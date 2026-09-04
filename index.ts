@@ -4,7 +4,7 @@
 // It is a re-export and holds no logic, by the same rule the rest of the package follows: the
 // decisions live in flow/pure, where they are proved. What this file DOES carry is the promise of
 // what the name `@jawache/flow` means — a symbol that is not here is not public, and a pack that
-// reaches past it into `flow/pure/…` is coupled to an internal layout that will move.
+// reaches past it into `flow/language/…` is coupled to an internal layout that will move.
 
 export {
   guardrail,
@@ -17,7 +17,7 @@ export {
   type BreadcrumbSentence,
   type EntryGroup,
   type DisabledMark,
-} from "./pure/entries.ts";
+} from "./language/domain.ts";
 
 export {
   definePack,
@@ -33,22 +33,24 @@ export {
   type PackBinding,
   type OverrideBinding,
   type ConfigSentence,
-} from "./pure/packs.ts";
+} from "./language/domain.ts";
 
 // `verdict` is deliberately absent: a check answers through `ctx.ok()` / `ctx.fail(detail)`, and
 // one answer should have one spelling. The constructors stay internal to flow, for the code that
-// BUILDS a ctx — see flow/pure/checks.ts.
+// BUILDS a ctx — see the CHECKS section of flow/language/domain.ts.
 export {
   defineCheck,
   type Check,
   type Ctx,
   type Verdict,
   type ExecResult,
+  type TurnAction,
   type Case,
+  type CaseWorld,
   type Cases,
-} from "./pure/checks.ts";
+} from "./language/domain.ts";
 
-export { defineCategory, type Category, type Classifier, type SessionFacts } from "./pure/categories.ts";
+export { defineCategory, type Category, type Classifier, type SessionFacts } from "./language/domain.ts";
 
 export {
   write,
@@ -61,7 +63,7 @@ export {
   type Moment,
   type GuardrailMoment,
   type BreadcrumbMoment,
-} from "./pure/moments.ts";
+} from "./language/domain.ts";
 
 export {
   loadConfig,
@@ -70,6 +72,6 @@ export {
   type RefusalCode,
   type LoadResult,
   type LoadedEntry,
-} from "./pure/validate.ts";
+} from "./language/domain.ts";
 
 export { FlowConfigError, entriesOrThrow } from "./errors.ts";

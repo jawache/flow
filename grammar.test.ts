@@ -20,7 +20,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfig } from "./pure/validate.ts";
+import { loadConfig } from "./language/domain.ts";
 import config from "./__fixtures__/valid.config.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));

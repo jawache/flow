@@ -31,5 +31,15 @@
   },
   "scripts": {
     "//": "Commands live in the root justfile — run `just` (build-flow · typecheck-flow · test-flow · link-flow)."
+  },
+  "dependencies": {
+    "@ast-grep/napi": "^0.42.3",
+    "dependency-cruiser": "^18.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "esbuild": "^0.28.1",
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.10"
   }
 }

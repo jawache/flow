@@ -21,11 +21,18 @@ const production = process.argv.includes("--production");
 
 const bundles = [{ entry: "flow.ts", out: "dist/flow.mjs" }];
 
-// Nothing is external yet: flow declares no dependencies, so there is nothing the bundler cannot
-// swallow. The two the CLI has to mark external (@ast-grep/napi, a native binding; and
-// dependency-cruiser, which it spawns rather than imports) arrive with the core checks that need
-// them, and this list is where they will be named.
-const EXTERNAL = [];
+// ONE external, and the asymmetry between flow's two dependencies is the whole explanation.
+//
+// @ast-grep/napi is a NATIVE binding — its real payload is a per-platform `.node` binary that
+// esbuild cannot inline into an ESM bundle — so it is marked external and resolved from
+// node_modules at run time, exactly as the CLI does with it.
+//
+// dependency-cruiser is a dependency and is NOT here, because nothing imports it: the depcruise
+// check runs it as a subprocess through `ctx.exec` (a check may not touch the module graph any
+// more than it may touch disk). It stays in `dependencies` so installing flow installs the tool
+// the check shells out to — a bundled binary whose one external tool is missing would be a
+// broken promise on first run.
+const EXTERNAL = ["@ast-grep/napi"];
 
 mkdirSync(fileURLToPath(new URL("dist/", root)), { recursive: true });
 
