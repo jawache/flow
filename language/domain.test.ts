@@ -14,6 +14,7 @@ import {
   BREADCRUMB_KEYS,
   BREADCRUMB_MOMENTS,
   type BreadcrumbSpec,
+  cannedWorld,
   type Cases,
   chain,
   type Check,
@@ -54,6 +55,7 @@ import {
   type SessionFacts,
   touch,
   turnEnd,
+  type Unanswered,
   verdict,
   type World,
   write,
@@ -264,6 +266,55 @@ describe("makeCtx — the ONE assembler", () => {
     }
     const built = makeCtx("command", { command: "ls" }, new Adapter());
     expect((await built.exec("ls")).stdout).toBe("live:ls");
+  });
+});
+
+describe("cannedWorld — the ONE recorded world", () => {
+  const reaches = (): Unanswered[] => [];
+
+  it("answers exec exactly first, then by containment — a case cannot be asked to retype a heredoc", async () => {
+    const missed = reaches();
+    const w = cannedWorld({ exec: { depcruise: { stdout: "wide" }, "npx depcruise --config x": { stdout: "exact" } } }, undefined, missed);
+    expect((await w.exec("npx depcruise --config x")).stdout).toBe("exact");
+    expect((await w.exec("npx depcruise <<'CFG'\n{}\nCFG")).stdout).toBe("wide");
+    expect(missed).toEqual([]);
+  });
+
+  it("RECORDS a reach it cannot answer instead of guessing — a fiction is how a case passes wrongly", async () => {
+    const missed = reaches();
+    const w = cannedWorld({ fs: { "a.ts": "body" } }, undefined, missed);
+    expect(await w.fs.read("a.ts")).toBe("body");
+    expect(await w.fs.read("b.ts")).toBe("");
+    expect(await w.exec("just test")).toEqual({ stdout: "", stderr: "", code: 0 });
+    expect(missed).toEqual([
+      { kind: "read", asked: "b.ts" },
+      { kind: "exec", asked: "just test" },
+    ]);
+  });
+
+  it("answers `exists` from the map alone — silence about a path means it is not there", async () => {
+    const missed = reaches();
+    const w = cannedWorld({ fs: { "a.ts": "" } }, undefined, missed);
+    expect(await w.fs.exists("a.ts")).toBe(true);
+    expect(await w.fs.exists("b.ts")).toBe(false);
+    expect(missed).toEqual([]);
+  });
+
+  it("lets the event's own staged set win over the recording's, and defaults both to empty", async () => {
+    expect(await cannedWorld({ staged: ["recorded.ts"] }, ["event.ts"], reaches()).git.stagedFiles()).toEqual([
+      "event.ts",
+    ]);
+    expect(await cannedWorld({ staged: ["recorded.ts"] }, undefined, reaches()).git.stagedFiles()).toEqual([
+      "recorded.ts",
+    ]);
+    expect(await cannedWorld({}, undefined, reaches()).git.stagedFiles()).toEqual([]);
+    expect(await cannedWorld({ gitDiff: "@@ -1" }, undefined, reaches()).git.diff()).toBe("@@ -1");
+    expect(await cannedWorld({}, undefined, reaches()).git.diff()).toBe("");
+  });
+
+  it("fills the exec answer's absent fields, so a case may record only the part it cares about", async () => {
+    const w = cannedWorld({ exec: { "just test": { code: 1 } } }, undefined, reaches());
+    expect(await w.exec("just test")).toEqual({ stdout: "", stderr: "", code: 1 });
   });
 });
 

@@ -28,6 +28,7 @@ import {
   isCategory,
   makeCtx,
   refusalText,
+  verdict,
   type BreadcrumbMoment,
   type Category,
   type Check,
@@ -450,7 +451,9 @@ async function ask(check: Check, ctx: Ctx): Promise<Verdict> {
   try {
     return await check(ctx);
   } catch (error) {
-    return { ok: false, detail: `the check threw: ${(error as Error).message}` };
+    // `verdict.fail`, not a hand-shaped object: a verdict has one constructor and this is a
+    // verdict. Two spellings of the same answer is how the two of them come to differ.
+    return verdict.fail(`the check threw: ${(error as Error).message}`);
   }
 }
 
@@ -482,7 +485,18 @@ export interface BriefArgs {
   readonly load: LoadResult;
   readonly event: BriefEvent;
   readonly marks: Marks;
-  readonly threshold?: number | undefined;
+  /**
+   * The config's own dials, and REQUIRED — `driftTokens` reaches the arithmetic through here and
+   * nowhere else.
+   *
+   * It was an optional `threshold` number, and that is a dead dial waiting to happen: `brief()`
+   * defaulted it independently, so a caller that never called `driftTokens(config.settings)` would
+   * run on 200k while the repo's `driftTokens:` sat in the config doing nothing, green and silent.
+   * That is the class of failure this whole package exists to delete, so the dial has one route and
+   * the compiler makes the adapter take it. `defineConfig` always produces a settings object, so
+   * passing `config.settings` costs the caller nothing.
+   */
+  readonly settings: Settings;
   readonly off?: boolean | undefined;
 }
 
@@ -502,7 +516,7 @@ export interface Briefing {
  * A `session` breadcrumb shows once at the session moment and is MARKED there, which is why the
  * first touch afterwards does not repeat what the greeting has just said.
  */
-export function brief({ load, event, marks, threshold, off = false }: BriefArgs): Briefing {
+export function brief({ load, event, marks, settings, off = false }: BriefArgs): Briefing {
   if (off) return { notices: [], marks };
   if (!load.ok)
     return {
@@ -512,7 +526,7 @@ export function brief({ load, event, marks, threshold, off = false }: BriefArgs)
 
   const notices: Notice[] = [];
   const next: Record<string, number> = { ...marks };
-  const limit = threshold ?? DEFAULT_DRIFT_TOKENS;
+  const limit = driftTokens(settings);
   for (const entry of load.entries) {
     if (entry.spec.kind !== "breadcrumb" || !fires(entry.spec, event.moment)) continue;
     if (!bindsTo(entry, event.wearing)) continue;
@@ -541,9 +555,10 @@ export function brief({ load, event, marks, threshold, off = false }: BriefArgs)
  * mechanism that cleared the mark rather than what the reader is looking at.
  */
 export function afterCompaction(marks: Marks, entries: readonly LoadedEntry[]): Marks {
-  const keep = new Set(
-    entries.filter((e) => ((e.spec.at ?? []) as readonly string[]).includes("session")).map((e) => e.id),
-  );
+  // `fires`, not a second at-includes-session read: "does this entry show at this moment" is one
+  // question with one answer, and asking it here by hand meant a disabled session breadcrumb kept
+  // its mark for free while `brief` would never have shown it.
+  const keep = new Set(entries.filter((e) => fires(e.spec, "session")).map((e) => e.id));
   const out: Record<string, number> = {};
   for (const [id, at] of Object.entries(marks)) if (keep.has(id)) out[id] = at;
   return out;

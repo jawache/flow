@@ -40,7 +40,7 @@
 //   TOOLS         execPasses · depcruise · astGrep, each orchestrating, never reimplementing
 //   CASES         the canned ctx a `.test()` case becomes, and the runner that walks them
 
-import { defineCheck, makeCtx } from "../language/domain.ts";
+import { cannedWorld, defineCheck, makeCtx } from "../language/domain.ts";
 import type {
   Case,
   CaseWorld,
@@ -51,8 +51,8 @@ import type {
   LoadedEntry,
   Moment,
   TurnAction,
+  Unanswered,
   Verdict,
-  World,
 } from "../language/domain.ts";
 import { escapeRe, expandTemplate, globTokenToRegExp, matchAny, tokenizeGlob } from "../glob.ts";
 
@@ -1450,65 +1450,18 @@ export function caseMoment(c: Case): Moment {
   return readCase(c).dialect;
 }
 
-/** What a canned ctx reached for that its case never answered. */
-export interface Unanswered {
-  readonly kind: "exec" | "read";
-  readonly asked: string;
-}
-
 /**
  * Build the ctx one case becomes, at one moment.
  *
- * Recorded exec answers are matched by exact command first and then by CONTAINMENT, which is not
- * laziness: the commands a check builds are not always things a person would want to retype — the
- * depcruise runner's is a multi-line heredoc carrying a compiled config — so a case says
- * `{ "depcruise": … }` and means "when it shells out to that". Exact wins when both could match, so
- * a case can still pin one specific invocation out of three.
- *
- * An unanswered reach is RECORDED rather than guessed at or thrown on. Guessing would let a case
- * pass on a fiction; throwing from here would be a throw in a pure home. The runner turns the
- * record into a failed case naming exactly what the check asked for.
+ * BOTH halves are the language layer's, and deliberately the same two calls the live engine makes:
+ * `cannedWorld` turns what the case wrote down into the three capabilities, and `makeCtx` assembles
+ * the ctx from those and the event's facts. A case is a recorded WORLD handed to one assembler, not
+ * a second kind of ctx — the moment either of those is written twice, a green case stops being
+ * evidence about the live rail, which is the whole value of cases existing.
  */
 export function cannedCtx(moment: Moment, c: Case, unanswered: Unanswered[]): Ctx {
   const { world, facts } = readCase(c);
-  // `makeCtx` is the language layer's, and it is deliberately the SAME call the live engine makes.
-  // A case is a recorded WORLD handed to one assembler, not a second kind of ctx — the moment
-  // those were two builders, a green case stopped being evidence about the live rail.
   return makeCtx(moment, facts, cannedWorld(world, facts.staged, unanswered));
-}
-
-/** The three capabilities, answered from what the case wrote down. */
-function cannedWorld(world: CaseWorld, staged: readonly string[] | undefined, unanswered: Unanswered[]): World {
-  const execAnswers = world.exec ?? {};
-  const files = world.fs ?? {};
-  return {
-    exec: (cmd: string): Promise<ExecResult> => {
-      const key = Object.hasOwn(execAnswers, cmd) ? cmd : Object.keys(execAnswers).find((k) => cmd.includes(k));
-      const answer = key === undefined ? undefined : execAnswers[key];
-      if (answer === undefined) {
-        unanswered.push({ kind: "exec", asked: cmd });
-        return Promise.resolve({ stdout: "", stderr: "", code: 0 });
-      }
-      return Promise.resolve({ stdout: answer.stdout ?? "", stderr: answer.stderr ?? "", code: answer.code ?? 0 });
-    },
-    fs: {
-      // `exists` is answered by the map alone and is never unanswered: a path the case did not
-      // mention is a path that is not there, which is the ordinary thing a case means by silence.
-      exists: (path: string): Promise<boolean> => Promise.resolve(Object.hasOwn(files, path)),
-      read: (path: string): Promise<string> => {
-        const text = files[path];
-        if (text === undefined) {
-          unanswered.push({ kind: "read", asked: path });
-          return Promise.resolve("");
-        }
-        return Promise.resolve(text);
-      },
-    },
-    git: {
-      diff: (): Promise<string> => Promise.resolve(world.gitDiff ?? ""),
-      stagedFiles: (): Promise<string[]> => Promise.resolve([...(staged ?? world.staged ?? [])]),
-    },
-  };
 }
 
 /** How one case came out. */

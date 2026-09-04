@@ -8,7 +8,15 @@
 // own. A check that could only be tested by reaching around ctx would fail here first.
 
 import { describe, it, expect } from "vitest";
-import { loadConfig, verdict, type Case, type CaseWorld, type Check, type LoadedEntry } from "../language/domain.ts";
+import {
+  loadConfig,
+  verdict,
+  type Case,
+  type CaseWorld,
+  type Check,
+  type LoadedEntry,
+  type Unanswered,
+} from "../language/domain.ts";
 import { globToRegExp } from "../glob.ts";
 import {
   astGrep,
@@ -72,7 +80,6 @@ import {
   type RequireEdge,
   type CanonVerdict,
   type CaseDialect,
-  type Unanswered,
   type WorkingState,
   type CaseResult,
 } from "./domain.ts";

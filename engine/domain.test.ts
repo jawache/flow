@@ -14,19 +14,21 @@
 //
 // Everything else is the ordinary matching underneath them.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   defineCategory,
   defineConfig,
   loadConfig,
   pack,
   override,
-  type ExecResult,
   type LoadResult,
   type Refusal,
   type SessionFacts,
   type World,
 } from "../index.ts";
+// Straight from the language layer, not through the public door: `cannedWorld` is how flow drives a
+// recorded world, not something a config or a pack imports, so it has no business on that surface.
+import { cannedWorld, type CaseWorld, type Unanswered } from "../language/domain.ts";
 import { builder, parent, rails, verifier } from "../__fixtures__/engine-pack.ts";
 import {
   CAUSES,
@@ -85,28 +87,27 @@ import {
 /** The regime the fixture pack becomes. Loaded once — the load itself is proved next door. */
 const regime: LoadResult = loadConfig(defineConfig([pack(rails)]));
 
-/** A recorded world. Anything the case did not record answers empty, which every test asserts on. */
-function world(
-  recorded: {
-    fs?: Record<string, string>;
-    exec?: Record<string, Partial<ExecResult>>;
-    diff?: string;
-    staged?: readonly string[];
-  } = {},
-): World {
-  const files = recorded.fs ?? {};
-  return {
-    exec: (cmd: string) => Promise.resolve({ stdout: "", stderr: "", code: 0, ...(recorded.exec?.[cmd] ?? {}) }),
-    fs: {
-      read: (path: string) => Promise.resolve(files[path] ?? ""),
-      exists: (path: string) => Promise.resolve(Object.hasOwn(files, path)),
-    },
-    git: {
-      diff: () => Promise.resolve(recorded.diff ?? ""),
-      stagedFiles: () => Promise.resolve([...(recorded.staged ?? [])]),
-    },
-  };
+/**
+ * A recorded world — `cannedWorld`, the SAME builder `flow test` drives a case through.
+ *
+ * It was a second implementation for one commit, and the two had already drifted: this one answered
+ * an unrecorded file read with `""` while the real one records the reach. That difference is the
+ * difference between a test that proves something and a test that passes on a fiction, so there is
+ * one builder, and the `afterEach` below makes every unrecorded reach in this suite a failure.
+ */
+function world(recorded: CaseWorld = {}, staged?: readonly string[]): World {
+  return cannedWorld(recorded, staged, missed);
 }
+
+let missed: Unanswered[] = [];
+
+beforeEach(() => {
+  missed = [];
+});
+
+afterEach(() => {
+  expect(missed, "a check reached for something this test never recorded").toEqual([]);
+});
 
 /** A write event, with whoever it happened to. */
 function wrote(path: string, content: string, wearing: readonly string[] = []): GuardEvent {
@@ -342,7 +343,10 @@ describe("what an entry is run against", () => {
     const outcome = await guard({
       load: regime,
       event: { moment: "commit", staged: ["src/a.ts", "src/b.ts", "src/b.test.ts", "docs/c.md"], wearing: [] },
-      world: world({ fs: { "src/a.ts": "TODO", "src/b.ts": "ok", "src/b.test.ts": "TODO", "docs/c.md": "TODO" } }),
+      world: world({
+        fs: { "src/a.ts": "TODO", "src/b.ts": "ok", "src/b.test.ts": "TODO", "docs/c.md": "TODO" },
+        exec: { "just test-commit": { code: 0 } },
+      }),
     });
     // Two subjects in scope, one of them offending — the ignored test file and the out-of-scope doc
     // are never read, let alone judged.
@@ -359,7 +363,7 @@ describe("what an entry is run against", () => {
     const outcome = await guard({
       load: regime,
       event: { moment: "commit", staged: ["src/gone.ts"], wearing: [] },
-      world: world({ fs: {} }),
+      world: world({ exec: { "just test-commit": { code: 0 } } }),
     });
     expect(tallyFor(outcome, "rails.stagedFiles")?.evaluated).toBe(0);
   });
@@ -368,7 +372,7 @@ describe("what an entry is run against", () => {
     const outcome = await guard({
       load: regime,
       event: { moment: "commit", staged: ["package.json"], wearing: [] },
-      world: world({ fs: {} }),
+      world: world({ exec: { "just test-commit": { code: 0 } } }),
     });
     expect(tallyFor(outcome, "rails.wholeCommit")).toEqual({
       id: "rails.wholeCommit",
@@ -489,7 +493,7 @@ describe("the off switch", () => {
 
   it("short-circuits the breadcrumb rails, and leaves the marks alone", () => {
     const marks: Marks = { "rails.notes.area": 10 };
-    expect(brief({ load: regime, event: touched("src/a.ts", 999_999), marks, off: true })).toEqual({
+    expect(briefing({ event: touched("src/a.ts", 999_999), marks, off: true })).toEqual({
       notices: [],
       marks,
     });
@@ -504,47 +508,50 @@ function touched(path: string, tokens: number, wearing: readonly string[] = []):
   return { moment: "touch", path, tokens, wearing };
 }
 
+/** Brief over the fixture regime. `settings` is required by the type, which is fix 1's whole point. */
+const briefing = (over: Omit<BriefArgs, "load" | "settings"> & Partial<BriefArgs>): Briefing =>
+  brief({ load: regime, settings: {}, ...over });
+
 const noticeIds = (b: Briefing): (string | null)[] => b.notices.map((n) => n.entry);
 
 describe("a breadcrumb across one session", () => {
   it("shows on first touch of its area, and records where it showed", () => {
-    const first = brief({ load: regime, event: touched("src/a.ts", 40_000), marks: {} });
+    const first = briefing({ event: touched("src/a.ts", 40_000), marks: {} });
     expect(noticeIds(first)).toEqual(["rails.notes.area"]);
     expect(first.notices[0]?.cause).toBe("first-touch");
     expect(first.marks).toEqual({ "rails.notes.area": 40_000 });
   });
 
   it("stays quiet while the session has not drifted far enough", () => {
-    const quiet = brief({ load: regime, event: touched("src/b.ts", 90_000), marks: { "rails.notes.area": 40_000 } });
+    const quiet = briefing({ event: touched("src/b.ts", 90_000), marks: { "rails.notes.area": 40_000 } });
     expect(quiet.notices).toEqual([]);
     expect(quiet.marks).toEqual({ "rails.notes.area": 40_000 });
   });
 
   it("shows again once the context has moved on past the threshold", () => {
-    const drifted = brief({ load: regime, event: touched("src/b.ts", 250_000), marks: { "rails.notes.area": 40_000 } });
+    const drifted = briefing({ event: touched("src/b.ts", 250_000), marks: { "rails.notes.area": 40_000 } });
     expect(noticeIds(drifted)).toEqual(["rails.notes.area"]);
     expect(drifted.notices[0]?.cause).toBe("drift");
     expect(drifted.marks).toEqual({ "rails.notes.area": 250_000 });
   });
 
-  it("takes the repo's own threshold when its config set one", () => {
-    const tight = brief({
-      load: regime,
-      event: touched("src/b.ts", 60_000),
-      marks: { "rails.notes.area": 40_000 },
-      threshold: 10_000,
-    });
+  it("takes the repo's own dial, straight off the config it was declared in", () => {
+    // The dial's ONE route: defineConfig carries it, brief() reads it through driftTokens, and the
+    // type makes the caller hand it over. A wired adapter cannot forget the call and quietly run
+    // on the default while the repo's number sits in the config doing nothing.
+    const settings = defineConfig([pack(rails)], { driftTokens: 10_000 }).settings;
+    const tight = briefing({ event: touched("src/b.ts", 60_000), marks: { "rails.notes.area": 40_000 }, settings });
     expect(noticeIds(tight)).toEqual(["rails.notes.area"]);
   });
 
   it("never shows a note for an area this touch is not in", () => {
-    expect(brief({ load: regime, event: touched("docs/a.md", 10), marks: {} }).notices).toEqual([]);
+    expect(briefing({ event: touched("docs/a.md", 10), marks: {} }).notices).toEqual([]);
   });
 
   it("shows a scoped note only to the actor it binds to, and carries a file's prose unresolved", () => {
-    const toAnyone = brief({ load: regime, event: touched("src/a.ts", 10), marks: {} });
+    const toAnyone = briefing({ event: touched("src/a.ts", 10), marks: {} });
     expect(noticeIds(toAnyone)).toEqual(["rails.notes.area"]);
-    const toBuilder = brief({ load: regime, event: touched("src/a.ts", 10, ["builder"]), marks: {} });
+    const toBuilder = briefing({ event: touched("src/a.ts", 10, ["builder"]), marks: {} });
     expect(noticeIds(toBuilder)).toEqual(["rails.notes.area", "rails.notes.forBuilders"]);
     const scoped: Notice | undefined = toBuilder.notices[1];
     expect(scoped?.file).toBe("docs/builder.md");
@@ -552,15 +559,15 @@ describe("a breadcrumb across one session", () => {
   });
 
   it("greets at the session moment, and the greeting does not repeat at the first touch", () => {
-    const opened = brief({ load: regime, event: { moment: "session", tokens: 0, wearing: [] }, marks: {} });
+    const opened = briefing({ event: { moment: "session", tokens: 0, wearing: [] }, marks: {} });
     expect(noticeIds(opened)).toEqual(["rails.notes.orientation"]);
     expect(opened.notices[0]?.cause).toBe("session");
-    const again = brief({ load: regime, event: { moment: "session", tokens: 100, wearing: [] }, marks: opened.marks });
+    const again = briefing({ event: { moment: "session", tokens: 100, wearing: [] }, marks: opened.marks });
     expect(again.notices).toEqual([]);
   });
 
   it("degrades to a NOTICE when the config will not load — the one exception to fail-loud", () => {
-    const args: BriefArgs = { load: broken, event: touched("src/a.ts", 10), marks: {} };
+    const args: BriefArgs = { load: broken, event: touched("src/a.ts", 10), marks: {}, settings: {} };
     const degraded = brief(args);
     expect(degraded.notices).toHaveLength(1);
     const only = degraded.notices[0];
@@ -581,7 +588,7 @@ describe("a compaction", () => {
 
   it("re-shows the area note at the next touch, as the first touch it now is", () => {
     const after = afterCompaction({ "rails.notes.area": 120_000 }, entries);
-    const shown = brief({ load: regime, event: touched("src/a.ts", 130_000), marks: after });
+    const shown = briefing({ event: touched("src/a.ts", 130_000), marks: after });
     expect(shown.notices[0]?.cause).toBe("first-touch");
   });
 

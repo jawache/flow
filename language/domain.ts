@@ -401,6 +401,69 @@ export function hasCases(cases: Cases | undefined): boolean {
   return (cases.pass?.length ?? 0) + (cases.block?.length ?? 0) > 0;
 }
 
+/** What a recorded world was reached for and could not answer. */
+export interface Unanswered {
+  readonly kind: "exec" | "read";
+  readonly asked: string;
+}
+
+/**
+ * THE recorded world — a `CaseWorld` as the three capabilities, and there must only ever be one.
+ *
+ * It sits beside `makeCtx` for the same reason and it is the same sentence: `flow test` drives a
+ * check through this, the engine's own suite drives a whole rail through this, and F5's replay will
+ * drive a recorded session through this. The moment there are two of them they disagree about
+ * silence — which is precisely what happened for one commit, where a second copy answered an
+ * unrecorded file read with `""` while this one recorded the reach. One of those makes a case pass
+ * on a fiction, and telling which is which afterwards is impossible.
+ *
+ * Recorded exec answers are matched by exact command first and then by CONTAINMENT, which is not
+ * laziness: the commands a check builds are not always things a person would want to retype — the
+ * depcruise runner's is a multi-line heredoc carrying a compiled config — so a case says
+ * `{ "depcruise": … }` and means "when it shells out to that". Exact wins when both could match, so
+ * a case can still pin one specific invocation out of three.
+ *
+ * An unanswered reach is RECORDED rather than guessed at or thrown on. Guessing would let a case
+ * pass on a fiction; throwing from here would be a throw in a pure home. The caller turns the
+ * record into a failure naming exactly what was asked for.
+ */
+export function cannedWorld(
+  recorded: CaseWorld,
+  staged: readonly string[] | undefined,
+  unanswered: Unanswered[],
+): World {
+  const execAnswers = recorded.exec ?? {};
+  const files = recorded.fs ?? {};
+  return {
+    exec: (cmd: string): Promise<ExecResult> => {
+      const key = Object.hasOwn(execAnswers, cmd) ? cmd : Object.keys(execAnswers).find((k) => cmd.includes(k));
+      const answer = key === undefined ? undefined : execAnswers[key];
+      if (answer === undefined) {
+        unanswered.push({ kind: "exec", asked: cmd });
+        return Promise.resolve({ stdout: "", stderr: "", code: 0 });
+      }
+      return Promise.resolve({ stdout: answer.stdout ?? "", stderr: answer.stderr ?? "", code: answer.code ?? 0 });
+    },
+    fs: {
+      // `exists` is answered by the map alone and is never unanswered: a path the recording did not
+      // mention is a path that is not there, which is the ordinary thing silence means here.
+      exists: (path: string): Promise<boolean> => Promise.resolve(Object.hasOwn(files, path)),
+      read: (path: string): Promise<string> => {
+        const text = files[path];
+        if (text === undefined) {
+          unanswered.push({ kind: "read", asked: path });
+          return Promise.resolve("");
+        }
+        return Promise.resolve(text);
+      },
+    },
+    git: {
+      diff: (): Promise<string> => Promise.resolve(recorded.gitDiff ?? ""),
+      stagedFiles: (): Promise<string[]> => Promise.resolve([...(staged ?? recorded.staged ?? [])]),
+    },
+  };
+}
+
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // ENTRIES — THE SENTENCE. One entry, spoken as a chain, and the data it becomes.

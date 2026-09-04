@@ -31,6 +31,7 @@ import {
   statePath,
   type Identity,
   type Row,
+  type SessionMarker,
   type SessionState,
 } from "./domain.ts";
 
@@ -237,5 +238,5 @@ export function commitSession(root: string, branch: string | null, nowMs: number
   } catch {
     /* missing or corrupt → the fallback, which is what sessionFrom does with null */
   }
-  return sessionFrom(marker as { session?: unknown; ts?: unknown } | null, "commit", nowMs);
+  return sessionFrom(marker as SessionMarker | null, "commit", nowMs);
 }
