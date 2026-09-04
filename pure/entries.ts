@@ -100,7 +100,14 @@ export type BreadcrumbKey = (typeof BREADCRUMB_KEYS)[number];
 // typed `never`, so saying it twice is not a call the compiler will make. It costs nothing at run
 // time — the object underneath carries all nine methods and always did.
 
-type Once<Spoken extends string, Key extends string, Verb> = Key extends Spoken ? never : Verb;
+/**
+ * A verb, until it is spoken.
+ *
+ * Exported because the override chain in packs.ts is the same trick over the same grammar, and a
+ * second copy of these fifty characters is a second place for "may be said once" to stop being
+ * true.
+ */
+export type Once<Spoken extends string, Key extends string, Verb> = Key extends Spoken ? never : Verb;
 
 /** Anything a pack may file under an entry name. The one shape `definePack` walks. */
 export interface Sentence<S extends EntrySpec = EntrySpec> {
@@ -185,18 +192,32 @@ export type CompleteEntry<B> =
 
 // ── the builders ─────────────────────────────────────────────────────────────
 
-// One implementation for both entry types: the verbs differ only in which keys they write, and
-// the types above are what keep a breadcrumb from ever being handed `.check()`. Writing it twice
-// would be two chances to drift.
-//
-// It works over an untyped record on purpose. The chain's types are a PROJECTION of this one
-// object — nine verbs the caller can see a shrinking subset of — and no signature can describe
-// that from the inside. The three casts are the seam; every claim the grammar makes is made in
-// the interfaces above, where a reader can check it.
-function chain(spec: Record<string, unknown>): Sentence {
-  const next = (patch: Record<string, unknown>): Sentence => chain({ ...spec, ...patch });
+/**
+ * THE chain builder — every chain in this grammar, and there are three of them: a guardrail, a
+ * breadcrumb, and an override.
+ *
+ * The three differ in only two ways, and both are arguments here: which keys they START from, and
+ * how the accumulated keys are EXPOSED (a sentence shows them as `.spec`, an override wraps them
+ * in its binding). What they must never differ in is the verbs themselves — that a second `.on()`
+ * replaces nothing, that `.disabled()` records an empty reason rather than dropping it, that every
+ * step returns a NEW object so a pack can build a family off a shared prefix. Each of those was
+ * written twice for one commit, which is one commit longer than "one of the two copies is now
+ * subtly different" needs.
+ *
+ * Which verbs a given caller may reach is a TYPE question and is answered entirely by the
+ * interfaces above and in packs.ts — an override has no `.check` because its chain type does not
+ * declare one, not because a different builder withheld it. That is the same reason this works
+ * over an untyped record: the chain types are a PROJECTION of this one object, a shrinking subset
+ * of eleven verbs, and no signature can describe that from the inside. The casts at each entry
+ * point are the seam.
+ */
+export function chain<Exposed extends object>(
+  spoken: Readonly<Record<string, unknown>>,
+  expose: (spoken: Readonly<Record<string, unknown>>) => Exposed,
+): Exposed {
+  const next = (patch: Record<string, unknown>): Exposed => chain({ ...spoken, ...patch }, expose);
   return {
-    spec,
+    ...expose(spoken),
     at: (...moments: string[]) => next({ at: moments }),
     for: (...categories: Category[]) => next({ for: categories }),
     on: (...globs: string[]) => next({ on: globs }),
@@ -208,17 +229,20 @@ function chain(spec: Record<string, unknown>): Sentence {
     disabled: (reason?: string) => next({ disabled: reason === undefined ? {} : { reason } }),
     test: (test: Cases) => next({ test }),
     description: (description: string) => next({ description }),
-  } as unknown as Sentence;
+  };
 }
+
+/** How a sentence exposes what it has spoken: as the entry spec itself. */
+const asSpec = (spoken: Readonly<Record<string, unknown>>): Sentence => ({ spec: spoken as unknown as EntrySpec });
 
 /** Open a guardrail sentence. It blocks; it must therefore say what it asks and what it proves. */
 export function guardrail(): GuardrailSentence {
-  return chain({ kind: "guardrail" }) as unknown as GuardrailSentence;
+  return chain({ kind: "guardrail" }, asSpec) as unknown as GuardrailSentence;
 }
 
 /** Open a breadcrumb sentence. Breadcrumbs are data — no check, ever, and no rail to block. */
 export function breadcrumb(): BreadcrumbSentence {
-  return chain({ kind: "breadcrumb" }) as unknown as BreadcrumbSentence;
+  return chain({ kind: "breadcrumb" }, asSpec) as unknown as BreadcrumbSentence;
 }
 
 /** Is this an entry rather than a group of them? What `definePack` walks a pack's tree with. */

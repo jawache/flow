@@ -184,6 +184,14 @@ describe("overlay — a spoken key replaces the pack's WHOLE key, nothing merges
     expect(source["disabled"]).toBe("override");
   });
 
+  it("keeps an earlier override's provenance when a second one lands on the same entry", () => {
+    const first = overlay(packSpec, { on: ["src/content/**"] });
+    const second = overlay(first.spec, { ignore: ["**/*.draft.md"] }, first.source);
+    expect(second.source["on"]).toBe("override");
+    expect(second.source["ignore"]).toBe("override");
+    expect(second.source["at"]).toBe("pack");
+  });
+
   it("moves a rule's moments wholesale", () => {
     const { spec } = overlay(packSpec, { at: [command] });
     expect(spec.at).toEqual(["command"]);

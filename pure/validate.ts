@@ -104,7 +104,10 @@ export function loadConfig(config: FlowConfig): LoadResult {
     }
 
     for (const { key, spec } of flatten(build(binding.params))) {
-      const draft: Draft = { id: `${name}.${key}`, pack: name, key, spec, source: sourceOf(spec) };
+      // `overlay(spec, {})` rather than a source loop of its own: an entry with no override is
+      // the same operation with nothing laid over it, and overlay is the one place a source map
+      // is built.
+      const draft: Draft = { id: `${name}.${key}`, pack: name, key, ...overlay(spec, {}) };
       const clash = seen.get(draft.id);
       if (clash) {
         refusals.push({
@@ -135,9 +138,9 @@ export function loadConfig(config: FlowConfig): LoadResult {
       });
       continue;
     }
-    const laid = overlay(draft.spec, binding.spoken);
+    const laid = overlay(draft.spec, binding.spoken, draft.source);
     draft.spec = laid.spec;
-    draft.source = { ...draft.source, ...laid.source };
+    draft.source = laid.source;
   }
 
   // ── every entry, judged once, in its final shape ──
@@ -179,12 +182,6 @@ function flatten(group: Readonly<Record<string, unknown>>, path: readonly string
 interface Found {
   key: string;
   spec: EntrySpec;
-}
-
-function sourceOf(spec: EntrySpec): Readonly<Record<string, "pack" | "override">> {
-  const source: Record<string, "pack" | "override"> = {};
-  for (const key of Object.keys(spec)) source[key] = "pack";
-  return source;
 }
 
 /** Every fault in one entry, so a reader fixes them together. */

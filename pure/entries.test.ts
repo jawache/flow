@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  chain,
   guardrail,
   breadcrumb,
   isSentence,
@@ -126,6 +127,29 @@ describe("the closed key sets", () => {
     const b = new Set<string>(BREADCRUMB_KEYS);
     expect(GUARDRAIL_KEYS.filter((k) => !b.has(k))).toEqual(["check", "message", "test"]);
     expect(BREADCRUMB_KEYS.filter((k) => !g.has(k))).toEqual(["text", "file"]);
+  });
+});
+
+describe("chain — the one builder behind all three chains", () => {
+  it("accumulates spoken keys and hands them to whatever the caller exposes them as", () => {
+    const built = chain({ kind: "guardrail" }, (spoken) => ({ seen: spoken })) as unknown as {
+      at: (...m: string[]) => { on: (...g: string[]) => { seen: Record<string, unknown> } };
+    };
+    expect(built.at("commit").on("src/**").seen).toEqual({
+      kind: "guardrail",
+      at: ["commit"],
+      on: ["src/**"],
+    });
+  });
+
+  it("is what both a sentence and an override are made of — same verbs, same replacement", () => {
+    // The sentence exposes its keys as `.spec`; the override wraps them in a binding. Nothing
+    // else differs, which is why there is one builder and not two.
+    expect(guardrail().at(commit).on("a/**").spec).toEqual({
+      kind: "guardrail",
+      at: ["commit"],
+      on: ["a/**"],
+    });
   });
 });
 

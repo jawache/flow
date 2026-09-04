@@ -30,7 +30,6 @@ describe("the public surface", () => {
       "session",
       "touch",
       "turnEnd",
-      "verdict",
       "write",
     ]);
   });

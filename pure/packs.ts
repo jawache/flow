@@ -25,15 +25,35 @@
 // by the time a sentence exists the bottom rung has already been spent — which is why `overlay`
 // below has exactly two inputs and not three.
 
-import type { EntryGroup, EntrySpec, Sentence, GuardrailSpec, BreadcrumbSpec, CompleteEntry } from "./entries.ts";
+import { chain } from "./entries.ts";
+import type {
+  EntryGroup,
+  EntrySpec,
+  Sentence,
+  GuardrailSpec,
+  BreadcrumbSpec,
+  CompleteEntry,
+  GuardrailKey,
+  BreadcrumbKey,
+  Once,
+} from "./entries.ts";
 import type { GuardrailMoment, BreadcrumbMoment } from "./moments.ts";
 import type { Category } from "./categories.ts";
 
-// Both brands are STRING keys that are not valid identifiers, and that is the point: an entry is
-// addressed by property, so any key a pack's author could plausibly type must stay free. `tdd.id`
-// and `tdd.pack` are entry names somebody will want one day; `tdd["flow:ref"]` is not.
-const PACK = "flow:pack";
-const REF = "flow:ref";
+// ONE branding mechanism across this package: `Symbol.for`, never a string key and never a bare
+// `Symbol()`. It matters more here than anywhere else in flow, because a pack's entries ARE its
+// properties — `tdd.id` and `tdd.pack` are entry names somebody will want one day, and a brand
+// that occupies a spellable name takes one away. The registry form (`.for`) rather than a
+// per-module symbol, so two copies of flow in one node_modules tree still recognise each other's
+// packs; a private symbol would make that failure invisible and unexplainable.
+//
+// The same mechanism holds `CATEGORY` in categories.ts. Two mechanisms is two answers to "is this
+// really one of ours", and one of them is always the one nobody updated.
+const PACK = Symbol.for("flow.pack");
+const REF = Symbol.for("flow.ref");
+/** Phantoms: typed, never present at run time. They exist so a call site can be refused. */
+const PARAMS = Symbol.for("flow.params");
+const KIND = Symbol.for("flow.kind");
 
 // ── what a pack IS ───────────────────────────────────────────────────────────
 
@@ -63,7 +83,7 @@ export interface RefTarget {
  */
 export interface EntryRef<Kind extends EntrySpec["kind"] = EntrySpec["kind"]> {
   readonly [REF]: RefTarget;
-  readonly "flow:kind"?: Kind;
+  readonly [KIND]?: Kind;
 }
 
 /** The reference tree a pack presents — the same shape as the entries, refs at the leaves. */
@@ -80,7 +100,7 @@ export type Refs<T> = {
 interface PackHandle<Params> {
   readonly [PACK]: PackDefinition;
   /** Phantom. It exists so `pack(tdd)` without parameters is not a call the compiler will make. */
-  readonly "flow:params"?: Params;
+  readonly [PARAMS]?: Params;
 }
 
 /** What `definePack` hands back: the reference tree, with the definition riding underneath it. */
@@ -141,14 +161,15 @@ export function definePack(
 // that. So a property access never asks the tree anything; it just gets longer, and whether the
 // path it built names a real entry is settled at load.
 function refProxy(packName: string, path: readonly string[], definition?: PackDefinition): object {
-  const target: Record<string, unknown> = {
-    [REF]: { pack: packName, id: path.join(".") },
-    ...(definition ? { [PACK]: definition } : {}),
-  };
+  const target: Record<string | symbol, unknown> = { [REF]: { pack: packName, id: path.join(".") } };
+  if (definition) target[PACK] = definition;
   return new Proxy(target, {
     get(t, key) {
-      if (typeof key !== "string") return undefined;
-      return key in t ? t[key] : refProxy(packName, [...path, key]);
+      // The brands answer from the target; a string key that is not one of them is the next
+      // segment of a path; an unknown SYMBOL is nothing — which is what keeps a ref from
+      // accidentally looking thenable, inspectable, or iterable to code that probes for those.
+      if (key in t) return t[key];
+      return typeof key === "string" ? refProxy(packName, [...path, key]) : undefined;
     },
   });
 }
@@ -156,7 +177,7 @@ function refProxy(packName: string, path: readonly string[], definition?: PackDe
 /** The definition riding under a pack value, or undefined if this was never made by definePack. */
 export function packDefinition(value: unknown): PackDefinition | undefined {
   if (typeof value !== "object" || value === null) return undefined;
-  const held = (value as Record<string, unknown>)[PACK];
+  const held = (value as Record<symbol, unknown>)[PACK];
   return isPackDefinition(held) ? held : undefined;
 }
 
@@ -172,7 +193,7 @@ function isPackDefinition(value: unknown): value is PackDefinition {
 /** Where a reference points, or undefined if this was never a reference. */
 export function refTarget(value: unknown): RefTarget | undefined {
   if (typeof value !== "object" || value === null) return undefined;
-  const held = (value as Record<string, unknown>)[REF];
+  const held = (value as Record<symbol, unknown>)[REF];
   if (typeof held !== "object" || held === null) return undefined;
   const { pack: packName, id } = held as RefTarget;
   return typeof packName === "string" && typeof id === "string" ? { pack: packName, id } : undefined;
@@ -208,9 +229,15 @@ export function pack(definition: object, ...params: readonly unknown[]): PackBin
 
 // ── override() ───────────────────────────────────────────────────────────────
 
-type OverrideKey = "at" | "for" | "on" | "ignore" | "message" | "text" | "file" | "disabled" | "description";
-
-type Once<Spoken extends string, Key extends string, Verb> = Key extends Spoken ? never : Verb;
+/**
+ * What an override may speak: BOTH entry grammars, minus the two verbs it must never reach.
+ *
+ * Derived rather than listed, and the subtraction is the whole statement — "an override moves an
+ * entry, rewords it or switches it off, and can never touch what the entry ASKS" is said once,
+ * here, in a form that cannot drift from the key sets it is subtracting from. A third hand-typed
+ * listing of the grammar would be a third place to forget a verb.
+ */
+type OverrideKey = Exclude<GuardrailKey | BreadcrumbKey, "check" | "test">;
 
 interface OverrideChain<Kind extends EntrySpec["kind"], Spoken extends OverrideKey> {
   readonly binding: OverrideBinding;
@@ -249,24 +276,11 @@ interface OverrideChain<Kind extends EntrySpec["kind"], Spoken extends OverrideK
  */
 export function override<Kind extends EntrySpec["kind"]>(ref: EntryRef<Kind>): OverrideChain<Kind, never> {
   const target = refTarget(ref) ?? { pack: "", id: "" };
-  return overrideChain({ kind: "override", ref: target, spoken: {} }) as OverrideChain<Kind, never>;
-}
-
-function overrideChain(binding: OverrideBinding): unknown {
-  const next = (patch: Record<string, unknown>): unknown =>
-    overrideChain({ ...binding, spoken: { ...binding.spoken, ...patch } });
-  return {
-    binding,
-    at: (...moments: string[]) => next({ at: moments }),
-    for: (...categories: unknown[]) => next({ for: categories }),
-    on: (...globs: string[]) => next({ on: globs }),
-    ignore: (...globs: string[]) => next({ ignore: globs }),
-    message: (message: string) => next({ message }),
-    text: (text: string) => next({ text }),
-    file: (file: string) => next({ file }),
-    disabled: (reason?: string) => next({ disabled: reason === undefined ? {} : { reason } }),
-    description: (description: string) => next({ description }),
-  };
+  // The same chain builder every sentence uses (entries.ts). All that differs is how the spoken
+  // keys are exposed — a sentence shows them as `.spec`, an override wraps them in its binding.
+  return chain({}, (spoken): { binding: OverrideBinding } => ({
+    binding: { kind: "override", ref: target, spoken },
+  })) as unknown as OverrideChain<Kind, never>;
 }
 
 // ── defineConfig ─────────────────────────────────────────────────────────────
@@ -296,15 +310,25 @@ export interface Overlaid {
 }
 
 /**
- * Lay an override's spoken keys over a pack's definition.
+ * Lay an override's spoken keys over a definition, and record where every key came from.
  *
- * A named key replaces the pack's WHOLE key — lists never merge, so an override that narrows one
- * glob restates the others. That is deliberate: two merge semantics is two bugs, and it is the
- * same replacement rule the YAML shadows had, kept.
+ * A named key replaces the WHOLE key — lists never merge, so an override that narrows one glob
+ * restates the others. That is deliberate: two merge semantics is two bugs, and it is the same
+ * replacement rule the YAML shadows had, kept.
+ *
+ * THE ONLY place a source map is built, including the first one: an entry with no override at all
+ * is `overlay(spec, {})`, not a second loop somewhere else that agrees with this one until it
+ * doesn't. `prior` is what makes that true for the second override onto one entry as well —
+ * without it, laying anything over an already-overridden entry would relabel the earlier
+ * override's keys as the pack's.
  */
-export function overlay(base: EntrySpec, spoken: Readonly<Record<string, unknown>>): Overlaid {
+export function overlay(
+  base: EntrySpec,
+  spoken: Readonly<Record<string, unknown>>,
+  prior?: Readonly<Record<string, "pack" | "override">>,
+): Overlaid {
   const source: Record<string, "pack" | "override"> = {};
-  for (const key of Object.keys(base)) source[key] = "pack";
+  for (const key of Object.keys(base)) source[key] = prior?.[key] ?? "pack";
   for (const key of Object.keys(spoken)) source[key] = "override";
   return { spec: { ...base, ...spoken }, source };
 }

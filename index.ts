@@ -35,9 +35,11 @@ export {
   type ConfigSentence,
 } from "./pure/packs.ts";
 
+// `verdict` is deliberately absent: a check answers through `ctx.ok()` / `ctx.fail(detail)`, and
+// one answer should have one spelling. The constructors stay internal to flow, for the code that
+// BUILDS a ctx — see flow/pure/checks.ts.
 export {
   defineCheck,
-  verdict,
   type Check,
   type Ctx,
   type Verdict,
