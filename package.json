@@ -20,11 +20,19 @@
   "bin": {
     "flow": "dist/flow.mjs"
   },
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "default": "./dist/index.mjs"
+    }
+  },
   "files": [
-    "dist/flow.mjs"
+    "dist/flow.mjs",
+    "dist/index.mjs",
+    "dist/types/"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "publishConfig": {
     "access": "public"

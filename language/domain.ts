@@ -112,6 +112,24 @@ export function isBreadcrumbMoment(m: string): m is BreadcrumbMoment {
   return (BREADCRUMB_MOMENTS as readonly string[]).includes(m);
 }
 
+/**
+ * The moments whose events NAME A PATH — and therefore the only ones `.on()` / `.ignore()` narrow.
+ *
+ * A write and a delete carry the would-be file; the commit gate carries the staged set; a touch
+ * carries the file the tool call was about. The other three carry no path at all: a command guard's
+ * patterns ARE its scope, a turn-end is about what the actor did, and a session start is about the
+ * session. The engine expresses the same fact at run time — `subjectsOf` consults `inScope` for
+ * exactly these moments, and `brief` narrows a note only when the event names a path — and stating
+ * it here is what lets a scope that would narrow NOTHING be refused rather than quietly ignored.
+ */
+export const PATH_MOMENTS = ["write", "delete", "commit", "touch"] as const;
+export type PathMoment = (typeof PATH_MOMENTS)[number];
+
+/** Does this moment carry a path for `on` / `ignore` to narrow? */
+export function isPathMoment(m: string): m is PathMoment {
+  return (PATH_MOMENTS as readonly string[]).includes(m);
+}
+
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // CATEGORIES — who a rule binds to
@@ -575,6 +593,30 @@ export type BreadcrumbKey = (typeof BREADCRUMB_KEYS)[number];
  */
 export type Once<Spoken extends string, Key extends string, Verb> = Key extends Spoken ? never : Verb;
 
+/** What `.on()` becomes once `.at(…)` has ruled every path out. The TEXT is the diagnostic. */
+type DeadScope =
+  "flow: every moment this entry fires at carries no path, so .on()/.ignore() would narrow nothing";
+
+/**
+ * `.on()` / `.ignore()`, or the refusal — the compile-time half of the dead-scope rule.
+ *
+ * A path scope is consulted only when the event names a path (`PATH_MOMENTS`), so an entry whose
+ * every moment is `command`, `turn-end` or `session` and which nonetheless speaks `.on(…)` reads as
+ * armed and narrows nothing — config that looks like a fence and is one line of decoration. The
+ * engine's silence about it was the old engine's behaviour, kept deliberately until now.
+ *
+ * It is a WRONG-ARGUMENT refusal rather than a `never`, and that is the whole design: `never` gives
+ * "this expression is not callable", which says nothing about why. A parameter typed as the message
+ * puts the sentence itself in the diagnostic, where a reader is already looking.
+ *
+ * It can only fire when `.at(…)` was spoken FIRST — before that, `At` is the whole vocabulary and
+ * every scope is live. Saying `.on(…)` above `.at(command)` is the same mistake with the words in
+ * the other order, and the load's `dead-scope` refusal is what catches it. Both halves, always.
+ */
+type Scoping<At extends Moment, Verb> = [Extract<At, PathMoment>] extends [never]
+  ? (dead: DeadScope) => never
+  : Verb;
+
 /** Anything a pack may file under an entry name. The one shape `definePack` walks. */
 export interface Sentence<S extends EntrySpec = EntrySpec> {
   readonly spec: S;
@@ -585,34 +627,56 @@ export interface EntryGroup {
   readonly [key: string]: Sentence | EntryGroup;
 }
 
-export interface GuardrailSentence<Spoken extends GuardrailKey = never> extends Sentence<GuardrailSpec> {
-  readonly at: Once<Spoken, "at", (...moments: GuardrailMoment[]) => GuardrailSentence<Spoken | "at">>;
-  readonly for: Once<Spoken, "for", (...categories: Category[]) => GuardrailSentence<Spoken | "for">>;
-  readonly on: Once<Spoken, "on", (...globs: string[]) => GuardrailSentence<Spoken | "on">>;
-  readonly ignore: Once<Spoken, "ignore", (...globs: string[]) => GuardrailSentence<Spoken | "ignore">>;
-  readonly check: Once<Spoken, "check", (check: Check) => GuardrailSentence<Spoken | "check">>;
-  readonly message: Once<Spoken, "message", (message: string) => GuardrailSentence<Spoken | "message">>;
-  readonly disabled: Once<Spoken, "disabled", (reason?: string) => GuardrailSentence<Spoken | "disabled">>;
-  readonly test: Once<Spoken, "test", (cases: Cases) => GuardrailSentence<Spoken | "test">>;
+// The SECOND parameter is the moments already named, and it exists for one rule: `Scoping`. Until
+// `.at(…)` is spoken it is the whole vocabulary, which is why a scope said first is always allowed.
+export interface GuardrailSentence<Spoken extends GuardrailKey = never, At extends GuardrailMoment = GuardrailMoment>
+  extends Sentence<GuardrailSpec> {
+  readonly at: Once<
+    Spoken,
+    "at",
+    <M extends GuardrailMoment[]>(...moments: M) => GuardrailSentence<Spoken | "at", M[number]>
+  >;
+  readonly for: Once<Spoken, "for", (...categories: Category[]) => GuardrailSentence<Spoken | "for", At>>;
+  readonly on: Once<Spoken, "on", Scoping<At, (...globs: string[]) => GuardrailSentence<Spoken | "on", At>>>;
+  readonly ignore: Once<
+    Spoken,
+    "ignore",
+    Scoping<At, (...globs: string[]) => GuardrailSentence<Spoken | "ignore", At>>
+  >;
+  readonly check: Once<Spoken, "check", (check: Check) => GuardrailSentence<Spoken | "check", At>>;
+  readonly message: Once<Spoken, "message", (message: string) => GuardrailSentence<Spoken | "message", At>>;
+  readonly disabled: Once<Spoken, "disabled", (reason?: string) => GuardrailSentence<Spoken | "disabled", At>>;
+  readonly test: Once<Spoken, "test", (cases: Cases) => GuardrailSentence<Spoken | "test", At>>;
   readonly description: Once<
     Spoken,
     "description",
-    (description: string) => GuardrailSentence<Spoken | "description">
+    (description: string) => GuardrailSentence<Spoken | "description", At>
   >;
 }
 
-export interface BreadcrumbSentence<Spoken extends BreadcrumbKey = never> extends Sentence<BreadcrumbSpec> {
-  readonly at: Once<Spoken, "at", (...moments: BreadcrumbMoment[]) => BreadcrumbSentence<Spoken | "at">>;
-  readonly for: Once<Spoken, "for", (...categories: Category[]) => BreadcrumbSentence<Spoken | "for">>;
-  readonly on: Once<Spoken, "on", (...globs: string[]) => BreadcrumbSentence<Spoken | "on">>;
-  readonly ignore: Once<Spoken, "ignore", (...globs: string[]) => BreadcrumbSentence<Spoken | "ignore">>;
-  readonly text: Once<Spoken, "text", (text: string) => BreadcrumbSentence<Spoken | "text">>;
-  readonly file: Once<Spoken, "file", (path: string) => BreadcrumbSentence<Spoken | "file">>;
-  readonly disabled: Once<Spoken, "disabled", (reason?: string) => BreadcrumbSentence<Spoken | "disabled">>;
+export interface BreadcrumbSentence<
+  Spoken extends BreadcrumbKey = never,
+  At extends BreadcrumbMoment = BreadcrumbMoment,
+> extends Sentence<BreadcrumbSpec> {
+  readonly at: Once<
+    Spoken,
+    "at",
+    <M extends BreadcrumbMoment[]>(...moments: M) => BreadcrumbSentence<Spoken | "at", M[number]>
+  >;
+  readonly for: Once<Spoken, "for", (...categories: Category[]) => BreadcrumbSentence<Spoken | "for", At>>;
+  readonly on: Once<Spoken, "on", Scoping<At, (...globs: string[]) => BreadcrumbSentence<Spoken | "on", At>>>;
+  readonly ignore: Once<
+    Spoken,
+    "ignore",
+    Scoping<At, (...globs: string[]) => BreadcrumbSentence<Spoken | "ignore", At>>
+  >;
+  readonly text: Once<Spoken, "text", (text: string) => BreadcrumbSentence<Spoken | "text", At>>;
+  readonly file: Once<Spoken, "file", (path: string) => BreadcrumbSentence<Spoken | "file", At>>;
+  readonly disabled: Once<Spoken, "disabled", (reason?: string) => BreadcrumbSentence<Spoken | "disabled", At>>;
   readonly description: Once<
     Spoken,
     "description",
-    (description: string) => BreadcrumbSentence<Spoken | "description">
+    (description: string) => BreadcrumbSentence<Spoken | "description", At>
   >;
 }
 
@@ -636,13 +700,13 @@ type GuardrailRequired = "at" | "check" | "message" | "test";
 type BreadcrumbProse = "flow: this breadcrumb has no prose — say .text(…) or .file(…)";
 
 export type CompleteEntry<B> =
-  B extends GuardrailSentence<infer S>
+  B extends GuardrailSentence<infer S, infer _GuardrailAt>
     ? "disabled" extends S
       ? B
       : [Missing<S, GuardrailRequired>] extends [never]
         ? B
         : NeverSaid<"guardrail", Missing<S, GuardrailRequired>>
-    : B extends BreadcrumbSentence<infer S>
+    : B extends BreadcrumbSentence<infer S, infer _BreadcrumbAt>
       ? "disabled" extends S
         ? B
         : [Missing<S, "at">] extends [never]
@@ -1090,6 +1154,7 @@ export const REFUSAL_CODES = [
   "undeclared-category",
   "no-cases",
   "duplicate-id",
+  "dead-scope",
 ] as const;
 
 export type RefusalCode = (typeof REFUSAL_CODES)[number];
@@ -1304,6 +1369,17 @@ function judge(draft: Draft): Refusal[] {
     say(
       "missing-mandatory",
       `\`${id}\` never said ${missing.join(" and ")}. Nothing in this grammar defaults — an absent key is absent, not a fallback.`,
+    );
+
+  // A SCOPE THAT NARROWS NOTHING. `on` / `ignore` are consulted only when the event names a path,
+  // so an entry firing only at `command`, `turn-end` or `session` and speaking one of them reads as
+  // a fence and is decoration. The sentence types refuse it where the moments were named first;
+  // this catches the other word order, and every config built outside an editor.
+  const scoped = (spec.on?.length ?? 0) > 0 || (spec.ignore?.length ?? 0) > 0;
+  if (scoped && at.length > 0 && !at.some((m) => isPathMoment(m)))
+    say(
+      "dead-scope",
+      `\`${id}\` narrows by path but fires only at ${at.map((m) => `\`${m}\``).join(", ")}, which name no path — its \`on\`/\`ignore\` would be read by nothing. Drop the scope, or add a moment that carries a file (${PATH_MOMENTS.join(" · ")}).`,
     );
 
   if (spec.kind === "guardrail" && !hasCases(spec.test))

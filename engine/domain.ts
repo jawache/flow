@@ -201,9 +201,11 @@ export function identify(
 // The last one deserves its own sentence. `.on()` scopes an entry to files: a write rail carries
 // one path, the commit gate carries the staged set, and a command rail carries none — a command
 // guard's patterns ARE its scope, which is why the fixture packs write `.at(command)` with no
-// `.on()` beside it. An `.on()` on a command-only entry is therefore consulted by nothing; that is
-// the old engine's behaviour, kept deliberately, and making the dead scope VISIBLE is a job for
-// `flow status` rather than for a silent difference in matching.
+// `.on()` beside it. An `.on()` on a command-only entry would therefore be consulted by nothing,
+// and matching stays silent about it — because that config never reaches here: the grammar refuses
+// it (`PATH_MOMENTS` and the `dead-scope` refusal, F6). A silent difference in matching was the old
+// engine's answer, and a fence that reads as armed and narrows nothing is the bug flow exists to
+// delete rather than to report.
 
 /** One event the guardrail rails carry. Facts only — who it happened to is `wearing`. */
 export interface GuardEvent {

@@ -5,7 +5,7 @@
 // Every judgement it prints was made in a domain file that could not have done any of those things
 // — which is the same seam the adapter sits on for the live hooks.
 //
-// FIVE VERBS, in two halves.
+// SEVEN VERBS, in three halves.
 //
 //   THE LIVE HALF, invoked by something else rather than by a person:
 //     flow hook <event>    what the harness's registrations call, payload on stdin
@@ -13,11 +13,14 @@
 //
 //   THE ASKING HALF, which a person types:
 //     flow test [config]   every bound entry's cases, driven
+//     flow status          what is bound here, and what is not wired yet
 //     flow replay <file>   a recorded session back through the engine, with no repo and no harness
 //     flow facts           what the record and the conversations say about this repo
 //
-// `flow init` and `flow status` arrive with the product surface. Anything else refuses, loudly,
-// rather than doing nothing quietly.
+//   THE SETUP, typed once:
+//     flow init [--empty]  scaffold a config, arm the gate, register the hooks
+//
+// Anything else refuses, loudly, rather than doing nothing quietly.
 //
 // The hook and commit verbs are one line each here, and that is the seam working: everything they
 // do is the adapter's, and this file only owns argv, the three IO edges and the exit code.
@@ -31,7 +34,8 @@ import { loadConfig, type FlowConfig, type LoadedEntry } from "./language/domain
 import { runCases, type CaseResult } from "./checks/domain.ts";
 import { commitEntry, hookEntry } from "./adapter/claude.ts";
 import { facts } from "./adapter/archive.ts";
-import { CONFIG_FILE, HOOK_EVENTS, formatFacts, snip, type HookResult } from "./adapter/domain.ts";
+import { CONFIG_FILE, HOOK_EVENTS, configLoadFault, formatFacts, snip, type HookResult } from "./adapter/domain.ts";
+import { runInit, runStatus, type VerbResult } from "./adapter/product.ts";
 import { diffRows, replay, type Row } from "./engine/domain.ts";
 import { loadRecording, readRowsFile } from "./engine/state.ts";
 
@@ -51,10 +55,10 @@ process.on("warning", (w: Error) => {
 /**
  * Load a config FILE — the one thing in flow that turns a path into a regime.
  *
- * The import is dynamic and the file is TypeScript, which node runs directly by stripping the
- * types (unflagged since 22.6). A node too old to do that fails on the import with a syntax error
- * that says nothing useful about the cause, so the message is rewritten here: a version floor is a
- * fact about the machine, and a machine fact should never arrive as a parse error.
+ * The import is dynamic and the file is TypeScript, which node runs directly by stripping the types.
+ * A node too old to do that fails on the import with a syntax error that says nothing useful about
+ * the cause, so the message is rewritten — by `configLoadFault`, which is also what the live hook
+ * rail uses, because one breakage described two ways is a guard nobody learns to read.
  */
 async function loadFile(path: string): Promise<FlowConfig> {
   const absolute = resolve(process.cwd(), path);
@@ -62,13 +66,7 @@ async function loadFile(path: string): Promise<FlowConfig> {
   try {
     module = (await import(pathToFileURL(absolute).href)) as { default?: unknown };
   } catch (error) {
-    const message = (error as Error).message;
-    if (/Unexpected token|Unknown file extension|strip/i.test(message)) {
-      throw new Error(
-        `flow could not load ${path} as TypeScript. Node ${process.versions.node} may be too old — type stripping is on by default from 22.6. (${message})`,
-      );
-    }
-    throw new Error(`flow could not load ${path}: ${message}`);
+    throw new Error(configLoadFault(path, (error as Error).message, process.versions.node));
   }
   const config = module.default;
   if (!config || typeof config !== "object" || !Array.isArray((config as FlowConfig).bindings)) {
@@ -251,6 +249,13 @@ if (argv.includes("--version") || argv.includes("-v")) {
   perform(await hookEntry(rest[0] ?? "", process.cwd()));
 } else if (verb === "commit") {
   perform(await commitEntry(rest, process.cwd()));
+} else if (verb === "init" || verb === "status") {
+  // The product surface. Both answer with the same three edges every other verb does, which is why
+  // neither of them writes to a stream or picks an exit code of its own.
+  const answer: VerbResult = verb === "init" ? runInit(process.cwd(), rest) : await runStatus(process.cwd(), rest);
+  if (answer.stdout) process.stdout.write(answer.stdout);
+  if (answer.stderr) process.stderr.write(answer.stderr);
+  process.exitCode = answer.exitCode;
 } else if (verb === "replay" || verb === "facts") {
   try {
     process.exitCode = verb === "replay" ? await replayFile(rest) : await readFacts(rest);
@@ -264,13 +269,13 @@ if (argv.includes("--version") || argv.includes("-v")) {
     [
       `flow ${VERSION}`,
       "",
+      "  flow init [--empty]    scaffold flow.config.ts, arm the git gate, register the hooks",
+      "  flow status [--json]   what is bound here, at which moments — and what is not wired yet",
       "  flow test [config]     run every bound entry's cases (default: flow.config.ts)",
       `  flow hook <event>      a harness hook, payload on stdin — ${HOOK_EVENTS.join(" · ")}`,
       "  flow commit <files…>   the git pre-commit gate, over the staged set",
       "  flow replay <file>     a recorded session, back through the engine — --against <log> diffs it",
       "  flow facts             what the record and the conversations say about this repo — --json for all of it",
-      "",
-      "`flow init` and `flow status` arrive with the product surface.",
       "",
     ].join("\n"),
   );

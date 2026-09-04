@@ -28,7 +28,13 @@ import {
 } from "../index.ts";
 // Straight from the language layer, not through the public door: `cannedWorld` is how flow drives a
 // recorded world, not something a config or a pack imports, so it has no business on that surface.
-import { cannedWorld, type CaseWorld, type Unanswered } from "../language/domain.ts";
+import {
+  cannedWorld,
+  GUARDRAIL_MOMENTS,
+  isPathMoment,
+  type CaseWorld,
+  type Unanswered,
+} from "../language/domain.ts";
 import { builder, parent, rails, verifier } from "../__fixtures__/engine-pack.ts";
 import {
   CAUSES,
@@ -280,6 +286,38 @@ describe("the three filters", () => {
     expect(inScope(spec, "src/a.test.ts")).toBe(false);
     expect(inScope(spec, "docs/a.md")).toBe(false);
     expect(inScope(entry("rails.everyone").spec, "anywhere/at/all.md")).toBe(true);
+  });
+
+  // The grammar refuses a scope that would narrow nothing, and it decides that from PATH_MOMENTS
+  // (flow/language/domain.ts). This is the other spelling of the same fact — which moments actually
+  // consult `on` when the engine runs them. Two spellings that drift is how a legitimate scope
+  // starts being refused, or a dead one starts loading, so they are pinned against each other here.
+  it("consults a path scope at exactly the moments PATH_MOMENTS names, and no others", async () => {
+    const base = entry("rails.everyone");
+    if (base.spec.kind !== "guardrail") throw new Error("rails.everyone is a guardrail — the fixture moved");
+    const spec = base.spec;
+    for (const moment of GUARDRAIL_MOMENTS) {
+      // One entry, scoped to a glob nothing here matches, asked at each moment in turn. If the
+      // moment carries a path the scope keeps it out (`evaluated: 0`); if it does not, the entry
+      // runs and the scope was read by nobody.
+      const load: LoadResult = {
+        ok: true,
+        entries: [{ ...base, spec: { ...spec, at: [moment], on: ["nothing/**"] } }],
+      };
+      const outcome = await guard({
+        load,
+        event: {
+          moment,
+          file: { path: "src/a.ts", content: "ok" },
+          command: "ok",
+          staged: ["src/a.ts"],
+          turn: [],
+          wearing: [],
+        },
+        world: world({ fs: { "src/a.ts": "ok" } }),
+      });
+      expect(outcome.tallies[0]?.evaluated === 0, `at ${moment}`).toBe(isPathMoment(moment));
+    }
   });
 });
 

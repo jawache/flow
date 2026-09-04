@@ -76,6 +76,21 @@ import {
   type Candidate,
   type Facts,
   type SpawnRecord,
+  NODE_FLOOR,
+  configLoadFault,
+  HOOK_REGISTRATIONS,
+  ourHookCommand,
+  registeredEvents,
+  withRegistrations,
+  PRE_COMMIT,
+  armsFlow,
+  scaffold,
+  planInit,
+  initLines,
+  status,
+  statusLines,
+  type InitFacts,
+  type StatusFacts,
 } from "./domain.ts";
 
 // ── the world a payload is read against ──────────────────────────────────────
@@ -129,11 +144,13 @@ describe("the five events, and the moments honestly delivered", () => {
   it("states what it can supply, and does not claim turn-end briefing", () => {
     // Stop's decision object carries no context channel, so a note bound at turn-end has nowhere to
     // be shown. Saying so is the contract; faking it would be the failure.
-    expect(delivers("turn-end"), "the turn-end GUARDRAIL rail works").toBe(true);
+    expect(delivers("guardrail", "turn-end"), "the turn-end GUARDRAIL rail works").toBe(true);
+    expect(delivers("breadcrumb", "turn-end"), "a NOTE bound there has nowhere to be shown").toBe(false);
     expect(DELIVERS.brief).not.toContain("turn-end");
     expect(DELIVERS.guard, "commit is delivered — by the git gate, not by the harness").toContain("commit");
-    expect(delivers("session")).toBe(true);
-    expect(delivers("touch")).toBe(true);
+    expect(delivers("breadcrumb", "session")).toBe(true);
+    expect(delivers("breadcrumb", "touch")).toBe(true);
+    expect(delivers("guardrail", "session"), "a guardrail has no session rail at all").toBe(false);
   });
 });
 
@@ -1075,5 +1092,407 @@ describe("formatFacts — the whole of what a person sees", () => {
     const text = formatFacts(empty({ actors: [1, 2, 3, 4, 5, 6, 7].map(actor) })).join("\n");
     expect(text.match(/actor {5}builder/g)).toHaveLength(5);
     expect(text).toContain("…and 2 more");
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE PRODUCT SURFACE — what `flow init` writes, and what `flow status` says
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+//
+// Both verbs are decisions about the world rather than reads of it: what to write given what is
+// already there, and what to SAY given what loaded. The shell next door (product.ts) stats, writes
+// and spawns; every branch below is asserted here, where it costs a millisecond.
+
+describe("the config load's one fault sentence", () => {
+  it("turns a type-stripping parse error into the machine fact it really is", () => {
+    const said = configLoadFault("flow.config.ts", "Unexpected token ':'", "22.4.0");
+    expect(said).toContain("flow.config.ts");
+    expect(said).toContain(`Node >= ${NODE_FLOOR}`);
+    expect(said).toContain("22.4.0");
+    expect(said, "the original is kept — the rewrite adds a cause, it does not hide one").toContain(
+      "Unexpected token",
+    );
+  });
+
+  it("leaves an ordinary failure alone — a missing import is not a version problem", () => {
+    const said = configLoadFault("flow.config.ts", "Cannot find package 'left-pad'", "24.1.0");
+    expect(said).toContain("Cannot find package 'left-pad'");
+    expect(said).not.toContain(`Node >= ${NODE_FLOOR}`);
+  });
+});
+
+describe("the hook registrations flow writes", () => {
+  it("names exactly the events it answers — four, and Notification is not one", () => {
+    expect(HOOK_REGISTRATIONS.map((r) => r.event)).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "Stop"]);
+    expect(HOOK_REGISTRATIONS.map((r) => r.event)).not.toContain("Notification");
+  });
+
+  it("registers each event once — two registrations on one event fire twice", () => {
+    expect(new Set(HOOK_REGISTRATIONS.map((r) => r.event)).size).toBe(HOOK_REGISTRATIONS.length);
+  });
+
+  it("recognises its own registration whatever path stands in front of the binary", () => {
+    expect(ourHookCommand("flow hook stop")).toBe(true);
+    expect(ourHookCommand("/usr/local/bin/flow hook pre-tool-use")).toBe(true);
+    expect(ourHookCommand("node /x/flow/dist/flow.mjs hook stop")).toBe(true);
+    expect(ourHookCommand("work hook stop"), "the old engine's, and not ours to touch").toBe(false);
+    expect(ourHookCommand("flow hook nonsense"), "a word we do not answer to").toBe(false);
+    expect(ourHookCommand("myflow hook stop")).toBe(false);
+  });
+
+  it("adds every event to a settings file that has none, leaving the rest of it alone", () => {
+    const before = { permissions: { allow: ["Bash(git:*)"] } };
+    const { settings, added } = withRegistrations(before);
+    expect(added).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "Stop"]);
+    const after = settings as { permissions: unknown; hooks: Record<string, unknown[]> };
+    expect(after.permissions, "untouched, byte for byte").toEqual(before.permissions);
+    expect(registeredEvents(settings)).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "Stop"]);
+    expect(after.hooks["Stop"]).toEqual([{ hooks: [{ type: "command", command: "flow hook stop" }] }]);
+    expect(after.hooks["PreToolUse"]?.[0]).toMatchObject({ matcher: "*" });
+  });
+
+  it("adds nothing on a second run — the whole of what makes init idempotent", () => {
+    const once = withRegistrations({});
+    const twice = withRegistrations(once.settings);
+    expect(twice.added).toEqual([]);
+    expect(twice.settings).toEqual(once.settings);
+  });
+
+  it("keeps a stranger's registration on the same event and stands beside it", () => {
+    const theirs = { hooks: { Stop: [{ hooks: [{ type: "command", command: "their-tool --report" }] }] } };
+    const { settings, added } = withRegistrations(theirs);
+    expect(added).toContain("Stop");
+    const stop = (settings as { hooks: Record<string, unknown[]> }).hooks["Stop"];
+    expect(JSON.stringify(stop), "theirs survives — we add, we never rewrite").toContain("their-tool --report");
+    expect(JSON.stringify(stop)).toContain("flow hook stop");
+  });
+
+  it("reads nothing out of a settings file that is not an object", () => {
+    expect(registeredEvents(null)).toEqual([]);
+    expect(registeredEvents("nonsense")).toEqual([]);
+    expect(registeredEvents({ hooks: { Stop: "not an array" } })).toEqual([]);
+  });
+});
+
+describe("the git gate flow arms", () => {
+  it("calls the binary's own commit verb over the staged set", () => {
+    expect(PRE_COMMIT).toContain("flow commit");
+    expect(PRE_COMMIT.startsWith("#!")).toBe(true);
+  });
+
+  it("recognises a gate that runs flow, and one that runs something else", () => {
+    expect(armsFlow(PRE_COMMIT)).toBe(true);
+    expect(armsFlow('#!/bin/sh\nwork guard commit "$@"\n'), "the old engine's gate").toBe(false);
+    expect(armsFlow(null)).toBe(false);
+  });
+});
+
+describe("the scaffolded config", () => {
+  it("is a readable demo: the four ruled entries, a category, and one pack", () => {
+    const demo = scaffold(false);
+    expect(demo).toContain('from "@jawache/flow"');
+    expect(demo).toContain("definePack");
+    expect(demo).toContain("defineCategory");
+    expect(demo).toContain("--force");
+    expect(demo).toContain("subagent");
+    expect(demo.split("\n").length, "one screen — the whole claim of the demo").toBeLessThan(80);
+  });
+
+  it("never contains the marker its own gate refuses — a config that blocks itself", () => {
+    // The gate greps staged content for a marker, and the config is a staged file. Spelled whole it
+    // would refuse the commit that added it, which is the exact self-reference this demo is here to
+    // teach: the entry builds the word rather than writing it.
+    expect(scaffold(false)).not.toContain("DO-NOT-COMMIT");
+  });
+
+  it("is an empty config, and nothing else, when asked for one", () => {
+    const bare = scaffold(true);
+    expect(bare).toContain("defineConfig([])");
+    expect(bare).not.toContain("definePack");
+  });
+});
+
+// ── init ─────────────────────────────────────────────────────────────────────
+
+const bare: InitFacts = {
+  root: "/repo",
+  empty: false,
+  isGit: true,
+  hasConfig: false,
+  gateText: null,
+  hasFlowDir: false,
+  hooksPath: null,
+  settingsPath: "/home/.claude/settings.json",
+  settings: {},
+  resolves: false,
+  packageRoot: "/checkout/flow",
+};
+
+describe("planInit — a repo that has never heard of flow", () => {
+  const plan = planInit(bare);
+
+  it("writes the config, the gate, the state directory and the link", () => {
+    expect(plan.config?.path).toBe("flow.config.ts");
+    expect(plan.gate?.path).toBe(".githooks/pre-commit");
+    expect(plan.flowDir).toBe(true);
+    expect(plan.link).toBe("/checkout/flow");
+    expect(plan.hooksPath).toBe(true);
+    expect(plan.registered).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "Stop"]);
+  });
+
+  it("reports every write, and nothing it did not do", () => {
+    const said = initLines(plan, []).join("\n");
+    expect(said).toContain("flow.config.ts");
+    expect(said).toContain(".githooks/pre-commit");
+    expect(said).toContain(".flow/");
+    expect(said).toContain("SessionStart");
+    expect(said).toContain("flow status");
+  });
+});
+
+describe("planInit — the second run", () => {
+  const already = planInit({
+    ...bare,
+    hasConfig: true,
+    gateText: PRE_COMMIT,
+    hasFlowDir: true,
+    hooksPath: ".githooks",
+    resolves: true,
+    settings: withRegistrations({}).settings,
+  });
+
+  it("adds nothing at all", () => {
+    expect(already.config).toBeNull();
+    expect(already.gate).toBeNull();
+    expect(already.flowDir).toBe(false);
+    expect(already.link).toBeNull();
+    expect(already.hooksPath).toBe(false);
+    expect(already.settings).toBeNull();
+    expect(already.registered).toEqual([]);
+  });
+
+  it("says so in one line rather than printing an empty list", () => {
+    expect(initLines(already, []).join("\n")).toContain("already set up");
+  });
+});
+
+describe("planInit — a repo that already has a pre-commit hook", () => {
+  const theirs = planInit({ ...bare, gateText: "#!/bin/sh\nnpm test\n" });
+
+  it("NEVER overwrites it, and says what to add by hand", () => {
+    expect(theirs.gate).toBeNull();
+    const said = initLines(theirs, []).join("\n");
+    expect(said).toContain("kept");
+    expect(said).toContain("flow commit");
+  });
+});
+
+describe("planInit — the flags and the edges", () => {
+  it("--empty scaffolds the bare config and the same wiring", () => {
+    const plan = planInit({ ...bare, empty: true });
+    expect(plan.config?.body).toContain("defineConfig([])");
+    expect(plan.gate?.path).toBe(".githooks/pre-commit");
+  });
+
+  it("arms no git gate outside a git repo, and says why", () => {
+    const plan = planInit({ ...bare, isGit: false });
+    expect(plan.gate).toBeNull();
+    expect(plan.hooksPath).toBe(false);
+    expect(initLines(plan, []).join("\n")).toContain("not a git repo");
+  });
+
+  it("links nothing when @jawache/flow already resolves — an installed package is not ours to shim", () => {
+    expect(planInit({ ...bare, resolves: true }).link).toBeNull();
+  });
+
+  it("carries a failure the shell hit into the report rather than swallowing it", () => {
+    expect(initLines(planInit(bare), ["could not write .githooks/pre-commit: EACCES"]).join("\n")).toContain("EACCES");
+  });
+});
+
+// ── status ───────────────────────────────────────────────────────────────────
+
+const noteAtTurnEnd = { kind: "breadcrumb", at: ["turn-end"], text: "late" } as const;
+
+const statusFacts = (over: Partial<StatusFacts> = {}): StatusFacts => ({
+  root: "/repo",
+  version: "1.2.3",
+  off: false,
+  configPath: "/repo/flow.config.ts",
+  hasConfig: true,
+  load: { ok: true, entries: [] },
+  gateText: PRE_COMMIT,
+  hooksPath: ".githooks",
+  settingsPath: "/home/.claude/settings.json",
+  settings: withRegistrations({}).settings,
+  session: null,
+  ...over,
+});
+
+/** One loaded entry, as the load hands it over — the shape `status` reads. */
+const loaded = (id: string, spec: Record<string, unknown>, categories: readonly string[] = []) => ({
+  id,
+  pack: id.split(".")[0] as string,
+  key: id.split(".").slice(1).join("."),
+  spec: spec as never,
+  source: {},
+  categories,
+  phases: [],
+});
+
+describe("status — the whole answer", () => {
+  it("is green over a fitted repo, and says the guard is on", () => {
+    const s = status(statusFacts());
+    expect(s.green).toBe(true);
+    expect(s.fittings.every((f) => f.ok)).toBe(true);
+    expect(statusLines(s)[0]).toContain("flow is ON");
+  });
+
+  it("lists every entry by moment, with its globs and the category it binds to", () => {
+    const s = status(
+      statusFacts({
+        load: {
+          ok: true,
+          entries: [
+            loaded("demo.noTodo", { kind: "guardrail", at: ["write", "commit"], on: ["src/**"], message: "no" }),
+            loaded("demo.onlySubagents", { kind: "guardrail", at: ["commit"], message: "no" }, ["subagent"]),
+          ],
+        },
+      }),
+    );
+    const said = statusLines(s).join("\n");
+    expect(said).toContain("demo.noTodo");
+    expect(said).toContain("src/**");
+    expect(said).toContain("for subagent");
+    expect(s.categories).toEqual(["subagent"]);
+    // An entry at two moments is listed under both — standing at the commit, a write rule is still
+    // about to run.
+    expect(said.match(/demo\.noTodo/g)?.length).toBe(2);
+  });
+
+  it("prints an entry's ignores beside its globs, and says so when a disabled one gave no reason", () => {
+    const s = status(
+      statusFacts({
+        load: {
+          ok: true,
+          entries: [
+            loaded("demo.scoped", {
+              kind: "guardrail",
+              at: ["write"],
+              on: ["src/**"],
+              ignore: ["**/*.test.ts"],
+              message: "no",
+            }),
+            loaded("demo.quiet", { kind: "guardrail", at: ["write"], message: "no", disabled: {} }),
+          ],
+        },
+      }),
+    );
+    const said = statusLines(s).join("\n");
+    expect(said).toContain("on src/**");
+    expect(said).toContain("not **/*.test.ts");
+    expect(said).toContain("no reason given");
+  });
+
+  it("names a session that wears nothing, and one the marker could not attribute to an agent", () => {
+    const said = statusLines(status(statusFacts({ session: { id: "s1", agent: null, wearing: [] } }))).join("\n");
+    expect(said).toContain("s1");
+    expect(said).toContain("wearing no category");
+  });
+
+  it("lists a disabled entry with the reason somebody wrote", () => {
+    const s = status(
+      statusFacts({
+        load: {
+          ok: true,
+          entries: [
+            loaded("demo.retired", {
+              kind: "guardrail",
+              at: ["commit"],
+              message: "no",
+              disabled: { reason: "the tool it calls is gone" },
+            }),
+          ],
+        },
+      }),
+    );
+    expect(statusLines(s).join("\n")).toContain("the tool it calls is gone");
+  });
+
+  it("names an entry bound at a moment this adapter cannot deliver — the dark rail", () => {
+    const s = status({
+      ...statusFacts(),
+      load: { ok: true, entries: [loaded("demo.late", noteAtTurnEnd)] },
+    });
+    expect(s.dark).toEqual(["demo.late"]);
+    expect(s.green, "a note that can never be shown is a red line").toBe(false);
+    expect(statusLines(s).join("\n")).toContain("nothing delivers");
+  });
+
+  it("keeps the turn-end GUARDRAIL out of that list — the rail works, only the note is dark", () => {
+    const s = status({
+      ...statusFacts(),
+      load: { ok: true, entries: [loaded("demo.ran", { kind: "guardrail", at: ["turn-end"], message: "no" })] },
+    });
+    expect(s.dark).toEqual([]);
+  });
+
+  it("says the session's own categories when a live session marked this worktree", () => {
+    const s = status(statusFacts({ session: { id: "s1", agent: "main", wearing: ["parent"] } }));
+    expect(statusLines(s).join("\n")).toContain("parent");
+  });
+
+  it("says so plainly when nothing has marked one", () => {
+    expect(statusLines(status(statusFacts())).join("\n")).toContain("no live session");
+  });
+});
+
+describe("status — the red lines, each carrying its fix", () => {
+  const red = (over: Partial<StatusFacts>): string => statusLines(status(statusFacts(over))).join("\n");
+
+  it("a repo with no config at all", () => {
+    const s = status(statusFacts({ hasConfig: false, load: null }));
+    expect(s.green).toBe(false);
+    expect(statusLines(s).join("\n")).toContain("flow init");
+  });
+
+  it("a config that will not load — every refusal, and every rail off until it is fixed", () => {
+    const s = status(
+      statusFacts({
+        load: { ok: false, refusals: [{ code: "no-cases", entry: "demo.x", detail: "`demo.x` carries no cases." }] },
+      }),
+    );
+    expect(s.green).toBe(false);
+    const said = statusLines(s).join("\n");
+    expect(said).toContain("carries no cases");
+    expect(said, "no moment table under a headline saying nothing is armed").not.toContain("commit  ");
+  });
+
+  it("an unarmed git gate", () => {
+    expect(red({ gateText: null })).toContain("flow init");
+    expect(red({ gateText: "#!/bin/sh\nnpm test\n" })).toContain("does not call flow");
+  });
+
+  it("a hooksPath git was never told about — the one a fresh clone always needs", () => {
+    expect(red({ hooksPath: null })).toContain("git config core.hooksPath .githooks");
+  });
+
+  it("a host that is not registered to call flow at all", () => {
+    const said = red({ settings: {} });
+    expect(said).toContain("SessionStart");
+    expect(said).toContain("flow init");
+  });
+
+  it("the kill switch, which is not a fault and outranks everything below it", () => {
+    const s = status(statusFacts({ off: true }));
+    expect(statusLines(s)).toHaveLength(1);
+    expect(statusLines(s)[0]).toContain("OFF");
+    expect(statusLines(s)[0]).toContain(".flow/off");
+  });
+
+  it("counts the reds it found, so a caller's exit code and the page agree", () => {
+    const s = status(statusFacts({ gateText: null, hooksPath: null }));
+    expect(s.green).toBe(false);
+    expect(statusLines(s).at(-1)).toContain("2 red lines");
   });
 });

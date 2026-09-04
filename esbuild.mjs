@@ -19,7 +19,23 @@ const root = new URL("./", import.meta.url);
 const pkg = JSON.parse(readFileSync(new URL("package.json", root), "utf8"));
 const production = process.argv.includes("--production");
 
-const bundles = [{ entry: "flow.ts", out: "dist/flow.mjs" }];
+// TWO BUNDLES, because `@jawache/flow` is two things and they are entered differently.
+//
+//   dist/flow.mjs   the BINARY. Executable, shebanged, and it runs on import — argv, exit code.
+//   dist/index.mjs  the LIBRARY. What `import { guardrail } from "@jawache/flow"` resolves to in a
+//                   guarded repo's flow.config.ts, and it must have no side effect at all.
+//
+// One file cannot be both: an import of the binary would parse argv and set an exit code, and the
+// main-module guard that usually separates them cannot work here — the process's entry point IS
+// the flow binary when a config is being loaded, so `argv[1] === this file` is true either way.
+//
+// The library half also needs TYPES, which esbuild does not emit — `just build-flow` runs
+// `tsc -p tsconfig.build.json` for that. Shipping the .ts source instead is not an option: node
+// refuses to strip types under node_modules.
+const bundles = [
+  { entry: "flow.ts", out: "dist/flow.mjs", binary: true },
+  { entry: "index.ts", out: "dist/index.mjs", binary: false },
+];
 
 // ONE external, and the asymmetry between flow's two dependencies is the whole explanation.
 //
@@ -36,17 +52,22 @@ const EXTERNAL = ["@ast-grep/napi"];
 
 mkdirSync(fileURLToPath(new URL("dist/", root)), { recursive: true });
 
-for (const { entry, out } of bundles) {
+for (const { entry, out, binary } of bundles) {
   const outfile = fileURLToPath(new URL(out, root));
   await build({
     entryPoints: [fileURLToPath(new URL(entry, root))],
     bundle: true,
     format: "esm",
     platform: "node",
+    // DELIBERATELY BEHIND `engines`, which says node >= 24. The floor is about the config LOADER —
+    // node has to strip the types out of a flow.config.ts — and not about this bundle's syntax. A
+    // target of node24 would make an old node fail on the bundle itself with a parse error, which
+    // is precisely the machine-fact-arriving-as-a-syntax-error that `configLoadFault` exists to
+    // stop. Lowering to node20 keeps the binary able to RUN far enough to say what is wrong.
     target: "node20",
     outfile,
     external: EXTERNAL,
-    banner: { js: "#!/usr/bin/env node" },
+    ...(binary ? { banner: { js: "#!/usr/bin/env node" } } : {}),
     define: { FLOW_VERSION: JSON.stringify(pkg.version) },
     sourcemap: !production,
     minify: production,
@@ -54,5 +75,5 @@ for (const { entry, out } of bundles) {
   });
 
   // npm sets the bit on install; set it here too so the repo's own build is runnable.
-  chmodSync(outfile, 0o755);
+  if (binary) chmodSync(outfile, 0o755);
 }

@@ -38,12 +38,14 @@ import {
   isBreadcrumbMoment,
   isCategory,
   isGuardrailMoment,
+  isPathMoment,
   isSentence,
   loadConfig,
   makeCtx,
   overlay,
   override,
   pack,
+  PATH_MOMENTS,
   type Pack,
   type PackBinding,
   packDefinition,
@@ -129,6 +131,21 @@ describe("the moment guards", () => {
   it("refuse a word that is in neither", () => {
     expect(isGuardrailMoment("push")).toBe(false);
     expect(isBreadcrumbMoment("push")).toBe(false);
+  });
+});
+
+describe("PATH_MOMENTS — the moments a path scope can narrow", () => {
+  it("is the four whose events name a file", () => {
+    expect(PATH_MOMENTS).toEqual(["write", "delete", "commit", "touch"]);
+  });
+
+  it("excludes every moment that carries no path — a command, a turn, a session start", () => {
+    expect([command, turnEnd, session].filter((m) => isPathMoment(m))).toEqual([]);
+  });
+
+  it("is drawn only from the two moment vocabularies, so no word here can be unreachable", () => {
+    for (const moment of PATH_MOMENTS)
+      expect(isGuardrailMoment(moment) || isBreadcrumbMoment(moment)).toBe(true);
   });
 });
 
@@ -901,6 +918,62 @@ describe("the load refuses", () => {
     expect(shape(refusalsOf([empty]))).toEqual([["no-cases", "empty.x"]]);
   });
 
+  it("a scope on an entry whose every moment names no path — P2's dead fence, refused", () => {
+    const dead = rawPack("dead", {
+      x: {
+        spec: { kind: "guardrail", at: [command], on: ["src/**"], check: passes, message: "m", test: cases },
+      },
+    });
+    expect(shape(refusalsOf([dead]))).toEqual([["dead-scope", "dead.x"]]);
+
+    // `ignore` alone is the same mistake — it is the other half of one scope.
+    const half = rawPack("half", {
+      x: {
+        spec: { kind: "guardrail", at: [turnEnd], ignore: ["**/*.md"], check: passes, message: "m", test: cases },
+      },
+    });
+    expect(shape(refusalsOf([half]))).toEqual([["dead-scope", "half.x"]]);
+
+    // A breadcrumb at the session start narrows nothing either: the event carries no path.
+    const note = rawPack("note", {
+      x: { spec: { kind: "breadcrumb", at: [session], on: ["docs/**"], text: "hi" } },
+    });
+    expect(shape(refusalsOf([note]))).toEqual([["dead-scope", "note.x"]]);
+  });
+
+  it("but not when ONE of the moments carries a path — the scope is live there", () => {
+    const live = rawPack("live", {
+      x: {
+        spec: {
+          kind: "guardrail",
+          at: [command, write],
+          on: ["src/**"],
+          check: passes,
+          message: "m",
+          test: cases,
+        },
+      },
+    });
+    expect(shape(refusalsOf([live]))).toEqual([]);
+  });
+
+  it("and it names the entry, the moments and the way out", () => {
+    const dead = rawPack("dead", {
+      x: { spec: { kind: "guardrail", at: [command], on: ["src/**"], check: passes, message: "m", test: cases } },
+    });
+    const [refusal] = refusalsOf([dead]);
+    expect(refusal?.detail).toContain("dead.x");
+    expect(refusal?.detail).toContain("`command`");
+    expect(refusal?.detail).toContain("commit");
+  });
+
+  it("catches the word order the sentence types cannot — a scope spoken before the moments", () => {
+    // `.on()` first is legal at that instant: nothing has said the entry fires only at `command`
+    // yet. The load is where the finished sentence is judged, which is why both halves exist.
+    const late = guardrail().on("src/**").at(command).check(passes).message("m").test(cases);
+    expect(shape(refusalsOf([rawPack("late", { x: late })]))).toEqual([["dead-scope", "late.x"]]);
+  });
+
   it("but never asks a disabled entry to prove itself", () => {
     const off = rawPack("off", { x: { spec: { kind: "guardrail", at: [commit], disabled: { reason: "not yet" } } } });
     expect(shape(refusalsOf([off]))).toEqual([]);
@@ -952,6 +1025,7 @@ describe("REFUSAL_CODES", () => {
       "undeclared-category",
       "no-cases",
       "duplicate-id",
+      "dead-scope",
     ]);
   });
 });

@@ -36,15 +36,21 @@ import {
   isBreadcrumbMoment,
   isGuardrailMoment,
   type BreadcrumbMoment,
+  type EntrySpec,
   type GuardrailMoment,
+  type LoadResult,
   type Moment,
+  type Refusal,
   type SessionFacts,
   type TurnAction,
 } from "../language/domain.ts";
 import {
   covers,
+  FLOW_DIR,
   formatBlock,
   insideRepo,
+  momentsView,
+  universe,
   watching,
   type Block,
   type Bound,
@@ -142,11 +148,10 @@ export const DELIVERS = {
   brief: ["session", "touch"] as readonly BreadcrumbMoment[],
 };
 
-/** Does this adapter carry that moment at all? The honest answer, for `flow status` to print. */
-export function delivers(moment: Moment): boolean {
-  if (isGuardrailMoment(moment) && DELIVERS.guard.includes(moment)) return true;
-  return isBreadcrumbMoment(moment) && DELIVERS.brief.includes(moment);
-}
+// `delivers` — the reader of the two lists — lives with `flow status`, its only caller, at the foot
+// of this file. It takes the entry's KIND as well as the moment, and it has to: `turn-end` is a word
+// in both vocabularies, so a reader that took the moment alone would answer "delivered" for a
+// breadcrumb bound there, which is the single lie these two lists exist to prevent.
 
 /**
  * Whatever the host put there, as a string — a payload field is JSON and may be anything.
@@ -1803,3 +1808,578 @@ export function formatFacts(facts: Facts): string[] {
   if (facts.marked !== null) lines.push(`  marked    ${facts.marked} conversation(s) read`);
   return lines;
 }
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE PRODUCT SURFACE — `flow init` and `flow status`
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+//
+// The two verbs a PERSON types at a repo, as against the two the harness invokes. They live in the
+// adapter because both are about the host: init writes Claude Code's own hook registrations and
+// git's own pre-commit hook, and status reports whether those wirings are there. Neither could sit
+// upstream — the engine is not allowed to know that a settings file exists.
+//
+// The split with the shell next door (product.ts) is the one this package keeps everywhere: what to
+// write given what is already there, and what to SAY given what loaded, are decisions and live
+// here; the stat, the write and the subprocess do not.
+
+/**
+ * The node version flow's config loader needs, and why it is a floor rather than a preference.
+ *
+ * A `flow.config.ts` is TypeScript and is loaded by node's own type stripping — there is no
+ * transpile step and there will not be one, because a guard that compiles its own config is a guard
+ * with a build to go wrong. Stripping is flag-free from node 24 (the Active LTS), so that is the
+ * floor `engines` states and the number this sentence names.
+ */
+export const NODE_FLOOR = 24;
+
+/**
+ * The one sentence for "this config would not load", and the one place a version floor is named.
+ *
+ * A node too old to strip types fails on the IMPORT, with a syntax error about a colon. That is a
+ * machine fact arriving as a parse error — the least actionable shape a true statement can take —
+ * so it is rewritten here, once, for both readers: the `flow test` verb and the live hook rail,
+ * which would otherwise describe one breakage two ways.
+ */
+export function configLoadFault(file: string, message: string, nodeVersion: string): string {
+  const stripping = /Unexpected token|Unknown file extension|strip|SyntaxError/i.test(message);
+  return stripping
+    ? `flow: ${file} could not be loaded as TypeScript. flow needs Node >= ${NODE_FLOOR}, where type stripping is on by default; this is node ${nodeVersion}. (${message})`
+    : `flow: ${file} could not be loaded — ${message}`;
+}
+
+// ── what the host is told to call ────────────────────────────────────────────
+
+/** One entry in a settings file's hook array: the command, and what it fires on. */
+export interface Registration {
+  /** The host's own name for the event — `SessionStart`, `PreToolUse`, … */
+  readonly event: string;
+  readonly command: string;
+  /** The host's `matcher`. Absent means every occurrence of the event. */
+  readonly matcher?: string;
+}
+
+/**
+ * WHAT `flow init` WRITES, verbatim — and it follows DELIVERS, not HOOK_EVENTS.
+ *
+ * flow answers five events and registers four. `Notification` is the difference and it is deliberate
+ * (ruled at F4): flow has no notification moment, so a registration there would spawn a process on
+ * every banner to answer nothing — cost with no function, and a line contradicting the honest moment
+ * list this file publishes. The day a notification moment earns its way into the grammar, the
+ * registration arrives with it.
+ *
+ * ONE PER EVENT. Two registrations on one event fire twice, and when they point at different
+ * checkouts they can disagree — so a second concern extends the command it shares an event with
+ * rather than standing beside it.
+ *
+ * The matchers are the host's, each the widest set its command can act on. PreToolUse takes `*`
+ * because the flight recorder's whole claim is that the log holds every call, including the ones no
+ * rule watches — they are the denominator of every coverage question. PostToolUse keeps a narrower
+ * list because a `touch` breadcrumb can only steer on a path, so a tool naming none would cost a
+ * process to inject nothing.
+ */
+export const HOOK_REGISTRATIONS: readonly Registration[] = [
+  { event: "SessionStart", command: "flow hook session-start", matcher: "startup|resume|clear|compact" },
+  { event: "PreToolUse", command: "flow hook pre-tool-use", matcher: "*" },
+  { event: "PostToolUse", command: "flow hook post-tool-use", matcher: "Read|Glob|Grep|Edit|Write|Bash" },
+  { event: "Stop", command: "flow hook stop" },
+];
+
+/**
+ * Is this registration OURS?
+ *
+ * The rule that says "this is ours" is the rule that would say "this may be removed", so it is
+ * narrow on purpose: the flow binary — by either name it legitimately goes by, with any path in
+ * front — invoking `hook <event>` for an event this build actually answers. A `work hook stop` from
+ * the engine flow replaces is NOT ours; sweeping those is the crossing's job, with that engine's own
+ * recogniser.
+ */
+export function ourHookCommand(command: string): boolean {
+  const match = /(^|[\s"'/\\])(?:flow|flow\.mjs)["']?\s+hook\s+([a-z-]+)\s*$/.exec(command.trim());
+  return match?.[2] !== undefined && isHookEvent(match[2]);
+}
+
+/** Every hook array in a settings file, by event. Loose: it is somebody's hand-edited JSON. */
+function hookArrays(settings: unknown): Record<string, unknown[]> {
+  const held = (settings && typeof settings === "object" ? settings : {}) as { hooks?: unknown };
+  const hooks = (held.hooks && typeof held.hooks === "object" ? held.hooks : {}) as Record<string, unknown>;
+  const out: Record<string, unknown[]> = {};
+  for (const [event, value] of Object.entries(hooks)) if (Array.isArray(value)) out[event] = value;
+  return out;
+}
+
+/** The events this settings file already calls flow for. What makes init idempotent and status honest. */
+export function registeredEvents(settings: unknown): string[] {
+  const out: string[] = [];
+  for (const [event, entries] of Object.entries(hookArrays(settings))) {
+    const ours = entries.some((entry) => {
+      const inner = (entry as { hooks?: unknown } | null)?.hooks;
+      if (!Array.isArray(inner)) return false;
+      return inner.some((held) => {
+        const command = (held as { command?: unknown } | null)?.command;
+        return typeof command === "string" && ourHookCommand(command);
+      });
+    });
+    if (ours) out.push(event);
+  }
+  return out;
+}
+
+/**
+ * A settings file with flow's registrations in it — a NEW object, and only ever added to.
+ *
+ * It is somebody's file and holds far more than us, so nothing is rewritten and nothing is removed:
+ * a registration on our event that belongs to another tool keeps its place and flow stands beside
+ * it. Adding what is already there is skipped, which is the whole of what makes `flow init`
+ * idempotent — a second run has nothing to say.
+ */
+export function withRegistrations(settings: unknown): { settings: unknown; added: string[] } {
+  const base = (settings && typeof settings === "object" ? settings : {}) as Record<string, unknown>;
+  const already = new Set(registeredEvents(settings));
+  const wanted = HOOK_REGISTRATIONS.filter((r) => !already.has(r.event));
+  if (wanted.length === 0) return { settings: base, added: [] };
+
+  const arrays = hookArrays(settings);
+  const hooks: Record<string, unknown> = { ...(base["hooks"] as Record<string, unknown> | undefined) };
+  for (const registration of wanted) {
+    hooks[registration.event] = [
+      ...(arrays[registration.event] ?? []),
+      {
+        ...(registration.matcher === undefined ? {} : { matcher: registration.matcher }),
+        hooks: [{ type: "command", command: registration.command }],
+      },
+    ];
+  }
+  return { settings: { ...base, hooks }, added: wanted.map((r) => r.event) };
+}
+
+// ── the git gate ─────────────────────────────────────────────────────────────
+
+/**
+ * The pre-commit hook, verbatim.
+ *
+ * `flow commit <files…>` rather than a sixth hook, because the commit moment is not delivered by any
+ * harness — git's own hook is what fires it, which is why every harness gets the gates for free. The
+ * staged set is computed here rather than inside flow: it is git's own question, and this file is
+ * already a git hook.
+ */
+export const PRE_COMMIT = `#!/bin/sh
+# The flow commit gate. Written by \`flow init\`; \`git config core.hooksPath .githooks\` arms it.
+#
+# Every at(commit) guardrail runs over the staged set and a block exits non-zero, which is how git
+# refuses the commit. This is the half of the promise the PreToolUse rail cannot make: it fires for
+# a human's commit, a merge and CI, with no session in the room.
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -z "$staged" ] && exit 0
+# shellcheck disable=SC2086
+exec flow commit $staged
+`;
+
+/** Does this pre-commit hook call flow? Asked by `init` before writing, and by `status` after. */
+export function armsFlow(text: string | null): boolean {
+  return text !== null && /(^|[\s"'/\\])flow\b[^\n]*\bcommit\b/m.test(text);
+}
+
+// ── the scaffold ─────────────────────────────────────────────────────────────
+
+/** The config `flow init --empty` leaves: the wiring, with no opinions. */
+const EMPTY_CONFIG = String.raw`// flow.config.ts — this repo's whole guard.
+//
+// A rule not reachable from this file does not run. Bind a pack with ` + "`pack(x)`" + String.raw`, refine one of
+// its entries with ` + "`override(x.entry)`" + String.raw`, and ask ` + "`flow status`" + String.raw` what is live.
+
+import { defineConfig } from "@jawache/flow";
+
+export default defineConfig([]);
+`;
+
+/**
+ * THE DEMO — the config `flow init` leaves behind, and the whole of J6.1.
+ *
+ * Four entries on one screen: a note that meets every session, a command ban, a commit gate over
+ * staged content, and one rule bound to an ACTOR rather than to a path. It is a worked example of
+ * J1.2 as much as a starting guard — a pack here is written exactly as a published one is, and
+ * promoting it would change the import line and nothing else.
+ *
+ * Written with `String.raw` so the regex inside it is the regex a reader will see: this is source
+ * code that generates source code, and a scaffold whose backslashes were eaten on the way out is a
+ * config that loads and matches nothing.
+ */
+const DEMO_CONFIG = String.raw`// flow.config.ts — this repo's whole guard, and the only file that turns anything on.
+//
+// A rule not reachable from here does not run. Everything below is ordinary code: a pack is a
+// module, a check is a function of its ctx, and a category is a name with its recognizer aboard.
+// Nothing defaults — an absent key is absent — so a mistake fails in your editor, not at 3am.
+//
+//   flow status   what is bound, at which moments, and what is not wired yet
+//   flow test     every rule's own cases, run
+
+import {
+  breadcrumb,
+  command,
+  commit,
+  defineCategory,
+  defineConfig,
+  definePack,
+  guardrail,
+  pack,
+  session,
+} from "@jawache/flow";
+
+// A category is a name and the HOST-WRITTEN evidence that recognises it — never a claim a session
+// made about itself. This one is "the harness wrote a sidecar for you", which is what a spawned
+// subagent is and a chat is not.
+const subagent = defineCategory("subagent", (facts) => facts.subagent);
+
+// Spelled in pieces on purpose. Written whole it would appear in this very file, and the gate below
+// greps staged content — so the demo would refuse the commit that added it.
+const MARKER = ["DO", "NOT", "COMMIT"].join("-");
+
+export const demo = definePack("demo", {
+  orientation: breadcrumb()
+    .at(session)
+    .text("This repo is guarded by flow. The rules are in flow.config.ts — read them rather than routing around them."),
+
+  noForcePush: guardrail()
+    .at(command)
+    .check((ctx) =>
+      /git\s+push\b[^\n]*(--force|(^|\s)-f(\s|$))/.test(ctx.command ?? "")
+        ? ctx.fail("rewrites history other clones already have")
+        : ctx.ok(),
+    )
+    .message("Force-pushing rewrites history everyone else has. Push a correcting commit, or ask first.")
+    .test({ pass: ["git push origin main"], block: ["git push --force origin main"] }),
+
+  // No .on() here, and that is the sentence rather than an omission: an entry that names no paths is
+  // about THE COMMIT, so it is asked once and handed the whole staged set. (Name paths with .on()
+  // and the gate asks it once per staged file in scope instead, handing over each file.)
+  noMarkedFiles: guardrail()
+    .at(commit)
+    .check(async (ctx) => {
+      for (const path of ctx.staged ?? [])
+        if ((await ctx.fs.read(path)).includes(MARKER)) return ctx.fail(path + " carries the marker");
+      return ctx.ok();
+    })
+    .message("A file carrying the do-not-commit marker is staged. Take the marker out, or unstage the file.")
+    .test({
+      pass: [{ staged: ["a.txt"], world: { fs: { "a.txt": "fine" } } }],
+      block: [{ staged: ["a.txt"], world: { fs: { "a.txt": MARKER } } }],
+    }),
+
+  // The same act, a different wearer, a different answer — a rule bound to WHO rather than to what.
+  chatCommits: guardrail()
+    .at(commit)
+    .for(subagent)
+    .check((ctx) => ctx.fail((ctx.staged ?? []).length + " staged file(s)"))
+    .message("A subagent does not commit — hand the change back to the chat that spawned it.")
+    .test({ pass: [], block: [{ staged: ["a.txt"] }] }),
+});
+
+export default defineConfig([pack(demo)]);
+`;
+
+/** The config file init writes: the demo, or the bare one `--empty` asks for. */
+export function scaffold(empty: boolean): string {
+  return empty ? EMPTY_CONFIG : DEMO_CONFIG;
+}
+
+// ── init ─────────────────────────────────────────────────────────────────────
+
+/** What the shell found before anything was written. Every one is a stat, not a judgement. */
+export interface InitFacts {
+  readonly root: string;
+  /** `--empty`: the wiring, with no demo. */
+  readonly empty: boolean;
+  readonly isGit: boolean;
+  readonly hasConfig: boolean;
+  /** `.githooks/pre-commit` as it stands, or null when there is none. */
+  readonly gateText: string | null;
+  readonly hasFlowDir: boolean;
+  /** `git config core.hooksPath` as it stands. */
+  readonly hooksPath: string | null;
+  readonly settingsPath: string;
+  /** The parsed host settings file. */
+  readonly settings: unknown;
+  /** Does `@jawache/flow` already resolve from this repo? */
+  readonly resolves: boolean;
+  /** Where the running binary's own package lives — what a link would point at. */
+  readonly packageRoot: string;
+}
+
+/** One file to write, repo-relative so the report reads the way a person would say it. */
+export interface Write {
+  readonly path: string;
+  readonly body: string;
+  /** Set on the gate, which git will not run unless it is executable. */
+  readonly mode?: number;
+}
+
+/** Everything `flow init` will do, decided before a byte is written. A null means "already there". */
+export interface InitPlan {
+  readonly config: Write | null;
+  readonly gate: Write | null;
+  /** A pre-commit hook that is somebody else's. Never overwritten — reported, with the line to add. */
+  readonly gateKept: boolean;
+  readonly notGit: boolean;
+  readonly flowDir: boolean;
+  /** The package to link into `node_modules/@jawache/flow`, or null when flow already resolves. */
+  readonly link: string | null;
+  readonly hooksPath: boolean;
+  /** The rewritten settings, or null when they already call flow. */
+  readonly settings: { readonly path: string; readonly value: unknown } | null;
+  readonly registered: readonly string[];
+}
+
+/** What init will do to this repo. Pure: every branch reads a fact the shell already gathered. */
+export function planInit(facts: InitFacts): InitPlan {
+  const registration = withRegistrations(facts.settings);
+  return {
+    config: facts.hasConfig ? null : { path: CONFIG_FILE, body: scaffold(facts.empty) },
+    // NEVER over a hook that is already there. This is a scaffold, and a repo whose gate runs its
+    // own suite must not lose it to a re-run — which is also what makes init safe to run again.
+    gate:
+      !facts.isGit || facts.gateText !== null
+        ? null
+        : { path: ".githooks/pre-commit", body: PRE_COMMIT, mode: 0o755 },
+    gateKept: facts.isGit && facts.gateText !== null && !armsFlow(facts.gateText),
+    notGit: !facts.isGit,
+    flowDir: !facts.hasFlowDir,
+    link: facts.resolves ? null : facts.packageRoot,
+    // Per CLONE, not per repo: `core.hooksPath` is not committed, so a fresh clone and every
+    // worktree needs it set again. That is why init is the command a new checkout runs.
+    hooksPath: facts.isGit && facts.hooksPath !== ".githooks",
+    settings: registration.added.length === 0 ? null : { path: facts.settingsPath, value: registration.settings },
+    registered: registration.added,
+  };
+}
+
+/**
+ * The report — every write named, and everything NOT done said out loud with what to do instead.
+ *
+ * A setup command that prints "done" is a command nobody can check. Failures are handed in rather
+ * than thrown because a PARTIAL init is the interesting case: the config landed, the settings file
+ * was read-only, and the person needs to know exactly that.
+ */
+export function initLines(plan: InitPlan, failures: readonly string[]): string[] {
+  const wrote: string[] = [];
+  if (plan.config) wrote.push(plan.config.path);
+  if (plan.gate) wrote.push(plan.gate.path);
+  if (plan.flowDir) wrote.push(`${FLOW_DIR}/ — flow's own state, self-ignoring, never committed`);
+  if (plan.link) wrote.push(`node_modules/@jawache/flow → ${plan.link} (npm link is flow's distribution until it is published)`);
+  if (plan.settings) wrote.push(`${plan.settings.path} — ${plan.registered.join(" · ")}`);
+  if (plan.hooksPath) wrote.push("git config core.hooksPath .githooks");
+
+  const lines: string[] =
+    wrote.length === 0
+      ? ["flow init — already set up here; nothing to do."]
+      : ["flow init — created:", ...wrote.map((what) => `  + ${what}`)];
+
+  if (plan.notGit) lines.push("  · not a git repo, so no commit gate was armed. Run `git init`, then `flow init` again.");
+  if (plan.gateKept)
+    lines.push(
+      "  · kept the .githooks/pre-commit already here — flow never overwrites one. Add `flow commit $(git diff --cached --name-only)` to it yourself.",
+    );
+  for (const failure of failures) lines.push(`  ✗ ${failure}`);
+  lines.push("  next: `flow status` — what is bound, and what is not wired yet.");
+  return lines;
+}
+
+// ── status ───────────────────────────────────────────────────────────────────
+//
+// ONE VERB that answers "is flow working here, and what will meet me". Green means guarded: every
+// rule loads, every fitting is in place, and no entry is bound at a moment nothing delivers.
+//
+// It counts what LOADS rather than what parses, and that distinction is the whole reason the old
+// engine needed four verbs to answer this badly. A rule that cannot fire no longer loads at all, so
+// "every one resolved and able to fire" is a statement the loader already made and this only has to
+// report. What is left is the world AROUND the config — the gate, the hooks path, the registrations
+// — and putting every red line where the person standing in the repo will see it, each with its fix.
+
+/** One thing the world around the config has to be, and whether it is. A red line carries its fix. */
+export interface Fitting {
+  readonly id: string;
+  readonly ok: boolean;
+  readonly detail: string;
+}
+
+/** Everything status was able to read. Gathering it is the shell's job; judging it is not. */
+export interface StatusFacts {
+  readonly root: string;
+  readonly version: string;
+  readonly off: boolean;
+  readonly configPath: string;
+  readonly hasConfig: boolean;
+  /** The load, or null when there is no config to load. */
+  readonly load: LoadResult | null;
+  readonly gateText: string | null;
+  readonly hooksPath: string | null;
+  readonly settingsPath: string;
+  readonly settings: unknown;
+  /** Who last worked in this worktree, from the marker the write rail leaves. Null when nobody has. */
+  readonly session: { readonly id: string; readonly agent: string | null; readonly wearing: readonly string[] } | null;
+}
+
+/** The whole answer. */
+export interface Status {
+  readonly root: string;
+  readonly version: string;
+  readonly armed: boolean;
+  readonly configPath: string;
+  readonly moments: MomentsView;
+  /** Every category a bound entry names — the vocabulary this repo actually classifies by. */
+  readonly categories: readonly string[];
+  readonly session: StatusFacts["session"];
+  /** Entries bound only at moments this harness cannot deliver. Loaded, counted, and dark. */
+  readonly dark: readonly string[];
+  readonly fittings: readonly Fitting[];
+  readonly refusals: readonly Refusal[];
+  readonly green: boolean;
+}
+
+function fittingsOf(facts: StatusFacts): Fitting[] {
+  const registered = registeredEvents(facts.settings);
+  const missing = HOOK_REGISTRATIONS.filter((r) => !registered.includes(r.event)).map((r) => r.event);
+  const armed = armsFlow(facts.gateText);
+  return [
+    {
+      id: "config",
+      ok: facts.hasConfig,
+      detail: facts.hasConfig
+        ? facts.configPath
+        : `no ${CONFIG_FILE} in ${facts.root} — \`flow init\` writes one, with a demo you can read in a minute.`,
+    },
+    {
+      id: "commit-gate",
+      ok: armed,
+      detail: armed
+        ? ".githooks/pre-commit runs `flow commit` over the staged set"
+        : facts.gateText === null
+          ? "no .githooks/pre-commit — `flow init` arms it. Until then nothing runs at the commit."
+          : ".githooks/pre-commit is here but does not call flow — add `flow commit $(git diff --cached --name-only)` to it.",
+    },
+    {
+      id: "hooks-path",
+      ok: facts.hooksPath === ".githooks",
+      detail:
+        facts.hooksPath === ".githooks"
+          ? "core.hooksPath = .githooks"
+          : `core.hooksPath is ${facts.hooksPath ?? "unset"} — run \`git config core.hooksPath .githooks\`. It is per-clone, so every fresh checkout needs it.`,
+    },
+    {
+      id: "hooks",
+      ok: missing.length === 0,
+      detail:
+        missing.length === 0
+          ? `${facts.settingsPath} — ${registered.join(" · ")}`
+          : `${facts.settingsPath} does not call flow for ${missing.join(" · ")} — re-run \`flow init\`. No live rail fires until it does.`,
+    },
+  ];
+}
+
+/** Does this adapter carry that moment, for that KIND of entry? */
+export function delivers(kind: EntrySpec["kind"], moment: Moment): boolean {
+  return kind === "guardrail"
+    ? isGuardrailMoment(moment) && DELIVERS.guard.includes(moment)
+    : isBreadcrumbMoment(moment) && DELIVERS.brief.includes(moment);
+}
+
+/** The gathered facts, judged. Never throws: a broken config is a red line, not an exception. */
+export function status(facts: StatusFacts): Status {
+  const entries = facts.load?.ok === true ? facts.load.entries : [];
+  const refusals = facts.load?.ok === false ? facts.load.refusals : [];
+
+  // NO MOMENT TABLE WHEN THE CONFIG DID NOT LOAD. A load fault is not partial — the loader refuses
+  // the whole document, so every rail is off until it is fixed, and printing "3 guardrails at the
+  // commit" under a headline saying nothing is armed would be the old status's exact lie.
+  const bound = refusals.length > 0 ? [] : universe(entries);
+  const dark = bound
+    .filter((entry) => entry.disabled === null && entry.at.length > 0 && !entry.at.some((m) => delivers(entry.kind, m)))
+    .map((entry) => entry.id);
+  const fittings = fittingsOf(facts);
+
+  return {
+    root: facts.root,
+    version: facts.version,
+    armed: !facts.off,
+    configPath: facts.configPath,
+    // NO RECORD NUMBERS HERE, deliberately. What each entry has DONE is a lifetime question over
+    // every session's rows, and `flow facts` is the verb that asks it — a second reader of the same
+    // rows is how two surfaces come to disagree about which rule is dead. status answers what is
+    // BOUND, which needs no history at all.
+    moments: momentsView(bound, null),
+    categories: [...new Set(entries.flatMap((entry) => entry.categories))].sort(),
+    session: facts.session,
+    dark,
+    fittings,
+    refusals,
+    green: refusals.length === 0 && dark.length === 0 && fittings.every((f) => f.ok),
+  };
+}
+
+/** One entry, as a person reads it: what it says, where it looks, and who it binds to. */
+function entryLines(entry: Bound): string[] {
+  const scope = [
+    (entry.on?.length ?? 0) > 0 ? `on ${entry.on?.join(" ")}` : "",
+    (entry.ignore?.length ?? 0) > 0 ? `not ${entry.ignore?.join(" ")}` : "",
+    entry.for.length > 0 ? `for ${entry.for.join(" · ")}` : "",
+  ].filter((part) => part !== "");
+  const mark = entry.disabled !== null ? "○" : entry.kind === "guardrail" ? "✗" : "🍞";
+  const lines = [`    ${mark} ${entry.id}${scope.length === 0 ? "" : `  —  ${scope.join(" · ")}`}`];
+  if (entry.disabled !== null) lines.push(`        off: ${entry.disabled || "no reason given"}`);
+  else if (entry.says !== null) lines.push(`        ${snip(entry.says, 100)}`);
+  return lines;
+}
+
+/**
+ * The whole answer as lines — the headline, what meets you and when, then everything not true yet.
+ *
+ * The branching is here rather than in the CLI shell for the reason every report in this package is:
+ * which headline, whether a moment table is printable at all, when the close goes red — each of
+ * those is a judgement about what a reader most needs to know, and in a shell not one has a test.
+ */
+export function statusLines(s: Status): string[] {
+  if (!s.armed)
+    return [`flow is OFF — every rail is silenced (${FLOW_DIR}/off is there). Delete that file to turn it back on.`];
+
+  const reds = [
+    ...s.refusals.map((r) => `${r.code}: ${r.detail}`),
+    ...s.dark,
+    ...s.fittings.filter((f) => !f.ok).map((f) => `${f.id}: ${f.detail}`),
+  ];
+
+  const { breadcrumbs, guardrails, disabled } = s.moments.totals;
+  const lines = [
+    s.refusals.length > 0
+      ? `flow ${s.version} — the config will not load, so every guardrail and breadcrumb here is OFF.`
+      : `flow is ON — ${count(guardrails, "guardrail")} · ${count(breadcrumbs, "breadcrumb")}` +
+        (disabled === 0 ? "" : ` · ${disabled} disabled`) +
+        ", every one resolved and able to fire",
+    `  config     ${s.configPath}`,
+    `  state      ${s.root}/${FLOW_DIR}`,
+    `  session    ` +
+      (s.session === null
+        ? "no live session has marked this worktree yet"
+        : `${s.session.id}${s.session.agent === null ? "" : ` · ${s.session.agent}`}, wearing ${s.session.wearing.length === 0 ? "no category" : s.session.wearing.join(" · ")}`),
+  ];
+  if (s.categories.length > 0) lines.push(`  categories ${s.categories.join(" · ")} — what the entries below bind to`);
+
+  for (const { moment, entries } of s.moments.moments) {
+    lines.push(`  ${moment}`);
+    for (const entry of entries) lines.push(...entryLines(entry));
+  }
+
+  for (const fitting of s.fittings) lines.push(`  ${fitting.ok ? "✓" : "✗"} ${fitting.id}: ${fitting.detail}`);
+  for (const refusal of s.refusals) lines.push(`  ✗ ${refusal.code}: ${refusal.detail}`);
+  for (const id of s.dark)
+    lines.push(
+      `  ✗ ${id}: bound only at a moment nothing delivers here — it loads, it counts, and it will never fire. ` +
+        `This adapter carries ${DELIVERS.guard.join(" · ")} for a guardrail and ${DELIVERS.brief.join(" · ")} for a breadcrumb.`,
+    );
+  lines.push(
+    reds.length === 0
+      ? "green — every rule loads, every fitting is in place."
+      : `${count(reds.length, "red line")} — flow is NOT fully in force here.`,
+  );
+  return lines;
+}
+
+const count = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;

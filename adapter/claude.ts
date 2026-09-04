@@ -68,6 +68,7 @@ import {
 import {
   ALLOW,
   CONFIG_FILE,
+  configLoadFault,
   branchFromHead,
   faultText,
   hermeticEnv,
@@ -248,7 +249,10 @@ export async function loadRegime(root: string): Promise<Regime> {
       };
     return { kind: "loaded", config, load: loadConfig(config) };
   } catch (error) {
-    return { kind: "broken", message: `flow: ${CONFIG_FILE} could not be loaded — ${(error as Error).message}` };
+    // `configLoadFault`, not a sentence of its own: the same breakage reaches a person through
+    // `flow test` and through a blocked hook, and a guard that describes it two ways is a guard
+    // nobody learns to read. It is also where the node floor is named, once.
+    return { kind: "broken", message: configLoadFault(CONFIG_FILE, (error as Error).message, process.versions.node) };
   }
 }
 
