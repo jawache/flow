@@ -58,12 +58,13 @@ flow init — created:
   + flow.config.ts
   + .githooks/pre-commit
   + .flow/ — flow's own state, self-ignoring, never committed
-  + node_modules/@jawache/flow → …/work/flow
+  + node_modules/@jawache/flow → …/work/flow (npm link is flow's distribution until it is published)
+  + ~/.claude/settings.json — SessionStart · PreToolUse · PostToolUse · Stop
   + git config core.hooksPath .githooks
   next: `flow status` — what is bound, and what is not wired yet.
 ```
 
-Five things, and each one is checkable:
+Six things, and each one is checkable:
 
 | what | why |
 | --- | --- |
@@ -72,6 +73,7 @@ Five things, and each one is checkable:
 | `.flow/` | flow's own state and logs. It ignores itself, so your `.gitignore` is untouched |
 | `node_modules/@jawache/flow` | a link, because nothing is published yet. Once flow is on npm, this step disappears |
 | the host's `settings.json` | four hook registrations, so a coding agent in any repo asks flow first |
+| `core.hooksPath` | what makes git run the gate. It is per-clone, so every fresh checkout runs `flow init` |
 
 `flow init --empty` gives you the same wiring with no opinions, for a repo that knows what it wants.
 Run `flow init` again whenever you like — it adds only what is missing and says so.
@@ -90,13 +92,13 @@ flow is ON — 3 guardrails · 1 breadcrumb, every one resolved and able to fire
   categories subagent — what the entries below bind to
   session
     🍞 demo.orientation
-        This repo is guarded by flow. The rules are in flow.config.ts — read them rather than…
+        This repo is guarded by flow. The rules are in flow.config.ts — read them rather than routing aroun…
   command
     ✗ demo.noForcePush
         Force-pushing rewrites history everyone else has. Push a correcting commit, or ask first.
   commit
     ✗ demo.noMarkedFiles
-        A file carrying the do-not-commit marker is staged. Take the marker out, or unstage it.
+        A file carrying the do-not-commit marker is staged. Take the marker out, or unstage the file.
     ✗ demo.chatCommits  —  for subagent
         A subagent does not commit — hand the change back to the chat that spawned it.
   ✓ config: /tmp/flow-demo/flow.config.ts
@@ -105,6 +107,10 @@ flow is ON — 3 guardrails · 1 breadcrumb, every one resolved and able to fire
   ✓ hooks: ~/.claude/settings.json — SessionStart · PreToolUse · PostToolUse · Stop
 green — every rule loads, every fitting is in place.
 ```
+
+Both blocks above are the real thing: the suite runs `flow init` and `flow status` in a throwaway
+repo and pins them against this file, with only the three paths (this repo, your home, the checkout)
+standing in for the ones you will see.
 
 Green means guarded. Anything not true yet is a red line carrying its own fix, and `flow status`
 exits non-zero — so a setup script can just ask.

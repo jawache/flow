@@ -15,7 +15,16 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, lstatSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+  existsSync,
+  lstatSync,
+} from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -34,11 +43,11 @@ interface Ran {
 }
 
 /** The built binary, in a given repo, with the throwaway host settings and the shim on PATH. */
-function flow(repo: string, args: readonly string[]): Ran {
+function flow(repo: string, args: readonly string[], settingsHome: string = home): Ran {
   const result = spawnSync("node", [BINARY, ...args], {
     cwd: repo,
     encoding: "utf8",
-    env: { ...process.env, CLAUDE_CONFIG_DIR: home, PATH: `${bin}:${process.env["PATH"] ?? ""}` },
+    env: { ...process.env, CLAUDE_CONFIG_DIR: settingsHome, PATH: `${bin}:${process.env["PATH"] ?? ""}` },
   });
   return { stdout: result.stdout, stderr: result.stderr, code: result.status ?? -1 };
 }
@@ -232,6 +241,53 @@ describe("flow init, run again", () => {
       expect(said.stdout).toContain("flow commit");
     } finally {
       rmSync(theirs, { recursive: true, force: true });
+    }
+  });
+});
+
+// ── the README's two transcripts ─────────────────────────────────────────────
+//
+// A quickstart is a promise about what you will see, and a hand-copied one starts drifting the first
+// time a sentence is reworded — silently, because nothing reads it. These two blocks are pinned to
+// the binary instead: the README is the expected value and the real run is the actual.
+//
+// THE THREE SUBSTITUTIONS are all paths and are named here: the repo, the host's config directory
+// and this checkout are different on every machine, so the README quotes a settled spelling of each
+// and this puts it back before comparing. Nothing else is touched — every word is the binary's.
+
+const DEMO_REPO = "/tmp/flow-demo";
+const CHECKOUT = "…/work/flow";
+
+/** The fenced block in the README that opens with this line. */
+function quoted(opening: string): string {
+  const text = readFileSync(join(PACKAGE, "README.md"), "utf8");
+  const block = text.split("```").find((part) => part.trimStart().startsWith(opening));
+  expect(block, `the README has no fenced block starting "${opening}"`).toBeDefined();
+  return (block as string).trim();
+}
+
+/** One machine's output, in the spelling the README quotes. */
+function asQuoted(output: string, repo: string, settingsHome: string): string {
+  return output
+    .replaceAll(realpathSync(repo), DEMO_REPO)
+    .replaceAll(repo, DEMO_REPO)
+    .replaceAll(PACKAGE.replace(/\/$/, ""), CHECKOUT)
+    .replaceAll(settingsHome, "~/.claude")
+    .trim();
+}
+
+describe("the README's quickstart", () => {
+  it("quotes what `flow init` and `flow status` really print, word for word", () => {
+    // A HOST THAT HAS NEVER HEARD OF FLOW, as well as a repo: the registrations are written once per
+    // machine, so re-using this file's shared home would drop the settings line the README shows and
+    // make the quickstart's first run unreproducible for the reader having it.
+    const shown = newRepo();
+    const firstTime = mkdtempSync(join(tmpdir(), "flow-readme-"));
+    try {
+      expect(asQuoted(flow(shown, ["init"], firstTime).stdout, shown, firstTime)).toBe(quoted("flow init — created:"));
+      expect(asQuoted(flow(shown, ["status"], firstTime).stdout, shown, firstTime)).toBe(quoted("flow is ON —"));
+    } finally {
+      for (const dir of [shown, firstTime]) rmSync(dir, { recursive: true, force: true });
     }
   });
 });

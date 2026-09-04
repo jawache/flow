@@ -1876,13 +1876,24 @@ export interface Registration {
  * rule watches — they are the denominator of every coverage question. PostToolUse keeps a narrower
  * list because a `touch` breadcrumb can only steer on a path, so a tool naming none would cost a
  * process to inject nothing.
+ *
+ * DERIVED, not re-typed: the host's name for an event and the word this binary answers to are both
+ * read off `HOST_EVENT`, the one place that mapping is stated. Written out by hand, this list would
+ * be a second spelling of it — and the day an event is renamed, the half that still compiled would
+ * register a command nothing answers.
  */
-export const HOOK_REGISTRATIONS: readonly Registration[] = [
-  { event: "SessionStart", command: "flow hook session-start", matcher: "startup|resume|clear|compact" },
-  { event: "PreToolUse", command: "flow hook pre-tool-use", matcher: "*" },
-  { event: "PostToolUse", command: "flow hook post-tool-use", matcher: "Read|Glob|Grep|Edit|Write|Bash" },
-  { event: "Stop", command: "flow hook stop" },
+const REGISTERED: readonly { readonly hook: HookEvent; readonly matcher?: string }[] = [
+  { hook: "session-start", matcher: "startup|resume|clear|compact" },
+  { hook: "pre-tool-use", matcher: "*" },
+  { hook: "post-tool-use", matcher: "Read|Glob|Grep|Edit|Write|Bash" },
+  { hook: "stop" },
 ];
+
+export const HOOK_REGISTRATIONS: readonly Registration[] = REGISTERED.map(({ hook, matcher }) => ({
+  event: HOST_EVENT[hook],
+  command: `flow hook ${hook}`,
+  ...(matcher === undefined ? {} : { matcher }),
+}));
 
 /**
  * Is this registration OURS?
@@ -1955,6 +1966,29 @@ export function withRegistrations(settings: unknown): { settings: unknown; added
 // ── the git gate ─────────────────────────────────────────────────────────────
 
 /**
+ * WHERE THE GATE LIVES, spelled once for everyone who names it.
+ *
+ * Four readers say these two paths — the hook `init` writes, the report that names the write, the
+ * fitting `status` checks, and the shell next door that stats the file. Spelled four times, a rename
+ * would leave one reader writing a path another never looks at, and the failure is the silent kind:
+ * a green report over a gate git is not running.
+ */
+export const HOOKS_DIR = ".githooks";
+export const GATE_PATH = `${HOOKS_DIR}/pre-commit`;
+
+/** What arms git, said the way a person types it — the report's line and the fitting's fix. */
+export const SET_HOOKS_PATH = `git config core.hooksPath ${HOOKS_DIR}`;
+
+/**
+ * How to arm a gate flow will not write over, in the ONE wording both readers use.
+ *
+ * `init` says it about the hook it just declined to overwrite; `status` says it about the hook it
+ * found unarmed. The same instruction, at the two moments a person can meet it — and two spellings
+ * of an instruction are two instructions the day one of them is edited.
+ */
+export const ADD_THE_GATE_LINE = "add `flow commit $(git diff --cached --name-only)` to it";
+
+/**
  * The pre-commit hook, verbatim.
  *
  * `flow commit <files…>` rather than a sixth hook, because the commit moment is not delivered by any
@@ -1963,7 +1997,7 @@ export function withRegistrations(settings: unknown): { settings: unknown; added
  * already a git hook.
  */
 export const PRE_COMMIT = `#!/bin/sh
-# The flow commit gate. Written by \`flow init\`; \`git config core.hooksPath .githooks\` arms it.
+# The flow commit gate. Written by \`flow init\`; \`${SET_HOOKS_PATH}\` arms it.
 #
 # Every at(commit) guardrail runs over the staged set and a block exits non-zero, which is how git
 # refuses the commit. This is the half of the promise the PreToolUse rail cannot make: it fires for
@@ -2091,7 +2125,7 @@ export interface InitFacts {
   readonly empty: boolean;
   readonly isGit: boolean;
   readonly hasConfig: boolean;
-  /** `.githooks/pre-commit` as it stands, or null when there is none. */
+  /** The gate as it stands, or null when there is none. */
   readonly gateText: string | null;
   readonly hasFlowDir: boolean;
   /** `git config core.hooksPath` as it stands. */
@@ -2101,8 +2135,13 @@ export interface InitFacts {
   readonly settings: unknown;
   /** Does `@jawache/flow` already resolve from this repo? */
   readonly resolves: boolean;
-  /** Where the running binary's own package lives — what a link would point at. */
-  readonly packageRoot: string;
+  /**
+   * Where the running binary's own package lives — what a link would point at, and NULL when the
+   * walk up never found it. Null rather than an empty string on purpose: an empty string is a path
+   * as far as the shell is concerned, and it would go on to attempt a symlink to nowhere and report
+   * the failure of a step that should never have been planned.
+   */
+  readonly packageRoot: string | null;
 }
 
 /** One file to write, repo-relative so the report reads the way a person would say it. */
@@ -2136,17 +2175,14 @@ export function planInit(facts: InitFacts): InitPlan {
     config: facts.hasConfig ? null : { path: CONFIG_FILE, body: scaffold(facts.empty) },
     // NEVER over a hook that is already there. This is a scaffold, and a repo whose gate runs its
     // own suite must not lose it to a re-run — which is also what makes init safe to run again.
-    gate:
-      !facts.isGit || facts.gateText !== null
-        ? null
-        : { path: ".githooks/pre-commit", body: PRE_COMMIT, mode: 0o755 },
+    gate: !facts.isGit || facts.gateText !== null ? null : { path: GATE_PATH, body: PRE_COMMIT, mode: 0o755 },
     gateKept: facts.isGit && facts.gateText !== null && !armsFlow(facts.gateText),
     notGit: !facts.isGit,
     flowDir: !facts.hasFlowDir,
     link: facts.resolves ? null : facts.packageRoot,
     // Per CLONE, not per repo: `core.hooksPath` is not committed, so a fresh clone and every
     // worktree needs it set again. That is why init is the command a new checkout runs.
-    hooksPath: facts.isGit && facts.hooksPath !== ".githooks",
+    hooksPath: facts.isGit && facts.hooksPath !== HOOKS_DIR,
     settings: registration.added.length === 0 ? null : { path: facts.settingsPath, value: registration.settings },
     registered: registration.added,
   };
@@ -2166,7 +2202,7 @@ export function initLines(plan: InitPlan, failures: readonly string[]): string[]
   if (plan.flowDir) wrote.push(`${FLOW_DIR}/ — flow's own state, self-ignoring, never committed`);
   if (plan.link) wrote.push(`node_modules/@jawache/flow → ${plan.link} (npm link is flow's distribution until it is published)`);
   if (plan.settings) wrote.push(`${plan.settings.path} — ${plan.registered.join(" · ")}`);
-  if (plan.hooksPath) wrote.push("git config core.hooksPath .githooks");
+  if (plan.hooksPath) wrote.push(SET_HOOKS_PATH);
 
   const lines: string[] =
     wrote.length === 0
@@ -2175,9 +2211,7 @@ export function initLines(plan: InitPlan, failures: readonly string[]): string[]
 
   if (plan.notGit) lines.push("  · not a git repo, so no commit gate was armed. Run `git init`, then `flow init` again.");
   if (plan.gateKept)
-    lines.push(
-      "  · kept the .githooks/pre-commit already here — flow never overwrites one. Add `flow commit $(git diff --cached --name-only)` to it yourself.",
-    );
+    lines.push(`  · kept the ${GATE_PATH} already here — flow never overwrites one, so ${ADD_THE_GATE_LINE} yourself.`);
   for (const failure of failures) lines.push(`  ✗ ${failure}`);
   lines.push("  next: `flow status` — what is bound, and what is not wired yet.");
   return lines;
@@ -2251,18 +2285,18 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
       id: "commit-gate",
       ok: armed,
       detail: armed
-        ? ".githooks/pre-commit runs `flow commit` over the staged set"
+        ? `${GATE_PATH} runs \`flow commit\` over the staged set`
         : facts.gateText === null
-          ? "no .githooks/pre-commit — `flow init` arms it. Until then nothing runs at the commit."
-          : ".githooks/pre-commit is here but does not call flow — add `flow commit $(git diff --cached --name-only)` to it.",
+          ? `no ${GATE_PATH} — \`flow init\` arms it. Until then nothing runs at the commit.`
+          : `${GATE_PATH} is here but does not call flow — ${ADD_THE_GATE_LINE}.`,
     },
     {
       id: "hooks-path",
-      ok: facts.hooksPath === ".githooks",
+      ok: facts.hooksPath === HOOKS_DIR,
       detail:
-        facts.hooksPath === ".githooks"
-          ? "core.hooksPath = .githooks"
-          : `core.hooksPath is ${facts.hooksPath ?? "unset"} — run \`git config core.hooksPath .githooks\`. It is per-clone, so every fresh checkout needs it.`,
+        facts.hooksPath === HOOKS_DIR
+          ? `core.hooksPath = ${HOOKS_DIR}`
+          : `core.hooksPath is ${facts.hooksPath ?? "unset"} — run \`${SET_HOOKS_PATH}\`. It is per-clone, so every fresh checkout needs it.`,
     },
     {
       id: "hooks",
@@ -2272,6 +2306,21 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
           ? `${facts.settingsPath} — ${registered.join(" · ")}`
           : `${facts.settingsPath} does not call flow for ${missing.join(" · ")} — re-run \`flow init\`. No live rail fires until it does.`,
     },
+  ];
+}
+
+/**
+ * EVERY RED LINE, worked out once — the list status closes on, and the definition of not-green.
+ *
+ * `green` and the closing count are the same question asked at two moments, and asking it twice is
+ * how a page that ends "green" comes to exit 1. One function answers it: the boolean is this list
+ * being empty, and the close prints its length.
+ */
+function redLines(s: Pick<Status, "refusals" | "dark" | "fittings">): string[] {
+  return [
+    ...s.refusals.map((r) => `${r.code}: ${r.detail}`),
+    ...s.dark,
+    ...s.fittings.filter((f) => !f.ok).map((f) => `${f.id}: ${f.detail}`),
   ];
 }
 
@@ -2311,7 +2360,7 @@ export function status(facts: StatusFacts): Status {
     dark,
     fittings,
     refusals,
-    green: refusals.length === 0 && dark.length === 0 && fittings.every((f) => f.ok),
+    green: redLines({ refusals, dark, fittings }).length === 0,
   };
 }
 
@@ -2339,12 +2388,6 @@ function entryLines(entry: Bound): string[] {
 export function statusLines(s: Status): string[] {
   if (!s.armed)
     return [`flow is OFF — every rail is silenced (${FLOW_DIR}/off is there). Delete that file to turn it back on.`];
-
-  const reds = [
-    ...s.refusals.map((r) => `${r.code}: ${r.detail}`),
-    ...s.dark,
-    ...s.fittings.filter((f) => !f.ok).map((f) => `${f.id}: ${f.detail}`),
-  ];
 
   const { breadcrumbs, guardrails, disabled } = s.moments.totals;
   const lines = [
@@ -2375,9 +2418,9 @@ export function statusLines(s: Status): string[] {
         `This adapter carries ${DELIVERS.guard.join(" · ")} for a guardrail and ${DELIVERS.brief.join(" · ")} for a breadcrumb.`,
     );
   lines.push(
-    reds.length === 0
+    s.green
       ? "green — every rule loads, every fitting is in place."
-      : `${count(reds.length, "red line")} — flow is NOT fully in force here.`,
+      : `${count(redLines(s).length, "red line")} — flow is NOT fully in force here.`,
   );
   return lines;
 }

@@ -15,23 +15,17 @@
 
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { chmodSync, existsSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { VERSION } from "../version.ts";
-import { ensureFlowDir, isOff, loadState } from "../engine/state.ts";
-import { commitAttribution } from "../engine/state.ts";
+import { ensureFlowDir, isOff } from "../engine/state.ts";
 import { FLOW_DIR } from "../engine/domain.ts";
 import {
   CONFIG_FILE,
+  GATE_PATH,
+  HOOKS_DIR,
   configLoadFault,
   initLines,
   planInit,
@@ -41,7 +35,7 @@ import {
   type InitPlan,
   type StatusFacts,
 } from "./domain.ts";
-import { currentBranch, loadRegime } from "./claude.ts";
+import { loadRegime, readText, wearer } from "./claude.ts";
 
 /** What a verb answers with. The same three edges a hook answers on, minus the decision object. */
 export interface VerbResult {
@@ -50,20 +44,9 @@ export interface VerbResult {
   readonly exitCode: number;
 }
 
-const GATE = join(".githooks", "pre-commit");
-
-/** A file's text, or null. Every read here is a fact-gathering read: absence is an answer. */
-function textOf(path: string): string | null {
-  try {
-    return readFileSync(path, "utf8");
-  } catch {
-    return null;
-  }
-}
-
 /** The host's settings file — `CLAUDE_CONFIG_DIR` first, because that is the host's own override. */
-export function settingsFile(env: NodeJS.ProcessEnv = process.env, home: string = homedir()): string {
-  return join(env["CLAUDE_CONFIG_DIR"] || join(home, ".claude"), "settings.json");
+function settingsFile(): string {
+  return join(process.env["CLAUDE_CONFIG_DIR"] || join(homedir(), ".claude"), "settings.json");
 }
 
 /**
@@ -75,10 +58,10 @@ export function settingsFile(env: NodeJS.ProcessEnv = process.env, home: string 
  * literal `new URL("../../")` would therefore be right in the suite and wrong in the shipped binary
  * — silently, because it would still name a real directory.
  */
-export function packageRoot(from: string = fileURLToPath(import.meta.url)): string | null {
-  let at = dirname(from);
+function packageRoot(): string | null {
+  let at = dirname(fileURLToPath(import.meta.url));
   for (let up = 0; up < 6; up++) {
-    const manifest = textOf(join(at, "package.json"));
+    const manifest = readText(at, "package.json");
     if (manifest !== null) {
       try {
         if ((JSON.parse(manifest) as { name?: unknown }).name === "@jawache/flow") return at;
@@ -113,9 +96,14 @@ function hooksPath(root: string): string | null {
   }
 }
 
-/** Whatever JSON is in that file, or null — an unparseable settings file registers nothing. */
-function parsedFile(path: string): unknown {
-  const text = textOf(path);
+/**
+ * Whatever JSON is in that file, or null — an unparseable settings file registers nothing.
+ *
+ * `root` is what a repo-relative path is read against; the host's settings file is absolute and
+ * passes straight through, which is the same rule every other read in the package follows.
+ */
+function parsedFile(root: string, path: string): unknown {
+  const text = readText(root, path);
   if (text === null || text.trim() === "") return null;
   try {
     return JSON.parse(text) as unknown;
@@ -126,11 +114,10 @@ function parsedFile(path: string): unknown {
 
 /** Who last worked in this worktree, and what they wear — the marker the write rail leaves. */
 function liveSession(root: string): StatusFacts["session"] {
-  const { session, agent } = commitAttribution(root, currentBranch(root));
-  // `commitAttribution` answers with its fallback when the marker is missing, stale or malformed,
+  const { session, agent, wearing } = wearer(root);
+  // `wearer` answers with the attribution's fallback when the marker is missing, stale or malformed,
   // and that fallback is not a session: reporting it would name a chat that never existed.
-  if (agent === null) return null;
-  return { id: session, agent, wearing: loadState(root, session, agent).categories ?? [] };
+  return agent === null ? null : { id: session, agent, wearing };
 }
 
 // ── init ─────────────────────────────────────────────────────────────────────
@@ -143,13 +130,13 @@ function initFacts(root: string, empty: boolean): InitFacts {
     empty,
     isGit: existsSync(join(root, ".git")),
     hasConfig: existsSync(join(root, CONFIG_FILE)),
-    gateText: textOf(join(root, GATE)),
+    gateText: readText(root, GATE_PATH),
     hasFlowDir: existsSync(join(root, FLOW_DIR)),
     hooksPath: hooksPath(root),
     settingsPath,
-    settings: parsedFile(settingsPath),
+    settings: parsedFile(root, settingsPath),
     resolves: resolves(root),
-    packageRoot: packageRoot() ?? "",
+    packageRoot: packageRoot(),
   };
 }
 
@@ -199,7 +186,7 @@ function perform(root: string, plan: InitPlan): string[] {
   // git at a directory before the hook is in it would leave a window where a commit runs nothing.
   if (plan.hooksPath)
     attempt("could not set core.hooksPath", () =>
-      execFileSync("git", ["-C", root, "config", "core.hooksPath", ".githooks"], { stdio: "ignore" }),
+      execFileSync("git", ["-C", root, "config", "core.hooksPath", HOOKS_DIR], { stdio: "ignore" }),
     );
 
   return failures;
@@ -246,10 +233,10 @@ export async function runStatus(cwd: string, args: readonly string[]): Promise<V
     configPath,
     hasConfig: regime.kind === "loaded",
     load: regime.kind === "loaded" ? regime.load : null,
-    gateText: textOf(join(root, GATE)),
+    gateText: readText(root, GATE_PATH),
     hooksPath: hooksPath(root),
     settingsPath,
-    settings: parsedFile(settingsPath),
+    settings: parsedFile(root, settingsPath),
     session: liveSession(root),
   };
 

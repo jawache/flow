@@ -83,6 +83,10 @@ import {
   registeredEvents,
   withRegistrations,
   PRE_COMMIT,
+  HOOKS_DIR,
+  GATE_PATH,
+  SET_HOOKS_PATH,
+  ADD_THE_GATE_LINE,
   armsFlow,
   scaffold,
   planInit,
@@ -1131,6 +1135,12 @@ describe("the hook registrations flow writes", () => {
     expect(new Set(HOOK_REGISTRATIONS.map((r) => r.event)).size).toBe(HOOK_REGISTRATIONS.length);
   });
 
+  it("commands a word this build answers to — the list is derived, so it cannot name one it doesn't", () => {
+    for (const registration of HOOK_REGISTRATIONS)
+      expect(ourHookCommand(registration.command), registration.command).toBe(true);
+    expect(HOOK_REGISTRATIONS.map((r) => r.command)).toContain("flow hook session-start");
+  });
+
   it("recognises its own registration whatever path stands in front of the binary", () => {
     expect(ourHookCommand("flow hook stop")).toBe(true);
     expect(ourHookCommand("/usr/local/bin/flow hook pre-tool-use")).toBe(true);
@@ -1178,6 +1188,12 @@ describe("the git gate flow arms", () => {
   it("calls the binary's own commit verb over the staged set", () => {
     expect(PRE_COMMIT).toContain("flow commit");
     expect(PRE_COMMIT.startsWith("#!")).toBe(true);
+  });
+
+  it("names one hooks directory, and one gate inside it", () => {
+    expect(GATE_PATH).toBe(`${HOOKS_DIR}/pre-commit`);
+    expect(SET_HOOKS_PATH, "the report's line and the fitting's fix are one sentence").toContain(HOOKS_DIR);
+    expect(PRE_COMMIT, "the hook's own comment tells you what arms it").toContain(SET_HOOKS_PATH);
   });
 
   it("recognises a gate that runs flow, and one that runs something else", () => {
@@ -1233,7 +1249,7 @@ describe("planInit — a repo that has never heard of flow", () => {
 
   it("writes the config, the gate, the state directory and the link", () => {
     expect(plan.config?.path).toBe("flow.config.ts");
-    expect(plan.gate?.path).toBe(".githooks/pre-commit");
+    expect(plan.gate?.path).toBe(GATE_PATH);
     expect(plan.flowDir).toBe(true);
     expect(plan.link).toBe("/checkout/flow");
     expect(plan.hooksPath).toBe(true);
@@ -1243,7 +1259,7 @@ describe("planInit — a repo that has never heard of flow", () => {
   it("reports every write, and nothing it did not do", () => {
     const said = initLines(plan, []).join("\n");
     expect(said).toContain("flow.config.ts");
-    expect(said).toContain(".githooks/pre-commit");
+    expect(said).toContain(GATE_PATH);
     expect(said).toContain(".flow/");
     expect(said).toContain("SessionStart");
     expect(said).toContain("flow status");
@@ -1256,7 +1272,7 @@ describe("planInit — the second run", () => {
     hasConfig: true,
     gateText: PRE_COMMIT,
     hasFlowDir: true,
-    hooksPath: ".githooks",
+    hooksPath: HOOKS_DIR,
     resolves: true,
     settings: withRegistrations({}).settings,
   });
@@ -1283,7 +1299,7 @@ describe("planInit — a repo that already has a pre-commit hook", () => {
     expect(theirs.gate).toBeNull();
     const said = initLines(theirs, []).join("\n");
     expect(said).toContain("kept");
-    expect(said).toContain("flow commit");
+    expect(said, "the same instruction status gives, in the same words").toContain(ADD_THE_GATE_LINE);
   });
 });
 
@@ -1291,7 +1307,7 @@ describe("planInit — the flags and the edges", () => {
   it("--empty scaffolds the bare config and the same wiring", () => {
     const plan = planInit({ ...bare, empty: true });
     expect(plan.config?.body).toContain("defineConfig([])");
-    expect(plan.gate?.path).toBe(".githooks/pre-commit");
+    expect(plan.gate?.path).toBe(GATE_PATH);
   });
 
   it("arms no git gate outside a git repo, and says why", () => {
@@ -1305,8 +1321,16 @@ describe("planInit — the flags and the edges", () => {
     expect(planInit({ ...bare, resolves: true }).link).toBeNull();
   });
 
+  it("plans no link at all when the shell could not find its own package", () => {
+    const plan = planInit({ ...bare, packageRoot: null });
+    expect(plan.link, "not an empty path the shell would go on to symlink to nowhere").toBeNull();
+    const said = initLines(plan, []).join("\n");
+    expect(said, "and nothing is reported that was never done").not.toContain("node_modules/@jawache/flow");
+    expect(said, "the rest of the setup still happened").toContain("flow.config.ts");
+  });
+
   it("carries a failure the shell hit into the report rather than swallowing it", () => {
-    expect(initLines(planInit(bare), ["could not write .githooks/pre-commit: EACCES"]).join("\n")).toContain("EACCES");
+    expect(initLines(planInit(bare), [`could not write ${GATE_PATH}: EACCES`]).join("\n")).toContain("EACCES");
   });
 });
 
@@ -1322,7 +1346,7 @@ const statusFacts = (over: Partial<StatusFacts> = {}): StatusFacts => ({
   hasConfig: true,
   load: { ok: true, entries: [] },
   gateText: PRE_COMMIT,
-  hooksPath: ".githooks",
+  hooksPath: HOOKS_DIR,
   settingsPath: "/home/.claude/settings.json",
   settings: withRegistrations({}).settings,
   session: null,
@@ -1470,11 +1494,13 @@ describe("status — the red lines, each carrying its fix", () => {
 
   it("an unarmed git gate", () => {
     expect(red({ gateText: null })).toContain("flow init");
-    expect(red({ gateText: "#!/bin/sh\nnpm test\n" })).toContain("does not call flow");
+    const theirs = red({ gateText: "#!/bin/sh\nnpm test\n" });
+    expect(theirs).toContain("does not call flow");
+    expect(theirs, "the same instruction init gives, in the same words").toContain(ADD_THE_GATE_LINE);
   });
 
   it("a hooksPath git was never told about — the one a fresh clone always needs", () => {
-    expect(red({ hooksPath: null })).toContain("git config core.hooksPath .githooks");
+    expect(red({ hooksPath: null })).toContain(SET_HOOKS_PATH);
   });
 
   it("a host that is not registered to call flow at all", () => {
@@ -1494,5 +1520,22 @@ describe("status — the red lines, each carrying its fix", () => {
     const s = status(statusFacts({ gateText: null, hooksPath: null }));
     expect(s.green).toBe(false);
     expect(statusLines(s).at(-1)).toContain("2 red lines");
+  });
+
+  it("closes on the same answer the exit code is taken from — never a green page that exits 1", () => {
+    // One decision, read twice. Every shape below is a different route to not-green, and the close
+    // has to follow `green` rather than re-deriving it from the parts.
+    const shapes: Partial<StatusFacts>[] = [
+      {},
+      { gateText: null },
+      { hasConfig: false, load: null },
+      { settings: {} },
+      { load: { ok: true, entries: [loaded("demo.late", noteAtTurnEnd)] } },
+      { load: { ok: false, refusals: [{ code: "no-cases", entry: "demo.x", detail: "no cases" }] } },
+    ];
+    for (const shape of shapes) {
+      const s = status(statusFacts(shape));
+      expect(statusLines(s).at(-1)?.startsWith("green"), JSON.stringify(shape)).toBe(s.green);
+    }
   });
 });

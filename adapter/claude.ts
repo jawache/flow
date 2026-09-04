@@ -205,6 +205,31 @@ export function currentBranch(root: string): string | null {
   }
 }
 
+/**
+ * WHO LAST WORKED IN THIS WORKTREE, and what they were wearing — the marker the write rail leaves,
+ * read the one way.
+ *
+ * Both surfaces that ask outside a session ask it: the commit gate, deciding whether an
+ * actor-scoped rule applies to a commit nobody is in the room for, and `flow status`, naming the
+ * session a person is about to join. Asked twice in two places, the two could come to disagree about
+ * who is here — and a rule that fires at the gate for a wearer status never showed is the exact
+ * surprise the marker exists to prevent.
+ *
+ * `agent` is null when the marker is missing, stale or malformed, and then the wearer wears NOTHING
+ * rather than a guess: there is no transcript and no sidecar out here, so the stored verdict is the
+ * only truthful answer there can be.
+ */
+export function wearer(root: string): {
+  readonly branch: string | null;
+  readonly session: string;
+  readonly agent: string | null;
+  readonly wearing: readonly string[];
+} {
+  const branch = currentBranch(root);
+  const { session, agent } = commitAttribution(root, branch);
+  return { branch, session, agent, wearing: agent === null ? [] : (loadState(root, session, agent).categories ?? []) };
+}
+
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE CONFIG — which repo this is, and what it has turned on
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -564,10 +589,8 @@ export async function runCommit(root: string, files: readonly string[]): Promise
   if (regime.kind === "broken") return refused([{ moment: "commit", block: fault(regime.message) }]) ?? ALLOW;
   if (files.length === 0) return ALLOW;
 
-  const branch = currentBranch(root);
-  const { session, agent } = commitAttribution(root, branch);
+  const { branch, session, wearing } = wearer(root);
   const { load } = regime;
-  const wearing = agent === null ? [] : (loadState(root, session, agent).categories ?? []);
   // The gate is where the expensive checks live — a suite, a type-check, a whole dependency
   // cruise — so it is also where a recording is worth the most: replaying a refused commit is the
   // one thing you cannot do by re-running it, because the working tree has moved on since.
