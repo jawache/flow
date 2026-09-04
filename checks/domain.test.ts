@@ -9,6 +9,7 @@
 
 import { describe, it, expect } from "vitest";
 import { loadConfig, verdict, type Case, type CaseWorld, type Check, type LoadedEntry } from "../language/domain.ts";
+import { globToRegExp } from "../glob.ts";
 import {
   astGrep,
   astGrepHits,
@@ -17,6 +18,7 @@ import {
   canonicalFault,
   canonicalFiles,
   caseMoment,
+  readCase,
   changeTogether,
   changedSet,
   commitMessage,
@@ -34,7 +36,7 @@ import {
   givesReason,
   globToRe,
   heredocBody,
-  isNonCanonicalFile,
+  judgeCanonical,
   jsonInvariant,
   jsonViolations,
   layersMatcher,
@@ -68,6 +70,8 @@ import {
   type PatternHit,
   type ReasonInput,
   type RequireEdge,
+  type CanonVerdict,
+  type CaseDialect,
   type Unanswered,
   type WorkingState,
   type CaseResult,
@@ -168,43 +172,57 @@ describe("siblingExists", () => {
 
 describe("canonicalFiles", () => {
   const canon: CanonOptions = { root: "src/lib", allow: ["domain", "index"], thinking: "domain" };
+  /** The verdict as a boolean, for the many cases where only the yes-or-no is the point. */
+  const bad = (path: string, o: CanonOptions = canon): boolean => !judgeCanonical(path, o).ok;
 
   it("leaves the shared-util tier alone and judges inside a feature folder", () => {
-    expect(isNonCanonicalFile("src/lib/helpers.ts", canon)).toBe(false); // directly under root
-    expect(isNonCanonicalFile("src/lib/cart/domain.ts", canon)).toBe(false);
-    expect(isNonCanonicalFile("src/lib/cart/helpers.ts", canon)).toBe(true);
+    expect(bad("src/lib/helpers.ts", canon)).toBe(false); // directly under root
+    expect(bad("src/lib/cart/domain.ts", canon)).toBe(false);
+    expect(bad("src/lib/cart/helpers.ts", canon)).toBe(true);
   });
 
   it("only the thinking file may carry a .test sibling — a tested talking file grew logic", () => {
-    expect(isNonCanonicalFile("src/lib/cart/domain.test.ts", canon)).toBe(false);
-    expect(isNonCanonicalFile("src/lib/cart/index.test.ts", canon)).toBe(true);
+    expect(bad("src/lib/cart/domain.test.ts", canon)).toBe(false);
+    expect(bad("src/lib/cart/index.test.ts", canon)).toBe(true);
   });
 
   it("ignores paths outside root, non-source files and declaration files", () => {
-    expect(isNonCanonicalFile("other/cart/helpers.ts", canon)).toBe(false);
-    expect(isNonCanonicalFile("src/lib/cart/notes.md", canon)).toBe(false);
-    expect(isNonCanonicalFile("src/lib/cart/shims.d.ts", canon)).toBe(false);
+    expect(bad("other/cart/helpers.ts", canon)).toBe(false);
+    expect(bad("src/lib/cart/notes.md", canon)).toBe(false);
+    expect(bad("src/lib/cart/shims.d.ts", canon)).toBe(false);
   });
 
   it("an empty allow list means the filename tier is not policed", () => {
-    expect(isNonCanonicalFile("src/lib/cart/anything.ts", { root: "src/lib", allow: [] })).toBe(false);
+    expect(bad("src/lib/cart/anything.ts", { root: "src/lib", allow: [] })).toBe(false);
   });
 
   it("the folder tier is a second allowlist, judged on ANY file type", () => {
     const docs: CanonOptions = { root: "docs", allow: [], folders: ["user", "agent"] };
-    expect(isNonCanonicalFile("docs/user/quickstart.html", docs)).toBe(false);
-    expect(isNonCanonicalFile("docs/notes.md", docs)).toBe(true);
-    expect(isNonCanonicalFile("docs/scratch/x.ts", docs)).toBe(true);
-    expect(canonicalFault("docs/notes.md", docs)).toContain("is not one of the names docs/ may hold");
+    expect(bad("docs/user/quickstart.html", docs)).toBe(false);
+    expect(bad("docs/notes.md", docs)).toBe(true);
+    expect(bad("docs/scratch/x.ts", docs)).toBe(true);
+    expect(canonicalFault(judgeCanonical("docs/notes.md", docs), "docs/notes.md", docs)).toContain(
+      "is not one of the names docs/ may hold",
+    );
+  });
+
+  it("the verdict says WHICH tier refused, so the message cannot describe the other one", () => {
+    const docs: CanonOptions = { root: "docs", allow: [], folders: ["user"] };
+    const folder: CanonVerdict = judgeCanonical("docs/notes.md", docs);
+    expect(folder).toEqual({ ok: false, tier: "folder", found: "notes.md" });
+    expect(judgeCanonical("src/lib/cart/helpers.ts", canon)).toEqual({ ok: false, tier: "filename" });
+    expect(judgeCanonical("src/lib/cart/domain.ts", canon)).toEqual({ ok: true });
   });
 
   it("the fault names the canon, because the canon IS the rule", () => {
-    const text = canonicalFault("src/lib/cart/helpers.ts", canon);
+    const path = "src/lib/cart/helpers.ts";
+    const text = canonicalFault(judgeCanonical(path, canon), path, canon);
     expect(text).toContain("domain · index");
     expect(text).toContain("only domain may carry a .test sibling");
-    expect(canonicalFault("src/lib/cart/helpers.ts", { root: "src/lib", allow: ["domain"] })).not.toContain(
-      "may carry a .test sibling",
-    );
+    const bare: CanonOptions = { root: "src/lib", allow: ["domain"] };
+    expect(canonicalFault(judgeCanonical(path, bare), path, bare)).not.toContain("may carry a .test sibling");
+    // A clean verdict renders nothing — there is no sentence to say about a file that is fine.
+    expect(canonicalFault({ ok: true }, path, canon)).toBe("");
   });
 
   it("blocks through the check with the fault as its detail", async () => {
@@ -704,11 +722,41 @@ describe("execPasses", () => {
 });
 
 describe("the depcruise dialect", () => {
-  it("globToRe emits only ReDoS-guard-safe constructs", () => {
+  it("globToRe emits only ReDoS-guard-safe constructs, unchanged from before the tokeniser", () => {
     expect(globToRe("src/**")).toBe("^src/");
     expect(globToRe("src/**/*.ts")).toBe("^src/.*[^/]*\\.ts$");
     expect(globToRe("src/x.ts")).toBe("^src/x\\.ts$");
     expect(globToRe("**")).toBe("^");
+    expect(globToRe("**/node_modules/@ast-grep/napi/**")).toBe("^.*node_modules/@ast-grep/napi/");
+  });
+
+  it("speaks the WHOLE dialect — a brace glob used to compile to a fence matching nothing", () => {
+    // The bug this fix exists for: `{` and `}` were escaped into literals, so this fence looked
+    // healthy and matched no module in any repo, forever.
+    expect(globToRe("src/**/*.{ts,tsx}")).toBe("^src/.*[^/]*\\.(ts|tsx)$");
+    expect(new RegExp(globToRe("src/**/*.{ts,tsx}")).test("src/lib/a.tsx")).toBe(true);
+    expect(new RegExp(globToRe("src/**/*.{ts,tsx}")).test("src/lib/a.css")).toBe(false);
+    // …and `?`, which used to pass through raw and become a regex quantifier on the character
+    // before it — `src/?.ts` meant "an optional slash", not "one character".
+    expect(globToRe("src/?.ts")).toBe("^src/[^/]\\.ts$");
+    expect(new RegExp(globToRe("src/?.ts")).test("src/a.ts")).toBe(true);
+    expect(new RegExp(globToRe("src/?.ts")).test("src.ts")).toBe(false);
+  });
+
+  it("both emitters read the same tokens, so a glob means one thing in a fence and in a scope", () => {
+    // Anchors aside — the fence's one deliberate difference — the two emitters must agree
+    // character for character. `RegExp.source` also escapes `/`, which is the engine's spelling
+    // and not a token, so both sides are normalised before comparing.
+    const body = (re: string): string =>
+      re
+        .replace(/\\\//g, "/")
+        .replace(/^\^/, "")
+        .replace(/\$$/, "");
+    // No trailing `**` here: that is the one glob whose fence deliberately drops a token, and it
+    // is asserted on its own above.
+    for (const glob of ["src/**/*.{ts,tsx}", "src/?.ts", "a/**/b.ts", "x.ts", "a{b,c}?d*e.ts"]) {
+      expect(body(globToRegExp(glob).source), glob).toBe(body(globToRe(glob)));
+    }
   });
 
   it("entryToMatcher tells a builtin, a bare npm package and a path glob apart", () => {
@@ -884,13 +932,39 @@ describe("astGrep", () => {
 // CASES
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-describe("caseMoment", () => {
+describe("readCase — the one ladder over the case union", () => {
   it("reads the dialect a case is written in", () => {
     expect(caseMoment("git push")).toBe("command");
     expect(caseMoment({ command: "git push" })).toBe("command");
     expect(caseMoment({ path: "a.ts", content: "" })).toBe("write");
     expect(caseMoment({ staged: [] })).toBe("commit");
     expect(caseMoment({ actions: [] })).toBe("turn-end");
+  });
+
+  it("reads the dialect, the facts and the world in ONE pass, so they cannot disagree", () => {
+    expect(readCase("git push")).toEqual({ dialect: "command", facts: { command: "git push" }, world: {} });
+    const world: CaseWorld = { fs: { "a.ts": "x" } };
+    expect(readCase({ path: "a.ts", content: "x", world })).toEqual({
+      dialect: "write",
+      facts: { file: { path: "a.ts", content: "x" } },
+      world,
+    });
+    expect(readCase({ command: "ls" }).world).toEqual({});
+    expect(readCase({ staged: ["a.ts"] }).facts).toEqual({ staged: ["a.ts"] });
+    expect(readCase({ actions: [{ did: "edit", path: "a.ts" }] }).facts).toEqual({
+      turn: [{ did: "edit", path: "a.ts" }],
+    });
+  });
+
+  it("every dialect is one a guardrail moment can actually be handed", async () => {
+    const dialects: CaseDialect[] = ["command", "write", "commit", "turn-end"];
+    const cases: Case[] = ["ls", { path: "a.ts", content: "" }, { staged: [] }, { actions: [] }];
+    const moments = ["command", "write", "commit", "turn-end"];
+    for (const [i, c] of cases.entries()) {
+      expect(readCase(c).dialect).toBe(dialects[i]);
+      const result = await runCase(entry({ at: [moments[i] as string] }), (ctx) => ctx.ok(), c, "pass", 0);
+      expect(result.ok, `${dialects[i]} should reach a ${moments[i]} rail`).toBe(true);
+    }
   });
 });
 

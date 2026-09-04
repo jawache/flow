@@ -26,25 +26,104 @@ export function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// Minimal glob → RegExp: supports ** (across /), * (within a segment), ?, {a,b}.
-export function globToRegExp(glob: string): RegExp {
-  let re = "";
+// ── the dialect, parsed once ─────────────────────────────────────────────────
+//
+// ONE PARSER, TWO EMITTERS, and the split exists because of a bug it now makes impossible.
+//
+// The depcruise check compiles a layer's globs into dependency-cruiser's own regex schema, which
+// is a different TARGET from the RegExp `matchGlob` builds — it must avoid grouped quantifiers
+// that trip the tool's ReDoS guard, and a trailing `**` has to leave the end unanchored. That was
+// reason enough for it to grow a second glob translator, and the second translator did not speak
+// the whole dialect: it escaped `{` and `}` into literals, so a perfectly ordinary layer glob like
+// `src/**/*.{ts,tsx}` compiled to a fence matching NOTHING, quietly, and reported healthy. That is
+// the exact failure this package exists to delete, reborn inside the code meant to kill it.
+//
+// So the dialect is TOKENISED here, once, and both callers emit from the same tokens. A construct
+// either has a token — in which case every emitter must map it — or it is not in the dialect at
+// all. There is nowhere left for a silent divergence to live.
+
+/** One piece of a glob. The whole dialect: `**` · `*` · `?` · `{a,b}` · literal text. */
+export type GlobToken =
+  | { readonly kind: "literal"; readonly text: string }
+  /** `*` — anything within one path segment. */
+  | { readonly kind: "star" }
+  /** `**` — anything, across segments. Consumes a `/` immediately after it. */
+  | { readonly kind: "globstar" }
+  /** `?` — exactly one character, not a separator. */
+  | { readonly kind: "single" }
+  /** `{a,b}` — one of these literals. */
+  | { readonly kind: "options"; readonly options: readonly string[] };
+
+/**
+ * Read a glob as tokens.
+ *
+ * An UNCLOSED `{` is a literal brace rather than an error or a swallowed rest-of-string. It cannot
+ * throw (this is a pure home) and refusing would mean every caller needs a failure path for a glob
+ * that is almost certainly just a brace in a filename; reading it literally is what the shell does
+ * too.
+ */
+export function tokenizeGlob(glob: string): GlobToken[] {
+  const tokens: GlobToken[] = [];
+  let literal = "";
+  const flush = (): void => {
+    if (literal !== "") tokens.push({ kind: "literal", text: literal });
+    literal = "";
+  };
   for (let i = 0; i < glob.length; i++) {
     const c = glob[i];
     if (c === "*") {
+      flush();
       if (glob[i + 1] === "*") {
-        re += ".*";
+        tokens.push({ kind: "globstar" });
         i++;
+        // `**/` is one token: the separator belongs to the wildcard, or `a/**/b` would demand the
+        // slash a `**` matching nothing cannot supply.
         if (glob[i + 1] === "/") i++;
-      } else re += "[^/]*";
-    } else if (c === "?") re += "[^/]";
-    else if (c === "{") {
+      } else tokens.push({ kind: "star" });
+    } else if (c === "?") {
+      flush();
+      tokens.push({ kind: "single" });
+    } else if (c === "{") {
       const end = glob.indexOf("}", i);
-      re += "(" + glob.slice(i + 1, end).split(",").map(escapeRe).join("|") + ")";
+      if (end === -1) {
+        literal += c;
+        continue;
+      }
+      flush();
+      tokens.push({ kind: "options", options: glob.slice(i + 1, end).split(",") });
       i = end;
-    } else re += escapeRe(c ?? "");
+    } else literal += c ?? "";
   }
-  return new RegExp("^" + re + "$");
+  flush();
+  return tokens;
+}
+
+/**
+ * One token → its regex source.
+ *
+ * Every construct emits something with NO quantifier of its own beyond a bare `.*` or `[^/]*`, and
+ * an alternation carries none at all — which is what keeps the output inside dependency-cruiser's
+ * ReDoS guard (it rejects grouped and nested quantifiers, never a plain group). The two emitters
+ * differ only in how they anchor the whole string, never in what a token means.
+ */
+export function globTokenToRegExp(token: GlobToken): string {
+  switch (token.kind) {
+    case "literal":
+      return escapeRe(token.text);
+    case "star":
+      return "[^/]*";
+    case "globstar":
+      return ".*";
+    case "single":
+      return "[^/]";
+    case "options":
+      return `(${token.options.map(escapeRe).join("|")})`;
+  }
+}
+
+/** A glob → an anchored RegExp. Supports `**` (across /), `*` (within a segment), `?`, `{a,b}`. */
+export function globToRegExp(glob: string): RegExp {
+  return new RegExp(`^${tokenizeGlob(glob).map(globTokenToRegExp).join("")}$`);
 }
 
 export function matchGlob(path: string, glob: string): boolean {

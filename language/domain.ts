@@ -175,9 +175,23 @@ export function defineCategory(name: string, classify: Classifier): Category {
   return { [CATEGORY]: true, name, classify };
 }
 
+/**
+ * What `value` holds under `key`, or undefined when it is not an object at all.
+ *
+ * ONE reader for every brand in this file. There were four — the category symbol, the pack symbol,
+ * the ref symbol and the sentence's `spec` — each re-typing the same `typeof value === "object" &&
+ * value !== null` guard before reaching in. Four copies of a null check is four chances to write
+ * the one that reads a property off `null` and throws inside a loader whose whole promise is that
+ * it collects faults instead of stopping at one.
+ */
+function held(value: unknown, key: symbol | string): unknown {
+  if (typeof value !== "object" || value === null) return undefined;
+  return (value as Record<symbol | string, unknown>)[key];
+}
+
 /** Was this made by `defineCategory`? The load's backstop behind `.for()`'s typing. */
 export function isCategory(value: unknown): value is Category {
-  return typeof value === "object" && value !== null && CATEGORY in value;
+  return held(value, CATEGORY) === true;
 }
 
 
@@ -603,10 +617,8 @@ export function breadcrumb(): BreadcrumbSentence {
 
 /** Is this an entry rather than a group of them? What `definePack` walks a pack's tree with. */
 export function isSentence(value: unknown): value is Sentence {
-  if (typeof value !== "object" || value === null || !("spec" in value)) return false;
-  const { spec } = value;
-  if (typeof spec !== "object" || spec === null || !("kind" in spec)) return false;
-  return spec.kind === "guardrail" || spec.kind === "breadcrumb";
+  const kind = held(held(value, "spec"), "kind");
+  return kind === "guardrail" || kind === "breadcrumb";
 }
 
 
@@ -776,9 +788,8 @@ function refProxy(packName: string, path: readonly string[], definition?: PackDe
 
 /** The definition riding under a pack value, or undefined if this was never made by definePack. */
 export function packDefinition(value: unknown): PackDefinition | undefined {
-  if (typeof value !== "object" || value === null) return undefined;
-  const held = (value as Record<symbol, unknown>)[PACK];
-  return isPackDefinition(held) ? held : undefined;
+  const definition = held(value, PACK);
+  return isPackDefinition(definition) ? definition : undefined;
 }
 
 function isPackDefinition(value: unknown): value is PackDefinition {
@@ -792,10 +803,9 @@ function isPackDefinition(value: unknown): value is PackDefinition {
 
 /** Where a reference points, or undefined if this was never a reference. */
 export function refTarget(value: unknown): RefTarget | undefined {
-  if (typeof value !== "object" || value === null) return undefined;
-  const held = (value as Record<symbol, unknown>)[REF];
-  if (typeof held !== "object" || held === null) return undefined;
-  const { pack: packName, id } = held as RefTarget;
+  const target = held(value, REF);
+  const packName = held(target, "pack");
+  const id = held(target, "id");
   return typeof packName === "string" && typeof id === "string" ? { pack: packName, id } : undefined;
 }
 

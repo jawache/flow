@@ -53,7 +53,37 @@ import type {
   TurnAction,
   Verdict,
 } from "../language/domain.ts";
-import { escapeRe, expandTemplate, matchAny } from "../glob.ts";
+import { escapeRe, expandTemplate, globTokenToRegExp, matchAny, tokenizeGlob } from "../glob.ts";
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE TWO SHAPES EVERY CHECK HAS
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+//
+// Almost every check below ends the same way — a list of hits, empty meaning yes — and most of
+// them start the same way, by reading the file the event is about. Written out each time that was
+// eleven copies of one ternary and four copies of one fallback, which is eleven places for a check
+// to answer `ok()` when it meant `fail()`.
+
+/**
+ * A verdict from a list of hits: none is a pass, and any is ONE block naming all of them.
+ *
+ * One block rather than one per hit, because a rail shows a person a single message: four separate
+ * refusals for one file is four things to read and three to lose.
+ */
+function answer(ctx: Ctx, hits: readonly string[], join = " · "): Verdict {
+  return hits.length === 0 ? ctx.ok() : ctx.fail(hits.join(join));
+}
+
+/**
+ * The would-be file this event is about.
+ *
+ * Empty strings when the moment carries none — a check bound at a moment with no file is a binding
+ * mistake, and it is caught where mistakes belong: the load refuses a `.test()` case whose dialect
+ * the entry's moments cannot speak, so a path check bound at `command` fails its own cases.
+ */
+function touched(ctx: Ctx): { readonly path: string; readonly content: string } {
+  return ctx.file ?? { path: "", content: "" };
+}
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // PATTERNS — the one regex sweep, and the two checks that render it differently
@@ -98,9 +128,8 @@ export function patternHits(text: string, patterns: readonly string[]): PatternH
 export const textBan = defineCheck(
   (opts: { ban: readonly string[] }): Check =>
     (ctx) => {
-      const hits = patternHits(ctx.file?.content ?? "", opts.ban);
-      if (hits.length === 0) return ctx.ok();
-      return ctx.fail(hits.map((h) => `line ${h.line}: matches /${h.pattern}/`).join(" · "));
+      const hits = patternHits(touched(ctx).content, opts.ban);
+      return answer(ctx, hits.map((h) => `line ${h.line}: matches /${h.pattern}/`));
     },
 );
 
@@ -114,8 +143,7 @@ export const banCommands = defineCheck(
   (opts: { ban: readonly string[] }): Check =>
     (ctx) => {
       const hits = patternHits(ctx.command ?? "", opts.ban);
-      if (hits.length === 0) return ctx.ok();
-      return ctx.fail(hits.map((h) => `matches banned /${h.pattern}/`).join(" · "));
+      return answer(ctx, hits.map((h) => `matches banned /${h.pattern}/`));
     },
 );
 
@@ -140,7 +168,7 @@ export const banCommands = defineCheck(
 export const protectedPath = defineCheck(
   (opts: { existingOnly?: boolean }): Check =>
     async (ctx) => {
-      const path = ctx.file?.path ?? "";
+      const { path } = touched(ctx);
       if (opts.existingOnly === true) {
         // "Already there" is asked of the tree, not of git: at write time the file either exists
         // or is being created, and that is exactly the distinction append-only wants. A delete has
@@ -163,7 +191,7 @@ export const protectedPath = defineCheck(
 export const siblingExists = defineCheck(
   (opts: { sibling: string }): Check =>
     async (ctx) => {
-      const sibling = expandTemplate(opts.sibling, ctx.file?.path ?? "");
+      const sibling = expandTemplate(opts.sibling, touched(ctx).path);
       return (await ctx.fs.exists(sibling)) ? ctx.ok() : ctx.fail(`required sibling missing: ${sibling}`);
     },
 );
@@ -198,7 +226,22 @@ export interface CanonOptions {
 const SOURCE = /\.(ts|tsx|mts|cts|js|mjs|cjs|jsx)$/;
 
 /**
- * Is this filename non-canonical under these options?
+ * What the canon says about one path.
+ *
+ * A DISCRIMINATED reason rather than a boolean, because there are two different violations here
+ * and they earn different sentences. The decision and the wording used to be two functions, each
+ * re-deriving the tier from the path — which meant the message could describe a different fault
+ * from the one that fired, and only a reader comparing the two would ever notice.
+ */
+export type CanonVerdict =
+  | { readonly ok: true }
+  /** A name directly under `root` that the folder tier does not allow. `found` is that name. */
+  | { readonly ok: false; readonly tier: "folder"; readonly found: string }
+  /** A filename inside a feature folder that the canon does not allow. */
+  | { readonly ok: false; readonly tier: "filename" };
+
+/**
+ * Judge one path against the canon. The ONE place the tier decision is made.
  *
  * The rule. A file directly under `root` is the shared-util tier and may be named anything — the
  * test and coverage rules already cover it. A file INSIDE a feature folder (`<root>/<feature>/…`)
@@ -212,45 +255,46 @@ const SOURCE = /\.(ts|tsx|mts|cts|js|mjs|cjs|jsx)$/;
  * wrong. It reads no content: this is a claim about NAMES, and reading the file would only invite
  * the rule to start having opinions about what is in it.
  */
-export function isNonCanonicalFile(path: string, o: CanonOptions): boolean {
+export function judgeCanonical(path: string, o: CanonOptions): CanonVerdict {
   const p = path.replace(/\\/g, "/");
   const marker = o.root.replace(/^\/+|\/+$/g, "") + "/";
   const ix = p.indexOf(marker);
-  if (ix === -1) return false;
+  if (ix === -1) return { ok: true };
+  const rel = p.slice(ix + marker.length);
 
   // The FOLDER tier, judged first and on any file type: what may sit directly under root. A stray
   // `docs/notes.md` and a stray `docs/notes/` are the same mistake, and neither is about source
   // code, so the extension check below must not get to decide.
   if (o.folders?.length) {
-    const first = p.slice(ix + marker.length).split("/")[0] ?? "";
+    const first = rel.split("/")[0] ?? "";
     const name = first.replace(/\.[^.]+$/, "");
-    if (first !== "" && !o.folders.includes(first) && !o.folders.includes(name)) return true;
+    if (first !== "" && !o.folders.includes(first) && !o.folders.includes(name)) {
+      return { ok: false, tier: "folder", found: first };
+    }
   }
-  if (!o.allow.length) return false;
+  if (!o.allow.length) return { ok: true };
 
   const m = SOURCE.exec(p);
-  if (!m) return false;
-  if (p.endsWith(".d.ts")) return false;
-
-  const rel = p.slice(ix + marker.length);
-  if (!rel.includes("/")) return false; // the shared-util tier — any name, tested elsewhere
+  if (!m) return { ok: true };
+  if (p.endsWith(".d.ts")) return { ok: true };
+  if (!rel.includes("/")) return { ok: true }; // the shared-util tier — any name, tested elsewhere
 
   const file = rel.slice(rel.lastIndexOf("/") + 1);
   const base = file.slice(0, -m[0].length);
 
   // Only the thinking file may carry a test: a talking file with a test is a talking file that
   // grew logic, which is the whole thing this allowlist is watching for.
-  if (base.endsWith(".test")) return base.slice(0, -".test".length) !== (o.thinking ?? "");
-  return !o.allow.includes(base);
+  const bad = base.endsWith(".test")
+    ? base.slice(0, -".test".length) !== (o.thinking ?? "")
+    : !o.allow.includes(base);
+  return bad ? { ok: false, tier: "filename" } : { ok: true };
 }
 
-/** The sentence a non-canonical file earns — one place, so every caller phrases it identically. */
-export function canonicalFault(path: string, o: CanonOptions): string {
-  const p = path.replace(/\\/g, "/");
-  const marker = o.root.replace(/^\/+|\/+$/g, "") + "/";
-  const first = p.slice(p.indexOf(marker) + marker.length).split("/")[0] ?? "";
-  if (o.folders?.length && !o.folders.includes(first) && !o.folders.includes(first.replace(/\.[^.]+$/, ""))) {
-    return `'${first}' is not one of the names ${o.root}/ may hold: ${o.folders.join(" · ")} (found ${path})`;
+/** The sentence a verdict earns. It renders what was decided — it never decides anything itself. */
+export function canonicalFault(verdict: CanonVerdict, path: string, o: CanonOptions): string {
+  if (verdict.ok) return "";
+  if (verdict.tier === "folder") {
+    return `'${verdict.found}' is not one of the names ${o.root}/ may hold: ${o.folders?.join(" · ") ?? ""} (found ${path})`;
   }
   return (
     `non-canonical file in a ${o.root} feature folder: ${path} ` +
@@ -262,8 +306,9 @@ export function canonicalFault(path: string, o: CanonOptions): string {
 export const canonicalFiles = defineCheck(
   (opts: CanonOptions): Check =>
     (ctx) => {
-      const path = ctx.file?.path ?? "";
-      return isNonCanonicalFile(path, opts) ? ctx.fail(canonicalFault(path, opts)) : ctx.ok();
+      const { path } = touched(ctx);
+      const verdict = judgeCanonical(path, opts);
+      return verdict.ok ? ctx.ok() : ctx.fail(canonicalFault(verdict, path, opts));
     },
 );
 
@@ -352,8 +397,7 @@ export function jsonViolations(jsonText: string, assert: readonly JsonAssert[]):
 export const jsonInvariant = defineCheck(
   (opts: { assert: readonly JsonAssert[] }): Check =>
     (ctx) => {
-      const hits = jsonViolations(ctx.file?.content ?? "", opts.assert);
-      return hits.length === 0 ? ctx.ok() : ctx.fail(hits.join(" · "));
+      return answer(ctx, jsonViolations(touched(ctx).content, opts.assert));
     },
 );
 
@@ -388,13 +432,12 @@ export async function exportedNames(content: string): Promise<string[]> {
 export const symbolsInSibling = defineCheck(
   (opts: { sibling: string }): Check =>
     async (ctx) => {
-      const sibling = expandTemplate(opts.sibling, ctx.file?.path ?? "");
+      const { path, content } = touched(ctx);
+      const sibling = expandTemplate(opts.sibling, path);
       if (!(await ctx.fs.exists(sibling))) return ctx.fail(`sibling test not found: ${sibling}`);
       const text = await ctx.fs.read(sibling);
-      const missing = unreferenced(await exportedNames(ctx.file?.content ?? ""), text);
-      return missing.length === 0
-        ? ctx.ok()
-        : ctx.fail(missing.map((n) => `exported '${n}' is never referenced in ${sibling}`).join(" · "));
+      const missing = unreferenced(await exportedNames(content), text);
+      return answer(ctx, missing.map((n) => `exported '${n}' is never referenced in ${sibling}`));
     },
 );
 
@@ -437,8 +480,7 @@ export function lonelyChanges(changed: readonly string[], groups: readonly Chang
 export const changeTogether = defineCheck(
   (opts: { groups: readonly ChangeGroup[] }): Check =>
     async (ctx) => {
-      const hits = lonelyChanges(await changedSet(ctx), opts.groups);
-      return hits.length === 0 ? ctx.ok() : ctx.fail(hits.join(" · "));
+      return answer(ctx, lonelyChanges(await changedSet(ctx), opts.groups));
     },
 );
 
@@ -842,7 +884,7 @@ export const commitReason = defineCheck(
         except: opts.except,
         token: opts.token,
       });
-      return hits.length === 0 ? ctx.ok() : ctx.fail(hits.join(" · "));
+      return answer(ctx, hits);
     },
 );
 
@@ -1017,27 +1059,24 @@ export interface Dialect {
 }
 
 /**
- * A path glob → an anchored module-path regex (posix module paths).
+ * A path glob → a module-path regex for dependency-cruiser (posix module paths).
  *
- * Emits only SAFE constructs: dependency-cruiser's ReDoS guard rejects GROUPED and NESTED
- * quantifiers — an optional non-capturing directory group, a repeated segment group — but accepts
- * a bare `.*`. So `**` becomes `.*` and a trailing `**` becomes a prefix with no end anchor. One
- * pass with a replacer, so a generated `.*` is never re-processed by the single-star rule.
+ * It emits from ../glob.ts's tokens, and that is the whole point: this used to be a SECOND glob
+ * translator, and it did not speak the whole dialect. It escaped `{` and `}` into literals, so
+ * `src/**` + `/*.{ts,tsx}` — an ordinary layer glob — compiled to a fence that matched nothing,
+ * silently, behind a green tick. One parser now, and a construct either has a token every emitter
+ * maps or it is not in the dialect at all.
+ *
+ * The ONE thing this emitter does differently, and why it is an anchor rule rather than a dialect:
+ * a TRAILING `**` means "everything under here", so the prefix is emitted and the end is left
+ * unanchored. dependency-cruiser matches module paths unanchored at the tail, and every layer in
+ * every repo already written against that behaviour must keep meaning what it meant.
  */
 export function globToRe(glob: string): string {
-  let g = glob;
-  let anchorEnd = true;
-  if (g.endsWith("/**")) {
-    g = g.slice(0, -3) + "/";
-    anchorEnd = false;
-  } else if (g.endsWith("**")) {
-    g = g.slice(0, -2);
-    anchorEnd = false;
-  }
-  const re = g
-    .replace(/[.+^${}()|[\]]/g, "\\$&") // escape specials (NOT * or /)
-    .replace(/\*\*\/?|\*/g, (m) => (m.startsWith("**") ? ".*" : "[^/]*"));
-  return `^${re}${anchorEnd ? "$" : ""}`;
+  const tokens = tokenizeGlob(glob);
+  const trailing = tokens[tokens.length - 1]?.kind === "globstar";
+  const body = (trailing ? tokens.slice(0, -1) : tokens).map(globTokenToRegExp).join("");
+  return `^${body}${trailing ? "" : "$"}`;
 }
 
 /**
@@ -1232,8 +1271,7 @@ export function depcruiseHits(result: ExecResult): string[] {
     // No parseable JSON. Exit 0 with no report is an empty cruise; anything else is a real failure
     // — a bad config, a missing tool — and saying so beats reporting a clean graph.
     if (result.code === 0) return [];
-    const tail = (result.stderr || result.stdout).trim().split("\n").slice(-3).join("\n");
-    return [`depcruise failed (exit ${result.code}): ${tail}`];
+    return [`depcruise failed (exit ${result.code}): ${failureExcerpt(result.stderr || result.stdout, 3)}`];
   }
   return (json.summary?.violations ?? []).map((v) => {
     const name = v.rule?.name ?? "fence";
@@ -1252,8 +1290,7 @@ export function depcruiseHits(result: ExecResult): string[] {
 export const depcruise = defineCheck(
   (opts: Dialect): Check =>
     async (ctx) => {
-      const hits = depcruiseHits(await ctx.exec(depcruiseCommand(opts)));
-      return hits.length === 0 ? ctx.ok() : ctx.fail(hits.join("\n"));
+      return answer(ctx, depcruiseHits(await ctx.exec(depcruiseCommand(opts))), "\n");
     },
 );
 
@@ -1350,9 +1387,9 @@ export async function astGrepHits(
 export const astGrep = defineCheck(
   (opts: { rule: unknown; language: string }): Check =>
     async (ctx) => {
-      const found = await astGrepHits(ctx.file?.content ?? "", opts.rule, opts.language);
+      const found = await astGrepHits(touched(ctx).content, opts.rule, opts.language);
       if (!found.ok) return ctx.fail(found.detail);
-      return found.hits.length === 0 ? ctx.ok() : ctx.fail(found.hits.join(" · "));
+      return answer(ctx, found.hits);
     },
 );
 
@@ -1370,23 +1407,46 @@ export const astGrep = defineCheck(
 // checked nothing for four days. A rule whose block case PASSES cannot ship — which is what makes
 // cases a proof rather than a formality.
 
-/** Which moment's dialect a case speaks. */
-export function caseMoment(c: Case): Moment {
-  if (typeof c === "string") return "command";
-  if ("command" in c) return "command";
-  if ("path" in c) return "write";
-  if ("staged" in c) return "commit";
-  return "turn-end";
+/** The four dialects a case can be written in — one per kind of event fact. */
+export type CaseDialect = "command" | "write" | "commit" | "turn-end";
+
+/**
+ * WHICH GUARDRAIL MOMENTS SPEAK EACH DIALECT — the one table, and everything else reads it.
+ *
+ * `write` covers `delete` too, because both carry a path and the delete rail hands over the file
+ * that is going away. Nothing else overlaps: a command case can only ever reach a command rail.
+ */
+const SPEAKS: Readonly<Record<CaseDialect, readonly GuardrailMoment[]>> = {
+  command: ["command"],
+  write: ["write", "delete"],
+  commit: ["commit"],
+  "turn-end": ["turn-end"],
+};
+
+/**
+ * Read a case once: which dialect it speaks, the event facts it carries, and its recorded world.
+ *
+ * ONE ladder over the union, and it is the only one. There were three — this, a `caseMoment` that
+ * asked the same questions to answer half of it, and a `momentSpeaks` that hard-coded the same
+ * pairing a fourth time — so adding a fifth case shape meant finding three places, and missing one
+ * of them would have produced a case that ran at the wrong moment rather than an error.
+ */
+export function readCase(c: Case): {
+  readonly dialect: CaseDialect;
+  readonly facts: Partial<Ctx>;
+  readonly world: CaseWorld;
+} {
+  if (typeof c === "string") return { dialect: "command", facts: { command: c }, world: {} };
+  const world = c.world ?? {};
+  if ("command" in c) return { dialect: "command", facts: { command: c.command }, world };
+  if ("path" in c) return { dialect: "write", facts: { file: { path: c.path, content: c.content } }, world };
+  if ("staged" in c) return { dialect: "commit", facts: { staged: c.staged }, world };
+  return { dialect: "turn-end", facts: { turn: c.actions }, world };
 }
 
-/** The event facts a case carries, and the recorded answers it supplies for everything else. */
-function caseFacts(c: Case): { world: CaseWorld; facts: Partial<Ctx> } {
-  if (typeof c === "string") return { world: {}, facts: { command: c } };
-  const world = c.world ?? {};
-  if ("command" in c) return { world, facts: { command: c.command } };
-  if ("path" in c) return { world, facts: { file: { path: c.path, content: c.content } } };
-  if ("staged" in c) return { world, facts: { staged: c.staged } };
-  return { world, facts: { turn: c.actions } };
+/** Which moment's dialect a case speaks. */
+export function caseMoment(c: Case): Moment {
+  return readCase(c).dialect;
 }
 
 /** What a canned ctx reached for that its case never answered. */
@@ -1409,7 +1469,7 @@ export interface Unanswered {
  * record into a failed case naming exactly what the check asked for.
  */
 export function cannedCtx(moment: Moment, c: Case, unanswered: Unanswered[]): Ctx {
-  const { world, facts } = caseFacts(c);
+  const { world, facts } = readCase(c);
   const execAnswers = world.exec ?? {};
   const files = world.fs ?? {};
   return {
@@ -1446,14 +1506,6 @@ export function cannedCtx(moment: Moment, c: Case, unanswered: Unanswered[]): Ct
   };
 }
 
-/** Does this moment speak the dialect a case is written in? */
-function momentSpeaks(moment: GuardrailMoment, dialect: Moment): boolean {
-  if (dialect === "command") return moment === "command";
-  if (dialect === "commit") return moment === "commit";
-  if (dialect === "turn-end") return moment === "turn-end";
-  return moment === "write" || moment === "delete";
-}
-
 /** How one case came out. */
 export interface CaseResult {
   readonly entry: string;
@@ -1486,15 +1538,15 @@ export async function runCase(
   expect: "pass" | "block",
   index: number,
 ): Promise<CaseResult> {
-  const spoken = caseMoment(c);
+  const { dialect } = readCase(c);
   const at: readonly GuardrailMoment[] = entry.spec.kind === "guardrail" ? (entry.spec.at ?? []) : [];
-  const moment = at.find((m) => momentSpeaks(m, spoken));
+  const moment = at.find((m) => SPEAKS[dialect].includes(m));
   const head = { entry: entry.id, expect, index };
   if (moment === undefined) {
     return {
       ...head,
       ok: false,
-      detail: `this case speaks the ${spoken} dialect, and the entry fires at ${at.length ? at.join(", ") : "no moment at all"} — nothing here would ever be handed one`,
+      detail: `this case speaks the ${dialect} dialect, and the entry fires at ${at.length ? at.join(", ") : "no moment at all"} — nothing here would ever be handed one`,
     };
   }
 

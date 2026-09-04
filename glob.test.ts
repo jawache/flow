@@ -1,5 +1,15 @@
 import { expect, test } from "vitest";
-import { escapeRe, globToRegExp, matchGlob, matchAny, fileParts, expandTemplate } from "./glob.ts";
+import {
+  escapeRe,
+  expandTemplate,
+  fileParts,
+  globToRegExp,
+  globTokenToRegExp,
+  matchAny,
+  matchGlob,
+  tokenizeGlob,
+  type GlobToken,
+} from "./glob.ts";
 
 test("escapeRe neutralises every regex metacharacter", () => {
   expect(escapeRe("a.b*c")).toBe("a\\.b\\*c");
@@ -67,4 +77,52 @@ test("matchGlob: **/ spans zero or more directories — the flat-file fix, now o
   expect(matchGlob("src/content/a/c.mdx", "src/content/**/*.md")).toBe(false);
   expect(matchGlob("src/lib/x/y.ts", "src/lib/**")).toBe(true);
   expect(matchGlob("work.yaml", "work.yaml")).toBe(true);
+});
+
+// ── the dialect, as tokens ────────────────────────────────────────────────────
+//
+// The tokeniser is what makes this the ONE glob engine: the depcruise check emits its fences from
+// these same tokens (flow/checks/domain.ts), and before it existed that check carried a second
+// translator which silently escaped `{a,b}` into a literal — a fence matching nothing, reporting
+// healthy. A construct either has a token here or it is not in the dialect.
+
+test("tokenizeGlob reads every construct the dialect has, and nothing else", () => {
+  expect(tokenizeGlob("src/a.ts")).toStrictEqual([{ kind: "literal", text: "src/a.ts" }]);
+  expect(tokenizeGlob("*")).toStrictEqual([{ kind: "star" }]);
+  expect(tokenizeGlob("?")).toStrictEqual([{ kind: "single" }]);
+  expect(tokenizeGlob("{ts,tsx}")).toStrictEqual([{ kind: "options", options: ["ts", "tsx"] }]);
+});
+
+test("`**` swallows the separator after it, so a/**/b matches a/b as well as a/x/b", () => {
+  expect(tokenizeGlob("a/**/b")).toStrictEqual([
+    { kind: "literal", text: "a/" },
+    { kind: "globstar" },
+    { kind: "literal", text: "b" },
+  ]);
+  expect(matchGlob("a/b", "a/**/b")).toBeTruthy();
+  expect(matchGlob("a/x/y/b", "a/**/b")).toBeTruthy();
+});
+
+test("an unclosed brace is a literal brace, never a throw and never a swallowed rest-of-string", () => {
+  expect(tokenizeGlob("a{b")).toStrictEqual([{ kind: "literal", text: "a{b" }]);
+  expect(matchGlob("a{b", "a{b")).toBeTruthy();
+});
+
+test("globTokenToRegExp maps every token, and emits no grouped quantifier for any of them", () => {
+  const tokens: GlobToken[] = [
+    { kind: "literal", text: "a.b" },
+    { kind: "star" },
+    { kind: "globstar" },
+    { kind: "single" },
+    { kind: "options", options: ["ts", "tsx"] },
+  ];
+  expect(tokens.map(globTokenToRegExp)).toStrictEqual(["a\\.b", "[^/]*", ".*", "[^/]", "(ts|tsx)"]);
+  // An alternation carries no quantifier at all, which is what keeps it inside dependency-cruiser's
+  // ReDoS guard when the fence emitter uses these same tokens.
+  expect(globTokenToRegExp({ kind: "options", options: ["a"] })).not.toMatch(/[*+?]/);
+});
+
+test("an option carrying a metacharacter is matched literally", () => {
+  expect(matchGlob("a.c", "a{.c,xx}")).toBeTruthy();
+  expect(matchGlob("axc", "a{.c,xx}")).toBeFalsy();
 });
