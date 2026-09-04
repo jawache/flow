@@ -41,6 +41,8 @@ import {
   MOMENT_ORDER,
   RECORDING_VERSION,
   ROW_KINDS,
+  readDir,
+  readMarkPath,
   readRecording,
   recordPath,
   recordingFile,
@@ -48,7 +50,7 @@ import {
   afterCompaction,
   covers,
   diffRows,
-  heat,
+  insideRepo,
   isEdit,
   metrics,
   momentsView,
@@ -57,6 +59,7 @@ import {
   subjectOf,
   terrain,
   universe,
+  watching,
   bindsTo,
   brief,
   categoriesIn,
@@ -875,6 +878,16 @@ describe("covers — coverage is only ever claimed by an entry that names paths"
     expect(covers(unscoped, "anything.ts")).toBe(false);
   });
 
+  it("one set of entries can claim coverage — live, and naming paths", () => {
+    // Three surfaces ask this (the gap list, the tree, and the transcript-side reading) and they
+    // must agree: a set that differs by a disabled entry is a folder that reads as guarded on one
+    // page and abandoned on the next.
+    const ids = watching(bound).map((e) => e.id);
+    expect(ids).toContain("rails.stagedFiles");
+    expect(ids, "unscoped — it matches everywhere and reaches nowhere").not.toContain("rails.everyone");
+    expect(ids, "turned off — it fires at nothing, so it watches nothing").not.toContain("rails.retired");
+  });
+
   it("a scoped entry reaches its globs and stops at its ignores", () => {
     const staged = boundOf("rails.stagedFiles");
     expect(covers(staged, "src/a.ts")).toBe(true);
@@ -1084,10 +1097,18 @@ describe("the record — the DEAD reading, which retires a rule if it is wrong",
 });
 
 describe("the terrain — the real tree, with coverage laid over it", () => {
+  const nowMs = Date.parse("2026-03-01T00:00:00.000Z");
+
   it("rolls touches, edits and gaps up every ancestor, and lists who reaches where", () => {
     const rows: Row[] = [toolRowFor("src/a.ts", true), toolRowFor("src/a.ts"), toolRowFor("docs/x.md", true)];
-    const recorded = heat([{ session: "s1", rows }]);
-    expect(recorded).toEqual({ touches: { "src/a.ts": 2, "docs/x.md": 1 }, edits: { "src/a.ts": 1, "docs/x.md": 1 } });
+    // The heat comes out of the metrics walk — ONE pass over the rows, and one decision about
+    // whether anything was watching. The tree reads that answer rather than making it again.
+    const recorded = metrics({ sessions: [{ session: "s1", rows }], entries: bound, nowMs }).heat;
+    expect(recorded).toEqual({
+      touches: { "src/a.ts": 2, "docs/x.md": 1 },
+      edits: { "src/a.ts": 1, "docs/x.md": 1 },
+      uncovered: { "docs/x.md": 1 },
+    });
 
     const tree = terrain({ paths: ["src/a.ts", "README.md"], heat: recorded, entries: bound });
     const at = (path: string): TerrainNode => tree.find((n) => n.path === path) as TerrainNode;
@@ -1101,7 +1122,7 @@ describe("the terrain — the real tree, with coverage laid over it", () => {
   it("draws folders before files, and a node always follows its parent", () => {
     const tree = terrain({
       paths: ["z.md", "src/b.ts", "src/a.ts", "docs/x.md"],
-      heat: { touches: {}, edits: {} },
+      heat: { touches: {}, edits: {}, uncovered: {} },
       entries: [],
     });
     expect(tree.map((n) => n.path)).toEqual(["docs", "docs/x.md", "src", "src/a.ts", "src/b.ts", "z.md"]);
@@ -1109,8 +1130,12 @@ describe("the terrain — the real tree, with coverage laid over it", () => {
 
   it("an absolute path, or one climbing out of the repo, is not a node of this tree", () => {
     const rows: Row[] = [toolRowFor("/etc/passwd"), toolRowFor("../elsewhere/a.ts", true)];
-    expect(heat([{ session: "s1", rows }])).toEqual({ touches: {}, edits: {} });
-    expect(terrain({ paths: [], heat: { touches: {}, edits: {} }, entries: bound })).toEqual([]);
+    expect(insideRepo("src/a.ts")).toBe(true);
+    expect([insideRepo("/etc/passwd"), insideRepo("../up.ts"), insideRepo("")]).toEqual([false, false, false]);
+    const read = metrics({ sessions: [{ session: "s1", rows }], entries: bound, nowMs: 0 });
+    expect(read.heat).toEqual({ touches: {}, edits: {}, uncovered: {} });
+    expect(read.gaps, "and an edit outside the repo is not a gap in it either").toEqual([]);
+    expect(terrain({ paths: [], heat: read.heat, entries: bound })).toEqual([]);
   });
 });
 
@@ -1360,6 +1385,11 @@ describe("the recording file — appended live, read back whole", () => {
   it("names the switch and the stream, both under the one state home", () => {
     expect(recordPath("/repo")).toBe("/repo/.flow/record");
     expect(recordingFile("/repo", "a/b")).toBe("/repo/.flow/replay/a-b.jsonl");
+    // The archival side's backlog marker is a `.flow` path like every other, spelled here rather
+    // than by the layer that happens to write it — a reader looking in the wrong place reports
+    // "nothing read yet" rather than an error, and silently re-offers a year of history.
+    expect(readDir("/repo")).toBe("/repo/.flow/read");
+    expect(readMarkPath("/repo", "a/b")).toBe("/repo/.flow/read/a-b");
   });
 
   it("reads a header, then every step, and drops a line it cannot read rather than failing", () => {

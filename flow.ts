@@ -29,9 +29,9 @@ import { VERSION } from "./version.ts";
 import { entriesOrThrow, FlowConfigError } from "./errors.ts";
 import { loadConfig, type FlowConfig, type LoadedEntry } from "./language/domain.ts";
 import { runCases, type CaseResult } from "./checks/domain.ts";
-import { CONFIG_FILE, commitEntry, hookEntry } from "./adapter/claude.ts";
+import { commitEntry, hookEntry } from "./adapter/claude.ts";
 import { facts } from "./adapter/archive.ts";
-import { HOOK_EVENTS, snip, type HookResult } from "./adapter/domain.ts";
+import { CONFIG_FILE, HOOK_EVENTS, formatFacts, snip, type HookResult } from "./adapter/domain.ts";
 import { diffRows, replay, type Row } from "./engine/domain.ts";
 import { loadRecording, readRowsFile } from "./engine/state.ts";
 
@@ -205,7 +205,9 @@ async function replayFile(args: readonly string[]): Promise<number> {
  *
  * The numbers come from flow's own rows and the pointers come from the transcripts, and the two
  * are never mixed: `--json` hands the whole structure over for a reader that wants to do its own
- * thinking, and the lines below are the headline for one that does not.
+ * thinking, and `formatFacts` is the headline for one that does not. The prose is a pure home's,
+ * not this file's — a report is a pile of branches about what a reader most needs to know, and the
+ * branch that matters most is the one that fires least.
  */
 async function readFacts(args: readonly string[]): Promise<number> {
   const root = process.cwd();
@@ -226,32 +228,7 @@ async function readFacts(args: readonly string[]): Promise<number> {
     process.stdout.write(`${JSON.stringify(read, null, 2)}\n`);
     return read.health.blocked === null ? 0 : 1;
   }
-
-  const lines: string[] = [];
-  if (read.health.blocked !== null) lines.push(`✗ ${read.health.blocked}`);
-  for (const warn of read.health.warn) lines.push(`⚠ ${warn}`);
-  const { span, headline } = read.metrics;
-  lines.push(
-    `flow facts — ${read.coverage.analysed} of ${read.selection.counts.backlog} unread conversations · ` +
-      `${read.coverage.withRecord} with a record · ${read.store.exists ? read.store.dir : `no store at ${read.store.dir}`}`,
-    `  recorded  ${span.tools.toLocaleString()} tool calls · ${span.sessions} chats · ${span.days}d` +
-      (span.ample ? "" : " (too thin to call anything dead)"),
-    `  blocks    ${headline.blocks}`,
-    `  lead      ${headline.lead.median === null ? "nothing measurable yet" : `median ${headline.lead.median} tool calls`}`,
-  );
-  for (const gap of headline.gaps.slice(0, 5))
-    lines.push(`  gap       ${gap.area} — ${gap.edits} edit${gap.edits === 1 ? "" : "s"}, nothing watches it`);
-  if (headline.dead.length > 0) lines.push(`  dead      ${headline.dead.join(" · ")}`);
-  if (headline.quiet.length > 0)
-    lines.push(`  quiet     ${headline.quiet.map((q) => `${q.id} (${q.daysSince}d)`).join(" · ")}`);
-  const { stats, corrections, loops, retries, bypassSites } = read.narrative;
-  lines.push(
-    `  session   ${stats.edits} edits · ${stats.writes} writes · ${stats.commits} commits · ` +
-      `${corrections.length} corrections · ${loops.length} edit loops · ${retries.length} retries · ${bypassSites.length} bypasses`,
-  );
-  for (const weak of read.weakened)
-    lines.push(`  ⚠ guard edited after ${weak.entry ?? "a block"} refused — ${weak.path}:L${weak.line}, ${weak.gapSeconds}s later`);
-  if (read.marked !== null) lines.push(`  marked    ${read.marked} conversation(s) read`);
+  const lines = formatFacts(read);
   process.stdout.write(`${lines.join("\n")}\n`);
   return read.health.blocked === null ? 0 : 1;
 }

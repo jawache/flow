@@ -67,6 +67,7 @@ import {
 } from "../engine/state.ts";
 import {
   ALLOW,
+  CONFIG_FILE,
   branchFromHead,
   faultText,
   hermeticEnv,
@@ -206,9 +207,6 @@ export function currentBranch(root: string): string | null {
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE CONFIG — which repo this is, and what it has turned on
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-
-/** The config file flow looks for, in the repo it was asked about. One name, spelled once. */
-export const CONFIG_FILE = "flow.config.ts";
 
 /**
  * The repo the session is standing in — the FOURTH question of §7.

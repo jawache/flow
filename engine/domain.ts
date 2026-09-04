@@ -276,6 +276,18 @@ export function covers(scope: Scope, path: string): boolean {
   return (scope.on?.length ?? 0) > 0 && inScope(scope, path);
 }
 
+/**
+ * The entries that can claim coverage of anything — live, and naming paths.
+ *
+ * ONE spelling, because three surfaces ask it and they must agree: the gap list, the terrain's
+ * per-node answer, and the transcript-side reading of areas nobody watches. They were spelled
+ * three ways for one commit, and a set that differs by a disabled entry is a folder that reads as
+ * guarded on one page and abandoned on the next.
+ */
+export function watching(entries: readonly Bound[]): Bound[] {
+  return entries.filter((entry) => entry.disabled === null && (entry.on?.length ?? 0) > 0);
+}
+
 /** One thing an entry is run against: what the log row names, and the facts its ctx carries. */
 interface Subject {
   /** A path, a command, or null when the event is not about any one thing. */
@@ -749,6 +761,24 @@ export function recordingFile(root: string, session: string): string {
   return join(flowDir(root), "replay", `${sanitise(session)}.jsonl`);
 }
 
+/**
+ * Where a repo remembers which conversations the archival side has already read.
+ *
+ * One empty file per conversation, so EXISTENCE is the whole fact and there is nothing to keep in
+ * step. It lives here with every other `.flow/` path for the reason this section exists at all:
+ * the old engine spelled one state path two ways and the disagreement was invisible in exactly the
+ * direction that hurts — a reader looking in the wrong place reports "nothing read yet" rather
+ * than an error, and silently re-offers a year of history.
+ */
+export function readDir(root: string): string {
+  return join(flowDir(root), "read");
+}
+
+/** The marker for one conversation. Sanitised, because a stray id must never escape the folder. */
+export function readMarkPath(root: string, session: string): string {
+  return join(readDir(root), sanitise(session));
+}
+
 /** What a session marker holds. Loose, because it is read back off disk. */
 export interface SessionMarker {
   readonly session?: unknown;
@@ -1026,6 +1056,15 @@ export interface Metrics {
   readonly guardrails: readonly GuardrailRecord[];
   readonly gaps: readonly Gap[];
   readonly span: Span;
+  /**
+   * The per-path tally the terrain is drawn from — and it comes out of THIS walk rather than a
+   * second one over the same rows.
+   *
+   * The two readings had drifted before they were even finished: `gaps` decided "no entry reaches
+   * this edit" against one scoped set and the terrain decided it against another, spelled
+   * separately. There is one decision now, made here, and the tree reads its answer.
+   */
+  readonly heat: Heat;
 }
 
 /** One session's rows, as every reader of the record takes them. */
@@ -1066,6 +1105,20 @@ function leadFrom(samples: readonly number[], noEdit: number): Lead {
 }
 
 const dirOf = (path: string): string => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : ".");
+
+/**
+ * Is this a path inside the repo — the ONE predicate, and it is exported because two layers need
+ * the same answer.
+ *
+ * Every path flow reasons about is repo-relative, because that is how an `on` glob is written. An
+ * absolute path or one that climbs out is a real thing an agent touched and is simply not a node
+ * of this tree, not a file any glob could reach, and not an area anybody could have been watching.
+ * There were two spellings of that sentence and an inline third; a predicate that disagrees with
+ * itself decides that an edit was uncovered in one reading and out of scope in another.
+ */
+export function insideRepo(path: string): boolean {
+  return path !== "" && !path.startsWith("/") && !path.startsWith("..");
+}
 
 /** A row's string field, or null — every row is read off disk and may hold anything. */
 function field(row: Row, key: string): string | null {
@@ -1126,11 +1179,13 @@ interface Rail {
 export function metrics({ sessions, entries, nowMs, minSessions = 15, minDays = 30 }: MetricsArgs): Metrics {
   const live = entries.filter((e) => e.disabled === null);
   const byId = new Map(live.map((e) => [e.id, e]));
-  const scoped = live.filter((e) => (e.on?.length ?? 0) > 0);
+  const scoped = watching(entries);
 
   const shows = new Map<string, Shows>();
   const rails = new Map<string, Rail>();
-  const gapEdits = new Map<string, number>();
+  const touches: Record<string, number> = {};
+  const edited: Record<string, number> = {};
+  const uncovered: Record<string, number> = {};
   const stamps: string[] = [];
 
   const showsOf = (id: string): Shows => {
@@ -1175,10 +1230,16 @@ export function metrics({ sessions, entries, nowMs, minSessions = 15, minDays = 
         toolIndex += 1;
         tools += 1;
         const path = field(row, "path");
-        if (isEdit(row) && path !== null) {
-          edits.push({ at: toolIndex, path });
-          if (!scoped.some((e) => covers(e, path))) gapEdits.set(dirOf(path), (gapEdits.get(dirOf(path)) ?? 0) + 1);
-        }
+        // Everything the lead, the gap list and the tree need — ONE walk over the rows, and one
+        // decision about whether anything was watching. A path outside the repo is not a file any
+        // glob could reach, so it is neither a node of the tree nor a gap in it nor an edit a
+        // breadcrumb could have steered.
+        if (path === null || !insideRepo(path)) continue;
+        touches[path] = (touches[path] ?? 0) + 1;
+        if (!isEdit(row)) continue;
+        edited[path] = (edited[path] ?? 0) + 1;
+        edits.push({ at: toolIndex, path });
+        if (!scoped.some((e) => covers(e, path))) uncovered[path] = (uncovered[path] ?? 0) + 1;
         continue;
       }
       // Past a compaction the message is gone, so a block after it teaches anew rather than repeating.
@@ -1297,7 +1358,10 @@ export function metrics({ sessions, entries, nowMs, minSessions = 15, minDays = 
       };
     });
 
-  const gaps: Gap[] = [...gapEdits.entries()]
+  // The gap list is the SAME per-path answer, rolled up to the folder somebody would act on.
+  const byArea = new Map<string, number>();
+  for (const [path, n] of Object.entries(uncovered)) byArea.set(dirOf(path), (byArea.get(dirOf(path)) ?? 0) + n);
+  const gaps: Gap[] = [...byArea.entries()]
     .map(([area, edits]) => ({ area, edits }))
     .sort((a, b) => b.edits - a.edits || a.area.localeCompare(b.area));
 
@@ -1341,6 +1405,7 @@ export function metrics({ sessions, entries, nowMs, minSessions = 15, minDays = 
     guardrails,
     gaps,
     span: { sessions: sessionCount, days, first, last, ample, tools },
+    heat: { touches, edits: edited, uncovered },
   };
 }
 
@@ -1369,37 +1434,28 @@ export interface TerrainNode {
   uncovered: number;
 }
 
-/** How often each path was touched at all, and how often it was CHANGED. */
+/**
+ * What the recorded rows say about each path: how often it was touched at all, how often it was
+ * CHANGED, and how many of those changes nothing was watching.
+ *
+ * Three numbers rather than one because they answer different questions — reading an area is how
+ * an agent learns it, editing it is how the area changes (and a breadcrumb that arrives on the
+ * read is doing its job while one that arrives on the edit is not), and the third is the gap.
+ *
+ * It is produced by `metrics` and by nothing else. Coverage is a judgement about an entry's scope,
+ * so a second producer would be a second answer to "was anybody watching here" — which the gap
+ * list and the terrain briefly had.
+ */
 export interface Heat {
   readonly touches: Readonly<Record<string, number>>;
   readonly edits: Readonly<Record<string, number>>;
-}
-
-/**
- * The heat, straight off the recorded rows.
- *
- * Two numbers rather than one because they answer different questions — reading an area is how an
- * agent learns it, editing it is how the area changes, and a breadcrumb that arrives on the read
- * is doing its job while one that arrives on the edit is not.
- */
-export function heat(sessions: readonly SessionRows[]): Heat {
-  const touches: Record<string, number> = {};
-  const edits: Record<string, number> = {};
-  for (const { rows } of sessions)
-    for (const row of rows) {
-      if (row.kind !== "tool") continue;
-      const path = field(row, "path");
-      // An absolute path, or one that climbs out of the repo, is not a node of this tree.
-      if (path === null || path.startsWith("/") || path.startsWith("..")) continue;
-      touches[path] = (touches[path] ?? 0) + 1;
-      if (isEdit(row)) edits[path] = (edits[path] ?? 0) + 1;
-    }
-  return { touches, edits };
+  readonly uncovered: Readonly<Record<string, number>>;
 }
 
 export interface TerrainArgs {
   /** The tracked tree — what the repo HAS. */
   readonly paths: readonly string[];
+  /** `metrics(…).heat` — the rows, already read. This function walks no rows of its own. */
   readonly heat: Heat;
   readonly entries: readonly Bound[];
 }
@@ -1410,7 +1466,10 @@ export function terrain({ paths, heat: recorded, entries }: TerrainArgs): Terrai
   // and the recorder's keys are what was WORKED ON — including a file since deleted, which is
   // exactly the history a tree built from the tracked set alone would quietly lose.
   const files = new Set<string>([...paths, ...Object.keys(recorded.touches), ...Object.keys(recorded.edits)]);
-  const scoped = entries.filter((e) => e.disabled === null && (e.on?.length ?? 0) > 0);
+  // The same set `metrics` judged coverage with, asked a DIFFERENT question: not "was this edit
+  // watched" — that is already answered, per path, in the heat — but "which entries reach this
+  // node", which is what a folder is opened to find out.
+  const scoped = watching(entries);
   const nodes = new Map<string, TerrainNode>();
 
   const node = (path: string, dir: boolean): TerrainNode => {
@@ -1436,7 +1495,7 @@ export function terrain({ paths, heat: recorded, entries }: TerrainArgs): Terrai
     const covering = scoped.filter((e) => covers(e, file)).map((e) => e.id);
     const touched = recorded.touches[file] ?? 0;
     const changed = recorded.edits[file] ?? 0;
-    const uncovered = covering.length > 0 ? 0 : changed;
+    const uncovered = recorded.uncovered[file] ?? 0;
 
     // Walk the path from the root down, so every ancestor folder exists and accumulates. A
     // folder's coverage is the UNION of what answers inside it: "does anything watch here" is the

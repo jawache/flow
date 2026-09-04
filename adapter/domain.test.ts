@@ -16,7 +16,7 @@
 
 import { describe, it, expect } from "vitest";
 import type { TurnAction } from "../index.ts";
-import type { Block, Row } from "../engine/domain.ts";
+import { metrics, momentsView, type Block, type Bound, type Row } from "../engine/domain.ts";
 import {
   ALLOW,
   DELIVERS,
@@ -43,13 +43,15 @@ import {
   tokensFromTranscript,
   toolRow,
   touchedPath,
+  CONFIG_FILE,
   GUARD_PATHS,
-  branchOf,
+  formatFacts,
   health,
+  joinSpawn,
+  uncoveredAreas,
   selectSessions,
   classifyBash,
   classifyStore,
-  cwdOf,
   isCorrection,
   isGuardPath,
   mergeNarratives,
@@ -60,8 +62,8 @@ import {
   snip,
   spawnMeta,
   spawnsIn,
-  startedAt,
   strip,
+  transcriptHead,
   weakenedAfterBlock,
   transcriptLines,
   turnActions,
@@ -72,6 +74,8 @@ import {
   type Shown,
   type TranscriptEvent,
   type Candidate,
+  type Facts,
+  type SpawnRecord,
 } from "./domain.ts";
 
 // ── the world a payload is read against ──────────────────────────────────────
@@ -674,14 +678,18 @@ describe("the store — where the harness keeps its transcripts", () => {
         message: { content: "hi" },
       },
     );
-    expect(cwdOf(file)).toBe("/x/workbench.workflow-flow");
-    expect(branchOf(file)).toBe("workflow/flow");
-    expect(startedAt(file)).toBe("2026-01-01T00:00:00.000Z");
+    // ONE pass for all three. It was three functions and therefore three parses of the same
+    // multi-megabyte file, per conversation in the store, for an answer that is in its first few
+    // records — and this stops as soon as it has them.
+    expect(transcriptHead(file)).toEqual({
+      cwd: "/x/workbench.workflow-flow",
+      branch: "workflow/flow",
+      started: "2026-01-01T00:00:00.000Z",
+    });
     // The stub records at the head of every file carry none of the three, so a literal first line
     // is never enough — and a file that has none of them says so rather than guessing.
-    expect(cwdOf(store({ type: "last-prompt" }))).toBe(null);
-    expect(branchOf("")).toBe(null);
-    expect(startedAt("")).toBe(null);
+    expect(transcriptHead(store({ type: "last-prompt" }))).toEqual({ cwd: null, branch: null, started: null });
+    expect(transcriptHead("")).toEqual({ cwd: null, branch: null, started: null });
   });
 });
 
@@ -833,7 +841,10 @@ describe("the narrative reading — stats, loops, retries, and what was touched"
 
 describe("weakened after a block — the one failure a guard cannot catch itself", () => {
   it("knows which files ARE the guard here, in flow's own spelling", () => {
-    expect(GUARD_PATHS).toContain("flow.config.ts");
+    // The config's name is spelled ONCE — a second copy here would leave a renamed config's old
+    // name watched and its new one not.
+    expect(GUARD_PATHS).toContain(CONFIG_FILE);
+    expect(CONFIG_FILE).toBe("flow.config.ts");
     expect(isGuardPath("flow.config.ts")).toBe(true);
     expect(isGuardPath("guards/mine.ts")).toBe(true);
     expect(isGuardPath("packages/app/.claude/settings.json")).toBe(true);
@@ -919,5 +930,150 @@ describe("the health line above every number", () => {
     expect(health({ armed: true, rows: 0, withRecord: 1, analysed: 1 }).warn[0]).toContain("holds no events");
     expect(health({ armed: true, rows: 0, withRecord: 0, analysed: 2 }).warn[0]).toContain("narrative only");
     expect(health({ armed: true, rows: 12, withRecord: 1, analysed: 1 })).toEqual({ blocked: null, warn: [] });
+  });
+});
+
+describe("the reading — the join, the coverage answer, and the lines a person reads", () => {
+  const bound: Bound[] = [
+    { kind: "guardrail", id: "core.noTodo", pack: "core", at: ["write"], on: ["src/**"], for: [], description: null, says: null, disabled: null },
+    { kind: "guardrail", id: "core.off", pack: "core", at: ["write"], on: ["docs/**"], for: [], description: null, says: null, disabled: "superseded" },
+  ];
+
+  it("joins a subagent's two host-written records, and keeps what only one of them knows", () => {
+    const spawns = new Map([
+      ["toolu_9", { toolUseId: "toolu_9", asked: "general-purpose", description: "Build F5", ts: "2026-01-01T10:00:00.000Z", line: 12 }],
+    ]);
+    // A builder hidden inside a generic bucket: the parent CLAIMED general-purpose, the host WROTE
+    // builder, and only one of those is evidence.
+    expect(
+      joinSpawn({ session: "s1", agent: "agent-1", meta: spawnMeta('{"agentType":"builder","toolUseId":"toolu_9","model":"opus"}'), spawns }),
+    ).toEqual({
+      session: "s1",
+      agent: "agent-1",
+      agentType: "builder",
+      description: "Build F5",
+      model: "opus",
+      asked: "general-purpose",
+      at: "2026-01-01T10:00:00.000Z",
+      line: 12,
+    });
+
+    // No sidecar at all: spawned, as what we cannot say — and nothing is invented to fill it.
+    expect(joinSpawn({ session: "s1", agent: "agent-2", meta: null, spawns })).toEqual({
+      session: "s1",
+      agent: "agent-2",
+      agentType: null,
+      description: null,
+      model: null,
+      asked: null,
+      at: null,
+      line: null,
+    });
+
+    // A sidecar whose id names no block in the parent: what it alone knows still crosses.
+    const orphan = joinSpawn({ session: "s1", agent: "agent-3", meta: spawnMeta('{"agentType":"verifier","toolUseId":"toolu_x"}'), spawns });
+    expect(orphan).toMatchObject({ agentType: "verifier", asked: null, line: null });
+  });
+
+  it("answers coverage from the TRANSCRIPT, which reaches conversations the record cannot", () => {
+    expect(uncoveredAreas({ "src/a.ts": 3, "docs/x.md": 9, "README.md": 1 }, bound)).toEqual([
+      // `docs/**` is watched by an entry that is TURNED OFF, so it is not watched.
+      { path: "docs/x.md", touches: 9 },
+      { path: "README.md", touches: 1 },
+    ]);
+    expect(uncoveredAreas({}, bound)).toEqual([]);
+  });
+});
+
+describe("formatFacts — the whole of what a person sees", () => {
+  const empty = (over: Partial<Facts> = {}): Facts => ({
+    root: "/repo",
+    store: { dir: "/home/.claude/projects/-repo", exists: true, ignored: [] },
+    selection: { analyse: [], excluded: [], counts: { backlog: 0, analysed: 0, excluded: 0 } },
+    coverage: { analysed: 0, withRecord: 0, narrativeOnly: 0 },
+    health: { blocked: null, warn: [] },
+    metrics: metrics({ sessions: [], entries: [], nowMs: 0 }),
+    moments: momentsView([], null),
+    terrain: [],
+    narrative: mergeNarratives([]),
+    uncovered: [],
+    actors: [],
+    weakened: [],
+    marked: null,
+    ...over,
+  });
+
+  it("leads with the fail-loud header — an unarmed record is never presented as a calm week", () => {
+    const lines = formatFacts(empty({ health: { blocked: "the record is NOT ARMED", warn: ["and a caveat"] } }));
+    expect(lines[0]).toBe("✗ the record is NOT ARMED");
+    expect(lines[1]).toBe("⚠ and a caveat");
+  });
+
+  it("says a thin history is thin, rather than letting a zero read as a verdict", () => {
+    expect(formatFacts(empty()).join("\n")).toContain("too thin to call anything dead");
+    expect(formatFacts(empty()).join("\n")).toContain("nothing measurable yet");
+    expect(formatFacts(empty({ store: { dir: "/nowhere", exists: false, ignored: [] } })).join("\n")).toContain("no store at /nowhere");
+  });
+
+  it("prints the record's own verdicts — the gap list, and each of the three silences", () => {
+    const bound: Bound[] = [
+      { kind: "guardrail", id: "core.fiction", pack: "core", at: ["commit"], on: ["changelog/**"], for: [], description: null, says: null, disabled: null },
+    ];
+    const ampleRows: Row[] = [
+      { kind: "run", ts: "2026-01-01T00:00:00.000Z", moment: "commit", rules: [{ id: "core.fiction", evaluated: 0, hits: 0, silenced: 0 }] },
+      { kind: "tool", ts: "2026-02-05T00:00:00.000Z", tool: "Edit", path: "docs/x.md", edit: true },
+    ];
+    const text = formatFacts(
+      empty({ metrics: metrics({ sessions: [{ session: "s1", rows: ampleRows }], entries: bound, nowMs: Date.parse("2026-03-01T00:00:00.000Z") }) }),
+    ).join("\n");
+    expect(text).toContain("gap       docs — 1 edit, nothing watches it");
+    expect(text).toContain("dead      core.fiction");
+    expect(text).toContain("retire    core.fiction — bound, never once reached");
+  });
+
+  it("names an entry that used to catch things and stopped", () => {
+    const bound: Bound[] = [
+      { kind: "guardrail", id: "core.noTodo", pack: "core", at: ["write"], on: ["src/**"], for: [], description: null, says: null, disabled: null },
+    ];
+    const rows: Row[] = [
+      { kind: "run", ts: "2026-01-01T00:00:00.000Z", moment: "write", rules: [{ id: "core.noTodo", evaluated: 1, hits: 1, silenced: 0 }] },
+      { kind: "guardrail", ts: "2026-01-01T00:00:00.000Z", moment: "write", id: "core.noTodo", out: "deny", subject: "src/a.ts" },
+      { kind: "run", ts: "2026-02-05T00:00:00.000Z", moment: "write", rules: [] },
+    ];
+    const text = formatFacts(
+      empty({ metrics: metrics({ sessions: [{ session: "s1", rows }], entries: bound, nowMs: Date.parse("2026-03-01T00:00:00.000Z") }) }),
+    ).join("\n");
+    expect(text).toContain("quiet     core.noTodo (59d)");
+  });
+
+  it("prints every finding that only fires when something is wrong", () => {
+    const read = empty({
+      uncovered: [{ path: "skills/work/modes/build.md", touches: 30 }],
+      actors: [{ session: "s1", agent: "a1", agentType: "builder", description: "Build F5", model: null, asked: "general-purpose", at: null, line: 3 }],
+      weakened: [{ entry: "core.noTodo", line: 88, path: "flow.config.ts", gapSeconds: 42 }],
+      marked: 2,
+    });
+    const text = formatFacts(read).join("\n");
+    expect(text).toContain("unwatched skills/work/modes/build.md — touched 30×, no entry reaches it");
+    // The spawn's two records disagree, and the line says so rather than picking one silently.
+    expect(text).toContain("actor     builder (spawned as general-purpose) — Build F5");
+    expect(text).toContain("⚠ the guard was edited after core.noTodo refused — flow.config.ts:L88, 42s later");
+    expect(text).toContain("marked    2 conversation(s) read");
+  });
+
+  it("caps the headline lists and says how many it did not print", () => {
+    const actor = (n: number): SpawnRecord => ({
+      session: "s1",
+      agent: `a${n}`,
+      agentType: "builder",
+      description: null,
+      model: null,
+      asked: "builder",
+      at: null,
+      line: null,
+    });
+    const text = formatFacts(empty({ actors: [1, 2, 3, 4, 5, 6, 7].map(actor) })).join("\n");
+    expect(text.match(/actor {5}builder/g)).toHaveLength(5);
+    expect(text).toContain("…and 2 more");
   });
 });

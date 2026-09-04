@@ -14,6 +14,7 @@ import { defineCategory, type SessionFacts } from "../index.ts";
 import { builder, parent } from "../__fixtures__/engine-pack.ts";
 import { FLOW_DIR, logFile, offPath, recordPath, recordingFile, statePath, type RecordedStep, type Row } from "./domain.ts";
 import {
+  alreadyRead,
   appendRows,
   appendSteps,
   commitAttribution,
@@ -22,6 +23,7 @@ import {
   isRecording,
   loadRecording,
   loadState,
+  markRead,
   readHistory,
   readRows,
   readRowsFile,
@@ -258,6 +260,22 @@ describe("reading the whole history back", () => {
     writeFileSync(file, '{"kind":"guardrail","id":"a"}\nnot json\n\n{"noKind":1}\n');
     expect(readRowsFile(file)).toEqual([{ kind: "guardrail", id: "a" }]);
     expect(readRowsFile(join(root, "missing.jsonl"))).toEqual([]);
+  });
+});
+
+describe("what the archival side has already read", () => {
+  it("a marker means READ, and its id is sanitised before it becomes a path", () => {
+    expect(alreadyRead(root)).toEqual(new Set());
+    expect(markRead(root, ["sess-1", "a/b"])).toBe(2);
+    expect(alreadyRead(root)).toEqual(new Set(["sess-1", "a-b"]));
+    expect(markRead(root, [])).toBe(0);
+  });
+
+  it("an unwritable home answers with a count rather than throwing — a marker is bookkeeping", () => {
+    const blocked = join(root, "not-a-dir");
+    writeFileSync(blocked, "");
+    expect(markRead(blocked, ["sess-1"])).toBe(0);
+    expect(alreadyRead(blocked)).toEqual(new Set());
   });
 });
 

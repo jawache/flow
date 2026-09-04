@@ -38,6 +38,8 @@ import {
   metaRow,
   nextSeq,
   offPath,
+  readDir,
+  readMarkPath,
   readRecording,
   readState,
   recordPath,
@@ -255,6 +257,46 @@ export function sessionIds(root: string): string[] {
 /** The whole recorded history of a repo — every stream, read. */
 export function readHistory(root: string): SessionRows[] {
   return sessionIds(root).map((session) => ({ session, rows: readRows(root, session) }));
+}
+
+// ── what the archival side has already read ──────────────────────────────────
+
+/**
+ * The conversations already dealt with. Existence is the fact; a marker means READ, never merely
+ * seen. Unreadable or absent is an empty set, which re-offers history — the harmless direction.
+ */
+export function alreadyRead(root: string): Set<string> {
+  try {
+    return new Set(readdirSync(readDir(root)).filter((name) => !name.startsWith(".")));
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * Mark conversations read, so the backlog starts after them next time.
+ *
+ * Only ANALYSED ids are ever passed — never the deferred ones — which is what keeps "a marker
+ * means read" true and stops a capped run declaring skipped history done. Bookkeeping, so it
+ * answers with a count rather than throwing, like every other writer in this file.
+ */
+export function markRead(root: string, ids: readonly string[]): number {
+  try {
+    ensureFlowDir(root);
+    mkdirSync(readDir(root), { recursive: true });
+  } catch {
+    return 0;
+  }
+  let wrote = 0;
+  for (const id of ids) {
+    try {
+      writeFileSync(readMarkPath(root, id), "");
+      wrote += 1;
+    } catch {
+      /* one bad id is not the rest of the backlog's problem */
+    }
+  }
+  return wrote;
 }
 
 // ── the recording seam ───────────────────────────────────────────────────────

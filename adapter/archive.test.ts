@@ -18,8 +18,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { defineConfig, loadConfig, pack, type LoadResult } from "../index.ts";
 import { rails } from "../__fixtures__/engine-pack.ts";
-import { appendRows } from "../engine/state.ts";
-import { alreadyRead, facts, markRead, projectDir, readStore, readTranscript } from "./archive.ts";
+import { alreadyRead, appendRows, markRead } from "../engine/state.ts";
+import { facts, projectDir, readStore, readTranscript } from "./archive.ts";
 import { projectFolderName } from "./domain.ts";
 
 let repo: string;
@@ -117,6 +117,8 @@ describe("which checkout a conversation belongs to", () => {
   });
 });
 
+// The marker store itself lives in the engine's state home with every other `.flow/` path — the
+// adapter only asks. What is proved here is the BACKLOG behaviour it buys.
 describe("the backlog's memory", () => {
   it("a marked conversation leaves the backlog, and only ANALYSED ones are ever marked", () => {
     conversation(repo, "one");
@@ -175,6 +177,54 @@ describe("the reading, assembled", () => {
     // The universe is the CONFIG's answer, handed in — this file never loads one.
     expect(read.moments.totals.guardrails).toBe(10);
     expect(read.terrain.some((node) => node.path === "src/a.ts")).toBe(true);
+    // COVERAGE FROM THE TRANSCRIPT, which reaches what the rows cannot: src/** is watched by the
+    // fixture's area breadcrumb, so the edit above is not a gap.
+    expect(read.uncovered).toEqual([]);
+  });
+
+  it("joins every actor a conversation spawned — the sidecar's answer over the parent's claim", () => {
+    conversation(repo, "one", {
+      body: [
+        line({
+          type: "assistant",
+          timestamp: "2026-09-04T10:01:00.000Z",
+          message: {
+            content: [
+              { type: "tool_use", id: "toolu_9", name: "Agent", input: { subagent_type: "general-purpose", description: "Build F5" } },
+            ],
+          },
+        }),
+      ],
+    });
+    conversation(repo, "one", { agent: "agent-1", meta: { agentType: "builder", toolUseId: "toolu_9", model: "opus" } });
+    conversation(repo, "one", { agent: "agent-2" });
+
+    const read = facts(repo, regime, { home });
+    expect(read.actors).toEqual([
+      // The parent asked for a generic bucket; the host wrote down what it really was. The join is
+      // what lets classification and cost attribution name the same actor.
+      { session: "one", agent: "agent-1", agentType: "builder", description: "Build F5", model: "opus", asked: "general-purpose", at: "2026-09-04T10:01:00.000Z", line: 3 },
+      // Spawned, as what we cannot say — and nothing is invented to fill it in.
+      { session: "one", agent: "agent-2", agentType: null, description: null, model: null, asked: null, at: null, line: null },
+    ]);
+  });
+
+  it("names the areas the CONVERSATIONS worked in that nothing watches — even with no record at all", () => {
+    conversation(repo, "one", {
+      body: [
+        line({
+          type: "assistant",
+          timestamp: "2026-09-04T10:01:00.000Z",
+          message: { content: [{ type: "tool_use", id: "t1", name: "Edit", input: { file_path: join(repo, "docs/guide.md") } }] },
+        }),
+      ],
+    });
+    const read = facts(repo, regime, { home });
+    // The rows can only answer for sessions flow was installed for; this conversation has none,
+    // and the transcript still says where the work went.
+    expect(read.coverage.withRecord).toBe(0);
+    expect(read.metrics.gaps).toEqual([]);
+    expect(read.uncovered).toEqual([{ path: "docs/guide.md", touches: 1 }]);
   });
 
   it("a conversation with no record of its own is narrative-only, and the health line says so", () => {

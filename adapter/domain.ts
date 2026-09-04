@@ -41,7 +41,19 @@ import {
   type SessionFacts,
   type TurnAction,
 } from "../language/domain.ts";
-import { formatBlock, type Block, type Cause, type Row } from "../engine/domain.ts";
+import {
+  covers,
+  formatBlock,
+  insideRepo,
+  watching,
+  type Block,
+  type Bound,
+  type Cause,
+  type Metrics,
+  type MomentsView,
+  type Row,
+  type TerrainNode,
+} from "../engine/domain.ts";
 // The command tokeniser, borrowed rather than copied. Reading `rm -rf src/x.ts` for the paths it
 // would remove is event ASSEMBLY — the adapter's job — but quote-aware shell tokenising is a
 // question the checks layer already answers, and the old engine's second answer (a regex split on
@@ -84,6 +96,16 @@ export interface HookPayload {
  * second hook beside the first, which is the duplicate-firing problem the grammar exists to make
  * impossible. One command per event; a second concern extends the function.
  */
+/**
+ * The one file that turns anything on, spelled ONCE.
+ *
+ * It lives in the pure home rather than in the shell that opens it because three things name it
+ * and only one of them is a read: the shell looks for it, the CLI defaults to it, and the list of
+ * files that ARE the guard here has to include it. A second spelling in that list would leave a
+ * renamed config's old name watched and its new one not.
+ */
+export const CONFIG_FILE = "flow.config.ts";
+
 export const HOOK_EVENTS = ["session-start", "pre-tool-use", "post-tool-use", "stop", "notification"] as const;
 export type HookEvent = (typeof HOOK_EVENTS)[number];
 
@@ -952,39 +974,41 @@ export function spawnMeta(raw: string | null): SpawnMeta | null {
   };
 }
 
+/** The three things knowable about a conversation without reading what was said in it. */
+export interface TranscriptHead {
+  /**
+   * The working directory it was recorded in — THE ONLY HONEST ANSWER to "which worktree is this".
+   *
+   * `projectFolderName` collapses dots, slashes and underscores into one character, so two
+   * worktrees of one repo — `workbench` and `workbench.workflow-flow` — share a folder name and a
+   * reader that inverted it would attribute one checkout's conversations to the other.
+   */
+  readonly cwd: string | null;
+  readonly branch: string | null;
+  /** When it started, as the host stamped it. */
+  readonly started: string | null;
+}
+
 /**
- * The working directory a transcript was recorded in, from the records themselves.
+ * A conversation's opening facts, in ONE pass, stopping as soon as all three are known.
  *
- * THE ONLY HONEST ANSWER to "which worktree is this", and the reason is `projectFolderName`: the
- * folder name collapses dots, slashes and underscores into one character, so two worktrees of one
- * repo — `workbench` and `workbench.workflow-flow` — can share a folder name's shape and a reader
- * that inverted the name would attribute one checkout's sessions to the other. The host writes
- * `cwd` on every field-bearing record; the first one that has it is the answer.
- *
- * The file opens with stub records (last-prompt, mode, permission-mode) that carry no fields at
- * all, so a literal first line is never enough.
+ * It was three functions and therefore three parses of the same multi-megabyte file, once per
+ * conversation in the store — a cost paid on every `flow facts` run for an answer that is in the
+ * first few records. The file opens with stub records (last-prompt, mode, permission-mode) that
+ * carry no fields at all, so a literal first line is never enough and the walk has to be able to
+ * continue; what it must not do is start over twice.
  */
-export function cwdOf(jsonl: string): string | null {
+export function transcriptHead(jsonl: string): TranscriptHead {
+  let cwd: string | null = null;
+  let branch: string | null = null;
+  let started: string | null = null;
   for (const line of transcriptLines(jsonl)) {
-    const cwd = text(line.record["cwd"]);
-    if (cwd !== "") return cwd;
+    cwd ??= text(line.record["cwd"]) || null;
+    branch ??= text(line.record["gitBranch"]) || null;
+    started ??= line.ts;
+    if (cwd !== null && branch !== null && started !== null) break;
   }
-  return null;
-}
-
-/** The branch a transcript was recorded on, as the host stamped it. */
-export function branchOf(jsonl: string): string | null {
-  for (const line of transcriptLines(jsonl)) {
-    const branch = text(line.record["gitBranch"]);
-    if (branch !== "") return branch;
-  }
-  return null;
-}
-
-/** The first moment a transcript carries — when the conversation started. */
-export function startedAt(jsonl: string): string | null {
-  for (const line of transcriptLines(jsonl)) if (line.ts !== null) return line.ts;
-  return null;
+  return { cwd, branch, started };
 }
 
 /** One spawn as the PARENT recorded it: the tool call, joined to the sidecar by its id. */
@@ -1299,7 +1323,9 @@ const LOOP = 5;
 /** How many times one command line is repeated before it reads as a retry. */
 const RETRY = 3;
 
-const inRepo = (path: string): boolean => path !== "" && !path.startsWith("/") && !path.startsWith("..");
+// `insideRepo` is the engine's, imported rather than re-spelled: whether a path is a file of this
+// repo decides what the narrative counts as touched AND what the record counts as an uncovered
+// edit, and those two must never be able to disagree.
 
 /**
  * The narrative reading of one conversation. Everything here is a guess with a citation.
@@ -1343,7 +1369,7 @@ export function narrative(events: readonly TranscriptEvent[], tools: readonly st
     if (EDIT_TOOLS.has(event.name)) {
       if (event.name === "Write") writes += 1;
       else edits += 1;
-      const here = inRepo(event.path);
+      const here = insideRepo(event.path);
       if (here && event.path === loopPath) {
         loopCount += 1;
         loopTo = event.line;
@@ -1358,7 +1384,7 @@ export function narrative(events: readonly TranscriptEvent[], tools: readonly st
       continue;
     }
     if (event.name === "Read") {
-      if (inRepo(event.path)) touched[event.path] = (touched[event.path] ?? 0) + 1;
+      if (insideRepo(event.path)) touched[event.path] = (touched[event.path] ?? 0) + 1;
       continue;
     }
     if (event.name !== "Bash") continue;
@@ -1439,7 +1465,7 @@ export function mergeNarratives(each: readonly { session: string; read: Narrativ
  * old list carried `work.yaml` and three file shapes the system can no longer produce.
  */
 export const GUARD_PATHS = [
-  "flow.config.ts",
+  CONFIG_FILE,
   "guards/**",
   ".claude/settings.json",
   ".claude/settings.local.json",
@@ -1606,4 +1632,174 @@ export function health({ armed, rows, withRecord, analysed }: HealthArgs): Healt
     );
   else if (rows === 0) warn.push("the record is armed and holds no events for what was read.");
   return { blocked: null, warn };
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE READING — what the record and the conversations add up to, and how it reads
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+//
+// The SHAPE lives here and the gathering lives in the shell next door, for the reason every other
+// split in this package exists: what a reading says is a decision and gets a test; opening the
+// files it says it about is not. That includes the prose — `formatFacts` is the whole of what a
+// person sees, and thirty lines of branching sentences in a CLI shell is thirty lines nothing can
+// assert.
+
+/**
+ * One spawned actor, as the two host-written records agree on it — THE join, at its consumer.
+ *
+ * The sidecar says what a spawn WAS (`agentType`, unforgeable, written by the host) and the
+ * parent's own `Agent` block says when it happened and what was asked for. Joining them on
+ * `toolUseId` is what lets classification and cost attribution name the same actor: a builder
+ * spawned under a generic bucket is `general-purpose` in the parent's claim and `builder` in the
+ * host's record, and only one of those is evidence.
+ */
+export interface SpawnRecord {
+  /** The conversation that spawned it. */
+  readonly session: string;
+  /** The `agent-…` stem — its own transcript's name. */
+  readonly agent: string;
+  /** The host's answer. Null when the sidecar was absent or would not parse: spawned, as what unknown. */
+  readonly agentType: string | null;
+  readonly description: string | null;
+  readonly model: string | null;
+  /** What the PARENT asked for. Null when the two records could not be joined. */
+  readonly asked: string | null;
+  readonly at: string | null;
+  /** Where in the parent's transcript to look. Null when unjoined. */
+  readonly line: number | null;
+}
+
+/** One subagent's two records, joined. An unjoinable sidecar still yields what it alone knows. */
+export function joinSpawn(args: {
+  readonly session: string;
+  readonly agent: string;
+  readonly meta: SpawnMeta | null;
+  readonly spawns: ReadonlyMap<string, Spawn>;
+}): SpawnRecord {
+  const { session, agent, meta, spawns } = args;
+  const from = meta?.toolUseId === undefined || meta.toolUseId === null ? undefined : spawns.get(meta.toolUseId);
+  return {
+    session,
+    agent,
+    agentType: meta?.agentType ?? null,
+    // The sidecar's description is the human label the spawn was filed under; the parent's block
+    // carries the same text, so either answers and the host-written one wins.
+    description: meta?.description ?? from?.description ?? null,
+    model: meta?.model ?? null,
+    asked: from?.asked ?? null,
+    at: from?.ts ?? null,
+    line: from?.line ?? null,
+  };
+}
+
+/** An area the conversations worked in that no entry's globs reach. */
+export interface Uncovered {
+  readonly path: string;
+  readonly touches: number;
+}
+
+/**
+ * The files a conversation touched that nothing was watching — coverage read from the TRANSCRIPT.
+ *
+ * It is not a duplicate of the record's own gap list and the difference is the whole point: the
+ * rows can only answer for sessions flow was installed for, and the store holds every conversation
+ * this repo has ever had. A session with no record at all still says where the work went, which is
+ * exactly the reading a repo wants on the day it adopts flow — and the day after, when it wants to
+ * know whether the entries it just bound point anywhere near it.
+ */
+export function uncoveredAreas(touched: Readonly<Record<string, number>>, entries: readonly Bound[]): Uncovered[] {
+  const scoped = watching(entries);
+  return Object.entries(touched)
+    .filter(([path]) => !scoped.some((e) => covers(e, path)))
+    .map(([path, touches]) => ({ path, touches }))
+    .sort((a, b) => b.touches - a.touches || a.path.localeCompare(b.path));
+}
+
+export interface Facts {
+  readonly root: string;
+  readonly store: { readonly dir: string; readonly exists: boolean; readonly ignored: readonly string[] };
+  /** Which conversations this run covers, and which it deliberately deferred. */
+  readonly selection: Selection;
+  readonly coverage: { readonly analysed: number; readonly withRecord: number; readonly narrativeOnly: number };
+  /** The fail-loud header. Read it before believing anything else here. */
+  readonly health: Health;
+  /**
+   * The numbers, over the repo's WHOLE recorded history — deliberately not narrowed to the
+   * selection. A dead scope and a lead distribution are lifetime questions, and scoping them to
+   * one backlog would make a quiet week look like a retirement case.
+   */
+  readonly metrics: Metrics;
+  readonly moments: MomentsView;
+  readonly terrain: readonly TerrainNode[];
+  /** The heuristic pointers, one list, each row tagged with the conversation it came from. */
+  readonly narrative: Narrative;
+  /** Where the conversations worked that nothing watches — the transcript's own coverage answer. */
+  readonly uncovered: readonly Uncovered[];
+  /** Every actor the read conversations spawned, both host-written records joined. */
+  readonly actors: readonly SpawnRecord[];
+  /** A rail refused, and then somebody edited the guard. A pointer, never an accusation. */
+  readonly weakened: readonly Weakening[];
+  /** How many conversations were marked read, when asked for. Null when not asked. */
+  readonly marked: number | null;
+}
+
+/** How many gaps and how many actors a headline lists before it stops being a headline. */
+const HEADLINE = 5;
+
+/**
+ * The reading, as the lines a person reads. The whole of what `flow facts` prints.
+ *
+ * It is here rather than in the CLI shell on this repo's own standing precedent (927ca62, the
+ * guard status report): a report's text is a pile of branches — is it armed, is the history ample,
+ * did anything go quiet, was the guard edited after it refused — and every one of those branches
+ * is a judgement about what a reader most needs to know. In a shell they are untestable, and the
+ * one that matters most is the one that fires least.
+ */
+export function formatFacts(facts: Facts): string[] {
+  const lines: string[] = [];
+  if (facts.health.blocked !== null) lines.push(`✗ ${facts.health.blocked}`);
+  for (const warn of facts.health.warn) lines.push(`⚠ ${warn}`);
+
+  const { span, headline } = facts.metrics;
+  lines.push(
+    `flow facts — ${facts.coverage.analysed} of ${facts.selection.counts.backlog} unread conversations · ` +
+      `${facts.coverage.withRecord} with a record · ` +
+      (facts.store.exists ? facts.store.dir : `no store at ${facts.store.dir}`),
+    `  recorded  ${span.tools.toLocaleString()} tool calls · ${span.sessions} chats · ${span.days}d` +
+      (span.ample ? "" : " (too thin to call anything dead)"),
+    `  blocks    ${headline.blocks}`,
+    `  lead      ` +
+      (headline.lead.median === null ? "nothing measurable yet" : `median ${headline.lead.median} tool calls`),
+  );
+
+  for (const gap of headline.gaps.slice(0, HEADLINE))
+    lines.push(`  gap       ${gap.area} — ${gap.edits} edit${gap.edits === 1 ? "" : "s"}, nothing watches it`);
+  if (headline.dead.length > 0) lines.push(`  dead      ${headline.dead.join(" · ")}`);
+  if (headline.retire.length > 0) lines.push(`  retire    ${headline.retire.join(" · ")} — bound, never once reached`);
+  if (headline.quiet.length > 0)
+    lines.push(`  quiet     ${headline.quiet.map((q) => `${q.id} (${q.daysSince}d)`).join(" · ")}`);
+
+  const { stats, corrections, loops, retries, bypassSites } = facts.narrative;
+  lines.push(
+    `  session   ${stats.edits} edits · ${stats.writes} writes · ${stats.commits} commits · ` +
+      `${corrections.length} corrections · ${loops.length} edit loops · ${retries.length} retries · ` +
+      `${bypassSites.length} bypasses`,
+  );
+  // The transcript's own coverage answer, which reaches conversations the record cannot.
+  for (const area of facts.uncovered.slice(0, HEADLINE))
+    lines.push(`  unwatched ${area.path} — touched ${area.touches}×, no entry reaches it`);
+  for (const actor of facts.actors.slice(0, HEADLINE))
+    lines.push(
+      `  actor     ${actor.agentType ?? "unknown"}${actor.asked !== null && actor.asked !== actor.agentType ? ` (spawned as ${actor.asked})` : ""}` +
+        (actor.description === null ? "" : ` — ${actor.description}`),
+    );
+  if (facts.actors.length > HEADLINE) lines.push(`            …and ${facts.actors.length - HEADLINE} more`);
+
+  for (const weak of facts.weakened)
+    lines.push(
+      `  ⚠ the guard was edited after ${weak.entry ?? "a block"} refused — ` +
+        `${weak.path}:L${weak.line}, ${weak.gapSeconds}s later`,
+    );
+  if (facts.marked !== null) lines.push(`  marked    ${facts.marked} conversation(s) read`);
+  return lines;
 }
