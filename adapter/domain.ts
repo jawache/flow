@@ -47,6 +47,9 @@ import { formatBlock, type Block, type Cause, type Row } from "../engine/domain.
 // question the checks layer already answers, and the old engine's second answer (a regex split on
 // `&&|\|\||;`) is exactly the near-duplicate this rewrite exists to delete.
 import { tokenizeCommand } from "../checks/domain.ts";
+// The one glob engine. A coverage question asked with a second matcher is a coverage answer about
+// files the guard never judged — see flow/glob.ts on why there is exactly one.
+import { matchAny } from "../glob.ts";
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE PAYLOAD — what the harness sends, and what flow answers to
@@ -495,6 +498,16 @@ export interface TranscriptLine {
   /** The record's `type`: `user`, `assistant`, or whatever else the host writes. */
   readonly kind: string;
   readonly record: Record<string, unknown>;
+  /**
+   * 1-based position in the FILE, counting blank and unreadable lines.
+   *
+   * Ground truth about the file rather than narrative, and the reason it is counted here rather
+   * than by a consumer: the facts layer cites a transcript line back to a person, and a number
+   * derived from a filtered list points at the wrong line the moment anything is skipped.
+   */
+  readonly line: number;
+  /** ISO-8601 UTC, exactly as the host wrote it. Null when the line carries none. */
+  readonly ts: string | null;
 }
 
 /**
@@ -504,9 +517,11 @@ export interface TranscriptLine {
  * A transcript is appended to live by the very session doing the reading, so the last line can be
  * caught mid-write. One unreadable line is not the rest of the history's problem.
  */
-function parseLine(raw: string): TranscriptLine | null {
+function parseLine(raw: string, line = 0): TranscriptLine | null {
   const record = parseObject(raw);
-  return record === null ? null : { kind: text(record["type"]), record };
+  if (record === null) return null;
+  const ts = text(record["timestamp"]);
+  return { kind: text(record["type"]), record, line, ts: ts === "" ? null : ts };
 }
 
 /**
@@ -538,8 +553,9 @@ function parseObject(raw: string | null): Record<string, unknown> | null {
  */
 export function transcriptLines(jsonl: string): TranscriptLine[] {
   const out: TranscriptLine[] = [];
-  for (const raw of jsonl.split("\n")) {
-    const line = parseLine(raw);
+  const raws = jsonl.split("\n");
+  for (let i = 0; i < raws.length; i++) {
+    const line = parseLine(raws[i] as string, i + 1);
     if (line !== null) out.push(line);
   }
   return out;
@@ -608,11 +624,16 @@ const INJECTED = [
   "[Request interrupted",
   "DO NOT respond",
   "<budget:",
+  "tool_use_id",
 ];
 
 export function isInjected(prose: string): boolean {
   const start = prose.trimStart();
-  return INJECTED.some((mark) => start.startsWith(mark));
+  // The `includes` tail is not slack: a reminder is sometimes prefixed by a line of the host's own
+  // framing before the tag, and a turn boundary read off that line would empty the turn's actions
+  // exactly when a turn-end rule needs them. The window is short enough that prose ABOUT a
+  // system-reminder — which a session discussing this file writes constantly — is not caught.
+  return INJECTED.some((mark) => start.startsWith(mark)) || start.slice(0, 40).includes("<system-reminder>");
 }
 
 /** A user line's prose, when it is one the human typed. Null for tool results and injections. */
@@ -764,7 +785,11 @@ export function toolRow(payload: HookPayload, root = ""): Row | null {
   if (!tool) return null;
   const input = payload.tool_input ?? {};
   for (const key of PATH_KEYS) {
-    if (input[key]) return { kind: "tool", tool, path: relativise(text(input[key]), root) };
+    // `edit` is stamped HERE, and that is the seam rather than a convenience. Which of a harness's
+    // tools change a file is harness knowledge; the engine reads the record back to answer "how
+    // much work happened in this area" and may never import this file to ask. So the answer is
+    // decided once, at write time, by the only layer entitled to know it.
+    if (input[key]) return { kind: "tool", tool, path: relativise(text(input[key]), root), edit: EDIT_TOOLS.has(tool) };
   }
   if (tool === "Bash" && input["command"]) return { kind: "tool", tool, command: text(input["command"]) };
   if (!input["pattern"]) return { kind: "tool", tool };
@@ -804,4 +829,781 @@ export function hermeticEnv(
 ): Record<string, string | undefined> {
   const drop = new Set(GIT_HOOK_ENV);
   return Object.fromEntries(Object.entries(env).filter(([key]) => !drop.has(key)));
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE STORE — where the harness keeps its transcripts, and what is in there
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+//
+// The live rails are handed a transcript path in the payload. The ARCHIVAL side has no payload:
+// it is asked about a repo, after the fact, and has to find the conversations itself. That is a
+// second piece of harness knowledge and it belongs on this side of the seam with the first.
+//
+// Claude Code keeps one folder per working directory under `~/.claude/projects/`, holding one
+// `<sessionId>.jsonl` per top-level session and, for each, a `<sessionId>/subagents/agent-*.jsonl`
+// per child with an `agent-*.meta.json` beside it. Two readers of that layout existed in the old
+// platform — the CLI's corpus reader and the guard's backlog reader — and they disagreed about the
+// folder-name rule; there is one here.
+
+/**
+ * The folder a working directory's transcripts live in.
+ *
+ * Every character that is not a letter or a digit becomes a dash — verified against all 63 folders
+ * on this machine carrying a readable cwd, with zero mismatches, rather than taken from a summary.
+ * A dot is not special: `/Users/x/.work/y` yields a doubled dash, and that doubling is the check
+ * that this is the real rule rather than a hand-written approximation (the old signposts spelling
+ * was `[/.]` and was wrong for an underscore or a space).
+ *
+ * THE RULE IS NOT INVERTIBLE, and that matters more here than anywhere else it is used: a folder
+ * named `…-workbench-workflow-flow` is `workbench.workflow-flow` and `workbench/workflow/flow` and
+ * `workbench_workflow_flow`, all three. Which worktree a transcript belongs to is answered by the
+ * `cwd` field the host writes INSIDE the records — see `cwdOf` — never by reading the name back.
+ */
+export function projectFolderName(cwd: string): string {
+  return cwd.replace(/[^a-zA-Z0-9]/g, "-");
+}
+
+/** One transcript file worth reading, and the sidecar beside it. */
+export interface TranscriptRef {
+  /** Relative to the project folder. */
+  readonly path: string;
+  /** The sidecar's path, only when the listing actually held it — never a probe. */
+  readonly meta: string | null;
+  readonly session: string;
+  /** Null for a top-level session; the `agent-…` stem for a subagent. */
+  readonly agent: string | null;
+}
+
+/**
+ * A flat listing of a project folder, sorted into the transcripts worth reading.
+ *
+ * Two shapes count and nothing else does: `<session>.jsonl` at the top (a conversation somebody
+ * sat in front of) and `<session>/subagents/<agent>.jsonl` (a child it spawned). A worktree holds
+ * several sessions — a chat resumed on another day is a second file — so every one is enumerated
+ * rather than a newest being picked.
+ *
+ * Anything else comes back as IGNORED rather than being silently skipped, because "the folder held
+ * something I did not understand" is a fact a reader should be able to see. A `.meta.json` is the
+ * one exception: it is read through the transcript it belongs to, so naming it would be noise.
+ */
+export function classifyStore(paths: readonly string[]): {
+  transcripts: TranscriptRef[];
+  ignored: string[];
+} {
+  const present = new Set(paths);
+  const sessions: TranscriptRef[] = [];
+  const subagents: TranscriptRef[] = [];
+  const ignored: string[] = [];
+
+  for (const path of paths) {
+    const parts = path.split("/");
+    if (parts.length === 1 && path.endsWith(".jsonl")) {
+      sessions.push({ path, meta: null, session: path.slice(0, -".jsonl".length), agent: null });
+      continue;
+    }
+    if (parts.length === 3 && parts[1] === "subagents" && path.endsWith(".jsonl")) {
+      const meta = `${path.slice(0, -".jsonl".length)}.meta.json`;
+      subagents.push({
+        path,
+        meta: present.has(meta) ? meta : null,
+        session: parts[0] ?? "",
+        agent: (parts[2] ?? "").slice(0, -".jsonl".length),
+      });
+      continue;
+    }
+    if (parts.length === 3 && parts[1] === "subagents" && path.endsWith(".meta.json")) continue;
+    ignored.push(path);
+  }
+
+  // Sessions first, then their children — a stable order, so the read is reproducible.
+  return { transcripts: [...sessions, ...subagents], ignored };
+}
+
+/**
+ * The sidecar the host writes beside every subagent transcript, read.
+ *
+ * `toolUseId` is the field that makes this more than a label: it is the id of the parent's own
+ * `Agent` tool call, so a sidecar and the block that spawned it join exactly. That join is what
+ * lets cost attribution and classification agree about who an actor was — the sidecar says what a
+ * spawn WAS, the parent's block says when it happened and what it was asked for, and neither
+ * alone answers both.
+ */
+export interface SpawnMeta {
+  readonly agentType: string | null;
+  readonly description: string | null;
+  /** The parent's tool_use id. Null on a sidecar written before the field existed. */
+  readonly toolUseId: string | null;
+  /** The model the spawn asked for — an alias like `opus`, never the served model id. */
+  readonly model: string | null;
+  readonly spawnDepth: number | null;
+}
+
+/** A sidecar's text → what it says. Null when it is absent or will not parse. */
+export function spawnMeta(raw: string | null): SpawnMeta | null {
+  const held = parseObject(raw);
+  if (held === null) return null;
+  const str = (key: string): string | null => (typeof held[key] === "string" && held[key] !== "" ? held[key] : null);
+  return {
+    agentType: str("agentType"),
+    description: str("description"),
+    toolUseId: str("toolUseId"),
+    model: str("model"),
+    spawnDepth: typeof held["spawnDepth"] === "number" ? held["spawnDepth"] : null,
+  };
+}
+
+/**
+ * The working directory a transcript was recorded in, from the records themselves.
+ *
+ * THE ONLY HONEST ANSWER to "which worktree is this", and the reason is `projectFolderName`: the
+ * folder name collapses dots, slashes and underscores into one character, so two worktrees of one
+ * repo — `workbench` and `workbench.workflow-flow` — can share a folder name's shape and a reader
+ * that inverted the name would attribute one checkout's sessions to the other. The host writes
+ * `cwd` on every field-bearing record; the first one that has it is the answer.
+ *
+ * The file opens with stub records (last-prompt, mode, permission-mode) that carry no fields at
+ * all, so a literal first line is never enough.
+ */
+export function cwdOf(jsonl: string): string | null {
+  for (const line of transcriptLines(jsonl)) {
+    const cwd = text(line.record["cwd"]);
+    if (cwd !== "") return cwd;
+  }
+  return null;
+}
+
+/** The branch a transcript was recorded on, as the host stamped it. */
+export function branchOf(jsonl: string): string | null {
+  for (const line of transcriptLines(jsonl)) {
+    const branch = text(line.record["gitBranch"]);
+    if (branch !== "") return branch;
+  }
+  return null;
+}
+
+/** The first moment a transcript carries — when the conversation started. */
+export function startedAt(jsonl: string): string | null {
+  for (const line of transcriptLines(jsonl)) if (line.ts !== null) return line.ts;
+  return null;
+}
+
+/** One spawn as the PARENT recorded it: the tool call, joined to the sidecar by its id. */
+export interface Spawn {
+  readonly toolUseId: string;
+  /** What the parent asked for — its own claim, which the sidecar's `agentType` outranks. */
+  readonly asked: string | null;
+  readonly description: string | null;
+  readonly ts: string | null;
+  readonly line: number;
+}
+
+/** The subagent-spawning tool, by the name this harness gives it. */
+const SPAWN_TOOL = "Agent";
+
+/**
+ * Every spawn a parent transcript made, by tool_use id — the parent's half of the join.
+ *
+ * It is the WEAKER half and is read as such: what the parent asked for is a claim by the session
+ * being classified, while the sidecar is host-written and unforgeable. The classification order
+ * (engine, `spawnedAs`) reads the sidecar and never this. What this is for is everything the
+ * sidecar cannot say — when the spawn happened, and where in the parent's own transcript to look.
+ */
+export function spawnsIn(jsonl: string): Map<string, Spawn> {
+  const out = new Map<string, Spawn>();
+  for (const line of transcriptLines(jsonl)) {
+    if (line.kind !== "assistant") continue;
+    const content = (line.record["message"] as { content?: unknown } | undefined)?.content;
+    if (!Array.isArray(content)) continue;
+    for (const raw of content) {
+      const block = raw as { type?: string; id?: string; name?: string; input?: Record<string, unknown> } | null;
+      if (!block || block.type !== "tool_use" || block.name !== SPAWN_TOOL) continue;
+      const id = text(block.id);
+      if (id === "") continue;
+      const input = block.input ?? {};
+      out.set(id, {
+        toolUseId: id,
+        asked: text(input["subagent_type"]) || null,
+        description: text(input["description"]) || null,
+        ts: line.ts,
+        line: line.line,
+      });
+    }
+  }
+  return out;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE NARRATIVE — what a conversation says, as opposed to what the guard did
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+//
+// Everything above this line is deterministic: a payload means one thing, a usage record is a
+// number, a sidecar says what it says. Everything below is HEURISTIC and must be labelled as such
+// wherever it surfaces — "the human pushed back here" is a guess about a sentence, and a guess
+// presented beside a count reads as a count.
+//
+// It carries its own citation for exactly that reason: every pointer names the transcript line it
+// came from, so the reader judges the spot rather than the label.
+//
+// It lives HERE because it is transcript CONTENT dialect — an assistant block called `tool_use`, a
+// user block called `tool_result`, a bare string meaning a typed prompt. The FILE shape is
+// `transcriptLines`' one answer, above; if the content format changes, this function changes, and
+// if the file format changes, that one does, once.
+
+const ANSI = /\x1b\[[0-9;]*m/g;
+
+/** Text with terminal colour codes taken out — a recorded command line is full of them. */
+export function strip(value: unknown): string {
+  return text(value).replace(ANSI, "");
+}
+
+/**
+ * ONE definition of "make this printable and short": strip ANSI, collapse whitespace, cut to `n`
+ * — and MARK the cut, because a truncated command with no ellipsis reads as a whole one, and every
+ * surface that shows these strings claims to be showing what really happened.
+ */
+export function snip(value: unknown, n = 140): string {
+  const flat = strip(value).replace(/\s+/g, " ").trim();
+  return flat.length > n ? `${flat.slice(0, n - 1)}…` : flat;
+}
+
+/** One thing that happened in a conversation, with the line it happened on. */
+export type TranscriptEvent =
+  | { readonly line: number; readonly kind: "prompt"; readonly text: string }
+  | { readonly line: number; readonly kind: "result"; readonly id: string; readonly content: string; readonly failed: boolean }
+  | {
+      readonly line: number;
+      readonly kind: "use";
+      readonly ts: string | null;
+      readonly id: string;
+      readonly name: string;
+      readonly input: Record<string, unknown>;
+      /** The file the call names, repo-relative. Empty when it names none. */
+      readonly path: string;
+    };
+
+/**
+ * A transcript → the narrative events in it: typed prompts, tool calls, and their results.
+ *
+ * The PAIRING is this function's own — a `tool_use` block carries the id its `tool_result` answers
+ * to, and matching them is what turns a flat file into "the agent tried X and got back Y". The
+ * old engine did this over its own `JSON.parse` and its own type switch, beside the corpus reader
+ * doing the same over the same files, so "what is an assistant line" had two answers free to
+ * drift. It reads through `transcriptLines` now, and owns only the pairing.
+ */
+export function parseEvents(jsonl: string, root = ""): TranscriptEvent[] {
+  const out: TranscriptEvent[] = [];
+  for (const line of transcriptLines(jsonl)) {
+    const content = (line.record["message"] as { content?: unknown } | undefined)?.content;
+
+    if (line.kind === "user") {
+      const typed = typedPrompt(line);
+      if (typed !== null) {
+        out.push({ line: line.line, kind: "prompt", text: typed });
+        continue;
+      }
+      if (!Array.isArray(content)) continue;
+      for (const raw of content) {
+        const block = raw as { type?: string; tool_use_id?: string; content?: unknown; is_error?: boolean } | null;
+        if (!block || block.type !== "tool_result") continue;
+        out.push({
+          line: line.line,
+          kind: "result",
+          id: text(block.tool_use_id),
+          content: resultText(block.content),
+          failed: block.is_error === true,
+        });
+      }
+      continue;
+    }
+
+    if (line.kind !== "assistant" || !Array.isArray(content)) continue;
+    for (const raw of content) {
+      const block = raw as { type?: string; id?: string; name?: string; input?: Record<string, unknown> } | null;
+      if (!block || block.type !== "tool_use") continue;
+      const input = block.input ?? {};
+      out.push({
+        line: line.line,
+        kind: "use",
+        ts: line.ts,
+        id: text(block.id),
+        name: text(block.name),
+        input,
+        path: relativise(text(input["file_path"] ?? input["notebook_path"]), root),
+      });
+    }
+  }
+  return out;
+}
+
+/** A tool result's text, whichever of the three shapes the host wrote it in. */
+function resultText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) return (content as { text?: string }[]).map((part) => part.text ?? "").join("\n");
+  return content === undefined ? "" : JSON.stringify(content);
+}
+
+/**
+ * High-signal pushback — where the human corrected the agent. A HEURISTIC, and the report says so.
+ *
+ * It is deliberately generous: the cost of a false positive is a coach reading one line that turns
+ * out to be fine, and the cost of a false negative is the session's most informative moment going
+ * unnoticed.
+ */
+// THE ANCHORING IS OUTSIDE THE CLASSES, and that is a fix rather than a transcription. The ported
+// regex wrapped every alternative in one `\b(…)\b`, so the two that end in punctuation — `wait[, ]`
+// and `no[, ]` — were then asked for a word boundary immediately after a comma or a space, which
+// neither can ever be followed by. `no, that's wrong` and `wait, stop` are the two commonest
+// spellings of pushback there are, and both alternatives were dead: a detector that reads as armed
+// and matches nothing is the spec's own P2 shape, inside the code meant to find it.
+const CORRECTION = new RegExp(
+  [
+    String.raw`\b(actually|hold on|nope|revert|undo|instead|hmm)\b`,
+    String.raw`\b(wait|no)[,!.](\s|$)`,
+    String.raw`\b(stop|don'?t|do not)\s`,
+    String.raw`\bthat'?s (wrong|not right|not what|not)\b`,
+    String.raw`\byou (broke|shouldn'?t|missed|forgot|didn'?t)\b`,
+    String.raw`\bwhy (did|are) you\b`,
+    String.raw`\b(rather than|let'?s not)\b`,
+  ].join("|"),
+  "i",
+);
+
+/** Does this prompt read as the human pushing back? */
+export function isCorrection(prose: string): boolean {
+  return CORRECTION.test(prose);
+}
+
+// ── the justfile's own tools, so a bypass is derived rather than guessed ──
+//
+// Every recipe body line → each command segment's first word → the set of tools that "should go
+// through just". Shell noise is dropped; with no justfile, bypass detection is switched off
+// entirely rather than falling back to a hardcoded list that would be wrong for every other repo.
+
+const NOISE = new Set([
+  "set", "node", "npx", "just", "cd", "export", "echo", "then", "fi", "do", "done", "if", "for", "while", "source",
+]);
+
+/** Is this top-level line a recipe header — `name:`, `name arg:`, `[attr]` and all? */
+function isRecipeHeader(line: string): boolean {
+  if (line.startsWith("[")) return false;
+  const colon = line.indexOf(":");
+  if (colon < 0) return false;
+  const head = line.slice(0, colon).trim();
+  return head !== "" && /^[@A-Za-z_][\w-]*(\s|$)/.test(head) && !head.includes("=");
+}
+
+/** The tools a repo's justfile actually drives — what a direct invocation would be bypassing. */
+export function recipeTools(justfile: string): string[] {
+  const tools = new Set<string>();
+  let inRecipe = false;
+  for (const raw of justfile.split("\n")) {
+    if (raw.trim() === "") continue;
+    const indented = /^\s/.test(raw);
+    const line = raw.trim();
+    if (line.startsWith("#")) continue;
+    if (!indented) {
+      inRecipe = isRecipeHeader(line);
+      continue; // the header itself is not a command
+    }
+    if (!inRecipe) continue;
+    for (const segment of line.split(/&&|\|\||\||;/)) {
+      const words = segment.trim().split(/\s+/);
+      // A LAUNCHER names the tool in its next word, and dropping the line at the launcher is how
+      // the ported reader came back empty on this very repo: every recipe here is `npx tsc`,
+      // `npx vitest`, `npx eslint`, so `npx` matched the noise list and no tool was ever
+      // collected — leaving the bypass section switched off and looking like a clean record.
+      const first = (words[0] ?? "").replace(/^@/, "");
+      const word = first === "npx" ? (words[1] ?? "") : first;
+      if (word === "" || !/^[A-Za-z]/.test(word) || word.includes("/") || NOISE.has(word)) continue;
+      tools.add(word);
+    }
+  }
+  return [...tools];
+}
+
+/** What one Bash line was: the recipes it drove, the tools it went round, and whether it committed. */
+export interface BashClass {
+  readonly recipes: readonly string[];
+  readonly bypasses: readonly string[];
+  readonly commits: boolean;
+}
+
+/** Read one command line against the repo's own recipe tools. HEURISTIC, like everything below. */
+export function classifyBash(command: unknown, tools: readonly string[]): BashClass {
+  const line = strip(command);
+  // A heredoc is authoring, not running — the body is a file being written, and every word in it
+  // would otherwise read as a command.
+  if (/<<-?\s*['"]?\w/.test(line)) return { recipes: [], bypasses: [], commits: false };
+  const recipes: string[] = [];
+  for (const match of line.matchAll(/(?:^|\n|;|\||&&|\()\s*just\s+([a-z][\w-]*)/g)) recipes.push(match[1] as string);
+  const bypasses: string[] = [];
+  for (const tool of tools) {
+    const escaped = tool.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const direct = new RegExp(`(?:^|\\n|;|\\||&&|\\(|node_modules/\\.bin/|npx\\s+)\\s*(?:\\./)?${escaped}\\b`);
+    const viaJust = new RegExp(`just\\s+\\S*\\b${escaped}\\b`);
+    if (direct.test(line) && !viaJust.test(line)) bypasses.push(tool);
+  }
+  return { recipes, bypasses, commits: /\bgit\s+commit\b/.test(line) };
+}
+
+// ── the reading ────────────────────────────────────────────────────────────
+
+/** A pointer into a transcript — the shape every heuristic finding takes. */
+export interface Pointer {
+  readonly line: number;
+  readonly text: string;
+  /** Which transcript, once several are merged into one report. */
+  readonly session?: string;
+}
+
+export interface Bypass extends Pointer {
+  readonly tool: string;
+}
+
+/** The same file edited over and over — a loop somebody was stuck in. */
+export interface EditLoop {
+  readonly path: string;
+  readonly count: number;
+  readonly from: number;
+  readonly to: number;
+  readonly session?: string;
+}
+
+/** The same command run again and again — something that would not come right. */
+export interface Retry {
+  readonly command: string;
+  readonly count: number;
+  readonly lines: readonly number[];
+  readonly session?: string;
+}
+
+export interface Narrative {
+  readonly stats: {
+    readonly edits: number;
+    readonly writes: number;
+    readonly commits: number;
+    readonly recipes: Readonly<Record<string, number>>;
+    readonly bypasses: Readonly<Record<string, number>>;
+  };
+  readonly prompts: readonly Pointer[];
+  readonly corrections: readonly Pointer[];
+  readonly bypassSites: readonly Bypass[];
+  readonly loops: readonly EditLoop[];
+  readonly retries: readonly Retry[];
+  /** Every in-repo file the session touched, with how often. The facts layer scores coverage. */
+  readonly touched: Readonly<Record<string, number>>;
+}
+
+/** How many times one file is edited in a row before it reads as a loop. */
+const LOOP = 5;
+/** How many times one command line is repeated before it reads as a retry. */
+const RETRY = 3;
+
+const inRepo = (path: string): boolean => path !== "" && !path.startsWith("/") && !path.startsWith("..");
+
+/**
+ * The narrative reading of one conversation. Everything here is a guess with a citation.
+ *
+ * `tools` is INJECTED — the shell reads the justfile — so the same call is reproducible from a
+ * fixture, which is the same discipline the guard itself is built on.
+ */
+export function narrative(events: readonly TranscriptEvent[], tools: readonly string[] = []): Narrative {
+  let edits = 0;
+  let writes = 0;
+  let commits = 0;
+  const recipes: Record<string, number> = {};
+  const bypasses: Record<string, number> = {};
+  const touched: Record<string, number> = {};
+  const prompts: Pointer[] = [];
+  const corrections: Pointer[] = [];
+  const bypassSites: Bypass[] = [];
+  const loops: EditLoop[] = [];
+  const retries: Retry[] = [];
+  const byCommand: Record<string, number[]> = {};
+
+  let loopPath: string | null = null;
+  let loopFrom = 0;
+  let loopTo = 0;
+  let loopCount = 0;
+  const closeLoop = (): void => {
+    if (loopCount >= LOOP && loopPath !== null) loops.push({ path: loopPath, count: loopCount, from: loopFrom, to: loopTo });
+  };
+
+  for (const event of events) {
+    if (event.kind === "prompt") {
+      prompts.push({ line: event.line, text: snip(event.text, 120) });
+      if (isCorrection(event.text)) corrections.push({ line: event.line, text: snip(event.text, 140) });
+      continue;
+    }
+    if (event.kind !== "use") continue;
+
+    // THE one edit-tool set, the same one the flight recorder stamps a row with. There were two
+    // in the old engine and they had already drifted; a fact about the host's tool names is
+    // spelled once in this file and read everywhere.
+    if (EDIT_TOOLS.has(event.name)) {
+      if (event.name === "Write") writes += 1;
+      else edits += 1;
+      const here = inRepo(event.path);
+      if (here && event.path === loopPath) {
+        loopCount += 1;
+        loopTo = event.line;
+      } else {
+        closeLoop();
+        loopPath = here ? event.path : null;
+        loopFrom = event.line;
+        loopTo = event.line;
+        loopCount = here ? 1 : 0;
+      }
+      if (here) touched[event.path] = (touched[event.path] ?? 0) + 1;
+      continue;
+    }
+    if (event.name === "Read") {
+      if (inRepo(event.path)) touched[event.path] = (touched[event.path] ?? 0) + 1;
+      continue;
+    }
+    if (event.name !== "Bash") continue;
+    const command = text(event.input["command"]);
+    const read = classifyBash(command, tools);
+    for (const recipe of read.recipes) recipes[recipe] = (recipes[recipe] ?? 0) + 1;
+    for (const tool of read.bypasses) {
+      bypasses[tool] = (bypasses[tool] ?? 0) + 1;
+      bypassSites.push({ line: event.line, tool, text: snip(command, 120) });
+    }
+    if (read.commits) commits += 1;
+    const normalised = snip(command, 400);
+    (byCommand[normalised] ??= []).push(event.line);
+  }
+  closeLoop();
+  for (const [command, lines] of Object.entries(byCommand))
+    if (lines.length >= RETRY) retries.push({ command, count: lines.length, lines });
+
+  return {
+    stats: { edits, writes, commits, recipes, bypasses },
+    prompts,
+    corrections,
+    bypassSites,
+    loops,
+    retries,
+    touched,
+  };
+}
+
+/**
+ * Every narrative reading merged into one, each pointer tagged with the transcript it came from.
+ *
+ * The report is ONE aggregate whether it read one conversation or a hundred — the flags only
+ * re-scope which sessions it covers, never its shape — so this is where the per-session readings
+ * stop being chapters and become one list somebody can work down.
+ */
+export function mergeNarratives(each: readonly { session: string; read: Narrative }[]): Narrative {
+  const tag = <T extends object>(rows: readonly T[], session: string): (T & { session: string })[] =>
+    rows.map((row) => ({ ...row, session }));
+  const recipes: Record<string, number> = {};
+  const bypasses: Record<string, number> = {};
+  const touched: Record<string, number> = {};
+  const out = {
+    prompts: [] as Pointer[],
+    corrections: [] as Pointer[],
+    bypassSites: [] as Bypass[],
+    loops: [] as EditLoop[],
+    retries: [] as Retry[],
+  };
+  let edits = 0;
+  let writes = 0;
+  let commits = 0;
+
+  for (const { session, read } of each) {
+    out.prompts.push(...tag(read.prompts, session));
+    out.corrections.push(...tag(read.corrections, session));
+    out.bypassSites.push(...tag(read.bypassSites, session));
+    out.loops.push(...tag(read.loops, session));
+    out.retries.push(...tag(read.retries, session));
+    edits += read.stats.edits;
+    writes += read.stats.writes;
+    commits += read.stats.commits;
+    for (const [key, n] of Object.entries(read.stats.recipes)) recipes[key] = (recipes[key] ?? 0) + n;
+    for (const [key, n] of Object.entries(read.stats.bypasses)) bypasses[key] = (bypasses[key] ?? 0) + n;
+    for (const [key, n] of Object.entries(read.touched)) touched[key] = (touched[key] ?? 0) + n;
+  }
+  return { stats: { edits, writes, commits, recipes, bypasses }, ...out, touched };
+}
+
+// ── weaken-after-block ─────────────────────────────────────────────────────
+
+/**
+ * The files that ARE the guard here. A scope list rather than a parser, which is why it survives
+ * every change to the config's own shape.
+ *
+ * It is flow's spelling now: `flow.config.ts` is the whole regime, `guards/` is where a repo's own
+ * packs live, and the settings files are where the hooks that invoke any of it are registered. The
+ * old list carried `work.yaml` and three file shapes the system can no longer produce.
+ */
+export const GUARD_PATHS = [
+  "flow.config.ts",
+  "guards/**",
+  ".claude/settings.json",
+  ".claude/settings.local.json",
+  ".claude/agents/**",
+];
+
+/** Is this one of the files that decides what the guard does? */
+export function isGuardPath(path: string): boolean {
+  return path !== "" && matchAny(path, GUARD_PATHS.flatMap((glob) => [glob, `**/${glob}`]));
+}
+
+/** A block, and the guardrail edit that followed it. A POINTER, never an accusation. */
+export interface Weakening {
+  readonly entry: string | null;
+  readonly line: number;
+  readonly path: string;
+  readonly gapSeconds: number;
+}
+
+/**
+ * A rail refused, and then somebody edited the guard — flagged, with both ends cited.
+ *
+ * The edit may be perfectly legitimate authoring, which is exactly why this reports a POINTER and
+ * lets a person read the two spots. What it cannot do is stay quiet: "the rule blocked me, so I
+ * changed the rule" is the one failure mode a guard cannot catch itself.
+ */
+export function weakenedAfterBlock(rows: readonly Row[], events: readonly TranscriptEvent[]): Weakening[] {
+  const blocked = rows
+    .filter((row) => row.kind === "guardrail" && row["out"] === "deny" && typeof row["ts"] === "string")
+    .map((row) => ({ entry: typeof row["id"] === "string" ? row["id"] : null, ts: row["ts"] as string }));
+  const edits = events
+    .filter((e): e is Extract<TranscriptEvent, { kind: "use" }> => e.kind === "use")
+    .filter((e) => (e.name === "Edit" || e.name === "Write") && e.ts !== null && isGuardPath(e.path))
+    .sort((a, b) => (a.ts as string).localeCompare(b.ts as string));
+
+  const out: Weakening[] = [];
+  for (const block of blocked) {
+    const after = edits.find((e) => (e.ts as string) > block.ts);
+    if (after === undefined) continue;
+    out.push({
+      entry: block.entry,
+      line: after.line,
+      path: after.path,
+      gapSeconds: Math.round((Date.parse(after.ts as string) - Date.parse(block.ts)) / 1000),
+    });
+  }
+  return out;
+}
+
+// ── which conversations a run covers ───────────────────────────────────────
+//
+// The archival side's scope is the UNREFLECTED BACKLOG: every transcript in the store whose
+// session id has not been marked dealt-with. That is deliberately the STORE and not the log —
+// history from before flow was installed is exactly what a first reading most wants to see, and a
+// scope taken from the log could only ever show the repo what it already knew.
+//
+// Everything this returns in `analyse` is analysed AND markable. The excluded ones never are, so a
+// capped run cannot declare skipped history done and quietly lose it.
+
+/** One transcript, as the selector needs it: enough to order by, and nothing it has to open. */
+export interface Candidate {
+  readonly id: string;
+  readonly bytes: number;
+  readonly mtimeMs: number;
+  /** When the conversation began, as the host stamped it. Preferred over the file's mtime. */
+  readonly started: string | null;
+  readonly branch: string | null;
+}
+
+export interface SelectOpts {
+  /** Analyse only the first N in order. The rest resurface next time. */
+  readonly limit?: number | null | undefined;
+  /** Ignore the limit. */
+  readonly all?: boolean | undefined;
+  /** Order heaviest-first — wasted effort concentrates in the token-heavy conversations. */
+  readonly largest?: boolean | undefined;
+  /** A date floor, in ms. */
+  readonly since?: number | null | undefined;
+}
+
+export interface Selection {
+  readonly analyse: readonly Candidate[];
+  readonly excluded: readonly { readonly id: string; readonly reason: "limit" | "since" }[];
+  readonly counts: { readonly backlog: number; readonly analysed: number; readonly excluded: number };
+}
+
+/** When a conversation happened: its own first timestamp, falling back to the file's mtime. */
+function timeOf(candidate: Candidate): number {
+  const started = Date.parse(String(candidate.started));
+  return Number.isFinite(started) ? started : candidate.mtimeMs;
+}
+
+/** The backlog, ordered and narrowed — and an honest account of what was left out, and why. */
+export function selectSessions(
+  candidates: readonly Candidate[],
+  done: ReadonlySet<string>,
+  opts: SelectOpts = {},
+): Selection {
+  const { limit = null, all = false, largest = false, since = null } = opts;
+  const backlog = candidates.filter((c) => !done.has(c.id));
+
+  const byNewest = (a: Candidate, b: Candidate): number => timeOf(b) - timeOf(a) || a.id.localeCompare(b.id);
+  const byLargest = (a: Candidate, b: Candidate): number => b.bytes - a.bytes || byNewest(a, b);
+  const ordered = [...backlog].sort(largest ? byLargest : byNewest);
+
+  const excluded: { id: string; reason: "limit" | "since" }[] = [];
+  let kept = ordered;
+  if (since !== null) {
+    kept = ordered.filter((c) => timeOf(c) >= since);
+    for (const c of ordered) if (timeOf(c) < since) excluded.push({ id: c.id, reason: "since" });
+  }
+
+  let analyse = kept;
+  if (!all && limit !== null && limit >= 0 && kept.length > limit) {
+    analyse = kept.slice(0, limit);
+    for (const c of kept.slice(limit)) excluded.push({ id: c.id, reason: "limit" });
+  }
+
+  return {
+    analyse,
+    excluded,
+    counts: { backlog: backlog.length, analysed: analyse.length, excluded: excluded.length },
+  };
+}
+
+// ── the fail-loud header on every number below it ──────────────────────────
+//
+// A record with nothing in it and a guard that never ran look identical in a table of zeroes, and
+// the second reads as "a calm week" to anyone — including a coach recommending which rules to
+// retire. So the reading carries its own health line, and the one thing it must never do is
+// present an unarmed repo's silence as evidence.
+
+export interface Health {
+  /** The record cannot be believed at all, and this says why. Nothing below it should be read. */
+  readonly blocked: string | null;
+  /** It can be believed with a caveat, and here they are. */
+  readonly warn: readonly string[];
+}
+
+export interface HealthArgs {
+  /** Does this repo have a recorded history at all? */
+  readonly armed: boolean;
+  /** Did the sessions being read record anything? */
+  readonly rows: number;
+  /** How many of the conversations being read had a stream of their own. */
+  readonly withRecord: number;
+  readonly analysed: number;
+}
+
+/** What a reader must know before believing anything under it. */
+export function health({ armed, rows, withRecord, analysed }: HealthArgs): Health {
+  if (!armed)
+    return {
+      blocked:
+        "the record is NOT ARMED — no stream has ever been written here, so there are no numbers. " +
+        'This is not "nothing happened".',
+      warn: [],
+    };
+  const warn: string[] = [];
+  if (analysed > 0 && withRecord === 0)
+    warn.push(
+      "none of the conversations read has a stream of its own — the hooks did not record for them, " +
+        "so everything below is narrative only.",
+    );
+  else if (rows === 0) warn.push("the record is armed and holds no events for what was read.");
+  return { blocked: null, warn };
 }

@@ -35,10 +35,28 @@ import {
   DEFAULT_DRIFT_TOKENS,
   FLOW_DIR,
   FLOW_GITIGNORE,
+  LEAD_BUCKETS,
   LOG_VERSION,
   MARKER_MAX_AGE_MS,
+  MOMENT_ORDER,
+  RECORDING_VERSION,
   ROW_KINDS,
+  readRecording,
+  recordPath,
+  recordingFile,
+  recordingHeader,
   afterCompaction,
+  covers,
+  diffRows,
+  heat,
+  isEdit,
+  metrics,
+  momentsView,
+  recorder,
+  replay,
+  subjectOf,
+  terrain,
+  universe,
   bindsTo,
   brief,
   categoriesIn,
@@ -79,8 +97,16 @@ import {
   type Tally,
   type Briefing,
   type BriefArgs,
+  type Bound,
+  type BreadcrumbRecord,
   type Cause,
   type ClassifierFault,
+  type GuardrailRecord,
+  type MomentEntry,
+  type RecordedStep,
+  type Recording,
+  type ReplayedStep,
+  type TerrainNode,
 } from "./domain.ts";
 
 // ── the fixtures every case shares ───────────────────────────────────────────
@@ -793,5 +819,569 @@ describe("the log's layout", () => {
     expect(nextSeq('{"seq":2}\n{"kind":"run"\n')).toBe(3);
     expect(nextSeq('{"kind":"meta"}\n')).toBe(1);
     expect(nextSeq('{"seq":-1}\n')).toBe(1);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE UNIVERSE, THE RECORD AND REPLAY
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+//
+// Three things are being proved down here and they build on each other:
+//
+//   THE UNIVERSE  what a log row's id MEANS today — the scope every later question is asked
+//                 against, read off the same load the guard runs on.
+//   THE RECORD    the rows read back as the settled numbers: blocks, lead, gaps, dead. The dead
+//                 reading is the delicate one — a wrong DEAD retires a rule that was working.
+//   REPLAY        J5.2. A recording is events plus recorded answers, and running it back through
+//                 the SAME `guard`/`brief` lands the same effects with no repo and no harness.
+
+const bound = universe(regime.ok ? regime.entries : []);
+const boundOf = (id: string): Bound => bound.find((e) => e.id === id) as Bound;
+
+/** A log row, stamped — the shape `appendRows` writes, without the file. */
+function row(kind: RowKind, fields: Record<string, unknown> = {}, ts = "2026-01-01T00:00:00.000Z"): Row {
+  return { kind, ts, ...fields };
+}
+
+const toolRowFor = (path: string, edit = false): Row => row("tool", { tool: edit ? "Edit" : "Read", path, edit });
+
+describe("the universe — what an id means today", () => {
+  it("carries each entry's scope, actors, pack and the sentence it speaks", () => {
+    const scoped = boundOf("rails.buildersOnly");
+    expect(scoped).toMatchObject({
+      kind: "guardrail",
+      pack: "rails",
+      at: ["write"],
+      on: ["plan/**"],
+      for: ["builder"],
+      disabled: null,
+    });
+    expect(scoped.says).toContain("the plan's shape is the parent's");
+    expect(boundOf("rails.notes.orientation").says).toBe("This repo is guarded by flow.");
+    // A `file:` breadcrumb says its file — the prose is the shell's to resolve, and a universe
+    // that showed an empty sentence would look like a note with nothing to say.
+    expect(boundOf("rails.notes.forBuilders").says).toBe("docs/builder.md");
+  });
+
+  it("keeps a DISABLED entry, carrying its reason — invisible is worse than off", () => {
+    expect(boundOf("rails.retired").disabled).toBe("superseded by everyone");
+  });
+});
+
+describe("covers — coverage is only ever claimed by an entry that names paths", () => {
+  it("an unscoped entry reaches nowhere, though it matches everywhere", () => {
+    const unscoped = boundOf("rails.everyone");
+    expect(inScope(unscoped, "anything.ts")).toBe(true);
+    expect(covers(unscoped, "anything.ts")).toBe(false);
+  });
+
+  it("a scoped entry reaches its globs and stops at its ignores", () => {
+    const staged = boundOf("rails.stagedFiles");
+    expect(covers(staged, "src/a.ts")).toBe(true);
+    expect(covers(staged, "src/a.test.ts")).toBe(false);
+    expect(covers(staged, "docs/a.ts")).toBe(false);
+  });
+});
+
+describe("reading a row", () => {
+  it("subjectOf prefers the path, falls back to the command, else nothing", () => {
+    expect(subjectOf(row("guardrail", { subject: "a.ts", path: "b.ts" }))).toBe("a.ts");
+    expect(subjectOf(row("tool", { path: "a.ts", command: "ls" }))).toBe("a.ts");
+    expect(subjectOf(row("tool", { command: "ls" }))).toBe("ls");
+    expect(subjectOf(row("run", {}))).toBe(null);
+  });
+
+  it("isEdit reads the ROW's own flag, never a set of tool names", () => {
+    expect(isEdit(row("tool", { tool: "Edit", path: "a.ts", edit: true }))).toBe(true);
+    // The same tool name with no flag is not an edit here: which names change a file is the
+    // adapter's knowledge, and the engine may not hold a second copy of it.
+    expect(isEdit(row("tool", { tool: "Edit", path: "a.ts" }))).toBe(false);
+    expect(isEdit(row("tool", { tool: "Edit", edit: true }))).toBe(false);
+    expect(isEdit(row("guardrail", { edit: true, path: "a.ts" }))).toBe(false);
+  });
+});
+
+describe("the record — blocks, lead, gaps", () => {
+  const nowMs = Date.parse("2026-03-01T00:00:00.000Z");
+
+  it("counts blocks, and reads the lead from the calls between a show and the edit it steered", () => {
+    const rows: Row[] = [
+      row("breadcrumb", { moment: "touch", id: "rails.notes.area", cause: "first-touch" }),
+      toolRowFor("src/a.ts"),
+      toolRowFor("src/a.ts", true),
+      row("guardrail", { moment: "write", id: "rails.everyone", out: "deny", subject: "src/a.ts" }),
+    ];
+    const read = metrics({ sessions: [{ session: "s1", rows }], entries: bound, nowMs });
+    expect(read.headline.blocks).toBe(1);
+    const area = read.breadcrumbs.find((b) => b.id === "rails.notes.area");
+    expect(area?.shown).toBe(1);
+    expect(area?.byCause["first-touch"]).toBe(1);
+    // The show rode on tool call 0; the first in-scope edit is call 2. A lead of 2.
+    expect(area?.lead.median).toBe(2);
+    expect(area?.lead.buckets["1-5"]).toBe(1);
+    expect(read.span.tools).toBe(2);
+  });
+
+  it("a show with no in-scope edit after it is counted, never scored as a lead of zero", () => {
+    const rows: Row[] = [row("breadcrumb", { moment: "touch", id: "rails.notes.area", cause: "drift" }), toolRowFor("docs/a.md", true)];
+    const read = metrics({ sessions: [{ session: "s1", rows }], entries: bound, nowMs });
+    const area = read.breadcrumbs.find((b) => b.id === "rails.notes.area");
+    expect(area?.lead).toEqual({ median: null, buckets: { "0": 0, "1-5": 0, "6-19": 0, "20+": 0 }, noEdit: 1 });
+    expect(area?.byCause["drift"]).toBe(1);
+    expect(LEAD_BUCKETS).toEqual(["0", "1-5", "6-19", "20+"]);
+  });
+
+  it("an edit no entry's globs reach is a GAP, ranked by its folder's edit count", () => {
+    const rows: Row[] = [toolRowFor("docs/a.md", true), toolRowFor("docs/b.md", true), toolRowFor("src/a.ts", true)];
+    const read = metrics({ sessions: [{ session: "s1", rows }], entries: bound, nowMs });
+    expect(read.gaps).toEqual([{ area: "docs", edits: 2 }]);
+  });
+
+  it("the same rule blocking the same subject twice in one chat is a REPEAT — unless a compaction sat between", () => {
+    const deny = row("guardrail", { moment: "write", id: "rails.everyone", out: "deny", subject: "a.ts" });
+    const once = metrics({ sessions: [{ session: "s1", rows: [deny, deny] }], entries: bound, nowMs });
+    expect(once.guardrails.find((g) => g.id === "rails.everyone")?.repeats).toBe(1);
+
+    const across = metrics({
+      sessions: [{ session: "s1", rows: [deny, row("compaction"), deny] }],
+      entries: bound,
+      nowMs,
+    });
+    expect(across.guardrails.find((g) => g.id === "rails.everyone")?.repeats).toBe(0);
+  });
+
+  it("a run tally becomes the rail's runs · evaluated · silenced", () => {
+    const rows: Row[] = [
+      row("run", {
+        moment: "write",
+        subjects: 1,
+        rules: [
+          { id: "rails.everyone", evaluated: 1, hits: 0, silenced: 0 },
+          { id: "rails.buildersOnly", evaluated: 0, hits: 0, silenced: 1 },
+        ],
+      }),
+    ];
+    const read = metrics({ sessions: [{ session: "s1", rows }], entries: bound, nowMs });
+    expect(read.guardrails.find((g) => g.id === "rails.everyone")).toMatchObject({ runs: 1, evaluated: 1, silenced: 0 });
+    expect(read.guardrails.find((g) => g.id === "rails.buildersOnly")).toMatchObject({ runs: 1, evaluated: 0, silenced: 1 });
+  });
+
+  it("a DISABLED entry earns no record at all — it fires at nothing, so it can neither work nor be dead", () => {
+    const read = metrics({ sessions: [], entries: bound, nowMs });
+    expect(read.guardrails.map((g) => g.id)).not.toContain("rails.retired");
+  });
+});
+
+describe("the record — the DEAD reading, which retires a rule if it is wrong", () => {
+  const nowMs = Date.parse("2026-03-01T00:00:00.000Z");
+  /** Enough opportunity that silence is a verdict. One session, thirty-one days of it. */
+  const ampleRows = (extra: readonly Row[]): Row[] => [
+    row("run", { moment: "write", subjects: 1, rules: [] }, "2026-01-01T00:00:00.000Z"),
+    ...extra,
+    row("run", { moment: "write", subjects: 1, rules: [] }, "2026-02-05T00:00:00.000Z"),
+  ];
+
+  it("a scoped guardrail that stood on the rail and never once ran is DEAD", () => {
+    const rows = ampleRows([
+      row("run", { moment: "commit", subjects: 3, rules: [{ id: "rails.stagedFiles", evaluated: 0, hits: 0, silenced: 0 }] }),
+    ]);
+    const read = metrics({ sessions: [{ session: "s1", rows }], entries: bound, nowMs });
+    expect(read.span.ample).toBe(true);
+    expect(read.headline.dead).toContain("rails.stagedFiles");
+  });
+
+  it("an UNSCOPED guardrail is never dead — its scope is not a claim about paths", () => {
+    const rows = ampleRows([
+      row("run", { moment: "commit", subjects: 1, rules: [{ id: "rails.wholeCommit", evaluated: 0, hits: 0, silenced: 0 }] }),
+    ]);
+    const read = metrics({ sessions: [{ session: "s1", rows }], entries: bound, nowMs });
+    expect(read.headline.dead).not.toContain("rails.wholeCommit");
+  });
+
+  it("a guardrail with NOTHING to its name is not judged — bound-after-the-history looks the same", () => {
+    const read = metrics({ sessions: [{ session: "s1", rows: ampleRows([]) }], entries: bound, nowMs });
+    expect(read.headline.dead).not.toContain("rails.stagedFiles");
+    // …but it is named as something nobody has evidence about, which is a different sentence.
+    expect(read.headline.retire).toContain("rails.stagedFiles");
+  });
+
+  it("a breadcrumb is judged only once its PACK has spoken — the bound-this-morning exemption", () => {
+    const silent = metrics({ sessions: [{ session: "s1", rows: ampleRows([]) }], entries: bound, nowMs });
+    expect(silent.headline.dead).not.toContain("rails.notes.area");
+
+    const spoke = metrics({
+      sessions: [
+        {
+          session: "s1",
+          rows: ampleRows([row("breadcrumb", { moment: "session", id: "rails.notes.orientation", cause: "session" })]),
+        },
+      ],
+      entries: bound,
+      nowMs,
+    });
+    expect(spoke.headline.dead).toContain("rails.notes.area");
+    // The session note itself is never dead: it shows by construction, so silence there would be
+    // an engine fault rather than a fiction in the config.
+    expect(spoke.headline.dead).not.toContain("rails.notes.orientation");
+  });
+
+  it("a thin history says UNPROVEN rather than retire, and neither claims anything dead", () => {
+    const read = metrics({ sessions: [{ session: "s1", rows: [toolRowFor("src/a.ts")] }], entries: bound, nowMs });
+    expect(read.span.ample).toBe(false);
+    expect(read.headline.dead).toEqual([]);
+    expect(read.headline.retire).toEqual([]);
+    expect(read.headline.unproven).toContain("rails.stagedFiles");
+  });
+
+  it("an entry that used to catch things and stopped goes QUIET, with the days since", () => {
+    const rows = ampleRows([
+      row("run", { moment: "write", subjects: 1, rules: [{ id: "rails.everyone", evaluated: 1, hits: 1, silenced: 0 }] }, "2026-01-02T00:00:00.000Z"),
+      row("guardrail", { moment: "write", id: "rails.everyone", out: "deny", subject: "a.ts" }, "2026-01-02T00:00:00.000Z"),
+    ]);
+    const read = metrics({ sessions: [{ session: "s1", rows }], entries: bound, nowMs });
+    expect(read.headline.quiet).toEqual([{ id: "rails.everyone", lastHit: "2026-01-02T00:00:00.000Z", daysSince: 58 }]);
+  });
+
+  it("the `commit` stream is not a chat, so it never counts toward an ample session span", () => {
+    const rows = [row("run", { moment: "commit", subjects: 1, rules: [] })];
+    const read = metrics({ sessions: [{ session: "commit", rows }], entries: bound, nowMs, minSessions: 1, minDays: 9999 });
+    expect(read.span.sessions).toBe(0);
+    expect(read.span.ample).toBe(false);
+  });
+
+  it("an empty history has an honest span rather than an invented one", () => {
+    const read = metrics({ sessions: [], entries: [], nowMs });
+    expect(read.span).toEqual({ sessions: 0, days: 0, first: null, last: null, ample: false, tools: 0 });
+    expect(read.headline.lead.median).toBe(null);
+  });
+
+  it("ignores rows it cannot read rather than counting them as something", () => {
+    const rows: Row[] = [
+      row("breadcrumb", { moment: "touch", cause: "first-touch" }), // no id
+      row("guardrail", { moment: "write", out: "deny" }), // no id
+      row("breadcrumb", { moment: "touch", id: "rails.notes.area", cause: "not-a-cause" }),
+      row("run", { moment: "write", rules: [{ evaluated: 3 }, null] }),
+    ];
+    const read = metrics({ sessions: [{ session: "s1", rows }], entries: bound, nowMs });
+    expect(read.headline.blocks).toBe(0);
+    const area = read.breadcrumbs.find((b) => b.id === "rails.notes.area");
+    expect(area?.shown).toBe(1);
+    expect(Object.values(area?.byCause ?? {}).reduce((a, b) => a + b, 0)).toBe(0);
+  });
+
+  it("an even number of leads averages the two middles — 1.5 is a real answer", () => {
+    const shown = (): Row[] => [row("breadcrumb", { moment: "touch", id: "rails.notes.area", cause: "first-touch" })];
+    const read = metrics({
+      sessions: [
+        { session: "a", rows: [...shown(), toolRowFor("src/a.ts", true)] },
+        { session: "b", rows: [...shown(), toolRowFor("x.md"), toolRowFor("src/a.ts", true)] },
+      ],
+      entries: bound,
+      nowMs,
+    });
+    expect(read.breadcrumbs.find((b) => b.id === "rails.notes.area")?.lead.median).toBe(1.5);
+  });
+});
+
+describe("the terrain — the real tree, with coverage laid over it", () => {
+  it("rolls touches, edits and gaps up every ancestor, and lists who reaches where", () => {
+    const rows: Row[] = [toolRowFor("src/a.ts", true), toolRowFor("src/a.ts"), toolRowFor("docs/x.md", true)];
+    const recorded = heat([{ session: "s1", rows }]);
+    expect(recorded).toEqual({ touches: { "src/a.ts": 2, "docs/x.md": 1 }, edits: { "src/a.ts": 1, "docs/x.md": 1 } });
+
+    const tree = terrain({ paths: ["src/a.ts", "README.md"], heat: recorded, entries: bound });
+    const at = (path: string): TerrainNode => tree.find((n) => n.path === path) as TerrainNode;
+    expect(at("src")).toMatchObject({ dir: true, touches: 2, edits: 1, uncovered: 0, depth: 0 });
+    expect(at("src/a.ts").entries).toContain("rails.notes.area");
+    // Nothing watches docs/, so its edit is a gap and the folder carries it.
+    expect(at("docs")).toMatchObject({ uncovered: 1 });
+    expect(at("README.md")).toMatchObject({ touches: 0, edits: 0, entries: [] });
+  });
+
+  it("draws folders before files, and a node always follows its parent", () => {
+    const tree = terrain({
+      paths: ["z.md", "src/b.ts", "src/a.ts", "docs/x.md"],
+      heat: { touches: {}, edits: {} },
+      entries: [],
+    });
+    expect(tree.map((n) => n.path)).toEqual(["docs", "docs/x.md", "src", "src/a.ts", "src/b.ts", "z.md"]);
+  });
+
+  it("an absolute path, or one climbing out of the repo, is not a node of this tree", () => {
+    const rows: Row[] = [toolRowFor("/etc/passwd"), toolRowFor("../elsewhere/a.ts", true)];
+    expect(heat([{ session: "s1", rows }])).toEqual({ touches: {}, edits: {} });
+    expect(terrain({ paths: [], heat: { touches: {}, edits: {} }, entries: bound })).toEqual([]);
+  });
+});
+
+describe("the moments lens", () => {
+  it("arranges the universe by moment, in the order a session meets them", () => {
+    const view = momentsView(bound, null);
+    expect(view.moments.map((m) => m.moment)).toEqual(MOMENT_ORDER.filter((m) => m !== "delete"));
+    expect(view.totals).toEqual({ breadcrumbs: 3, guardrails: 10, disabled: 1 });
+  });
+
+  it("an entry stands in EVERY moment it fires at, carrying whatever the record says about it", () => {
+    const read = metrics({
+      sessions: [{ session: "s1", rows: [row("guardrail", { moment: "write", id: "rails.everyone", out: "deny", subject: "a.ts" })] }],
+      entries: bound,
+      nowMs: Date.parse("2026-03-01T00:00:00.000Z"),
+    });
+    const view = momentsView(bound, read);
+    const writes = view.moments.find((m) => m.moment === "write");
+    const everyone = writes?.entries.find((e) => e.id === "rails.everyone") as MomentEntry;
+    expect((everyone.record as GuardrailRecord).hits).toBe(1);
+    // An entry the record has never seen still carries a record, zeroed — the reading is "bound,
+    // never fired", which is a fact. `null` is reserved for a view drawn with no record at all.
+    const session = view.moments.find((m) => m.moment === "session");
+    expect((session?.entries[0]?.record as BreadcrumbRecord).shown).toBe(0);
+    expect(momentsView(bound, null).moments[0]?.entries[0]?.record).toBe(null);
+  });
+});
+
+// ── replay ──────────────────────────────────────────────────────────────────
+
+describe("replay — a recorded session, run again with no repo and no harness", () => {
+  const recording = (steps: readonly RecordedStep[], session = "s1"): Recording => ({
+    v: RECORDING_VERSION,
+    session,
+    steps,
+  });
+
+  it("lands the same block the live rail landed, from recorded answers alone", async () => {
+    const result = await replay({
+      load: regime,
+      settings: {},
+      recording: recording([
+        { rail: "guard", moment: "write", file: { path: "a.ts", content: "TODO" }, wearing: [] },
+        { rail: "guard", moment: "command", command: "git push --force", wearing: [] },
+      ]),
+    });
+    const denied = result.rows.filter((r) => r.kind === "guardrail");
+    expect(denied.map((r) => r["id"])).toEqual(["rails.everyone", "rails.explodes", "rails.noForce"]);
+    expect(result.unanswered).toEqual([]);
+  });
+
+  it("drives a check that shells out through the recorded answer — no command is ever run", async () => {
+    const passing = await replay({
+      load: regime,
+      settings: {},
+      recording: recording([
+        {
+          rail: "guard",
+          moment: "commit",
+          staged: ["src/a.ts"],
+          wearing: [],
+          world: { exec: { "just test-commit": { code: 0 } }, fs: { "src/a.ts": "ok" } },
+        },
+      ]),
+    });
+    expect(passing.rows.filter((r) => r.kind === "guardrail")).toEqual([]);
+
+    const failing = await replay({
+      load: regime,
+      settings: {},
+      recording: recording([
+        {
+          rail: "guard",
+          moment: "commit",
+          staged: ["src/a.ts"],
+          wearing: [],
+          world: { exec: { "just test-commit": { code: 1, stderr: "red" } }, fs: { "src/a.ts": "ok" } },
+        },
+      ]),
+    });
+    expect(failing.rows.filter((r) => r.kind === "guardrail").map((r) => r["id"])).toEqual(["rails.suitePasses"]);
+  });
+
+  it("a reach the recording never answered is REPORTED — a replay carrying one is not evidence", async () => {
+    const result = await replay({
+      load: regime,
+      settings: {},
+      recording: recording([{ rail: "guard", moment: "commit", staged: ["src/a.ts"], wearing: [] }]),
+    });
+    expect(result.unanswered).toContainEqual({ kind: "exec", asked: "just test-commit" });
+  });
+
+  it("replays who the session WAS — a scoped rule fires for the actor that wore it", async () => {
+    const step = (wearing: readonly string[]): RecordedStep => ({
+      rail: "guard",
+      moment: "write",
+      file: { path: "plan/a.yml", content: "TODO" },
+      wearing,
+    });
+    const asBuilder = await replay({ load: regime, settings: {}, recording: recording([step(["builder"])]) });
+    expect(asBuilder.rows.filter((r) => r.kind === "guardrail").map((r) => r["id"])).toContain("rails.buildersOnly");
+
+    const asNobody = await replay({ load: regime, settings: {}, recording: recording([step([])]) });
+    expect(asNobody.rows.filter((r) => r.kind === "guardrail").map((r) => r["id"])).not.toContain("rails.buildersOnly");
+  });
+
+  it("threads the marks, so first touch · drift · compaction all replay — not just the blocks", async () => {
+    const touch = (tokens: number): RecordedStep => ({ rail: "brief", moment: "touch", path: "src/a.ts", wearing: [], tokens });
+    const result = await replay({
+      load: regime,
+      settings: { driftTokens: 100 },
+      recording: recording([
+        { rail: "brief", moment: "session", wearing: [], tokens: 0 },
+        touch(10), // first touch of the area
+        touch(20), // quiet — the context has barely moved
+        touch(500), // drifted past the threshold
+        { rail: "compaction" }, // the area mark is cleared; the session mark holds
+        touch(600), // first touch again, because the agent no longer knows
+      ]),
+    });
+    const shows = result.rows.filter((r) => r.kind === "breadcrumb").map((r) => `${r["id"] as string} ${r["cause"] as string}`);
+    expect(shows).toEqual([
+      "rails.notes.orientation session",
+      "rails.notes.area first-touch",
+      "rails.notes.area drift",
+      "rails.notes.area first-touch",
+    ]);
+    // The session note is NOT re-shown after the compaction: the host re-delivers orientation at
+    // exactly that moment, and clearing its mark would print the greeting twice.
+    expect(result.marks["rails.notes.orientation"]).toBe(0);
+    expect(result.steps.filter((s) => s.step.rail === "compaction")[0]?.rows).toEqual([{ kind: "compaction" }]);
+  });
+
+  it("a config that will not load refuses every replayed rail, exactly as it does live", async () => {
+    const broken = loadConfig(defineConfig([pack(rails), override(rails.everyone).at()]));
+    const result = await replay({
+      load: broken,
+      settings: {},
+      recording: recording([
+        { rail: "guard", moment: "write", file: { path: "a.ts", content: "ok" }, wearing: [] },
+        { rail: "compaction" },
+        { rail: "brief", moment: "session", wearing: [], tokens: 0 },
+      ]),
+    });
+    expect(result.rows.filter((r) => r.kind === "guardrail")).toHaveLength(1);
+    expect(result.rows.filter((r) => r.kind === "breadcrumb")).toHaveLength(1);
+  });
+
+  it("the replayed steps carry their own effects and rows, step by step", async () => {
+    const result = await replay({
+      load: regime,
+      settings: {},
+      recording: recording([{ rail: "guard", moment: "command", command: "git push --force", wearing: [] }]),
+    });
+    const first = result.steps[0] as ReplayedStep;
+    expect(first.step.rail).toBe("guard");
+    expect(first.effects.filter((e) => e.do === "block").map((e) => e.entry)).toEqual(["rails.noForce"]);
+    expect(first.rows[0]).toMatchObject({ kind: "run", moment: "command" });
+  });
+});
+
+describe("diffRows — the proof is an EMPTY diff", () => {
+  const live: Row[] = [
+    row("meta", { session: "s1" }),
+    row("tool", { tool: "Bash", command: "git push --force" }),
+    row("run", { moment: "command", subjects: 1, rules: [] }),
+    row("guardrail", { moment: "command", id: "rails.noForce", out: "deny", subject: "git push --force" }),
+  ];
+
+  it("agrees when the same rules refused the same subjects, ignoring what only a live run has", async () => {
+    const result = await replay({
+      load: regime,
+      settings: {},
+      recording: { v: RECORDING_VERSION, session: "s1", steps: [{ rail: "guard", moment: "command", command: "git push --force", wearing: [] }] },
+    });
+    expect(diffRows(result.rows, live)).toEqual([]);
+  });
+
+  it("names both sides when they disagree, so a lost block reads differently from an invented one", () => {
+    const invented = [...live, row("guardrail", { moment: "write", id: "rails.everyone", out: "deny", subject: "a.ts" })];
+    expect(diffRows(invented, live)).toEqual([
+      { side: "replay", at: 1, row: "guardrail write rails.everyone deny a.ts" },
+    ]);
+    expect(diffRows(live, invented)).toEqual([{ side: "live", at: 1, row: "guardrail write rails.everyone deny a.ts" }]);
+    expect(diffRows([row("breadcrumb", { moment: "touch", id: "x", cause: "drift" })], [])).toEqual([
+      { side: "replay", at: 0, row: "breadcrumb touch x drift" },
+    ]);
+  });
+});
+
+describe("the recording seam — the live world's answers, written down", () => {
+  it("keeps every answer the checks reached for, in the shape a case is written in", async () => {
+    const live: World = {
+      exec: (cmd) => Promise.resolve({ stdout: `ran ${cmd}`, stderr: "", code: 0 }),
+      fs: { read: (path) => Promise.resolve(`body of ${path}`), exists: (path) => Promise.resolve(path !== "gone.ts") },
+      git: { diff: () => Promise.resolve("@@ -1"), stagedFiles: () => Promise.resolve(["a.ts"]) },
+    };
+    const taping = recorder(live);
+    expect(await taping.world.exec("just test")).toEqual({ stdout: "ran just test", stderr: "", code: 0 });
+    expect(await taping.world.fs.read("a.ts")).toBe("body of a.ts");
+    expect(await taping.world.fs.exists("b.ts")).toBe(true);
+    expect(await taping.world.fs.exists("gone.ts")).toBe(false);
+    expect(await taping.world.git.diff("a.ts")).toBe("@@ -1");
+    expect(await taping.world.git.stagedFiles()).toEqual(["a.ts"]);
+
+    expect(taping.taken()).toEqual({
+      exec: { "just test": { stdout: "ran just test", stderr: "", code: 0 } },
+      // `b.ts` exists and nothing read it, so it is present with no content; `gone.ts` is absent,
+      // which is what a canned world reads as "not there".
+      fs: { "a.ts": "body of a.ts", "b.ts": "" },
+      gitDiff: "@@ -1",
+      staged: ["a.ts"],
+    });
+  });
+
+  it("a world nothing reached for records nothing — an empty answer set, not an empty world", () => {
+    const taping = recorder(world());
+    expect(taping.taken()).toEqual({});
+  });
+
+  it("what it records replays: the same check, the same verdict, no repo", async () => {
+    const live: World = {
+      exec: () => Promise.resolve({ stdout: "", stderr: "red", code: 1 }),
+      fs: { read: () => Promise.resolve("ok"), exists: () => Promise.resolve(true) },
+      git: { diff: () => Promise.resolve(""), stagedFiles: () => Promise.resolve([]) },
+    };
+    const taping = recorder(live);
+    const event: GuardEvent = { moment: "commit", staged: ["src/a.ts"], wearing: [] };
+    const outcome = await guard({ load: regime, event, world: taping.world });
+
+    const replayed = await replay({
+      load: regime,
+      settings: {},
+      recording: {
+        v: RECORDING_VERSION,
+        session: "s1",
+        steps: [{ rail: "guard", moment: "commit", staged: ["src/a.ts"], wearing: [], world: taping.taken() }],
+      },
+    });
+    expect(replayed.unanswered).toEqual([]);
+    expect(blockedIds(outcome)).toEqual(replayed.steps[0]?.effects.map((e) => (e as Block).entry));
+    expect(blockedIds(outcome)).toEqual(["rails.suitePasses"]);
+  });
+});
+
+describe("the recording file — appended live, read back whole", () => {
+  it("names the switch and the stream, both under the one state home", () => {
+    expect(recordPath("/repo")).toBe("/repo/.flow/record");
+    expect(recordingFile("/repo", "a/b")).toBe("/repo/.flow/replay/a-b.jsonl");
+  });
+
+  it("reads a header, then every step, and drops a line it cannot read rather than failing", () => {
+    const text = [
+      JSON.stringify(recordingHeader("s1")),
+      JSON.stringify({ rail: "guard", moment: "write", file: { path: "a.ts", content: "x" }, wearing: [] }),
+      "{ this is not json",
+      JSON.stringify({ rail: "compaction" }),
+      JSON.stringify({ rail: "brief", moment: "touch", path: "a.ts", wearing: [], tokens: 5 }),
+      JSON.stringify({ kind: "not-a-step" }),
+      "[1,2]",
+      "",
+    ].join("\n");
+    const read = readRecording(text);
+    expect(read.v).toBe(RECORDING_VERSION);
+    expect(read.session).toBe("s1");
+    expect(read.steps.map((s) => s.rail)).toEqual(["guard", "compaction", "brief"]);
+  });
+
+  it("a headerless file is still a recording — a hand-written fixture has no header to write", () => {
+    const read = readRecording(JSON.stringify({ rail: "compaction" }), "from-the-filename");
+    expect(read).toEqual({ v: RECORDING_VERSION, session: "from-the-filename", steps: [{ rail: "compaction" }] });
+    expect(readRecording("").steps).toEqual([]);
   });
 });

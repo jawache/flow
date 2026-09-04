@@ -16,7 +16,7 @@
 
 import { describe, it, expect } from "vitest";
 import type { TurnAction } from "../index.ts";
-import type { Block } from "../engine/domain.ts";
+import type { Block, Row } from "../engine/domain.ts";
 import {
   ALLOW,
   DELIVERS,
@@ -43,6 +43,26 @@ import {
   tokensFromTranscript,
   toolRow,
   touchedPath,
+  GUARD_PATHS,
+  branchOf,
+  health,
+  selectSessions,
+  classifyBash,
+  classifyStore,
+  cwdOf,
+  isCorrection,
+  isGuardPath,
+  mergeNarratives,
+  narrative,
+  parseEvents,
+  projectFolderName,
+  recipeTools,
+  snip,
+  spawnMeta,
+  spawnsIn,
+  startedAt,
+  strip,
+  weakenedAfterBlock,
   transcriptLines,
   turnActions,
   wouldBeFile,
@@ -50,6 +70,8 @@ import {
   type EventWorld,
   type HookPayload,
   type Shown,
+  type TranscriptEvent,
+  type Candidate,
 } from "./domain.ts";
 
 // ── the world a payload is read against ──────────────────────────────────────
@@ -507,11 +529,16 @@ describe("who the session is, from what the host wrote", () => {
 
 describe("the flight recorder's row", () => {
   it("records a path call, a command call, and a search — every call, by name", () => {
+    // `edit: true` is stamped here and nowhere else: the engine reads the record back to answer
+    // "how much work happened in this area" and may never import this file to ask which of the
+    // host's tool names change a file.
     expect(toolRow(pre("Edit", { file_path: "/repo/src/a.ts" }), ROOT)).toStrictEqual({
       kind: "tool",
       tool: "Edit",
       path: "src/a.ts",
+      edit: true,
     });
+    expect(toolRow(pre("Read", { file_path: "/repo/src/a.ts" }), ROOT)).toMatchObject({ edit: false });
     expect(toolRow(pre("Bash", { command: "just test" }), ROOT)).toStrictEqual({
       kind: "tool",
       tool: "Bash",
@@ -539,5 +566,358 @@ describe("the environment a check's command sees", () => {
     const env = hermeticEnv({ PATH: "/usr/bin", GIT_INDEX_FILE: "/repo/.git/index", HOME: "/home/me" });
     expect(env).toStrictEqual({ PATH: "/usr/bin", HOME: "/home/me" });
     expect(GIT_HOOK_ENV).toContain("GIT_DIR");
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE ARCHIVAL SIDE — the store, and what a conversation says
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+//
+// The live half above is handed a transcript path. This half is asked about a REPO, after the
+// fact, and has to find the conversations itself — so it is proved the same way, as decisions over
+// bytes: a folder listing is an array of strings, a transcript is a string, and what they MEAN is
+// the thing under test.
+
+/** A whole transcript file, built the way the host writes it. */
+const store = (...records: Record<string, unknown>[]): string => records.map((r) => JSON.stringify(r)).join("\n");
+
+const spokeBack = (blocks: unknown[], ts = "2026-01-01T00:00:00.000Z"): Record<string, unknown> => ({
+  type: "assistant",
+  timestamp: ts,
+  message: { content: blocks },
+});
+
+const spoke = (prose: string, ts = "2026-01-01T00:00:00.000Z"): Record<string, unknown> => ({
+  type: "user",
+  timestamp: ts,
+  message: { content: prose },
+});
+
+const used = (name: string, input: Record<string, unknown>, id = "toolu_1"): Record<string, unknown> => ({
+  type: "tool_use",
+  id,
+  name,
+  input,
+});
+
+describe("the store — where the harness keeps its transcripts", () => {
+  it("encodes a working directory the way the host does: every non-alphanumeric becomes a dash", () => {
+    expect(projectFolderName("/Users/x/dev/repo")).toBe("-Users-x-dev-repo");
+    // A dot is not special, so a hidden folder yields a DOUBLED dash — the check that this is the
+    // real rule rather than the hand-written `[/.]` approximation the old tools carried.
+    expect(projectFolderName("/Users/x/.work/y")).toBe("-Users-x--work-y");
+    expect(projectFolderName("/Users/x/a_b c")).toBe("-Users-x-a-b-c");
+  });
+
+  it("sorts a listing into sessions, their subagents, and what it did not understand", () => {
+    const { transcripts, ignored } = classifyStore([
+      "abc.jsonl",
+      "abc/subagents/agent-1.jsonl",
+      "abc/subagents/agent-1.meta.json",
+      "abc/subagents/agent-2.jsonl",
+      "notes.txt",
+      "abc/summary.md",
+    ]);
+    expect(transcripts).toEqual([
+      { path: "abc.jsonl", meta: null, session: "abc", agent: null },
+      { path: "abc/subagents/agent-1.jsonl", meta: "abc/subagents/agent-1.meta.json", session: "abc", agent: "agent-1" },
+      // The sidecar is only named when the listing HELD it — the shell never probes for a file.
+      { path: "abc/subagents/agent-2.jsonl", meta: null, session: "abc", agent: "agent-2" },
+    ]);
+    // A `.meta.json` is read through its transcript, so naming it as ignored would be noise.
+    expect(ignored).toEqual(["notes.txt", "abc/summary.md"]);
+  });
+
+  it("reads the sidecar, including the toolUseId that joins it to the parent's own call", () => {
+    expect(
+      spawnMeta('{"agentType":"builder","description":"Build F5","toolUseId":"toolu_9","model":"opus","spawnDepth":1}'),
+    ).toEqual({ agentType: "builder", description: "Build F5", toolUseId: "toolu_9", model: "opus", spawnDepth: 1 });
+    expect(spawnMeta("{}")).toEqual({ agentType: null, description: null, toolUseId: null, model: null, spawnDepth: null });
+    expect(spawnMeta("not json")).toBe(null);
+    expect(spawnMeta(null)).toBe(null);
+  });
+
+  it("joins a sidecar to the parent block that spawned it, by id", () => {
+    const parent = store(
+      spoke("go"),
+      spokeBack(
+        [used("Agent", { subagent_type: "general-purpose", description: "Build F5", prompt: "x" }, "toolu_9")],
+        "2026-01-01T10:00:00.000Z",
+      ),
+      spokeBack([used("Read", { file_path: "/repo/a.ts" }, "toolu_x")]),
+    );
+    const spawns = spawnsIn(parent);
+    expect([...spawns.keys()]).toEqual(["toolu_9"]);
+    const meta = spawnMeta('{"agentType":"builder","toolUseId":"toolu_9"}');
+    expect(spawns.get(meta?.toolUseId ?? "")).toMatchObject({
+      asked: "general-purpose",
+      description: "Build F5",
+      ts: "2026-01-01T10:00:00.000Z",
+      line: 2,
+    });
+    // The sidecar OUTRANKS what the parent asked for — that is the whole point of the join: the
+    // parent's `general-purpose` is a claim, and `builder` is what the host wrote down.
+    expect(meta?.agentType).toBe("builder");
+  });
+
+  it("answers which worktree a transcript belongs to from the RECORDS, never from the folder name", () => {
+    // Two different checkouts, one folder name — which is why the name can never be inverted.
+    expect(projectFolderName("/x/workbench.workflow-flow")).toBe(projectFolderName("/x/workbench/workflow/flow"));
+    const file = store(
+      { type: "last-prompt" },
+      { type: "mode" },
+      {
+        type: "user",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        cwd: "/x/workbench.workflow-flow",
+        gitBranch: "workflow/flow",
+        message: { content: "hi" },
+      },
+    );
+    expect(cwdOf(file)).toBe("/x/workbench.workflow-flow");
+    expect(branchOf(file)).toBe("workflow/flow");
+    expect(startedAt(file)).toBe("2026-01-01T00:00:00.000Z");
+    // The stub records at the head of every file carry none of the three, so a literal first line
+    // is never enough — and a file that has none of them says so rather than guessing.
+    expect(cwdOf(store({ type: "last-prompt" }))).toBe(null);
+    expect(branchOf("")).toBe(null);
+    expect(startedAt("")).toBe(null);
+  });
+});
+
+describe("the narrative — the pairing, and the pointers it produces", () => {
+  it("reads typed prompts, tool calls and their results, each with its line", () => {
+    const file = store(
+      { type: "user", message: { content: "<system-reminder>injected</system-reminder>" } },
+      spoke("please fix the build"),
+      spokeBack([used("Bash", { command: "just test" }, "toolu_1")], "2026-01-01T09:00:00.000Z"),
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "ok", is_error: false }] } },
+      spokeBack([used("Edit", { file_path: "/repo/src/a.ts" }, "toolu_2")]),
+      {
+        type: "user",
+        message: { content: [{ type: "tool_result", tool_use_id: "toolu_2", content: [{ text: "boom" }], is_error: true }] },
+      },
+    );
+    expect(parseEvents(file, "/repo")).toEqual([
+      // The injected reminder is NOT a prompt: the harness talking to itself is not the human.
+      { line: 2, kind: "prompt", text: "please fix the build" },
+      { line: 3, kind: "use", ts: "2026-01-01T09:00:00.000Z", id: "toolu_1", name: "Bash", input: { command: "just test" }, path: "" },
+      { line: 4, kind: "result", id: "toolu_1", content: "ok", failed: false },
+      {
+        line: 5,
+        kind: "use",
+        ts: "2026-01-01T00:00:00.000Z",
+        id: "toolu_2",
+        name: "Edit",
+        input: { file_path: "/repo/src/a.ts" },
+        path: "src/a.ts",
+      },
+      { line: 6, kind: "result", id: "toolu_2", content: "boom", failed: true },
+    ]);
+  });
+
+  it("a result carrying an object rather than text is still readable", () => {
+    const file = store({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t", content: { n: 1 } }] } });
+    expect(parseEvents(file)[0]).toMatchObject({ kind: "result", content: '{"n":1}', failed: false });
+  });
+
+  it("spots the human pushing back — a heuristic, which is why every finding cites its line", () => {
+    expect(isCorrection("actually, revert that")).toBe(true);
+    expect(isCorrection("you forgot the test")).toBe(true);
+    // `no,` — the commonest spelling of pushback there is, and the one the ported regex could
+    // never match: its alternative ended in a punctuation class and was then asked for a word
+    // boundary, which a comma followed by a space can never be. A dead alternative in a detector
+    // is the spec's own P2 shape, so the anchoring moved outside the class.
+    expect(isCorrection("no, the other one")).toBe(true);
+    expect(isCorrection("wait, that is not it")).toBe(true);
+    expect(isCorrection("please add a test for the parser")).toBe(false);
+    expect(isCorrection("the manifest has no, or few, entries")).toBe(true);
+  });
+
+  it("shortens for printing, and MARKS the cut so a truncated line never reads as a whole one", () => {
+    expect(snip("  a\n  b  ")).toBe("a b");
+    expect(snip("abcdefghij", 5)).toBe("abcd…");
+    expect(strip("[31mred[0m")).toBe("red");
+    expect(strip(undefined)).toBe("");
+  });
+});
+
+describe("the justfile — a bypass is DERIVED from the repo's own recipes", () => {
+  const justfile = ["# a comment", "test:", "    npx vitest run", "    @just lint", "lint:", "    eslint .", "[private]"].join("\n");
+
+
+  it("reads each recipe body's command words, minus the shell noise", () => {
+    // `npx vitest run` names `vitest`, not `npx`. The ported reader took the first word, found a
+    // launcher in its own noise list, and dropped the line — so in a repo that drives everything
+    // through npx (this one) the tool set came back empty and the bypass section was silently off.
+    expect(recipeTools(justfile).sort()).toEqual(["eslint", "vitest"]);
+    // With no justfile there is nothing to bypass, so the detection switches itself off rather
+    // than falling back to a hardcoded list that would be wrong in every other repo.
+    expect(recipeTools("")).toEqual([]);
+  });
+
+  it("tells a recipe call from going round it, and leaves a heredoc alone", () => {
+    const tools = ["vitest", "eslint"];
+    expect(classifyBash("just test && just lint", tools)).toEqual({ recipes: ["test", "lint"], bypasses: [], commits: false });
+    expect(classifyBash("npx vitest run", tools)).toEqual({ recipes: [], bypasses: ["vitest"], commits: false });
+    expect(classifyBash("just test-vitest", tools)).toEqual({ recipes: ["test-vitest"], bypasses: [], commits: false });
+    expect(classifyBash("git commit -m x", tools).commits).toBe(true);
+    // Authoring a file whose body mentions a tool is not running that tool.
+    expect(classifyBash("cat <<'EOF' > x\neslint .\nEOF", tools)).toEqual({ recipes: [], bypasses: [], commits: false });
+  });
+});
+
+describe("the narrative reading — stats, loops, retries, and what was touched", () => {
+  const call = (name: string, input: Record<string, unknown>, line: number): TranscriptEvent => ({
+    line,
+    kind: "use",
+    ts: null,
+    id: `t${line}`,
+    name,
+    input,
+    path: typeof input["file_path"] === "string" ? input["file_path"] : "",
+  });
+
+  it("counts the work, and cites where the human pushed back", () => {
+    const read = narrative(
+      [
+        { line: 1, kind: "prompt", text: "add the parser" },
+        { line: 2, kind: "prompt", text: "no, revert that" },
+        call("Write", { file_path: "src/a.ts" }, 3),
+        call("Edit", { file_path: "src/a.ts" }, 4),
+        call("Read", { file_path: "src/b.ts" }, 5),
+        call("Bash", { command: "git commit -m x" }, 6),
+      ],
+      [],
+    );
+    expect(read.stats).toMatchObject({ edits: 1, writes: 1, commits: 1 });
+    expect(read.prompts.map((p) => p.line)).toEqual([1, 2]);
+    expect(read.corrections.map((p) => p.text)).toEqual(["no, revert that"]);
+    expect(read.touched).toEqual({ "src/a.ts": 2, "src/b.ts": 1 });
+  });
+
+  it("a file edited five times in a row is a LOOP; four is just work", () => {
+    const edits = (n: number): TranscriptEvent[] =>
+      Array.from({ length: n }, (_, i) => call("Edit", { file_path: "src/a.ts" }, i + 1));
+    expect(narrative(edits(4)).loops).toEqual([]);
+    expect(narrative(edits(5)).loops).toEqual([{ path: "src/a.ts", count: 5, from: 1, to: 5 }]);
+    // A path outside the repo breaks the run rather than extending it — it is not this tree's file.
+    expect(narrative([...edits(3), call("Edit", { file_path: "/tmp/x" }, 9), ...edits(3)]).loops).toEqual([]);
+  });
+
+  it("the same command three times is a RETRY, with every line it happened on", () => {
+    const runs = Array.from({ length: 3 }, (_, i) => call("Bash", { command: "just test" }, i + 1));
+    expect(narrative(runs).retries).toEqual([{ command: "just test", count: 3, lines: [1, 2, 3] }]);
+    expect(narrative(runs.slice(0, 2)).retries).toEqual([]);
+  });
+
+  it("records a bypass at the site it happened, so the coach reads the line", () => {
+    const read = narrative([call("Bash", { command: "npx vitest run" }, 7)], ["vitest"]);
+    expect(read.stats.bypasses).toEqual({ vitest: 1 });
+    expect(read.bypassSites).toEqual([{ line: 7, tool: "vitest", text: "npx vitest run" }]);
+  });
+
+  it("merges several readings into ONE list, each pointer tagged with its own transcript", () => {
+    const one = narrative([{ line: 1, kind: "prompt", text: "no, undo it" }, call("Edit", { file_path: "a.ts" }, 2)]);
+    const two = narrative([call("Edit", { file_path: "a.ts" }, 3)]);
+    const merged = mergeNarratives([
+      { session: "s1", read: one },
+      { session: "s2", read: two },
+    ]);
+    expect(merged.stats.edits).toBe(2);
+    expect(merged.touched).toEqual({ "a.ts": 2 });
+    expect(merged.corrections).toEqual([{ line: 1, text: "no, undo it", session: "s1" }]);
+    expect(mergeNarratives([]).stats).toEqual({ edits: 0, writes: 0, commits: 0, recipes: {}, bypasses: {} });
+  });
+});
+
+describe("weakened after a block — the one failure a guard cannot catch itself", () => {
+  it("knows which files ARE the guard here, in flow's own spelling", () => {
+    expect(GUARD_PATHS).toContain("flow.config.ts");
+    expect(isGuardPath("flow.config.ts")).toBe(true);
+    expect(isGuardPath("guards/mine.ts")).toBe(true);
+    expect(isGuardPath("packages/app/.claude/settings.json")).toBe(true);
+    expect(isGuardPath("src/a.ts")).toBe(false);
+    expect(isGuardPath("")).toBe(false);
+  });
+
+  it("flags the guardrail edit that followed a block, citing both ends and the gap", () => {
+    const rows: Row[] = [
+      { kind: "guardrail", ts: "2026-01-01T10:00:00.000Z", id: "core.noTodo", out: "deny" },
+      { kind: "guardrail", ts: "2026-01-01T10:00:00.000Z", id: "core.noTodo", out: "allow" },
+    ];
+    const events: TranscriptEvent[] = [
+      { line: 4, kind: "use", ts: "2026-01-01T09:00:00.000Z", id: "a", name: "Edit", input: {}, path: "flow.config.ts" },
+      { line: 9, kind: "use", ts: "2026-01-01T10:00:30.000Z", id: "b", name: "Edit", input: {}, path: "flow.config.ts" },
+      { line: 11, kind: "use", ts: "2026-01-01T10:01:00.000Z", id: "c", name: "Edit", input: {}, path: "src/a.ts" },
+    ];
+    // The edit BEFORE the block is not a weakening, and neither is one to an ordinary file.
+    expect(weakenedAfterBlock(rows, events)).toEqual([{ entry: "core.noTodo", line: 9, path: "flow.config.ts", gapSeconds: 30 }]);
+    expect(weakenedAfterBlock(rows, [])).toEqual([]);
+    expect(weakenedAfterBlock([], events)).toEqual([]);
+  });
+});
+
+describe("selecting which conversations a run covers", () => {
+  const at = (id: string, over: Partial<Candidate> = {}): Candidate => ({
+    id,
+    bytes: 100,
+    mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+    started: null,
+    branch: null,
+    ...over,
+  });
+
+  const newest = at("new", { started: "2026-03-01T00:00:00.000Z" });
+  const middle = at("mid", { started: "2026-02-01T00:00:00.000Z", bytes: 900 });
+  const oldest = at("old", { started: "2026-01-01T00:00:00.000Z" });
+
+  it("subtracts what is already done, and orders newest first", () => {
+    const picked = selectSessions([oldest, newest, middle], new Set(["mid"]));
+    expect(picked.analyse.map((c) => c.id)).toEqual(["new", "old"]);
+    expect(picked.counts).toEqual({ backlog: 2, analysed: 2, excluded: 0 });
+  });
+
+  it("orders heaviest-first when asked — wasted effort concentrates in the big conversations", () => {
+    expect(selectSessions([oldest, newest, middle], new Set(), { largest: true }).analyse.map((c) => c.id)).toEqual([
+      "mid",
+      "new",
+      "old",
+    ]);
+  });
+
+  it("a limit DEFERS rather than drops, so a capped run cannot declare skipped history done", () => {
+    const picked = selectSessions([oldest, newest, middle], new Set(), { limit: 1 });
+    expect(picked.analyse.map((c) => c.id)).toEqual(["new"]);
+    expect(picked.excluded).toEqual([
+      { id: "mid", reason: "limit" },
+      { id: "old", reason: "limit" },
+    ]);
+    expect(selectSessions([oldest, newest], new Set(), { limit: 1, all: true }).analyse).toHaveLength(2);
+  });
+
+  it("a date floor defers everything older, naming each one", () => {
+    const picked = selectSessions([oldest, newest, middle], new Set(), { since: Date.parse("2026-02-15T00:00:00.000Z") });
+    expect(picked.analyse.map((c) => c.id)).toEqual(["new"]);
+    expect(picked.excluded.map((e) => e.reason)).toEqual(["since", "since"]);
+  });
+
+  it("falls back to the file's own mtime when the conversation never stamped a start", () => {
+    const dated = at("dated", { started: null, mtimeMs: Date.parse("2026-05-01T00:00:00.000Z") });
+    expect(selectSessions([newest, dated], new Set()).analyse[0]?.id).toBe("dated");
+  });
+});
+
+describe("the health line above every number", () => {
+  it("an unarmed record BLOCKS the reading rather than reporting zeroes", () => {
+    const said = health({ armed: false, rows: 0, withRecord: 0, analysed: 3 });
+    expect(said.blocked).toContain("NOT ARMED");
+    expect(said.warn).toEqual([]);
+  });
+
+  it("armed but silent for what was read is a warning, not a verdict", () => {
+    expect(health({ armed: true, rows: 0, withRecord: 1, analysed: 1 }).warn[0]).toContain("holds no events");
+    expect(health({ armed: true, rows: 0, withRecord: 0, analysed: 2 }).warn[0]).toContain("narrative only");
+    expect(health({ armed: true, rows: 12, withRecord: 1, analysed: 1 })).toEqual({ blocked: null, warn: [] });
   });
 });

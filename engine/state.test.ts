@@ -12,15 +12,21 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { defineCategory, type SessionFacts } from "../index.ts";
 import { builder, parent } from "../__fixtures__/engine-pack.ts";
-import { FLOW_DIR, logFile, offPath, statePath, type Row } from "./domain.ts";
+import { FLOW_DIR, logFile, offPath, recordPath, recordingFile, statePath, type RecordedStep, type Row } from "./domain.ts";
 import {
   appendRows,
+  appendSteps,
   commitAttribution,
   ensureFlowDir,
   isOff,
+  isRecording,
+  loadRecording,
   loadState,
+  readHistory,
   readRows,
+  readRowsFile,
   saveState,
+  sessionIds,
   stickyIdentity,
   writeMarker,
   type LogContext,
@@ -226,5 +232,67 @@ describe("the commit gate's marker", () => {
     writeFileSync(join(blocked, FLOW_DIR), "in the way");
     expect(writeMarker(blocked, "s", "main", null, at)).toBe(false);
     rmSync(blocked, { recursive: true, force: true });
+  });
+});
+
+describe("reading the whole history back", () => {
+  it("finds every stream, and a repo with none is an empty history rather than an error", () => {
+    expect(sessionIds(root)).toEqual([]);
+    expect(readHistory(root)).toEqual([]);
+
+    appendRows({ root, session: "sess-1", branch: null, now: () => at }, [{ kind: "tool", tool: "Read", path: "a.ts" }]);
+    appendRows({ root, session: "commit", branch: null, now: () => at }, [{ kind: "run", moment: "commit", subjects: 1, rules: [] }]);
+    // A stray file in the log folder is not a stream.
+    writeFileSync(join(root, FLOW_DIR, "log", "notes.md"), "x");
+
+    expect(sessionIds(root)).toEqual(["commit", "sess-1"]);
+    const history = readHistory(root);
+    expect(history.map((s) => s.session)).toEqual(["commit", "sess-1"]);
+    // The meta row is part of the stream — a present-but-quiet log and a missing one are
+    // different facts, and the first row is what tells them apart.
+    expect(history[1]?.rows.map((r) => r.kind)).toEqual(["meta", "tool"]);
+  });
+
+  it("reads a stream by path, so a recording can be diffed against a log that is not ours", () => {
+    const file = join(root, "elsewhere.jsonl");
+    writeFileSync(file, '{"kind":"guardrail","id":"a"}\nnot json\n\n{"noKind":1}\n');
+    expect(readRowsFile(file)).toEqual([{ kind: "guardrail", id: "a" }]);
+    expect(readRowsFile(join(root, "missing.jsonl"))).toEqual([]);
+  });
+});
+
+describe("the recording seam", () => {
+  const step = (path: string): RecordedStep => ({ rail: "guard", moment: "write", file: { path, content: "x" }, wearing: [] });
+
+  it("is off until the switch file exists, and a hiccup reads as off rather than as on", () => {
+    expect(isRecording(root)).toBe(false);
+    ensureFlowDir(root);
+    writeFileSync(recordPath(root), "");
+    expect(isRecording(root)).toBe(true);
+  });
+
+  it("writes its header once, then appends — the first writer is a hook, and it can only append", () => {
+    expect(appendSteps(root, "sess-1", [step("a.ts")])).toBe(true);
+    expect(appendSteps(root, "sess-1", [step("b.ts"), { rail: "compaction" }])).toBe(true);
+    const text = readFileSync(recordingFile(root, "sess-1"), "utf8");
+    expect(text.split("\n").filter(Boolean)).toHaveLength(4);
+
+    const read = loadRecording(recordingFile(root, "sess-1"));
+    expect(read.session).toBe("sess-1");
+    expect(read.steps.map((s) => s.rail)).toEqual(["guard", "guard", "compaction"]);
+  });
+
+  it("nothing to record writes nothing, and an unwritable home answers false rather than throwing", () => {
+    expect(appendSteps(root, "sess-1", [])).toBe(true);
+    expect(existsSync(recordingFile(root, "sess-1"))).toBe(false);
+    // A repo root that is a FILE cannot hold a state directory. Telemetry never throws: a
+    // recording that could not be written must not be the reason a write is refused.
+    const blocked = join(root, "a-file");
+    writeFileSync(blocked, "");
+    expect(appendSteps(blocked, "sess-1", [step("a.ts")])).toBe(false);
+  });
+
+  it("a recording that is not there is an empty one, keyed by the name it was asked for", () => {
+    expect(loadRecording(join(root, "nope.jsonl"))).toEqual({ v: 1, session: "nope", steps: [] });
   });
 });

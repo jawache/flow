@@ -44,18 +44,22 @@ import {
   brief,
   categoriesIn,
   guard,
+  recorder,
   runRows,
   type Block,
   type Identity,
   type Marks,
   type Notice,
   type Outcome,
+  type RecordedStep,
   type Row,
 } from "../engine/domain.ts";
 import {
   appendRows,
+  appendSteps,
   commitAttribution,
   isOff,
+  isRecording,
   loadState,
   saveState,
   stickyIdentity,
@@ -401,8 +405,15 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
     if (row) rows.push(row);
   }
 
-  const answer = await judge({ events, session, load, settings: config.settings, identity, off, hook, payload, rows });
+  // RECORDING is a second, independent stream and it is deliberately not gated on `off`: turning
+  // the guard off to reproduce something and finding the recorder off with it is the one moment
+  // this seam exists for. It is gated on the switch alone, and on nothing else.
+  const steps: RecordedStep[] = [];
+  const taping = isRecording(root);
+
+  const answer = await judge({ events, session, load, settings: config.settings, identity, off, hook, payload, rows, steps: taping ? steps : null });
   if (!off) appendRows({ root, session: session.id, branch: session.branch }, rows);
+  if (taping) appendSteps(root, session.id, steps);
   return toResult(hook, answer);
 }
 
@@ -417,8 +428,10 @@ async function judge(args: {
   readonly hook: HookEvent;
   readonly payload: HookPayload;
   readonly rows: Row[];
+  /** Where the replayable steps go, or null when this repo is not recording. */
+  readonly steps: RecordedStep[] | null;
 }): Promise<Answer> {
-  const { events, session, load, settings, identity, off, hook, payload, rows } = args;
+  const { events, session, load, settings, identity, off, hook, payload, rows, steps } = args;
   const blocked: Refused[] = [];
   const shown: Shown[] = [];
   const world = realWorld(session.root);
@@ -434,9 +447,15 @@ async function judge(args: {
   const stored = loadState(session.root, session.id, session.agent);
   let marks: Marks = compacted && load.ok ? afterCompaction(stored.marks, load.entries) : stored.marks;
   if (compacted && !off) rows.push({ kind: "compaction" });
+  if (compacted) steps?.push({ rail: "compaction" });
 
   for (const event of events) {
     if (event.rail === "guard") {
+      // The recorder wraps the world rather than replacing it: what a check reached for is kept as
+      // it was answered AT THAT INSTANT — the file's bytes then, the command's real exit code —
+      // because re-deriving it tomorrow answers differently, and a recording that cannot reproduce
+      // yesterday's block is not a recording.
+      const tape = steps === null ? null : recorder(world);
       const outcome = await guard({
         load,
         event: {
@@ -447,9 +466,19 @@ async function judge(args: {
           turn: event.turn,
           wearing: identity.wearing,
         },
-        world,
+        world: tape?.world ?? world,
         faults: identity.faults,
         off,
+      });
+      steps?.push({
+        rail: "guard",
+        moment: event.moment,
+        ...(event.file === undefined ? {} : { file: event.file }),
+        ...(event.command === undefined ? {} : { command: event.command }),
+        ...(event.staged === undefined ? {} : { staged: event.staged }),
+        ...(event.turn === undefined ? {} : { turn: event.turn }),
+        wearing: identity.wearing,
+        world: tape?.taken() ?? {},
       });
       for (const effect of outcome.effects)
         if (effect.do === "block") blocked.push({ moment: event.moment, block: effect });
@@ -457,6 +486,13 @@ async function judge(args: {
       continue;
     }
 
+    steps?.push({
+      rail: "brief",
+      moment: event.moment,
+      ...(event.path === undefined ? {} : { path: event.path }),
+      wearing: identity.wearing,
+      tokens: session.tokens(),
+    });
     const briefing = brief({
       load,
       event: { moment: event.moment, path: event.path, wearing: identity.wearing, tokens: session.tokens() },
@@ -529,12 +565,19 @@ export async function runCommit(root: string, files: readonly string[]): Promise
   const branch = currentBranch(root);
   const { session, agent } = commitAttribution(root, branch);
   const { load } = regime;
+  const wearing = agent === null ? [] : (loadState(root, session, agent).categories ?? []);
+  // The gate is where the expensive checks live — a suite, a type-check, a whole dependency
+  // cruise — so it is also where a recording is worth the most: replaying a refused commit is the
+  // one thing you cannot do by re-running it, because the working tree has moved on since.
+  const tape = isRecording(root) ? recorder(realWorld(root)) : null;
   const outcome = await guard({
     load,
-    event: { moment: "commit", staged: files, wearing: agent === null ? [] : (loadState(root, session, agent).categories ?? []) },
-    world: realWorld(root),
+    event: { moment: "commit", staged: files, wearing },
+    world: tape?.world ?? realWorld(root),
     off: false,
   });
+  if (tape !== null)
+    appendSteps(root, session, [{ rail: "guard", moment: "commit", staged: files, wearing, world: tape.taken() }]);
   appendRows({ root, session, branch }, runRows("commit", outcome, files.length));
 
   const blocks: Refused[] = outcome.effects

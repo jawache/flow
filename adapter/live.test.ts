@@ -370,3 +370,210 @@ describe("a repo that has never heard of flow", () => {
     }
   });
 });
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// RECORDING AND REPLAY — J5.2, driven end to end
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+//
+// A whole session is driven through the real binary with the recorder armed, and then replayed
+// with `--against` its own log. THE PROOF IS AN EMPTY DIFF: the same rules refused the same
+// subjects and the same notes showed for the same causes, from a file, with no repo state, no
+// harness and no commands run.
+//
+// It is driven rather than hand-written on purpose. A fixture somebody typed proves that replay
+// agrees with what they expected; a fixture the guard recorded while it was working proves replay
+// agrees with what actually happened, which is the only version of the claim worth anything.
+
+describe("a recorded session, replayed", () => {
+  /** The chat this block drives. Its own id, so the log and the recording hold only its steps. */
+  const SESSION = "record-1";
+  let transcript: string;
+
+  /**
+   * The session's own transcript, as the host would have written it so far.
+   *
+   * It is what makes DRIFT real here rather than simulated: the token count the breadcrumb rail
+   * reads comes from the last `usage` record in this file, so growing the file is how the session
+   * "moves on" — the same input the live rail takes, from the same place.
+   */
+  const drifted = (tokens: number): void => {
+    writeFileSync(
+      transcript,
+      [
+        JSON.stringify({ type: "user", timestamp: "2026-09-04T10:00:00.000Z", cwd: repo, message: { content: "go" } }),
+        JSON.stringify({ type: "assistant", timestamp: "2026-09-04T10:00:01.000Z", message: { usage: { input_tokens: 10, cache_read_input_tokens: tokens } } }),
+        "",
+      ].join("\n"),
+    );
+  };
+
+  const inSession = (payload: Record<string, unknown>): Record<string, unknown> => ({
+    session_id: SESSION,
+    transcript_path: transcript,
+    ...payload,
+  });
+
+  beforeAll(() => {
+    mkdirSync(join(repo, ".t"), { recursive: true });
+    transcript = join(repo, ".t", `${SESSION}.jsonl`);
+    drifted(1000);
+    // The recorder is armed by an existence-file, exactly as the kill switch is turned off by one:
+    // capture is what you reach for the moment something misbehaves, and a mechanism that needs a
+    // config edit is one nobody arms in time to catch the bug they were looking at.
+    writeFileSync(join(repo, ".flow", "record"), "");
+  });
+
+  afterAll(() => {
+    rmSync(join(repo, ".flow", "record"), { force: true });
+  });
+
+  it("drives a whole session: greeting, first touch, drift, compaction, two blocks and a commit", () => {
+    // 1 — the greeting. The session breadcrumb shows, and is MARKED there.
+    const greeting = hook("session-start", inSession({ source: "startup" }));
+    expect(greeting.code).toBe(0);
+    expect(greeting.stdout).toContain("This repo is guarded by flow.");
+
+    // 2 — first touch of the area. The area note shows.
+    const first = hook("post-tool-use", inSession({ tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } }));
+    expect(first.stdout).toContain("src/ is the product");
+
+    // 3 — the same area again, with the context barely moved. It stays quiet.
+    const quiet = hook("post-tool-use", inSession({ tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } }));
+    expect(quiet.stdout).toBe("");
+
+    // 4 — the session has drifted past the threshold. The note is earned again.
+    drifted(400_000);
+    const again = hook("post-tool-use", inSession({ tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } }));
+    expect(again.stdout).toContain("src/ is the product");
+
+    // 5 — a compaction. Every AREA mark is cleared; the SESSION mark is deliberately kept, so the
+    // greeting is not printed a second time in a row — which is why this rail says nothing at all
+    // even though it is the moment that re-arms everything else.
+    const compacted = hook("session-start", inSession({ source: "compact" }));
+    expect(compacted.stdout, "the session note keeps its mark across a compaction").toBe("");
+
+    // 6 — first touch again, because after a compaction it genuinely is one.
+    const relearned = hook("post-tool-use", inSession({ tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } }));
+    expect(relearned.stdout).toContain("src/ is the product");
+
+    // 7 and 8 — two rails refuse, which is what the replay has to land again.
+    expect(hook("pre-tool-use", inSession({ tool_name: "Write", tool_input: { file_path: join(repo, "src/z.ts"), content: "// TODO\n" } })).code).toBe(2);
+    expect(hook("pre-tool-use", inSession({ tool_name: "Bash", tool_input: { command: "git push --force" } })).code).toBe(2);
+
+    // 9 — the commit gate, whose check SHELLS OUT. Its answer is recorded, which is the part no
+    // amount of re-running could reproduce later: the working tree has moved on since.
+    expect(run(["commit", "tool/x.ts"], "").code).toBe(2);
+  });
+
+  it("records the canonical event stream, harness-blind — no payload, no hook, no path", () => {
+    const text = readFileSync(join(repo, ".flow", "replay", `${SESSION}.jsonl`), "utf8");
+    const steps = text
+      .split("\n")
+      .filter((line) => line.trim() !== "")
+      .map((line) => JSON.parse(line) as { rail?: string; moment?: string; v?: number; session?: string });
+
+    expect(steps[0]).toEqual({ v: 1, session: SESSION });
+    expect(steps.slice(1).map((s) => `${s.rail ?? ""} ${s.moment ?? ""}`.trim())).toEqual([
+      "brief session",
+      "brief touch",
+      "brief touch",
+      "brief touch",
+      "compaction",
+      "brief session",
+      "brief touch",
+      "guard write",
+      "guard command",
+      "guard commit",
+    ]);
+    // Nothing in the file names Claude Code. That is the standing proof of the seam: the engine
+    // could not tell which harness recorded this, which is exactly why a second harness is a
+    // second column rather than a second engine.
+    expect(text).not.toMatch(/hook_event_name|tool_input|PreToolUse|SessionStart|\.claude/);
+    // The commit step carries the answer its check got from the missing binary, verbatim.
+    const commitStep = steps[steps.length - 1] as { world?: { exec?: Record<string, { code?: number }> } };
+    expect(commitStep.world?.exec?.["definitely-not-a-real-binary-xyz --check"]?.code).toBe(127);
+  });
+
+  it("replays with no repo and no harness, and the diff against the live log is EMPTY", () => {
+    const answer = run(
+      ["replay", join(".flow", "replay", `${SESSION}.jsonl`), "--against", join(".flow", "log", `${SESSION}.jsonl`)],
+      "",
+    );
+    expect(answer.stderr, "an unanswered reach would mean the verdict rests on a silence").toBe("");
+    expect(answer.stdout).toContain("Diff empty.");
+    expect(answer.code).toBe(0);
+
+    // …and it really did replay the whole thing rather than agreeing about nothing.
+    expect(answer.stdout).toContain("demo.noTodo");
+    expect(answer.stdout).toContain("demo.noForce");
+    expect(answer.stdout).toContain("demo.suitePasses");
+    expect(answer.stdout).toContain("demo.area · touch · first-touch");
+    expect(answer.stdout).toContain("demo.area · touch · drift");
+    expect(answer.stdout).toContain("demo.orientation · session · session");
+  });
+
+  it("a replay run somewhere else entirely still lands the same verdicts", () => {
+    // The claim is "no repo", so it is proved by taking the repo away: the recording and the config
+    // are copied to a bare directory with none of the files the checks judged, no git, and no
+    // `.flow` at all. Every answer below came out of the recording.
+    const elsewhere = mkdtempSync(join(tmpdir(), "flow-replay-"));
+    try {
+      writeFileSync(join(elsewhere, "flow.config.ts"), readFileSync(join(repo, "flow.config.ts"), "utf8"));
+      writeFileSync(join(elsewhere, "recording.jsonl"), readFileSync(join(repo, ".flow", "replay", `${SESSION}.jsonl`), "utf8"));
+      const answer = spawnSync("node", [BINARY, "replay", "recording.jsonl"], { cwd: elsewhere, encoding: "utf8" });
+      expect(answer.stderr).toBe("");
+      expect(answer.status).toBe(0);
+      expect(answer.stdout).toContain("with no repo and no harness");
+      expect(answer.stdout).toContain("demo.noTodo");
+      expect(answer.stdout).toContain("demo.suitePasses");
+      expect(existsSync(join(elsewhere, ".flow")), "replay writes nothing — it is a reading").toBe(false);
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  it("a recording missing an answer a check needs is REPORTED, never quietly believed", () => {
+    // The failure this format exists to make impossible: a step whose check reaches for something
+    // nobody wrote down. `cannedWorld` records the reach rather than guessing at it, and replay
+    // ends non-zero saying which.
+    const thin = join(repo, "thin.jsonl");
+    // The file is recorded (so the gate finds a subject) and the command's answer is not.
+    const step = { rail: "guard", moment: "commit", staged: ["tool/x.ts"], wearing: [], world: { fs: { "tool/x.ts": "" } } };
+    writeFileSync(thin, `${JSON.stringify(step)}\n`);
+    const answer = run(["replay", "thin.jsonl"], "");
+    expect(answer.code).toBe(1);
+    expect(answer.stderr).toContain("the recording never answered a exec of `definitely-not-a-real-binary-xyz --check`");
+    rmSync(thin);
+  });
+});
+
+describe("flow facts — the record and the conversations, read back", () => {
+  it("reads its own rows, names the areas nothing watches, and says when it is not armed", () => {
+    const answer = run(["facts", "--json"], "");
+    expect(answer.code).toBe(0);
+    const read = JSON.parse(answer.stdout) as {
+      health: { blocked: string | null };
+      metrics: { headline: { blocks: number }; span: { tools: number }; guardrails: { id: string; hits: number }[] };
+      moments: { totals: { guardrails: number; breadcrumbs: number } };
+      terrain: { path: string; edits: number }[];
+    };
+    expect(read.health.blocked).toBe(null);
+    expect(read.metrics.headline.blocks).toBeGreaterThan(0);
+    expect(read.metrics.span.tools).toBeGreaterThan(0);
+    expect(read.metrics.guardrails.find((g) => g.id === "demo.noTodo")?.hits).toBeGreaterThan(0);
+    expect(read.moments.totals).toMatchObject({ guardrails: 6, breadcrumbs: 2 });
+    expect(read.terrain.some((n) => n.path === "src")).toBe(true);
+  });
+
+  it("a repo with no record at all BLOCKS the reading rather than reporting a calm week", () => {
+    const bare = mkdtempSync(join(tmpdir(), "flow-facts-"));
+    try {
+      writeFileSync(join(bare, "flow.config.ts"), readFileSync(join(repo, "flow.config.ts"), "utf8"));
+      const answer = spawnSync("node", [BINARY, "facts"], { cwd: bare, encoding: "utf8" });
+      expect(answer.status).toBe(1);
+      expect(answer.stdout).toContain("NOT ARMED");
+    } finally {
+      rmSync(bare, { recursive: true, force: true });
+    }
+  });
+});

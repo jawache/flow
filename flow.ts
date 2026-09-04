@@ -3,24 +3,37 @@
 //
 // It is the CLI SHELL: it reads argv, loads a config file off disk, prints, and sets an exit code.
 // Every judgement it prints was made in a domain file that could not have done any of those things
-// — which is the same seam the adapter will sit on when the live hooks arrive at F4.
+// — which is the same seam the adapter sits on for the live hooks.
 //
-// THREE VERBS. `flow test` drives every bound entry's cases; `flow hook <event>` is what the
-// harness's five registrations invoke; `flow commit <files…>` is what git's pre-commit hook calls
-// with the staged set. `flow init` and `flow status` arrive with the product surface. Anything else
-// refuses, loudly, rather than doing nothing quietly.
+// FIVE VERBS, in two halves.
+//
+//   THE LIVE HALF, invoked by something else rather than by a person:
+//     flow hook <event>    what the harness's registrations call, payload on stdin
+//     flow commit <files…> what git's pre-commit hook calls, with the staged set
+//
+//   THE ASKING HALF, which a person types:
+//     flow test [config]   every bound entry's cases, driven
+//     flow replay <file>   a recorded session back through the engine, with no repo and no harness
+//     flow facts           what the record and the conversations say about this repo
+//
+// `flow init` and `flow status` arrive with the product surface. Anything else refuses, loudly,
+// rather than doing nothing quietly.
 //
 // The hook and commit verbs are one line each here, and that is the seam working: everything they
 // do is the adapter's, and this file only owns argv, the three IO edges and the exit code.
 
+import { existsSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { VERSION } from "./version.ts";
 import { entriesOrThrow, FlowConfigError } from "./errors.ts";
 import { loadConfig, type FlowConfig, type LoadedEntry } from "./language/domain.ts";
 import { runCases, type CaseResult } from "./checks/domain.ts";
-import { commitEntry, hookEntry } from "./adapter/claude.ts";
-import { HOOK_EVENTS, type HookResult } from "./adapter/domain.ts";
+import { CONFIG_FILE, commitEntry, hookEntry } from "./adapter/claude.ts";
+import { facts } from "./adapter/archive.ts";
+import { HOOK_EVENTS, snip, type HookResult } from "./adapter/domain.ts";
+import { diffRows, replay, type Row } from "./engine/domain.ts";
+import { loadRecording, readRowsFile } from "./engine/state.ts";
 
 const argv = process.argv.slice(2);
 
@@ -106,6 +119,143 @@ function perform(result: HookResult): void {
   process.exitCode = result.exitCode;
 }
 
+/** `--name value` and `--name`, off a flat argv. The whole of flow's option dialect. */
+function flag(args: readonly string[], name: string): string | null {
+  const at = args.indexOf(`--${name}`);
+  if (at === -1) return null;
+  const next = args[at + 1];
+  return next === undefined || next.startsWith("--") ? "" : next;
+}
+
+const positional = (args: readonly string[]): string[] => {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const word = args[i] as string;
+    if (!word.startsWith("--")) {
+      out.push(word);
+      continue;
+    }
+    const next = args[i + 1];
+    if (next !== undefined && !next.startsWith("--")) i += 1;
+  }
+  return out;
+};
+
+/**
+ * REPLAY — J5.2, and the one verb that proves the seam rather than using it.
+ *
+ * A recording is the canonical event stream plus the answers the checks reached for while it was
+ * live, so this opens no file the recording did not bring with it, runs no command, and asks git
+ * nothing. `--against` diffs the judgements it produced against a live log: an EMPTY diff is the
+ * proof, and it is what makes a bug a fixture before it is a fix.
+ */
+async function replayFile(args: readonly string[]): Promise<number> {
+  const [file, configPath] = positional(args);
+  if (file === undefined) {
+    process.stderr.write("flow replay <recording.jsonl> [config] [--against <log.jsonl>]\n");
+    return 2;
+  }
+  const config = await loadFile(configPath ?? CONFIG_FILE);
+  const load = loadConfig(config);
+  const recording = loadRecording(resolve(process.cwd(), file));
+  if (recording.steps.length === 0) {
+    process.stderr.write(`flow replay — ${file} holds no steps. Arm the recorder with \`touch .flow/record\`.\n`);
+    return 2;
+  }
+  const result = await replay({ load, recording, settings: config.settings });
+
+  // A row is read back off disk, so every field is `unknown` until something says otherwise — and
+  // a subject can be a whole multi-line shell command, which would break the one-line-per-judgement
+  // promise this listing makes. `snip` is the ONE "make it printable and short", ellipsis and all.
+  const said = (row: Row, key: string): string => snip(row[key], 100);
+  const judgements = result.rows.filter((row) => row.kind === "guardrail" || row.kind === "breadcrumb");
+  for (const row of judgements) {
+    const subject = said(row, "subject");
+    process.stdout.write(
+      row.kind === "guardrail"
+        ? `  ✗ ${said(row, "id")} · ${said(row, "moment")}${subject === "" ? "" : ` · ${subject}`}\n`
+        : `  🍞 ${said(row, "id")} · ${said(row, "moment")} · ${said(row, "cause")}\n`,
+    );
+  }
+  process.stdout.write(
+    `flow replay — ${recording.steps.length} steps · ${judgements.filter((r) => r.kind === "guardrail").length} blocked · ` +
+      `${judgements.filter((r) => r.kind === "breadcrumb").length} shown, with no repo and no harness\n`,
+  );
+
+  // An unanswered reach means the recording did not capture something a check asked for, so the
+  // verdict above rests on a silence rather than on evidence. It is reported as a failure, never
+  // absorbed — a replay you cannot trust is worse than none.
+  for (const miss of result.unanswered)
+    process.stderr.write(`  ! the recording never answered a ${miss.kind} of \`${miss.asked}\`\n`);
+
+  const against = flag(args, "against");
+  if (against === null) return result.unanswered.length > 0 ? 1 : 0;
+  const differences = diffRows(result.rows, readRowsFile(resolve(process.cwd(), against)));
+  for (const row of differences) process.stderr.write(`  ${row.side === "replay" ? "+" : "-"} [${row.at}] ${row.row}\n`);
+  process.stdout.write(
+    differences.length === 0
+      ? `flow replay — the replay and ${against} agree on every block and every injection. Diff empty.\n`
+      : `flow replay — ${differences.length} difference(s) against ${against}.\n`,
+  );
+  return differences.length === 0 && result.unanswered.length === 0 ? 0 : 1;
+}
+
+/**
+ * FACTS — what the record and the conversations say about this repo.
+ *
+ * The numbers come from flow's own rows and the pointers come from the transcripts, and the two
+ * are never mixed: `--json` hands the whole structure over for a reader that wants to do its own
+ * thinking, and the lines below are the headline for one that does not.
+ */
+async function readFacts(args: readonly string[]): Promise<number> {
+  const root = process.cwd();
+  const load = existsSync(join(root, CONFIG_FILE)) ? loadConfig(await loadFile(CONFIG_FILE)) : ({ ok: true, entries: [] } as const);
+  const limit = flag(args, "limit");
+  const since = flag(args, "since");
+  const read = facts(root, load, {
+    session: flag(args, "session"),
+    branch: flag(args, "branch"),
+    limit: limit === null || limit === "" ? null : Number(limit),
+    all: flag(args, "all") !== null,
+    largest: flag(args, "largest") !== null,
+    since: since === null || since === "" ? null : Date.parse(since),
+    mark: flag(args, "mark") !== null,
+  });
+
+  if (flag(args, "json") !== null) {
+    process.stdout.write(`${JSON.stringify(read, null, 2)}\n`);
+    return read.health.blocked === null ? 0 : 1;
+  }
+
+  const lines: string[] = [];
+  if (read.health.blocked !== null) lines.push(`✗ ${read.health.blocked}`);
+  for (const warn of read.health.warn) lines.push(`⚠ ${warn}`);
+  const { span, headline } = read.metrics;
+  lines.push(
+    `flow facts — ${read.coverage.analysed} of ${read.selection.counts.backlog} unread conversations · ` +
+      `${read.coverage.withRecord} with a record · ${read.store.exists ? read.store.dir : `no store at ${read.store.dir}`}`,
+    `  recorded  ${span.tools.toLocaleString()} tool calls · ${span.sessions} chats · ${span.days}d` +
+      (span.ample ? "" : " (too thin to call anything dead)"),
+    `  blocks    ${headline.blocks}`,
+    `  lead      ${headline.lead.median === null ? "nothing measurable yet" : `median ${headline.lead.median} tool calls`}`,
+  );
+  for (const gap of headline.gaps.slice(0, 5))
+    lines.push(`  gap       ${gap.area} — ${gap.edits} edit${gap.edits === 1 ? "" : "s"}, nothing watches it`);
+  if (headline.dead.length > 0) lines.push(`  dead      ${headline.dead.join(" · ")}`);
+  if (headline.quiet.length > 0)
+    lines.push(`  quiet     ${headline.quiet.map((q) => `${q.id} (${q.daysSince}d)`).join(" · ")}`);
+  const { stats, corrections, loops, retries, bypassSites } = read.narrative;
+  lines.push(
+    `  session   ${stats.edits} edits · ${stats.writes} writes · ${stats.commits} commits · ` +
+      `${corrections.length} corrections · ${loops.length} edit loops · ${retries.length} retries · ${bypassSites.length} bypasses`,
+  );
+  for (const weak of read.weakened)
+    lines.push(`  ⚠ guard edited after ${weak.entry ?? "a block"} refused — ${weak.path}:L${weak.line}, ${weak.gapSeconds}s later`);
+  if (read.marked !== null) lines.push(`  marked    ${read.marked} conversation(s) read`);
+  process.stdout.write(`${lines.join("\n")}\n`);
+  return read.health.blocked === null ? 0 : 1;
+}
+
 const [verb, ...rest] = argv;
 
 if (argv.includes("--version") || argv.includes("-v")) {
@@ -124,6 +274,14 @@ if (argv.includes("--version") || argv.includes("-v")) {
   perform(await hookEntry(rest[0] ?? "", process.cwd()));
 } else if (verb === "commit") {
   perform(await commitEntry(rest, process.cwd()));
+} else if (verb === "replay" || verb === "facts") {
+  try {
+    process.exitCode = verb === "replay" ? await replayFile(rest) : await readFacts(rest);
+  } catch (error) {
+    // Same split as `flow test`: exit 2 is "your rules are broken", exit 1 is "the answer is no".
+    process.stderr.write(`${error instanceof FlowConfigError ? error.message : (error as Error).message}\n`);
+    process.exitCode = 2;
+  }
 } else {
   process.stderr.write(
     [
@@ -132,6 +290,8 @@ if (argv.includes("--version") || argv.includes("-v")) {
       "  flow test [config]     run every bound entry's cases (default: flow.config.ts)",
       `  flow hook <event>      a harness hook, payload on stdin — ${HOOK_EVENTS.join(" · ")}`,
       "  flow commit <files…>   the git pre-commit gate, over the staged set",
+      "  flow replay <file>     a recorded session, back through the engine — --against <log> diffs it",
+      "  flow facts             what the record and the conversations say about this repo — --json for all of it",
       "",
       "`flow init` and `flow status` arrive with the product surface.",
       "",

@@ -14,8 +14,19 @@
 // It knows no harness. The branch, the session id and the agent id are arguments, because the
 // place they are discovered is the adapter and the fence says the engine may not look there.
 
-import { appendFileSync, existsSync, mkdirSync, openSync, readFileSync, readSync, closeSync, statSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
 import type { Category, SessionFacts } from "../language/domain.ts";
 import {
   FLOW_GITIGNORE,
@@ -27,12 +38,19 @@ import {
   metaRow,
   nextSeq,
   offPath,
+  readRecording,
   readState,
+  recordPath,
+  recordingFile,
+  recordingHeader,
   statePath,
   type Attribution,
   type Identity,
+  type RecordedStep,
+  type Recording,
   type Row,
   type SessionMarker,
+  type SessionRows,
   type SessionState,
 } from "./domain.ts";
 
@@ -192,11 +210,11 @@ export function appendRows(ctx: LogContext, rows: readonly Row[]): boolean {
   }
 }
 
-/** Every row of one session's stream, in the order it was written. Unreadable → nothing. */
-export function readRows(root: string, session: string): Row[] {
+/** Every row in one stream file, in the order it was written. Unreadable → nothing. */
+export function readRowsFile(file: string): Row[] {
   const out: Row[] = [];
   try {
-    const raw = readFileSync(logFile(root, session), "utf8");
+    const raw = readFileSync(file, "utf8");
     for (const line of raw.split("\n")) {
       if (!line.trim()) continue;
       try {
@@ -210,6 +228,81 @@ export function readRows(root: string, session: string): Row[] {
     /* no log is an empty history, never an error */
   }
   return out;
+}
+
+/** Every row of one session's stream. */
+export function readRows(root: string, session: string): Row[] {
+  return readRowsFile(logFile(root, session));
+}
+
+/**
+ * Every session that has a stream here, oldest file first.
+ *
+ * `commit` is included: its rows still count toward what an entry has done, and only the SESSION
+ * count excludes it — a shared file is not a chat, and the metrics say so where it matters.
+ */
+export function sessionIds(root: string): string[] {
+  try {
+    return readdirSync(join(flowDir(root), "log"))
+      .filter((name) => name.endsWith(".jsonl"))
+      .map((name) => name.slice(0, -".jsonl".length))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+/** The whole recorded history of a repo — every stream, read. */
+export function readHistory(root: string): SessionRows[] {
+  return sessionIds(root).map((session) => ({ session, rows: readRows(root, session) }));
+}
+
+// ── the recording seam ───────────────────────────────────────────────────────
+
+/**
+ * Is this repo capturing replayable recordings?
+ *
+ * Fail-safe in the OFF direction, which is the opposite of the kill switch's and right for the
+ * opposite reason: a filesystem hiccup must never silence a gate, and it must never start writing
+ * a megabyte of transcript nobody asked for either.
+ */
+export function isRecording(root: string): boolean {
+  try {
+    return existsSync(recordPath(root));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Append steps to this session's recording. Best-effort, like every other writer in this file.
+ *
+ * The header is written by whoever gets there first, exactly as the log's meta row is — the first
+ * writer is a hook, and a recording that only became valid once somebody ran a command would miss
+ * the opening of every session.
+ */
+export function appendSteps(root: string, session: string, steps: readonly RecordedStep[]): boolean {
+  try {
+    if (steps.length === 0) return true;
+    const file = recordingFile(root, session);
+    ensureFlowDir(root);
+    mkdirSync(dirname(file), { recursive: true });
+    if (!existsSync(file)) writeFileSync(file, `${JSON.stringify(recordingHeader(session))}\n`);
+    appendFileSync(file, `${steps.map((step) => JSON.stringify(step)).join("\n")}\n`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** One recording, read off disk. A file that is not there is an empty one, never an error. */
+export function loadRecording(file: string): Recording {
+  const name = file.slice(file.lastIndexOf("/") + 1).replace(/\.jsonl$/, "");
+  try {
+    return readRecording(readFileSync(file, "utf8"), name);
+  } catch {
+    return readRecording("", name);
+  }
 }
 
 // ── the commit gate's marker ─────────────────────────────────────────────────
