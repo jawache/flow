@@ -5,9 +5,13 @@
 // Every judgement it prints was made in a domain file that could not have done any of those things
 // — which is the same seam the adapter will sit on when the live hooks arrive at F4.
 //
-// ONE VERB SO FAR. `flow test` drives every bound entry's cases; the hook and init surfaces arrive
-// with the engine and the adapter. Anything else refuses, loudly, rather than doing nothing
-// quietly.
+// THREE VERBS. `flow test` drives every bound entry's cases; `flow hook <event>` is what the
+// harness's five registrations invoke; `flow commit <files…>` is what git's pre-commit hook calls
+// with the staged set. `flow init` and `flow status` arrive with the product surface. Anything else
+// refuses, loudly, rather than doing nothing quietly.
+//
+// The hook and commit verbs are one line each here, and that is the seam working: everything they
+// do is the adapter's, and this file only owns argv, the three IO edges and the exit code.
 
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
@@ -15,6 +19,8 @@ import { VERSION } from "./version.ts";
 import { entriesOrThrow, FlowConfigError } from "./errors.ts";
 import { loadConfig, type FlowConfig, type LoadedEntry } from "./language/domain.ts";
 import { runCases, type CaseResult } from "./checks/domain.ts";
+import { commitEntry, hookEntry } from "./adapter/claude.ts";
+import { HOOK_EVENTS, type HookResult } from "./adapter/domain.ts";
 
 const argv = process.argv.slice(2);
 
@@ -87,6 +93,19 @@ async function test(path: string): Promise<number> {
   return report(entries, await runCases(entries));
 }
 
+/**
+ * A hook's three IO edges, performed. The ONE place flow turns an answer into an exit code.
+ *
+ * The adapter decides what to say and how loudly; this writes it. Keeping the write here rather
+ * than inside the adapter is what lets every rail be asserted as a value in a unit test — the whole
+ * reason `HookResult` is data and not a `process.exit`.
+ */
+function perform(result: HookResult): void {
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  process.exitCode = result.exitCode;
+}
+
 const [verb, ...rest] = argv;
 
 if (argv.includes("--version") || argv.includes("-v")) {
@@ -101,14 +120,20 @@ if (argv.includes("--version") || argv.includes("-v")) {
     process.stderr.write(`${error instanceof FlowConfigError ? error.message : (error as Error).message}\n`);
     process.exitCode = 2;
   }
+} else if (verb === "hook") {
+  perform(await hookEntry(rest[0] ?? "", process.cwd()));
+} else if (verb === "commit") {
+  perform(await commitEntry(rest, process.cwd()));
 } else {
   process.stderr.write(
     [
       `flow ${VERSION}`,
       "",
-      "  flow test [config]   run every bound entry's cases (default: flow.config.ts)",
+      "  flow test [config]     run every bound entry's cases (default: flow.config.ts)",
+      `  flow hook <event>      a harness hook, payload on stdin — ${HOOK_EVENTS.join(" · ")}`,
+      "  flow commit <files…>   the git pre-commit gate, over the staged set",
       "",
-      "The hook and init surfaces arrive with the engine and the adapter.",
+      "`flow init` and `flow status` arrive with the product surface.",
       "",
     ].join("\n"),
   );
