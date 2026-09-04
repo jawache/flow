@@ -42,6 +42,7 @@ export {
   defineCheck,
   type Check,
   type Ctx,
+  type World,
   type Verdict,
   type ExecResult,
   type TurnAction,
@@ -51,6 +52,11 @@ export {
 } from "./language/domain.ts";
 
 export { defineCategory, type Category, type Classifier, type SessionFacts } from "./language/domain.ts";
+
+// The stock way to write a classifier — the engine's, because the ORDER host-written evidence must
+// be read in is engine knowledge (and was measured, not chosen). A bespoke `defineCategory(name,
+// facts => …)` remains the escape hatch; this is the path that cannot be got wrong.
+export { spawnedAs, type SpawnRecipe } from "./engine/domain.ts";
 
 export {
   write,
@@ -67,11 +73,13 @@ export {
 
 export {
   loadConfig,
+  refusalText,
   REFUSAL_CODES,
   type Refusal,
   type RefusalCode,
   type LoadResult,
   type LoadedEntry,
+  type Settings,
 } from "./language/domain.ts";
 
 export { FlowConfigError, entriesOrThrow } from "./errors.ts";

@@ -302,6 +302,39 @@ export const verdict = {
 };
 
 /**
+ * Everything a check may reach for beyond the event's own facts — the three capabilities, alone.
+ *
+ * Derived from `Ctx` rather than restated, so there is one description of what flow can reach and
+ * no way to grow a fourth capability that a `.test()` case has no means of recording.
+ */
+export type World = Pick<Ctx, "exec" | "fs" | "git">;
+
+/**
+ * THE ctx builder — the one place a check's world is assembled, and there must only ever be one.
+ *
+ * Three callers, and the whole promise of this package rests on their agreeing: the engine builds
+ * one from a live event and a real world; `flow test` builds one from a case and a recorded world;
+ * replay builds one from a transcript. If those three assembled a ctx even slightly differently,
+ * a green case would stop being evidence about the live rail — which is the entire value of cases
+ * existing. They were two assemblers for one commit, and that was one commit too many.
+ *
+ * `exec` is wrapped while `fs` and `git` are passed whole, which looks inconsistent and is not: a
+ * method called off `ctx.fs` still has `world.fs` as its receiver, whereas a bare `exec: world.exec`
+ * would be called with `ctx` as its receiver and break any world that closes over itself.
+ */
+export function makeCtx(moment: Moment, facts: Partial<Ctx>, world: World): Ctx {
+  return {
+    moment,
+    ...facts,
+    exec: (cmd: string) => world.exec(cmd),
+    fs: world.fs,
+    git: world.git,
+    ok: verdict.ok,
+    fail: verdict.fail,
+  };
+}
+
+/**
  * Declare a CONFIGURED check: a function that takes options and returns a check.
  *
  * It is an identity function and that is deliberate — there is no framework machinery here, only
@@ -738,9 +771,23 @@ export interface OverrideBinding {
 
 export type Binding = PackBinding | OverrideBinding;
 
+/**
+ * The engine's dials — the few numbers that are about the RUN rather than about any one entry.
+ *
+ * It is deliberately not part of the sentence grammar, and `defineConfig`'s second argument is
+ * where it goes. `driftTokens` is the clearest example of why: how far a session may drift before
+ * a breadcrumb shows again is one answer for the whole repo, and putting it on entries would make
+ * every breadcrumb restate it or inherit it silently. The grammar stays closed; this is a knob.
+ */
+export interface Settings {
+  /** Context tokens between re-showings of a breadcrumb. Absent = the engine's own default. */
+  readonly driftTokens?: number;
+}
+
 /** A whole guard, as its config file states it: bindings, in the order they were spoken. */
 export interface FlowConfig {
   readonly bindings: readonly Binding[];
+  readonly settings: Settings;
 }
 
 // ── definePack ───────────────────────────────────────────────────────────────
@@ -899,15 +946,20 @@ export function override<Kind extends EntrySpec["kind"]>(ref: EntryRef<Kind>): O
 export type ConfigSentence = PackBinding | { readonly binding: OverrideBinding };
 
 /**
- * The config: the sentences, in order.
+ * The config: the sentences, in order, and the engine's dials.
  *
  * It records and does not judge. Every refusal lives in `loadConfig` instead, for one reason —
  * a config with three mistakes should report three, and a function that threw on the first would
  * report one and hide the rest behind a fix.
+ *
+ * The settings argument is OPTIONAL and trailing, which is the shape F1 promised it: `driftTokens`
+ * is an engine number and the engine did not exist yet, so the grammar was closed without it and
+ * left room for exactly this. A config that sets nothing writes `defineConfig([…])` as before.
  */
-export function defineConfig(sentences: readonly ConfigSentence[]): FlowConfig {
+export function defineConfig(sentences: readonly ConfigSentence[], settings: Settings = {}): FlowConfig {
   return {
     bindings: sentences.map((s) => ("binding" in s ? s.binding : s)),
+    settings,
   };
 }
 
@@ -1007,6 +1059,21 @@ export interface LoadedEntry {
 export type LoadResult =
   | { readonly ok: true; readonly entries: readonly LoadedEntry[] }
   | { readonly ok: false; readonly refusals: readonly Refusal[] };
+
+/**
+ * Every refusal as ONE block of text — the sentence a person reads when the config will not load.
+ *
+ * There is exactly one wording, here, because there are three places it surfaces and they must not
+ * drift: the `flow test` exception (errors.ts), the block a gated moment refuses with, and the
+ * notice a breadcrumb moment degrades to. A guard that describes its own breakage differently
+ * depending on which rail you hit is a guard nobody learns to read.
+ */
+export function refusalText(refusals: readonly Refusal[]): string {
+  return [
+    `flow: the config will not load — ${refusals.length} refusal${refusals.length === 1 ? "" : "s"}.`,
+    ...refusals.map((r) => `  ${r.code}: ${r.detail}`),
+  ].join("\n");
+}
 
 interface Draft {
   id: string;

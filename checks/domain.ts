@@ -40,7 +40,7 @@
 //   TOOLS         execPasses · depcruise · astGrep, each orchestrating, never reimplementing
 //   CASES         the canned ctx a `.test()` case becomes, and the runner that walks them
 
-import { defineCheck, verdict } from "../language/domain.ts";
+import { defineCheck, makeCtx } from "../language/domain.ts";
 import type {
   Case,
   CaseWorld,
@@ -52,6 +52,7 @@ import type {
   Moment,
   TurnAction,
   Verdict,
+  World,
 } from "../language/domain.ts";
 import { escapeRe, expandTemplate, globTokenToRegExp, matchAny, tokenizeGlob } from "../glob.ts";
 
@@ -1470,11 +1471,17 @@ export interface Unanswered {
  */
 export function cannedCtx(moment: Moment, c: Case, unanswered: Unanswered[]): Ctx {
   const { world, facts } = readCase(c);
+  // `makeCtx` is the language layer's, and it is deliberately the SAME call the live engine makes.
+  // A case is a recorded WORLD handed to one assembler, not a second kind of ctx — the moment
+  // those were two builders, a green case stopped being evidence about the live rail.
+  return makeCtx(moment, facts, cannedWorld(world, facts.staged, unanswered));
+}
+
+/** The three capabilities, answered from what the case wrote down. */
+function cannedWorld(world: CaseWorld, staged: readonly string[] | undefined, unanswered: Unanswered[]): World {
   const execAnswers = world.exec ?? {};
   const files = world.fs ?? {};
   return {
-    moment,
-    ...facts,
     exec: (cmd: string): Promise<ExecResult> => {
       const key = Object.hasOwn(execAnswers, cmd) ? cmd : Object.keys(execAnswers).find((k) => cmd.includes(k));
       const answer = key === undefined ? undefined : execAnswers[key];
@@ -1499,10 +1506,8 @@ export function cannedCtx(moment: Moment, c: Case, unanswered: Unanswered[]): Ct
     },
     git: {
       diff: (): Promise<string> => Promise.resolve(world.gitDiff ?? ""),
-      stagedFiles: (): Promise<string[]> => Promise.resolve([...(facts.staged ?? world.staged ?? [])]),
+      stagedFiles: (): Promise<string[]> => Promise.resolve([...(staged ?? world.staged ?? [])]),
     },
-    ok: verdict.ok,
-    fail: verdict.fail,
   };
 }
 

@@ -8,19 +8,20 @@
 // So the conversion lives here, once, and it is a SHELL concern: this file is not a domain.ts,
 // and no domain.ts imports it.
 
-import type { Refusal, LoadResult, LoadedEntry } from "./language/domain.ts";
+import { refusalText, type Refusal, type LoadResult, type LoadedEntry } from "./language/domain.ts";
 
-/** The config would not load. Every refusal rides along, each naming the entry it is about. */
+/**
+ * The config would not load. Every refusal rides along, each naming the entry it is about.
+ *
+ * The WORDING is `refusalText`'s, not this file's. The engine refuses a gated moment with the same
+ * block of text, so a person who has read one has read the other — and a second copy of the
+ * sentence here is how the exception and the block would come to disagree.
+ */
 export class FlowConfigError extends Error {
   readonly refusals: readonly Refusal[];
 
   constructor(refusals: readonly Refusal[]) {
-    super(
-      [
-        `flow: the config will not load — ${refusals.length} refusal${refusals.length === 1 ? "" : "s"}.`,
-        ...refusals.map((r) => `  ${r.code}: ${r.detail}`),
-      ].join("\n"),
-    );
+    super(refusalText(refusals));
     this.name = "FlowConfigError";
     this.refusals = refusals;
   }

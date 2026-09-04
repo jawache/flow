@@ -28,6 +28,7 @@ import {
   deletion,
   type EntryGroup,
   type EntryRef,
+  type ExecResult,
   guardrail,
   GUARDRAIL_KEYS,
   GUARDRAIL_MOMENTS,
@@ -38,6 +39,7 @@ import {
   isGuardrailMoment,
   isSentence,
   loadConfig,
+  makeCtx,
   overlay,
   override,
   pack,
@@ -53,6 +55,7 @@ import {
   touch,
   turnEnd,
   verdict,
+  type World,
   write,
 } from "./domain.ts";
 
@@ -206,6 +209,61 @@ describe("verdict", () => {
 
   it("allows a fail with no detail — the message alone is the whole answer", () => {
     expect(verdict.fail()).toEqual({ ok: false });
+  });
+});
+
+describe("makeCtx — the ONE assembler", () => {
+  /** A world that records what it was asked, so the ctx's wiring is visible rather than assumed. */
+  const spy = (): { world: World; asked: string[] } => {
+    const asked: string[] = [];
+    const world: World = {
+      exec(cmd: string) {
+        asked.push(`exec:${cmd}`);
+        return Promise.resolve({ stdout: "out", stderr: "", code: 0 });
+      },
+      fs: {
+        read(path: string) {
+          asked.push(`read:${path}`);
+          return Promise.resolve("body");
+        },
+        exists: () => Promise.resolve(true),
+      },
+      git: { diff: () => Promise.resolve("diff"), stagedFiles: () => Promise.resolve(["a.ts"]) },
+    };
+    return { world, asked };
+  };
+
+  it("carries the moment, the event's facts, and the three capabilities — and nothing else", async () => {
+    const { world, asked } = spy();
+    const built = makeCtx("write", { file: { path: "a.ts", content: "x" } }, world);
+    expect(built.moment).toBe("write");
+    expect(built.file).toEqual({ path: "a.ts", content: "x" });
+    expect((await built.exec("ls")).stdout).toBe("out");
+    expect(await built.fs.read("a.ts")).toBe("body");
+    expect(await built.git.stagedFiles()).toEqual(["a.ts"]);
+    expect(asked).toEqual(["exec:ls", "read:a.ts"]);
+  });
+
+  it("answers through ctx.ok / ctx.fail, which is a check's only spelling", () => {
+    const built = makeCtx("commit", {}, spy().world);
+    expect(built.ok()).toEqual(ok);
+    expect(built.fail("why")).toEqual({ ok: false, detail: "why" });
+  });
+
+  it("keeps a world's own receiver, so an adapter that closes over itself still works", async () => {
+    // The failure this pins: `exec: world.exec` detaches the method and calls it with the ctx as
+    // `this`. A world implemented as a class — which a live adapter reasonably is — then reads its
+    // own fields off the wrong object and answers nonsense.
+    class Adapter {
+      readonly label = "live";
+      exec(cmd: string): Promise<ExecResult> {
+        return Promise.resolve({ stdout: `${this.label}:${cmd}`, stderr: "", code: 0 });
+      }
+      readonly fs = { read: () => Promise.resolve(""), exists: () => Promise.resolve(false) };
+      readonly git = { diff: () => Promise.resolve(""), stagedFiles: () => Promise.resolve([]) };
+    }
+    const built = makeCtx("command", { command: "ls" }, new Adapter());
+    expect((await built.exec("ls")).stdout).toBe("live:ls");
   });
 });
 
