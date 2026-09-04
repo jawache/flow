@@ -1,0 +1,35 @@
+{
+  "name": "@jawache/flow",
+  "version": "0.0.1",
+  "description": "Guardrails and breadcrumbs as code — packs you import, a config that typechecks, one adapter per harness.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jawache/work.git",
+    "directory": "flow"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "guardrails",
+    "hooks",
+    "lint"
+  ],
+  "private": true,
+  "type": "module",
+  "bin": {
+    "flow": "dist/flow.mjs"
+  },
+  "files": [
+    "dist/flow.mjs"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "//": "Commands live in the root justfile — run `just` (build-flow · typecheck-flow · test-flow · link-flow)."
+  }
+}
