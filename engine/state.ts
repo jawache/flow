@@ -19,6 +19,7 @@ import { dirname } from "node:path";
 import type { Category, SessionFacts } from "../language/domain.ts";
 import {
   FLOW_GITIGNORE,
+  attribution,
   flowDir,
   identify,
   logFile,
@@ -27,8 +28,8 @@ import {
   nextSeq,
   offPath,
   readState,
-  sessionFrom,
   statePath,
+  type Attribution,
   type Identity,
   type Row,
   type SessionMarker,
@@ -214,29 +215,37 @@ export function readRows(root: string, session: string): Row[] {
 // ── the commit gate's marker ─────────────────────────────────────────────────
 
 /**
- * Leave the live session id where the commit gate can find it.
+ * Leave the live session × agent where the commit gate can find it.
  *
- * The gate is spawned by git, outside any session, so it cannot know which chat a commit belongs
- * to. This is written on every edit, so the marker tracks the session's latest activity and its
- * timestamp is what `sessionFrom` judges freshness by.
+ * The gate is spawned by git, outside any session, so it cannot know which chat a commit belongs to
+ * — nor which of that chat's actors was working, which is a second question and the one that
+ * decides whether an actor-scoped rule can fire at the commit moment. Written on every edit, so the
+ * marker tracks the session's latest activity and its timestamp is what `attribution` judges
+ * freshness by.
  */
-export function writeMarker(root: string, session: string, branch: string | null, at: Date = new Date()): boolean {
+export function writeMarker(
+  root: string,
+  session: string,
+  agent: string,
+  branch: string | null,
+  at: Date = new Date(),
+): boolean {
   try {
     ensureFlowDir(root);
-    writeFileSync(markerPath(root, branch), `${JSON.stringify({ session, ts: at.toISOString() })}\n`);
+    writeFileSync(markerPath(root, branch), `${JSON.stringify({ session, agent, ts: at.toISOString() })}\n`);
     return true;
   } catch {
     return false;
   }
 }
 
-/** Which session this worktree's commit belongs to — the fresh marker's, or `commit`. */
-export function commitSession(root: string, branch: string | null, nowMs: number = Date.now()): string {
+/** Who this worktree's commit belongs to — the fresh marker's session × agent, or `commit`. */
+export function commitAttribution(root: string, branch: string | null, nowMs: number = Date.now()): Attribution {
   let marker: unknown = null;
   try {
     marker = JSON.parse(readFileSync(markerPath(root, branch), "utf8"));
   } catch {
-    /* missing or corrupt → the fallback, which is what sessionFrom does with null */
+    /* missing or corrupt → the fallback, which is what attribution does with null */
   }
-  return sessionFrom(marker as SessionMarker | null, "commit", nowMs);
+  return attribution(marker as SessionMarker | null, "commit", nowMs);
 }

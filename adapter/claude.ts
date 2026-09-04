@@ -30,6 +30,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  loadConfig,
   type Category,
   type ExecResult,
   type FlowConfig,
@@ -45,22 +46,21 @@ import {
   guard,
   runRows,
   type Block,
+  type Identity,
   type Marks,
   type Notice,
-  type Identity,
   type Outcome,
   type Row,
 } from "../engine/domain.ts";
-import { loadConfig } from "../language/domain.ts";
 import {
   appendRows,
+  commitAttribution,
   isOff,
   loadState,
   saveState,
   stickyIdentity,
   writeMarker,
 } from "../engine/state.ts";
-import { commitSession } from "../engine/state.ts";
 import {
   ALLOW,
   branchFromHead,
@@ -70,6 +70,7 @@ import {
   relativise,
   sessionFactsFrom,
   sidecarPath,
+  refused,
   toEvent,
   toResult,
   tokensFromTranscript,
@@ -77,6 +78,7 @@ import {
   turnActions,
   type AdapterEvent,
   type Answer,
+  type EventWorld,
   type HookEvent,
   type HookPayload,
   type HookResult,
@@ -333,7 +335,7 @@ function identityOf(session: Session, payload: HookPayload, categories: readonly
 }
 
 /** The world a payload is read against — disk, and the turn, asked only if the moment needs them. */
-function eventWorld(root: string, session: Session): { root: string; read: (path: string) => string | null; turn: () => readonly TurnAction[] } {
+function eventWorld(root: string, session: Session): EventWorld {
   return { root, read: (path: string) => readText(root, path), turn: session.turn };
 }
 
@@ -367,7 +369,8 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
   // THE SESSION MARKER, written on every tool call: the commit gate is spawned by git, outside any
   // session, so this is the only way a later `git commit` can attribute its refusals to the chat
   // that caused them. Best-effort by construction — `writeMarker` answers a boolean.
-  if (hook === "pre-tool-use" && !off && session.id !== "unknown") writeMarker(root, session.id, session.branch);
+  if (hook === "pre-tool-use" && !off && session.id !== "unknown")
+    writeMarker(root, session.id, session.agent, session.branch);
 
   if (regime.kind === "broken") {
     // A config that is present and will not import. Gated moments refuse; a breadcrumb moment has no
@@ -375,13 +378,13 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
     // that split, and this is the same split one step earlier, before there is a LoadResult at all.
     if (off) return ALLOW;
     const events = toEvent(hook, payload, eventWorld(root, session));
-    const refused: Refused[] = events
+    const blocked: Refused[] = events
       .filter((event) => event.rail === "guard")
       .map((event) => ({ moment: event.moment, block: fault(regime.message) }));
     const shown: Shown[] = events
       .filter((event) => event.rail === "brief")
       .map(() => ({ entry: null, cause: "fault", body: regime.message }));
-    return toResult(hook, { refused, shown });
+    return toResult(hook, { refused: blocked, shown });
   }
 
   const { load, config } = regime;
@@ -416,7 +419,7 @@ async function judge(args: {
   readonly rows: Row[];
 }): Promise<Answer> {
   const { events, session, load, settings, identity, off, hook, payload, rows } = args;
-  const refused: Refused[] = [];
+  const blocked: Refused[] = [];
   const shown: Shown[] = [];
   const world = realWorld(session.root);
 
@@ -449,7 +452,7 @@ async function judge(args: {
         off,
       });
       for (const effect of outcome.effects)
-        if (effect.do === "block") refused.push({ moment: event.moment, block: effect });
+        if (effect.do === "block") blocked.push({ moment: event.moment, block: effect });
       if (!off) rows.push(...runRows(event.moment, outcome, subjectCount(event)));
       continue;
     }
@@ -483,7 +486,7 @@ async function judge(args: {
   }
 
   if (!off && marks !== stored.marks) saveState(session.root, session.id, session.agent, { ...stored, marks });
-  return { refused, shown };
+  return { refused: blocked, shown };
 }
 
 /** The marks the briefing produced, with the notes that could not be shown put back as they were. */
@@ -510,42 +513,34 @@ function marksWithout(briefed: Marks, before: Marks, unshown: readonly string[])
  * binary rather than a hook, why it is in `DELIVERS` even though the harness supplies nothing here,
  * and why every harness gets the gates for free.
  *
- * It attributes its rows to the LIVE session when the PreToolUse rail left a fresh marker, so a
- * commit's refusals land in the session that caused them rather than in a shared `commit` stream.
+ * WHO IT IS comes from the marker the PreToolUse rail left — session AND agent — so a commit's rows
+ * land in the session that caused them and an actor-scoped rule fires at this moment as honestly as
+ * at any other. The classification itself is never re-derived here: there is no transcript and no
+ * sidecar outside a session, so the STORED verdict is the only truthful answer, and a fresh commit
+ * on a stale or absent marker wears nothing rather than wearing a guess.
  */
 export async function runCommit(root: string, files: readonly string[]): Promise<HookResult> {
   const regime = await loadRegime(root);
   if (regime.kind === "none") return ALLOW;
   if (isOff(root)) return ALLOW;
-  if (regime.kind === "broken") return refuse("commit", fault(regime.message));
+  if (regime.kind === "broken") return refused([{ moment: "commit", block: fault(regime.message) }]) ?? ALLOW;
   if (files.length === 0) return ALLOW;
 
   const branch = currentBranch(root);
-  const session = commitSession(root, branch);
+  const { session, agent } = commitAttribution(root, branch);
   const { load } = regime;
-  // A COMMIT WEARS NO CATEGORIES, and that is a real limit rather than an oversight. The gate runs
-  // outside any session: there is no payload, no transcript and no sidecar to classify from, and the
-  // marker names the session but not which of its agents typed the command. So an entry scoped with
-  // `.for(…)` is SILENCED at the commit moment — a rule that must bind to an actor has to fire at a
-  // moment the harness delivers. Lifting the limit means teaching the marker who wrote it, which is
-  // a change to what the engine stores and belongs with whoever needs it.
   const outcome = await guard({
     load,
-    event: { moment: "commit", staged: files, wearing: [] },
+    event: { moment: "commit", staged: files, wearing: agent === null ? [] : (loadState(root, session, agent).categories ?? []) },
     world: realWorld(root),
     off: false,
   });
   appendRows({ root, session, branch }, runRows("commit", outcome, files.length));
 
-  const refused: Refused[] = outcome.effects
+  const blocks: Refused[] = outcome.effects
     .filter((effect): effect is Block => effect.do === "block")
     .map((block) => ({ moment: "commit", block }));
-  return toResult("pre-tool-use", { refused, shown: [] });
-}
-
-/** One block, rendered as the gate's refusal. */
-function refuse(moment: "commit", block: Block): HookResult {
-  return toResult("pre-tool-use", { refused: [{ moment, block }], shown: [] });
+  return refused(blocks) ?? ALLOW;
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════

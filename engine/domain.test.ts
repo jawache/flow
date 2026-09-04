@@ -57,8 +57,8 @@ import {
   offPath,
   readState,
   runRows,
+  attribution,
   sanitise,
-  sessionFrom,
   spawnedAs,
   statePath,
   type Block,
@@ -71,6 +71,7 @@ import {
   type Notice,
   type Outcome,
   type RowKind,
+  type Attribution,
   type Row,
   type SessionMarker,
   type SessionState,
@@ -713,22 +714,33 @@ describe("a session × agent's own state", () => {
 
 describe("the commit gate's session marker", () => {
   const now = Date.parse("2026-09-04T12:00:00.000Z");
-  const fresh: SessionMarker = { session: "live", ts: "2026-09-04T11:59:00.000Z" };
+  const fresh: SessionMarker = { session: "live", agent: "agent-7", ts: "2026-09-04T11:59:00.000Z" };
+  const none: Attribution = { session: "commit", agent: null };
 
-  it("attributes a commit to the session that was just editing", () => {
-    expect(sessionFrom(fresh, "commit", now)).toBe("live");
+  it("attributes a commit to the session AND the agent that was just editing", () => {
+    // The agent is what makes an actor-scoped commit rule possible: identity is stored per
+    // session × agent, so the session id alone cannot find who was working.
+    expect(attribution(fresh, "commit", now)).toStrictEqual({ session: "live", agent: "agent-7" });
   });
 
   it("falls back rather than mis-pinning a commit to a session that ended hours ago", () => {
-    expect(sessionFrom({ session: "old", ts: "2026-09-04T02:00:00.000Z" }, "commit", now)).toBe("commit");
-    expect(sessionFrom({ session: "future", ts: "2027-01-01T00:00:00.000Z" }, "commit", now)).toBe("commit");
-    expect(sessionFrom({ session: "live", ts: "not a date" }, "commit", now)).toBe("commit");
-    expect(sessionFrom({ ts: fresh.ts }, "commit", now)).toBe("commit");
-    expect(sessionFrom(null, "commit", now)).toBe("commit");
+    expect(attribution({ session: "old", ts: "2026-09-04T02:00:00.000Z" }, "commit", now)).toStrictEqual(none);
+    expect(attribution({ session: "future", ts: "2027-01-01T00:00:00.000Z" }, "commit", now)).toStrictEqual(none);
+    expect(attribution({ session: "live", ts: "not a date" }, "commit", now)).toStrictEqual(none);
+    expect(attribution({ ts: fresh.ts }, "commit", now)).toStrictEqual(none);
+    expect(attribution(null, "commit", now)).toStrictEqual(none);
+  });
+
+  it("reads a marker written before the agent field as an unknown actor, not a wrong one", () => {
+    expect(attribution({ session: "live", ts: fresh.ts }, "commit", now)).toStrictEqual({
+      session: "live",
+      agent: null,
+    });
+    expect(attribution({ session: "live", agent: 7, ts: fresh.ts }, "commit", now).agent).toBeNull();
   });
 
   it("takes the age as an argument, because a clock inside a decision cannot be tested", () => {
-    expect(sessionFrom(fresh, "commit", now, 30_000)).toBe("commit");
+    expect(attribution(fresh, "commit", now, 30_000)).toStrictEqual(none);
     expect(MARKER_MAX_AGE_MS).toBe(4 * 60 * 60 * 1000);
   });
 });

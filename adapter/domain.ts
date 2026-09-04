@@ -431,15 +431,27 @@ export function briefBlock(shown: readonly Shown[]): string {
  * Injection stays the decision object, because there is no other channel for it.
  */
 export function toResult(hook: HookEvent, answer: Answer): HookResult {
-  const first = answer.refused[0];
-  if (first !== undefined) {
-    const rail = RAIL[first.moment];
-    const body = answer.refused.map((refusal) => formatBlock(refusal.block)).join("\n\n");
-    return { stdout: "", stderr: `\n${rail.head}:\n\n${body}\n\n${rail.tail}\n`, exitCode: 2 };
-  }
+  const refusal = refused(answer.refused);
+  if (refusal !== null) return refusal;
   const prose = briefBlock(answer.shown);
   if (prose === "") return ALLOW;
   return { stdout: decision(hook, prose), stderr: "", exitCode: 0 };
+}
+
+/**
+ * Every refusal as the one thing a refusal is, or null when nothing refused.
+ *
+ * It takes NO hook, and that is the point of it existing beside `toResult`: the commit gate is not
+ * a hook at all — git spawns it — so rendering its refusals through a hook-shaped function meant
+ * naming an event that never happened. The banner comes off the MOMENT, which every rail has,
+ * rather than off the event, which only the harness ones do.
+ */
+export function refused(refusals: readonly Refused[]): HookResult | null {
+  const first = refusals[0];
+  if (first === undefined) return null;
+  const rail = RAIL[first.moment];
+  const body = refusals.map((refusal) => formatBlock(refusal.block)).join("\n\n");
+  return { stdout: "", stderr: `\n${rail.head}:\n\n${body}\n\n${rail.tail}\n`, exitCode: 2 };
 }
 
 /** Hand the agent some context and allow — the one shape every steering rail emits. */
@@ -493,16 +505,26 @@ export interface TranscriptLine {
  * caught mid-write. One unreadable line is not the rest of the history's problem.
  */
 function parseLine(raw: string): TranscriptLine | null {
-  if (raw.trim() === "") return null;
-  let record: unknown;
+  const record = parseObject(raw);
+  return record === null ? null : { kind: text(record["type"]), record };
+}
+
+/**
+ * JSON that should be an object, or null — THE reader, and there is one because there is one rule.
+ *
+ * Two files answer to it: a transcript line and a sidecar. Both are read off disk, both can be
+ * hand-edited, half-written or simply not what was expected, and "an array parses fine and is not a
+ * record" is the sort of thing two copies of this would eventually disagree about.
+ */
+function parseObject(raw: string | null): Record<string, unknown> | null {
+  if (raw === null || raw.trim() === "") return null;
+  let held: unknown;
   try {
-    record = JSON.parse(raw);
+    held = JSON.parse(raw);
   } catch {
     return null;
   }
-  if (typeof record !== "object" || record === null || Array.isArray(record)) return null;
-  const held = record as Record<string, unknown>;
-  return { kind: text(held["type"]), record: held };
+  return typeof held === "object" && held !== null && !Array.isArray(held) ? (held as Record<string, unknown>) : null;
 }
 
 /**
@@ -711,17 +733,6 @@ export function sessionFactsFrom(args: {
     ...(agentType === undefined ? {} : { agentType }),
     ...(description === undefined ? {} : { description }),
   };
-}
-
-/** JSON that should be an object, or null — a sidecar is a file, and files get hand-edited. */
-function parseObject(raw: string | null): Record<string, unknown> | null {
-  if (raw === null) return null;
-  try {
-    const held: unknown = JSON.parse(raw);
-    return typeof held === "object" && held !== null && !Array.isArray(held) ? (held as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════

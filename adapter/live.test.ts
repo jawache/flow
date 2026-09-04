@@ -30,9 +30,11 @@ let repo: string;
 
 /** What the temp repo's own guard says. Five entries, one per rail this suite drives. */
 const CONFIG = (packageRoot: string): string => `
-import { breadcrumb, command, commit, definePack, defineConfig, guardrail, pack, session, touch, turnEnd, write } from ${JSON.stringify(
+import { breadcrumb, command, commit, defineCategory, definePack, defineConfig, guardrail, pack, session, spawnedAs, touch, turnEnd, write } from ${JSON.stringify(
   join(packageRoot, "index.ts"),
 )};
+
+const builder = defineCategory("builder", spawnedAs({ types: ["builder"] }));
 
 const demo = definePack("demo", {
   noTodo: guardrail()
@@ -63,6 +65,26 @@ const demo = definePack("demo", {
     .check((ctx) => ((ctx.turn ?? []).every((a) => a.did === "edit") && (ctx.turn ?? []).length > 3 ? ctx.fail("nothing ran") : ctx.ok()))
     .message("You edited all turn and ran nothing.")
     .test({ pass: [{ actions: [] }], block: [{ actions: [{ did: "edit", path: "a" }, { did: "edit", path: "b" }, { did: "edit", path: "c" }, { did: "edit", path: "d" }] }] }),
+
+  suitePasses: guardrail()
+    .at(commit)
+    .on("tool/**")
+    .check(async (ctx) => {
+      const ran = await ctx.exec("definitely-not-a-real-binary-xyz --check");
+      return ran.code === 0 ? ctx.ok() : ctx.fail(\`\\\`definitely-not-a-real-binary-xyz\\\` failed (exit \${ran.code}): \${ran.stderr.trim()}\`);
+    })
+    .message("The gate could not run its tool.")
+    .test({
+      pass: [{ staged: ["tool/x.ts"], world: { fs: { "tool/x.ts": "" }, exec: { "definitely-not-a-real-binary-xyz": { code: 0 } } } }],
+      block: [{ staged: ["tool/x.ts"], world: { fs: { "tool/x.ts": "" }, exec: { "definitely-not-a-real-binary-xyz": { code: 127, stderr: "command not found" } } } }],
+    }),
+
+  buildersOnly: guardrail()
+    .at(commit)
+    .for(builder)
+    .check((ctx) => ((ctx.staged ?? []).includes("plan.yaml") ? ctx.fail("the plan is the parent's") : ctx.ok()))
+    .message("A builder completes its phase — the plan's shape is the parent's.")
+    .test({ pass: [{ staged: ["src/a.ts"] }], block: [{ staged: ["plan.yaml"] }] }),
 
   orientation: breadcrumb().at(session).text("This repo is guarded by flow."),
 
@@ -144,8 +166,11 @@ describe("the write rail", () => {
   it("leaves the session marker the commit gate reads, and records the call", () => {
     // The handshake: the PreToolUse rail writes which session is live, and the gate — spawned by
     // git, outside any session — reads it back. Both ends are flow's or commits misattribute.
-    const marked = readFileSync(join(repo, ".flow", ".session-main"), "utf8");
-    expect(JSON.parse(marked).session).toBe("live-1");
+    const marked = JSON.parse(readFileSync(join(repo, ".flow", ".session-main"), "utf8")) as Record<string, unknown>;
+    expect(marked["session"]).toBe("live-1");
+    // The AGENT too: identity is stored per session x agent, so without this field the gate has no
+    // state file to look up and an actor-scoped commit rule is silenced while reading as armed.
+    expect(marked["agent"]).toBe("main");
     expect(rows("live-1").some((row) => row["kind"] === "tool" && row["path"] === "src/b.ts")).toBe(true);
     expect(rows("live-1").some((row) => row["kind"] === "guardrail" && row["out"] === "deny")).toBe(true);
   });
@@ -249,6 +274,47 @@ describe("the commit gate", () => {
     const answer = run(["commit", "src/a.ts"], "");
     expect(answer.code).toBe(0);
     expect(answer.stdout + answer.stderr).toBe("");
+  });
+
+  it("blocks when a gate's own tool is not installed — a missing binary is 127, never a pass", () => {
+    // The live World's answer, end to end: the engine turns the non-zero exit into a block naming
+    // the entry and the command. A throw here would have been swallowed as "the check threw" and a
+    // repo whose tool was missing would have had a silently weaker gate.
+    mkdirSync(join(repo, "tool"), { recursive: true });
+    writeFileSync(join(repo, "tool", "x.ts"), "export const x = 1;\n");
+    spawnSync("git", ["add", "tool/x.ts"], { cwd: repo });
+    const answer = run(["commit", "tool/x.ts"], "");
+    expect(answer.code).toBe(2);
+    expect(answer.stderr).toContain("demo.suitePasses");
+    expect(answer.stderr).toContain("definitely-not-a-real-binary-xyz");
+    expect(answer.stderr.toLowerCase()).toContain("command not found");
+    spawnSync("git", ["rm", "-q", "--cached", "tool/x.ts"], { cwd: repo });
+  });
+
+  it("wears the categories of the session x agent the marker names, so .for(…) fires at commit too", () => {
+    // The handshake at full stretch. The gate is spawned by git with no session in the room, so an
+    // actor-scoped commit rule can only fire if the marker says WHICH agent was working — the field
+    // whose absence used to silence such a rule while it read as armed.
+    writeFileSync(join(repo, "plan.yaml"), "phases: []\n");
+    expect(run(["commit", "plan.yaml"], "").code, "nobody has been classified yet").toBe(0);
+
+    mkdirSync(join(repo, ".t"), { recursive: true });
+    const transcript = join(repo, ".t", "agent-b1.jsonl");
+    writeFileSync(transcript, JSON.stringify({ type: "user", message: { content: "Follow `/work build`" } }) + "\n");
+    writeFileSync(join(repo, ".t", "agent-b1.meta.json"), JSON.stringify({ agentType: "builder", description: "F4" }));
+    const asBuilder = hook("pre-tool-use", {
+      session_id: "live-b",
+      agent_id: "agent-b1",
+      transcript_path: transcript,
+      tool_name: "Write",
+      tool_input: { file_path: join(repo, "src/ok.ts"), content: "export const ok = 1;\n" },
+    });
+    expect(asBuilder.code, "the write itself is fine — this is only how the session gets classified").toBe(0);
+
+    const blocked = run(["commit", "plan.yaml"], "");
+    expect(blocked.code).toBe(2);
+    expect(blocked.stderr).toContain("demo.buildersOnly");
+    expect(blocked.stderr).toContain("the plan's shape is the parent's");
   });
 
   it("attributes its rows to the session the marker names", () => {

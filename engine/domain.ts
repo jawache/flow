@@ -706,29 +706,52 @@ export function offPath(root: string): string {
 /** What a session marker holds. Loose, because it is read back off disk. */
 export interface SessionMarker {
   readonly session?: unknown;
+  /**
+   * WHICH AGENT of that session was live — the field that lets a commit wear categories.
+   *
+   * Identity is stored per session × agent, so the session id alone cannot find it: a parent and
+   * three subagents share one session and are four different actors. Without this the commit gate
+   * had no honest `wearing` to hand the engine, so a `.for(builder).at(commit)` rule was loaded,
+   * counted, and silently silenced — the exact class of quiet failure this package exists to
+   * delete. Absent on a marker written before this field existed, which reads as "unknown actor".
+   */
+  readonly agent?: unknown;
   readonly ts?: unknown;
 }
 
 /** A commit long after the last edit is not this session's. */
 export const MARKER_MAX_AGE_MS = 4 * 60 * 60 * 1000;
 
+/** Who a commit-gate run belongs to: the live session, and which of its agents was working. */
+export interface Attribution {
+  readonly session: string;
+  /** Null when the marker named no agent — an old marker, or a run with nobody to attribute to. */
+  readonly agent: string | null;
+}
+
 /**
- * Which session a commit-gate run belongs to, given the marker it found.
+ * Which session × agent a commit-gate run belongs to, given the marker it found.
  *
- * A fresh, well-formed marker wins. Stale, missing, malformed or absurdly-future → the fallback, so
- * a human's or CI's commit stays unattributed rather than mis-pinned to a session that ended hours
- * ago. `now` is an argument because a clock inside a decision is a decision nobody can test.
+ * A fresh, well-formed marker wins. Stale, missing, malformed or absurdly-future → the fallback,
+ * with NO agent, so a human's or CI's commit stays unattributed rather than mis-pinned to a session
+ * that ended hours ago. `now` is an argument because a clock inside a decision is a decision nobody
+ * can test.
+ *
+ * The agent rides with the session rather than being read separately, because they are one fact:
+ * an agent id paired with the wrong session names a state file that does not exist, and half of a
+ * stale marker is not more useful than none of it.
  */
-export function sessionFrom(
+export function attribution(
   marker: SessionMarker | null | undefined,
   fallback: string,
   nowMs: number,
   maxAgeMs: number = MARKER_MAX_AGE_MS,
-): string {
-  if (!marker || typeof marker.session !== "string" || !marker.session) return fallback;
+): Attribution {
+  const none: Attribution = { session: fallback, agent: null };
+  if (!marker || typeof marker.session !== "string" || !marker.session) return none;
   const at = Date.parse(String(marker.ts));
-  if (!Number.isFinite(at) || Math.abs(nowMs - at) > maxAgeMs) return fallback;
-  return marker.session;
+  if (!Number.isFinite(at) || Math.abs(nowMs - at) > maxAgeMs) return none;
+  return { session: marker.session, agent: typeof marker.agent === "string" && marker.agent ? marker.agent : null };
 }
 
 /**
