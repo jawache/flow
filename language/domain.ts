@@ -30,6 +30,10 @@
 // The PUBLIC surface is ../index.ts, not this file. A pack or a config imports from there — which
 // is what leaves this layout free to move again.
 
+// The ONE import: `../glob.ts`, the package's single shared file, because a scope's `on` / `ignore`
+// keys are glob-shaped and the dialect they speak has exactly one parser.
+import { matchAny } from "../glob.ts";
+
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // MOMENTS — when a rule fires. The vocabulary and the mapping to engine phases,
 // and nothing else.
@@ -544,6 +548,31 @@ export interface BreadcrumbSpec extends SpecCommon {
 }
 
 export type EntrySpec = GuardrailSpec | BreadcrumbSpec;
+
+/**
+ * A path scope, as anything that has one states it — an entry's spec, or the universe row the
+ * facts layer reads. Two readers of `on` / `ignore` is how the guard and the report come to
+ * disagree about what a rule watches, so there is one and everything that has a scope wears it.
+ */
+export interface Scope {
+  readonly on?: readonly string[] | undefined;
+  readonly ignore?: readonly string[] | undefined;
+}
+
+/**
+ * Is this path inside the entry's `on` / `ignore` scope? No `on` at all is every path.
+ *
+ * It lives HERE, with the two keys it reads, rather than with the engine that was its first
+ * caller. Three things now ask it and they must agree exactly: the engine, deciding which staged
+ * files an entry is run against; the case runner, driving that same fan-out from a recorded world;
+ * and the facts layer, reporting what a rule watches. A commit rule whose case exercised a
+ * different scope test than its live rail would be a green case that is not evidence.
+ */
+export function inScope(scope: Scope, path: string): boolean {
+  if (scope.on && !matchAny(path, scope.on)) return false;
+  if (scope.ignore && matchAny(path, scope.ignore)) return false;
+  return true;
+}
 
 /**
  * The grammar's keys, per entry type — the closed sets the load re-checks.

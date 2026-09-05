@@ -40,7 +40,7 @@
 //   TOOLS         execPasses · depcruise · astGrep, each orchestrating, never reimplementing
 //   CASES         the canned ctx a `.test()` case becomes, and the runner that walks them
 
-import { cannedWorld, defineCheck, makeCtx } from "../language/domain.ts";
+import { cannedWorld, defineCheck, inScope, makeCtx } from "../language/domain.ts";
 import type {
   Case,
   CaseWorld,
@@ -53,6 +53,7 @@ import type {
   TurnAction,
   Unanswered,
   Verdict,
+  World,
 } from "../language/domain.ts";
 import { escapeRe, expandTemplate, globTokenToRegExp, matchAny, tokenizeGlob } from "../glob.ts";
 
@@ -139,12 +140,21 @@ export const textBan = defineCheck(
  *
  * A DETERRENT: the patterns ARE its scope, so matching nothing in a repo is the rule working, not
  * a rule watching the wrong place.
+ *
+ * MATCHED WHOLE, and that is the one difference from `textBan` above. A command is ONE subject
+ * however many lines it occupies — `git commit -m "subject\n\nCo-Authored-By: …"` is a single
+ * invocation, and the patterns that police it span the newline on purpose. Swept line by line
+ * (which is right for a file, where a hit must be able to name its line) every one of those
+ * patterns matches nothing, silently: the rule loads, counts, and cannot catch the thing it
+ * names. Measured at the crossing, on the attribution ban, which is the reason this comment is
+ * here rather than a `// eslint-disable`-shaped shrug.
  */
 export const banCommands = defineCheck(
   (opts: { ban: readonly string[] }): Check =>
     (ctx) => {
-      const hits = patternHits(ctx.command ?? "", opts.ban);
-      return answer(ctx, hits.map((h) => `matches banned /${h.pattern}/`));
+      const command = ctx.command ?? "";
+      const hits = opts.ban.filter((pattern) => new RegExp(pattern).test(command));
+      return answer(ctx, hits.map((pattern) => `matches banned /${pattern}/`));
     },
 );
 
@@ -1460,8 +1470,53 @@ export function caseMoment(c: Case): Moment {
  * evidence about the live rail, which is the whole value of cases existing.
  */
 export function cannedCtx(moment: Moment, c: Case, unanswered: Unanswered[]): Ctx {
+  const { world, facts } = cannedParts(c, unanswered);
+  return makeCtx(moment, facts, world);
+}
+
+/** A case read once: the world it recorded, assembled, and the event facts it carries. */
+function cannedParts(c: Case, unanswered: Unanswered[]): { readonly world: World; readonly facts: Partial<Ctx> } {
   const { world, facts } = readCase(c);
-  return makeCtx(moment, facts, cannedWorld(world, facts.staged, unanswered));
+  return { world: cannedWorld(world, facts.staged, unanswered), facts };
+}
+
+/**
+ * Every ctx one case becomes for one entry — one, or one per staged file it is scoped to.
+ *
+ * The plural is the whole of the fan-out fix, and the world is built ONCE and shared across the
+ * subjects: a case records one world, and a per-file rule reading it four times must see the same
+ * four answers the live gate would.
+ */
+export async function caseCtxs(entry: LoadedEntry, moment: Moment, c: Case, unanswered: Unanswered[]): Promise<Ctx[]> {
+  const { world, facts } = cannedParts(c, unanswered);
+  const subjects = moment === "commit" ? await commitSubjects(entry, facts, world) : [facts];
+  return subjects.map((subject) => makeCtx(moment, subject, world));
+}
+
+/**
+ * THE COMMIT FAN-OUT, in a case — the same split the engine makes, made from a recorded world.
+ *
+ * At the gate an entry that named `.on(…)` is about FILES: it is asked once per staged file in its
+ * scope, each time holding that file as `ctx.file`. An entry that named none is about the commit
+ * and is asked once with the staged set. The case runner used to know only the second half, so a
+ * commit-only content rule — a staged-secret scan, a marker sweep — could not be given a case that
+ * reached its own rail: the check was handed `ctx.file` empty and passed a fixture full of the
+ * thing it exists to catch. Green, and not evidence.
+ *
+ * A staged path the recorded world holds no content for yields no subject, exactly as a staged
+ * deletion does live. `runCase` reports the unanswered read either way, so a case that forgot the
+ * content is a failure naming what to add rather than a silent pass.
+ */
+async function commitSubjects(entry: LoadedEntry, facts: Partial<Ctx>, world: World): Promise<Partial<Ctx>[]> {
+  const staged = facts.staged ?? [];
+  if (!entry.spec.on) return [facts];
+  const out: Partial<Ctx>[] = [];
+  for (const path of staged) {
+    if (!inScope(entry.spec, path)) continue;
+    if (!(await world.fs.exists(path))) continue;
+    out.push({ file: { path, content: await world.fs.read(path) }, staged });
+  }
+  return out;
 }
 
 /** How one case came out. */
@@ -1509,15 +1564,20 @@ export async function runCase(
   }
 
   const unanswered: Unanswered[] = [];
-  let answer: Verdict;
+  let blocked: boolean;
+  let answer: Verdict = { ok: true };
   try {
-    answer = await check(cannedCtx(moment, c, unanswered));
+    const answers: Verdict[] = [];
+    for (const ctx of await caseCtxs(entry, moment, c, unanswered)) answers.push(await check(ctx));
+    // Any subject blocking blocks the commit, exactly as the engine's effects do. No subject at all
+    // — a scope nothing staged fell into — is a pass, because there was nothing to refuse.
+    answer = answers.find((v) => !v.ok) ?? { ok: true };
+    blocked = !answer.ok;
   } catch (error) {
     return { ...head, ok: false, detail: `the check threw: ${(error as Error).message}` };
   }
   if (unanswered.length) return { ...head, ok: false, detail: unansweredText(unanswered) };
 
-  const blocked = !answer.ok;
   const wanted = expect === "block";
   if (blocked === wanted) return { ...head, ok: true, detail: "" };
   if (wanted) {

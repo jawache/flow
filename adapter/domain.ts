@@ -2133,6 +2133,16 @@ export interface InitFacts {
   readonly settingsPath: string;
   /** The parsed host settings file. */
   readonly settings: unknown;
+  /**
+   * The settings file is THERE and would not parse.
+   *
+   * Distinct from `settings: null`, which means there is none — and the distinction is the whole
+   * reason this field exists. Both read as "no registrations found", so an init that acted on the
+   * absence would answer an unreadable file by writing a NEW one over it, taking the reader's
+   * permissions, model and every other key with it. Measured at the crossing, against a real
+   * settings.json holding JSONC comments: the write was one branch away.
+   */
+  readonly settingsUnreadable: boolean;
   /** Does `@jawache/flow` already resolve from this repo? */
   readonly resolves: boolean;
   /**
@@ -2163,14 +2173,21 @@ export interface InitPlan {
   /** The package to link into `node_modules/@jawache/flow`, or null when flow already resolves. */
   readonly link: string | null;
   readonly hooksPath: boolean;
-  /** The rewritten settings, or null when they already call flow. */
+  /** The rewritten settings, or null when they already call flow — or could not be read. */
   readonly settings: { readonly path: string; readonly value: unknown } | null;
   readonly registered: readonly string[];
+  /** The settings file was there and would not parse, so nothing was registered. Said out loud. */
+  readonly settingsUnreadable: string | null;
 }
 
 /** What init will do to this repo. Pure: every branch reads a fact the shell already gathered. */
 export function planInit(facts: InitFacts): InitPlan {
-  const registration = withRegistrations(facts.settings);
+  // A file we could not read is a file we may not write. `withRegistrations` builds a NEW object
+  // from whatever it is handed, so handing it the null an unparseable file produces would emit a
+  // settings file holding flow's four registrations and NOTHING ELSE — permissions, model, theme,
+  // every other tool's hooks, gone. There is no safe merge into bytes nobody parsed, so init
+  // registers nothing and says which file to fix.
+  const registration = facts.settingsUnreadable ? { settings: facts.settings, added: [] } : withRegistrations(facts.settings);
   return {
     config: facts.hasConfig ? null : { path: CONFIG_FILE, body: scaffold(facts.empty) },
     // NEVER over a hook that is already there. This is a scaffold, and a repo whose gate runs its
@@ -2185,6 +2202,7 @@ export function planInit(facts: InitFacts): InitPlan {
     hooksPath: facts.isGit && facts.hooksPath !== HOOKS_DIR,
     settings: registration.added.length === 0 ? null : { path: facts.settingsPath, value: registration.settings },
     registered: registration.added,
+    settingsUnreadable: facts.settingsUnreadable ? facts.settingsPath : null,
   };
 }
 
@@ -2212,6 +2230,12 @@ export function initLines(plan: InitPlan, failures: readonly string[]): string[]
   if (plan.notGit) lines.push("  · not a git repo, so no commit gate was armed. Run `git init`, then `flow init` again.");
   if (plan.gateKept)
     lines.push(`  · kept the ${GATE_PATH} already here — flow never overwrites one, so ${ADD_THE_GATE_LINE} yourself.`);
+  if (plan.settingsUnreadable !== null)
+    lines.push(
+      `  ✗ ${plan.settingsUnreadable} is not valid JSON, so nothing was registered and NOTHING was written to it — ` +
+        `every other key in that file is somebody's, and there is no safe merge into bytes nobody could parse. ` +
+        `Fix the JSON (a trailing comma, or a // comment) and run \`flow init\` again. Until then no rail fires.`,
+    );
   for (const failure of failures) lines.push(`  ✗ ${failure}`);
   lines.push("  next: `flow status` — what is bound, and what is not wired yet.");
   return lines;

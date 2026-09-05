@@ -53,6 +53,50 @@ export {
 
 export { defineCategory, type Category, type Classifier, type SessionFacts } from "./language/domain.ts";
 
+// ── the stock checks, and the command reader they are written against ────────
+//
+// THE LIBRARY IS PART OF THE PROMISE. A pack is just code, and the code it is made of is these:
+// thirteen configured checks that cover what a guard actually asks — a banned shape in a file, a
+// banned command, a protected path, a JSON invariant, an import fence, a gate that runs a tool.
+// A pack that could not reach them would have to re-implement each one, and thirteen private
+// re-implementations is the string registry this package exists to delete, wearing a new coat.
+//
+// They come through THIS door and never `@jawache/flow/checks`, for the same reason the grammar
+// does: the layer path is internal and free to move.
+export {
+  astGrep,
+  banCommands,
+  canonicalFiles,
+  changeTogether,
+  commitReason,
+  depcruise,
+  execPasses,
+  jsonInvariant,
+  protectedPath,
+  ranSinceEdit,
+  siblingExists,
+  symbolsInSibling,
+  textBan,
+  type CanonOptions,
+  type ChangeGroup,
+  type Dialect,
+  type ForbidEdge,
+  type JsonAssert,
+  type RequireEdge,
+} from "./checks/domain.ts";
+
+// The four readings of a command line a bespoke check needs, and the reason they are public: a
+// repo writing its own command rule otherwise writes its own shell tokeniser, and a tokeniser that
+// does not know a newline separates commands is how `git commit -m "bad"` sails through as line 2
+// of a batch. One parser, proved once, for every rule in every repo.
+export {
+  commitMessage,
+  gitInvocations,
+  givesReason,
+  tokenizeCommand,
+  type GitInvocation,
+} from "./checks/domain.ts";
+
 // The stock way to write a classifier — the engine's, because the ORDER host-written evidence must
 // be read in is engine knowledge (and was measured, not chosen). A bespoke `defineCategory(name,
 // facts => …)` remains the escape hatch; this is the path that cannot be got wrong.

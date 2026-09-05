@@ -1240,6 +1240,7 @@ const bare: InitFacts = {
   hooksPath: null,
   settingsPath: "/home/.claude/settings.json",
   settings: {},
+  settingsUnreadable: false,
   resolves: false,
   packageRoot: "/checkout/flow",
 };
@@ -1331,6 +1332,25 @@ describe("planInit — the flags and the edges", () => {
 
   it("carries a failure the shell hit into the report rather than swallowing it", () => {
     expect(initLines(planInit(bare), [`could not write ${GATE_PATH}: EACCES`]).join("\n")).toContain("EACCES");
+  });
+
+  // The near-miss the crossing found, one branch from happening: a real settings.json holding
+  // JSONC comments parsed to null, which reads identically to "there is no settings file" — and
+  // the next line builds a NEW object holding four registrations and nothing else.
+  it("registers NOTHING into a settings file it could not parse, and never writes over it", () => {
+    const plan = planInit({ ...bare, settings: null, settingsUnreadable: true });
+    expect(plan.settings, "no write is planned against bytes nobody parsed").toBeNull();
+    expect(plan.registered).toStrictEqual([]);
+    const said = initLines(plan, []).join("\n");
+    expect(said).toContain("/home/.claude/settings.json");
+    expect(said).toContain("not valid JSON");
+    expect(said, "and it says the consequence rather than only the cause").toContain("no rail fires");
+  });
+
+  it("still creates a settings file that is simply ABSENT — the other silence", () => {
+    const plan = planInit({ ...bare, settings: null, settingsUnreadable: false });
+    expect(plan.settings?.path).toBe("/home/.claude/settings.json");
+    expect(plan.registered.length, "all four events flow answers").toBe(4);
   });
 });
 

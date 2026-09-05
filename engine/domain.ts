@@ -29,10 +29,12 @@
 import { join } from "node:path";
 import {
   cannedWorld,
+  inScope,
   isCategory,
   makeCtx,
   refusalText,
   verdict,
+  type Scope,
   type BreadcrumbMoment,
   type CaseWorld,
   type Category,
@@ -51,7 +53,6 @@ import {
   type Verdict,
   type World,
 } from "../language/domain.ts";
-import { matchAny } from "../glob.ts";
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // CATEGORIES — who a session is
@@ -249,22 +250,12 @@ export function bindsTo(entry: LoadedEntry, wearing: readonly string[]): boolean
   return entry.categories.some((c) => wearing.includes(c));
 }
 
-/**
- * A path scope, as anything that has one states it — an entry's spec, or the universe row the
- * facts layer reads. Two readers of `on` / `ignore` is how the guard and the report come to
- * disagree about what a rule watches, so there is one and everything that has a scope wears it.
- */
-export interface Scope {
-  readonly on?: readonly string[] | undefined;
-  readonly ignore?: readonly string[] | undefined;
-}
-
-/** Is this path inside the entry's `on` / `ignore` scope? No `on` at all is every path. */
-export function inScope(scope: Scope, path: string): boolean {
-  if (scope.on && !matchAny(path, scope.on)) return false;
-  if (scope.ignore && matchAny(path, scope.ignore)) return false;
-  return true;
-}
+// `Scope` and `inScope` moved DOWN to the language layer, where the two keys they read are
+// declared, and are re-exported here because this layer's readers have always addressed them here.
+// The move is what lets the case runner drive the commit fan-out below through the identical scope
+// test the live rail uses — one reader, three callers, no chance of a green case that is not
+// evidence about the rail.
+export { inScope, type Scope };
 
 /**
  * Does this entry's scope REACH this path — the coverage question, which is not the matching one.

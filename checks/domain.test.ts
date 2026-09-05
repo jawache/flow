@@ -142,6 +142,16 @@ describe("banCommands", () => {
     const detail = await run(check, "command", "rm -rf / ; rm -rf /tmp");
     expect(detail?.split(" · ")).toHaveLength(2);
   });
+
+  // A command is ONE subject however many lines it occupies. Swept line by line, every pattern
+  // that spans the newline between a commit's subject and its body matches nothing — the rule
+  // loads, counts and cannot catch what it names.
+  it("matches a pattern spanning the newlines of a multi-line command", async () => {
+    const trailer = ["Co", "Authored", "By"].join("-");
+    const check = banCommands({ ban: [`git commit[\\s\\S]*${trailer}:`] });
+    expect(await run(check, "command", 'git commit -m "fix: a thing"')).toBeNull();
+    expect(await run(check, "command", `git commit -m "fix: a thing\n\n${trailer}: someone"`)).toContain("banned");
+  });
 });
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -1011,7 +1021,14 @@ describe("cannedCtx", () => {
 });
 
 /** A loaded entry, as the load hands one over — the runner's only input. */
-const entry = (over: { at?: string[]; check?: Check; test?: { pass?: Case[]; block?: Case[] }; disabled?: boolean }): LoadedEntry => ({
+const entry = (over: {
+  at?: string[];
+  on?: string[];
+  ignore?: string[];
+  check?: Check;
+  test?: { pass?: Case[]; block?: Case[] };
+  disabled?: boolean;
+}): LoadedEntry => ({
   id: "house.rule",
   pack: "house",
   key: "rule",
@@ -1020,6 +1037,8 @@ const entry = (over: { at?: string[]; check?: Check; test?: { pass?: Case[]; blo
     at: (over.at ?? ["write"]) as never,
     check: over.check ?? ((ctx) => ctx.ok()),
     message: "No.",
+    ...(over.on ? { on: over.on } : {}),
+    ...(over.ignore ? { ignore: over.ignore } : {}),
     ...(over.test ? { test: over.test } : {}),
     ...(over.disabled === true ? { disabled: {} } : {}),
   },
@@ -1082,6 +1101,39 @@ describe("runCase", () => {
     expect((await runCase(entry({ at: ["commit"] }), passes, { staged: [] }, "pass", 0)).ok).toBe(true);
     expect((await runCase(entry({ at: ["turn-end"] }), passes, { actions: [] }, "pass", 0)).ok).toBe(true);
     expect((await runCase(entry({ at: ["delete"] }), passes, file("a.ts", ""), "pass", 0)).ok).toBe(true);
+  });
+
+  // The commit fan-out, from a recorded world — the same split `subjectsOf` makes at the live gate.
+  // Without it a commit-only CONTENT rule was handed `ctx.file` empty and passed a fixture full of
+  // the thing it exists to catch: green, and not evidence about the rail.
+  describe("a commit entry that named paths", () => {
+    const banned: Check = (ctx) => (ctx.file?.content.includes("SECRET") === true ? ctx.fail(ctx.file.path) : ctx.ok());
+    const scoped = entry({ at: ["commit"], on: ["**"], ignore: ["**/*.test.ts"], check: banned });
+
+    it("is asked once per staged file in scope, holding that file", async () => {
+      const result = await runCase(scoped, banned, { staged: ["a.ts"], world: { fs: { "a.ts": "SECRET" } } }, "block", 0);
+      expect(result.ok).toBe(true);
+    });
+
+    it("honours the entry's own ignore list, so an out-of-scope file is never a subject", async () => {
+      const result = await runCase(scoped, banned, { staged: ["a.test.ts"], world: { fs: { "a.test.ts": "SECRET" } } }, "pass", 0);
+      expect(result.ok).toBe(true);
+    });
+
+    it("reports a staged path the case recorded no content for, rather than passing on the silence", async () => {
+      const result = await runCase(scoped, banned, { staged: ["a.ts"], world: { fs: { "a.ts": "fine" } } }, "pass", 0);
+      expect(result.ok).toBe(true);
+      const missing = await runCase(scoped, banned, { staged: ["a.ts"] }, "pass", 0);
+      // No content recorded means the path does not exist — a staged deletion, live — so there is
+      // no subject and nothing to refuse.
+      expect(missing.ok).toBe(true);
+    });
+
+    it("still hands an UNSCOPED commit entry the staged set, once", async () => {
+      const counts: Check = (ctx) => ((ctx.staged ?? []).length === 2 ? ctx.fail("two") : ctx.ok());
+      const result = await runCase(entry({ at: ["commit"], check: counts }), counts, { staged: ["a.ts", "b.ts"] }, "block", 0);
+      expect(result.ok).toBe(true);
+    });
   });
 });
 

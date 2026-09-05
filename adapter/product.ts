@@ -97,18 +97,23 @@ function hooksPath(root: string): string | null {
 }
 
 /**
- * Whatever JSON is in that file, or null — an unparseable settings file registers nothing.
+ * Whatever JSON is in that file, and WHY there is none when there is none.
+ *
+ * The two silences are different and both callers need them apart: ABSENT is a file init may
+ * create, UNREADABLE is a file init must not touch. Returning one null for both is how a settings
+ * file holding a stray comma or a `//` comment gets replaced by four registrations and nothing
+ * else — every other key in it belonging to somebody, and no safe merge into bytes nobody parsed.
  *
  * `root` is what a repo-relative path is read against; the host's settings file is absolute and
  * passes straight through, which is the same rule every other read in the package follows.
  */
-function parsedFile(root: string, path: string): unknown {
+function parsedFile(root: string, path: string): { readonly value: unknown; readonly unreadable: boolean } {
   const text = readText(root, path);
-  if (text === null || text.trim() === "") return null;
+  if (text === null || text.trim() === "") return { value: null, unreadable: false };
   try {
-    return JSON.parse(text) as unknown;
+    return { value: JSON.parse(text) as unknown, unreadable: false };
   } catch {
-    return null;
+    return { value: null, unreadable: true };
   }
 }
 
@@ -125,6 +130,7 @@ function liveSession(root: string): StatusFacts["session"] {
 /** Everything init found, before it wrote anything. */
 function initFacts(root: string, empty: boolean): InitFacts {
   const settingsPath = settingsFile();
+  const read = parsedFile(root, settingsPath);
   return {
     root,
     empty,
@@ -134,7 +140,8 @@ function initFacts(root: string, empty: boolean): InitFacts {
     hasFlowDir: existsSync(join(root, FLOW_DIR)),
     hooksPath: hooksPath(root),
     settingsPath,
-    settings: parsedFile(root, settingsPath),
+    settings: read.value,
+    settingsUnreadable: read.unreadable,
     resolves: resolves(root),
     packageRoot: packageRoot(),
   };
@@ -236,7 +243,7 @@ export async function runStatus(cwd: string, args: readonly string[]): Promise<V
     gateText: readText(root, GATE_PATH),
     hooksPath: hooksPath(root),
     settingsPath,
-    settings: parsedFile(root, settingsPath),
+    settings: parsedFile(root, settingsPath).value,
     session: liveSession(root),
   };
 
