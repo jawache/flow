@@ -137,6 +137,12 @@ Your editor goes red on that line. Ask the agent to edit any file, or to run any
 refused, with the load error on screen. Undo the edit and the next action passes. There is no
 notice-and-proceed anywhere.
 
+The one exception is the repair: while the config is broken, a write to `flow.config.ts` or to
+`guards/**` still goes through. Without it the rule demanding a fix would also forbid it — you would
+never notice, because your editor has no hooks in front of it, but anything that does is locked out
+of its own repair. Commands stay refused, and so does the commit gate, so nothing written under the
+exception reaches a commit until the config loads green.
+
 **6 — run every rule's own cases.**
 
 ```sh

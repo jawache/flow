@@ -112,6 +112,33 @@ export interface HookPayload {
  */
 export const CONFIG_FILE = "flow.config.ts";
 
+/**
+ * THE CONFIG SURFACE — the files a write may target while the guard is broken, and nothing else.
+ *
+ * Fail-loud says a config that will not load refuses every gated moment, and it is right: a guard
+ * that quietly carries on with yesterday's rules is a guard that lies about being there. But taken
+ * without exception it also refuses the ONE write that can end the outage, and then the doctrine's
+ * own instruction — "adjust the change so it passes, then retry" — is impossible to obey. A human
+ * in an editor never meets this (no hooks sit in front of them, so they just undo); an agent that
+ * broke the config is locked out of repairing it, and the repo stays broken until a human arrives.
+ * Measured twice on the crossing that introduced it, once for real.
+ *
+ * So the exception is exactly as wide as the repair and no wider: a write whose target is the
+ * config or a pack it imports. Everything else still refuses — every other path, every command,
+ * and the commit gate, which goes on refusing until the config loads green, so nothing written
+ * under the exception can reach a commit unreviewed by a working guard.
+ *
+ * STATIC, not derived from the config's own import graph, and that is the point: the config is
+ * broken, so its imports are exactly what cannot be trusted to be read. A convention two lines long
+ * that a person can check by eye beats a resolver that has to parse the file that will not parse.
+ */
+export const CONFIG_SURFACE: readonly string[] = [CONFIG_FILE, "guards/**"];
+
+/** Is this repo-relative path part of the guard's own source? */
+export function onConfigSurface(path: string): boolean {
+  return matchAny(path, CONFIG_SURFACE);
+}
+
 export const HOOK_EVENTS = ["session-start", "pre-tool-use", "post-tool-use", "stop", "notification"] as const;
 export type HookEvent = (typeof HOOK_EVENTS)[number];
 

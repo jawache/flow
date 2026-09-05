@@ -350,6 +350,69 @@ describe("a config that will not load", () => {
       writeFileSync(join(repo, "flow.config.ts"), good);
     }
   });
+
+  // THE ONE EXCEPTION, and the reason it exists: taken without it, fail-loud refuses the only write
+  // that can end the outage, and the doctrine's own instruction — "adjust the change so it passes,
+  // then retry" — cannot be obeyed by anything that meets a hook. A human in an editor never hits
+  // it. An agent that broke the config is locked out of repairing it.
+  describe("the write that can fix it is allowed through, and nothing else is", () => {
+    const withBrokenConfig = (drive: () => void): void => {
+      const good = readFileSync(join(repo, "flow.config.ts"), "utf8");
+      writeFileSync(join(repo, "flow.config.ts"), `${good}\nthis is not typescript at all(((\n`);
+      try {
+        drive();
+      } finally {
+        writeFileSync(join(repo, "flow.config.ts"), good);
+      }
+    };
+
+    it("lets a write reach the config itself and the packs under guards/", () => {
+      withBrokenConfig(() => {
+        const config = hook("pre-tool-use", pre("Write", { file_path: join(repo, "flow.config.ts"), content: "// fixed" }));
+        expect(config.code, "the repair is refused, so the repo stays broken until a human arrives").toBe(0);
+        expect(config.stderr, "and it is allowed silently — a notice here is noise on the way out").toBe("");
+
+        mkdirSync(join(repo, "guards"), { recursive: true });
+        const pack = hook("pre-tool-use", pre("Edit", { file_path: join(repo, "guards", "house.ts"), new_string: "// fixed" }));
+        expect(pack.code, "a pack the config imports is as much the repair as the config is").toBe(0);
+      });
+    });
+
+    it("still refuses every other write, so the exception is the repair and not an amnesty", () => {
+      withBrokenConfig(() => {
+        const ordinary = hook("pre-tool-use", pre("Write", { file_path: join(repo, "src/e.ts"), content: "fine" }));
+        expect(ordinary.code, "a broken guard must not wave ordinary work through").toBe(2);
+        expect(ordinary.stderr).toContain("could not be loaded");
+      });
+    });
+
+    it("keeps the COMMAND rail fully closed — a command names a string, never a target", () => {
+      withBrokenConfig(() => {
+        // `sed -i` on the config would be a repair by intent, and there is no way to tell it from
+        // `rm -rf` before it runs. The route back is the edit tools, which name the file.
+        const command = hook("pre-tool-use", pre("Bash", { command: `sed -i "" s/x/y/ ${join(repo, "flow.config.ts")}` }));
+        expect(command.code).toBe(2);
+        expect(command.stderr).toContain("could not be loaded");
+      });
+    });
+
+    it("keeps the COMMIT gate closed, so nothing written under the exception lands unguarded", () => {
+      withBrokenConfig(() => {
+        const gate = spawnSync("node", [BINARY, "commit", "flow.config.ts"], { cwd: repo, encoding: "utf8" });
+        expect(gate.status, "a commit while the guard cannot run is a commit nothing checked").toBe(2);
+        expect(gate.stderr).toContain("could not be loaded");
+      });
+    });
+
+    it("changes nothing at all when the config is healthy", () => {
+      // The exception is keyed on the BROKEN state and nowhere else: with a working config the
+      // config surface is guarded exactly like every other path, by whatever rules watch it.
+      const config = hook("pre-tool-use", pre("Write", { file_path: join(repo, "flow.config.ts"), content: "// TODO" }));
+      expect(config.code, "a healthy guard judges the config file on its rules, like any other file").toBe(0);
+      const ordinary = hook("pre-tool-use", pre("Write", { file_path: join(repo, "src/f.ts"), content: "fine" }));
+      expect(ordinary.code).toBe(0);
+    });
+  });
 });
 
 describe("a repo that has never heard of flow", () => {

@@ -69,6 +69,7 @@ import {
   ALLOW,
   CONFIG_FILE,
   configLoadFault,
+  onConfigSurface,
   branchFromHead,
   faultText,
   hermeticEnv,
@@ -286,6 +287,23 @@ function fault(message: string): Block {
   return { do: "block", entry: null, message, subject: null, detail: "" };
 }
 
+/**
+ * Is this event the WRITE that could fix the broken config?
+ *
+ * The one exception to fail-loud, and it is deliberately the narrowest shape that works: a write
+ * (or a delete) whose target is the guard's own source. `CONFIG_SURFACE` next door says why.
+ *
+ * A COMMAND is never a repair, however plausible it looks. `sed -i` on the config would qualify by
+ * intent and there is no way to tell it from `rm -rf` before it runs — a command rail sees a string,
+ * not a target — so the command rail stays fully closed in the broken state, and the agent's route
+ * back is the edit tools, which name the file they are about to write.
+ */
+function repairs(event: AdapterEvent): boolean {
+  if (event.rail !== "guard") return false;
+  if (event.moment !== "write" && event.moment !== "delete") return false;
+  return event.file !== undefined && onConfigSurface(event.file.path);
+}
+
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE RUN — one payload, from stdin to an exit code
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -411,6 +429,7 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
     const events = toEvent(hook, payload, eventWorld(root, session));
     const blocked: Refused[] = events
       .filter((event) => event.rail === "guard")
+      .filter((event) => !repairs(event))
       .map((event) => ({ moment: event.moment, block: fault(regime.message) }));
     const shown: Shown[] = events
       .filter((event) => event.rail === "brief")

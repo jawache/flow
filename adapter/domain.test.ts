@@ -44,6 +44,8 @@ import {
   toolRow,
   touchedPath,
   CONFIG_FILE,
+  CONFIG_SURFACE,
+  onConfigSurface,
   GUARD_PATHS,
   formatFacts,
   health,
@@ -1301,6 +1303,26 @@ describe("planInit — a repo that already has a pre-commit hook", () => {
     const said = initLines(theirs, []).join("\n");
     expect(said).toContain("kept");
     expect(said, "the same instruction status gives, in the same words").toContain(ADD_THE_GATE_LINE);
+  });
+});
+
+describe("the config surface — what a write may target while the guard is broken", () => {
+  it("is the config and the packs it imports, and nothing else", () => {
+    expect(onConfigSurface(CONFIG_FILE)).toBe(true);
+    expect(onConfigSurface("guards/git.ts")).toBe(true);
+    expect(onConfigSurface("guards/nested/deep.ts")).toBe(true);
+    expect(onConfigSurface("src/a.ts")).toBe(false);
+    expect(onConfigSurface("cli/work.ts")).toBe(false);
+    // Not a suffix match: a file that merely ENDS with the config's name is somebody else's.
+    expect(onConfigSurface("vendor/flow.config.ts")).toBe(false);
+    expect(onConfigSurface("src/guards/thing.ts"), "the folder is at the repo root or nowhere").toBe(false);
+  });
+
+  it("is STATIC, and the two entries are the whole convention", () => {
+    // Deliberately not derived from the config's own import graph: the config is broken, so its
+    // imports are precisely what cannot be trusted to be read. Two lines a person checks by eye
+    // beat a resolver that has to parse the file that will not parse.
+    expect([...CONFIG_SURFACE]).toStrictEqual([CONFIG_FILE, "guards/**"]);
   });
 });
 
