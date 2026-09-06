@@ -17,6 +17,7 @@
 import { describe, it, expect } from "vitest";
 import type { TurnAction } from "../index.ts";
 import { metrics, momentsView, type Block, type Bound, type Row } from "../engine/domain.ts";
+import { matchAny } from "../glob.ts";
 import {
   ALLOW,
   DELIVERS,
@@ -46,8 +47,8 @@ import {
   CONFIG_FILE,
   configImports,
   configSurface,
-  onConfigSurface,
   guardPaths,
+  HOST_SURFACE,
   formatFacts,
   health,
   joinSpawn,
@@ -864,23 +865,27 @@ describe("the narrative reading — stats, loops, retries, and what was touched"
 });
 
 describe("weakened after a block — the one failure a guard cannot catch itself", () => {
-  it("knows which files ARE the guard here — this config's packs, plus the host's registrations", () => {
+  it("watches the host's registrations, and takes the repo's half whole from the surface", () => {
+    // Two halves, and only one of them is this test's. That the repo half FOLLOWS the config's own
+    // imports is `configSurface`'s claim and is proved where it is made, further down this file;
+    // `guardPaths` does nothing but concatenate, so re-proving the derivation here would be a
+    // second place for the same fact to be right and a first place for it to disagree.
+    const paths = guardPaths(`import { house } from "./rules/house.ts";`);
+    expect(paths).toStrictEqual([...configSurface(`import { house } from "./rules/house.ts";`), ...HOST_SURFACE]);
+
     // The config's name is spelled ONCE — a second copy here would leave a renamed config's old
     // name watched and its new one not.
-    const paths = guardPaths(`import { house } from "./guards/house.ts";`);
     expect(paths).toContain(CONFIG_FILE);
     expect(CONFIG_FILE).toBe("flow.config.ts");
     expect(isGuardPath("flow.config.ts", paths)).toBe(true);
-    expect(isGuardPath("guards/mine.ts", paths)).toBe(true);
-    expect(isGuardPath("packages/app/.claude/settings.json", paths)).toBe(true);
     expect(isGuardPath("src/a.ts", paths)).toBe(false);
     expect(isGuardPath("", paths)).toBe(false);
-    // A repo that keeps its packs somewhere else is watched THERE, and `guards/` is not special.
-    const elsewhere = guardPaths(`import { house } from "./rules/house.ts";`);
-    expect(isGuardPath("rules/mine.ts", elsewhere)).toBe(true);
-    expect(isGuardPath("guards/mine.ts", elsewhere)).toBe(false);
-    // The host's half is fixed, because those are the harness's file names and not a repo's.
+
+    // The host's half is fixed, because those are the harness's file names and not a repo's, and it
+    // is matched at any depth: a monorepo package carries its own `.claude/`.
     expect(isGuardPath(".claude/settings.json", guardPaths(null))).toBe(true);
+    expect(isGuardPath("packages/app/.claude/settings.json", paths)).toBe(true);
+    expect(isGuardPath(".claude/agents/builder.md", paths)).toBe(true);
   });
 
   it("flags the guardrail edit that followed a block, citing both ends and the gap", () => {
@@ -1328,24 +1333,24 @@ describe("the config surface — what a write may target while the guard is brok
 
   it("is the config and the packs it imports, and nothing else", () => {
     const surface = configSurface(CONFIG);
-    expect(onConfigSurface(CONFIG_FILE, surface)).toBe(true);
-    expect(onConfigSurface("guards/house.ts", surface)).toBe(true);
-    expect(onConfigSurface("guards/git.ts", surface), "the folder comes with the file").toBe(true);
-    expect(onConfigSurface("guards/nested/deep.ts", surface)).toBe(true);
-    expect(onConfigSurface("src/a.ts", surface)).toBe(false);
-    expect(onConfigSurface("cli/work.ts", surface)).toBe(false);
+    expect(matchAny(CONFIG_FILE, surface)).toBe(true);
+    expect(matchAny("guards/house.ts", surface)).toBe(true);
+    expect(matchAny("guards/git.ts", surface), "the folder comes with the file").toBe(true);
+    expect(matchAny("guards/nested/deep.ts", surface)).toBe(true);
+    expect(matchAny("src/a.ts", surface)).toBe(false);
+    expect(matchAny("cli/work.ts", surface)).toBe(false);
     // Not a suffix match: a file that merely ENDS with the config's name is somebody else's.
-    expect(onConfigSurface("vendor/flow.config.ts", surface)).toBe(false);
-    expect(onConfigSurface("src/guards/thing.ts", surface), "the folder is where the import said").toBe(false);
+    expect(matchAny("vendor/flow.config.ts", surface)).toBe(false);
+    expect(matchAny("src/guards/thing.ts", surface), "the folder is where the import said").toBe(false);
   });
 
   it("follows whatever the repo called the folder, and reaches nothing when the config names nothing", () => {
     // The whole point of reading the text: `guards/` was one repo's name for it, and every other
     // repo got a repair exception over a folder it does not have.
     const theirs = configSurface(`import { house } from "./.guard/house.ts";`);
-    expect(onConfigSurface(".guard/house.ts", theirs)).toBe(true);
-    expect(onConfigSurface(".guard/helpers/text.ts", theirs)).toBe(true);
-    expect(onConfigSurface("guards/house.ts", theirs)).toBe(false);
+    expect(matchAny(".guard/house.ts", theirs)).toBe(true);
+    expect(matchAny(".guard/helpers/text.ts", theirs)).toBe(true);
+    expect(matchAny("guards/house.ts", theirs)).toBe(false);
     // A config with every rule written inline imports no pack, so the surface is the config alone.
     const inline = configSurface(`import { defineConfig } from "@jawache/flow";`);
     expect([...inline]).toStrictEqual([CONFIG_FILE]);

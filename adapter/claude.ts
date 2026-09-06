@@ -56,6 +56,7 @@ import {
   type Row,
 } from "../engine/domain.ts";
 import { quoteArg } from "../checks/domain.ts";
+import { matchAny } from "../glob.ts";
 import {
   appendRows,
   appendSteps,
@@ -72,7 +73,6 @@ import {
   CONFIG_FILE,
   configLoadFault,
   configSurface,
-  onConfigSurface,
   branchFromHead,
   faultText,
   hermeticEnv,
@@ -284,7 +284,7 @@ export async function loadRegime(root: string): Promise<Regime> {
  * Is this event the WRITE that could fix the broken config?
  *
  * The one exception to fail-loud, and it is deliberately the narrowest shape that works: a write
- * (or a delete) whose target is the guard's own source. `CONFIG_SURFACE` next door says why.
+ * (or a delete) whose target is the guard's own source. `configSurface` next door says why.
  *
  * The SURFACE is handed in, because it is read out of the config's own text — the files it imports
  * relatively, and their folders. `configSurface` says why the text and not the module.
@@ -297,7 +297,7 @@ export async function loadRegime(root: string): Promise<Regime> {
 function repairs(event: AdapterEvent, surface: readonly string[]): boolean {
   if (event.rail !== "guard") return false;
   if (event.moment !== "write" && event.moment !== "delete") return false;
-  return event.file !== undefined && onConfigSurface(event.file.path, surface);
+  return event.file !== undefined && matchAny(event.file.path, surface);
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════

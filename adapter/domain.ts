@@ -175,10 +175,10 @@ export function configSurface(configText: string | null): readonly string[] {
   return surface;
 }
 
-/** Is this repo-relative path part of the guard's own source, as this config draws it? */
-export function onConfigSurface(path: string, surface: readonly string[]): boolean {
-  return matchAny(path, surface);
-}
+// `onConfigSurface(path, surface)` used to sit here and was exactly `matchAny` under a longer
+// name: once the surface stopped being a module-level constant and became an argument, the
+// wrapper carried no fact of its own. Its two call sites read better without it — the local is
+// already called `surface`, and `matchAny(path, surface)` says the same sentence in one hop.
 
 export const HOOK_EVENTS = ["session-start", "pre-tool-use", "post-tool-use", "stop", "notification"] as const;
 export type HookEvent = (typeof HOOK_EVENTS)[number];
@@ -1535,6 +1535,23 @@ export function mergeNarratives(each: readonly { session: string; read: Narrativ
  * Fixed, because these are the harness's own file names and not a repo's choice — unlike the
  * repo's half, which is `configSurface` reading the config's imports. The old list spelled the two
  * halves as one constant, with one repo's pack folder standing in for every repo's.
+ *
+ * THE GUARD PACK KEEPS ITS OWN, WIDER LIST, and the difference is deliberate — this is the one
+ * place that says so, because two lists that look like copies are read as drift until somebody
+ * checks. Two things separate them:
+ *
+ *   · They answer different questions. This list feeds `weakenedAfterBlock`, which reports "a rail
+ *     refused, and then somebody edited the guard" — so it holds only files that can WEAKEN a
+ *     rule the engine enforces. The pack's `editingTheGuardrails` is a nudge before you type, and
+ *     it adds `.claude/skills/**`: a skill is prose an agent reads, so editing one is worth a
+ *     word of caution and is not evidence that a guardrail was loosened. Merged, every skill edit
+ *     after any block would be reported as a possible weakening, and the report earns its keep
+ *     only while every line in it is worth reading.
+ *   · Neither may import the other, and the shared home would be worse than the duplication.
+ *     `flow-packs → flow-adapter` is fenced (a pack must not be able to tell which harness is
+ *     running it) and so is the way back, so a shared constant could only live in the public
+ *     door — which would put one harness's file names into the GRAMMAR every config is written
+ *     in, and that is the coupling the fence exists to prevent.
  */
 export const HOST_SURFACE: readonly string[] = [".claude/settings.json", ".claude/settings.local.json", ".claude/agents/**"];
 

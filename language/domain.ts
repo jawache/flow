@@ -1019,7 +1019,7 @@ export function refTarget(value: unknown): RefTarget | undefined {
  *
  * ONE signature, not two overloads, and the reason is the error message. A pack that declares no
  * parameters carries `Params = undefined`, and the rest-tuple below then resolves to `[]` — so
- * `pack(git)` is a complete call. A pack that DOES declare them infers its own parameter type,
+ * `pack(node)` is a complete call. A pack that DOES declare them infers its own parameter type,
  * the tuple gains a required member, and `pack(tdd)` is short an argument: "Expected 2 arguments,
  * but got 1", at the line you typed. Two overloads produced the same refusal wearing a diagnostic
  * about a phantom property, which was true and unreadable.

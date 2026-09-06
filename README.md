@@ -169,7 +169,7 @@ Open `flow.config.ts`. It is ordinary code, and it is the whole guard:
 
 ```ts
 import { commit, command, defineCategory, defineConfig, definePack, guardrail, pack } from "@jawache/flow";
-import { guard, git } from "@jawache/flow/packs";
+import { guard } from "@jawache/flow/packs";
 
 const subagent = defineCategory("subagent", (facts) => facts.subagent);
 
@@ -181,7 +181,7 @@ export const demo = definePack("demo", {
     .test({ pass: ["git push origin main"], block: ["git push --force origin main"] }),
 });
 
-export default defineConfig([pack(guard, { packs: [] }), pack(git, { release: "npm run release" }), pack(demo)]);
+export default defineConfig([pack(guard, { packs: [] }), pack(demo)]);
 ```
 
 Six things to know, and then you can write your own:

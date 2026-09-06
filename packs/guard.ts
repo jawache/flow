@@ -56,6 +56,10 @@ export const guard = definePack("guard", (repo: Home) => ({
       ].join("\n"),
     ),
 
+  // The three host files below look like the engine's own list and are deliberately one wider —
+  // `.claude/skills/**`, because a skill is prose an agent reads and is worth a word of caution
+  // before you edit it. The engine keeps the narrower list for a different question, and the
+  // argument for not sharing one is written out at HOST_SURFACE in the adapter's pure home.
   editingTheGuardrails: breadcrumb()
     .at(touch)
     .on(
