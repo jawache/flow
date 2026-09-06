@@ -47,7 +47,7 @@ describe("the packs surface", () => {
         pack(packs.docs),
         pack(packs.fcis, { files: ["src/pure/**/*.ts"], homes: ["src/pure/**"], coverage: "npm run coverage" }),
         pack(packs.git, { release: "npm run release" }),
-        pack(packs.guard),
+        pack(packs.guard, { packs: ["rules/**"] }),
         pack(packs.justfile, { exempt: [] }),
         pack(packs.node),
         pack(packs.secrets, { dx: "npm run dx", encrypt: "npm run seal", names: "npm run names" }),
@@ -103,5 +103,39 @@ describe("the packs surface", () => {
       const spec = entry.spec as { message?: string; text?: string };
       expect(`${spec.message ?? ""}\n${spec.text ?? ""}`, entry.id).not.toContain("just ");
     }
+  });
+
+  // THE GUARD PACK'S SCOPE, which is a parameter for the same reason the recipes are: one repo's
+  // folder name was written into both of its path-scoped entries, so every other repo bound a nudge
+  // that never fires and a delete refusal that protects nothing — while `flow status` counted both
+  // as armed. A message can be read; a scope has to be looked at, which is what this does.
+  it("scopes the guard pack on the folder the repo says its packs are in, and on no other", () => {
+    const bound = (homes: readonly string[]): Record<string, readonly string[]> => {
+      const result = loadConfig(defineConfig([pack(packs.guard, { packs: homes })]));
+      expect(result.ok ? [] : result.refusals).toEqual([]);
+      return Object.fromEntries(
+        (result.ok ? result.entries : []).map((entry) => [entry.id, (entry.spec as { on?: readonly string[] }).on ?? []]),
+      );
+    };
+
+    const theirs = bound(["rules/**", "policy/*.ts"]);
+    expect(theirs["guard.editingTheGuardrails"]).toContain("rules/**");
+    expect(theirs["guard.editingTheGuardrails"]).toContain("policy/*.ts");
+    expect(theirs["guard.noDeleteGuardrails"]).toStrictEqual(["flow.config.ts", "rules/**", "policy/*.ts", ".githooks/pre-commit"]);
+
+    // Empty is a real answer — the config IS the whole guard — and the two entries still cover it
+    // and the host's registrations, and nothing invented.
+    const inline = bound([]);
+    expect(inline["guard.noDeleteGuardrails"]).toStrictEqual(["flow.config.ts", ".githooks/pre-commit"]);
+    expect(inline["guard.editingTheGuardrails"]).toStrictEqual([
+      "flow.config.ts",
+      ".claude/settings.json",
+      ".claude/settings.local.json",
+      ".claude/agents/**",
+      ".claude/skills/**",
+    ]);
+    // Whatever a repo passes, the package never puts a folder of its own into either scope.
+    for (const scope of Object.values(theirs).concat(Object.values(inline)))
+      for (const glob of scope) expect(glob.startsWith("guards/"), glob).toBe(false);
   });
 });

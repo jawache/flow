@@ -3,7 +3,12 @@
 // Every guarded repo wants these: a note saying what is steering you, a nudge when you edit the
 // steering itself, and a refusal when a command would delete it. They were the `guard` pack in the
 // home-directory library; they are a module now, and the only thing that changed on the way across
-// is what they point AT — flow.config.ts and guards/, not work.yaml and ~/.work/library.
+// is what they point AT — flow.config.ts and the packs it imports, not work.yaml and ~/.work/library.
+//
+// Subtlety: WHERE those packs live is a mandatory parameter. One repo's name for the folder used to
+// be written into both scopes below, so every other repo bound two rules over a folder it does not
+// have — a nudge that never fires and a delete refusal that protects nothing, both counted as
+// armed. That is the exact failure flow exists to make impossible.
 //
 // THREE ENTRIES, and the count is the pack's definition rather than a coincidence: this is flow's
 // self-protection and nothing else. Two entries that used to sit here left when the packs moved
@@ -21,7 +26,24 @@
 
 import { breadcrumb, deletion, definePack, guardrail, protectedPath, session, touch } from "../index.ts";
 
-export const guard = definePack("guard", {
+/** The one fact this pack cannot know: where this repo keeps the packs its config imports. */
+export interface Home {
+  /**
+   * Every glob covering a pack file `flow.config.ts` imports — one entry per folder a repo keeps
+   * its own packs in, and `[]` in a repo whose rules are all written inline in the config.
+   *
+   * MANDATORY, and empty is a real answer rather than the absence of one. An unstated list is a
+   * list nobody reviews, and here it decides what two rules watch: the nudge when you edit the
+   * guard, and the refusal to delete it. Both name it and neither defaults.
+   *
+   * The engine derives the REPAIR surface from the config's imports directly (`configSurface`),
+   * because it is asked in the broken state and can only read text. This is the same fact asked
+   * at a moment where the config loads, so it is stated once, here, and typed.
+   */
+  readonly packs: readonly string[];
+}
+
+export const guard = definePack("guard", (repo: Home) => ({
   orientation: breadcrumb()
     .at(session)
     .description("What the guard layer is and how it steers — shown at the start of every session.")
@@ -36,7 +58,14 @@ export const guard = definePack("guard", {
 
   editingTheGuardrails: breadcrumb()
     .at(touch)
-    .on("flow.config.ts", "guards/**", ".claude/settings.json", ".claude/settings.local.json", ".claude/agents/**", ".claude/skills/**")
+    .on(
+      "flow.config.ts",
+      ...repo.packs,
+      ".claude/settings.json",
+      ".claude/settings.local.json",
+      ".claude/agents/**",
+      ".claude/skills/**",
+    )
     .description("A nudge when you edit the guardrails themselves; it never blocks.")
     .text(
       [
@@ -51,11 +80,11 @@ export const guard = definePack("guard", {
 
   noDeleteGuardrails: guardrail()
     .at(deletion)
-    .on("flow.config.ts", "guards/**", ".githooks/pre-commit")
+    .on("flow.config.ts", ...repo.packs, ".githooks/pre-commit")
     .description("Stops a command from deleting the committed guard surface. No bypass — disable entries in the file instead.")
     .check(protectedPath({}))
     .message(
-      "That command would delete this repo's guard surface (flow.config.ts binds every rule; guards/ holds the packs this repo writes itself; .githooks/pre-commit is what runs them at the gate). Deleting any of them is the same attack. There is no bypass — `override(pack.entry).disabled(\"why\")` inside flow.config.ts is the visible, committed route.",
+      "That command would delete this repo's guard surface (flow.config.ts binds every rule; the packs it imports are where this repo writes its own; .githooks/pre-commit is what runs them at the gate). Deleting any of them is the same attack. There is no bypass — `override(pack.entry).disabled(\"why\")` inside flow.config.ts is the visible, committed route.",
     )
-    .test({ block: [{ path: "flow.config.ts", content: "" }, { path: "guards/house.ts", content: "" }] }),
-});
+    .test({ block: [{ path: "flow.config.ts", content: "" }, { path: ".githooks/pre-commit", content: "" }] }),
+}));

@@ -30,7 +30,7 @@
 export { docs } from "./docs.ts";
 export { fcis, type Convention } from "./fcis.ts";
 export { git, type Release } from "./git.ts";
-export { guard } from "./guard.ts";
+export { guard, type Home } from "./guard.ts";
 export { justfile, type Catalogue } from "./justfile.ts";
 export { node } from "./node.ts";
 export { secrets, type Seam } from "./secrets.ts";

@@ -154,11 +154,11 @@ export function configImports(configText: string): readonly string[] {
  * and the commit gate, which goes on refusing until the config loads green, so nothing written
  * under the exception can reach a commit unreviewed by a working guard.
  *
- * DERIVED FROM THE CONFIG'S OWN TEXT, and it used to be the constant `[CONFIG_FILE, "guards/**"]`.
- * `guards/` was one repo's folder name written into the engine: every other repo got a repair
- * exception over a folder it does not have, and an agent that broke the config there could not
- * reach the pack it broke. The text is readable when the module is not, so nothing is given up by
- * asking it — and the answer now follows whatever a repo actually called the folder.
+ * DERIVED FROM THE CONFIG'S OWN TEXT, and it used to be a two-line constant: the config file, plus
+ * one repo's pack folder spelled into the engine. Every other repo got a repair exception over a
+ * folder it does not have, and an agent that broke the config there could not reach the pack it
+ * broke. The text is readable when the module is not, so nothing is given up by asking it — and the
+ * answer now follows whatever a repo actually called the folder.
  *
  * The FOLDER of each imported pack comes with the file, which is the one deliberate widening. A
  * repair is rarely one file: a pack imports its own helpers, and those the config never names. The
@@ -1533,9 +1533,8 @@ export function mergeNarratives(each: readonly { session: string; read: Narrativ
  * The HOST's half of the guard: where the hooks that invoke any of it are registered.
  *
  * Fixed, because these are the harness's own file names and not a repo's choice — unlike the
- * repo's half, which is `configSurface` reading the config's imports. The old list spelled the
- * two halves as one constant and wrote `guards/**` into it, which was one repo's folder name
- * standing in for every repo's.
+ * repo's half, which is `configSurface` reading the config's imports. The old list spelled the two
+ * halves as one constant, with one repo's pack folder standing in for every repo's.
  */
 export const HOST_SURFACE: readonly string[] = [".claude/settings.json", ".claude/settings.local.json", ".claude/agents/**"];
 
@@ -2107,6 +2106,11 @@ export default defineConfig([]);
  * every repo running flow wants all three whether or not it wants anything else. `--empty` leaves
  * it out, along with everything else.
  *
+ * Its one parameter is `packs`, and the scaffold passes EXACTLY WHAT IT SCAFFOLDS: an empty list,
+ * because everything it writes is in the config file itself. That is a real answer rather than a
+ * missing one, and the comment beside it says what to add on the day the rules move to a folder —
+ * a repo that grows one and forgets to say so has a nudge and a delete refusal watching nothing.
+ *
  * Then three entries of this repo's own on one screen: a command ban, a commit gate over staged
  * content, and one rule bound to an ACTOR rather than to a path. It is a worked example of J1.2 as
  * much as a starting guard — a pack written here is written exactly as a published one is, and
@@ -2175,7 +2179,10 @@ export const demo = definePack("demo", {
 
 export default defineConfig([
   // flow's own self-protection: what is steering you, a nudge when you edit it, and no deleting it.
-  pack(guard),
+  // Its packs list is where YOUR OWN packs live. Everything here is in this file, so it is empty —
+  // move a pack out to a folder of its own and add that folder's glob, or the nudge and the delete
+  // refusal stop covering it.
+  pack(guard, { packs: [] }),
   pack(demo),
 ]);
 `;

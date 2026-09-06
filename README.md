@@ -97,11 +97,11 @@ flow is ON — 4 guardrails · 2 breadcrumbs, every one resolved and able to fir
     🍞 guard.orientation
         This repo is guarded by flow. Guardrails block risky edits before they land (and again at commit); …
   touch
-    🍞 guard.editingTheGuardrails  —  on flow.config.ts guards/** .claude/settings.json .claude/settings.local.json .claude/agents/** .claude/skills/**
+    🍞 guard.editingTheGuardrails  —  on flow.config.ts .claude/settings.json .claude/settings.local.json .claude/agents/** .claude/skills/**
         You are editing the guardrails themselves. If this edit weakens, disables or removes a guardrail or…
   delete
-    ✗ guard.noDeleteGuardrails  —  on flow.config.ts guards/** .githooks/pre-commit
-        That command would delete this repo's guard surface (flow.config.ts binds every rule; guards/ holds…
+    ✗ guard.noDeleteGuardrails  —  on flow.config.ts .githooks/pre-commit
+        That command would delete this repo's guard surface (flow.config.ts binds every rule; the packs it …
   command
     ✗ demo.noForcePush
         Force-pushing rewrites history everyone else has. Push a correcting commit, or ask first.
@@ -181,7 +181,7 @@ export const demo = definePack("demo", {
     .test({ pass: ["git push origin main"], block: ["git push --force origin main"] }),
 });
 
-export default defineConfig([pack(guard), pack(git, { release: "npm run release" }), pack(demo)]);
+export default defineConfig([pack(guard, { packs: [] }), pack(git, { release: "npm run release" }), pack(demo)]);
 ```
 
 Six things to know, and then you can write your own:
@@ -199,8 +199,9 @@ Six things to know, and then you can write your own:
   `node` · `secrets` · `typescript` · `fcis` · `tdd` · `docs` · `guard` · `work`), each bound by one
   `pack(…)` line, and an unbound one costs nothing. A pack names nothing it does not ship: the
   recipe your gate runs is a typed, mandatory parameter, so a config that never says which command
-  cuts a release does not compile. `guard` is flow's own self-protection, and `flow init` binds it
-  for you.
+  cuts a release does not compile — and `guard`, flow's own self-protection, takes the folder your
+  own packs live in, so it never guesses at a folder your repo does not have. `flow init` binds
+  that one for you.
 - **A repo bends a pack it did not write** with `override(pack.entry)`, which speaks only what it
   changes — a different glob, a different message, or `.disabled("why")`, and the reason is what
   `flow status` prints beside it.
