@@ -10,6 +10,10 @@
 // What is left is the half a linter cannot do: keep the repo's own configs pointing at the shared
 // base, run both tools at the gate, and teach the design habit no tool checks.
 //
+// Subtlety: BOTH gate recipes are mandatory parameters, on the `{ run }` shape tdd already uses.
+// `just typecheck` is this fleet's spelling and nothing more — a pack that wrote it in would run
+// nothing in a repo whose gate is `npm run typecheck`, and would say so in the refusal too.
+//
 // The two provisioned files (`tsconfig.base.json`, `eslint.config.base.js`) are COMMITTED here and
 // byte-compared by nothing any more: `work guard apply` and its drift check went with the old
 // engine. What holds them now is the two rules below plus review — a repo that edits the base is
@@ -17,7 +21,15 @@
 
 import { astGrep, commit, breadcrumb, definePack, execPasses, guardrail, jsonInvariant, touch, write } from "../index.ts";
 
-export const typescript = definePack("typescript", {
+/** The two facts this pack cannot know: what the whole-project typecheck and the lint are called. */
+export interface Gates {
+  /** The recipe that typechecks every project in one pass. */
+  readonly typecheck: string;
+  /** The recipe that lints the repo. */
+  readonly lint: string;
+}
+
+export const typescript = definePack("typescript", (repo: Gates) => ({
   strictTypesNoInvalidStates: breadcrumb()
     .at(touch)
     .on("**/tsconfig*.json", "eslint.config.*")
@@ -85,24 +97,24 @@ export const typescript = definePack("typescript", {
   commitRunsTsc: guardrail()
     .at(commit)
     .description("Runs the whole-project typecheck at commit and blocks on any type error.")
-    .check(execPasses({ run: "just typecheck" }))
+    .check(execPasses({ run: repo.typecheck }))
     .message(
-      "The typecheck failed — the commit is blocked until types are clean. tsc catches the cross-file mismatches a file-at-a-time build never sees: a change that compiled here and broke a caller there.",
+      `The typecheck failed (\`${repo.typecheck}\`) — the commit is blocked until types are clean. tsc catches the cross-file mismatches a file-at-a-time build never sees: a change that compiled here and broke a caller there.`,
     )
     .test({
-      pass: [{ staged: ["cli/a.ts"], world: { exec: { "just typecheck": { code: 0 } } } }],
-      block: [{ staged: ["cli/a.ts"], world: { exec: { "just typecheck": { code: 1, stdout: "a.ts(1,1): error TS2322" } } } }],
+      pass: [{ staged: ["cli/a.ts"], world: { exec: { [repo.typecheck]: { code: 0 } } } }],
+      block: [{ staged: ["cli/a.ts"], world: { exec: { [repo.typecheck]: { code: 1, stdout: "a.ts(1,1): error TS2322" } } } }],
     }),
 
   commitRunsEslint: guardrail()
     .at(commit)
     .description("Runs the lint at commit and blocks on any error.")
-    .check(execPasses({ run: "just lint" }))
+    .check(execPasses({ run: repo.lint }))
     .message(
-      "The lint failed — the commit is blocked until it is clean. This is where the escape hatches are held (floating promises, explicit any, ts-comments); fix the finding, or override that one rule visibly and locally.",
+      `The lint failed (\`${repo.lint}\`) — the commit is blocked until it is clean. This is where the escape hatches are held (floating promises, explicit any, ts-comments); fix the finding, or override that one rule visibly and locally.`,
     )
     .test({
-      pass: [{ staged: ["cli/a.ts"], world: { exec: { "just lint": { code: 0 } } } }],
-      block: [{ staged: ["cli/a.ts"], world: { exec: { "just lint": { code: 1, stdout: "error  Unsafe assignment" } } } }],
+      pass: [{ staged: ["cli/a.ts"], world: { exec: { [repo.lint]: { code: 0 } } } }],
+      block: [{ staged: ["cli/a.ts"], world: { exec: { [repo.lint]: { code: 1, stdout: "error  Unsafe assignment" } } } }],
     }),
-});
+}));

@@ -28,13 +28,27 @@ const BINARY = join(PACKAGE, "dist", "flow.mjs");
 
 let repo: string;
 
+/**
+ * The one pack this repo writes itself, in the folder it chose to write it in.
+ *
+ * It holds the category rather than a rule, and that is enough for what it is here for: the
+ * repair exception is derived from the config's own RELATIVE imports, so a config that imports
+ * nothing of its own has no pack half to prove. The folder name is this fixture's choice and
+ * nothing else's — `guards/` is where this repo happens to keep them, and the engine no longer
+ * knows the word.
+ */
+const HOUSE = (packageRoot: string): string => `
+import { defineCategory, spawnedAs } from ${JSON.stringify(join(packageRoot, "index.ts"))};
+
+export const builder = defineCategory("builder", spawnedAs({ types: ["builder"] }));
+`;
+
 /** What the temp repo's own guard says. Five entries, one per rail this suite drives. */
 const CONFIG = (packageRoot: string): string => `
-import { breadcrumb, command, commit, defineCategory, definePack, defineConfig, guardrail, pack, session, spawnedAs, touch, turnEnd, write } from ${JSON.stringify(
+import { breadcrumb, command, commit, definePack, defineConfig, guardrail, pack, session, touch, turnEnd, write } from ${JSON.stringify(
   join(packageRoot, "index.ts"),
 )};
-
-const builder = defineCategory("builder", spawnedAs({ types: ["builder"] }));
+import { builder } from "./guards/house.ts";
 
 const demo = definePack("demo", {
   noTodo: guardrail()
@@ -127,6 +141,8 @@ beforeAll(() => {
   spawnSync("git", ["init", "-q"], { cwd: repo });
   spawnSync("git", ["config", "user.email", "t@example.com"], { cwd: repo });
   spawnSync("git", ["config", "user.name", "t"], { cwd: repo });
+  mkdirSync(join(repo, "guards"), { recursive: true });
+  writeFileSync(join(repo, "guards", "house.ts"), HOUSE(PACKAGE));
   writeFileSync(join(repo, "flow.config.ts"), CONFIG(PACKAGE));
   mkdirSync(join(repo, "src"), { recursive: true });
   writeFileSync(join(repo, "src", "a.ts"), "export const a = 1;\n");
@@ -135,6 +151,19 @@ beforeAll(() => {
 afterAll(() => {
   rmSync(repo, { recursive: true, force: true });
 });
+
+/**
+ * The guard, copied somewhere else: the config AND the pack it imports.
+ *
+ * Both, always, and that is the shape of the thing rather than a fixture detail — the config names
+ * `./guards/house.ts`, so a directory holding one without the other holds a config that will not
+ * load, which is precisely what these two tests are not about.
+ */
+function copyGuard(into: string): void {
+  mkdirSync(join(into, "guards"), { recursive: true });
+  writeFileSync(join(into, "guards", "house.ts"), readFileSync(join(repo, "guards", "house.ts"), "utf8"));
+  writeFileSync(join(into, "flow.config.ts"), readFileSync(join(repo, "flow.config.ts"), "utf8"));
+}
 
 const pre = (tool: string, input: Record<string, unknown>): Record<string, unknown> => ({
   session_id: "live-1",
@@ -366,15 +395,19 @@ describe("a config that will not load", () => {
       }
     };
 
-    it("lets a write reach the config itself and the packs under guards/", () => {
+    it("lets a write reach the config itself and the packs it imports", () => {
       withBrokenConfig(() => {
         const config = hook("pre-tool-use", pre("Write", { file_path: join(repo, "flow.config.ts"), content: "// fixed" }));
         expect(config.code, "the repair is refused, so the repo stays broken until a human arrives").toBe(0);
         expect(config.stderr, "and it is allowed silently — a notice here is noise on the way out").toBe("");
 
-        mkdirSync(join(repo, "guards"), { recursive: true });
         const pack = hook("pre-tool-use", pre("Edit", { file_path: join(repo, "guards", "house.ts"), new_string: "// fixed" }));
         expect(pack.code, "a pack the config imports is as much the repair as the config is").toBe(0);
+
+        // And a pack it does NOT import is not the repair: the surface is read out of the config's
+        // own import lines, so a folder nobody named is an ordinary folder.
+        const stranger = hook("pre-tool-use", pre("Edit", { file_path: join(repo, "rules", "other.ts"), new_string: "// fixed" }));
+        expect(stranger.code, "the exception is exactly as wide as this config's own imports").toBe(2);
       });
     });
 
@@ -581,7 +614,7 @@ describe("a recorded session, replayed", () => {
     // `.flow` at all. Every answer below came out of the recording.
     const elsewhere = mkdtempSync(join(tmpdir(), "flow-replay-"));
     try {
-      writeFileSync(join(elsewhere, "flow.config.ts"), readFileSync(join(repo, "flow.config.ts"), "utf8"));
+      copyGuard(elsewhere);
       writeFileSync(join(elsewhere, "recording.jsonl"), readFileSync(join(repo, ".flow", "replay", `${SESSION}.jsonl`), "utf8"));
       const answer = spawnSync("node", [BINARY, "replay", "recording.jsonl"], { cwd: elsewhere, encoding: "utf8" });
       expect(answer.stderr).toBe("");
@@ -631,7 +664,7 @@ describe("flow facts — the record and the conversations, read back", () => {
   it("a repo with no record at all BLOCKS the reading rather than reporting a calm week", () => {
     const bare = mkdtempSync(join(tmpdir(), "flow-facts-"));
     try {
-      writeFileSync(join(bare, "flow.config.ts"), readFileSync(join(repo, "flow.config.ts"), "utf8"));
+      copyGuard(bare);
       const answer = spawnSync("node", [BINARY, "facts"], { cwd: bare, encoding: "utf8" });
       expect(answer.status).toBe(1);
       expect(answer.stdout).toContain("NOT ARMED");

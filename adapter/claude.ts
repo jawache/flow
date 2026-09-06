@@ -71,6 +71,7 @@ import {
   ALLOW,
   CONFIG_FILE,
   configLoadFault,
+  configSurface,
   onConfigSurface,
   branchFromHead,
   faultText,
@@ -285,15 +286,18 @@ export async function loadRegime(root: string): Promise<Regime> {
  * The one exception to fail-loud, and it is deliberately the narrowest shape that works: a write
  * (or a delete) whose target is the guard's own source. `CONFIG_SURFACE` next door says why.
  *
+ * The SURFACE is handed in, because it is read out of the config's own text — the files it imports
+ * relatively, and their folders. `configSurface` says why the text and not the module.
+ *
  * A COMMAND is never a repair, however plausible it looks. `sed -i` on the config would qualify by
  * intent and there is no way to tell it from `rm -rf` before it runs — a command rail sees a string,
  * not a target — so the command rail stays fully closed in the broken state, and the agent's route
  * back is the edit tools, which name the file they are about to write.
  */
-function repairs(event: AdapterEvent): boolean {
+function repairs(event: AdapterEvent, surface: readonly string[]): boolean {
   if (event.rail !== "guard") return false;
   if (event.moment !== "write" && event.moment !== "delete") return false;
-  return event.file !== undefined && onConfigSurface(event.file.path);
+  return event.file !== undefined && onConfigSurface(event.file.path, surface);
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -418,10 +422,13 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
     // rail to refuse with and says it instead — the engine's own load-failure path makes exactly
     // that split, and this is the same split one step earlier, before there is a LoadResult at all.
     if (off) return ALLOW;
+    // The config's TEXT, not its module: the module is what will not load, and the surface the
+    // repair may reach is whatever this config imports. Read once, here, and only in this branch.
+    const surface = configSurface(readText(root, CONFIG_FILE));
     const events = toEvent(hook, payload, eventWorld(root, session));
     const blocked: Refused[] = events
       .filter((event) => event.rail === "guard")
-      .filter((event) => !repairs(event))
+      .filter((event) => !repairs(event, surface))
       .map((event) => ({ moment: event.moment, block: fault(regime.message) }));
     const shown: Shown[] = events
       .filter((event) => event.rail === "brief")

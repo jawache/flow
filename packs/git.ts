@@ -2,6 +2,8 @@
 // uncommitted work.
 // Subtlety: these rules read COMMAND STRINGS, not files at rest — an agent writes file text through commands (heredocs), so the attribution literals are ASSEMBLED from pieces (TRAILER/VENDOR/SITE below) or committing this file would trip its own ban.
 //
+// Subtlety: the release RECIPE is a mandatory parameter, not `just release` written into the pack — which command cuts a release is the repo's fact, and it is named in the sentence a blocked person reads.
+//
 // NO BYPASSES: `noGitDiscard` and `noForcePush` have no marker escape. The strictest variant in the
 // fleet is the one that shipped; a repo that wants out disables the entry in its config, visibly.
 //
@@ -27,7 +29,20 @@ const TRAILER = ["Co", "Authored", "By"].join("-");
 const VENDOR = ["Cl", "aude"].join("");
 const SITE = ["cl", "aude", "\\.com/", "cl", "aude", "-code"].join("");
 
-export const git = definePack("git", {
+/** The one fact this pack cannot know: which recipe cuts a release here. */
+export interface Release {
+  /**
+   * The recipe that computes the version from the history, writes the changelog, stamps the
+   * version file and tags — `just release` here, `npm run release` elsewhere.
+   *
+   * MANDATORY rather than defaulted, by the same rule tdd's suite recipe follows: a default is a
+   * rule that names the wrong command in every repo that spells it differently, and it names it in
+   * the one sentence a person reads at the moment they are blocked.
+   */
+  readonly release: string;
+}
+
+export const git = definePack("git", (repo: Release) => ({
   orientation: breadcrumb()
     .at(session)
     .description("The whole commit contract — how commits are written here, how versions are computed, what is blocked.")
@@ -35,7 +50,7 @@ export const git = definePack("git", {
       [
         `Commits, PRs and issues carry NO Claude/Anthropic attribution — no ${TRAILER} line, no "Generated with Claude", no mention. Author them as your own.`,
         "Commit headers speak Conventional Commits — `type(scope)!: description`. The TYPE is your judgement: `fix` patches behaviour, `feat` adds it, `refactor` changes neither (and must not change test expectations); a `!` or a `BREAKING CHANGE:` footer drives the SemVer major. The grammar is enforced; the choice is yours.",
-        "The version number is computed from this history at release (`just release`) — never hand-edit a version field or a changelog.",
+        `The version number is computed from this history at release (\`${repo.release}\`) — never hand-edit a version field or a changelog.`,
         "A `git checkout` / `git restore` / `reset --hard` / `clean -f` that would silently wipe uncommitted work is blocked outright — there is no bypass token. Use `git stash` instead; it is recoverable.",
       ].join("\n"),
     ),
@@ -167,9 +182,9 @@ export const git = definePack("git", {
     noHandEditedVersion: guardrail()
       .at(command)
       .description("The version field is written by the release commit, never by hand.")
-      .check(noHandEditedVersion({ versionFile: "package.json", recipe: "just release" }))
+      .check(noHandEditedVersion({ versionFile: "package.json", recipe: repo.release }))
       .message(
-        "The version is computed from the commit history at release time — run `just release`, which writes the version, the changelog and the tag together. A real release commit (`release:` / `chore(release):`) passes.",
+        `The version is computed from the commit history at release time — run \`${repo.release}\`, which writes the version, the changelog and the tag together. A real release commit (\`release:\` / \`chore(release):\`) passes.`,
       )
       .test({
         pass: [
@@ -215,4 +230,4 @@ export const git = definePack("git", {
         ],
       }),
   },
-});
+}));

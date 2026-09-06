@@ -28,15 +28,15 @@ export const guard = definePack("guard", {
     .text(
       [
         "This repo is guarded by flow. Guardrails block risky edits before they land (and again at commit); breadcrumbs steer you by area as you touch files.",
-        "The whole guard is `flow.config.ts` — every rule that fires is reachable from that one file, whether it comes from a pack the config imports or from a pack this repo writes itself under `guards/`. Nothing resolves at run time and nothing defaults: what you read there is what fires. Author or refine one via /work reflect — never loosen a guardrail to get an edit through; that is the user's call.",
+        "The whole guard is `flow.config.ts` — every rule that fires is reachable from that one file, whether it comes from a pack the config imports or from a pack this repo writes itself. Nothing resolves at run time and nothing defaults: what you read there is what fires. Authoring a new entry is always welcome; never loosen a guardrail to get an edit through — that is the user's call.",
         "There is no bypass token anywhere in this system. A guardrail is on or off, and turning one off is `override(pack.entry).disabled(\"why\")` in flow.config.ts — a committed change, visible in review.",
-        "If the config will not load, every gated moment refuses until it is fixed. A guard that fails open is a guard that lies about being there. The ONE exception is the repair itself: while the config is broken you may still write `flow.config.ts` and `guards/**`, because otherwise the rule that demands a fix also forbids it. Commands stay blocked, and so does the commit gate — nothing written under that exception reaches a commit until the config loads green.",
+        "If the config will not load, every gated moment refuses until it is fixed. A guard that fails open is a guard that lies about being there. The ONE exception is the repair itself: while the config is broken you may still write `flow.config.ts` and the pack files it imports, because otherwise the rule that demands a fix also forbids it. Commands stay blocked, and so does the commit gate — nothing written under that exception reaches a commit until the config loads green.",
       ].join("\n"),
     ),
 
   editingTheGuardrails: breadcrumb()
     .at(touch)
-    .on("flow.config.ts", "guards/**", ".claude/settings.json", ".claude/settings.local.json", ".claude/agents/**", ".claude/skills/**", "skills/*/agents/**")
+    .on("flow.config.ts", "guards/**", ".claude/settings.json", ".claude/settings.local.json", ".claude/agents/**", ".claude/skills/**")
     .description("A nudge when you edit the guardrails themselves; it never blocks.")
     .text(
       [

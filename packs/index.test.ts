@@ -46,13 +46,13 @@ describe("the packs surface", () => {
       defineConfig([
         pack(packs.docs),
         pack(packs.fcis, { files: ["src/pure/**/*.ts"], homes: ["src/pure/**"], coverage: "npm run coverage" }),
-        pack(packs.git),
+        pack(packs.git, { release: "npm run release" }),
         pack(packs.guard),
         pack(packs.justfile, { exempt: [] }),
         pack(packs.node),
-        pack(packs.secrets),
+        pack(packs.secrets, { dx: "npm run dx", encrypt: "npm run seal", names: "npm run names" }),
         pack(packs.tdd, { run: "npm test" }),
-        pack(packs.typescript),
+        pack(packs.typescript, { typecheck: "npm run typecheck", lint: "npm run lint" }),
         pack(packs.work),
       ]),
     );
@@ -70,5 +70,38 @@ describe("the packs surface", () => {
       "typescript",
       "work",
     ]);
+  });
+
+  // THE PARAMETERS, proved where they are meant to land: in the sentence a blocked person reads.
+  //
+  // Four packs take a repo fact, and three of them (fcis, justfile, tdd) hand it to a check, where
+  // the entry's own `block` case already drives it. `git` and `typescript` hand theirs to a MESSAGE
+  // as well — the whole reason they became parameters is that a hard-coded `just release` names the
+  // wrong command in every repo that spells it differently, and names it at the worst moment. A
+  // case cannot see a message, so this is the one place that can say so.
+  it("puts the repo's own recipe names into the sentences that name a command", () => {
+    const result = loadConfig(
+      defineConfig([
+        pack(packs.git, { release: "cargo release" }),
+        pack(packs.typescript, { typecheck: "make types", lint: "make lint" }),
+      ]),
+    );
+    const entries = result.ok ? result.entries : [];
+    /** What the entry says — a guardrail's refusal, a breadcrumb's prose. */
+    const said = (id: string): string => {
+      const found = entries.find((entry) => entry.id === id);
+      expect(found, `no entry ${id}`).toBeDefined();
+      const spec = (found as { spec: { message?: string; text?: string } }).spec;
+      return spec.message ?? spec.text ?? "";
+    };
+    expect(said("git.orientation")).toContain("cargo release");
+    expect(said("git.node.noHandEditedVersion")).toContain("cargo release");
+    expect(said("typescript.commitRunsTsc")).toContain("make types");
+    expect(said("typescript.commitRunsEslint")).toContain("make lint");
+    // And nothing carries the fleet's own spelling any more — the point of the extraction.
+    for (const entry of entries) {
+      const spec = entry.spec as { message?: string; text?: string };
+      expect(`${spec.message ?? ""}\n${spec.text ?? ""}`, entry.id).not.toContain("just ");
+    }
   });
 });

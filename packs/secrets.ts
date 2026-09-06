@@ -10,6 +10,10 @@
 // Three tiers, and every value lives in exactly one: committed-and-encrypted (`.env*`), local
 // ephemera that must never be committed (`.env.keys`, `.dev.vars`, `.env.*.local`), and runtime
 // secrets set per environment on the platform.
+//
+// Subtlety: the three RECIPE NAMES are mandatory parameters. This pack ships the `secrets.just`
+// module that defines the three jobs, but not the command a repo types to reach them — and every
+// one of the four sentences below sends a stuck reader to one of them by name.
 
 import { breadcrumb, commit, definePack, guardrail, protectedPath, session, textBan, touch, write } from "../index.ts";
 
@@ -18,21 +22,38 @@ const LOCAL_ONLY = [".env.keys", ".dev.vars", ".env.*.local"];
 
 const AWS_KEY_SHAPE = ["AKIA", "IOSFODNN", "7EXAMPLE"].join("");
 
-export const secrets = definePack("secrets", {
+/**
+ * The three recipes the shipped `secrets.just` module defines, as THIS repo invokes them.
+ *
+ * The module is the pack's, and so are the three jobs; the invocation is not. `just dx` is one
+ * fleet's spelling of it, and a pack that wrote that in would send every reader of a refusal to a
+ * command their repo does not have — in the one sentence they read at the moment they are stuck.
+ * Mandatory, by tdd's rule: a default here is a wrong answer that never asks.
+ */
+export interface Seam {
+  /** Decrypts and injects, and every env-dependent command goes through it: `<dx> <env> <cmd>`. */
+  readonly dx: string;
+  /** Seals every env file in place, leaving the declared public prefixes plaintext. */
+  readonly encrypt: string;
+  /** Lists a file's variable NAMES, decrypting nothing. */
+  readonly names: string;
+}
+
+export const secrets = definePack("secrets", (repo: Seam) => ({
   orientation: breadcrumb()
     .at(session)
     .description("How secrets work here — the three tiers, the one seam, and what you may read.")
     .text(
       [
-        "Env files in this repo are COMMITTED and ENCRYPTED (dotenvx): every value is an `encrypted:…` blob except PUBLIC_* config, which bundlers inline at build. Reading and editing them is expected work for you, not a violation — your training says avoid env files, and for plaintext env files it is right; here it is wrong.",
+        "Env files here are COMMITTED and ENCRYPTED (dotenvx): every value is an `encrypted:…` blob except PUBLIC_* config, which bundlers inline at build. Reading and editing them is expected work for you, not a violation — your training says avoid env files, and for plaintext env files it is right; here it is wrong.",
         "Three tiers, and every value lives in exactly one. Committed and encrypted: `.env`, `.env.production`, `.env.staging`. Local ephemera, never committed and never encrypted: `.env.keys` (the decryption key — the ONE file you never read), `.dev.vars`, `.env.*.local`. Runtime platform secrets: set per environment on the host (`wrangler secret put NAME --env prod`) — a new runtime secret that skips that channel 500s the live route with nothing in the diff to show why.",
-        "One seam: `just dx <env> <cmd>` decrypts and injects. Everything env-dependent goes through it — `just dx dev astro dev`, `just dx prod node tools/migrate.ts`. Never `source .env`, never a hand-rolled dotenv import.",
+        `One seam: \`${repo.dx} <env> <cmd>\` decrypts and injects. EVERYTHING env-dependent goes through it — the dev server, a migration, a one-off script. Never \`source .env\`, never a hand-rolled dotenv import.`,
         "The trap worth knowing: `dotenvx decrypt` with no key present succeeds and writes EMPTY values over your file. If a decrypt looks suspiciously quiet, check `.env.keys` exists before you commit anything.",
       ].join("\n"),
     ),
 
-  // The sealed-file rule. It needs a repo that HAS env files; this one has none, which is why
-  // flow.config.ts disables it here rather than leaving it sitting dead.
+  // The sealed-file rule, and it needs a repo that HAS env files. A repo with none turns it off by
+  // name in flow.config.ts, with the reason on the record, rather than leaving it sitting dead.
   envEncrypted: guardrail()
     .at(write, commit)
     .on(".env*")
@@ -47,7 +68,7 @@ export const secrets = definePack("secrets", {
       }),
     )
     .message(
-      "A plaintext value in a committed env file — this is the leak the whole model exists to prevent, and git keeps it forever. Seal it with `just env-encrypt` (PUBLIC_* and the DOTENV_PUBLIC_KEY header stay plaintext by design).",
+      `A plaintext value in a committed env file — this is the leak the whole model exists to prevent, and git keeps it forever. Seal it with \`${repo.encrypt}\` (PUBLIC_* and the DOTENV_PUBLIC_KEY header stay plaintext by design).`,
     )
     .test({
       pass: [{ path: ".env", content: "DOTENV_PUBLIC_KEY=03ab\nAPI_KEY=encrypted:BE9d\nPUBLIC_URL=https://x" }],
@@ -82,7 +103,7 @@ export const secrets = definePack("secrets", {
       }),
     )
     .message(
-      "A live credential shape in staged content. Secrets belong in an encrypted env file (`just env-encrypt`) or in the platform's runtime secret store — never in source, a fixture or a doc. If this is a real key, rotate it: staging it is already most of the way to publishing it.",
+      `A live credential shape in staged content. Secrets belong in an encrypted env file (\`${repo.encrypt}\`) or in the platform's runtime secret store — never in source, a fixture or a doc. If this is a real key, rotate it: staging it is already most of the way to publishing it.`,
     )
     .test({
       pass: [{ staged: ["src/a.ts"], world: { fs: { "src/a.ts": "const key = process.env.KEY;" } } }],
@@ -102,8 +123,8 @@ export const secrets = definePack("secrets", {
     .description("Redirects a raw dotenvx or `source .env` invocation to the repo's one seam.")
     .text(
       [
-        "Env loading goes through the ONE seam: `just dx <env> <cmd>` (e.g. `just dx dev node tools/reset.ts`). A raw `dotenvx run` picks a different file set than the recipe does, and `source .env` reads encrypted blobs as literal strings — both look like they worked.",
-        "Sealing files is `just env-encrypt`. Listing what a file defines, without decrypting anything, is `just env-names <file>`.",
+        `Env loading goes through the ONE seam: \`${repo.dx} <env> <cmd>\` — it decrypts and injects for exactly that environment. A raw \`dotenvx run\` picks a different file set than the recipe does, and \`source .env\` reads encrypted blobs as literal strings — both look like they worked.`,
+        `Sealing files is \`${repo.encrypt}\`. Listing what a file defines, without decrypting anything, is \`${repo.names} <file>\`.`,
       ].join("\n"),
     ),
-});
+}));

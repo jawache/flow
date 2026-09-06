@@ -37,12 +37,15 @@ flow is not published yet. Until it has been lived on, it reaches a repo by `npm
 checkout:
 
 ```sh
-git clone https://github.com/jawache/work.git
-cd work
-just link-flow          # builds the binary and puts `flow` on your PATH
+git clone https://github.com/jawache/flow.git
+cd flow
+npm install
+node esbuild.mjs        # builds the binary
+npm link                # puts `flow` on your PATH
 ```
 
-Undo it any time with `npm unlink -g @jawache/flow`.
+Undo it any time with `npm unlink -g @jawache/flow`. You never link it into a guarded repo by
+hand — `flow init` does that itself when nothing resolves, which is the next section.
 
 ## Five minutes, from nothing
 
@@ -58,7 +61,7 @@ flow init — created:
   + flow.config.ts
   + .githooks/pre-commit
   + .flow/ — flow's own state, self-ignoring, never committed
-  + node_modules/@jawache/flow → …/work/flow (npm link is flow's distribution until it is published)
+  + node_modules/@jawache/flow → …/flow (npm link is flow's distribution until it is published)
   + ~/.claude/settings.json — SessionStart · PreToolUse · PostToolUse · Stop
   + git config core.hooksPath .githooks
   next: `flow status` — what is bound, and what is not wired yet.
@@ -68,7 +71,7 @@ Six things, and each one is checkable:
 
 | what | why |
 | --- | --- |
-| `flow.config.ts` | a demo guard you can read in one screen — the only file that turns anything on |
+| `flow.config.ts` | flow's own `guard` pack plus a demo guard you can read in one screen — the only file that turns anything on |
 | `.githooks/pre-commit` | the commit gate. Never written over one you already have |
 | `.flow/` | flow's own state and logs. It ignores itself, so your `.gitignore` is untouched |
 | `node_modules/@jawache/flow` | a link, because nothing is published yet. Once flow is on npm, this step disappears |
@@ -85,14 +88,20 @@ flow status
 ```
 
 ```
-flow is ON — 3 guardrails · 1 breadcrumb, every one resolved and able to fire
+flow is ON — 4 guardrails · 2 breadcrumbs, every one resolved and able to fire
   config     /tmp/flow-demo/flow.config.ts
   state      /tmp/flow-demo/.flow
   session    no live session has marked this worktree yet
   categories subagent — what the entries below bind to
   session
-    🍞 demo.orientation
-        This repo is guarded by flow. The rules are in flow.config.ts — read them rather than routing aroun…
+    🍞 guard.orientation
+        This repo is guarded by flow. Guardrails block risky edits before they land (and again at commit); …
+  touch
+    🍞 guard.editingTheGuardrails  —  on flow.config.ts guards/** .claude/settings.json .claude/settings.local.json .claude/agents/** .claude/skills/**
+        You are editing the guardrails themselves. If this edit weakens, disables or removes a guardrail or…
+  delete
+    ✗ guard.noDeleteGuardrails  —  on flow.config.ts guards/** .githooks/pre-commit
+        That command would delete this repo's guard surface (flow.config.ts binds every rule; guards/ holds…
   command
     ✗ demo.noForcePush
         Force-pushing rewrites history everyone else has. Push a correcting commit, or ask first.
@@ -137,17 +146,19 @@ Your editor goes red on that line. Ask the agent to edit any file, or to run any
 refused, with the load error on screen. Undo the edit and the next action passes. There is no
 notice-and-proceed anywhere.
 
-The one exception is the repair: while the config is broken, a write to `flow.config.ts` or to
-`guards/**` still goes through. Without it the rule demanding a fix would also forbid it — you would
-never notice, because your editor has no hooks in front of it, but anything that does is locked out
-of its own repair. Commands stay refused, and so does the commit gate, so nothing written under the
-exception reaches a commit until the config loads green.
+The one exception is the repair: while the config is broken, a write to `flow.config.ts` — or to a
+pack it imports, whatever you called that folder — still goes through. The surface is read out of
+the config's own relative import lines, as text, because the module is the thing that will not load.
+Without the exception the rule demanding a fix would also forbid it — you would never notice,
+because your editor has no hooks in front of it, but anything that does is locked out of its own
+repair. Commands stay refused, and so does the commit gate, so nothing written under the exception
+reaches a commit until the config loads green.
 
 **6 — run every rule's own cases.**
 
 ```sh
 flow test
-# flow test — 5 cases over 3 guardrails, all green
+# flow test — 7 cases over 4 guardrails, all green
 ```
 
 Delete a rule's `.test(…)` block and the config stops loading at all, naming the entry.
@@ -158,6 +169,7 @@ Open `flow.config.ts`. It is ordinary code, and it is the whole guard:
 
 ```ts
 import { commit, command, defineCategory, defineConfig, definePack, guardrail, pack } from "@jawache/flow";
+import { guard, git } from "@jawache/flow/packs";
 
 const subagent = defineCategory("subagent", (facts) => facts.subagent);
 
@@ -169,10 +181,10 @@ export const demo = definePack("demo", {
     .test({ pass: ["git push origin main"], block: ["git push --force origin main"] }),
 });
 
-export default defineConfig([pack(demo)]);
+export default defineConfig([pack(guard), pack(git, { release: "npm run release" }), pack(demo)]);
 ```
 
-Five things to know, and then you can write your own:
+Six things to know, and then you can write your own:
 
 - **A sentence says everything, and defaults nothing.** `.at(…)` when it fires · `.on(…)`/`.ignore(…)`
   which files · `.for(…)` which actor · `.check(…)` the question · `.message(…)` what you are told ·
@@ -182,6 +194,13 @@ Five things to know, and then you can write your own:
   case, and replay from a recording without a repo.
 - **A pack is just code.** `definePack` in a file here, or a package you install: identical shape.
   Publishing one is promotion, not a rewrite.
+- **Packs come with the install, behind their own door.** `@jawache/flow` is the GRAMMAR a rule is
+  written in; `@jawache/flow/packs` is the CONTENT — ten opinionated packs (`git` · `justfile` ·
+  `node` · `secrets` · `typescript` · `fcis` · `tdd` · `docs` · `guard` · `work`), each bound by one
+  `pack(…)` line, and an unbound one costs nothing. A pack names nothing it does not ship: the
+  recipe your gate runs is a typed, mandatory parameter, so a config that never says which command
+  cuts a release does not compile. `guard` is flow's own self-protection, and `flow init` binds it
+  for you.
 - **A repo bends a pack it did not write** with `override(pack.entry)`, which speaks only what it
   changes — a different glob, a different message, or `.disabled("why")`, and the reason is what
   `flow status` prints beside it.

@@ -29,6 +29,7 @@ import { metrics, momentsView, terrain, universe, type Bound } from "../engine/d
 import { alreadyRead, markRead, readHistory } from "../engine/state.ts";
 import { runCommand } from "./claude.ts";
 import {
+  CONFIG_FILE,
   classifyStore,
   health,
   joinSpawn,
@@ -42,6 +43,7 @@ import {
   spawnsIn,
   transcriptHead,
   uncoveredAreas,
+  guardPaths,
   weakenedAfterBlock,
   type Candidate,
   type Facts,
@@ -219,6 +221,9 @@ export function facts(root: string, load: LoadResult, opts: FactsOpts = {}): Fac
   const bySession = new Map(history.map((s) => [s.session, s.rows]));
   const bound: Bound[] = load.ok ? universe(load.entries) : [];
   const tools = recipeTools(textOf(join(root, "justfile")) ?? "");
+  // What counts as "somebody edited the guard" here: the config, the packs it imports, and the
+  // host's registration files. Read from the config's text once, not per session.
+  const guarded = guardPaths(textOf(join(root, CONFIG_FILE)));
 
   const readings: { session: string; read: Narrative }[] = [];
   const weakened: Weakening[] = [];
@@ -230,7 +235,7 @@ export function facts(root: string, load: LoadResult, opts: FactsOpts = {}): Fac
     const jsonl = held.get(candidate.id) ?? "";
     const events = parseEvents(jsonl, root);
     readings.push({ session: candidate.id, read: narrative(events, tools) });
-    weakened.push(...weakenedAfterBlock(rows, events));
+    weakened.push(...weakenedAfterBlock(rows, events, guarded));
 
     // THE JOIN, at the one place that has both halves: the parent's own spawn blocks, and the
     // sidecar the host wrote beside each child's transcript.

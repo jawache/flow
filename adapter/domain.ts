@@ -113,6 +113,32 @@ export interface HookPayload {
 export const CONFIG_FILE = "flow.config.ts";
 
 /**
+ * Every relative module the config names, READ OUT OF ITS TEXT.
+ *
+ * A regex over source, deliberately, and it is the only reader that can work here: this is asked
+ * about a file that will not import, so anything that had to resolve, parse or evaluate it would
+ * be asking the broken thing to answer for itself. A line like `import { house } from
+ * "./guards/house.ts";` survives almost every way a config breaks, because what breaks a config is
+ * a missing `.message(…)` or a stray brace two hundred lines below its imports.
+ *
+ * Only `./…` and `../…` count. A bare specifier is a package — `@jawache/flow`, or a pack somebody
+ * published — and a package is not this repo's source to repair. A `..` segment climbs out of the
+ * root, so those are dropped too: the config sits at the repo root and the surface is
+ * repo-relative or it is nothing. A leading dot in a FOLDER name is ordinary and is kept —
+ * `./.guard/house.ts` is a pack like any other.
+ */
+export function configImports(configText: string): readonly string[] {
+  const out: string[] = [];
+  for (const [, , specifier] of configText.matchAll(/\b(?:from|import)\s*\(?\s*(['"])([^'"\n]+)\1/g)) {
+    if (specifier === undefined || !specifier.startsWith(".")) continue;
+    const path = specifier.replace(/^\.\//, "");
+    if (path === "" || path.split("/").includes("..")) continue;
+    if (!out.includes(path)) out.push(path);
+  }
+  return out;
+}
+
+/**
  * THE CONFIG SURFACE — the files a write may target while the guard is broken, and nothing else.
  *
  * Fail-loud says a config that will not load refuses every gated moment, and it is right: a guard
@@ -128,15 +154,30 @@ export const CONFIG_FILE = "flow.config.ts";
  * and the commit gate, which goes on refusing until the config loads green, so nothing written
  * under the exception can reach a commit unreviewed by a working guard.
  *
- * STATIC, not derived from the config's own import graph, and that is the point: the config is
- * broken, so its imports are exactly what cannot be trusted to be read. A convention two lines long
- * that a person can check by eye beats a resolver that has to parse the file that will not parse.
+ * DERIVED FROM THE CONFIG'S OWN TEXT, and it used to be the constant `[CONFIG_FILE, "guards/**"]`.
+ * `guards/` was one repo's folder name written into the engine: every other repo got a repair
+ * exception over a folder it does not have, and an agent that broke the config there could not
+ * reach the pack it broke. The text is readable when the module is not, so nothing is given up by
+ * asking it — and the answer now follows whatever a repo actually called the folder.
+ *
+ * The FOLDER of each imported pack comes with the file, which is the one deliberate widening. A
+ * repair is rarely one file: a pack imports its own helpers, and those the config never names. The
+ * import graph cannot be walked (walking it means resolving, and resolving is what is broken), so
+ * the folder is the honest approximation — and it is exactly the width the old constant had.
  */
-export const CONFIG_SURFACE: readonly string[] = [CONFIG_FILE, "guards/**"];
+export function configSurface(configText: string | null): readonly string[] {
+  const surface: string[] = [CONFIG_FILE];
+  for (const file of configImports(configText ?? "")) {
+    if (!surface.includes(file)) surface.push(file);
+    const dir = file.includes("/") ? `${file.slice(0, file.lastIndexOf("/"))}/**` : null;
+    if (dir !== null && !surface.includes(dir)) surface.push(dir);
+  }
+  return surface;
+}
 
-/** Is this repo-relative path part of the guard's own source? */
-export function onConfigSurface(path: string): boolean {
-  return matchAny(path, CONFIG_SURFACE);
+/** Is this repo-relative path part of the guard's own source, as this config draws it? */
+export function onConfigSurface(path: string, surface: readonly string[]): boolean {
+  return matchAny(path, surface);
 }
 
 export const HOOK_EVENTS = ["session-start", "pre-tool-use", "post-tool-use", "stop", "notification"] as const;
@@ -1489,24 +1530,23 @@ export function mergeNarratives(each: readonly { session: string; read: Narrativ
 // ── weaken-after-block ─────────────────────────────────────────────────────
 
 /**
- * The files that ARE the guard here. A scope list rather than a parser, which is why it survives
- * every change to the config's own shape.
+ * The HOST's half of the guard: where the hooks that invoke any of it are registered.
  *
- * It is flow's spelling now: `flow.config.ts` is the whole regime, `guards/` is where a repo's own
- * packs live, and the settings files are where the hooks that invoke any of it are registered. The
- * old list carried `work.yaml` and three file shapes the system can no longer produce.
+ * Fixed, because these are the harness's own file names and not a repo's choice — unlike the
+ * repo's half, which is `configSurface` reading the config's imports. The old list spelled the
+ * two halves as one constant and wrote `guards/**` into it, which was one repo's folder name
+ * standing in for every repo's.
  */
-export const GUARD_PATHS = [
-  CONFIG_FILE,
-  "guards/**",
-  ".claude/settings.json",
-  ".claude/settings.local.json",
-  ".claude/agents/**",
-];
+export const HOST_SURFACE: readonly string[] = [".claude/settings.json", ".claude/settings.local.json", ".claude/agents/**"];
+
+/** Every file that decides what the guard does here — the config and its packs, plus the host's. */
+export function guardPaths(configText: string | null): readonly string[] {
+  return [...configSurface(configText), ...HOST_SURFACE];
+}
 
 /** Is this one of the files that decides what the guard does? */
-export function isGuardPath(path: string): boolean {
-  return path !== "" && matchAny(path, GUARD_PATHS.flatMap((glob) => [glob, `**/${glob}`]));
+export function isGuardPath(path: string, paths: readonly string[]): boolean {
+  return path !== "" && matchAny(path, paths.flatMap((glob) => [glob, `**/${glob}`]));
 }
 
 /** A block, and the guardrail edit that followed it. A POINTER, never an accusation. */
@@ -1524,13 +1564,17 @@ export interface Weakening {
  * lets a person read the two spots. What it cannot do is stay quiet: "the rule blocked me, so I
  * changed the rule" is the one failure mode a guard cannot catch itself.
  */
-export function weakenedAfterBlock(rows: readonly Row[], events: readonly TranscriptEvent[]): Weakening[] {
+export function weakenedAfterBlock(
+  rows: readonly Row[],
+  events: readonly TranscriptEvent[],
+  paths: readonly string[],
+): Weakening[] {
   const blocked = rows
     .filter((row) => row.kind === "guardrail" && row["out"] === "deny" && typeof row["ts"] === "string")
     .map((row) => ({ entry: typeof row["id"] === "string" ? row["id"] : null, ts: row["ts"] as string }));
   const edits = events
     .filter((e): e is Extract<TranscriptEvent, { kind: "use" }> => e.kind === "use")
-    .filter((e) => (e.name === "Edit" || e.name === "Write") && e.ts !== null && isGuardPath(e.path))
+    .filter((e) => (e.name === "Edit" || e.name === "Write") && e.ts !== null && isGuardPath(e.path, paths))
     .sort((a, b) => (a.ts as string).localeCompare(b.ts as string));
 
   const out: Weakening[] = [];
@@ -2056,9 +2100,16 @@ export default defineConfig([]);
 /**
  * THE DEMO — the config `flow init` leaves behind, and the whole of J6.1.
  *
- * Four entries on one screen: a note that meets every session, a command ban, a commit gate over
- * staged content, and one rule bound to an ACTOR rather than to a path. It is a worked example of
- * J1.2 as much as a starting guard — a pack here is written exactly as a published one is, and
+ * TWO IMPORTS AND THE SPLIT IS THE LESSON. `@jawache/flow` is the grammar a rule is written in;
+ * `@jawache/flow/packs` is the content the package ships, bound one `pack(…)` line each. `guard` is
+ * bound by default because it is flow's own self-protection — the note saying what is steering you,
+ * the nudge when you edit the steering itself, and the refusal when a command would delete it — and
+ * every repo running flow wants all three whether or not it wants anything else. `--empty` leaves
+ * it out, along with everything else.
+ *
+ * Then three entries of this repo's own on one screen: a command ban, a commit gate over staged
+ * content, and one rule bound to an ACTOR rather than to a path. It is a worked example of J1.2 as
+ * much as a starting guard — a pack written here is written exactly as a published one is, and
  * promoting it would change the import line and nothing else.
  *
  * Written with `String.raw` so the regex inside it is the regex a reader will see: this is source
@@ -2074,17 +2125,8 @@ const DEMO_CONFIG = String.raw`// flow.config.ts — this repo's whole guard, an
 //   flow status   what is bound, at which moments, and what is not wired yet
 //   flow test     every rule's own cases, run
 
-import {
-  breadcrumb,
-  command,
-  commit,
-  defineCategory,
-  defineConfig,
-  definePack,
-  guardrail,
-  pack,
-  session,
-} from "@jawache/flow";
+import { command, commit, defineCategory, defineConfig, definePack, guardrail, pack } from "@jawache/flow";
+import { guard } from "@jawache/flow/packs";
 
 // A category is a name and the HOST-WRITTEN evidence that recognises it — never a claim a session
 // made about itself. This one is "the harness wrote a sidecar for you", which is what a spawned
@@ -2096,10 +2138,6 @@ const subagent = defineCategory("subagent", (facts) => facts.subagent);
 const MARKER = ["DO", "NOT", "COMMIT"].join("-");
 
 export const demo = definePack("demo", {
-  orientation: breadcrumb()
-    .at(session)
-    .text("This repo is guarded by flow. The rules are in flow.config.ts — read them rather than routing around them."),
-
   noForcePush: guardrail()
     .at(command)
     .check((ctx) =>
@@ -2135,7 +2173,11 @@ export const demo = definePack("demo", {
     .test({ pass: [], block: [{ staged: ["a.txt"] }] }),
 });
 
-export default defineConfig([pack(demo)]);
+export default defineConfig([
+  // flow's own self-protection: what is steering you, a nudge when you edit it, and no deleting it.
+  pack(guard),
+  pack(demo),
+]);
 `;
 
 /** The config file init writes: the demo, or the bare one `--empty` asks for. */

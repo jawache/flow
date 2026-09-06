@@ -29,13 +29,13 @@
 
 export { docs } from "./docs.ts";
 export { fcis, type Convention } from "./fcis.ts";
-export { git } from "./git.ts";
+export { git, type Release } from "./git.ts";
 export { guard } from "./guard.ts";
 export { justfile, type Catalogue } from "./justfile.ts";
 export { node } from "./node.ts";
-export { secrets } from "./secrets.ts";
+export { secrets, type Seam } from "./secrets.ts";
 export { tdd, type Suite } from "./tdd.ts";
-export { typescript } from "./typescript.ts";
+export { typescript, type Gates } from "./typescript.ts";
 
 // The work lifecycle's three rungs travel WITH the pack that binds them, because a category
 // nothing names is never classified: they are exported beside it so a repo's own house pack can

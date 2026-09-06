@@ -177,7 +177,7 @@ describe("flow status", () => {
     const said = flow(repo, ["status"]);
     expect(said.code, said.stdout + said.stderr).toBe(0);
     expect(said.stdout).toContain("flow is ON");
-    expect(said.stdout).toContain("demo.orientation");
+    expect(said.stdout, "flow's own self-protection is bound by default").toContain("guard.orientation");
     expect(said.stdout).toContain("demo.noForcePush");
     expect(said.stdout).toContain("for subagent");
     expect(said.stdout).toContain("categories subagent");
@@ -256,7 +256,7 @@ describe("flow init, run again", () => {
 // and this puts it back before comparing. Nothing else is touched — every word is the binary's.
 
 const DEMO_REPO = "/tmp/flow-demo";
-const CHECKOUT = "…/work/flow";
+const CHECKOUT = "…/flow";
 
 /** The fenced block in the README that opens with this line. */
 function quoted(opening: string): string {
