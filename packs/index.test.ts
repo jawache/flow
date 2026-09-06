@@ -45,7 +45,12 @@ describe("the packs surface", () => {
     const result = loadConfig(
       defineConfig([
         pack(packs.docs),
-        pack(packs.fcis, { files: ["src/pure/**/*.ts"], homes: ["src/pure/**"], coverage: "npm run coverage" }),
+        pack(packs.fcis, {
+          files: ["src/pure/**/*.ts"],
+          homes: ["src/pure/**"],
+          coverage: "npm run coverage",
+          example: "src/pure/money.ts",
+        }),
         pack(packs.git, { release: "npm run release" }),
         pack(packs.guard, { packs: ["rules/**"] }),
         pack(packs.justfile, { exempt: [] }),

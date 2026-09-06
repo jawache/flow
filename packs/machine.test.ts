@@ -51,39 +51,22 @@ interface Shipped {
   readonly cases: number;
   /** The guardrails those cases cover — the disabled ones are loaded but not run. */
   readonly guardrails: number;
-  /**
-   * Cases that FAIL in a stranger's repo, named one by one.
-   *
-   * Not a tolerance and not a skip: the set is compared exactly, so a third failure is a red run
-   * and a fix that makes one of these pass is ALSO a red run, asking for this line to be deleted.
-   * Every entry here is a defect this command found and nothing else did — see the note on `fcis`.
-   */
-  readonly red?: readonly string[];
 }
 
 const SHIPPED: readonly Shipped[] = [
   { pack: "docs", bind: "pack(docs)", cases: 3, guardrails: 2 },
   {
     pack: "fcis",
-    bind: `pack(fcis, { files: ["core/**/*.ts"], homes: ["core/**"], coverage: "./ci.sh coverage" })`,
+    // `example` is the field this command's first run earned. Two of the pack's entries narrow
+    // inside their own check (`changed`, `whenAdded`) rather than through `.on(…)`, and both used
+    // to prove themselves with `cli/pure/a.ts` written out — one repo's spelling, inside the pack.
+    // Bound here, against `core/`, their block cases fell outside the check's narrowing, were
+    // correctly passed, and FAILED: `flow test` red on day one in every repo that spells its pure
+    // home differently. Nothing else in the suite could see it, because nothing else binds a pack
+    // as a stranger.
+    bind: `pack(fcis, { files: ["core/**/*.ts"], homes: ["core/**"], coverage: "./ci.sh coverage", example: "core/clock.ts" })`,
     cases: 15,
     guardrails: 7,
-    // FOUND BY THIS COMMAND, on its first run, and left visible rather than papered over.
-    //
-    // Both entries scope themselves on the caller's globs (`whenAdded: repo.files`, `changed:
-    // repo.homes`) and then prove themselves with a case whose path is written out as
-    // `cli/pure/a.ts` — one repo's spelling of a pure home, inside the pack. In a repo that spells
-    // it any other way the block case's file is out of scope, the check correctly passes it, and
-    // the case fails: `flow test` is RED in a stranger's repo, for both entries, on day one.
-    //
-    // It is the same defect F2 extracted six of, one layer further in — the scan read `.on(…)`
-    // scopes and stopped short of the `.test()` fixtures, and F2's own notes called these paths
-    // cosmetic. They are not: they decide whether the pack's proof runs at all.
-    //
-    // The FIX is a pack change (the cases need a path derived from the parameter, the way the
-    // scopes already are) and pack content is not this phase's to edit, so it is raised rather
-    // than made. Delete these two lines the moment it lands.
-    red: ["fcis.pureCovered · block case 1", "fcis.newPureFileNeedsReason · block case 1"],
   },
   { pack: "git", bind: `pack(git, { release: "./ci.sh release" })`, cases: 30, guardrails: 7 },
   { pack: "guard", bind: `pack(guard, { packs: ["rules/**"] })`, cases: 2, guardrails: 1 },
@@ -375,30 +358,24 @@ describe("the machine test", () => {
     const measured = [...SHIPPED, HOUSE].map((entry) => {
       const said = flow(["test", join("probe", `${entry.pack}.config.ts`)]);
       const { cases, guardrails, red } = ran(said);
-      return { pack: entry.pack, cases, guardrails, ...(red.length > 0 ? { red } : {}) };
+      // Every case of every pack, green under somebody else's parameters. A pack whose own case
+      // only passes in the repo that wrote it is a pack that does not travel, and that is exactly
+      // what this command exists to catch — it caught two on its first run.
+      expect(red, `${entry.pack} failed its own cases:\n${said.stdout}`).toEqual([]);
+      return { pack: entry.pack, cases, guardrails };
     });
-    expect(measured).toEqual([...SHIPPED, HOUSE].map(({ pack, cases, guardrails, red }) => ({ pack, cases, guardrails, ...(red ? { red } : {}) })));
+    expect(measured).toEqual([...SHIPPED, HOUSE].map(({ pack, cases, guardrails }) => ({ pack, cases, guardrails })));
 
-    // …and the same run over the whole config: the cases add up (a case that moved between packs
-    // shows here), and nothing fails that the pinned census did not already name.
-    const whole = ran(flow(["test"]));
+    // …and the same run over the whole config: green, and the cases add up — which is the
+    // arithmetic that catches a case moving between packs rather than disappearing.
+    const said = flow(["test"]);
+    expect(said.code, said.stdout + said.stderr).toBe(0);
+    expect(said.stdout).toContain("all green");
     const total = [...SHIPPED, HOUSE].reduce((sum, entry) => sum + entry.cases, 0);
-    const known = [...SHIPPED, HOUSE].flatMap((entry) => entry.red ?? []);
-    expect(whole.cases).toBe(total);
-    expect([...whole.red].sort()).toEqual([...known].sort());
+    expect(ran(said).cases).toBe(total);
 
     report.push(
-      known.length === 0
-        ? `  cases      ${total} green over ${measured.reduce((sum, m) => sum + m.guardrails, 0)} guardrails`
-        : `  cases      ${total - known.length} of ${total} green — ${known.length} KNOWN RED, named and pinned:`,
-      ...known.map((name) => `             ✗ ${name}`),
-      ...(known.length === 0
-        ? []
-        : [
-            "             both prove themselves with a case naming `cli/pure/…`, so they cannot pass",
-            "             in a repo that spells its pure home any other way. Found by this command;",
-            "             the fix is a pack change, raised at F3 rather than made here.",
-          ]),
+      `  cases      ${total} green over ${measured.reduce((sum, m) => sum + m.guardrails, 0)} guardrails, pack by pack`,
       "  live",
     );
   });

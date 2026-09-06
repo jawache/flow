@@ -43,7 +43,33 @@ export interface Convention {
   readonly homes: readonly string[];
   /** The recipe that runs the coverage gate. */
   readonly coverage: string;
+  /**
+   * ONE PURE FILE, spelled out — a path this repo's `files` and `homes` globs both match.
+   *
+   * It is what the two entries below prove themselves WITH, and it is mandatory for the reason
+   * the rest of this parameter is: those two narrow inside their CHECK (`pureCovered`'s changed
+   * set, `newPureFileNeedsReason`'s added set) rather than through `.on(…)`, so their cases have
+   * to name a concrete path, and a path this pack invented is a path only the repo that wrote it
+   * matches. It was `cli/pure/a.ts` — one repo's spelling, hard-coded — and in every other repo
+   * the block case's file fell outside the check's own narrowing, the check correctly passed it,
+   * and the case FAILED: `flow test` red on day one, twice, for a pack that was working
+   * perfectly. Found by the machine test (`just test-packs`), which binds every pack with a
+   * stranger's parameters.
+   *
+   * ASKED FOR rather than computed from the globs above, on the ruling this pack's sibling
+   * already took (`guard`'s `Home`): inventing a concrete path out of a caller's glob is
+   * arithmetic that does not belong in a pack, and it needs a second glob dialect inside one to
+   * do it. A repo knows one of its own pure files; nothing else does.
+   *
+   * The sibling test path the exempt case needs is derived from THIS by the pack's own convention
+   * — `{dir}/{name}.test.ts`, the same template `pureHasTest` ships — so a repo states one fact,
+   * once.
+   */
+  readonly example: string;
 }
+
+/** The sibling test of a pure file, by the same template `pureHasTest` holds every pure file to. */
+const siblingTest = (file: string): string => `${file.replace(/\.[^./]+$/, "")}.test.ts`;
 
 export const fcis = definePack("fcis", (repo: Convention) => ({
   fcis: breadcrumb()
@@ -188,7 +214,10 @@ export const fcis = definePack("fcis", (repo: Convention) => ({
       // Nothing pure changed: the gate does not run at all, and a red suite is not this rule's
       // business. That is the `changed` narrowing, and it is what the pass case proves.
       pass: [{ staged: ["README.md"], world: { exec: { [repo.coverage]: { code: 1 } } } }],
-      block: [{ staged: ["cli/pure/a.ts"], world: { exec: { [repo.coverage]: { code: 1, stdout: "ERROR: Coverage 91% < 95%" } } } }],
+      // THE REPO'S OWN PURE FILE, because the narrowing this case exists to prove is the check's
+      // own: a path from any other repo falls outside `changed`, is passed correctly, and fails
+      // the case.
+      block: [{ staged: [repo.example], world: { exec: { [repo.coverage]: { code: 1, stdout: "ERROR: Coverage 91% < 95%" } } } }],
     }),
 
   // ── the strict-layout family: for repos that name their files by role ──
@@ -225,25 +254,30 @@ export const fcis = definePack("fcis", (repo: Convention) => ({
     .message(
       "Adding a file to the pure core must say why the pure file it belongs in isn't the place — put `new-pure-file: <why not the existing file>` on a line of its own in the commit message. The verifier reads that reason at the next phase boundary.",
     )
+    // THE REPO'S OWN PURE FILE in all three, for the same reason `pureCovered`'s block case takes
+    // it: `whenAdded` is the check's own narrowing, so a path from somebody else's tree is simply
+    // not an added pure file and every one of these cases would prove the opposite of what it says.
     .test({
       pass: [
         {
           command: "git commit -m 'feat: x\n\nnew-pure-file: a whole new tier'",
           world: {
             exec: {
-              "git diff HEAD --name-only": { stdout: "cli/pure/new.ts" },
-              "git diff HEAD --name-only --diff-filter=A": { stdout: "cli/pure/new.ts" },
+              "git diff HEAD --name-only": { stdout: repo.example },
+              "git diff HEAD --name-only --diff-filter=A": { stdout: repo.example },
               "git ls-files --others --exclude-standard": { stdout: "" },
             },
           },
         },
         {
-          // A new sibling TEST is expected, never sprawl.
+          // A new sibling TEST is expected, never sprawl — and the exemption is what this proves,
+          // so the path has to be BOTH a pure file and a test, which is what the sibling template
+          // makes it.
           command: 'git commit -m "test: cover it"',
           world: {
             exec: {
-              "git diff HEAD --name-only": { stdout: "cli/pure/a.test.ts" },
-              "git diff HEAD --name-only --diff-filter=A": { stdout: "cli/pure/a.test.ts" },
+              "git diff HEAD --name-only": { stdout: siblingTest(repo.example) },
+              "git diff HEAD --name-only --diff-filter=A": { stdout: siblingTest(repo.example) },
               "git ls-files --others --exclude-standard": { stdout: "" },
             },
           },
@@ -254,8 +288,8 @@ export const fcis = definePack("fcis", (repo: Convention) => ({
           command: 'git commit -m "feat: x"',
           world: {
             exec: {
-              "git diff HEAD --name-only": { stdout: "cli/pure/new.ts" },
-              "git diff HEAD --name-only --diff-filter=A": { stdout: "cli/pure/new.ts" },
+              "git diff HEAD --name-only": { stdout: repo.example },
+              "git diff HEAD --name-only --diff-filter=A": { stdout: repo.example },
               "git ls-files --others --exclude-standard": { stdout: "" },
             },
           },
