@@ -163,6 +163,22 @@ flow test
 
 Delete a rule's `.test(…)` block and the config stops loading at all, naming the entry.
 
+## Proving the packs themselves
+
+`flow test` proves the rules in *your* config. One command proves the ten this package ships, and it
+is the one to run before you trust a change to any of them:
+
+```sh
+just test-packs
+```
+
+It builds the binary, runs `flow init` in a throwaway repo that has never heard of flow, binds every
+shipped pack at once with a stranger's parameters — one shell script for the toolchain, `core/` for
+the pure home, `rules/` for the repo's own pack — and then drives the rails: `flow status` green,
+each pack's cases run pack by pack, and one real refusal at each of write · delete · command ·
+commit · turn-end. It prints what it bound and what refused, and exits non-zero naming the pack the
+moment a count moves.
+
 ## The config
 
 Open `flow.config.ts`. It is ordinary code, and it is the whole guard:
