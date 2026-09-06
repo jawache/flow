@@ -89,10 +89,16 @@ export {
 // repo writing its own command rule otherwise writes its own shell tokeniser, and a tokeniser that
 // does not know a newline separates commands is how `git commit -m "bad"` sails through as line 2
 // of a batch. One parser, proved once, for every rule in every repo.
+//
+// `quoteArg` is the fifth, and it is the same argument in the other direction: a check that reads
+// a command usually goes on to BUILD one for `ctx.exec`, and a path interpolated raw is a path
+// whose apostrophe ends the quoting. Written by hand it is a one-liner everybody gets almost
+// right; there is one of them in this package and it is this.
 export {
   commitMessage,
   gitInvocations,
   givesReason,
+  quoteArg,
   tokenizeCommand,
   type GitInvocation,
 } from "./checks/domain.ts";

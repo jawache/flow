@@ -24,8 +24,8 @@
 // ── the ten packs ────────────────────────────────────────────────────────────
 //
 // Eight of them are fleet discipline that any repo would recognise; `guard` is flow's own
-// self-protection, which is why `flow init` binds it in the config it scaffolds; `work` is the
-// work lifecycle's rungs, for the repos that run it.
+// self-protection, and is the one every guarded repo wants whether or not it runs anything else;
+// `work` is the work lifecycle's rungs, for the repos that run it.
 
 export { docs } from "./docs.ts";
 export { fcis, type Convention } from "./fcis.ts";

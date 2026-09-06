@@ -39,6 +39,7 @@ describe("the public surface", () => {
       "override",
       "pack",
       "protectedPath",
+      "quoteArg",
       "ranSinceEdit",
       "refusalText",
       "session",

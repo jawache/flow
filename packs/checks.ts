@@ -20,6 +20,7 @@ import {
   defineCheck,
   gitInvocations,
   givesReason,
+  quoteArg,
   type Check,
   type Ctx,
 } from "../index.ts";
@@ -104,7 +105,10 @@ export const noGitDiscard = defineCheck(
       const targets = discardPaths(command);
       if (targets.length === 0) return ctx.ok();
       const cleaning = /(^|[;&|\n]\s*)git\s+clean\b/.test(command);
-      const status = await ctx.exec(`git status --porcelain -- ${targets.map((p) => `'${p}'`).join(" ")}`);
+      // `quoteArg` rather than a pair of typed quotes: a path with an apostrophe in it closes a
+      // hand-rolled quote and the rest of the pathspec becomes shell. One quoter in this package,
+      // and this is the call that was the second one.
+      const status = await ctx.exec(`git status --porcelain -- ${targets.map(quoteArg).join(" ")}`);
       if (status.code !== 0) return ctx.ok(); // not a repo, or a bad pathspec — git owns that error
       const dirty = dirtyIn(status.stdout, cleaning);
       if (dirty.length === 0) return ctx.ok();
