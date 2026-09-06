@@ -24,11 +24,16 @@
     ".": {
       "types": "./dist/types/index.d.ts",
       "default": "./dist/index.mjs"
+    },
+    "./packs": {
+      "types": "./dist/types/packs/index.d.ts",
+      "default": "./dist/packs.mjs"
     }
   },
   "files": [
     "dist/flow.mjs",
     "dist/index.mjs",
+    "dist/packs.mjs",
     "dist/types/"
   ],
   "engines": {

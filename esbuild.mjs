@@ -19,22 +19,34 @@ const root = new URL("./", import.meta.url);
 const pkg = JSON.parse(readFileSync(new URL("package.json", root), "utf8"));
 const production = process.argv.includes("--production");
 
-// TWO BUNDLES, because `@jawache/flow` is two things and they are entered differently.
+// THREE BUNDLES, because `@jawache/flow` is three things and they are entered differently.
 //
 //   dist/flow.mjs   the BINARY. Executable, shebanged, and it runs on import — argv, exit code.
 //   dist/index.mjs  the LIBRARY. What `import { guardrail } from "@jawache/flow"` resolves to in a
 //                   guarded repo's flow.config.ts, and it must have no side effect at all.
+//   dist/packs.mjs  the PACKS. What `import { git } from "@jawache/flow/packs"` resolves to — the
+//                   ten shipped packs, behind their own subpath export.
 //
-// One file cannot be both: an import of the binary would parse argv and set an exit code, and the
-// main-module guard that usually separates them cannot work here — the process's entry point IS
-// the flow binary when a config is being loaded, so `argv[1] === this file` is true either way.
+// The binary cannot be either of the others: an import of it would parse argv and set an exit
+// code, and the main-module guard that usually separates them cannot work here — the process's
+// entry point IS the flow binary when a config is being loaded, so `argv[1] === this file` is true
+// either way.
 //
-// The library half also needs TYPES, which esbuild does not emit — `just build-flow` runs
-// `tsc -p tsconfig.build.json` for that. Shipping the .ts source instead is not an option: node
-// refuses to strip types under node_modules.
+// The packs are a SECOND library bundle rather than more of the first, because they are a
+// different promise: `@jawache/flow` is the grammar a config is written in, and a symbol reachable
+// through it is part of the language. A pack is content — rules somebody has to agree with — and
+// belongs behind its own door. The cost is that each bundle inlines its own copy of the grammar
+// (the packs import `../index.ts`), and that copy is harmless by construction: every brand in this
+// package is a `Symbol.for`, so a pack built against one copy and bound by a config using the
+// other still matches. That is the case the branding was chosen for.
+//
+// The library halves also need TYPES, which esbuild does not emit — `just build-flow` runs
+// `tsc -p tsconfig.build.json` for that, and its `include` already sweeps packs/. Shipping the .ts
+// source instead is not an option: node refuses to strip types under node_modules.
 const bundles = [
   { entry: "flow.ts", out: "dist/flow.mjs", binary: true },
   { entry: "index.ts", out: "dist/index.mjs", binary: false },
+  { entry: "packs/index.ts", out: "dist/packs.mjs", binary: false },
 ];
 
 // ONE external, and the asymmetry between flow's two dependencies is the whole explanation.
