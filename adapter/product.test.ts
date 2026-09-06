@@ -14,61 +14,33 @@
 // driven for real instead of mocked — the seam is the product's, not the suite's.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { spawnSync } from "node:child_process";
-import {
-  mkdtempSync,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-  existsSync,
-  lstatSync,
-} from "node:fs";
-import { fileURLToPath } from "node:url";
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-
-const PACKAGE = fileURLToPath(new URL("../", import.meta.url));
-const BINARY = join(PACKAGE, "dist", "flow.mjs");
+import {
+  PACKAGE,
+  buildBundles,
+  hook,
+  newRepo as freshRepo,
+  pre,
+  settingsHome,
+  shimBin,
+  flow as runFlow,
+  git as runGit,
+  type Ran,
+} from "../harness.ts";
 
 let home: string;
 /** A directory holding one `flow` shim, so git's own hook can find the binary under test. */
 let bin: string;
 
-interface Ran {
-  stdout: string;
-  stderr: string;
-  code: number;
-}
-
 /** The built binary, in a given repo, with the throwaway host settings and the shim on PATH. */
-function flow(repo: string, args: readonly string[], settingsHome: string = home): Ran {
-  const result = spawnSync("node", [BINARY, ...args], {
-    cwd: repo,
-    encoding: "utf8",
-    env: { ...process.env, CLAUDE_CONFIG_DIR: settingsHome, PATH: `${bin}:${process.env["PATH"] ?? ""}` },
-  });
-  return { stdout: result.stdout, stderr: result.stderr, code: result.status ?? -1 };
-}
+const flow = (repo: string, args: readonly string[], settingsFolder: string = home): Ran =>
+  runFlow(repo, args, { home: settingsFolder, bin });
 
-function git(repo: string, args: readonly string[]): Ran {
-  const result = spawnSync("git", args, {
-    cwd: repo,
-    encoding: "utf8",
-    env: { ...process.env, CLAUDE_CONFIG_DIR: home, PATH: `${bin}:${process.env["PATH"] ?? ""}` },
-  });
-  return { stdout: result.stdout, stderr: result.stderr, code: result.status ?? -1 };
-}
+const git = (repo: string, args: readonly string[]): Ran => runGit(repo, args, { home, bin });
 
-/** A fresh git repo with nothing in it — the stranger's repo of UAT step 1. */
-function newRepo(): string {
-  const repo = mkdtempSync(join(tmpdir(), "flow-init-"));
-  git(repo, ["init", "-q"]);
-  git(repo, ["config", "user.email", "t@example.com"]);
-  git(repo, ["config", "user.name", "t"]);
-  return repo;
-}
+const newRepo = (): string => freshRepo("flow-init-");
 
 const settings = (): Record<string, unknown> =>
   JSON.parse(readFileSync(join(home, "settings.json"), "utf8")) as Record<string, unknown>;
@@ -77,14 +49,11 @@ let repo: string;
 let first: Ran;
 
 beforeAll(() => {
-  // The BUILT bundles, deliberately: the library bundle is what a scaffolded config resolves to, and
-  // a package that only works from source is the failure this whole build step exists to catch.
-  const built = spawnSync("node", [join(PACKAGE, "esbuild.mjs")], { encoding: "utf8" });
-  expect(built.status, built.stderr).toBe(0);
+  const built = buildBundles();
+  expect(built.code, built.stderr).toBe(0);
 
-  home = mkdtempSync(join(tmpdir(), "flow-home-"));
-  bin = mkdtempSync(join(tmpdir(), "flow-bin-"));
-  writeFileSync(join(bin, "flow"), `#!/bin/sh\nexec node ${JSON.stringify(BINARY)} "$@"\n`, { mode: 0o755 });
+  home = settingsHome();
+  bin = shimBin();
 
   repo = newRepo();
   first = flow(repo, ["init"]);
@@ -132,22 +101,10 @@ describe("the scaffolded config", () => {
   });
 
   it("blocks the force-push it bans — UAT step 3", () => {
-    const answer = spawnSync(
-      "node",
-      [BINARY, "hook", "pre-tool-use"],
-      {
-        cwd: repo,
-        encoding: "utf8",
-        input: JSON.stringify({
-          session_id: "demo-1",
-          hook_event_name: "PreToolUse",
-          tool_name: "Bash",
-          tool_input: { command: "git push --force origin main" },
-        }),
-        env: { ...process.env, CLAUDE_CONFIG_DIR: home, CLAUDE_PROJECT_DIR: repo },
-      },
-    );
-    expect(answer.status).toBe(2);
+    const answer = hook(repo, "pre-tool-use", pre("Bash", { command: "git push --force origin main" }, "demo-1"), {
+      home,
+    });
+    expect(answer.code).toBe(2);
     expect(answer.stderr).toContain("demo.noForcePush");
     expect(answer.stderr).toContain("Force-pushing rewrites history");
   });

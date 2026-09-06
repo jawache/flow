@@ -16,39 +16,32 @@
 // the `Symbol.for` decision (flow/language/domain.ts) being paid off rather than a coincidence.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-
-/** The package root, from this file rather than from the runner's cwd. */
-const PACKAGE = fileURLToPath(new URL("../", import.meta.url));
-const BINARY = join(PACKAGE, "dist", "flow.mjs");
+import { PACKAGE, buildBundles, fixturePack, newRepo, pre, flow as runFlow, git as runGit, type Ran } from "../harness.ts";
 
 let repo: string;
 
 /**
  * The one pack this repo writes itself, in the folder it chose to write it in.
  *
- * It holds the category rather than a rule, and that is enough for what it is here for: the
+ * A category and one turn-end rule, shared with `packs/machine.test.ts` as a fixture file rather
+ * than kept twice as a string — see flow/__fixtures__/repo-pack.ts. It matters here for two
+ * reasons beyond the rule: a `.for(…)` entry needs a rung to bind to at the commit gate, and the
  * repair exception is derived from the config's own RELATIVE imports, so a config that imports
  * nothing of its own has no pack half to prove. The folder name is this fixture's choice and
  * nothing else's — `guards/` is where this repo happens to keep them, and the engine no longer
  * knows the word.
  */
-const HOUSE = (packageRoot: string): string => `
-import { defineCategory, spawnedAs } from ${JSON.stringify(join(packageRoot, "index.ts"))};
-
-export const builder = defineCategory("builder", spawnedAs({ types: ["builder"] }));
-`;
+const HOUSE = (packageRoot: string): string => fixturePack("repo-pack", join(packageRoot, "index.ts"));
 
 /** What the temp repo's own guard says. Five entries, one per rail this suite drives. */
 const CONFIG = (packageRoot: string): string => `
-import { breadcrumb, command, commit, definePack, defineConfig, guardrail, pack, session, touch, turnEnd, write } from ${JSON.stringify(
+import { breadcrumb, command, commit, definePack, defineConfig, guardrail, pack, session, touch, write } from ${JSON.stringify(
   join(packageRoot, "index.ts"),
 )};
-import { builder } from "./guards/house.ts";
+import { builder, house } from "./guards/house.ts";
 
 const demo = definePack("demo", {
   noTodo: guardrail()
@@ -73,12 +66,6 @@ const demo = definePack("demo", {
       pass: [{ staged: ["src/a.ts"], world: { fs: { "src/a.ts": "ok" } } }],
       block: [{ staged: ["src/a.ts"], world: { fs: { "src/a.ts": "DO-NOT-COMMIT" } } }],
     }),
-
-  ranSomething: guardrail()
-    .at(turnEnd)
-    .check((ctx) => ((ctx.turn ?? []).every((a) => a.did === "edit") && (ctx.turn ?? []).length > 3 ? ctx.fail("nothing ran") : ctx.ok()))
-    .message("You edited all turn and ran nothing.")
-    .test({ pass: [{ actions: [] }], block: [{ actions: [{ did: "edit", path: "a" }, { did: "edit", path: "b" }, { did: "edit", path: "c" }, { did: "edit", path: "d" }] }] }),
 
   suitePasses: guardrail()
     .at(commit)
@@ -105,21 +92,15 @@ const demo = definePack("demo", {
   area: breadcrumb().at(touch).on("src/**").text("src/ is the product — its tests sit beside it."),
 });
 
-export default defineConfig([pack(demo)]);
+// The repo's own pack is bound beside the demo one, which is how a real config reads: the package's
+// rules and the repo's, in one list.
+export default defineConfig([pack(demo), pack(house)]);
 `;
 
 /** Run the built binary in the temp repo, with a payload on stdin exactly as the host sends it. */
-function run(args: readonly string[], stdin: string): { stdout: string; stderr: string; code: number } {
-  const result = spawnSync("node", [BINARY, ...args], {
-    cwd: repo,
-    input: stdin,
-    encoding: "utf8",
-    env: { ...process.env, CLAUDE_PROJECT_DIR: repo },
-  });
-  return { stdout: result.stdout, stderr: result.stderr, code: result.status ?? -1 };
-}
+const run = (args: readonly string[], stdin: string): Ran => runFlow(repo, args, {}, stdin);
 
-const hook = (event: string, payload: unknown): ReturnType<typeof run> => run(["hook", event], JSON.stringify(payload));
+const hook = (event: string, payload: unknown): Ran => run(["hook", event], JSON.stringify(payload));
 
 /** Every row `.flow/` recorded for one session. */
 function rows(session: string): Record<string, unknown>[] {
@@ -134,13 +115,10 @@ function rows(session: string): Record<string, unknown>[] {
 beforeAll(() => {
   // The BUILT binary, deliberately — the bundle is what a repo runs, and bundling is where an
   // import that only resolves in source would show up.
-  const built = spawnSync("node", [join(PACKAGE, "esbuild.mjs")], { encoding: "utf8" });
-  expect(built.status, built.stderr).toBe(0);
+  const built = buildBundles();
+  expect(built.code, built.stderr).toBe(0);
 
-  repo = mkdtempSync(join(tmpdir(), "flow-live-"));
-  spawnSync("git", ["init", "-q"], { cwd: repo });
-  spawnSync("git", ["config", "user.email", "t@example.com"], { cwd: repo });
-  spawnSync("git", ["config", "user.name", "t"], { cwd: repo });
+  repo = newRepo("flow-live-");
   mkdirSync(join(repo, "guards"), { recursive: true });
   writeFileSync(join(repo, "guards", "house.ts"), HOUSE(PACKAGE));
   writeFileSync(join(repo, "flow.config.ts"), CONFIG(PACKAGE));
@@ -165,16 +143,12 @@ function copyGuard(into: string): void {
   writeFileSync(join(into, "flow.config.ts"), readFileSync(join(repo, "flow.config.ts"), "utf8"));
 }
 
-const pre = (tool: string, input: Record<string, unknown>): Record<string, unknown> => ({
-  session_id: "live-1",
-  hook_event_name: "PreToolUse",
-  tool_name: tool,
-  tool_input: input,
-});
+/** This suite's session, on the harness's payload — every row below is keyed by that id. */
+const inThisSession = (tool: string, input: Record<string, unknown>): Record<string, unknown> => pre(tool, input, "live-1");
 
 describe("the write rail", () => {
   it("blocks the write before it lands, with the message on stderr and exit 2", () => {
-    const answer = hook("pre-tool-use", pre("Write", { file_path: join(repo, "src/b.ts"), content: "// TODO: later\n" }));
+    const answer = hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "src/b.ts"), content: "// TODO: later\n" }));
     expect(answer.code).toBe(2);
     expect(answer.stdout).toBe("");
     expect(answer.stderr).toContain("flow — blocked before the write landed");
@@ -186,9 +160,9 @@ describe("the write rail", () => {
 
   it("judges the file as the EDIT would leave it, not as it is", () => {
     // The would-be file, rebuilt in memory. The base is clean; the edit is what introduces the TODO.
-    const edit = pre("Edit", { file_path: join(repo, "src/a.ts"), old_string: "1", new_string: "1 // TODO" });
+    const edit = inThisSession("Edit", { file_path: join(repo, "src/a.ts"), old_string: "1", new_string: "1 // TODO" });
     expect(hook("pre-tool-use", edit).code).toBe(2);
-    const innocent = pre("Edit", { file_path: join(repo, "src/a.ts"), old_string: "1", new_string: "2" });
+    const innocent = inThisSession("Edit", { file_path: join(repo, "src/a.ts"), old_string: "1", new_string: "2" });
     expect(hook("pre-tool-use", innocent).code).toBe(0);
   });
 
@@ -207,14 +181,14 @@ describe("the write rail", () => {
 
 describe("the command rail", () => {
   it("blocks the command before it runs", () => {
-    const answer = hook("pre-tool-use", pre("Bash", { command: "git push --force" }));
+    const answer = hook("pre-tool-use", inThisSession("Bash", { command: "git push --force" }));
     expect(answer.code).toBe(2);
     expect(answer.stderr).toContain("flow — command blocked before it ran");
     expect(answer.stderr).toContain("demo.noForce");
   });
 
   it("lets an ordinary command through", () => {
-    expect(hook("pre-tool-use", pre("Bash", { command: "git status" })).code).toBe(0);
+    expect(hook("pre-tool-use", inThisSession("Bash", { command: "git status" })).code).toBe(0);
   });
 });
 
@@ -291,7 +265,7 @@ describe("what a broken or empty call does", () => {
 describe("the commit gate", () => {
   it("blocks a staged file the gate refuses, naming it", () => {
     writeFileSync(join(repo, "src", "leak.ts"), "// DO-NOT-COMMIT\n");
-    spawnSync("git", ["add", "src/leak.ts"], { cwd: repo });
+    runGit(repo, ["add", "src/leak.ts"]);
     const answer = run(["commit", "src/leak.ts"], "");
     expect(answer.code).toBe(2);
     expect(answer.stderr).toContain("flow — commit blocked");
@@ -311,13 +285,13 @@ describe("the commit gate", () => {
     // repo whose tool was missing would have had a silently weaker gate.
     mkdirSync(join(repo, "tool"), { recursive: true });
     writeFileSync(join(repo, "tool", "x.ts"), "export const x = 1;\n");
-    spawnSync("git", ["add", "tool/x.ts"], { cwd: repo });
+    runGit(repo, ["add", "tool/x.ts"]);
     const answer = run(["commit", "tool/x.ts"], "");
     expect(answer.code).toBe(2);
     expect(answer.stderr).toContain("demo.suitePasses");
     expect(answer.stderr).toContain("definitely-not-a-real-binary-xyz");
     expect(answer.stderr.toLowerCase()).toContain("command not found");
-    spawnSync("git", ["rm", "-q", "--cached", "tool/x.ts"], { cwd: repo });
+    runGit(repo, ["rm", "-q", "--cached", "tool/x.ts"]);
   });
 
   it("wears the categories of the session x agent the marker names, so .for(…) fires at commit too", () => {
@@ -357,7 +331,7 @@ describe("the off switch", () => {
   it("silences every rail, and writes no telemetry while it is off", () => {
     writeFileSync(join(repo, ".flow", "off"), "");
     const before = rows("live-1").length;
-    expect(hook("pre-tool-use", pre("Write", { file_path: join(repo, "src/c.ts"), content: "TODO" })).code).toBe(0);
+    expect(hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "src/c.ts"), content: "TODO" })).code).toBe(0);
     expect(run(["commit", "src/leak.ts"], "").code).toBe(0);
     expect(rows("live-1").length, "a half-off guard that still logged would make the A/B dishonest").toBe(before);
     rmSync(join(repo, ".flow", "off"));
@@ -369,7 +343,7 @@ describe("a config that will not load", () => {
     const good = readFileSync(join(repo, "flow.config.ts"), "utf8");
     writeFileSync(join(repo, "flow.config.ts"), `${good}\nthis is not typescript at all(((\n`);
     try {
-      const guarded = hook("pre-tool-use", pre("Write", { file_path: join(repo, "src/d.ts"), content: "fine" }));
+      const guarded = hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "src/d.ts"), content: "fine" }));
       expect(guarded.code, "a guard that cannot run must not look like a guard that passed").toBe(2);
       expect(guarded.stderr).toContain("flow.config.ts could not be loaded");
       const greeting = hook("session-start", { session_id: "live-3", source: "startup" });
@@ -397,23 +371,23 @@ describe("a config that will not load", () => {
 
     it("lets a write reach the config itself and the packs it imports", () => {
       withBrokenConfig(() => {
-        const config = hook("pre-tool-use", pre("Write", { file_path: join(repo, "flow.config.ts"), content: "// fixed" }));
+        const config = hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "flow.config.ts"), content: "// fixed" }));
         expect(config.code, "the repair is refused, so the repo stays broken until a human arrives").toBe(0);
         expect(config.stderr, "and it is allowed silently — a notice here is noise on the way out").toBe("");
 
-        const pack = hook("pre-tool-use", pre("Edit", { file_path: join(repo, "guards", "house.ts"), new_string: "// fixed" }));
+        const pack = hook("pre-tool-use", inThisSession("Edit", { file_path: join(repo, "guards", "house.ts"), new_string: "// fixed" }));
         expect(pack.code, "a pack the config imports is as much the repair as the config is").toBe(0);
 
         // And a pack it does NOT import is not the repair: the surface is read out of the config's
         // own import lines, so a folder nobody named is an ordinary folder.
-        const stranger = hook("pre-tool-use", pre("Edit", { file_path: join(repo, "rules", "other.ts"), new_string: "// fixed" }));
+        const stranger = hook("pre-tool-use", inThisSession("Edit", { file_path: join(repo, "rules", "other.ts"), new_string: "// fixed" }));
         expect(stranger.code, "the exception is exactly as wide as this config's own imports").toBe(2);
       });
     });
 
     it("still refuses every other write, so the exception is the repair and not an amnesty", () => {
       withBrokenConfig(() => {
-        const ordinary = hook("pre-tool-use", pre("Write", { file_path: join(repo, "src/e.ts"), content: "fine" }));
+        const ordinary = hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "src/e.ts"), content: "fine" }));
         expect(ordinary.code, "a broken guard must not wave ordinary work through").toBe(2);
         expect(ordinary.stderr).toContain("could not be loaded");
       });
@@ -423,7 +397,7 @@ describe("a config that will not load", () => {
       withBrokenConfig(() => {
         // `sed -i` on the config would be a repair by intent, and there is no way to tell it from
         // `rm -rf` before it runs. The route back is the edit tools, which name the file.
-        const command = hook("pre-tool-use", pre("Bash", { command: `sed -i "" s/x/y/ ${join(repo, "flow.config.ts")}` }));
+        const command = hook("pre-tool-use", inThisSession("Bash", { command: `sed -i "" s/x/y/ ${join(repo, "flow.config.ts")}` }));
         expect(command.code).toBe(2);
         expect(command.stderr).toContain("could not be loaded");
       });
@@ -431,8 +405,8 @@ describe("a config that will not load", () => {
 
     it("keeps the COMMIT gate closed, so nothing written under the exception lands unguarded", () => {
       withBrokenConfig(() => {
-        const gate = spawnSync("node", [BINARY, "commit", "flow.config.ts"], { cwd: repo, encoding: "utf8" });
-        expect(gate.status, "a commit while the guard cannot run is a commit nothing checked").toBe(2);
+        const gate = runFlow(repo, ["commit", "flow.config.ts"]);
+        expect(gate.code, "a commit while the guard cannot run is a commit nothing checked").toBe(2);
         expect(gate.stderr).toContain("could not be loaded");
       });
     });
@@ -440,9 +414,9 @@ describe("a config that will not load", () => {
     it("changes nothing at all when the config is healthy", () => {
       // The exception is keyed on the BROKEN state and nowhere else: with a working config the
       // config surface is guarded exactly like every other path, by whatever rules watch it.
-      const config = hook("pre-tool-use", pre("Write", { file_path: join(repo, "flow.config.ts"), content: "// TODO" }));
+      const config = hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "flow.config.ts"), content: "// TODO" }));
       expect(config.code, "a healthy guard judges the config file on its rules, like any other file").toBe(0);
-      const ordinary = hook("pre-tool-use", pre("Write", { file_path: join(repo, "src/f.ts"), content: "fine" }));
+      const ordinary = hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "src/f.ts"), content: "fine" }));
       expect(ordinary.code).toBe(0);
     });
   });
@@ -452,13 +426,8 @@ describe("a repo that has never heard of flow", () => {
   it("says nothing at all — the hooks are registered globally and fire everywhere", () => {
     const bare = mkdtempSync(join(tmpdir(), "flow-bare-"));
     try {
-      const answer = spawnSync("node", [BINARY, "hook", "pre-tool-use"], {
-        cwd: bare,
-        input: JSON.stringify(pre("Write", { file_path: join(bare, "src/a.ts"), content: "TODO" })),
-        encoding: "utf8",
-        env: { ...process.env, CLAUDE_PROJECT_DIR: bare },
-      });
-      expect(answer.status).toBe(0);
+      const answer = runFlow(bare, ["hook", "pre-tool-use"], {}, JSON.stringify(pre("Write", { file_path: join(bare, "src/a.ts"), content: "TODO" })));
+      expect(answer.code).toBe(0);
       expect(answer.stdout + answer.stderr).toBe("");
       expect(existsSync(join(bare, ".flow")), "and leaves nothing behind").toBe(false);
     } finally {
@@ -616,9 +585,9 @@ describe("a recorded session, replayed", () => {
     try {
       copyGuard(elsewhere);
       writeFileSync(join(elsewhere, "recording.jsonl"), readFileSync(join(repo, ".flow", "replay", `${SESSION}.jsonl`), "utf8"));
-      const answer = spawnSync("node", [BINARY, "replay", "recording.jsonl"], { cwd: elsewhere, encoding: "utf8" });
+      const answer = runFlow(elsewhere, ["replay", "recording.jsonl"]);
       expect(answer.stderr).toBe("");
-      expect(answer.status).toBe(0);
+      expect(answer.code).toBe(0);
       expect(answer.stdout).toContain("with no repo and no harness");
       expect(answer.stdout).toContain("demo.noTodo");
       expect(answer.stdout).toContain("demo.suitePasses");
@@ -665,8 +634,8 @@ describe("flow facts — the record and the conversations, read back", () => {
     const bare = mkdtempSync(join(tmpdir(), "flow-facts-"));
     try {
       copyGuard(bare);
-      const answer = spawnSync("node", [BINARY, "facts"], { cwd: bare, encoding: "utf8" });
-      expect(answer.status).toBe(1);
+      const answer = runFlow(bare, ["facts"]);
+      expect(answer.code).toBe(1);
       expect(answer.stdout).toContain("NOT ARMED");
     } finally {
       rmSync(bare, { recursive: true, force: true });

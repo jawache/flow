@@ -21,20 +21,26 @@
 // any pack and this exits non-zero naming that pack. It is the same discipline index.test.ts
 // applies to the export list — a change here is deliberate or it is a bug.
 //
-// NOTHING OUTSIDE THE TEMP DIRECTORIES IS TOUCHED. `CLAUDE_CONFIG_DIR` is the host's own override
-// for where settings live, and pointing it at a temp folder is what lets init's registration half
-// run for real — the seam is the product's, not the suite's. Same road as product.test.ts, one
-// scale up.
+// NOTHING OUTSIDE THE TEMP DIRECTORIES IS TOUCHED, and none of that plumbing is here: the
+// throwaway repo, the built binary and the host's own `CLAUDE_CONFIG_DIR` and PATH seams are
+// flow/harness.ts, which product.test.ts and live.test.ts drive too. Literally the same road as
+// product.test.ts, one scale up.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
-
-const PACKAGE = fileURLToPath(new URL("../", import.meta.url));
-const BINARY = join(PACKAGE, "dist", "flow.mjs");
+import {
+  buildBundles,
+  fixturePack,
+  newRepo,
+  pre,
+  settingsHome,
+  shimBin,
+  flow as runFlow,
+  git as runGit,
+  hook as sendHook,
+  type Ran,
+} from "../harness.ts";
 
 // ── the stranger, and what it calls things ───────────────────────────────────
 //
@@ -93,36 +99,12 @@ const HOUSE: Shipped = { pack: "house", bind: "pack(house)", cases: 2, guardrail
  * turn-end guardrail, so the rail would otherwise go undriven here — and "no pack ships one" is a
  * fact about the packs, not about the moment. This is also what `guard`'s `packs: ["rules/**"]`
  * parameter is pointed at, so the delete refusal below is protecting a file that really exists.
+ *
+ * It is the fixture `live.test.ts` drives too (flow/__fixtures__/repo-pack.ts), with its import
+ * repointed at the bare specifier — which is the one this repo can resolve, because `flow init`
+ * linked it.
  */
-const HOUSE_PACK = `// rules/house.ts — this repo's own pack. Everything else comes from @jawache/flow/packs.
-import { definePack, guardrail, turnEnd } from "@jawache/flow";
-
-export const house = definePack("house", {
-  ranSomething: guardrail()
-    .at(turnEnd)
-    .description("A turn that edited all the way through and ran nothing hands back untested work.")
-    .check((ctx) => {
-      const did = ctx.turn ?? [];
-      return did.length > 3 && did.every((action) => action.did === "edit")
-        ? ctx.fail(\`\${did.length} edits, nothing run\`)
-        : ctx.ok();
-    })
-    .message("You edited all turn and ran nothing. Run ./ci.sh test before you hand back.")
-    .test({
-      pass: [{ actions: [] }],
-      block: [
-        {
-          actions: [
-            { did: "edit", path: "core/a.ts" },
-            { did: "edit", path: "core/b.ts" },
-            { did: "edit", path: "core/c.ts" },
-            { did: "edit", path: "core/d.ts" },
-          ],
-        },
-      ],
-    }),
-});
-`;
+const HOUSE_PACK = fixturePack("repo-pack", "@jawache/flow");
 
 /** The whole guard of a repo that binds everything flow ships, plus the one pack it writes itself. */
 const CONFIG = `// flow.config.ts — this repo's whole guard.
@@ -218,12 +200,6 @@ const ENTRIES: readonly string[] = [
 
 // ── the road ─────────────────────────────────────────────────────────────────
 
-interface Ran {
-  stdout: string;
-  stderr: string;
-  code: number;
-}
-
 let home: string;
 /** A directory holding one `flow` shim, so git's own hook can find the binary under test. */
 let bin: string;
@@ -233,40 +209,26 @@ let scaffolded: Ran;
 /** The report this command prints. Every line is something that was driven, not something claimed. */
 const report: string[] = [];
 
+/**
+ * THE STEPS THE ROAD IS MADE OF, and the ones that actually finished.
+ *
+ * A failed run still prints whatever the steps AFTER the failure managed to push, which reads as a
+ * complete report with a hole in it — the worst of the three possible outputs. So each step signs
+ * its own name, and `afterAll` says which never did.
+ */
+const STEPS = ["scaffold", "bind", "cases", "write", "delete", "command", "commit", "turn-end"] as const;
+const finished = new Set<string>();
+const step = (name: (typeof STEPS)[number], ...lines: string[]): void => {
+  finished.add(name);
+  report.push(...lines);
+};
+
 /** The built binary, in the stranger's repo, with the throwaway host settings and the shim on PATH. */
-function flow(args: readonly string[], stdin = ""): Ran {
-  const result = spawnSync("node", [BINARY, ...args], {
-    cwd: repo,
-    input: stdin,
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      CLAUDE_CONFIG_DIR: home,
-      CLAUDE_PROJECT_DIR: repo,
-      PATH: `${bin}:${process.env["PATH"] ?? ""}`,
-    },
-  });
-  return { stdout: result.stdout, stderr: result.stderr, code: result.status ?? -1 };
-}
-
-function git(args: readonly string[]): Ran {
-  const result = spawnSync("git", args, {
-    cwd: repo,
-    encoding: "utf8",
-    env: { ...process.env, CLAUDE_CONFIG_DIR: home, PATH: `${bin}:${process.env["PATH"] ?? ""}` },
-  });
-  return { stdout: result.stdout, stderr: result.stderr, code: result.status ?? -1 };
-}
-
-/** A harness payload, on the rail the harness would send it on. */
-const hook = (event: string, payload: Record<string, unknown>): Ran => flow(["hook", event], JSON.stringify(payload));
-
-const pre = (tool: string, input: Record<string, unknown>): Record<string, unknown> => ({
-  session_id: "machine-1",
-  hook_event_name: "PreToolUse",
-  tool_name: tool,
-  tool_input: input,
-});
+const flow = (args: readonly string[], stdin = ""): Ran => runFlow(repo, args, { home, bin }, stdin);
+const git = (args: readonly string[]): Ran => runGit(repo, args, { home, bin });
+const hook = (event: string, payload: Record<string, unknown>): Ran => sendHook(repo, event, payload, { home, bin });
+const inThisSession = (tool: string, input: Record<string, unknown>): Record<string, unknown> =>
+  pre(tool, input, "machine-1");
 
 /** A `flow test` run, read back: its headline as numbers, and every case that failed, by name. */
 function ran(said: Ran): { cases: number; guardrails: number; red: string[] } {
@@ -281,27 +243,22 @@ function ran(said: Ran): { cases: number; guardrails: number; red: string[] } {
 }
 
 /** What one live refusal proved, for the report. */
-function refusal(moment: string, said: Ran, entry: string): void {
+function refusal(moment: (typeof STEPS)[number], said: Ran, entry: string): void {
   expect(said.code, `${moment} was not refused:\n${said.stdout}${said.stderr}`).toBe(2);
   expect(said.stderr, `${moment} refused, but not by ${entry}`).toContain(entry);
-  report.push(`    ${moment.padEnd(9)} ✗ ${entry}`);
+  step(moment, `    ${moment.padEnd(9)} ✗ ${entry}`);
 }
 
 beforeAll(() => {
   // The BUILT bundles, deliberately: `@jawache/flow` and `@jawache/flow/packs` resolve to
   // dist/index.mjs and dist/packs.mjs through the link `flow init` makes, so this is the only
   // place the packs subpath export is exercised as an INSTALL rather than as a source import.
-  const built = spawnSync("node", [join(PACKAGE, "esbuild.mjs")], { encoding: "utf8" });
-  expect(built.status, built.stderr).toBe(0);
+  const built = buildBundles();
+  expect(built.code, built.stderr).toBe(0);
 
-  home = mkdtempSync(join(tmpdir(), "flow-machine-home-"));
-  bin = mkdtempSync(join(tmpdir(), "flow-machine-bin-"));
-  writeFileSync(join(bin, "flow"), `#!/bin/sh\nexec node ${JSON.stringify(BINARY)} "$@"\n`, { mode: 0o755 });
-
-  repo = mkdtempSync(join(tmpdir(), "flow-machine-"));
-  git(["init", "-q"]);
-  git(["config", "user.email", "t@example.com"]);
-  git(["config", "user.name", "t"]);
+  home = settingsHome("flow-machine-home-");
+  bin = shimBin("flow-machine-bin-");
+  repo = newRepo("flow-machine-");
 
   // 1 — the scaffold. Everything after this point is the stranger writing their own guard over it.
   scaffolded = flow(["init"]);
@@ -315,7 +272,19 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  process.stdout.write(`\n${report.join("\n")}\n\n`);
+  // PRINTED ONLY WHEN ASKED. This file is in the flow project (`just test` and `just test-flow`
+  // run it, and the commit gate runs those), so an unconditional report is twenty lines of ASCII
+  // in the middle of somebody else's suite output. `just test-packs` — the door this command is
+  // named at — sets the variable; every other runner gets the exit code and vitest's own failure
+  // report, which is what it came for.
+  if (process.env["FLOW_MACHINE_REPORT"]) {
+    const missing = STEPS.filter((name) => !finished.has(name));
+    const hole =
+      missing.length === 0
+        ? []
+        : ["", `  … report TRUNCATED — ${missing.join(", ")} did not finish. The failure is above; the lines here are the steps that did.`];
+    process.stdout.write(`\n${[...report, ...hole].join("\n")}\n\n`);
+  }
   for (const dir of [repo, home, bin]) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -324,7 +293,7 @@ describe("the machine test", () => {
     expect(scaffolded.code, scaffolded.stdout + scaffolded.stderr).toBe(0);
     for (const created of ["flow.config.ts", ".githooks/pre-commit", "node_modules/@jawache/flow", "core.hooksPath"])
       expect(scaffolded.stdout).toContain(created);
-    report.push("flow packs — the machine test, in a repo that has never heard of flow", "", "  scaffold   flow init armed the gate, the link and the four registrations");
+    step("scaffold", "flow packs — the machine test, in a repo that has never heard of flow", "", "  scaffold   flow init armed the gate, the link and the four registrations");
   });
 
   it("binds every pack the package ships, and exactly these entries", () => {
@@ -344,7 +313,8 @@ describe("the machine test", () => {
     expect(said.code).toBe(0);
 
     const totals = read.moments.totals;
-    report.push(
+    step(
+      "bind",
       `  bind       ${SHIPPED.length} shipped packs + the repo's own · ${ids.length} entries ` +
         `(${totals["guardrails"]} guardrails · ${totals["breadcrumbs"]} breadcrumbs · ${totals["disabled"]} disabled)`,
       `             ${[...SHIPPED.map((s) => s.pack), `${HOUSE.pack} (this repo's own)`].join(" · ")}`,
@@ -374,10 +344,7 @@ describe("the machine test", () => {
     const total = [...SHIPPED, HOUSE].reduce((sum, entry) => sum + entry.cases, 0);
     expect(ran(said).cases).toBe(total);
 
-    report.push(
-      `  cases      ${total} green over ${measured.reduce((sum, m) => sum + m.guardrails, 0)} guardrails, pack by pack`,
-      "  live",
-    );
+    step("cases", `  cases      ${total} green over ${measured.reduce((sum, m) => sum + m.guardrails, 0)} guardrails, pack by pack`, "  live");
   });
 
   it("refuses the write — the stranger's own pure home, from a parameter", () => {
@@ -385,7 +352,7 @@ describe("the machine test", () => {
     // live, on the rail rather than in a case.
     refusal(
       "write",
-      hook("pre-tool-use", pre("Write", { file_path: join(repo, "core/clock.ts"), content: "export const now = () => new Date();\n" })),
+      hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "core/clock.ts"), content: "export const now = () => new Date();\n" })),
       "fcis.noSideEffectsInPure",
     );
   });
@@ -393,11 +360,11 @@ describe("the machine test", () => {
   it("refuses the delete — the guard surface named by a parameter", () => {
     // One Bash call, two moments: the command itself, and the file the `rm` would take. `rules/`
     // is the stranger's pack folder, handed to the guard pack as `packs`.
-    refusal("delete", hook("pre-tool-use", pre("Bash", { command: "rm rules/house.ts" })), "guard.noDeleteGuardrails");
+    refusal("delete", hook("pre-tool-use", inThisSession("Bash", { command: "rm rules/house.ts" })), "guard.noDeleteGuardrails");
   });
 
   it("refuses the command", () => {
-    refusal("command", hook("pre-tool-use", pre("Bash", { command: "git push --force origin main" })), "git.noForcePush");
+    refusal("command", hook("pre-tool-use", inThisSession("Bash", { command: "git push --force origin main" })), "git.noForcePush");
   });
 
   it("refuses the commit, at git's own hook, and passes the same commit once it is clean", () => {
@@ -412,7 +379,7 @@ describe("the machine test", () => {
     const refused = git(["commit", "-m", "chore: deploy notes"]);
     expect(refused.code, "git refuses when the gate exits non-zero").not.toBe(0);
     expect(refused.stderr).toContain("secrets.noSecretsInCommits");
-    report.push("    commit    ✗ secrets.noSecretsInCommits (at git's own pre-commit hook)");
+    step("commit", "    commit    ✗ secrets.noSecretsInCommits (at git's own pre-commit hook)");
 
     // …and the gate is not simply refusing everything: the same commit lands once the shape is
     // gone, with every exec-shaped rule in the config (the suite, the typecheck, the lint) really

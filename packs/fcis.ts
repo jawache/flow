@@ -61,15 +61,23 @@ export interface Convention {
    * arithmetic that does not belong in a pack, and it needs a second glob dialect inside one to
    * do it. A repo knows one of its own pure files; nothing else does.
    *
-   * The sibling test path the exempt case needs is derived from THIS by the pack's own convention
-   * — `{dir}/{name}.test.ts`, the same template `pureHasTest` ships — so a repo states one fact,
-   * once.
+   * `newPureFileNeedsReason`'s exempt case needs one more path — a pure file that is ALSO a test —
+   * and takes this one with `.test` before its extension. That is not a claim about anybody's
+   * sibling-naming convention: it is `TESTS`, the exemption glob two lines down, made concrete on
+   * a path the repo says is pure, and the two are read together on purpose.
    */
   readonly example: string;
 }
 
-/** The sibling test of a pure file, by the same template `pureHasTest` holds every pure file to. */
-const siblingTest = (file: string): string => `${file.replace(/\.[^./]+$/, "")}.test.ts`;
+/**
+ * What a new file may be without owing a reason: a test. ONE spelling, shared by the exemption and
+ * by the case that proves it — a case matching a pattern the rule does not use would be green
+ * about nothing.
+ */
+const TESTS = "**/*.test.*";
+
+/** `example`, as a test file — the same path, matched by `TESTS`, still inside the repo's pure globs. */
+const asTest = (file: string): string => file.replace(/(\.[^./]+)$/, ".test$1");
 
 export const fcis = definePack("fcis", (repo: Convention) => ({
   fcis: breadcrumb()
@@ -247,7 +255,7 @@ export const fcis = definePack("fcis", (repo: Convention) => ({
     .check(
       commitReason({
         whenAdded: repo.files,
-        except: ["**/*.test.*"],
+        except: [TESTS],
         token: "new-pure-file",
       }),
     )
@@ -257,6 +265,7 @@ export const fcis = definePack("fcis", (repo: Convention) => ({
     // THE REPO'S OWN PURE FILE in all three, for the same reason `pureCovered`'s block case takes
     // it: `whenAdded` is the check's own narrowing, so a path from somebody else's tree is simply
     // not an added pure file and every one of these cases would prove the opposite of what it says.
+    // The exempt one is that same path under `TESTS`, the exemption's own glob.
     .test({
       pass: [
         {
@@ -270,14 +279,13 @@ export const fcis = definePack("fcis", (repo: Convention) => ({
           },
         },
         {
-          // A new sibling TEST is expected, never sprawl — and the exemption is what this proves,
-          // so the path has to be BOTH a pure file and a test, which is what the sibling template
-          // makes it.
+          // A new TEST is expected, never sprawl — and the exemption is what this proves, so the
+          // path has to be BOTH a pure file and a test.
           command: 'git commit -m "test: cover it"',
           world: {
             exec: {
-              "git diff HEAD --name-only": { stdout: siblingTest(repo.example) },
-              "git diff HEAD --name-only --diff-filter=A": { stdout: siblingTest(repo.example) },
+              "git diff HEAD --name-only": { stdout: asTest(repo.example) },
+              "git diff HEAD --name-only --diff-filter=A": { stdout: asTest(repo.example) },
               "git ls-files --others --exclude-standard": { stdout: "" },
             },
           },

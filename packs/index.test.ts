@@ -39,43 +39,13 @@ describe("the packs surface", () => {
     ]);
   });
 
-  // The ten the spec names, spelled out as ten: the list above also carries the checks and the
-  // categories, so "how many packs ship" is a question it cannot answer on its own.
-  it("ships ten packs, and a config binding all ten loads clean", () => {
-    const result = loadConfig(
-      defineConfig([
-        pack(packs.docs),
-        pack(packs.fcis, {
-          files: ["src/pure/**/*.ts"],
-          homes: ["src/pure/**"],
-          coverage: "npm run coverage",
-          example: "src/pure/money.ts",
-        }),
-        pack(packs.git, { release: "npm run release" }),
-        pack(packs.guard, { packs: ["rules/**"] }),
-        pack(packs.justfile, { exempt: [] }),
-        pack(packs.node),
-        pack(packs.secrets, { dx: "npm run dx", encrypt: "npm run seal", names: "npm run names" }),
-        pack(packs.tdd, { run: "npm test" }),
-        pack(packs.typescript, { typecheck: "npm run typecheck", lint: "npm run lint" }),
-        pack(packs.work),
-      ]),
-    );
-    expect(result.ok ? [] : result.refusals).toEqual([]);
-    const bound = new Set(result.ok ? result.entries.map((e) => e.id.split(".")[0]) : []);
-    expect([...bound].sort()).toEqual([
-      "docs",
-      "fcis",
-      "git",
-      "guard",
-      "justfile",
-      "node",
-      "secrets",
-      "tdd",
-      "typescript",
-      "work",
-    ]);
-  });
+  // "AND ALL TEN BIND CLEAN" USED TO BE HERE, and it is not any more: `packs/machine.test.ts`
+  // binds the same ten with a stranger's parameters, in a repo `flow init` scaffolded, and asserts
+  // `flow status` green plus the exact list of all fifty-five entries they produce — strictly more
+  // than a refusal count over ten prefixes, through the built package rather than the source. Two
+  // tests of one claim means the weaker one is what fails first and the stronger one gets read as
+  // a duplicate. What stays here is what that road does not cover: the door's export list, the
+  // parameters that reach a MESSAGE (no case can see one), and the guard pack's scopes.
 
   // THE PARAMETERS, proved where they are meant to land: in the sentence a blocked person reads.
   //
