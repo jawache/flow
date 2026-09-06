@@ -400,8 +400,12 @@ export interface Outcome {
 
 const NOTHING: Outcome = { effects: [], tallies: [] };
 
-/** One block from the guard itself rather than from any rule. */
-function fault(message: string): Block {
+/**
+ * One block from the guard itself rather than from any rule. `entry: null` is how a reader tells
+ * this from a rule refusing. The adapter raises the same shape for a broken config, so this is the
+ * one home the canonical block wears — a field added here reaches both callers.
+ */
+export function fault(message: string): Block {
   return { do: "block", entry: null, message, subject: null, detail: "" };
 }
 

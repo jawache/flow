@@ -43,6 +43,7 @@ import {
   afterCompaction,
   brief,
   categoriesIn,
+  fault,
   guard,
   recorder,
   runRows,
@@ -54,6 +55,7 @@ import {
   type RecordedStep,
   type Row,
 } from "../engine/domain.ts";
+import { quoteArg } from "../checks/domain.ts";
 import {
   appendRows,
   appendSteps,
@@ -170,16 +172,11 @@ export function realWorld(root: string): World {
     },
     git: {
       diff: (path?: string): Promise<string> =>
-        Promise.resolve(runCommand(path ? `git diff -- ${quote(path)}` : "git diff", root).stdout),
+        Promise.resolve(runCommand(path ? `git diff -- ${quoteArg(path)}` : "git diff", root).stdout),
       stagedFiles: (): Promise<string[]> =>
         Promise.resolve(pathLines(runCommand("git diff --cached --name-only --diff-filter=ACM", root).stdout)),
     },
   };
-}
-
-/** One argument, safe inside single quotes — the one place flow builds a command for itself. */
-function quote(argument: string): string {
-  return `'${argument.replace(/'/g, `'\\''`)}'`;
 }
 
 /**
@@ -280,11 +277,6 @@ export async function loadRegime(root: string): Promise<Regime> {
     // nobody learns to read. It is also where the node floor is named, once.
     return { kind: "broken", message: configLoadFault(CONFIG_FILE, (error as Error).message, process.versions.node) };
   }
-}
-
-/** The guard itself is broken. `entry: null` is how a reader tells this from a rule refusing. */
-function fault(message: string): Block {
-  return { do: "block", entry: null, message, subject: null, detail: "" };
 }
 
 /**
