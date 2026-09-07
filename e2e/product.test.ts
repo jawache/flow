@@ -14,7 +14,7 @@
 // driven for real instead of mocked — the seam is the product's, not the suite's.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync, lstatSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync, lstatSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -188,6 +188,22 @@ describe("flow init, run again", () => {
     expect(again.code).toBe(0);
     expect(again.stdout).toContain("already set up");
     expect(JSON.stringify(settings()), "the host's file is untouched, byte for byte").toBe(before);
+  });
+
+  it("replaces a dangling @jawache/flow link, which is one way nothing resolves", () => {
+    const stale = newRepo();
+    try {
+      const scope = join(stale, "node_modules", "@jawache");
+      mkdirSync(scope, { recursive: true });
+      symlinkSync(join(stale, "no-such-checkout"), join(scope, "flow"), "dir");
+      const said = flow(stale, ["init"]);
+      expect(said.code).toBe(0);
+      expect(said.stdout).toContain("node_modules/@jawache/flow →");
+      expect(said.stdout).not.toContain("could not link");
+      expect(existsSync(join(scope, "flow", "package.json")), "the link now resolves to a package").toBe(true);
+    } finally {
+      rmSync(stale, { recursive: true, force: true });
+    }
   });
 
   it("never overwrites a pre-commit hook somebody else put there", () => {

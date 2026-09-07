@@ -15,7 +15,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { chmodSync, existsSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -180,7 +180,13 @@ function perform(root: string, plan: InitPlan): string[] {
     attempt("could not link @jawache/flow", () => {
       const scope = join(root, "node_modules", "@jawache");
       mkdirSync(scope, { recursive: true });
-      symlinkSync(plan.link as string, join(scope, "flow"), "dir");
+      const at = join(scope, "flow");
+      // The plan says link because nothing resolves — and a DANGLING symlink at this path is one
+      // way nothing resolves: a link an earlier tool wrote to a checkout that has since moved.
+      // Replacing it is the same act as creating it. A real directory or a live link is left
+      // alone and the refusal below names the path, because that is somebody's install.
+      if (lstatSync(at, { throwIfNoEntry: false })?.isSymbolicLink() && !existsSync(at)) unlinkSync(at);
+      symlinkSync(plan.link as string, at, "dir");
     });
 
   if (plan.settings !== null)
