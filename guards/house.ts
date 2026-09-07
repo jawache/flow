@@ -142,9 +142,9 @@ export const house = definePack("house", (repo: Terrain) => ({
           // `index.ts` — the public door, the file whose contents ARE the shipped surface — passed
           // the fence that says nothing may import e2e. A claim with a hole where the door is.
           //
-          // Spelled with a star so the dialect reads it as a PATH rather than an npm package: a
-          // layer entry with no slash and no star means `node_modules/<name>`, which is why
-          // "index.ts" would have compiled to a matcher for a package called index.ts.
+          // A star because the layer is EVERY `.ts` at the root, not because a bare name would be
+          // misread — the dialect reads a dotted entry with no slash as a root-relative path now,
+          // so `index.ts` would name that one file correctly. Here the whole level is wanted.
           root: ["*.ts"],
           language: ["language/**"],
           checks: ["checks/**"],

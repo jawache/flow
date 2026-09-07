@@ -20,6 +20,7 @@ import {
   commitMessage,
   defineCheck,
   definePack,
+  gitDirPrefix,
   gitInvocations,
   guardrail,
   jsonInvariant,
@@ -111,10 +112,14 @@ const noGitDiscard = defineCheck(
       const targets = discardPaths(command);
       if (targets.length === 0) return ctx.ok();
       const cleaning = /(^|[;&|\n]\s*)git\s+clean\b/.test(command);
+      // THE COMMAND'S OWN `-C`, copied onto the read, exactly as `commitReason` copies it: a
+      // `git -C ~/other-repo checkout -- x` is about THAT repo's tree, and a status read here would
+      // answer about files the command was never aimed at — clean ones, so the loss goes through.
+      const git = `git ${gitDirPrefix(command)}`.trimEnd();
       // `quoteArg` rather than a pair of typed quotes: a path with an apostrophe in it closes a
       // hand-rolled quote and the rest of the pathspec becomes shell. One quoter in this package,
       // and this is the call that was the second one.
-      const status = await ctx.exec(`git status --porcelain -- ${targets.map(quoteArg).join(" ")}`);
+      const status = await ctx.exec(`${git} status --porcelain -- ${targets.map(quoteArg).join(" ")}`);
       if (status.code !== 0) return ctx.ok(); // not a repo, or a bad pathspec — git owns that error
       const dirty = dirtyIn(status.stdout, cleaning);
       if (dirty.length === 0) return ctx.ok();
@@ -202,7 +207,11 @@ const noHandEditedVersion = defineCheck(
       if (message === null) return ctx.ok();
       if (isReleaseCommit(message)) return ctx.ok(); // the one shape that may write it
       // `git diff HEAD` — staged AND unstaged, because `git commit -a` sweeps the second lot in.
-      const diff = await ctx.exec(`git diff HEAD -- ${quoteArg(opts.versionFile)}`);
+      // Prefixed with the command's own `-C`, the way `commitReason` is: a commit aimed at another
+      // repo has to be judged against that repo's diff, or this vetoes it over a version field it
+      // cannot see.
+      const git = `git ${gitDirPrefix(ctx.command ?? "")}`.trimEnd();
+      const diff = await ctx.exec(`${git} diff HEAD -- ${quoteArg(opts.versionFile)}`);
       if (diff.code !== 0) return ctx.ok();
       if (!changesVersion(diff.stdout)) return ctx.ok();
       return ctx.fail(
@@ -341,19 +350,52 @@ export const git = definePack("git", (repo: Release) => ({
           command: "git status\ngit checkout -- a.ts",
           world: { exec: { "git status --porcelain": { stdout: " M a.ts" } } },
         },
+        // AIMED AT ANOTHER REPO, and judged there. The recorded world answers only the `-C` form,
+        // so a check that read this repo's status instead would reach a question the case never
+        // answered and fail saying so — which is what makes this case evidence about the routing
+        // rather than about the checkout.
+        {
+          command: "git -C ../other checkout -- src/x.ts",
+          world: { exec: { "git -C '../other' status --porcelain": { stdout: " M src/x.ts" } } },
+        },
       ],
     }),
 
   noForcePush: guardrail()
     .at(command)
     .description("Blocks a force-push — rewriting pushed history is the one loss a stash cannot undo.")
-    .check(banCommands({ ban: ["git\\s+push[^\\n]*\\s(--force|-f)(\\s|$)", "git\\s+push[^\\n]*--force-with-lease"] }))
+    // ANCHORED TO A COMMAND POSITION — the start of the line, or just past a shell operator —
+    // exactly as `work.noAgentInboxItems` is, and measured the same way: unanchored, this pattern
+    // refused a script four times over for EDITING the rule's own fixture text, because the words
+    // sat inside a heredoc it was writing. Four false refusals, and a rule that cries wolf is one
+    // agents learn to route around.
+    .check(
+      banCommands({
+        ban: [
+          "(?:^|[\\n;&|(]\\s*)\\s*git\\s+push[^\\n]*\\s(--force|-f)(\\s|$)",
+          "(?:^|[\\n;&|(]\\s*)\\s*git\\s+push[^\\n]*--force-with-lease",
+        ],
+      }),
+    )
     .message(
       "Force-push rewrites history that other clones (and every open PR) already have — the one loss no stash can undo. Push a new commit that corrects the old one. A repo whose workflow genuinely rewrites a scratch remote disables this entry in flow.config.ts, visibly.",
     )
     .test({
-      pass: ["git push origin main"],
-      block: ["git push --force origin main", "git push -f", "git push --force-with-lease origin main"],
+      pass: [
+        "git push origin main",
+        // PROSE THAT MENTIONS THE VERB IS NOT AN INVOCATION. A heredoc writing a note about the
+        // ban carries the words in a BODY line, where no command position is — which is the whole
+        // difference the anchor reads, and the false positive it was added for.
+        "cat > notes.md <<'EOF'\nnever run git push --force here\nEOF",
+      ],
+      block: [
+        "git push --force origin main",
+        "git push -f",
+        "git push --force-with-lease origin main",
+        // …and a POSITION is not the start of the string: a real force-push chained behind another
+        // command is still one, which is the half an anchor written as `^` alone would let through.
+        "git status && git push --force origin main",
+      ],
     }),
 
   conventionalCommitFormat: guardrail()
@@ -499,6 +541,17 @@ export const git = definePack("git", (repo: Release) => ({
           {
             command: 'git commit -m "fix: a thing"',
             world: { exec: { "git diff HEAD -- 'package.json'": { stdout: '-  "version": "1.0.0"\n+  "version": "1.0.0-rc.1"' } } },
+          },
+          // A COMMIT AIMED ELSEWHERE, read where it lands. The world answers only the `-C` form,
+          // so a check that diffed this repo would ask a question the case never answered and fail
+          // naming it — the case is about which repo is read, not about the version.
+          {
+            command: 'git -C ../other commit -m "fix: a thing"',
+            world: {
+              exec: {
+                "git -C '../other' diff HEAD -- 'package.json'": { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' },
+              },
+            },
           },
         ],
       }),

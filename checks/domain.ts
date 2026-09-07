@@ -1240,13 +1240,23 @@ export function globToRe(glob: string): string {
 }
 
 /**
- * A layer entry → a module-path regex or a marker. `node:*` → the builtin marker; a bare name (no
- * slash, no star) → an npm package under node_modules; anything else → a path glob.
+ * A layer entry → a module-path regex or a marker. `node:*` → the builtin marker; a bare name with
+ * no slash, no star and no DOT → an npm package under node_modules; anything else → a path glob.
+ *
+ * THE DOT IS WHAT TELLS A ROOT FILE FROM A PACKAGE, and it is a fix rather than a nicety. Read as a
+ * package name, an entry for a file at the repo root — `glob.ts`, `index.ts` — compiled to a matcher
+ * for `node_modules/glob.ts`, so the layer covered nothing at all while `flow status` reported the
+ * fence armed. It bit twice in this package alone, and only the commit gate caught either.
+ *
+ * The mirror case is the cost, and it has a spelling already: an npm package whose NAME carries a
+ * dot (`socket.io`) now reads as a file, and is named the way a SCOPED package has always had to be
+ * named here — as a path under node_modules, behind a leading globstar. One escape, already in use,
+ * rather than a second convention.
  */
 export function entryToMatcher(entry: string): { core?: true; path?: string } {
   if (entry === "node:*") return { core: true };
   if (entry.startsWith("node:")) return { path: `^${escapeRe(entry)}$` };
-  if (entry.includes("/") || entry.includes("*")) return { path: globToRe(entry) };
+  if (entry.includes("/") || entry.includes("*") || entry.includes(".")) return { path: globToRe(entry) };
   return { path: `node_modules/${escapeRe(entry)}(/|$)` };
 }
 

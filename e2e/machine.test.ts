@@ -31,6 +31,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   buildBundles,
+  cleanBundles,
   fixturePack,
   newRepo,
   pre,
@@ -75,7 +76,7 @@ const SHIPPED: readonly Shipped[] = [
     guardrails: 7,
   },
   { pack: "flow", bind: `pack(flow, { packs: ["rules/**"] })`, cases: 2, guardrails: 1 },
-  { pack: "git", bind: `pack(git, { release: "./ci.sh release" })`, cases: 44, guardrails: 7 },
+  { pack: "git", bind: `pack(git, { release: "./ci.sh release" })`, cases: 48, guardrails: 7 },
   { pack: "justfile", bind: `pack(justfile, { exempt: [] })`, cases: 13, guardrails: 2 },
   { pack: "node", bind: "pack(node)", cases: 14, guardrails: 2 },
   {
@@ -286,6 +287,7 @@ afterAll(() => {
     process.stdout.write(`\n${[...report, ...hole].join("\n")}\n\n`);
   }
   for (const dir of [repo, home, bin]) rmSync(dir, { recursive: true, force: true });
+  cleanBundles();
 });
 
 describe("the machine test", () => {

@@ -37,12 +37,13 @@ import { house } from "./guards/house.ts";
 // fence's `pure` layer. Nobody restates it: a second copy is how the rails move and the fence does
 // not, with both still reading as armed.
 //
-// `**/glob.ts` rather than the bare `glob.ts` the file is actually called, and the leading `**/`
-// is load-bearing in ONE of the two readers: the depcruise dialect reads an entry with no slash
-// and no star as an NPM PACKAGE NAME, so `glob.ts` compiled to a matcher for
-// `node_modules/glob.ts` and the fence quietly stopped covering the one shared file of the
-// product. Both readers agree on this spelling.
-const PURE = ["**/domain.ts", "**/glob.ts"];
+// `glob.ts` is spelled as the file is actually called. It used to carry a leading `**/` it did not
+// want, because the depcruise dialect read an entry with no slash and no star as an NPM PACKAGE
+// NAME — so the plain spelling compiled to a matcher for `node_modules/glob.ts` and the fence
+// quietly stopped covering the one shared file of the product. The dialect now reads a dot with no
+// slash as a root-relative path, so both readers agree on the plain name, and the fence covers that
+// file rather than anything anywhere ending in it.
+const PURE = ["**/domain.ts", "glob.ts"];
 
 export default defineConfig([
   // ── the guard's own orientation and self-protection ──

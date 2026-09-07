@@ -12,6 +12,7 @@
 
 import { build } from "esbuild";
 import { chmodSync, mkdirSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // THE PACKAGE ROOT — flow/, not the repo. See the note above.
@@ -40,14 +41,25 @@ const production = process.argv.includes("--production");
 // package is a `Symbol.for`, so a pack built against one copy and bound by a config using the
 // other still matches. That is the case the branding was chosen for.
 //
-// The library halves also need TYPES, which esbuild does not emit — `just build-flow` runs
+// The library halves also need TYPES, which esbuild does not emit — `just build` runs
 // `tsc -p tsconfig.build.json` for that, and its `include` already sweeps packs/. Shipping the .ts
 // source instead is not an option: node refuses to strip types under node_modules.
 const bundles = [
-  { entry: "flow.ts", out: "dist/flow.mjs", binary: true },
-  { entry: "index.ts", out: "dist/index.mjs", binary: false },
-  { entry: "packs/index.ts", out: "dist/packs.mjs", binary: false },
+  { entry: "flow.ts", out: "flow.mjs", binary: true },
+  { entry: "index.ts", out: "index.mjs", binary: false },
+  { entry: "packs/index.ts", out: "packs.mjs", binary: false },
 ];
+
+// WHERE THE THREE LAND — `dist/` beside this file, unless `--outdir <path>` says otherwise.
+//
+// The flag exists for the end-to-end suites and for nothing else. `dist/` is not a build artefact
+// in this checkout, it is the LIVE GUARD: the hooks and the commit gate execute dist/flow.mjs and
+// flow.config.ts resolves `@jawache/flow` to dist/index.mjs. Every one of those suites builds the
+// package on the way in, so building into `dist/` rebuilt the running guard as a side effect — and
+// a run stopped part-way left it disagreeing with the source, which wedged the guard once and
+// produced a false test count. They pass a temp folder now; nothing else does.
+const flagged = process.argv.indexOf("--outdir");
+const outDir = flagged === -1 ? fileURLToPath(new URL("dist/", root)) : resolve(process.argv[flagged + 1] ?? "");
 
 // ONE external, and the asymmetry between flow's two dependencies is the whole explanation.
 //
@@ -62,10 +74,10 @@ const bundles = [
 // broken promise on first run.
 const EXTERNAL = ["@ast-grep/napi"];
 
-mkdirSync(fileURLToPath(new URL("dist/", root)), { recursive: true });
+mkdirSync(outDir, { recursive: true });
 
 for (const { entry, out, binary } of bundles) {
-  const outfile = fileURLToPath(new URL(out, root));
+  const outfile = join(outDir, out);
   await build({
     entryPoints: [fileURLToPath(new URL(entry, root))],
     bundle: true,

@@ -1368,6 +1368,12 @@ describe("the config surface — what a write may target while the guard is brok
     expect(configImports(`import { house } from "./guards/house.ts";\nthis is not typescript(((`)).toStrictEqual([
       "guards/house.ts",
     ]);
+    // A `from '…'` phrase inside a QUOTED MESSAGE is harvested too, and that is the accepted
+    // behaviour rather than a miss: separating a real import from a sentence that quotes one takes
+    // a parser, and the file being asked about is the one that will not parse. Pinned here because
+    // it only ever WIDENS the repair surface, and only while the config is already refusing every
+    // other write — so the cost is one extra repairable path at a moment when nothing can commit.
+    expect(configImports(`.message("write it as: import { x } from './guards/x.ts'")`)).toStrictEqual(["guards/x.ts"]);
   });
 });
 

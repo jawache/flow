@@ -33,16 +33,56 @@
 //                       flow neither spawns nor configures — can find the binary under test.
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 /** The package root, from this file rather than from the runner's cwd. */
 export const PACKAGE = fileURLToPath(new URL("../", import.meta.url));
+
+/** This run's throwaway package root, once something has asked for it. */
+let bundleRoot: string | null = null;
+
+/**
+ * WHERE THIS RUN'S BUNDLES LIVE — a throwaway package root under the OS temp directory, and never
+ * `dist/`.
+ *
+ * `dist/` is not a build artefact in this checkout, it is THE LIVE GUARD: this repo's git hook and
+ * commit gate execute `dist/flow.mjs`, and its own `flow.config.ts` resolves `@jawache/flow` to
+ * `dist/index.mjs`. All three suites build the package on the way in, so building into `dist/` also
+ * rebuilt the guard the developer running the suite is standing on — and a run stopped between a
+ * fixture mutation and its restore left that guard disagreeing with its source. It wedged the guard
+ * once and produced a false test count once, which is exactly one more time than a test may edit
+ * the thing that judges the repo.
+ *
+ * A PACKAGE root rather than a bare folder of bundles, because two things walk it. `flow init`
+ * finds its own package by climbing to a `package.json` named `@jawache/flow` and links the guarded
+ * repo at whatever it finds, so the copy is what makes the link resolve; and the `exports` map in
+ * that same file is what turns `@jawache/flow` and `@jawache/flow/packs` into the two library
+ * bundles. `node_modules` is a symlink to the real one — the bundles keep one external, and the
+ * checks that shell out want the same tools the checkout has.
+ */
+function packageUnderTest(): string {
+  if (bundleRoot !== null) return bundleRoot;
+  const root = mkdtempSync(join(tmpdir(), "flow-dist-"));
+  copyFileSync(join(PACKAGE, "package.json"), join(root, "package.json"));
+  symlinkSync(join(PACKAGE, "node_modules"), join(root, "node_modules"), "dir");
+  bundleRoot = root;
+  return root;
+}
+
+/**
+ * The package this run built, as `flow init` will report it — the stand-in for the checkout.
+ *
+ * Exported for ONE reader: the README transcript in product.test.ts quotes the link line `flow init`
+ * prints, and the path in it is now this directory rather than the checkout.
+ */
+export const builtPackage = (): string => packageUnderTest();
+
 /** The built binary — the thing under test, always. A suite that drove the source would prove the
  * one thing a shipped package cannot rely on. */
-export const BINARY = join(PACKAGE, "dist", "flow.mjs");
+export const binary = (): string => join(packageUnderTest(), "dist", "flow.mjs");
 
 /** What a run answers with: the three edges a hook, a gate or a person actually reads. */
 export interface Ran {
@@ -70,7 +110,7 @@ function env(repo: string, rig: Rig): NodeJS.ProcessEnv {
 
 /** The built binary, run in a repo, with whatever of the world the caller has set up. */
 export function flow(repo: string, args: readonly string[], rig: Rig = {}, stdin = ""): Ran {
-  const result = spawnSync("node", [BINARY, ...args], {
+  const result = spawnSync("node", [binary(), ...args], {
     cwd: repo,
     input: stdin,
     encoding: "utf8",
@@ -133,18 +173,29 @@ export const settingsHome = (prefix = "flow-home-"): string => mkdtempSync(join(
  */
 export function shimBin(prefix = "flow-bin-"): string {
   const bin = mkdtempSync(join(tmpdir(), prefix));
-  writeFileSync(join(bin, "flow"), `#!/bin/sh\nexec node ${JSON.stringify(BINARY)} "$@"\n`, { mode: 0o755 });
+  writeFileSync(join(bin, "flow"), `#!/bin/sh\nexec node ${JSON.stringify(binary())} "$@"\n`, { mode: 0o755 });
   return bin;
 }
 
 /**
- * The bundles, built.
+ * The bundles, built — into this run's throwaway package root, never into `dist/`. See above.
  *
  * The BUILT ones, deliberately, in every suite that uses this: the library bundle is what a
  * scaffolded config resolves to and the packs bundle is what `@jawache/flow/packs` resolves to, so
  * a package that only works from source is exactly the failure this build step exists to catch.
  */
 export function buildBundles(): Ran {
-  const result = spawnSync("node", [join(PACKAGE, "esbuild.mjs")], { encoding: "utf8" });
+  const args = [join(PACKAGE, "esbuild.mjs"), "--outdir", join(packageUnderTest(), "dist")];
+  const result = spawnSync("node", args, { encoding: "utf8" });
   return { stdout: result.stdout, stderr: result.stderr, code: result.status ?? -1 };
+}
+
+/** The throwaway package root, gone. Every suite that built one calls this in its `afterAll`. */
+export function cleanBundles(): void {
+  if (bundleRoot === null) return;
+  // The `node_modules` inside is a SYMLINK, and a recursive remove unlinks it rather than walking
+  // into it — the same reason a suite can delete a temp repo still holding the link `flow init`
+  // made into this package.
+  rmSync(bundleRoot, { recursive: true, force: true });
+  bundleRoot = null;
 }

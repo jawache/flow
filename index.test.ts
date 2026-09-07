@@ -32,6 +32,7 @@ describe("the public surface", () => {
       "depcruise",
       "entriesOrThrow",
       "execPasses",
+      "gitDirPrefix",
       "gitInvocations",
       "givesReason",
       "guardrail",

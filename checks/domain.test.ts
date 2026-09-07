@@ -945,6 +945,14 @@ describe("the depcruise dialect", () => {
     expect(entryToMatcher("node:path")).toEqual({ path: "^node:path$" });
     expect(entryToMatcher("vitest")).toEqual({ path: "node_modules/vitest(/|$)" });
     expect(entryToMatcher("src/**")).toEqual({ path: "^src/" });
+    // A DOT AND NO SLASH IS A FILE AT THE ROOT, not a package: read as a package these compiled to
+    // `node_modules/glob.ts`, and the layer they were written for covered nothing while the fence
+    // still read as armed.
+    expect(entryToMatcher("glob.ts")).toEqual({ path: "^glob\\.ts$" });
+    expect(entryToMatcher("index.ts")).toEqual({ path: "^index\\.ts$" });
+    // …and the mirror case keeps the spelling a scoped package already needs: a dotted package name
+    // is a PATH under node_modules, never a bare word.
+    expect(entryToMatcher("**/node_modules/socket.io/**")).toEqual({ path: "^.*node_modules/socket\\.io/" });
   });
 
   it("layersMatcher ORs a layer's paths and lifts builtins to a dependency type", () => {

@@ -20,6 +20,8 @@ import { tmpdir } from "node:os";
 import {
   PACKAGE,
   buildBundles,
+  builtPackage,
+  cleanBundles,
   hook,
   newRepo as freshRepo,
   pre,
@@ -61,6 +63,7 @@ beforeAll(() => {
 
 afterAll(() => {
   for (const dir of [repo, home, bin]) rmSync(dir, { recursive: true, force: true });
+  cleanBundles();
 });
 
 describe("flow init — a repo that has never heard of flow", () => {
@@ -211,6 +214,11 @@ describe("flow init, run again", () => {
 // THE THREE SUBSTITUTIONS are all paths and are named here: the repo, the host's config directory
 // and this checkout are different on every machine, so the README quotes a settled spelling of each
 // and this puts it back before comparing. Nothing else is touched — every word is the binary's.
+//
+// "This checkout" is TWO paths, and the second is the suite's own doing: the package under test is
+// built into a throwaway root so a test run never rewrites the live guard, so the link `flow init`
+// reports points there rather than at the checkout. A reader following the README has one of them
+// and it is spelled the same way.
 
 const DEMO_REPO = "/tmp/flow-demo";
 const CHECKOUT = "…/flow";
@@ -228,6 +236,8 @@ function asQuoted(output: string, repo: string, settingsHome: string): string {
   return output
     .replaceAll(realpathSync(repo), DEMO_REPO)
     .replaceAll(repo, DEMO_REPO)
+    .replaceAll(realpathSync(builtPackage()), CHECKOUT)
+    .replaceAll(builtPackage(), CHECKOUT)
     .replaceAll(PACKAGE.replace(/\/$/, ""), CHECKOUT)
     .replaceAll(settingsHome, "~/.claude")
     .trim();

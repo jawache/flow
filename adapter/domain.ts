@@ -126,6 +126,13 @@ export const CONFIG_FILE = "flow.config.ts";
  * root, so those are dropped too: the config sits at the repo root and the surface is
  * repo-relative or it is nothing. A leading dot in a FOLDER name is ordinary and is kept —
  * `./.guard/house.ts` is a pack like any other.
+ *
+ * A `from '…'` phrase inside a QUOTED STRING is harvested as well — a rule whose `.message(…)`
+ * spells an import line puts that path on the surface though no import named it. ACCEPTED, not
+ * overlooked: telling a real import from a sentence quoting one takes a parser, and a parser is
+ * the one thing a file that will not parse cannot give. The cost is bounded and one-directional —
+ * the surface only ever WIDENS, it widens only while the config is already refusing every other
+ * write, and the commit gate goes on refusing until the config loads green.
  */
 export function configImports(configText: string): readonly string[] {
   const out: string[] = [];

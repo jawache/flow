@@ -106,8 +106,15 @@ export { substitutionInProse, SUBSTITUTION_MESSAGE } from "./checks/domain.ts";
 // a command usually goes on to BUILD one for `ctx.exec`, and a path interpolated raw is a path
 // whose apostrophe ends the quoting. Written by hand it is a one-liner everybody gets almost
 // right; there is one of them in this package and it is this.
+//
+// `gitDirPrefix` is the sixth, and it answers the question every command rule that shells out has
+// to ask before it reads anything: WHICH REPO is this command about. A `git -C ~/other-repo commit`
+// judged against this repo's index once vetoed another repo's commit over files it could not see.
+// `commitReason` carries the fix; the packs that shell out live outside this package, so the fix
+// has to come through the door with them or each one re-derives it and one of them gets it wrong.
 export {
   commitMessage,
+  gitDirPrefix,
   gitInvocations,
   givesReason,
   quoteArg,
