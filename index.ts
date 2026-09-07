@@ -85,6 +85,17 @@ export {
   type RequireEdge,
 } from "./checks/domain.ts";
 
+// The one shared PATTERN, and the sentence that goes with it — the pair `banCommands` above is
+// most often configured with, and the only piece of a rule's content this door carries.
+//
+// It is here because TWO PACKS say it: `git` polices `git commit` and the `gh` verbs, `work`
+// polices the lifecycle verbs that write to an append-only journal, and the tail of the expression
+// — an open double quote reaching a backtick, without crossing a quoted heredoc — is identical.
+// Anything two packs share is a core check by the rule F5 settled; the alternative was a shared
+// module beside the packs, which is what this was, and it had grown four unrelated sections around
+// this pair before anyone noticed it had become a bag.
+export { substitutionInProse, SUBSTITUTION_MESSAGE } from "./checks/domain.ts";
+
 // The four readings of a command line a bespoke check needs, and the reason they are public: a
 // repo writing its own command rule otherwise writes its own shell tokeniser, and a tokeniser that
 // does not know a newline separates commands is how `git commit -m "bad"` sails through as line 2

@@ -60,6 +60,8 @@ import {
   runCases,
   siblingExists,
   skipForChanged,
+  substitutionInProse,
+  SUBSTITUTION_MESSAGE,
   symbolsInSibling,
   textBan,
   tokenizeCommand,
@@ -151,6 +153,54 @@ describe("banCommands", () => {
     const check = banCommands({ ban: [`git commit[\\s\\S]*${trailer}:`] });
     expect(await run(check, "command", 'git commit -m "fix: a thing"')).toBeNull();
     expect(await run(check, "command", `git commit -m "fix: a thing\n\n${trailer}: someone"`)).toContain("banned");
+  });
+});
+
+// A BUILDER, so its cases are about the expression it returns rather than about one pack's heads.
+// Both real bindings (`git`'s commit and gh verbs, `work`'s lifecycle verbs) carry their own
+// `.test({ pass, block })` cases; what those cannot show is the tail in isolation — that an
+// argument already CLOSED before the prose does not open the scan, and that a quoted heredoc is
+// genuinely safe while an unquoted one is not. Each of those was a bug in a hand-rolled copy.
+describe("substitutionInProse", () => {
+  const caught = (command: string): boolean => new RegExp(substitutionInProse(["say"])).test(command);
+
+  it("catches a backtick inside an open double-quoted argument", () => {
+    expect(caught('say "run `just test` first"')).toBe(true);
+  });
+
+  it("leaves a single-quoted argument alone — backticks are literal there", () => {
+    expect(caught("say 'run `just test` first'")).toBe(false);
+  });
+
+  it("walks past arguments that are already CLOSED before deciding a quote is open", () => {
+    // `--flag "value"` is a complete pair, so the backtick after it sits outside any double quote
+    // and nothing would splice. A tail that counted quotes rather than pairing them blocks this.
+    expect(caught('say --flag "value" and then `date`')).toBe(false);
+    expect(caught('say --flag "value" --text "run `date`"')).toBe(true);
+  });
+
+  it("treats a QUOTED heredoc as the sanctioned way to carry backticks, and an unquoted one as live", () => {
+    expect(caught("say -F - <<'EOF'\nrun `just test`\nEOF")).toBe(false);
+    expect(caught('say -F - <<EOF\nrun "`just test`"\nEOF')).toBe(true);
+  });
+
+  it("spans the newline, which is why banCommands matches a command whole", () => {
+    expect(caught('say "subject\n\nbody with `date` in it"')).toBe(true);
+  });
+
+  it("takes several heads, so two packs share one tail without either copying it", () => {
+    const both = new RegExp(substitutionInProse(["git\\s+commit\\b", "work\\s+plan\\b"]));
+    expect(both.test('git commit -m "a `date`"')).toBe(true);
+    expect(both.test('work plan decision "a `date`"')).toBe(true);
+    expect(both.test('gh pr create --body "a `date`"')).toBe(false);
+  });
+
+  it("says the mechanism, the absence of an undo and the fix — the sentence both packs print", () => {
+    expect(SUBSTITUTION_MESSAGE).toContain("the shell RUNS it");
+    expect(SUBSTITUTION_MESSAGE).toContain("no undo");
+    expect(SUBSTITUTION_MESSAGE).toContain("SINGLE-quote");
+    // And it never names a verb: one sentence, whichever pack caught the command.
+    expect(SUBSTITUTION_MESSAGE).not.toContain("gh pr");
   });
 });
 

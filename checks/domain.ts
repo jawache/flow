@@ -158,6 +158,49 @@ export const banCommands = defineCheck(
     },
 );
 
+/**
+ * A `banCommands` pattern for: a command that writes permanent prose, with a BACKTICK inside a
+ * double-quoted argument.
+ *
+ * Reads as: <one of `heads`> … <an OPEN double quote> … <a backtick>, where the quote-pair walk
+ * skips arguments that are already closed, and both scans refuse to cross a QUOTED heredoc opener
+ * — inside one the shell substitutes nothing, so it is the sanctioned way to carry backticks and
+ * must not be blocked. An unquoted `<<EOF` is deliberately still caught: there, substitution
+ * really does happen. This is the one pattern that has to span a newline, and the reason
+ * `banCommands` matches a command whole rather than line by line.
+ *
+ * A BUILDER over a `heads` list rather than one frozen expression, because the commands that
+ * record prose belong to different packs: `git commit` and `gh pr|issue` are `git`'s, which every
+ * repo binds, and the `work …` verbs are `work`'s, which only a repo running the work lifecycle
+ * binds. One tail, two heads, and neither pack carries a copy of the other's — a second copy of
+ * this expression is how the two would drift while both still read as armed.
+ *
+ * WHY IT IS CORE and not a helper beside the packs, which is where it lived until F5: TWO PACKS
+ * SHARE IT, and that is the whole rule the fold settled — anything two packs share is a core
+ * check. A shared file sitting beside the packs is a library with two users and no owner, and this
+ * one proved it by growing four unrelated sections around this pair. Here it sits next to the
+ * check it builds a pattern for, and the door that exports one exports both.
+ */
+export function substitutionInProse(heads: readonly string[]): string {
+  return `(?:${heads.join("|")})` + "[^\"`]*(?:\"(?:(?!<<-?')[^\"])*\"[^\"`]*)*\"(?:(?!<<-?')[^\"])*`";
+}
+
+/**
+ * What a blocked prose-writing command is told, and it is the same sentence whichever pack caught
+ * it: the mechanism, the absence of an undo, the fix, and the one false positive the rule owns.
+ *
+ * ONE constant rather than a message per pack. The sentence never named the verb that was blocked
+ * — it names the shape — so two copies would be two places for the same advice to drift, and the
+ * copy that drifted would still read as correct.
+ */
+export const SUBSTITUTION_MESSAGE = [
+  "You are recording prose through a shell command, and a backtick inside a DOUBLE-quoted argument is not Markdown — the shell RUNS it and splices its output into your text before the command ever sees it.",
+  "On an append-only record there is no undo: no amend, no redact. And once the binary has argv the splice has already happened, so this is the only moment it can be caught.",
+  "Fix: SINGLE-quote the argument (backticks are literal there), or feed the prose on stdin with a QUOTED heredoc — `git commit -F -` plus `<<'EOF'`, which this rule treats as safe.",
+  "ALREADY single-quoted and still blocked? Then your PROSE carries an unbalanced double quote before the backtick, and the matcher cannot tell that quote from a real open argument. Nothing would splice — this one is the rule's cost, not your mistake. Balance the quote, drop it, or use the heredoc; do not go back to double quotes to make it pass.",
+  "Measured four times. A `work plan decision` whose double-quoted text carried backticks around a command name executed it and spliced a whole task-list dump into the Decision Log. A justfile @echo with backticks ran `npm unlink`, silently undoing the link the message was announcing.",
+].join("\n");
+
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // PATHS — claims about where a file is, never about what is in it
 // ════════════════════════════════════════════════════════════════════════════════════════════════

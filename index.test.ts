@@ -14,6 +14,7 @@ describe("the public surface", () => {
     expect(Object.keys(flow).sort()).toEqual([
       "FlowConfigError",
       "REFUSAL_CODES",
+      "SUBSTITUTION_MESSAGE",
       "astGrep",
       "banCommands",
       "breadcrumb",
@@ -45,6 +46,7 @@ describe("the public surface", () => {
       "session",
       "siblingExists",
       "spawnedAs",
+      "substitutionInProse",
       "symbolsInSibling",
       "textBan",
       "tokenizeCommand",

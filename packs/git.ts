@@ -12,8 +12,20 @@
 // rather than flattened because `git.node.versionIsSemver` is what the entry is called, and a
 // pack's shape is what a reader navigates it by.
 
-import { banCommands, breadcrumb, command, commit, definePack, guardrail, jsonInvariant, session, write } from "../index.ts";
-import { conventionalCommit, noGitDiscard, noHandEditedVersion, substitutionInProse, SUBSTITUTION_MESSAGE } from "./checks.ts";
+import {
+  banCommands,
+  breadcrumb,
+  command,
+  commit,
+  definePack,
+  guardrail,
+  jsonInvariant,
+  session,
+  substitutionInProse,
+  SUBSTITUTION_MESSAGE,
+  write,
+} from "../index.ts";
+import { conventionalCommit, noGitDiscard, noHandEditedVersion } from "./checks.ts";
 
 /** The type words this repo accepts. Stated, never defaulted — the entry is the whole rule. */
 const TYPES = ["feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert", "release"];
@@ -146,7 +158,8 @@ export const git = definePack("git", (repo: Release) => ({
   // verbs that open a PR or an issue. It arrived here when the packs moved into the package: it
   // was one entry in `guard` covering these AND the `work …` lifecycle verbs, which is two packs'
   // worth of commands in one rule, so the head split along the pack line and the tail is shared
-  // (`substitutionInProse` in checks.ts). A repo that binds `work` gets the other head there; a
+  // (`substitutionInProse`, a core check beside `banCommands`). A repo that binds `work` gets the
+  // other head there; a
   // repo that binds only `git` still gets this one, which is the half every repo has.
   noShellSubstitutionInProse: guardrail()
     .at(command)

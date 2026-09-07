@@ -27,8 +27,17 @@
 // The agent type names and brief needles below are TODAY'S work, and this pack moves into work's
 // own package when work-core rewrites these rules as edit-time rails over the plan.
 
-import { banCommands, command, defineCategory, definePack, guardrail, spawnedAs, write } from "../index.ts";
-import { substitutionInProse, SUBSTITUTION_MESSAGE } from "./checks.ts";
+import {
+  banCommands,
+  command,
+  defineCategory,
+  definePack,
+  guardrail,
+  spawnedAs,
+  substitutionInProse,
+  SUBSTITUTION_MESSAGE,
+  write,
+} from "../index.ts";
 
 /**
  * The harness's typeless spawn buckets — the ONLY ones whose brief may be read.
@@ -155,7 +164,8 @@ export const work = definePack("work", {
     }),
 
   // The lifecycle's half of the prose-substitution rule; `git`'s half covers `git commit` and the
-  // two `gh` verbs, and both are built from the one tail in checks.ts. The verbs named here write
+  // two `gh` verbs, and both are built from the one tail in core, beside `banCommands`. The verbs
+  // named here write
   // to an APPEND-ONLY journal, which is the half of the rule with no undo of any kind.
   noShellSubstitutionInProse: guardrail()
     .at(command)
