@@ -28,20 +28,22 @@ import {
 } from "@jawache/flow";
 
 /**
- * HOW A DISPATCH SURFACE REGISTERS A VERB, as regexes over a diff's ADDED lines: a `case "x":` in a
- * switch, a `command === "x"` in a pre-journal guard, a `sub === "x"` in a subcommand router.
+ * HOW `flow.ts` REGISTERS A VERB, as a regex over a diff's ADDED lines — and it is ONE shape,
+ * because that is how many shapes the file has: an `else if (verb === "x")` chain, top to bottom.
  *
- * A PARAMETER of the binding rather than a constant inside a check, and that is the lesson of the
- * check this replaced: it hard-coded these three shapes where no reader of the entry could see
- * them. `flow.ts` spells only the first today; the other two are here because the surface is free
- * to grow one, and a ratchet that quietly stops watching a registration form is the same silent
- * failure a stale `known` list is.
+ * IT WAS THREE, AND ALL THREE WERE WRONG. The list read `case "x":`, `command === "x"` and
+ * `sub === "x"` — the work CLI's shapes, inherited wholesale when the ratchet was a shared check
+ * with those spellings baked in. `flow.ts` contains not one `case` line and never has, so the entry
+ * below could not fire on a real diff of the file it names. It loaded, it counted, `flow status`
+ * showed it armed, and its own cases were green because they were written against synthetic lines
+ * this file cannot produce. That is the exact failure flow exists to delete, sitting in flow's own
+ * house pack, and it was equally dead before the parameter existed — making the shapes visible at
+ * the binding is what let anyone see it.
+ *
+ * So the rule now is: the list is the surface's fact, not a fleet's. A shape this file does not
+ * spell does not belong here, and the block case below is driven off a line `flow.ts` really has.
  */
-const REGISTERS = [
-  'case\\s+"([a-z][a-z-]*)"\\s*:',
-  'command\\s*===\\s*"([a-z][a-z-]*)"',
-  'sub\\s*===\\s*"([a-z][a-z-]*)"',
-];
+const REGISTERS = ['verb\\s*===\\s*"([a-z][a-z-]*)"'];
 
 /** What this repo calls pure. The import fence's `pure` layer is exactly this list. */
 export interface Terrain {
@@ -134,6 +136,16 @@ export const house = definePack("house", (repo: Terrain) => ({
           // Spelled as a PATH glob, not as a bare name: the dialect reads a bare name as an npm
           // package and anchors it, which cannot work for a SCOPED package.
           "astgrep-lib": ["**/node_modules/@ast-grep/napi/**"],
+          // THE PACKAGE ROOT — index.ts, flow.ts, glob.ts, errors.ts, version.ts and the three
+          // test files beside them. A layer for ONE reason: without it these files belong to no
+          // layer at all, so every `from:` rule below skips them and an import of `e2e/` from
+          // `index.ts` — the public door, the file whose contents ARE the shipped surface — passed
+          // the fence that says nothing may import e2e. A claim with a hole where the door is.
+          //
+          // Spelled with a star so the dialect reads it as a PATH rather than an npm package: a
+          // layer entry with no slash and no star means `node_modules/<name>`, which is why
+          // "index.ts" would have compiled to a matcher for a package called index.ts.
+          root: ["*.ts"],
           language: ["language/**"],
           checks: ["checks/**"],
           engine: ["engine/**"],
@@ -205,11 +217,12 @@ export const house = definePack("house", (repo: Terrain) => ({
           { from: "adapter", to: "e2e", why: "the adapter is the shipped harness column; the e2e road is a TEST harness and must never be mistaken for it" },
           { from: "packs", to: "e2e", why: "a shipped pack that imported a test road would ship it to everybody who installs flow" },
           { from: "guards", to: "e2e", why: "a rule loads at every gated moment; the e2e road builds temp repos and spawns binaries" },
+          { from: "root", to: "e2e", why: "index.ts IS the shipped surface — an import here would put a temp-repo builder and a binary spawner into `@jawache/flow` itself" },
         ],
       }),
     )
     .message(
-      "Import crosses a fence the wrong way (see the named check). The pipeline runs ONE WAY — language → checks → engine → adapter; packs/ sits outside it, reaching index.ts only, with nothing reaching back; guards/ is a consumer of the two public doors and nothing in the package may import it; and a pure `domain.ts` reaches pure code and node:path, nothing else.",
+      "Import crosses a fence the wrong way (see the named check). The pipeline runs ONE WAY — language → checks → engine → adapter; packs/ sits outside it, reaching index.ts only, with nothing reaching back; guards/ is a consumer of the two public doors and nothing in the package may import it; e2e/ is test-only and nothing may import it, the package root included; and a pure `domain.ts` reaches pure code and node:path, nothing else.",
     )
     .test({
       pass: [{ staged: ["engine/domain.ts"], world: { exec: { depcruise: { stdout: '{"summary":{"violations":[]}}' } } } }],
@@ -256,29 +269,35 @@ export const house = definePack("house", (repo: Terrain) => ({
     .message(
       "Adding a verb to `flow.ts` must name its caller and why an existing verb's JSON output — or a few lines at the caller — can't serve. Put `caller: <skill|verifier|human> — <why>` on a line of its own in the commit message. Every question anyone asks a guard looks like a new verb, which is exactly why this ratchets.",
     )
+    // EVERY DIFF LINE BELOW IS COPIED OFF flow.ts, and after this entry was found dead that is the
+    // discipline rather than a nicety: a case written in a shape the named file cannot produce
+    // proves the regex against itself and nothing else. What is here now is the else-if chain
+    // exactly as that file spells it, including the one line that registers two verbs at once.
     .test({
       pass: [
         { command: 'git commit -m "feat: a thing"', world: { exec: { "diff HEAD -- 'flow.ts'": { stdout: "" } } } },
-        // A verb already ON the surface, moved in a refactor: known, so it is not new and owes
-        // nothing. The ratchet is about GROWTH, and a rule that fired on every dispatch tidy would
-        // be turned off.
+        // Verbs already ON the surface, moved in a refactor: known, so neither is new and neither
+        // owes anything. The ratchet is about GROWTH, and a rule that fired on every dispatch tidy
+        // would be turned off. Two on one line, because that is how this pair is really written.
         {
           command: 'git commit -m "refactor: move the dispatch"',
-          world: { exec: { "diff HEAD -- 'flow.ts'": { stdout: '+    case "status":' } } },
+          world: { exec: { "diff HEAD -- 'flow.ts'": { stdout: '+} else if (verb === "init" || verb === "status") {' } } },
         },
         {
           command: "git commit -m 'feat: explain\n\ncaller: human — no verb says why one entry did not fire'",
-          world: { exec: { "diff HEAD -- 'flow.ts'": { stdout: '+    case "explain":' } } },
+          world: { exec: { "diff HEAD -- 'flow.ts'": { stdout: '+} else if (verb === "explain") {' } } },
         },
       ],
       block: [
         {
           command: 'git commit -m "feat: explain"',
-          world: { exec: { "diff HEAD -- 'flow.ts'": { stdout: '+    case "explain":' } } },
+          world: { exec: { "diff HEAD -- 'flow.ts'": { stdout: '+} else if (verb === "explain") {' } } },
         },
+        // A new verb smuggled in beside a known one on the same line — the surface's own shape for
+        // init/status, and what a reader that stopped at the first match on a line would miss.
         {
-          command: 'git commit -m "feat: a subcommand"',
-          world: { exec: { "diff HEAD -- 'flow.ts'": { stdout: '+  } else if (sub === "why") {' } } },
+          command: 'git commit -m "feat: two at once"',
+          world: { exec: { "diff HEAD -- 'flow.ts'": { stdout: '+} else if (verb === "status" || verb === "why") {' } } },
         },
       ],
     }),

@@ -3,14 +3,14 @@
 //
 // It is a fixture with two drivers, and they are why it is a file rather than a string in either
 // of them. `live.test.ts` needs the category, so a `.for(…)` rule has a rung to bind to at the
-// commit gate. `packs/machine.test.ts` needs the turn-end rule, because not one of the ten packs
+// commit gate. `e2e/machine.test.ts` needs the turn-end rule, because not one of the ten packs
 // the package ships carries one — a fact about the packs, not about the moment — so the stranger's
 // own pack is what proves that rail. Both used to hold their own copy of the same eight lines.
 //
 // The import below says `../index.ts` so this typechecks in place, with the rest of the fixtures.
 // Each suite repoints it as it writes the file into its temp repo — at an absolute path where
 // nothing is linked, at `@jawache/flow` where `flow init` has linked it. See `fixturePack` in
-// flow/harness.ts.
+// flow/e2e/harness.ts.
 
 import { defineCategory, definePack, guardrail, spawnedAs, turnEnd } from "../index.ts";
 

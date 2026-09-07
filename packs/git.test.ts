@@ -14,25 +14,13 @@
 import { describe, it, expect } from "vitest";
 import { changesVersion, discardPaths, dirtyIn, isConventional, isReleaseCommit } from "./git.ts";
 
+// WHAT IS NOT HERE, and the line is worth drawing once for the whole file: `git checkout main`
+// passing, `git checkout -- a.ts` returning its paths, `git restore --staged` touching nothing and
+// `--staged --worktree` touching the tree are all driven by `noGitDiscard`'s own `.test({ pass,
+// block })` cases, through the live ctx. Restating them here would be a second place for the same
+// claim to be right — and the weaker copy is what fails first, which teaches a reader to skim the
+// stronger one. Every case below is a shape a case CANNOT reach.
 describe("discardPaths", () => {
-  it("says nothing about a command that destroys nothing", () => {
-    expect(discardPaths("git status")).toEqual([]);
-    expect(discardPaths("git checkout main")).toEqual([]); // branch switching, not a pathspec
-    expect(discardPaths("ls -la")).toEqual([]);
-  });
-
-  it("reads the -- pathspec form of checkout, and only that form", () => {
-    expect(discardPaths("git checkout -- src/a.ts src/b.ts")).toEqual(["src/a.ts", "src/b.ts"]);
-    expect(discardPaths("git checkout feature-branch")).toEqual([]);
-  });
-
-  it("treats `restore --staged` alone as touching no working tree", () => {
-    expect(discardPaths("git restore --staged a.ts")).toEqual([]);
-    // …but --staged AND --worktree does overwrite the tree.
-    expect(discardPaths("git restore --staged --worktree a.ts")).toEqual(["a.ts"]);
-    expect(discardPaths("git restore a.ts")).toEqual(["a.ts"]);
-  });
-
   it("skips restore's -s/--source VALUE, which is a commit and never a path", () => {
     expect(discardPaths("git restore -s HEAD~2 a.ts")).toEqual(["a.ts"]);
     expect(discardPaths("git restore --source main a.ts")).toEqual(["a.ts"]);

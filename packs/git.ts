@@ -202,7 +202,7 @@ const noHandEditedVersion = defineCheck(
       if (message === null) return ctx.ok();
       if (isReleaseCommit(message)) return ctx.ok(); // the one shape that may write it
       // `git diff HEAD` — staged AND unstaged, because `git commit -a` sweeps the second lot in.
-      const diff = await ctx.exec(`git diff HEAD -- ${opts.versionFile}`);
+      const diff = await ctx.exec(`git diff HEAD -- ${quoteArg(opts.versionFile)}`);
       if (diff.code !== 0) return ctx.ok();
       if (!changesVersion(diff.stdout)) return ctx.ok();
       return ctx.fail(
@@ -391,41 +391,41 @@ export const git = definePack("git", (repo: Release) => ({
           // A release commit may write it — the one shape that passes with the diff right there.
           {
             command: 'git commit -m "chore(release): 1.2.3"',
-            world: { exec: { "git diff HEAD -- package.json": { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
+            world: { exec: { "git diff HEAD -- 'package.json'": { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
           },
           // The other two release spellings the header rule accepts, so all three arms are proved
           // rather than the one this repo happens to type.
           {
             command: 'git commit -m "release: 1.2.3"',
-            world: { exec: { "git diff HEAD -- package.json": { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
+            world: { exec: { "git diff HEAD -- 'package.json'": { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
           },
           {
             command: 'git commit -m "release(flow)!: 2.0.0"',
-            world: { exec: { "git diff HEAD -- package.json": { stdout: '-  "version": "1.2.2"\n+  "version": "2.0.0"' } } },
+            world: { exec: { "git diff HEAD -- 'package.json'": { stdout: '-  "version": "1.2.2"\n+  "version": "2.0.0"' } } },
           },
           // A metadata edit that rewrites the version LINE without moving its value — adding a key
           // after it puts a comma on the end. Values are compared, never lines, or this would fire
           // on every reformat.
           {
             command: 'git commit -m "chore: add a field"',
-            world: { exec: { "git diff HEAD -- package.json": { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.2",' } } },
+            world: { exec: { "git diff HEAD -- 'package.json'": { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.2",' } } },
           },
           {
             command: 'git commit -m "fix: a thing"',
-            world: { exec: { "git diff HEAD -- package.json": { stdout: '-  "name": "a"\n+  "name": "b"' } } },
+            world: { exec: { "git diff HEAD -- 'package.json'": { stdout: '-  "name": "a"\n+  "name": "b"' } } },
           },
         ],
         block: [
           {
             command: 'git commit -m "fix: a thing"',
-            world: { exec: { "git diff HEAD -- package.json": { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
+            world: { exec: { "git diff HEAD -- 'package.json'": { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
           },
           // THE HOLE THIS CASE CLOSED: a bare `chore:` used to read as a release, so every
           // housekeeping commit in the repo was licensed to hand-edit the version. `chore` needs
           // its release scope now, and this case is what keeps it needing one.
           {
             command: 'git commit -m "chore: tidy the readme"',
-            world: { exec: { "git diff HEAD -- package.json": { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
+            world: { exec: { "git diff HEAD -- 'package.json'": { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
           },
         ],
       }),

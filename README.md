@@ -184,7 +184,7 @@ Open `flow.config.ts`. It is ordinary code, and it is the whole guard:
 
 ```ts
 import { commit, command, defineCategory, defineConfig, definePack, guardrail, pack } from "@jawache/flow";
-import { guard } from "@jawache/flow/packs";
+import { flow } from "@jawache/flow/packs";
 
 const subagent = defineCategory("subagent", (facts) => facts.subagent);
 
