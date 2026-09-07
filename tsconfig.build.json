@@ -1,9 +1,9 @@
 {
   "//": [
     "DECLARATION EMIT, and nothing else — the types half of what `@jawache/flow` ships.",
-    "A config file is TypeScript, and flow's first promise is that a mistake in it fails in the editor. That promise only reaches a repo that INSTALLED flow if the installed package carries types, so `just build-flow` emits this tree beside the two bundles and package.json's `exports` points at it.",
+    "A config file is TypeScript, and flow's first promise is that a mistake in it fails in the editor. That promise only reaches a repo that INSTALLED flow if the installed package carries types, so `just build` emits this tree beside the two bundles and package.json's `exports` points at it.",
     "The source itself cannot be what ships: node refuses to strip types under node_modules (ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING), so the runtime half is a bundle and the type half is emitted .d.ts.",
-    "It differs from tsconfig.json in exactly two ways — the emit switches, and dropping the tests, the fixtures and harness.ts (the road those tests drive), which are proof rather than product."
+    "It differs from tsconfig.json in exactly two ways — the emit switches, and dropping everything that is not the PACKAGE: the tests, the fixtures, harness.ts (the road those tests drive), and this repo's own guard (flow.config.ts + guards/), which is a CONSUMER of the package and would otherwise emit declarations into the tarball."
   ],
   "extends": "./tsconfig.json",
   "compilerOptions": {
@@ -12,5 +12,5 @@
     "emitDeclarationOnly": true,
     "outDir": "dist/types"
   },
-  "exclude": ["dist", "__fixtures__", "**/*.test.ts", "harness.ts", "esbuild.mjs"]
+  "exclude": ["dist", "__fixtures__", "**/*.test.ts", "harness.ts", "esbuild.mjs", "flow.config.ts", "guards", "vitest.config.ts"]
 }

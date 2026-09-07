@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ranSinceEdit — you changed X but never ran Y</title>
+<style>
+  :root{
+    --ink:#1a1a1a; --mut:#666; --line:#e2e6ea; --bg:#f7f8fa; --card:#fff; --soft:#eef1f4;
+    --parent:#2a6fb0; --check:#b8860b; --stop:#b3261e;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif}
+  main{max-width:52rem;margin:0 auto;padding:2.6rem 1.4rem 6rem}
+  a{color:var(--parent);text-decoration:none} a:hover{text-decoration:underline}
+  code{font-family:ui-monospace, Menlo, monospace;font-size:.86em;background:var(--soft);padding:.03em .32em;border-radius:4px}
+  pre{background:#1e2227;color:#e6e9ec;border-radius:10px;padding:.9rem 1.1rem;overflow-x:auto;font:.85rem/1.55 ui-monospace, Menlo, monospace;margin:.6rem 0}
+  pre code{background:none;padding:0;font-size:1em;color:inherit}
+  h1{font-size:1.7rem;font-weight:900;letter-spacing:-.02em;margin:0}
+  h2{font-size:1.25rem;font-weight:800;margin:2.2rem 0 .4rem;padding-top:1.2rem;border-top:2px solid var(--line)}
+  .scope{color:var(--mut);font-size:.9rem;margin:.35rem 0 0;font-family:ui-monospace, Menlo, monospace}
+  .lead{font-size:1.08rem;font-weight:600;color:#2c322b;margin:1.2rem 0 1rem;line-height:1.55}
+  table{border-collapse:collapse;width:100%;margin:.6rem 0;font-size:.92rem;background:var(--card)}
+  th,td{text-align:left;padding:.5rem .6rem;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);background:var(--soft)}
+  footer{margin-top:3rem;color:var(--mut);font-size:.85rem;border-top:1px solid var(--line);padding-top:1rem}
+</style>
+</head>
+<body>
+<main>
+  <h1><code>ranSinceEdit</code></h1>
+  <p class="scope">reads: the turn · fires at: turn-end · 2026-09-06</p>
+
+  <p class="lead">Holds the turn open once when the agent edited a matching file this turn but never ran the command afterwards — “you changed a guard but never ran the tests”. It reads the turn's own actions, holds no state, and never traps: the next stop attempt goes through.</p>
+
+  <h2>Options</h2>
+  <table>
+    <thead><tr><th>Key</th><th>Type</th><th>Required</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>edited</code></td><td>list of globs</td><td>yes</td><td>the files whose edit-without-a-run is the violation</td></tr>
+      <tr><td><code>mustRun</code></td><td>string</td><td>yes</td><td>the command that must have run after the last matching edit</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Example</h2>
+<pre><code>guardsTested: guardrail()
+  .at(turnEnd)
+  .check(ranSinceEdit({ edited: ["guards/**"], mustRun: "flow test" }))
+  .message("You changed a guard this turn but never ran `flow test` — run it before finishing.")
+  .test({
+    pass:  [{ actions: [{ did: "edit", path: "guards/x.ts" }, { did: "run", command: "flow test" }] }],
+    block: [{ actions: [{ did: "edit", path: "guards/x.ts" }] }],
+  }),</code></pre>
+
+  <footer><a href="../index.html#checks">All stock checks</a> · the sentence around it:
+  <a href="../02-entry-reference.html">the config reference</a> · this page's example is copied
+  from a pack that <code>flow test</code> proves green.</footer>
+</main>
+</body>
+</html>

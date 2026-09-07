@@ -1,11 +1,11 @@
 {
   "//": [
-    "The fleet base (../tsconfig.base.json, shipped by the typescript pack) and two additions, nothing subtracted — the same two the CLI takes, for the same two reasons. `module` and `moduleResolution` stay the base's NodeNext: this package is `type: module` and NodeNext describes it exactly.",
+    "The fleet base (./tsconfig.base.json, shipped by the typescript pack) and two additions, nothing subtracted. `module` and `moduleResolution` stay the base's NodeNext: this package is `type: module` and NodeNext describes it exactly.",
     "`allowImportingTsExtensions` because every import here names its `.ts` file — esbuild bundles them and `noEmit` (also from the base) is what makes that legal.",
     "`types` narrows the ambient set to node's; without it every @types package installed anywhere in the tree becomes globally visible.",
-    "`__fixtures__` is EXCLUDED and that is the point of it: it holds configs that are deliberately wrong, one per grammar-misuse class, and `flow/typecheck.test.ts` compiles them under their own project and asserts the compiler refused. Typechecking them here would mean this project can never be green."
+    "`__fixtures__` is EXCLUDED and that is the point of it: it holds configs that are deliberately wrong, one per grammar-misuse class, and `grammar.test.ts` compiles them under their own project and asserts the compiler refused. Typechecking them here would mean this project can never be green."
   ],
-  "extends": "../tsconfig.base.json",
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "allowImportingTsExtensions": true,
     "types": ["node"]

@@ -1,0 +1,25 @@
+{
+  "//": "Shipped by the typescript pack in ~/.work/library. Copied in (CI must read it), compared with the pack's version at every `work guard status` — drift is a visible red line, never silence. Change the fleet's strictness by changing the pack's file once.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "moduleDetection": "force",
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+
+    "noEmit": true,
+    "sourceMap": true,
+    "declaration": true
+  }
+}

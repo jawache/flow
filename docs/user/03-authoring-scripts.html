@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Authoring a pack — a bespoke check, and sharing rules</title>
+<style>
+  :root{
+    --ink:#1a1a1a; --mut:#666; --line:#e2e6ea; --bg:#f7f8fa; --card:#fff; --soft:#eef1f4;
+    --parent:#2a6fb0; --check:#b8860b; --stop:#b3261e;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif}
+  main{max-width:52rem;margin:0 auto;padding:2.6rem 1.4rem 6rem}
+  a{color:var(--parent);text-decoration:none} a:hover{text-decoration:underline}
+  code{font-family:ui-monospace, Menlo, monospace;font-size:.86em;background:var(--soft);padding:.03em .32em;border-radius:4px}
+  pre{background:#1e2227;color:#e6e9ec;border-radius:10px;padding:.9rem 1.1rem;overflow-x:auto;font:.85rem/1.55 ui-monospace, Menlo, monospace;margin:.6rem 0}
+  pre code{background:none;padding:0;font-size:1em;color:inherit}
+  h1{font-size:2.1rem;font-weight:900;letter-spacing:-.02em;margin:0}
+  h2{font-size:1.4rem;font-weight:800;margin:2.8rem 0 .5rem;padding-top:1.5rem;border-top:2px solid var(--line)}
+  h3{font-size:1.05rem;font-weight:800;margin:1.8rem 0 .3rem}
+  .scope{color:var(--mut);font-size:.9rem;margin:.35rem 0 0;font-family:ui-monospace, Menlo, monospace}
+  .lead{font-size:1.14rem;font-weight:600;color:#2c322b;margin:1.5rem 0 1.2rem;line-height:1.55}
+  table{border-collapse:collapse;width:100%;margin:.6rem 0;font-size:.92rem;background:var(--card)}
+  th,td{text-align:left;padding:.5rem .6rem;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);background:var(--soft)}
+  footer{margin-top:3rem;color:var(--mut);font-size:.85rem;border-top:1px solid var(--line);padding-top:1rem}
+</style>
+</head>
+<body>
+<main>
+  <h1>Authoring a pack</h1>
+  <p class="scope">docs/user/03 · a bespoke check, and packing rules for a second repo · 2026-09-06</p>
+
+  <p class="lead">Before you write a check, check you need one: most rules are a
+  <a href="./index.html#checks">stock check</a> plus a sentence, and a structural code pattern is
+  <code>astGrep</code>, no code at all. Write your own when the check needs real logic — read a
+  companion file, compute something, hold an invariant no stock check expresses. This page is that
+  contract, and how a pack travels to a second repo.</p>
+
+  <h2>A check is a function of <code>ctx</code></h2>
+
+  <p><code>defineCheck</code> takes an options object and returns the check — a function of
+  <code>ctx</code> that answers <code>ctx.ok()</code> or <code>ctx.fail(detail)</code>. It may be
+  async. It reaches the world <strong>only</strong> through <code>ctx</code> — never
+  <code>node:fs</code>, <code>child_process</code> or <code>process.env</code> — and that single
+  rule is what lets the same check run live, run in a case, and replay from a recording with no
+  repo at all.</p>
+
+<pre><code>// guards/house.ts
+import { defineCheck, write, commit, definePack, guardrail } from "@jawache/flow";
+
+const frontmatterComplete = defineCheck((_opts: Record&lt;string, never&gt;) =&gt; (ctx) =&gt; {
+  const { content } = ctx.file ?? { content: "" };
+  return content.startsWith("---") ? ctx.ok() : ctx.fail("missing frontmatter block");
+});
+
+export const house = definePack("house", {
+  frontmatter: guardrail()
+    .at(write, commit)
+    .on("content/**/*.md")
+    .check(frontmatterComplete({}))
+    .message("Every content file opens with frontmatter.")
+    .test({
+      pass:  [{ path: "content/a.md", content: "---\ntitle: x\n---\n" }],
+      block: [{ path: "content/a.md", content: "no frontmatter here" }],
+    }),
+});</code></pre>
+
+  <p>Note what is <em>not</em> here: no declaration of which moments the check supports, no schema
+  factory, no <code>kind</code>. The sentence's <code>.at(…)</code> says when it fires; the
+  <code>ctx</code> a check reads is whatever that moment carries; and its options are an ordinary
+  typed argument, so a wrong value is a compile error, not a runtime surprise.</p>
+
+  <h2>What <code>ctx</code> carries, by moment</h2>
+
+  <table>
+    <thead><tr><th>At</th><th>The check reads</th></tr></thead>
+    <tbody>
+      <tr><td><code>write</code> · <code>commit</code> (a file rule)</td><td><code>ctx.file</code> = <code>{ path, content }</code> — at write, the would-be bytes; at commit, one staged file at a time when the rule named <code>.on(…)</code></td></tr>
+      <tr><td><code>command</code></td><td><code>ctx.command</code> — the line about to run</td></tr>
+      <tr><td><code>commit</code> (no <code>.on</code>)</td><td><code>ctx.staged</code> — the whole staged set, asked once</td></tr>
+      <tr><td><code>turn-end</code></td><td><code>ctx.turn</code> — the edits and runs of the turn</td></tr>
+      <tr><td>any</td><td><code>ctx.fs</code> · <code>ctx.exec</code> · <code>ctx.git</code> to reach further; <code>ctx.moment</code> to branch</td></tr>
+    </tbody>
+  </table>
+
+  <p>Return <code>ctx.fail(detail)</code> with a sentence naming what was seen and what to do — a
+  detector that emits the same line for causes the reader must answer differently teaches them to
+  talk past it. A check that throws is a load-time fault that names the file; it can never load as
+  a rule that silently stopped checking.</p>
+
+  <h2>Proving it</h2>
+
+  <p>A bespoke check is authored logic, so its entry carries cases like any other — a rule with no
+  block case does not load. The case shapes are in the
+  <a href="./02-entry-reference.html">config reference</a>. Run them with:</p>
+<pre><code>flow test</code></pre>
+  <p>Every case runs through the same <code>ctx</code> the live rails build, with the world
+  supplied as data. After a green run, flip a case so it should go red and watch it fail — a test
+  that cannot fail proves nothing.</p>
+
+  <h2>Packing rules for a second repo</h2>
+
+  <p>Rules start in a repo's <code>guards/</code>. When a second repo wants them, the pack is a
+  module, so sharing it is a move, not a rewrite: the file goes to an npm package and both repos
+  <code>import</code> it. There is nothing on the machine to resolve against.</p>
+
+  <p>Where two repos differ on a fact the pack needs — a pure-code home, a test command — the pack
+  declares it as a <strong>mandatory typed parameter</strong> rather than baking one repo's answer
+  in. A repo that binds the pack without stating the fact does not compile:</p>
+
+<pre><code>// the pack takes a repo fact it cannot know
+export const tdd = definePack("tdd", (repo: { run: string }) =&gt; ({
+  commitRunsTests: guardrail()
+    .at(commit)
+    .check(execPasses({ run: repo.run }))
+    .message("Commit runs the suite.")
+    .test({ /* … */ }),
+}));
+
+// …and the config supplies it
+export default defineConfig([
+  pack(tdd, { run: "just test-commit" }),
+]);</code></pre>
+
+  <p>Where a repo disagrees with a single entry, it <code>override</code>s rather than forking —
+  a different scope, a different message, or <code>.disabled("why")</code>. Each override key
+  replaces the pack's whole value, and its reason prints in <code>flow status</code>, so the
+  divergence is visible.</p>
+
+  <footer>docs/user/03 · Verified against the shipped binary. The built-ins to reach for first:
+  the <a href="./index.html#checks">stock checks</a>.</footer>
+</main>
+</body>
+</html>

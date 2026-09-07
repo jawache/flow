@@ -1,0 +1,23 @@
+#!/bin/sh
+# .githooks/pre-commit — this repo's commit gate. `flow init` writes this file.
+#
+# Every `at(commit)` guardrail in flow.config.ts runs over the STAGED files, and a block exits
+# non-zero, which is how git refuses the commit. This fires with no agent in the room — a human
+# commit, a merge, CI — which is the half of the promise the PreToolUse rail cannot make.
+#
+# It calls the `flow` binary on PATH, which in THIS repo is the one built from this checkout
+# (`just link`). flow guarding flow is the whole dogfood: a rule that stopped loading, a door that
+# stopped exporting, or a bundle that stopped building refuses this repo's own next commit first.
+#
+# Wired by `git config core.hooksPath .githooks`, which is per-CLONE and not committed — every
+# fresh clone and every worktree needs it again, and `flow status` says so when it is missing.
+#
+# IFS=newline + `set -f` so paths with spaces survive; --diff-filter=ACMR skips deletions.
+
+IFS='
+'
+set -f
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -z "$staged" ] && exit 0
+set -- $staged
+exec flow commit "$@"

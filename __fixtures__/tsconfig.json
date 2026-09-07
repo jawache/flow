@@ -1,9 +1,9 @@
 {
   "//": [
-    "The project flow/grammar.test.ts compiles, and it is EXPECTED TO FAIL: every file under refusals/ misuses the grammar on purpose, and the test asserts the compiler said so on the line the file marks. `just typecheck-flow` never sees these — flow/tsconfig.json excludes this folder, which is why they can live here at all.",
+    "The project grammar.test.ts compiles, and it is EXPECTED TO FAIL: every file under refusals/ misuses the grammar on purpose, and the test asserts the compiler said so on the line the file marks. `just typecheck` never sees these — tsconfig.json excludes this folder, which is why they can live here at all.",
     "It extends the same shared base as every other project in the repo. That is not ceremony: a fixture proving `strict` catches something would prove nothing if it were compiled without `strict`."
   ],
-  "extends": "../../tsconfig.base.json",
+  "extends": "../tsconfig.base.json",
   "compilerOptions": {
     "allowImportingTsExtensions": true,
     "types": ["node"]

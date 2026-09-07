@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>protectedPath — paths that must not be touched</title>
+<style>
+  :root{
+    --ink:#1a1a1a; --mut:#666; --line:#e2e6ea; --bg:#f7f8fa; --card:#fff; --soft:#eef1f4;
+    --parent:#2a6fb0; --check:#b8860b; --stop:#b3261e;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif}
+  main{max-width:52rem;margin:0 auto;padding:2.6rem 1.4rem 6rem}
+  a{color:var(--parent);text-decoration:none} a:hover{text-decoration:underline}
+  code{font-family:ui-monospace, Menlo, monospace;font-size:.86em;background:var(--soft);padding:.03em .32em;border-radius:4px}
+  pre{background:#1e2227;color:#e6e9ec;border-radius:10px;padding:.9rem 1.1rem;overflow-x:auto;font:.85rem/1.55 ui-monospace, Menlo, monospace;margin:.6rem 0}
+  pre code{background:none;padding:0;font-size:1em;color:inherit}
+  h1{font-size:1.7rem;font-weight:900;letter-spacing:-.02em;margin:0}
+  h2{font-size:1.25rem;font-weight:800;margin:2.2rem 0 .4rem;padding-top:1.2rem;border-top:2px solid var(--line)}
+  .scope{color:var(--mut);font-size:.9rem;margin:.35rem 0 0;font-family:ui-monospace, Menlo, monospace}
+  .lead{font-size:1.08rem;font-weight:600;color:#2c322b;margin:1.2rem 0 1rem;line-height:1.55}
+  table{border-collapse:collapse;width:100%;margin:.6rem 0;font-size:.92rem;background:var(--card)}
+  th,td{text-align:left;padding:.5rem .6rem;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);background:var(--soft)}
+  footer{margin-top:3rem;color:var(--mut);font-size:.85rem;border-top:1px solid var(--line);padding-top:1rem}
+</style>
+</head>
+<body>
+<main>
+  <h1><code>protectedPath</code></h1>
+  <p class="scope">reads: file path · fires at: write · delete · commit · 2026-09-06</p>
+
+  <p class="lead">Refuses a hand-edit of a protected path. The <code>.on(…)</code> set <em>is</em> the protected set — any file that reaches the check is protected by definition, so matching it is the violation. Name the bare folder alongside its glob, or an <code>rm -rf</code> of the directory slips past. A protected-path rule is block-only: everything in scope is refused, so there is nothing to pass.</p>
+
+  <h2>Options</h2>
+  <table>
+    <thead><tr><th>Key</th><th>Type</th><th>Required</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>existingOnly</code></td><td>boolean</td><td>no</td><td>append-only: a NEW file here is fine, but an existing one may not be edited or deleted</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Example</h2>
+<pre><code>keepGenerated: guardrail()
+  .at(write, deletion, commit)
+  .on("src/generated/**", "src/generated")
+  .check(protectedPath({}))
+  .message("Machine-written — edit the source the header names, then re-run the build.")
+  .test({ block: [{ path: "src/generated/api.ts", content: "" }] }),</code></pre>
+
+  <footer><a href="../index.html#checks">All stock checks</a> · the sentence around it:
+  <a href="../02-entry-reference.html">the config reference</a> · this page's example is copied
+  from a pack that <code>flow test</code> proves green.</footer>
+</main>
+</body>
+</html>

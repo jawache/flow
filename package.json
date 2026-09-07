@@ -5,8 +5,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/jawache/work.git",
-    "directory": "flow"
+    "url": "git+https://github.com/jawache/flow.git"
   },
   "keywords": [
     "claude",
@@ -43,7 +42,7 @@
     "access": "public"
   },
   "scripts": {
-    "//": "Commands live in the root justfile — run `just` (build-flow · typecheck-flow · test-flow · link-flow)."
+    "//": "Commands live in the justfile — run `just` (build · typecheck · test · test-rules · test-packs · gate · link · release)."
   },
   "dependencies": {
     "@ast-grep/napi": "^0.42.3",
@@ -51,8 +50,13 @@
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
+    "@vitest/coverage-v8": "4.1.10",
+    "commit-and-tag-version": "^13.1.2",
     "esbuild": "^0.28.1",
+    "eslint": "^10.8.1",
+    "eslint-plugin-n": "^18.3.0",
     "typescript": "^5.6.0",
-    "vitest": "^4.1.10"
+    "typescript-eslint": "^8.67.0",
+    "vitest": "4.1.10"
   }
 }

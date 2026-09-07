@@ -1,12 +1,12 @@
-// flow/grammar.test.ts — J1.3, both halves, on the same artefacts.
+// grammar.test.ts — J1.3, both halves, on the same artefacts.
 //
 // The claim is that a config mistake cannot load quietly: it fails the typecheck in your editor,
 // AND the load re-validates the same rules for a config that got past one. Proving only the
 // second half would be the old system's proof — a validator nobody reaches. So this file drives
 // the COMPILER, which is the half no unit test can stand in for.
 //
-// It compiles flow/__fixtures__/ under its own tsconfig (flow's own project excludes the folder,
-// or `just typecheck-flow` could never be green) and asserts, per file:
+// It compiles __fixtures__/ under its own tsconfig (this package's own project excludes the folder,
+// or `just typecheck` could never be green) and asserts, per file:
 //
 //   refusals/*.ts   the compiler refused, on the line the file marks with `// @refusal <text>`,
 //                   with `<text>` in the diagnostic. The marker sits on the line ABOVE the
@@ -23,9 +23,10 @@ import { fileURLToPath } from "node:url";
 import { loadConfig } from "./language/domain.ts";
 import config from "./__fixtures__/valid.config.ts";
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(HERE, "..");
-const FIXTURES = join(HERE, "__fixtures__");
+// THE PACKAGE ROOT, which is also the repo root: this file sits at the top of the package, and
+// `node_modules/` and the paths tsc prints are both relative to it.
+const ROOT = dirname(fileURLToPath(import.meta.url));
+const FIXTURES = join(ROOT, "__fixtures__");
 
 interface Diagnostic {
   file: string;

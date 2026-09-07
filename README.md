@@ -39,9 +39,8 @@ checkout:
 ```sh
 git clone https://github.com/jawache/flow.git
 cd flow
-npm install
-node esbuild.mjs        # builds the binary
-npm link                # puts `flow` on your PATH
+just install            # npm ci from the lockfile
+just link               # builds the package and puts `flow` on your PATH
 ```
 
 Undo it any time with `npm unlink -g @jawache/flow`. You never link it into a guarded repo by
@@ -172,7 +171,7 @@ is the one to run before you trust a change to any of them:
 just test-packs
 ```
 
-It builds the binary, runs `flow init` in a throwaway repo that has never heard of flow, binds every
+It builds the bundles, runs `flow init` in a throwaway repo that has never heard of flow, binds every
 shipped pack at once with a stranger's parameters — one shell script for the toolchain, `core/` for
 the pure home, `rules/` for the repo's own pack — and then drives the rails: `flow status` green,
 each pack's cases run pack by pack, and one real refusal at each of write · delete · command ·
@@ -269,6 +268,22 @@ touch .flow/record     # capture sessions so `flow replay` can run them again
 
 The 1/2 split is load-bearing: "your guard caught something" and "your guard cannot run" are
 different facts, and a script, a hook or a CI step has to be able to tell them apart.
+
+## Working on flow
+
+```sh
+just                    # the catalogue — every recipe carries its own [doc]
+just test-commit        # what the commit gate runs: the rules cases, the typecheck, the suite
+just gate               # the gate itself, over every file git can see
+```
+
+flow guards itself: `flow.config.ts` at the root binds the ten packs above through
+`@jawache/flow/packs` — the same import a stranger writes — plus one pack this repo writes,
+`guards/house.ts`. A door that stops exporting, a rule that stops loading or a bundle that stops
+building refuses this repo's own next commit first.
+
+Longer documentation is in [`docs/user/`](docs/user/index.html): the guidebook, the five-minute
+quick start, the config reference, how to author a pack, and one page per stock check.
 
 ## Licence
 
