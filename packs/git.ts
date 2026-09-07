@@ -300,6 +300,16 @@ export const git = definePack("git", (repo: Release) => ({
         // A clean target with no uncommitted work in it: the command is one of the four, and
         // there is nothing to discard, so it runs.
         { command: "git checkout -- src/x.ts", world: { exec: { "git status --porcelain": { stdout: "" } } } },
+        // …and the same tree carrying only UNTRACKED files. A checkout overwrites tracked paths
+        // and leaves untracked ones where they are, so counting them here would refuse a safe
+        // command — which is why the untracked half of the status is read for `clean` and for
+        // nothing else.
+        { command: "git checkout -- src/x.ts", world: { exec: { "git status --porcelain": { stdout: "?? other.ts" } } } },
+        // The forms that discard NOTHING never reach a status call at all: a soft reset moves the
+        // branch pointer and leaves the tree alone, and `clean -n` is a dry run that prints what it
+        // would have deleted.
+        "git reset --soft HEAD~1",
+        "git clean -n",
       ],
       block: [
         {
@@ -314,6 +324,23 @@ export const git = definePack("git", (repo: Release) => ({
         // status IS the loss — everywhere else those files survive and counting them would refuse
         // a safe command.
         { command: "git clean -fd", world: { exec: { "git status --porcelain": { stdout: "?? junk.txt" } } } },
+        // The long spelling with a named path: `--force` counts exactly as a bundled `-f` does, and
+        // a pathspec narrows what is lost rather than excusing it.
+        {
+          command: "git clean --force src/",
+          world: { exec: { "git status --porcelain": { stdout: "?? src/junk.txt" } } },
+        },
+        // A hard reset has no discarding pathspec form, so its target is the whole tree — the one
+        // of the four that needs no path named to be dangerous.
+        { command: "git reset --hard", world: { exec: { "git status --porcelain": { stdout: " M a.ts" } } } },
+        // TWO COMMANDS ON ONE LINE, and both are read. A reader that stopped at the first
+        // invocation is how `git status` followed by a checkout sails through as a status call —
+        // and a NEWLINE separates commands exactly as `&&` does, which is the half that gets
+        // forgotten.
+        {
+          command: "git status\ngit checkout -- a.ts",
+          world: { exec: { "git status --porcelain": { stdout: " M a.ts" } } },
+        },
       ],
     }),
 
@@ -337,8 +364,23 @@ export const git = definePack("git", (repo: Release) => ({
       "Commit header must match Conventional Commits v1.0.0: type(scope)!: description — e.g. `fix(auth): renew session on token refresh`.",
     )
     .test({
-      pass: ['git commit -m "fix(auth): renew session on token refresh"', "git status"],
-      block: ['git commit -m "fixed the auth thing"'],
+      pass: [
+        'git commit -m "fix(auth): renew session on token refresh"',
+        "git status",
+        // The BANG, which is what drives the SemVer major — a scope and a `!` together, since that
+        // is the shape a breaking change is actually typed in.
+        'git commit -m "feat(cli)!: the config grammar is closed"',
+      ],
+      block: [
+        'git commit -m "fixed the auth thing"',
+        // A known type word with no colon after it. `feat a thing` reads as a sentence that happens
+        // to start with a type, and a header regex that only looked for the word would take it.
+        'git commit -m "feat a thing"',
+        // THE FIRST LINE IS THE HEADER, and the body may say anything at all — including something
+        // that looks exactly like a header. A check that searched the whole message would pass this
+        // and every other well-meaning commit whose subject was never written.
+        "git commit -m 'tidied things up\n\nfeat: the thing I actually did'",
+      ],
     }),
 
   // The commands in THIS pack that write a permanent record — `git commit -m` and the two `gh`
@@ -414,6 +456,18 @@ export const git = definePack("git", (repo: Release) => ({
             command: 'git commit -m "fix: a thing"',
             world: { exec: { "git diff HEAD -- 'package.json'": { stdout: '-  "name": "a"\n+  "name": "b"' } } },
           },
+          // The type word is read case-insensitively: a person typing `Release:` has written a
+          // release commit, and refusing it would teach them the rule is about capitalisation.
+          {
+            command: 'git commit -m "Release: 1.2.3"',
+            world: { exec: { "git diff HEAD -- 'package.json'": { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
+          },
+          // A `+++` line is the diff's own header naming the file, not a line OF the file — so a
+          // path that happens to contain a version-shaped string changes nothing.
+          {
+            command: 'git commit -m "fix: a thing"',
+            world: { exec: { "git diff HEAD -- 'package.json'": { stdout: '+++ b/version = "9.9.9"\n--- a/x' } } },
+          },
         ],
         block: [
           {
@@ -426,6 +480,25 @@ export const git = definePack("git", (repo: Release) => ({
           {
             command: 'git commit -m "chore: tidy the readme"',
             world: { exec: { "git diff HEAD -- 'package.json'": { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
+          },
+          // A release header in the BODY is not a release commit. The header is line one, the same
+          // reading the format rule takes — and a message parser that searched the whole text would
+          // hand every commit a free pass by way of a footer.
+          {
+            command: "git commit -m 'feat: a thing\n\nrelease: 1.2.3'",
+            world: { exec: { "git diff HEAD -- 'package.json'": { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
+          },
+          // A version ADDED where the file had none: there is no removed value to compare against,
+          // and writing the first one by hand is the same act as changing it.
+          {
+            command: 'git commit -m "chore: add the field"',
+            world: { exec: { "git diff HEAD -- 'package.json'": { stdout: '+  "version": "0.1.0"' } } },
+          },
+          // A prerelease suffix is part of the value, so `1.0.0` → `1.0.0-rc.1` is a change. A
+          // comparison that read only the numeric core would wave through every rc a hand cut.
+          {
+            command: 'git commit -m "fix: a thing"',
+            world: { exec: { "git diff HEAD -- 'package.json'": { stdout: '-  "version": "1.0.0"\n+  "version": "1.0.0-rc.1"' } } },
           },
         ],
       }),

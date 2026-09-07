@@ -160,6 +160,80 @@ export const node = definePack("node", {
             },
           },
         },
+        // ADDED and REMOVED, not just re-pinned. The case above compares two versions of the same
+        // name, which a comparison keyed on the version string alone would also pass; these two are
+        // what say the comparison is over the SET.
+        {
+          staged: ["package.json"],
+          world: {
+            exec: {
+              "git show HEAD:package.json": { stdout: "{}" },
+              "git show :package.json": { stdout: '{"dependencies":{"zod":"1.0.0"}}' },
+            },
+          },
+        },
+        {
+          staged: ["package.json"],
+          world: {
+            exec: {
+              "git show HEAD:package.json": { stdout: '{"dependencies":{"zod":"1.0.0"}}' },
+              "git show :package.json": { stdout: "{}" },
+            },
+          },
+        },
+        // ALL FOUR BLOCKS, one case each. A lockfile mirrors every one of them, and a list that
+        // quietly dropped a block would leave that block's moves unwatched while the rule still
+        // read as armed — so each is driven on its own rather than four at once, where three
+        // passing and one missing is the same green.
+        {
+          staged: ["package.json"],
+          world: {
+            exec: {
+              "git show HEAD:package.json": { stdout: '{"devDependencies":{"vitest":"1.0.0"}}' },
+              "git show :package.json": { stdout: '{"devDependencies":{"vitest":"2.0.0"}}' },
+            },
+          },
+        },
+        {
+          staged: ["package.json"],
+          world: {
+            exec: {
+              "git show HEAD:package.json": { stdout: "{}" },
+              "git show :package.json": { stdout: '{"peerDependencies":{"react":"^19"}}' },
+            },
+          },
+        },
+        {
+          staged: ["package.json"],
+          world: {
+            exec: {
+              "git show HEAD:package.json": { stdout: "{}" },
+              "git show :package.json": { stdout: '{"optionalDependencies":{"fsevents":"^2"}}' },
+            },
+          },
+        },
+        // A name moved BETWEEN blocks — dev to prod is the usual direction, and it is a real move:
+        // the lockfile records which tree a package belongs to, so it has to follow.
+        {
+          staged: ["package.json"],
+          world: {
+            exec: {
+              "git show HEAD:package.json": { stdout: '{"devDependencies":{"zod":"1.0.0"}}' },
+              "git show :package.json": { stdout: '{"dependencies":{"zod":"1.0.0"}}' },
+            },
+          },
+        },
+        // A package.json that did not exist on the other side at all: `git show HEAD:` fails, and
+        // an absent file reads as an empty one, so every dependency in the new file is new.
+        {
+          staged: ["package.json"],
+          world: {
+            exec: {
+              "git show HEAD:package.json": { code: 128, stderr: "path does not exist in HEAD" },
+              "git show :package.json": { stdout: '{"dependencies":{"zod":"1.0.0"}}' },
+            },
+          },
+        },
       ],
     }),
 });

@@ -139,7 +139,29 @@ export const justfile = definePack("justfile", (repo: Catalogue) => ({
         { path: "justfile", content: "[private]\n_helper:\n    echo hi\n" },
         // An assignment and a `set` line are not recipes at all.
         { path: "justfile", content: 'set shell := ["bash", "-c"]\nport := "3000"\n' },
+        // …nor are the other words that open a construct at column 0. `import` and `mod` carry no
+        // colon at all, so only the reserved list keeps them from being read as recipe names.
+        { path: "justfile", content: 'import "other.just"\nmod sub\n[doc("Run it.")]\ntest:\n    npx vitest run\n' },
+        // ATTRIBUTES STACK, and the walk goes up over the whole contiguous run, so either one
+        // excuses the recipe in either order. A walk that read only the line immediately above
+        // would start refusing a private recipe the moment somebody documented it as well.
+        { path: "justfile", content: '[private]\n[doc("why")]\na:\n    echo x\n' },
+        { path: "justfile", content: '[doc("why")]\n[private]\nb:\n    echo x\n' },
+        // A BODY line is indented, however recipe-shaped it reads. This one spells a colon after a
+        // word and is still a shell command inside `a`.
+        { path: "justfile", content: '[doc("why")]\na:\n    echo "test: not a recipe"\n' },
       ],
-      block: [{ path: "justfile", content: "test:\n    npx vitest run\n" }],
+      block: [
+        { path: "justfile", content: "test:\n    npx vitest run\n" },
+        // THE WALK STOPS at the first line that is not an attribute, so the doc attached to `a`
+        // does not reach down to `b`. One documented recipe excusing every recipe beneath it is
+        // what that stop exists to prevent.
+        { path: "justfile", content: '[doc("belongs to a")]\na:\n    echo x\nb:\n    echo y\n' },
+        // A recipe with PARAMETERS is named before a space rather than before a colon, and one
+        // written with a leading `@` is the same recipe run quietly. Both are in `just --list`, so
+        // both owe it a description.
+        { path: "justfile", content: "greet name:\n    echo {{name}}\n" },
+        { path: "justfile", content: "@quiet:\n    echo hi\n" },
+      ],
     }),
 }));
