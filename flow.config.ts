@@ -23,7 +23,7 @@
 // below on purpose.
 
 import { defineConfig, override, pack } from "@jawache/flow";
-import { docs, fcis, git, guard, justfile, node, secrets, tdd, typescript, work } from "@jawache/flow/packs";
+import { docs, fcis, flow, git, justfile, node, secrets, tdd, typescript, work } from "@jawache/flow/packs";
 import { house } from "./guards/house.ts";
 
 // THIS REPO'S PURE HOME, stated once and used by every fcis rail and by the import fence.
@@ -52,7 +52,7 @@ export default defineConfig([
   // guard, and the refusal to delete it — so the folder is named here, once, and the pack never
   // knew the word. This is flow's own self-protection, bound in flow's own repo, which is the
   // shortest description of what this whole file is for.
-  pack(guard, { packs: ["guards/**"] }),
+  pack(flow, { packs: ["guards/**"] }),
 
   // ── git: commit headers, computed versions, nothing destroys uncommitted work ──
   //

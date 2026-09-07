@@ -25,8 +25,8 @@ describe("the packs surface", () => {
       "checker",
       "docs",
       "fcis",
+      "flow",
       "git",
-      "guard",
       "justfile",
       "node",
       "parent",
@@ -43,7 +43,7 @@ describe("the packs surface", () => {
   // than a refusal count over ten prefixes, through the built package rather than the source. Two
   // tests of one claim means the weaker one is what fails first and the stronger one gets read as
   // a duplicate. What stays here is what that road does not cover: the door's export list, the
-  // parameters that reach a MESSAGE (no case can see one), and the guard pack's scopes.
+  // parameters that reach a MESSAGE (no case can see one), and the flow pack's scopes.
 
   // THE PARAMETERS, proved where they are meant to land: in the sentence a blocked person reads.
   //
@@ -82,9 +82,9 @@ describe("the packs surface", () => {
   // folder name was written into both of its path-scoped entries, so every other repo bound a nudge
   // that never fires and a delete refusal that protects nothing — while `flow status` counted both
   // as armed. A message can be read; a scope has to be looked at, which is what this does.
-  it("scopes the guard pack on the folder the repo says its packs are in, and on no other", () => {
+  it("scopes the flow pack on the folder the repo says its packs are in, and on no other", () => {
     const bound = (homes: readonly string[]): Record<string, readonly string[]> => {
-      const result = loadConfig(defineConfig([pack(packs.guard, { packs: homes })]));
+      const result = loadConfig(defineConfig([pack(packs.flow, { packs: homes })]));
       expect(result.ok ? [] : result.refusals).toEqual([]);
       return Object.fromEntries(
         (result.ok ? result.entries : []).map((entry) => [entry.id, (entry.spec as { on?: readonly string[] }).on ?? []]),
@@ -92,15 +92,15 @@ describe("the packs surface", () => {
     };
 
     const theirs = bound(["rules/**", "policy/*.ts"]);
-    expect(theirs["guard.editingTheGuardrails"]).toContain("rules/**");
-    expect(theirs["guard.editingTheGuardrails"]).toContain("policy/*.ts");
-    expect(theirs["guard.noDeleteGuardrails"]).toStrictEqual(["flow.config.ts", "rules/**", "policy/*.ts", ".githooks/pre-commit"]);
+    expect(theirs["flow.editingTheGuardrails"]).toContain("rules/**");
+    expect(theirs["flow.editingTheGuardrails"]).toContain("policy/*.ts");
+    expect(theirs["flow.noDeleteGuardrails"]).toStrictEqual(["flow.config.ts", "rules/**", "policy/*.ts", ".githooks/pre-commit"]);
 
     // Empty is a real answer — the config IS the whole guard — and the two entries still cover it
     // and the host's registrations, and nothing invented.
     const inline = bound([]);
-    expect(inline["guard.noDeleteGuardrails"]).toStrictEqual(["flow.config.ts", ".githooks/pre-commit"]);
-    expect(inline["guard.editingTheGuardrails"]).toStrictEqual([
+    expect(inline["flow.noDeleteGuardrails"]).toStrictEqual(["flow.config.ts", ".githooks/pre-commit"]);
+    expect(inline["flow.editingTheGuardrails"]).toStrictEqual([
       "flow.config.ts",
       ".claude/settings.json",
       ".claude/settings.local.json",

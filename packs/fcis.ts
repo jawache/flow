@@ -57,7 +57,7 @@ export interface Convention {
    * stranger's parameters.
    *
    * ASKED FOR rather than computed from the globs above, on the ruling this pack's sibling
-   * already took (`guard`'s `Home`): inventing a concrete path out of a caller's glob is
+   * already took (the `flow` pack's `Home`): inventing a concrete path out of a caller's glob is
    * arithmetic that does not belong in a pack, and it needs a second glob dialect inside one to
    * do it. A repo knows one of its own pure files; nothing else does.
    *

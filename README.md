@@ -70,7 +70,7 @@ Six things, and each one is checkable:
 
 | what | why |
 | --- | --- |
-| `flow.config.ts` | flow's own `guard` pack plus a demo guard you can read in one screen — the only file that turns anything on |
+| `flow.config.ts` | flow's own `flow` pack plus a demo guard you can read in one screen — the only file that turns anything on |
 | `.githooks/pre-commit` | the commit gate. Never written over one you already have |
 | `.flow/` | flow's own state and logs. It ignores itself, so your `.gitignore` is untouched |
 | `node_modules/@jawache/flow` | a link, because nothing is published yet. Once flow is on npm, this step disappears |
@@ -93,13 +93,13 @@ flow is ON — 4 guardrails · 2 breadcrumbs, every one resolved and able to fir
   session    no live session has marked this worktree yet
   categories subagent — what the entries below bind to
   session
-    🍞 guard.orientation
+    🍞 flow.orientation
         This repo is guarded by flow. Guardrails block risky edits before they land (and again at commit); …
   touch
-    🍞 guard.editingTheGuardrails  —  on flow.config.ts .claude/settings.json .claude/settings.local.json .claude/agents/** .claude/skills/**
+    🍞 flow.editingTheGuardrails  —  on flow.config.ts .claude/settings.json .claude/settings.local.json .claude/agents/** .claude/skills/**
         You are editing the guardrails themselves. If this edit weakens, disables or removes a guardrail or…
   delete
-    ✗ guard.noDeleteGuardrails  —  on flow.config.ts .githooks/pre-commit
+    ✗ flow.noDeleteGuardrails  —  on flow.config.ts .githooks/pre-commit
         That command would delete this repo's guard surface (flow.config.ts binds every rule; the packs it …
   command
     ✗ demo.noForcePush
@@ -196,7 +196,7 @@ export const demo = definePack("demo", {
     .test({ pass: ["git push origin main"], block: ["git push --force origin main"] }),
 });
 
-export default defineConfig([pack(guard, { packs: [] }), pack(demo)]);
+export default defineConfig([pack(flow, { packs: [] }), pack(demo)]);
 ```
 
 Six things to know, and then you can write your own:
@@ -211,10 +211,10 @@ Six things to know, and then you can write your own:
   Publishing one is promotion, not a rewrite.
 - **Packs come with the install, behind their own door.** `@jawache/flow` is the GRAMMAR a rule is
   written in; `@jawache/flow/packs` is the CONTENT — ten opinionated packs (`git` · `justfile` ·
-  `node` · `secrets` · `typescript` · `fcis` · `tdd` · `docs` · `guard` · `work`), each bound by one
+  `node` · `secrets` · `typescript` · `fcis` · `tdd` · `docs` · `flow` · `work`), each bound by one
   `pack(…)` line, and an unbound one costs nothing. A pack names nothing it does not ship: the
   recipe your gate runs is a typed, mandatory parameter, so a config that never says which command
-  cuts a release does not compile — and `guard`, flow's own self-protection, takes the folder your
+  cuts a release does not compile — and `flow`, flow's own self-protection, takes the folder your
   own packs live in, so it never guesses at a folder your repo does not have. `flow init` binds
   that one for you.
 - **A repo bends a pack it did not write** with `override(pack.entry)`, which speaks only what it

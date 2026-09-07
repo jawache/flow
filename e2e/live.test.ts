@@ -19,7 +19,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { PACKAGE, buildBundles, fixturePack, newRepo, pre, flow as runFlow, git as runGit, type Ran } from "../harness.ts";
+import { PACKAGE, buildBundles, fixturePack, newRepo, pre, flow as runFlow, git as runGit, type Ran } from "./harness.ts";
 
 let repo: string;
 

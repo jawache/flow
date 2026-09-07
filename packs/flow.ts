@@ -1,9 +1,15 @@
-// flow/packs/guard.ts — the guard layer's own orientation and self-protection.
+// flow/packs/flow.ts — flow's own orientation and self-protection, as a pack any repo binds.
 //
 // Every guarded repo wants these: a note saying what is steering you, a nudge when you edit the
 // steering itself, and a refusal when a command would delete it. They were the `guard` pack in the
 // home-directory library; they are a module now, and the only thing that changed on the way across
 // is what they point AT — flow.config.ts and the packs it imports, not work.yaml and ~/.work/library.
+//
+// AND THEY ARE THE `flow` PACK NOW, not `guard`, which is a rename worth its churn: every entry in
+// every pack here is a guardrail or a breadcrumb, so `guard.` as a prefix said nothing that was not
+// already true of `git.` and `tdd.`. What these three are actually about is FLOW — the config file,
+// the packs it imports, the gate that runs them — and `flow.noDeleteGuardrails` names the thing
+// being protected where `guard.noDeleteGuardrails` named the category it belongs to.
 //
 // Subtlety: WHERE those packs live is a mandatory parameter. One repo's name for the folder used to
 // be written into both scopes below, so every other repo bound two rules over a folder it does not
@@ -43,7 +49,7 @@ export interface Home {
   readonly packs: readonly string[];
 }
 
-export const guard = definePack("guard", (repo: Home) => ({
+export const flow = definePack("flow", (repo: Home) => ({
   orientation: breadcrumb()
     .at(session)
     .description("What the guard layer is and how it steers — shown at the start of every session.")

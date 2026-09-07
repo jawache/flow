@@ -343,7 +343,7 @@ export const git = definePack("git", (repo: Release) => ({
 
   // The commands in THIS pack that write a permanent record — `git commit -m` and the two `gh`
   // verbs that open a PR or an issue. It arrived here when the packs moved into the package: it
-  // was one entry in `guard` covering these AND the `work …` lifecycle verbs, which is two packs'
+  // was one entry in the `flow` pack covering these AND the `work …` lifecycle verbs, which is two packs'
   // worth of commands in one rule, so the head split along the pack line and the tail is shared
   // (`substitutionInProse`, a core check beside `banCommands`). A repo that binds `work` gets the
   // other head there; a

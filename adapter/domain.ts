@@ -2117,7 +2117,7 @@ export default defineConfig([]);
  * THE DEMO — the config `flow init` leaves behind, and the whole of J6.1.
  *
  * TWO IMPORTS AND THE SPLIT IS THE LESSON. `@jawache/flow` is the grammar a rule is written in;
- * `@jawache/flow/packs` is the content the package ships, bound one `pack(…)` line each. `guard` is
+ * `@jawache/flow/packs` is the content the package ships, bound one `pack(…)` line each. `flow` is
  * bound by default because it is flow's own self-protection — the note saying what is steering you,
  * the nudge when you edit the steering itself, and the refusal when a command would delete it — and
  * every repo running flow wants all three whether or not it wants anything else. `--empty` leaves
@@ -2147,7 +2147,7 @@ const DEMO_CONFIG = String.raw`// flow.config.ts — this repo's whole guard, an
 //   flow test     every rule's own cases, run
 
 import { command, commit, defineCategory, defineConfig, definePack, guardrail, pack } from "@jawache/flow";
-import { guard } from "@jawache/flow/packs";
+import { flow } from "@jawache/flow/packs";
 
 // A category is a name and the HOST-WRITTEN evidence that recognises it — never a claim a session
 // made about itself. This one is "the harness wrote a sidecar for you", which is what a spawned
@@ -2199,7 +2199,7 @@ export default defineConfig([
   // Its packs list is where YOUR OWN packs live. Everything here is in this file, so it is empty —
   // move a pack out to a folder of its own and add that folder's glob, or the nudge and the delete
   // refusal stop covering it.
-  pack(guard, { packs: [] }),
+  pack(flow, { packs: [] }),
   pack(demo),
 ]);
 `;

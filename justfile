@@ -36,7 +36,7 @@ typecheck:
 
 [doc("Lint every TypeScript surface — the pipeline layers, the packs, this repo's own guard and the two configs — with the fleet's shared eslint base (typescript-eslint strictTypeChecked + eslint-plugin-n). Type-aware: it sees what tsc alone cannot.")]
 lint:
-    npx eslint adapter checks engine language packs guards *.ts
+    npx eslint adapter checks e2e engine language packs guards *.ts
 
 [doc("The whole unit suite: the grammar's pure model, the compiler-refusal matrix, the engine, the adapter driven through the built binary, and the machine test over every shipped pack.")]
 test:
@@ -55,7 +55,7 @@ test-packs:
     # `flow init` makes, which is the one path a source import would never exercise.
     # FLOW_MACHINE_REPORT is what makes it PRINT its report: the file is in the suite, so
     # `just test` and the commit gate run it too, and they want the exit code rather than the page.
-    FLOW_MACHINE_REPORT=1 npx vitest run packs/machine.test.ts
+    FLOW_MACHINE_REPORT=1 npx vitest run e2e/machine.test.ts
 
 [doc("Coverage gate for the pure home — one `domain.ts` per pipeline layer plus glob.ts, judged against the threshold in vitest.config.ts.")]
 test-coverage:

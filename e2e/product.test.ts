@@ -28,7 +28,7 @@ import {
   flow as runFlow,
   git as runGit,
   type Ran,
-} from "../harness.ts";
+} from "./harness.ts";
 
 let home: string;
 /** A directory holding one `flow` shim, so git's own hook can find the binary under test. */
@@ -134,7 +134,7 @@ describe("flow status", () => {
     const said = flow(repo, ["status"]);
     expect(said.code, said.stdout + said.stderr).toBe(0);
     expect(said.stdout).toContain("flow is ON");
-    expect(said.stdout, "flow's own self-protection is bound by default").toContain("guard.orientation");
+    expect(said.stdout, "flow's own self-protection is bound by default").toContain("flow.orientation");
     expect(said.stdout).toContain("demo.noForcePush");
     expect(said.stdout).toContain("for subagent");
     expect(said.stdout).toContain("categories subagent");

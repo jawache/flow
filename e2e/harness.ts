@@ -1,14 +1,22 @@
-// flow/harness.ts — the road three suites drive: a throwaway git repo, the BUILT binary, and the
-// two edges a harness really talks to.
+// flow/e2e/harness.ts — the road three suites drive: a throwaway git repo, the BUILT binary, and
+// the two edges a harness really talks to.
 //
-// It is not product and ships with nothing (tsconfig.build.json excludes it, beside the tests and
-// the fixtures). It is here, at the package root beside glob.ts, for the same reason that file is:
-// three callers need the SAME one. `product.test.ts` drives `flow init` and `flow status`,
-// `live.test.ts` drives the live rails, and `packs/machine.test.ts` drives every shipped pack at
-// once — and all three had grown their own copy of this: a `Ran` triple, a spawn wrapper with the
-// host-settings override and a shim on PATH, a `git init` with an identity, an esbuild pre-build.
-// Three copies of one road is three ways for it to drift, and it had already started —
+// It is not product and ships with nothing (tsconfig.build.json excludes this whole folder, beside
+// the fixtures). Its three callers need the SAME one: `product.test.ts` drives `flow init` and
+// `flow status`, `live.test.ts` drives the live rails, and `machine.test.ts` drives every shipped
+// pack at once — and all three had grown their own copy of this: a `Ran` triple, a spawn wrapper
+// with the host-settings override and a shim on PATH, a `git init` with an identity, an esbuild
+// pre-build. Three copies of one road is three ways for it to drift, and it had already started —
 // `CLAUDE_PROJECT_DIR` was set in two of them and not the third.
+//
+// THE FOLDER IS THE POINT, and it is why this is not at the package root any more. These three are
+// the only suites that spawn a binary, write a temp repo and take tens of seconds; every other test
+// file in the package is a fast unit suite beside the code it is about. Two of the three were also
+// filed by what they happened to drive rather than by what they ARE — `live.test.ts` under
+// `adapter/`, `machine.test.ts` under `packs/` — which made a folder of pure decision logic look as
+// though it held an end-to-end suite, and put a test that imports the BUILT PACKAGE inside a layer
+// whose fence exists to stop exactly that reach. One folder, one shape: the road, and the three
+// things that drive it.
 //
 // WHAT IT DELIBERATELY DOES NOT DO: assert. Nothing here imports vitest, and every function
 // returns what happened rather than judging it, so a suite's expectations stay in the suite where
@@ -31,7 +39,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 /** The package root, from this file rather than from the runner's cwd. */
-export const PACKAGE = fileURLToPath(new URL("./", import.meta.url));
+export const PACKAGE = fileURLToPath(new URL("../", import.meta.url));
 /** The built binary — the thing under test, always. A suite that drove the source would prove the
  * one thing a shipped package cannot rely on. */
 export const BINARY = join(PACKAGE, "dist", "flow.mjs");

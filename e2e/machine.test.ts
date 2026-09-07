@@ -40,7 +40,7 @@ import {
   git as runGit,
   hook as sendHook,
   type Ran,
-} from "../harness.ts";
+} from "./harness.ts";
 
 // ── the stranger, and what it calls things ───────────────────────────────────
 //
@@ -74,8 +74,8 @@ const SHIPPED: readonly Shipped[] = [
     cases: 15,
     guardrails: 7,
   },
+  { pack: "flow", bind: `pack(flow, { packs: ["rules/**"] })`, cases: 2, guardrails: 1 },
   { pack: "git", bind: `pack(git, { release: "./ci.sh release" })`, cases: 30, guardrails: 7 },
-  { pack: "guard", bind: `pack(guard, { packs: ["rules/**"] })`, cases: 2, guardrails: 1 },
   { pack: "justfile", bind: `pack(justfile, { exempt: [] })`, cases: 6, guardrails: 2 },
   { pack: "node", bind: "pack(node)", cases: 7, guardrails: 2 },
   {
@@ -97,7 +97,7 @@ const HOUSE: Shipped = { pack: "house", bind: "pack(house)", cases: 2, guardrail
  *
  * ONE RULE, and it is at turn-end deliberately: not one of the ten shipped packs carries a
  * turn-end guardrail, so the rail would otherwise go undriven here — and "no pack ships one" is a
- * fact about the packs, not about the moment. This is also what `guard`'s `packs: ["rules/**"]`
+ * fact about the packs, not about the moment. This is also what `flow`'s `packs: ["rules/**"]`
  * parameter is pointed at, so the delete refusal below is protecting a file that really exists.
  *
  * It is the fixture `live.test.ts` drives too (flow/__fixtures__/repo-pack.ts), with its import
@@ -109,7 +109,7 @@ const HOUSE_PACK = fixturePack("repo-pack", "@jawache/flow");
 /** The whole guard of a repo that binds everything flow ships, plus the one pack it writes itself. */
 const CONFIG = `// flow.config.ts — this repo's whole guard.
 import { defineConfig, pack } from "@jawache/flow";
-import { docs, fcis, git, guard, justfile, node, secrets, tdd, typescript, work } from "@jawache/flow/packs";
+import { docs, fcis, flow, git, justfile, node, secrets, tdd, typescript, work } from "@jawache/flow/packs";
 import { house } from "./rules/house.ts";
 
 export default defineConfig([
@@ -155,6 +155,9 @@ const ENTRIES: readonly string[] = [
   "fcis.pureExportsTested",
   "fcis.pureHasTest",
   "fcis.strictLayout",
+  "flow.editingTheGuardrails",
+  "flow.noDeleteGuardrails",
+  "flow.orientation",
   "git.conventionalCommitFormat",
   "git.noAiAttributionInCommits",
   "git.noForcePush",
@@ -163,9 +166,6 @@ const ENTRIES: readonly string[] = [
   "git.node.noHandEditedVersion",
   "git.node.versionIsSemver",
   "git.orientation",
-  "guard.editingTheGuardrails",
-  "guard.noDeleteGuardrails",
-  "guard.orientation",
   "house.ranSomething",
   "justfile.justfileDocs",
   "justfile.node.noPackageScripts",
@@ -305,7 +305,7 @@ describe("the machine test", () => {
     const entries = read.moments.moments.flatMap((m) => m.entries);
     const ids = [...new Set(entries.map((e) => e.id))].sort();
 
-    // The exact list, not a count: "one fewer" is a puzzle, "guard.noDeleteGuardrails is gone" is
+    // The exact list, not a count: "one fewer" is a puzzle, "flow.noDeleteGuardrails is gone" is
     // an answer.
     expect(ids).toEqual([...ENTRIES]);
     expect([...new Set(entries.map((e) => e.pack))].sort()).toEqual([...SHIPPED.map((s) => s.pack), HOUSE.pack].sort());
@@ -359,8 +359,8 @@ describe("the machine test", () => {
 
   it("refuses the delete — the guard surface named by a parameter", () => {
     // One Bash call, two moments: the command itself, and the file the `rm` would take. `rules/`
-    // is the stranger's pack folder, handed to the guard pack as `packs`.
-    refusal("delete", hook("pre-tool-use", inThisSession("Bash", { command: "rm rules/house.ts" })), "guard.noDeleteGuardrails");
+    // is the stranger's pack folder, handed to the flow pack as `packs`.
+    refusal("delete", hook("pre-tool-use", inThisSession("Bash", { command: "rm rules/house.ts" })), "flow.noDeleteGuardrails");
   });
 
   it("refuses the command", () => {

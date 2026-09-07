@@ -94,10 +94,13 @@ export const house = definePack("house", (repo: Terrain) => ({
         "the old engine had, and it hid which checks were really the same check.",
         "`glob.ts` is the ONE shared file of the PRODUCT, at the package root, because exactly one",
         "thing is genuinely shared and one shared thing earns a name rather than a folder.",
-        "`harness.ts` sits beside it and ships with nothing (tsconfig.build.json excludes it): it is",
-        "the road three suites drive — a throwaway git repo, the built binary, the host's own",
-        "CLAUDE_CONFIG_DIR and PATH seams — and the fixture packs those suites write into a temp",
-        "repo live in `__fixtures__/`.",
+        "`e2e/` is the END-TO-END suites and nothing else, and it is not a pipeline stage either:",
+        "the three tests that spawn the built binary over a throwaway git repo (product · live ·",
+        "machine) plus `harness.ts`, the one road all three drive — the repo, the binary, the host's",
+        "CLAUDE_CONFIG_DIR and PATH seams. It ships with nothing (tsconfig.build.json excludes the",
+        "folder) and nothing in the package may import it. The fixture packs those suites write into",
+        "a temp repo live in `__fixtures__/`. Every OTHER test file sits beside the code it is about",
+        "and runs in milliseconds; these three take tens of seconds because they build and spawn.",
         "The pipeline runs ONE WAY — language → checks → engine → adapter. A layer may import",
         "backwards and never forwards; the fences are in the import-boundaries entry in",
         "guards/house.ts, and they are why a recorded session can replay with no harness at all.",
@@ -115,8 +118,8 @@ export const house = definePack("house", (repo: Terrain) => ({
       depcruise({
         // Named folder by folder rather than swept with `**`, so the cruise never walks
         // node_modules, dist/ or the deliberately-wrong fixtures. The leading `*.ts` is the
-        // package root — index.ts, flow.ts, glob.ts, errors.ts, harness.ts, version.ts.
-        scan: "{*.ts,language/**/*.ts,checks/**/*.ts,engine/**/*.ts,adapter/**/*.ts,packs/**/*.ts,guards/**/*.ts}",
+        // package root — index.ts, flow.ts, glob.ts, errors.ts, version.ts.
+        scan: "{*.ts,language/**/*.ts,checks/**/*.ts,engine/**/*.ts,adapter/**/*.ts,packs/**/*.ts,guards/**/*.ts,e2e/**/*.ts}",
         layers: {
           // THE SAME LIST the fcis rails are scoped to, handed in once by the config. This package
           // keeps no pure folder and states its pure home as a filename per pipeline layer, plus
@@ -144,6 +147,12 @@ export const house = definePack("house", (repo: Terrain) => ({
           // the same fence a stranger's guard obeys from outside the package, which is what makes
           // this one worth having: it is the proof the door works from the outside.
           guards: ["guards/**"],
+          // THE END-TO-END SUITES. Named as a layer for ONE reason and it is the inward half: no
+          // file in this package may import e2e/. Outward it is deliberately unfenced — the whole
+          // job of these three is to reach the product from outside, and two of them did exactly
+          // that from inside `adapter/` and `packs/` until F5 moved them here, which is the fence
+          // being asked for by the shape rather than imposed on it.
+          e2e: ["e2e/**"],
         },
         only: {
           // The pure home reaches pure code, `node:path` and one parser, and nothing else. No
@@ -188,6 +197,14 @@ export const house = definePack("house", (repo: Terrain) => ({
           { from: "engine", to: "guards", why: "the engine reads whatever config it is pointed at; importing this one would make our bindings everyone's" },
           { from: "adapter", to: "guards", why: "the adapter loads a config by path at run time — importing one would bake this repo's guard into the shipped bundle" },
           { from: "packs", to: "guards", why: "a shipped pack that imported this repo's own pack would ship it to everybody who installs flow" },
+          // NOTHING IMPORTS e2e/. It is test-only, it ships with nothing, and a product file that
+          // reached into it would put a temp-repo builder and a binary spawner into the bundle.
+          { from: "language", to: "e2e", why: "the grammar cannot depend on the suites that drive it" },
+          { from: "checks", to: "e2e", why: "a check reads the world through ctx; the e2e road builds a real repo and spawns a real binary, which is the opposite of that" },
+          { from: "engine", to: "e2e", why: "the engine is replayable with no repo and no harness — importing the thing that makes one would end that" },
+          { from: "adapter", to: "e2e", why: "the adapter is the shipped harness column; the e2e road is a TEST harness and must never be mistaken for it" },
+          { from: "packs", to: "e2e", why: "a shipped pack that imported a test road would ship it to everybody who installs flow" },
+          { from: "guards", to: "e2e", why: "a rule loads at every gated moment; the e2e road builds temp repos and spawns binaries" },
         ],
       }),
     )
