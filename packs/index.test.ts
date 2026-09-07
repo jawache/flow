@@ -15,20 +15,19 @@ import * as packs from "./index.ts";
 import { defineConfig, loadConfig, pack } from "../index.ts";
 
 describe("the packs surface", () => {
+  // TEN PACKS AND THREE RUNGS, and nothing else. Five configured checks used to sit on this list
+  // too, exported from a shared `checks.ts` beside the packs; not one was ever bound outside the
+  // pack it was written for, so each folded into that pack and the file went. What a house pack
+  // reaches for now is the grammar and the stock checks, and those come through `@jawache/flow`.
   it("is exactly what a config file may bind", () => {
     expect(Object.keys(packs).sort()).toEqual([
       "builder",
       "checker",
-      "conventionalCommit",
       "docs",
       "fcis",
       "git",
       "guard",
       "justfile",
-      "justfileDocs",
-      "lockfileInStep",
-      "noGitDiscard",
-      "noHandEditedVersion",
       "node",
       "parent",
       "secrets",

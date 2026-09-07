@@ -7,10 +7,67 @@
 // first, `node/noPackageScripts` closes the decoy surface agents habitually read, and `justfileDocs`
 // keeps the manifest readable.
 
-import { breadcrumb, commit, definePack, guardrail, jsonInvariant, session, touch, write } from "../index.ts";
-import { justfileDocs } from "./checks.ts";
+import { breadcrumb, commit, defineCheck, definePack, guardrail, jsonInvariant, session, touch, write, type Check } from "../index.ts";
 
 /** The one fact this pack cannot know: which recipes are genuinely undocumentable here. */
+// ── the justfile: every recipe is discoverable ───────────────────────────────
+
+/** Words that open a non-recipe construct at column 0. */
+const RESERVED = new Set(["set", "alias", "export", "import", "mod", "unexport"]);
+
+/**
+ * Recipes with no `[doc(…)]` attribute, as `{ name, line }` (1-based).
+ *
+ * `[private]` recipes are SKIPPED, and that is a fix rather than a nicety: `just --list` hides
+ * them, so a private recipe is not in the catalogue and cannot owe the catalogue a description.
+ * The message has claimed this exemption from the day it was written and the walk never honoured
+ * it — a rule that refuses what its own sentence promises to allow is the worst kind, because the
+ * reader does the thing they were told to do and is refused anyway.
+ */
+export function undocumentedRecipes(text: string, exempt: readonly string[] = []): { name: string; line: number }[] {
+  const ex = new Set(exempt);
+  const lines = text.split("\n");
+  const bad: { name: string; line: number }[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] as string;
+    const m = /^(@?[A-Za-z_][A-Za-z0-9_-]*)(\s|:)/.exec(line);
+    if (!m?.[1]) continue; // indented (a body), a comment, an attribute, a blank
+    const name = m[1].replace(/^@/, "");
+    if (RESERVED.has(name) || ex.has(name)) continue;
+    const colon = line.indexOf(":");
+    if (colon === -1 || line[colon + 1] === "=") continue; // not a recipe / an assignment
+    // Walk up over the recipe's contiguous attribute lines (`[private]`, `[doc(…)]`, …). Either
+    // one settles it: a documented recipe is fine, and a private one is not in the listing at all.
+    let excused = false;
+    for (let j = i - 1; j >= 0; j--) {
+      const above = lines[j] as string;
+      if (!/^\[.*\]\s*$/.test(above)) break;
+      if (/\bdoc\(/.test(above) || /\bprivate\b/.test(above)) {
+        excused = true;
+        break;
+      }
+    }
+    if (!excused) bad.push({ name, line: i + 1 });
+  }
+  return bad;
+}
+
+/**
+ * Every justfile recipe carries an explicit `[doc("…")]`.
+ *
+ * Without one, `just --list` falls back to the LAST comment line above a recipe, which for a
+ * multi-line comment block is a mid-sentence fragment — a help screen assembled by accident.
+ */
+const justfileDocs = defineCheck(
+  (opts: { exempt?: readonly string[] }): Check =>
+    (ctx) => {
+      const bad = undocumentedRecipes(ctx.file?.content ?? "", opts.exempt ?? []);
+      return bad.length === 0
+        ? ctx.ok()
+        : ctx.fail(bad.map((r) => `recipe '${r.name}' (line ${r.line}) has no [doc("…")] attribute`).join("\n"));
+    },
+);
+
 export interface Catalogue {
   /**
    * Recipe names that owe no `[doc("…")]`. Usually empty, and MANDATORY so that it is empty on

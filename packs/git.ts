@@ -17,15 +17,202 @@ import {
   breadcrumb,
   command,
   commit,
+  commitMessage,
+  defineCheck,
   definePack,
+  gitInvocations,
   guardrail,
   jsonInvariant,
+  quoteArg,
   session,
   substitutionInProse,
   SUBSTITUTION_MESSAGE,
   write,
+  type Check,
 } from "../index.ts";
-import { conventionalCommit, noGitDiscard, noHandEditedVersion } from "./checks.ts";
+
+// ── git: the commands that destroy work, and the commits that owe a sentence ──
+
+/** `git restore` args → the working-tree paths it would overwrite. `--staged` alone touches none. */
+function restoreWorktreePaths(args: readonly string[]): string[] {
+  const staged = args.includes("--staged") || args.includes("-S");
+  const worktree = args.includes("--worktree") || args.includes("-W");
+  if (staged && !worktree) return [];
+  const paths: string[] = [];
+  let afterDashDash = false;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] as string;
+    if (afterDashDash) {
+      paths.push(a);
+      continue;
+    }
+    if (a === "--") {
+      afterDashDash = true;
+      continue;
+    }
+    if (a === "-s" || a === "--source") {
+      i++; // skip the source value
+      continue;
+    }
+    if (a.startsWith("-")) continue;
+    paths.push(a);
+  }
+  return paths;
+}
+
+/**
+ * The working-tree paths a command line would discard, or [] when it is safe to run.
+ *
+ * Deliberately narrow — false negatives beat blocking real work. Only the `--` pathspec form of
+ * checkout counts (branch switching passes), only the restore forms that touch the tree, and
+ * `reset --hard` / `clean -f`, whose target is the tree itself.
+ */
+export function discardPaths(command: string): string[] {
+  const invocations = gitInvocations(command);
+  if (!invocations) return [];
+  const paths: string[] = [];
+  for (const { subcommand, args } of invocations) {
+    if (subcommand === "checkout") {
+      const dd = args.indexOf("--");
+      if (dd !== -1) paths.push(...args.slice(dd + 1));
+    } else if (subcommand === "restore") {
+      paths.push(...restoreWorktreePaths(args));
+    } else if (subcommand === "reset" && args.includes("--hard")) {
+      // A hard reset overwrites the whole tree from a commit; it has no discarding pathspec form,
+      // so the target is `.` and the dirty check below reads that as "every uncommitted file".
+      paths.push(".");
+    } else if (subcommand === "clean" && args.some((a) => /^-[a-zA-Z]*[fx]/.test(a) || a === "--force")) {
+      const named = args.filter((a) => !a.startsWith("-"));
+      paths.push(...(named.length ? named : ["."]));
+    }
+  }
+  return paths;
+}
+
+/** Of some porcelain lines, the paths with real uncommitted work. */
+export function dirtyIn(porcelain: string, includeUntracked: boolean): string[] {
+  return porcelain
+    .split("\n")
+    .filter((l) => l !== "" && (includeUntracked || !l.startsWith("??")))
+    .map((l) => l.slice(3));
+}
+
+/**
+ * Blocks a git command that would silently destroy uncommitted work. No bypass, by ruling.
+ *
+ * `git clean` is the one form whose whole purpose is deleting UNTRACKED files, so for it the
+ * untracked half of the status IS the loss; everywhere else those files survive and counting them
+ * would block a safe command.
+ */
+const noGitDiscard = defineCheck(
+  (_opts: Record<string, never>): Check =>
+    async (ctx) => {
+      const command = ctx.command ?? "";
+      const targets = discardPaths(command);
+      if (targets.length === 0) return ctx.ok();
+      const cleaning = /(^|[;&|\n]\s*)git\s+clean\b/.test(command);
+      // `quoteArg` rather than a pair of typed quotes: a path with an apostrophe in it closes a
+      // hand-rolled quote and the rest of the pathspec becomes shell. One quoter in this package,
+      // and this is the call that was the second one.
+      const status = await ctx.exec(`git status --porcelain -- ${targets.map(quoteArg).join(" ")}`);
+      if (status.code !== 0) return ctx.ok(); // not a repo, or a bad pathspec — git owns that error
+      const dirty = dirtyIn(status.stdout, cleaning);
+      if (dirty.length === 0) return ctx.ok();
+      return ctx.fail(
+        dirty.map((f) => `would discard uncommitted edits to ${f} — use \`git stash\` instead (recoverable)`).join("\n"),
+      );
+    },
+);
+
+/** Does this header line speak Conventional Commits for the given type set? */
+export function isConventional(header: string, types: readonly string[]): boolean {
+  const alt = types.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  return new RegExp(`^(${alt})(\\([^)]+\\))?!?: .+`).test(header.split("\n")[0] ?? "");
+}
+
+/**
+ * The commit header must speak Conventional Commits v1.0.0, checked before `git commit` runs.
+ *
+ * `types` is stated, never defaulted: the accepted words are the whole content of the rule, and a
+ * private list inside a script is a rule a reader of the entry cannot check.
+ */
+const conventionalCommit = defineCheck(
+  (opts: { types: readonly string[] }): Check =>
+    (ctx) => {
+      const message = commitMessage(ctx.command ?? "");
+      if (message === null) return ctx.ok(); // nothing judgeable — an editor commit passes
+      return isConventional(message, opts.types)
+        ? ctx.ok()
+        : ctx.fail(`commit header "${message.split("\n")[0] ?? ""}" is not Conventional Commits (type(scope)!: description)`);
+    },
+);
+
+/**
+ * A release commit's header — the ONE shape allowed to write a version by hand.
+ *
+ * `release: …` · `release(scope): …` · `release(scope)!: …` · `chore(release): …`, and a `chore`
+ * ONLY with a release-ish scope.
+ *
+ * TWO FAULTS FIXED HERE, both found by writing the cases the crossing's audit asked for, and both
+ * the same shape: a claim nobody had driven.
+ *
+ * The hole: the old expression was `^(release|chore)(\([^)]*release[^)]*\))?!?:` with the scope
+ * group OPTIONAL, so a bare `chore:` matched — every `chore: tidy the readme` in this repo's
+ * history was licensed to hand-edit the version, which is the whole thing this rule exists to
+ * refuse. `chore` now REQUIRES its release scope.
+ *
+ * The lie: the doc line claimed `release(scope)!:` worked, and it could not — the scope group
+ * demanded the word "release" inside the parentheses, so `release(flow): 1.0.0` was refused. That
+ * spelling is about to be typed here for real, now that `work` and `flow` version independently.
+ */
+export function isReleaseCommit(message: string): boolean {
+  const first = message.split("\n")[0] ?? "";
+  return /^(release(\([^)]*\))?|chore\([^)]*release[^)]*\))!?:/i.test(first);
+}
+
+// JSON and TOML in one expression — `"version": "1.2.3"` and `version = "1.2.3"` ask the identical
+// question, and three parsers for one line is three things to get wrong.
+const VERSION_LINE = /["']?\bversion["']?\s*[:=]\s*["']?(\d+\.\d+\.\d+[^"',\s]*)/;
+
+/**
+ * Does this diff change the version VALUE?
+ *
+ * Values on both sides, compared — never "an added line mentions version". Adding a key after the
+ * version rewrites its line (it gains a comma), and a rule that fired on every reformat is a rule
+ * whose message people stop reading.
+ */
+export function changesVersion(diff: string): boolean {
+  const added: string[] = [];
+  const removed: string[] = [];
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    const m = VERSION_LINE.exec(line);
+    if (!m?.[1]) continue;
+    if (line.startsWith("+")) added.push(m[1]);
+    else if (line.startsWith("-")) removed.push(m[1]);
+  }
+  return added.some((v) => !removed.includes(v));
+}
+
+/** The version field is written by the release commit, never by hand. */
+const noHandEditedVersion = defineCheck(
+  (opts: { versionFile: string; recipe: string }): Check =>
+    async (ctx) => {
+      const message = commitMessage(ctx.command ?? "");
+      if (message === null) return ctx.ok();
+      if (isReleaseCommit(message)) return ctx.ok(); // the one shape that may write it
+      // `git diff HEAD` — staged AND unstaged, because `git commit -a` sweeps the second lot in.
+      const diff = await ctx.exec(`git diff HEAD -- ${opts.versionFile}`);
+      if (diff.code !== 0) return ctx.ok();
+      if (!changesVersion(diff.stdout)) return ctx.ok();
+      return ctx.fail(
+        `this commit hand-edits the \`version\` field in ${opts.versionFile}. The version is COMPUTED ` +
+          `from the commit history at release time — run \`${opts.recipe}\`, which writes the version, ` +
+          `the changelog and the tag together. (A real release commit, headed \`release:\` or ` +
+          `\`chore(release):\`, passes.)`,
+      );
+    },
+);
 
 /** The type words this repo accepts. Stated, never defaulted — the entry is the whole rule. */
 const TYPES = ["feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert", "release"];

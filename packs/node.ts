@@ -6,8 +6,59 @@
 // avoid a package has no users, no reviewers and no fixes coming, which is the larger risk most of
 // the time.
 
-import { breadcrumb, command, commit, commitReason, definePack, guardrail, touch } from "../index.ts";
-import { lockfileInStep } from "./checks.ts";
+import { breadcrumb, command, commit, commitReason, defineCheck, definePack, guardrail, touch, type Check } from "../index.ts";
+
+// ── node: the lockfile moves with the dependency, not with the file ──────────
+
+const DEP_BLOCKS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"] as const;
+const LOCKFILES = ["package-lock.json", "pnpm-lock.yaml", "bun.lock", "bun.lockb", "yarn.lock"];
+
+/**
+ * The dependency names whose entry differs between two package.json texts.
+ *
+ * Unparseable JSON on either side names every dependency both sides mention: a file being reshaped
+ * into something else is a change we cannot rule out. An empty string means the file did not exist
+ * on that side.
+ */
+export function movedDependencies(beforeText: string, afterText: string): string[] {
+  let before: Record<string, unknown>;
+  let after: Record<string, unknown>;
+  try {
+    before = beforeText.trim() === "" ? {} : (JSON.parse(beforeText) as Record<string, unknown>);
+    after = afterText.trim() === "" ? {} : (JSON.parse(afterText) as Record<string, unknown>);
+  } catch {
+    return ["(package.json is not parseable JSON on one side of this commit)"];
+  }
+  const moved: string[] = [];
+  for (const block of DEP_BLOCKS) {
+    const a = (before[block] ?? {}) as Record<string, unknown>;
+    const b = (after[block] ?? {}) as Record<string, unknown>;
+    for (const name of new Set([...Object.keys(a), ...Object.keys(b)]))
+      if (a[name] !== b[name] && !moved.includes(name)) moved.push(name);
+  }
+  return moved;
+}
+
+/**
+ * A dependency move and its lockfile land in the same commit.
+ *
+ * Keyed on the dependency BLOCKS, never on the file: a `repository.url` fix moves no lockfile, and
+ * the file-keyed version of this rule blocked exactly that commit (2026-08-13). Knowing the domain
+ * is what buys the message the generic rule could never write — it names what moved.
+ */
+const lockfileInStep = defineCheck(
+  (_opts: Record<string, never>): Check =>
+    async (ctx) => {
+      const staged = ctx.staged ?? [];
+      if (!staged.includes("package.json")) return ctx.ok();
+      if (staged.some((f) => LOCKFILES.includes(f))) return ctx.ok();
+      // `HEAD:` is the last committed version (empty = a brand-new package.json), `:` the staged one.
+      const [head, index] = await Promise.all([ctx.exec("git show HEAD:package.json"), ctx.exec("git show :package.json")]);
+      const moved = movedDependencies(head.code === 0 ? head.stdout : "", index.code === 0 ? index.stdout : "");
+      if (moved.length === 0) return ctx.ok(); // a metadata edit — nothing for a lockfile to mirror
+      return ctx.fail(`this commit moves ${moved.map((d) => `\`${d}\``).join(", ")} in package.json but stages no lockfile`);
+    },
+);
 
 export const node = definePack("node", {
   dependencies: breadcrumb()

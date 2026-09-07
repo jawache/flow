@@ -1,5 +1,5 @@
 // flow/packs/index.ts — the door of `@jawache/flow/packs`. Every pack the package ships, and the
-// checks a repo needs to write a pack of its own.
+// three rungs the work lifecycle's entries are scoped to. Content, and nothing but content.
 //
 // TWO DOORS, and they are different promises. `@jawache/flow` is the GRAMMAR — what a pack and a
 // config are written in, and it changes only when the language does. This one is the CONTENT — ten
@@ -42,15 +42,19 @@ export { typescript, type Gates } from "./typescript.ts";
 // bind a rule to the same rung rather than defining a fourth name for it.
 export { work, builder, checker, parent } from "./work.ts";
 
-// ── the checks these packs are written in ────────────────────────────────────
+// ── and nothing else ────────────────────────────────────────────────────────
 //
-// Configured checks, the same shape as the stock thirteen behind `@jawache/flow`, and public for
-// one reason: a repo's own house pack binds them too.
+// THE DOOR IS THE PACKS AND THE RUNGS, and that is the whole list. It used to carry five configured
+// checks as well, from a `checks.ts` beside the packs, and the fold that deleted that file is what
+// makes this comment worth writing: not one of the five was ever bound outside the pack it was
+// written for. They read as a library and were a bag — five sections about git, the justfile, node
+// and the work platform in one module, held together by nothing but having been extracted at the
+// same time.
 //
-// What is deliberately NOT here: the pure helpers each check is built from (`discardPaths`,
-// `changesVersion`, `undocumentedRecipes`, …). Those are how a check is written, not what a repo
-// binds, and a door that exported them would freeze the inside of every one of them.
-
-export { conventionalCommit, noGitDiscard, noHandEditedVersion } from "./checks.ts";
-export { justfileDocs } from "./checks.ts";
-export { lockfileInStep } from "./checks.ts";
+// Each now lives in its own pack file, private to it, with its pure helpers unit-tested beside it.
+// A check that TWO packs share is a different thing and has a different home: it goes to core,
+// behind `@jawache/flow`, which is where `substitutionInProse` went the same day.
+//
+// So a repo writing its own house pack imports the grammar and the stock checks from
+// `@jawache/flow`, and from HERE it imports content: a pack to bind, or a rung to scope an entry
+// of its own to.
