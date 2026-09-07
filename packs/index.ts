@@ -45,16 +45,12 @@ export { work, builder, checker, parent } from "./work.ts";
 // ── the checks these packs are written in ────────────────────────────────────
 //
 // Configured checks, the same shape as the stock thirteen behind `@jawache/flow`, and public for
-// one reason: a repo's own house pack binds them too. `newCommandNeedsCaller` is the proof — the
-// verb ratchet's `known` lists are a project's own fact, so the binding lives in the house pack
-// while the check ships here.
+// one reason: a repo's own house pack binds them too.
 //
 // What is deliberately NOT here: the pure helpers each check is built from (`discardPaths`,
-// `changesVersion`, `undocumentedRecipes`, …) and the two pieces `git` and `work` share to say the
-// same sentence about shell substitution. Those are how a check is written, not what a repo binds,
-// and a door that exported them would freeze the inside of every one of them.
+// `changesVersion`, `undocumentedRecipes`, …). Those are how a check is written, not what a repo
+// binds, and a door that exported them would freeze the inside of every one of them.
 
 export { conventionalCommit, noGitDiscard, noHandEditedVersion } from "./checks.ts";
 export { justfileDocs } from "./checks.ts";
 export { lockfileInStep } from "./checks.ts";
-export { newCommandNeedsCaller, type Surface } from "./checks.ts";

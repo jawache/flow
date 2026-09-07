@@ -15,15 +15,7 @@
 // being a function of ctx, and a second vitest suite over the same logic would be a second place
 // for it to be right.
 
-import {
-  commitMessage,
-  defineCheck,
-  gitInvocations,
-  givesReason,
-  quoteArg,
-  type Check,
-  type Ctx,
-} from "../index.ts";
+import { commitMessage, defineCheck, gitInvocations, quoteArg, type Check } from "../index.ts";
 
 // ── git: the commands that destroy work, and the commits that owe a sentence ──
 
@@ -315,52 +307,5 @@ export const lockfileInStep = defineCheck(
       const moved = movedDependencies(head.code === 0 ? head.stdout : "", index.code === 0 ? index.stdout : "");
       if (moved.length === 0) return ctx.ok(); // a metadata edit — nothing for a lockfile to mirror
       return ctx.fail(`this commit moves ${moved.map((d) => `\`${d}\``).join(", ")} in package.json but stages no lockfile`);
-    },
-);
-
-// ── the work platform: a new verb names its caller ───────────────────────────
-
-/** One dispatch file, and the commands already on it. */
-export interface Surface {
-  readonly file: string;
-  readonly known: readonly string[];
-}
-
-/**
- * From one file's diff, the command names introduced on ADDED lines and not already known.
- *
- * A command is registered three ways in this shell — `case "x":` in a dispatch switch,
- * `command === "x"` in the pre-journal guards, and `sub === "x"` in a subcommand router — so all
- * three count. Removals and context are ignored: renaming or editing a command is silent.
- */
-export function addedCommands(diff: string, known: readonly string[]): string[] {
-  const seen = new Set(known);
-  const found = new Set<string>();
-  for (const line of diff.split("\n")) {
-    if (!line.startsWith("+") || line.startsWith("+++")) continue;
-    const body = line.slice(1);
-    for (const re of [/case\s+"([a-z][a-z-]*)"\s*:/g, /command\s*===\s*"([a-z][a-z-]*)"/g, /sub\s*===\s*"([a-z][a-z-]*)"/g]) {
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(body)) !== null) if (m[1] !== undefined && !seen.has(m[1])) found.add(m[1]);
-    }
-  }
-  return [...found];
-}
-
-/** Adding a verb to a dispatch surface must name its caller, in the commit message. */
-export const newCommandNeedsCaller = defineCheck(
-  (opts: { surfaces: readonly Surface[]; token: string }): Check =>
-    async (ctx: Ctx) => {
-      const message = commitMessage(ctx.command ?? "");
-      if (message === null) return ctx.ok();
-      const added: string[] = [];
-      for (const surface of opts.surfaces) {
-        const diff = await ctx.exec(`git diff HEAD -- ${surface.file}`);
-        if (diff.code !== 0) return ctx.ok(); // not a repo — never trap
-        for (const name of addedCommands(diff.stdout, surface.known)) added.push(`\`${name}\` (${surface.file})`);
-      }
-      if (added.length === 0) return ctx.ok();
-      if (givesReason(message, opts.token)) return ctx.ok();
-      return ctx.fail(`commit adds ${added.join(", ")} to a dispatch surface but its message names no caller`);
     },
 );

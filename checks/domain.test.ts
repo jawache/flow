@@ -19,6 +19,7 @@ import {
 } from "../language/domain.ts";
 import { globToRegExp } from "../glob.ts";
 import {
+  addedNames,
   astGrep,
   astGrepHits,
   banCommands,
@@ -604,6 +605,63 @@ describe("reasonHits", () => {
     const hits = reasonHits(base({ state, whenChanged: ["pure/**"], except: ["**/*.test.ts"] }));
     expect(hits[0]).not.toContain("a.test.ts");
   });
+
+  it("folds the third condition's names into the SAME sentence, each naming the file it came from", () => {
+    const state: WorkingState = { changed: ["package.json"], added: [] };
+    const hits = reasonHits(
+      base({ state, whenChanged: ["package.json"], namesAdded: [{ name: "audit", file: "cli/work.ts" }] }),
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toContain("`package.json` (changed)");
+    expect(hits[0]).toContain("`audit` (added in cli/work.ts)");
+  });
+
+  it("asks on the third condition alone, with nothing on the tree — the shape both verb ratchets bind", () => {
+    const hits = reasonHits(base({ token: "caller", namesAdded: [{ name: "explain", file: "flow.ts" }] }));
+    expect(hits[0]).toContain("`explain` (added in flow.ts)");
+    expect(hits[0]).toContain("caller: <why>");
+  });
+
+  it("clears on the third condition too, once the message records the reason", () => {
+    const message = "feat: explain\n\ncaller: human — no verb says why one entry did not fire";
+    const hits = reasonHits(base({ message, token: "caller", namesAdded: [{ name: "explain", file: "flow.ts" }] }));
+    expect(hits).toEqual([]);
+  });
+});
+
+// The pure half of the third condition. A dispatch surface registers a name several ways and the
+// list of shapes is the binding's, not the check's — two of the three forms this repo's own
+// surfaces use went unwatched for a year under a version that hard-coded them.
+describe("addedNames", () => {
+  const CASE = 'case\\s+"([a-z][a-z-]*)"\\s*:';
+  const SUB = 'sub\\s*===\\s*"([a-z][a-z-]*)"';
+
+  it("reads names off ADDED lines only — a removal or a context line is not an addition", () => {
+    const diff = ['+    case "audit":', '-    case "gone":', '     case "old":'].join("\n");
+    expect(addedNames(diff, [CASE])).toEqual(["audit"]);
+  });
+
+  it("skips the +++ header, which names the file rather than a line of it", () => {
+    expect(addedNames('+++ b/case "x":\n+    case "real":', [CASE])).toEqual(["real"]);
+  });
+
+  it("ignores a name the binding already knows, which is what makes it a ratchet", () => {
+    const diff = '+    case "audit":\n+    case "plan":';
+    expect(addedNames(diff, [CASE], ["plan"])).toEqual(["audit"]);
+  });
+
+  it("takes several patterns, so every way a surface registers a name counts", () => {
+    const diff = '+    case "audit":\n+  } else if (sub === "explain") {';
+    expect(addedNames(diff, [CASE, SUB]).sort()).toEqual(["audit", "explain"]);
+  });
+
+  it("finds every match on one line, and reports each name once", () => {
+    expect(addedNames('+ case "a": case "b": case "a":', [CASE]).sort()).toEqual(["a", "b"]);
+  });
+
+  it("contributes nothing for a pattern with no capture group, rather than throwing at a commit gate", () => {
+    expect(addedNames('+    case "audit":', ['case\\s+"[a-z]+"'])).toEqual([]);
+  });
 });
 
 describe("commitReason", () => {
@@ -654,6 +712,62 @@ describe("commitReason", () => {
     const ctx = cannedCtx("command", { command: "git -C ../other commit -m x" }, missing);
     await commitReason(opts)(ctx);
     expect(missing.every((m) => m.asked.includes("-C '../other'"))).toBe(true);
+  });
+
+  // ── the third condition, driven through the same door ──
+  describe("diffAdds", () => {
+    const ratchet = {
+      token: "caller",
+      diffAdds: [{ file: "cli/work.ts", patterns: ['case\\s+"([a-z][a-z-]*)"\\s*:'], known: ["plan"] }],
+    };
+    const surface = (diff: string): CaseWorld => ({ exec: { "diff HEAD -- 'cli/work.ts'": { stdout: diff } } });
+
+    it("blocks a bare commit that added a name, and clears once the reason is there", async () => {
+      const world = surface('+    case "audit":');
+      const blocked = await run(commitReason(ratchet), "command", { command: 'git commit -m "feat: audit"', world });
+      expect(blocked).toContain("`audit` (added in cli/work.ts)");
+      const withReason = await run(commitReason(ratchet), "command", {
+        command: "git commit -m 'feat: audit\n\ncaller: skill — no verb answers it'",
+        world,
+      });
+      expect(withReason).toBeNull();
+    });
+
+    it("says nothing about a name the binding already knows — a refactor that moves one is silent", async () => {
+      const world = surface('+    case "plan":');
+      expect(await run(commitReason(ratchet), "command", { command: "git commit -m x", world })).toBeNull();
+    });
+
+    // A path condition costs three git reads; this one costs a diff. A binding that names only
+    // `diffAdds` must not pay for the other three — every one is a question a case has to answer.
+    it("asks git for the diff and NOTHING else when no path condition is bound", async () => {
+      const { missing } = await runWithReaches(commitReason(ratchet), "command", { command: "git commit -m x" });
+      expect(missing.map((m) => m.asked)).toEqual(["git diff HEAD -- 'cli/work.ts'"]);
+    });
+
+    it("stands aside when the diff cannot be read, rather than trapping the commit", async () => {
+      const world: CaseWorld = { exec: { "diff HEAD -- 'cli/work.ts'": { code: 128, stderr: "not a git repository" } } };
+      expect(await run(commitReason(ratchet), "command", { command: "git commit -m x", world })).toBeNull();
+    });
+
+    it("reads several surfaces, and each hit names the file it came from", async () => {
+      const two = {
+        token: "caller",
+        diffAdds: [
+          { file: "a.ts", patterns: ['case\\s+"([a-z]+)"'] },
+          { file: "b.ts", patterns: ['case\\s+"([a-z]+)"'] },
+        ],
+      };
+      const world: CaseWorld = {
+        exec: {
+          "diff HEAD -- 'a.ts'": { stdout: '+ case "one"' },
+          "diff HEAD -- 'b.ts'": { stdout: '+ case "two"' },
+        },
+      };
+      const detail = await run(commitReason(two), "command", { command: "git commit -m x", world });
+      expect(detail).toContain("`one` (added in a.ts)");
+      expect(detail).toContain("`two` (added in b.ts)");
+    });
   });
 });
 

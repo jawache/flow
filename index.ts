@@ -80,6 +80,7 @@ export {
   type CanonOptions,
   type ChangeGroup,
   type Dialect,
+  type DiffAdds,
   type ForbidEdge,
   type JsonAssert,
   type RequireEdge,

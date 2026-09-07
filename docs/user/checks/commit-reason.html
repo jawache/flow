@@ -29,7 +29,7 @@
 <body>
 <main>
   <h1><code>commitReason</code></h1>
-  <p class="scope">reads: command line · fires at: command · 2026-09-06</p>
+  <p class="scope">reads: command line · fires at: command · 2026-09-07</p>
 
   <p class="lead">Makes an act legal when the commit message explains it — the classic being “adding a dependency is fine, adding it silently is not”. The reason lands in git history, where the next reviewer reads it. It fires at <code>command</code>, not <code>commit</code>: git runs the pre-commit gate before the message exists, so the only place a message can be read is the typed command — which also means it polices agent-typed commits only.</p>
 
@@ -41,10 +41,16 @@
       <tr><td><code>whenChanged</code></td><td>list of globs</td><td>no</td><td>staged changes matching these make the token due</td></tr>
       <tr><td><code>whenAdded</code></td><td>list of globs</td><td>no</td><td>ADDED files (not edits) matching these make it due</td></tr>
       <tr><td><code>except</code></td><td>list of globs</td><td>no</td><td>…and these never do</td></tr>
+      <tr><td><code>diffAdds</code></td><td>list of <code>{ file, patterns, known? }</code></td><td>no</td><td>the third condition, and the only one not about paths: names this commit ADDED <em>inside</em> one named file. <code>patterns</code> are regexes with one capture group each — the name; <code>known</code> lists the names already there, which are matched and ignored.</td></tr>
     </tbody>
   </table>
 
-  <h2>Example</h2>
+  <p>All three conditions report in ONE sentence, each hit marked with why it asked —
+  <code>(changed)</code>, <code>(new)</code>, <code>(added in &lt;file&gt;)</code>. A binding that names only
+  <code>diffAdds</code> reads one diff and asks git nothing else, which is why the second example below
+  records one command where the first records three.</p>
+
+  <h2>Example — a path condition</h2>
 <pre><code>newDependency: guardrail()
   .at(command)
   .check(commitReason({ whenChanged: ["package.json"], token: "new-dep" }))
@@ -59,6 +65,30 @@
       "git diff HEAD --name-only": { stdout: "package.json" },
       "git diff HEAD --name-only --diff-filter=A": { stdout: "" },
       "git ls-files --others --exclude-standard": { stdout: "" },
+    } } }],
+  }),</code></pre>
+
+  <h2>Example — the diff-adds condition</h2>
+  <p>A RATCHET on a dispatch surface. “Did this file change” is the wrong question — every commit
+  changes it — and the right one is “what did this commit add inside it”. Names already on the surface
+  go in <code>known</code>, so a refactor that moves one is silent and only growth owes a sentence.</p>
+<pre><code>newVerbNeedsCaller: guardrail()
+  .at(command)
+  .check(commitReason({
+    diffAdds: [{
+      file: "flow.ts",
+      patterns: ['case\\s+"([a-z][a-z-]*)"\\s*:'],
+      known: ["test", "hook", "commit", "init", "status", "replay", "facts"],
+    }],
+    token: "caller",
+  }))
+  .message("Adding a verb must name its caller — put `caller: &lt;who&gt; — &lt;why&gt;` on a line of its own.")
+  .test({
+    pass: [{ command: "git commit -m 'feat: explain\n\ncaller: human — no verb answers it'", world: { exec: {
+      "diff HEAD -- 'flow.ts'": { stdout: '+    case "explain":' },
+    } } }],
+    block: [{ command: 'git commit -m "feat: explain"', world: { exec: {
+      "diff HEAD -- 'flow.ts'": { stdout: '+    case "explain":' },
     } } }],
   }),</code></pre>
 

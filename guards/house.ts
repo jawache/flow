@@ -11,10 +11,37 @@
 // other repo's guard does, never a layer path. That is deliberate: the doors are proved by a real
 // consumer, and this one is the first to notice when either stops exporting something.
 
-import { breadcrumb, command, commit, definePack, depcruise, guardrail, session, touch } from "@jawache/flow";
-// The ONE thing this file takes from the packs door: a configured check whose `known` verb list is
-// a project's own fact and could not travel with it.
-import { newCommandNeedsCaller } from "@jawache/flow/packs";
+// EVERYTHING from the grammar door, and nothing from the packs door any more. Until F5 this file
+// took one configured check from `@jawache/flow/packs` — a verb ratchet no shipped pack ever bound,
+// which turned out to be `commitReason` with one condition missing. The condition is core now, so
+// the house pack binds a stock check like every other entry here does.
+import {
+  breadcrumb,
+  command,
+  commit,
+  commitReason,
+  definePack,
+  depcruise,
+  guardrail,
+  session,
+  touch,
+} from "@jawache/flow";
+
+/**
+ * HOW A DISPATCH SURFACE REGISTERS A VERB, as regexes over a diff's ADDED lines: a `case "x":` in a
+ * switch, a `command === "x"` in a pre-journal guard, a `sub === "x"` in a subcommand router.
+ *
+ * A PARAMETER of the binding rather than a constant inside a check, and that is the lesson of the
+ * check this replaced: it hard-coded these three shapes where no reader of the entry could see
+ * them. `flow.ts` spells only the first today; the other two are here because the surface is free
+ * to grow one, and a ratchet that quietly stops watching a registration form is the same silent
+ * failure a stale `known` list is.
+ */
+const REGISTERS = [
+  'case\\s+"([a-z][a-z-]*)"\\s*:',
+  'command\\s*===\\s*"([a-z][a-z-]*)"',
+  'sub\\s*===\\s*"([a-z][a-z-]*)"',
+];
 
 /** What this repo calls pure. The import fence's `pure` layer is exactly this list. */
 export interface Terrain {
@@ -190,12 +217,19 @@ export const house = definePack("house", (repo: Terrain) => ({
     .description("A commit adding a verb to flow's dispatch surface must name its caller and why nothing existing serves.")
     // THE KNOWN SET IS ON THE BINDING, never inside the check: which verbs already exist is a
     // project's own fact, and a ratchet keyed off a stale list is the same silent failure it exists
-    // to catch. This is also why the check is public through the packs door — a house pack binds it.
+    // to catch.
+    //
+    // `commitReason`'s THIRD condition, and the reason a check of its own died: the question is not
+    // "did flow.ts change" — every commit here changes something, and a path condition would ask for
+    // a sentence about all of them — but "what did this commit ADD inside it". Same commit
+    // detection, same message parse, same token, same one-sentence refusal as the two path
+    // conditions beside it.
     .check(
-      newCommandNeedsCaller({
-        surfaces: [
+      commitReason({
+        diffAdds: [
           {
             file: "flow.ts",
+            patterns: REGISTERS,
             known: ["test", "hook", "commit", "init", "status", "replay", "facts"],
           },
         ],
@@ -207,27 +241,27 @@ export const house = definePack("house", (repo: Terrain) => ({
     )
     .test({
       pass: [
-        { command: 'git commit -m "feat: a thing"', world: { exec: { "git diff HEAD -- flow.ts": { stdout: "" } } } },
+        { command: 'git commit -m "feat: a thing"', world: { exec: { "diff HEAD -- 'flow.ts'": { stdout: "" } } } },
         // A verb already ON the surface, moved in a refactor: known, so it is not new and owes
         // nothing. The ratchet is about GROWTH, and a rule that fired on every dispatch tidy would
         // be turned off.
         {
           command: 'git commit -m "refactor: move the dispatch"',
-          world: { exec: { "git diff HEAD -- flow.ts": { stdout: '+    case "status":' } } },
+          world: { exec: { "diff HEAD -- 'flow.ts'": { stdout: '+    case "status":' } } },
         },
         {
           command: "git commit -m 'feat: explain\n\ncaller: human — no verb says why one entry did not fire'",
-          world: { exec: { "git diff HEAD -- flow.ts": { stdout: '+    case "explain":' } } },
+          world: { exec: { "diff HEAD -- 'flow.ts'": { stdout: '+    case "explain":' } } },
         },
       ],
       block: [
         {
           command: 'git commit -m "feat: explain"',
-          world: { exec: { "git diff HEAD -- flow.ts": { stdout: '+    case "explain":' } } },
+          world: { exec: { "diff HEAD -- 'flow.ts'": { stdout: '+    case "explain":' } } },
         },
         {
           command: 'git commit -m "feat: a subcommand"',
-          world: { exec: { "git diff HEAD -- flow.ts": { stdout: '+  } else if (sub === "why") {' } } },
+          world: { exec: { "diff HEAD -- 'flow.ts'": { stdout: '+  } else if (sub === "why") {' } } },
         },
       ],
     }),

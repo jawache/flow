@@ -822,6 +822,77 @@ export interface WorkingState {
   readonly added: readonly string[];
 }
 
+/**
+ * One file whose DIFF is read for names that owe a reason, and the shape of the third condition.
+ *
+ * The two conditions above it ask about PATHS — a file changed, a file is new — and there is a
+ * third question a guard keeps wanting to ask that neither can reach: not "did this file change"
+ * but "what did this commit ADD INSIDE it". A dispatch surface is the case that forced it: every
+ * commit to `cli/work.ts` changes the file, so a path condition there asks for a sentence about
+ * every edit and is turned off within a week; what actually owes one is a NEW VERB, and a verb is
+ * a name on an added line.
+ *
+ * WHY IT REPLACED A CHECK OF ITS OWN. This arrived as `newCommandNeedsCaller` in the shared file
+ * beside the packs, and it was `commitReason` with one condition missing and everything else
+ * rewritten: its own commit detection, its own message parse, its own token read, its own
+ * one-sentence refusal. No pack bound it — two house packs in two repos did — so it was a shipped
+ * check with no shipped user, carrying a second copy of a mechanism that already existed. As a
+ * condition it inherits all of it, and the `known` list stays where it always had to be: on the
+ * binding, because which names are already there is a project's own fact.
+ */
+export interface DiffAdds {
+  /** The one file whose `git diff HEAD -- <file>` is read. Nothing else in the commit is looked at. */
+  readonly file: string;
+  /**
+   * Regex sources, each with exactly ONE capture group — the name a hit is reported by.
+   *
+   * Several, because one surface registers a name several ways: a `case "x":` in a dispatch
+   * switch, a `command === "x"`, a `sub === "x"` in a subcommand router. Two of those three went
+   * unwatched for a year under a check that hard-coded them, which is the argument for the list
+   * being a parameter a reader of the binding can see rather than a constant inside a function.
+   */
+  readonly patterns: readonly string[];
+  /**
+   * Names already on the surface: matched, and ignored.
+   *
+   * This is what makes it a RATCHET rather than a rule about editing the file at all. Renaming,
+   * moving or reformatting an existing name is silent by design — a rule that fired on every
+   * dispatch tidy is a rule someone turns off — and a stale list is the same silent failure the
+   * ratchet exists to catch, which is why it is stated at the binding and never inside the check.
+   */
+  readonly known?: readonly string[] | undefined;
+}
+
+/**
+ * The names one file's diff ADDED and did not already know.
+ *
+ * Added lines only: removals and context are ignored, so a rename shows the new name and nothing
+ * else, and a reformat shows nothing. `+++` is skipped — it is the header naming the file, not a
+ * line of the file.
+ *
+ * A pattern with no capture group contributes nothing rather than throwing: the binding is
+ * TypeScript and a missing group is a mistake, but the moment this runs is a commit gate, and a
+ * gate that crashes on a bad pattern refuses every commit in the repo until someone reads a stack
+ * trace.
+ */
+export function addedNames(diff: string, patterns: readonly string[], known: readonly string[] = []): string[] {
+  const seen = new Set(known);
+  const found = new Set<string>();
+  for (const line of diff.split("\n")) {
+    if (!line.startsWith("+") || line.startsWith("+++")) continue;
+    const body = line.slice(1);
+    for (const pattern of patterns) {
+      const re = new RegExp(pattern, "g");
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(body)) !== null) {
+        if (m[1] !== undefined && !seen.has(m[1])) found.add(m[1]);
+        if (m[0] === "") re.lastIndex++; // a pattern that can match empty would spin here
+      }
+    }
+  }
+  return [...found];
+}
+
 export interface ReasonInput {
   /** The commit message, as the command line carries it. */
   readonly message: string;
@@ -840,6 +911,12 @@ export interface ReasonInput {
   readonly whenAdded?: readonly string[] | undefined;
   /** Paths that never owe one, whichever condition matched — a test sibling, typically. */
   readonly except?: readonly string[] | undefined;
+  /**
+   * What the third condition found: names added inside a watched file, each with the file it came
+   * from. Already filtered against that file's `known` list by `addedNames` — reading the diff is
+   * IO and belongs to the check, and what is left here is the same pure judgement as the other two.
+   */
+  readonly namesAdded?: readonly { readonly name: string; readonly file: string }[] | undefined;
   /** The key the message must carry on a line of its own. */
   readonly token: string;
 }
@@ -848,23 +925,25 @@ export interface ReasonInput {
  * The findings for one commit. Empty means either nothing this rule watches moved, or the reason is
  * there.
  *
- * ONE hit, naming every file that asked and why it asked — `(new)` or `(changed)`. A message that
- * names four files when one is the reason is a message nobody reads twice, so the two conditions
- * report together in one sentence rather than one hit each.
+ * ONE hit, naming everything that asked and why it asked — `(new)`, `(changed)`, or `(added in
+ * <file>)` for a name the third condition found inside a diff. A message that names four things
+ * when one is the reason is a message nobody reads twice, so all three conditions report together
+ * in one sentence rather than one hit each.
  *
  * WHAT IT BLOCKS is the UNEXPLAINED act, never the act. Adding a dependency is fine; adding one
  * with nothing written down is not, because the one thing a diff can never show is which
  * alternatives were weighed.
  */
 export function reasonHits(o: ReasonInput): string[] {
-  const { message, state, whenChanged, whenAdded, except, token } = o;
-  const added = new Set(state.added);
+  const { message, state, whenChanged, whenAdded, except, namesAdded, token } = o;
+  const isNew = new Set(state.added);
   const asked: string[] = [];
   for (const path of state.changed) {
     if (except && matchAny(path, except)) continue;
-    if (added.has(path) && whenAdded && matchAny(path, whenAdded)) asked.push(`\`${path}\` (new)`);
+    if (isNew.has(path) && whenAdded && matchAny(path, whenAdded)) asked.push(`\`${path}\` (new)`);
     else if (whenChanged && matchAny(path, whenChanged)) asked.push(`\`${path}\` (changed)`);
   }
+  for (const { name, file } of namesAdded ?? []) asked.push(`\`${name}\` (added in ${file})`);
   if (!asked.length) return [];
   if (givesReason(message, token)) return [];
   return [
@@ -884,11 +963,16 @@ function pathLines(out: string): string[] {
 /**
  * This commit needs a reason recorded, and here is whether it gave one.
  *
- * WHAT THIS REPLACES. Two hand-rolled scripts asked the same question about different nouns — a
- * commit adding a dependency, and a commit adding a file to a pure core — each carrying its own
- * git-commit detection, its own staged-state read and its own message parse, behind an inert
- * `compliance: true` flag that did nothing at run time. One check, two conditions and a token: that
- * is the whole mechanism now, and it is stated on the entry where a reader meets it.
+ * WHAT THIS REPLACES. THREE hand-rolled checks asked the same question about different nouns — a
+ * commit adding a dependency, a commit adding a file to a pure core, and a commit adding a verb to
+ * a dispatch surface — each carrying its own git-commit detection, its own read of what moved, its
+ * own message parse and its own refusal sentence. One check, three conditions and a token: that is
+ * the whole mechanism now, and it is stated on the entry where a reader meets it.
+ *
+ * THE THIRD CONDITION is `diffAdds`, and it is the one that is not about paths: see `DiffAdds`. It
+ * came in from `newCommandNeedsCaller`, a shipped check no pack ever bound — two house packs in two
+ * repos did — which on inspection was this check with one condition missing and everything else
+ * written a second time.
  *
  * AT WHICH RAIL, and the boundary that comes with it: the COMMAND moment — the Bash rail, before
  * the command runs, which is where an agent's commit can still be stopped and rewritten. git's own
@@ -901,14 +985,21 @@ function pathLines(out: string): string[] {
  * each one is a list of paths, one per line. It is also strictly better: the porcelain parser had a
  * war story about eating the first character of a path, and there is now no column to slice.
  *
- * Fails safe on every one of them: not a git repo, or git unavailable, and the check stands aside
- * rather than trapping a commit it cannot judge.
+ * …AND IT ASKS THEM ONLY WHEN A PATH CONDITION IS BOUND. A binding that names `diffAdds` alone —
+ * the verb ratchets in both house packs do — reads one diff and nothing else. This is not a
+ * micro-optimisation: every one of these commands is a question a `.test()` case has to answer, so
+ * asking three that cannot change the verdict makes every case for a diff-adds entry carry three
+ * lines of git output that mean nothing, and a case full of noise is a case nobody re-reads.
+ *
+ * Fails safe on every read: not a git repo, or git unavailable, and the check stands aside rather
+ * than trapping a commit it cannot judge.
  */
 export const commitReason = defineCheck(
   (opts: {
     whenChanged?: readonly string[];
     whenAdded?: readonly string[];
     except?: readonly string[];
+    diffAdds?: readonly DiffAdds[];
     token: string;
   }): Check =>
     async (ctx) => {
@@ -918,24 +1009,39 @@ export const commitReason = defineCheck(
       if (message == null) return ctx.ok();
 
       const git = `git ${gitDirPrefix(ctx.command ?? "")}`.trimEnd();
-      const [tracked, adds, untracked] = await Promise.all([
-        ctx.exec(`${git} diff HEAD --name-only`),
-        ctx.exec(`${git} diff HEAD --name-only --diff-filter=A`),
-        ctx.exec(`${git} ls-files --others --exclude-standard`),
-      ]);
-      if (tracked.code !== 0 || adds.code !== 0 || untracked.code !== 0) return ctx.ok();
 
-      const untrackedPaths = pathLines(untracked.stdout);
-      const state: WorkingState = {
-        changed: [...new Set([...pathLines(tracked.stdout), ...untrackedPaths])],
-        added: [...pathLines(adds.stdout), ...untrackedPaths],
-      };
+      let state: WorkingState = { changed: [], added: [] };
+      if (opts.whenChanged || opts.whenAdded) {
+        const [tracked, adds, untracked] = await Promise.all([
+          ctx.exec(`${git} diff HEAD --name-only`),
+          ctx.exec(`${git} diff HEAD --name-only --diff-filter=A`),
+          ctx.exec(`${git} ls-files --others --exclude-standard`),
+        ]);
+        if (tracked.code !== 0 || adds.code !== 0 || untracked.code !== 0) return ctx.ok();
+        const untrackedPaths = pathLines(untracked.stdout);
+        state = {
+          changed: [...new Set([...pathLines(tracked.stdout), ...untrackedPaths])],
+          added: [...pathLines(adds.stdout), ...untrackedPaths],
+        };
+      }
+
+      const namesAdded: { name: string; file: string }[] = [];
+      for (const surface of opts.diffAdds ?? []) {
+        // `git diff HEAD`, so a staged add and an unstaged edit both count — `git commit -a`
+        // sweeps the second in, and the generous reading is the same one the path conditions take.
+        const diff = await ctx.exec(`${git} diff HEAD -- ${quoteArg(surface.file)}`);
+        if (diff.code !== 0) return ctx.ok();
+        for (const name of addedNames(diff.stdout, surface.patterns, surface.known ?? []))
+          namesAdded.push({ name, file: surface.file });
+      }
+
       const hits = reasonHits({
         message,
         state,
         whenChanged: opts.whenChanged,
         whenAdded: opts.whenAdded,
         except: opts.except,
+        namesAdded,
         token: opts.token,
       });
       return answer(ctx, hits);

@@ -27,7 +27,6 @@ describe("the packs surface", () => {
       "justfile",
       "justfileDocs",
       "lockfileInStep",
-      "newCommandNeedsCaller",
       "noGitDiscard",
       "noHandEditedVersion",
       "node",
