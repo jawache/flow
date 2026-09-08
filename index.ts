@@ -151,4 +151,11 @@ export {
   type Settings,
 } from "./language/domain.ts";
 
+// The one symbol the shared glob file makes public, and it wins the argument `quoteArg` won. A pack
+// turns a repo's own value into a pattern all the time — a base config's path, a commit type, a
+// recipe name — and a value interpolated raw into a `RegExp` is a value whose dot matches anything.
+// Written by hand it is a character class everybody nearly gets right, and there were three copies
+// of it inside two shipped packs before this line existed.
+export { escapeRe } from "./glob.ts";
+
 export { FlowConfigError, entriesOrThrow } from "./errors.ts";

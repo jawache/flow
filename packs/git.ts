@@ -19,6 +19,7 @@ import {
   commitMessage,
   defineCheck,
   definePack,
+  escapeRe,
   gitDirPrefix,
   gitInvocations,
   guardrail,
@@ -130,7 +131,7 @@ const noGitDiscard = defineCheck(
 
 /** Does this header line speak Conventional Commits for the given type set? */
 export function isConventional(header: string, types: readonly string[]): boolean {
-  const alt = types.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  const alt = types.map(escapeRe).join("|");
   return new RegExp(`^(${alt})(\\([^)]+\\))?!?: .+`).test(header.split("\n")[0] ?? "");
 }
 

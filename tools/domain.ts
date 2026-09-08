@@ -16,6 +16,13 @@
 // drift-checked at the commit gate by regenerating it and comparing, so a byte that changes on
 // its own is a gate that goes red for a reason nobody can fix.
 
+// TYPE-ONLY, and that is what lets a pure home import at all: the grammar's own vocabulary for a
+// case and for an entry's sentence, erased at compile time and therefore not an edge the import
+// fence has to carve an exception for. It is imported rather than restated because a restatement
+// is a second declaration of the same union that nothing keeps in step — the page would go on
+// rendering an arm the grammar had dropped, and would render nothing for one it had gained.
+import type { Case, CaseWorld, Cases, EntrySpec } from "../index.ts";
+
 // ── the model a page is rendered from ────────────────────────────────────────
 
 /** One `.test({ pass, block })` case, already reduced to the lines a reader sees. */
@@ -100,46 +107,81 @@ export interface PackDoc {
   readonly entries: readonly EntryDoc[];
 }
 
-// ── a case, as one line ──────────────────────────────────────────────────────
+// ── the stranger's spellings ─────────────────────────────────────────────────
 
 /**
- * One canned event, in the shape the grammar's `Case` union really has.
+ * THE EXAMPLE PARAMETERS every parameterised pack is bound with, for the whole repo.
  *
- * Declared HERE rather than imported, because this file is a pure home and a pure home reaches
- * nothing: the shell hands over plain data. The union is small and the four dialects are what the
- * page has to name, so restating them is a smaller cost than the import would be.
+ * One shell script for the toolchain, `core/` for the pure home, `rules/` for the pack the repo
+ * writes itself, `documentation/` for the docs folder. Not one of those names is this repo's, and
+ * that is the point twice over: a page rendered with our own spelling teaches a reader that the
+ * spelling is the pack's, and a machine test bound with it proves only that our own spelling still
+ * works.
+ *
+ * DECLARED ONCE because there are two readers of it and they must not drift: `tools/pack-pages.ts`
+ * binds these to render every glob and command on a pack's page, and `e2e/machine.test.ts` writes
+ * them into a stranger's config and drives every rail against them. Two copies is a page that
+ * documents a binding no test has ever run.
+ *
+ * Two packs are deliberately bound differently by the machine test, each saying so where it does
+ * it: `docs` bare, because a pack whose parameters are all optional must stay bindable with no
+ * object at all, and `typescript` with no shared base, because the rule that demands one exists
+ * only when a base is named and the no-base path is the one a stranger takes.
  */
-export type CaseFact =
-  | string
-  | {
-      readonly command?: string;
-      readonly path?: string;
-      readonly content?: string;
-      readonly staged?: readonly string[];
-      readonly actions?: readonly unknown[];
-      readonly world?: {
-        readonly exec?: Readonly<Record<string, { stdout?: string; stderr?: string; code?: number }>>;
-        readonly fs?: Readonly<Record<string, string>>;
-        readonly gitDiff?: string;
-        readonly staged?: readonly string[];
-      };
-    };
+export const EXAMPLE = {
+  docs: { root: "documentation", allow: ["README.md"] },
+  fcis: { files: ["core/**/*.ts"], homes: ["core/**"], coverage: "./ci.sh coverage", example: "core/clock.ts" },
+  flow: { packs: ["rules/**"] },
+  git: { release: "./ci.sh release" },
+  justfile: { exempt: [], recipes: { "npx vitest": "./ci.sh test" } },
+  secrets: { dx: "./ci.sh dx", encrypt: "./ci.sh seal", names: "./ci.sh names" },
+  tdd: { run: "./ci.sh test" },
+  typescript: { typecheck: "./ci.sh types", lint: "./ci.sh lint", tsconfigBase: "./tsconfig.base.json", eslintBase: "./eslint.config.base.js" },
+} as const;
+
+/** A JavaScript identifier, which is what decides whether an object key needs quoting. */
+const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+
+/**
+ * A parameters object as the source that would supply it.
+ *
+ * KEYS ARE QUOTED WHEN THEY HAVE TO BE. The justfile pack's `recipes` map is keyed by a command
+ * pattern — `"npx vitest"` — and printed bare it made the one thing this page exists to give a
+ * reader, a config they can paste, a syntax error. The machine test writes the same text into a
+ * real config file now, so a key that needs quoting and does not get it fails a suite rather than
+ * sitting on a page.
+ */
+export function literal(value: unknown): string {
+  if (typeof value === "string") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(literal).join(", ")}]`;
+  if (value !== null && typeof value === "object")
+    return `{ ${Object.entries(value)
+      .map(([key, held]) => `${IDENTIFIER.test(key) ? key : JSON.stringify(key)}: ${literal(held)}`)
+      .join(", ")} }`;
+  return JSON.stringify(value);
+}
+
+/** The `pack(…)` call that binds one pack with the parameters given, exactly as a config writes it. */
+export function bindLine(name: string, params: unknown): string {
+  return params === undefined ? `pack(${name})` : `pack(${name}, ${literal(params)})`;
+}
+
+// ── a case, as one line ──────────────────────────────────────────────────────
 
 /**
  * A case as the one line a reader scans — "writing `docs/user/guide.md`", "running `git push
  * --force`".
  *
- * The canned world a case carries (recorded `exec` answers, files, a diff) is deliberately NOT
- * shown: it is scaffolding for the runner, and a page that printed it would bury the fact the
- * case is making.
+ * One arm per dialect the grammar's `Case` union has, and the union is what makes the list
+ * exhaustive: a dialect added there stops compiling here rather than falling through to a sentence
+ * that says nothing.
  */
-export function caseLine(fact: CaseFact): string {
+export function caseLine(fact: Case): string {
   if (typeof fact === "string") return `running \`${fact}\``;
-  if (fact.command !== undefined) return `running \`${fact.command}\``;
-  if (fact.path !== undefined) return `writing \`${fact.path}\`${fact.content === undefined || fact.content === "" ? "" : ` — \`${oneLine(fact.content)}\``}`;
-  if (fact.staged !== undefined) return `committing ${fact.staged.map((f) => `\`${f}\``).join(", ")}`;
-  if (fact.actions !== undefined) return `a turn with ${fact.actions.length} recorded action${fact.actions.length === 1 ? "" : "s"}`;
-  return "an event with no facts";
+  if ("command" in fact) return `running \`${fact.command}\``;
+  if ("path" in fact) return `writing \`${fact.path}\`${fact.content === "" ? "" : ` — \`${oneLine(fact.content)}\``}`;
+  if ("staged" in fact) return `committing ${fact.staged.map((f) => `\`${f}\``).join(", ")}`;
+  return `a turn with ${fact.actions.length} recorded action${fact.actions.length === 1 ? "" : "s"}`;
 }
 
 /**
@@ -178,9 +220,9 @@ function oneLine(content: string): string {
  * nothing between them — which is precisely what the first read of these pages found. An exit code
  * of 0 is said out loud for the same reason: "succeeds" is the fact the case is making.
  */
-export function caseWorld(fact: CaseFact): string[] {
+export function caseWorld(fact: Case): string[] {
   if (typeof fact === "string" || fact.world === undefined) return [];
-  const world = fact.world;
+  const world: CaseWorld = fact.world;
   const said: string[] = [];
   for (const [command, answer] of Object.entries(world.exec ?? {})) {
     const output = oneLine(`${answer.stdout ?? ""} ${answer.stderr ?? ""}`);
@@ -191,6 +233,23 @@ export function caseWorld(fact: CaseFact): string[] {
   if (world.gitDiff !== undefined) said.push(world.gitDiff === "" ? "the diff is empty" : `the diff is \`${oneLine(world.gitDiff)}\``);
   if (world.staged !== undefined) said.push(`the staged set is ${world.staged.map((file) => `\`${file}\``).join(", ")}`);
   return said;
+}
+
+/** Every case an entry carries, pass side then block side, as the lines a reader scans. */
+export function caseLines(cases: Cases | undefined): readonly CaseLine[] {
+  const side = (kind: "pass" | "block"): CaseLine[] =>
+    (cases?.[kind] ?? []).map((fact) => ({ kind, line: caseLine(fact), given: caseWorld(fact) }));
+  return [...side("pass"), ...side("block")];
+}
+
+/** The prose an entry shows — a guardrail's refusal message, or a breadcrumb's text. */
+export function says(spec: EntrySpec): string {
+  return spec.kind === "guardrail" ? (spec.message ?? "") : (spec.text ?? spec.file ?? "");
+}
+
+/** The stock check a `.check(…)` argument calls, when it calls one — `canonicalFiles({…})`. */
+export function checkName(expression: string): string {
+  return /^([A-Za-z][A-Za-z0-9]*)\(/.exec(expression)?.[1] ?? "";
 }
 
 // ── a check's settings ──────────────────────────────────────────────────────
@@ -461,8 +520,6 @@ const STYLE = `  :root{
   .entry .desc{margin:.3rem 0 0;color:#39404a}
   .fact{margin:.25rem 0;font-size:.9rem;color:#39404a}
   .fact b{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-right:.35rem}
-  .check{margin:.5rem 0 .2rem}
-  .check .fact{margin:0}
   .settings{margin:.25rem 0 .4rem}
   .settings summary{cursor:pointer;font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);font-weight:700}
   .settings pre{margin:.3rem 0 0}
@@ -485,7 +542,7 @@ const STYLE = `  :root{
   .gen{background:var(--soft);border-radius:8px;padding:.5rem .9rem;font-size:.82rem;color:var(--mut);margin:1.2rem 0 0}
   .none{color:var(--mut);font-style:italic}
   footer{margin-top:3rem;color:var(--mut);font-size:.85rem;border-top:1px solid var(--line);padding-top:1rem}
-  @media (max-width:640px){.cases{grid-template-columns:1fr}.entry .facts{grid-template-columns:1fr}}`;
+  @media (max-width:640px){.cases{grid-template-columns:1fr}}`;
 
 /** The `<head>` every generated page shares, title apart. */
 function head(title: string): string {

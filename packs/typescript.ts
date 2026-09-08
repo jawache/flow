@@ -5,7 +5,7 @@
 // nothing in a repo whose gate is `npm run typecheck`, and would say so in the refusal too.
 
 
-import { astGrep, commit, breadcrumb, definePack, execPasses, guardrail, jsonInvariant, touch, write } from "../index.ts";
+import { astGrep, commit, breadcrumb, definePack, escapeRe, execPasses, guardrail, jsonInvariant, touch, write } from "../index.ts";
 
 /** What this pack cannot know: the two gate recipes, and whether the repo has shared config files. */
 export interface Gates {
@@ -63,7 +63,7 @@ export const typescript = definePack("typescript", (repo: Gates) => {
   // base. A repo with no shared file still gets the half that travels.
   const base = repo.tsconfigBase;
   const asserts = [
-    ...(base === undefined ? [] : [{ path: "extends", matches: `${base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, required: true }]),
+    ...(base === undefined ? [] : [{ path: "extends", matches: `${escapeRe(base)}$`, required: true }]),
     ...strictOptions.map((option) => ({ path: `compilerOptions.${option}`, equals: true })),
   ];
   return {
@@ -145,7 +145,7 @@ export const typescript = definePack("typescript", (repo: Gates) => {
                 language: "javascript",
                 rule: {
                   kind: "program",
-                  not: { has: { stopBy: "end", kind: "string", regex: repo.eslintBase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") } },
+                  not: { has: { stopBy: "end", kind: "string", regex: escapeRe(repo.eslintBase) } },
                 },
               }),
             )

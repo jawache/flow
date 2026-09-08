@@ -9,25 +9,31 @@
 import { describe, expect, it } from "vitest";
 import {
   bindingSnippet,
+  bindLine,
   caseLine,
+  caseLines,
   caseWorld,
+  checkName,
   DOC_BLOCKS,
   esc,
+  EXAMPLE,
   firstSentence,
   kebab,
   line,
+  literal,
   prose,
   renderPackPage,
   renderPacksIndex,
+  says,
   settingsJson,
   whenText,
-  type CaseFact,
   type CaseLine,
   type DocBlock,
   type EntryDoc,
   type PackDoc,
   type ParamDoc,
 } from "./domain.ts";
+import type { Case, TurnAction } from "../index.ts";
 
 /** A guardrail with everything filled in — the page's fullest row. */
 const rail: EntryDoc = {
@@ -74,6 +80,9 @@ const param: ParamDoc = { name: "run", type: "string", why: "The recipe that run
 
 const doc: PackDoc = { name: "docs", lead: "Two audiences, one folder.", params: [], blocks: [], bind: "pack(docs)", entries: [rail, crumb] };
 
+/** One recorded turn action — the dialect the turn-end moment speaks. */
+const edit: TurnAction = { did: "edit", path: "core/clock.ts" };
+
 describe("a case as one line", () => {
   it("names what the event was, in the dialect of its moment", () => {
     expect(caseLine("git push --force")).toBe("running `git push --force`");
@@ -81,13 +90,12 @@ describe("a case as one line", () => {
     expect(caseLine({ path: "a.ts", content: "" })).toBe("writing `a.ts`");
     expect(caseLine({ path: "a.ts", content: "const x = 1;" })).toBe("writing `a.ts` — `const x = 1;`");
     expect(caseLine({ staged: ["a.ts", "b.ts"] })).toBe("committing `a.ts`, `b.ts`");
-    expect(caseLine({ actions: [1] })).toBe("a turn with 1 recorded action");
-    expect(caseLine({ actions: [1, 2] })).toBe("a turn with 2 recorded actions");
-    expect(caseLine({})).toBe("an event with no facts");
+    expect(caseLine({ actions: [edit] })).toBe("a turn with 1 recorded action");
+    expect(caseLine({ actions: [edit, { did: "run", command: "just test" }] })).toBe("a turn with 2 recorded actions");
   });
 
   it("shortens a file body rather than pasting a whole fixture into a list item", () => {
-    const long: CaseFact = { path: "a.ts", content: `${"x".repeat(200)}\n\n  y` };
+    const long: Case = { path: "a.ts", content: `${"x".repeat(200)}\n\n  y` };
     const said = caseLine(long);
     expect(said.length).toBeLessThan(120);
     expect(said).toContain("…");
@@ -99,8 +107,8 @@ describe("the world a case canned", () => {
   // answer the case supplied. The page dropped this until the first read of it found `git checkout
   // -- src/x.ts` sitting under both "passes" and "blocks" with nothing between them.
   it("says what a command was answered, so two identical commands are told apart", () => {
-    const clean: CaseFact = { command: "git checkout -- src/x.ts", world: { exec: { "git status --porcelain": { stdout: "" } } } };
-    const dirty: CaseFact = { command: "git checkout -- src/x.ts", world: { exec: { "git status --porcelain": { stdout: " M src/x.ts" } } } };
+    const clean: Case = { command: "git checkout -- src/x.ts", world: { exec: { "git status --porcelain": { stdout: "" } } } };
+    const dirty: Case = { command: "git checkout -- src/x.ts", world: { exec: { "git status --porcelain": { stdout: " M src/x.ts" } } } };
     expect(caseWorld(clean)).toEqual(["`git status --porcelain` exits 0"]);
     expect(caseWorld(dirty)).toEqual(["`git status --porcelain` exits 0 and says `M src/x.ts`"]);
   });
@@ -334,6 +342,68 @@ describe("a check's settings", () => {
     expect(settingsJson({})).toBe("");
     expect(settingsJson(undefined)).toBe("");
     expect(settingsJson(null)).toBe("");
+  });
+});
+
+describe("an entry's cases and its sentence", () => {
+  it("puts every pass case before every block case, each with what it was told", () => {
+    expect(
+      caseLines({
+        pass: [{ command: "git checkout -- a.ts", world: { exec: { "git status --porcelain": { stdout: "" } } } }],
+        block: ["git push --force", { staged: ["a.ts"] }],
+      }),
+    ).toEqual([
+      { kind: "pass", line: "running `git checkout -- a.ts`", given: ["`git status --porcelain` exits 0"] },
+      { kind: "block", line: "running `git push --force`", given: [] },
+      { kind: "block", line: "committing `a.ts`", given: [] },
+    ]);
+  });
+
+  it("has nothing to show for an entry that carries no cases at all", () => {
+    expect(caseLines(undefined)).toEqual([]);
+    expect(caseLines({})).toEqual([]);
+  });
+
+  // A guardrail's prose is its refusal and a breadcrumb's is its text, and one breadcrumb points at
+  // a file instead. Asked for the wrong one, the page shows a rule with nothing to say.
+  it("reads a guardrail's refusal, a breadcrumb's text, and a breadcrumb that points at a file", () => {
+    expect(says({ kind: "guardrail", message: "no." })).toBe("no.");
+    expect(says({ kind: "guardrail" })).toBe("");
+    expect(says({ kind: "breadcrumb", text: "two doors." })).toBe("two doors.");
+    expect(says({ kind: "breadcrumb", file: "docs/agent/map.md" })).toBe("docs/agent/map.md");
+    expect(says({ kind: "breadcrumb" })).toBe("");
+  });
+
+  it("names the stock check a `.check(…)` argument calls, and nothing when it calls none", () => {
+    expect(checkName('canonicalFiles({ root: "docs" })')).toBe("canonicalFiles");
+    expect(checkName("astGrep({})")).toBe("astGrep");
+    expect(checkName("myOwnCheck")).toBe("");
+    expect(checkName("")).toBe("");
+  });
+});
+
+describe("the stranger's binding", () => {
+  it("is a config line a reader can paste, whatever the parameters are shaped like", () => {
+    expect(bindLine("node", undefined)).toBe("pack(node)");
+    expect(bindLine("tdd", { run: "./ci.sh test" })).toBe('pack(tdd, { run: "./ci.sh test" })');
+    expect(bindLine("fcis", { files: ["core/**/*.ts"], homes: [] })).toBe('pack(fcis, { files: ["core/**/*.ts"], homes: [] })');
+  });
+
+  // The justfile pack's `recipes` map is keyed by a command pattern. Printed bare, the one thing
+  // the page exists to hand a reader — a config to paste — was a syntax error.
+  it("quotes a key that is not an identifier, and leaves one that is alone", () => {
+    expect(literal({ recipes: { "npx vitest": "./ci.sh test" } })).toBe('{ recipes: { "npx vitest": "./ci.sh test" } }');
+    expect(literal({ exempt: [], depth: 2, off: false })).toBe("{ exempt: [], depth: 2, off: false }");
+  });
+
+  // One list, two readers: the page generator renders every glob and command on a page with these,
+  // and the machine test drives a stranger's repo with them. Neither may be our own spelling.
+  it("spells nothing the way this repo does", () => {
+    const spellings = JSON.stringify(EXAMPLE);
+    expect(spellings).not.toContain("just ");
+    expect(spellings).not.toContain("glob.ts");
+    expect(EXAMPLE.fcis.homes).toEqual(["core/**"]);
+    expect(EXAMPLE.justfile.recipes["npx vitest"]).toBe("./ci.sh test");
   });
 });
 

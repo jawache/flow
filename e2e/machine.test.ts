@@ -42,59 +42,63 @@ import {
   hook as sendHook,
   type Ran,
 } from "./harness.ts";
+import { bindLine, EXAMPLE } from "../tools/domain.ts";
 
 // ── the stranger, and what it calls things ───────────────────────────────────
 //
 // One shell script for the whole toolchain, `core/` for the pure home, `rules/` for the pack it
 // writes itself. Not one of those names is this repo's, and that is the fixture's whole job.
+//
+// THE SPELLINGS ARE THE SHARED ONES — `EXAMPLE` in tools/domain.ts, the same values every pack page
+// is rendered with. One list, because the alternative is a page documenting a binding nothing has
+// ever run and a test driving a binding nobody has read. Two packs are bound differently here on
+// purpose, and each says so at its own line.
 
 /** Every pack the package ships, as a stranger's config binds it — with its census pinned. */
 interface Shipped {
   /** The pack's exported name, which is also the prefix of every entry id it contributes. */
   readonly pack: string;
-  /** The binding line, parameters and all, exactly as it appears in the config. */
-  readonly bind: string;
+  /** What this repo binds it with. `undefined` binds it bare. */
+  readonly params: Readonly<Record<string, unknown>> | undefined;
   /** What `flow test` runs over this pack alone. Pinned: a deleted case shows up here, by name. */
   readonly cases: number;
   /** The guardrails those cases cover — the disabled ones are loaded but not run. */
   readonly guardrails: number;
 }
 
-const SHIPPED: readonly Shipped[] = [
-  { pack: "docs", bind: "pack(docs)", cases: 3, guardrails: 2 },
-  {
-    pack: "fcis",
-    // `example` is the field this command's first run earned. Two of the pack's entries narrow
-    // inside their own check (`changed`, `whenAdded`) rather than through `.on(…)`, and both used
-    // to prove themselves with `cli/pure/a.ts` written out — one repo's spelling, inside the pack.
-    // Bound here, against `core/`, their block cases fell outside the check's narrowing, were
-    // correctly passed, and FAILED: `flow test` red on day one in every repo that spells its pure
-    // home differently. Nothing else in the suite could see it, because nothing else binds a pack
-    // as a stranger.
-    bind: `pack(fcis, { files: ["core/**/*.ts"], homes: ["core/**"], coverage: "./ci.sh coverage", example: "core/clock.ts" })`,
-    cases: 15,
-    guardrails: 7,
-  },
-  { pack: "flow", bind: `pack(flow, { packs: ["rules/**"] })`, cases: 2, guardrails: 1 },
-  { pack: "git", bind: `pack(git, { release: "./ci.sh release" })`, cases: 51, guardrails: 7 },
-  // `recipes` bound, so the entry that only exists when a repo has one is driven here too.
-  { pack: "justfile", bind: `pack(justfile, { exempt: [], recipes: { "npx vitest": "./ci.sh test" } })`, cases: 15, guardrails: 3 },
-  { pack: "node", bind: "pack(node)", cases: 14, guardrails: 2 },
-  {
-    pack: "secrets",
-    bind: `pack(secrets, { dx: "./ci.sh dx", encrypt: "./ci.sh seal", names: "./ci.sh names" })`,
-    cases: 6,
-    guardrails: 3,
-  },
-  { pack: "tdd", bind: `pack(tdd, { run: "./ci.sh test" })`, cases: 12, guardrails: 6 },
-  // The stranger names NO shared base, so `eslintFromBase` does not exist here and the tsconfig
-  // rule asks only for the strict options — which is the F2 ruling driven rather than described.
-  { pack: "typescript", bind: `pack(typescript, { typecheck: "./ci.sh types", lint: "./ci.sh lint" })`, cases: 7, guardrails: 3 },
-  { pack: "work", bind: "pack(work)", cases: 16, guardrails: 5 },
-];
+/** The config line one binding is written as — the generator's, so the page prints what runs here. */
+const bind = (entry: Shipped): string => bindLine(entry.pack, entry.params);
 
+const SHIPPED: readonly Shipped[] = [
+  // BARE, where the page binds `root` and `allow`. Every parameter the docs pack takes is optional,
+  // and a pack in that state must stay bindable with no object at all — a config that had already
+  // bound it refuses to load, fail-closed, the day the pack gains its first parameter otherwise.
+  // Nothing else in this file drives that path: `node` and `work` take no parameters to begin with.
+  { pack: "docs", params: undefined, cases: 3, guardrails: 2 },
+  // `example` is the field this command's first run earned. Two of the pack's entries narrow
+  // inside their own check (`changed`, `whenAdded`) rather than through `.on(…)`, and both used
+  // to prove themselves with `cli/pure/a.ts` written out — one repo's spelling, inside the pack.
+  // Bound here, against `core/`, their block cases fell outside the check's narrowing, were
+  // correctly passed, and FAILED: `flow test` red on day one in every repo that spells its pure
+  // home differently. Nothing else in the suite could see it, because nothing else binds a pack
+  // as a stranger.
+  { pack: "fcis", params: EXAMPLE.fcis, cases: 15, guardrails: 7 },
+  { pack: "flow", params: EXAMPLE.flow, cases: 2, guardrails: 1 },
+  { pack: "git", params: EXAMPLE.git, cases: 51, guardrails: 7 },
+  // `recipes` bound, so the entry that only exists when a repo has one is driven here too.
+  { pack: "justfile", params: EXAMPLE.justfile, cases: 15, guardrails: 3 },
+  { pack: "node", params: undefined, cases: 14, guardrails: 2 },
+  { pack: "secrets", params: EXAMPLE.secrets, cases: 6, guardrails: 3 },
+  { pack: "tdd", params: EXAMPLE.tdd, cases: 12, guardrails: 6 },
+  // NO SHARED BASE, where the page names both — `eslintFromBase` exists only when a repo names an
+  // eslint base, so the page has to name one or that rule is invisible to a reader, and this has to
+  // name none or the no-base path the F2 ruling created is driven nowhere. The two gate recipes are
+  // the shared ones.
+  { pack: "typescript", params: { typecheck: EXAMPLE.typescript.typecheck, lint: EXAMPLE.typescript.lint }, cases: 7, guardrails: 3 },
+  { pack: "work", params: undefined, cases: 16, guardrails: 5 },
+];
 /** The stranger's own pack — the eleventh binding, and the only turn-end rule in the config. */
-const HOUSE: Shipped = { pack: "house", bind: "pack(house)", cases: 2, guardrails: 1 };
+const HOUSE: Shipped = { pack: "house", params: undefined, cases: 2, guardrails: 1 };
 
 /**
  * The stranger's own pack, in the folder the stranger chose.
@@ -117,16 +121,16 @@ import { docs, fcis, flow, git, justfile, node, secrets, tdd, typescript, work }
 import { house } from "./rules/house.ts";
 
 export default defineConfig([
-${SHIPPED.map((s) => `  ${s.bind},`).join("\n")}
-  ${HOUSE.bind},
+${SHIPPED.map((s) => `  ${bind(s)},`).join("\n")}
+  ${bind(HOUSE)},
 ]);
 `;
 
 /** One pack alone, so `flow test` can be asked about it by itself. */
 const only = (entry: Shipped): string =>
   entry.pack === HOUSE.pack
-    ? `import { defineConfig, pack } from "@jawache/flow";\nimport { house } from "../rules/house.ts";\nexport default defineConfig([${entry.bind}]);\n`
-    : `import { defineConfig, pack } from "@jawache/flow";\nimport { ${entry.pack} } from "@jawache/flow/packs";\nexport default defineConfig([${entry.bind}]);\n`;
+    ? `import { defineConfig, pack } from "@jawache/flow";\nimport { house } from "../rules/house.ts";\nexport default defineConfig([${bind(entry)}]);\n`
+    : `import { defineConfig, pack } from "@jawache/flow";\nimport { ${entry.pack} } from "@jawache/flow/packs";\nexport default defineConfig([${bind(entry)}]);\n`;
 
 /** The stranger's entire toolchain: one script, one job per argument. */
 const CI_SH = `#!/bin/sh
