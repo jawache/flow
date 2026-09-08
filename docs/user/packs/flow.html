@@ -66,18 +66,16 @@
 <main>
   <p class="scope"><a href="./index.html">flow packs</a> › flow</p>
   <h1>The <code>flow</code> pack</h1>
-  <p class="scope">1 guardrail · 2 breadcrumbs · fires at: session · touch · delete · takes 1 parameter</p>
+  <p class="scope">1 guardrail · 2 breadcrumbs · fires at: session · touch · delete · takes 2 parameters</p>
 
   <div class="lead"><p>flow's own orientation and self-protection, as a pack any repo binds.</p>
-<p>Every guarded repo wants these: a note saying what is steering you, a nudge when you edit the
-steering itself, and a refusal when a command would delete it. They were the <code>guard</code> pack in the
-home-directory library; they are a module now, and the only thing that changed on the way across
-is what they point AT — flow.config.ts and the packs it imports, not work.yaml and ~/.work/library.</p></div>
+<p>Every guarded repo wants these three: a note saying what is steering you, a nudge when you edit
+the steering itself, and a refusal when a command would delete it.</p></div>
 
   <p class="gen">Generated from <code>packs/flow.ts</code> by <code>just docs-packs</code>. Edit the pack, not this page. The commit gate refuses a page that has drifted.</p>
 
   <h2 id="binding">Binding it</h2>
-  <p>The pack takes 1 parameter. These are facts the pack cannot know about your repo:</p>
+  <p>The pack takes 2 parameters. These are facts the pack cannot know about your repo:</p>
   <table>
     <thead><tr><th>Parameter</th><th>Type</th><th>What it is</th></tr></thead>
     <tbody>
@@ -89,6 +87,12 @@ guard, and the refusal to delete it. Both name it and neither defaults.</p>
 <p>The engine derives the REPAIR surface from the config's imports directly (<code>configSurface</code>),
 because it is asked in the broken state and can only read text. This is the same fact asked
 at a moment where the config loads, so it is stated once, here, and typed.</p></td></tr>
+      <tr><td><code>hostSurface</code></td><td><code>readonly string[]</code></td><td><p>The harness's own permission surface — the files an agent's tools and permissions are declared
+in. Defaults to Claude Code's: <code>.claude/settings.json</code>, <code>.claude/settings.local.json</code>,
+<code>.claude/agents/**</code> and <code>.claude/skills/**</code>.</p>
+<p>The edit nudge fires on these as well as on the guard itself, because a tool list and a hook
+registration decide what any rule here can ever see. A repo on another harness names its own
+files; a repo with none passes <code>[]</code>.</p></td></tr>
     </tbody>
   </table>
   <p>Example config. The values are examples, and every glob and command on this page was rendered with them:</p>
@@ -143,7 +147,7 @@ a hook rewritten mid-task — and the guard changes without anybody deciding tha
     <div class="says">You are editing the guardrails themselves.
 If this edit weakens, disables or removes a guardrail or a permission because it just blocked you — stop and confirm with the user first.
 Authoring new entries is always fine; loosening one to get an edit through is the user's call, not yours.
-An AGENT DEFINITION is a permission surface too: its `tools:` list decides what that agent can do, and the installed link is live — the file you are editing is the one that takes effect, with nothing between your edit and every future session. Widening a tool list, or adding a permissionMode, is the user's call. Measured: `permissionMode: dontAsk` was added as a hardening and turned out to be a loosening.
+An AGENT DEFINITION is a permission surface too: its `tools:` list decides what that agent can do, and the installed link is live — the file you are editing is the one that takes effect, with nothing between your edit and every future session. Widening a tool list, or adding a permissionMode, is the user's call — a mode added as a hardening is as likely to be a loosening.
 Whatever you are authoring here — a `.message(…)`, a finding format, a warning — name what was SEEN (which file, which commit, which command) and what that specific cause wants done. A condition that cannot produce a distinguishing message is two rules, not one: split it. A detector that emits the same sentence for causes the reader must answer differently teaches them to talk past it, and then fails silently on the one occasion it was right.
 Every guardrail carries its own cases. Add the block case first — a rule whose block case passes is a rule that catches nothing, and `flow test` is what says so.</div>
 

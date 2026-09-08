@@ -42,75 +42,80 @@ export interface Home {
    * at a moment where the config loads, so it is stated once, here, and typed.
    */
   readonly packs: readonly string[];
+
+  /**
+   * The harness's own permission surface — the files an agent's tools and permissions are declared
+   * in. Defaults to Claude Code's: `.claude/settings.json`, `.claude/settings.local.json`,
+   * `.claude/agents/**` and `.claude/skills/**`.
+   *
+   * The edit nudge fires on these as well as on the guard itself, because a tool list and a hook
+   * registration decide what any rule here can ever see. A repo on another harness names its own
+   * files; a repo with none passes `[]`.
+   */
+  readonly hostSurface?: readonly string[];
 }
 
 /**
  * flow's own orientation and self-protection, as a pack any repo binds.
  *
- * Every guarded repo wants these: a note saying what is steering you, a nudge when you edit the
- * steering itself, and a refusal when a command would delete it. They were the `guard` pack in the
- * home-directory library; they are a module now, and the only thing that changed on the way across
- * is what they point AT — flow.config.ts and the packs it imports, not work.yaml and ~/.work/library.
+ * Every guarded repo wants these three: a note saying what is steering you, a nudge when you edit
+ * the steering itself, and a refusal when a command would delete it.
  *
  * @setup A `flow.config.ts` at the repo root and a folder for the packs the repo writes itself —
  * whatever it is called, named here as the `packs` parameter. `flow init` writes both.
  * @adopt Bind it first, before any other pack: it is the one every guarded repo wants whether or
  * not it agrees with a single other opinion in this package.
  */
-export const flow = definePack("flow", (repo: Home) => ({
-  /**
-   * Without it, an agent works in a guarded repo without knowing it is guarded: a refusal arrives
-   * with no model of where it came from, and the config that produced it is just another file.
-   */
-  orientation: breadcrumb()
-    .at(session)
-    .description("What the guard layer is and how it steers — shown at the start of every session.")
-    .text(
-      [
-        "This repo is guarded by flow. Guardrails block risky edits before they land (and again at commit); breadcrumbs steer you by area as you touch files.",
-        "The whole guard is `flow.config.ts` — every rule that fires is reachable from that one file, whether it comes from a pack the config imports or from a pack this repo writes itself. Nothing resolves at run time and nothing defaults: what you read there is what fires. Authoring a new entry is always welcome; never loosen a guardrail to get an edit through — that is the user's call.",
-        "There is no bypass token anywhere in this system. A guardrail is on or off, and turning one off is `override(pack.entry).disabled(\"why\")` in flow.config.ts — a committed change, visible in review.",
-        "If the config will not load, every gated moment refuses until it is fixed. A guard that fails open is a guard that lies about being there. The ONE exception is the repair itself: while the config is broken you may still write `flow.config.ts` and the pack files it imports, because otherwise the rule that demands a fix also forbids it. Commands stay blocked, and so does the commit gate — nothing written under that exception reaches a commit until the config loads green.",
-      ].join("\n"),
-    ),
+export const flow = definePack("flow", (repo: Home) => {
+  const hostSurface = repo.hostSurface ?? [".claude/settings.json", ".claude/settings.local.json", ".claude/agents/**", ".claude/skills/**"];
+  return {
+    /**
+     * Without it, an agent works in a guarded repo without knowing it is guarded: a refusal arrives
+     * with no model of where it came from, and the config that produced it is just another file.
+     */
+    orientation: breadcrumb()
+      .at(session)
+      .description("What the guard layer is and how it steers — shown at the start of every session.")
+      .text(
+        [
+          "This repo is guarded by flow. Guardrails block risky edits before they land (and again at commit); breadcrumbs steer you by area as you touch files.",
+          "The whole guard is `flow.config.ts` — every rule that fires is reachable from that one file, whether it comes from a pack the config imports or from a pack this repo writes itself. Nothing resolves at run time and nothing defaults: what you read there is what fires. Authoring a new entry is always welcome; never loosen a guardrail to get an edit through — that is the user's call.",
+          "There is no bypass token anywhere in this system. A guardrail is on or off, and turning one off is `override(pack.entry).disabled(\"why\")` in flow.config.ts — a committed change, visible in review.",
+          "If the config will not load, every gated moment refuses until it is fixed. A guard that fails open is a guard that lies about being there. The ONE exception is the repair itself: while the config is broken you may still write `flow.config.ts` and the pack files it imports, because otherwise the rule that demands a fix also forbids it. Commands stay blocked, and so does the commit gate — nothing written under that exception reaches a commit until the config loads green.",
+        ].join("\n"),
+      ),
 
-  // The three host files below look like the engine's own list and are deliberately one wider —
-  // `.claude/skills/**`, because a skill is prose an agent reads and is worth a word of caution
-  // before you edit it. The engine keeps the narrower list for a different question, and the
-  // argument for not sharing one is written out at HOST_SURFACE in the adapter's pure home.
-  /**
-   * Without it, the steering layer gets edited like any other file — a rule loosened in passing,
-   * a hook rewritten mid-task — and the guard changes without anybody deciding that it should.
-   */
-  editingTheGuardrails: breadcrumb()
-    .at(touch)
-    .on(
-      "flow.config.ts",
-      ...repo.packs,
-      ".claude/settings.json",
-      ".claude/settings.local.json",
-      ".claude/agents/**",
-      ".claude/skills/**",
-    )
-    .description("A nudge when you edit the guardrails themselves; it never blocks.")
-    .text(
-      [
-        "You are editing the guardrails themselves.",
-        "If this edit weakens, disables or removes a guardrail or a permission because it just blocked you — stop and confirm with the user first.",
-        "Authoring new entries is always fine; loosening one to get an edit through is the user's call, not yours.",
-        "An AGENT DEFINITION is a permission surface too: its `tools:` list decides what that agent can do, and the installed link is live — the file you are editing is the one that takes effect, with nothing between your edit and every future session. Widening a tool list, or adding a permissionMode, is the user's call. Measured: `permissionMode: dontAsk` was added as a hardening and turned out to be a loosening.",
-        "Whatever you are authoring here — a `.message(…)`, a finding format, a warning — name what was SEEN (which file, which commit, which command) and what that specific cause wants done. A condition that cannot produce a distinguishing message is two rules, not one: split it. A detector that emits the same sentence for causes the reader must answer differently teaches them to talk past it, and then fails silently on the one occasion it was right.",
-        "Every guardrail carries its own cases. Add the block case first — a rule whose block case passes is a rule that catches nothing, and `flow test` is what says so.",
-      ].join("\n"),
-    ),
+    // The default host surface is deliberately one wider than the engine's own list —
+    // `.claude/skills/**`, because a skill is prose an agent reads and is worth a word of caution
+    // before you edit it. The engine keeps the narrower list for a different question; the argument
+    // for not sharing one is written out at HOST_SURFACE in the adapter's pure home.
+    /**
+     * Without it, the steering layer gets edited like any other file — a rule loosened in passing,
+     * a hook rewritten mid-task — and the guard changes without anybody deciding that it should.
+     */
+    editingTheGuardrails: breadcrumb()
+      .at(touch)
+      .on("flow.config.ts", ...repo.packs, ...hostSurface)
+      .description("A nudge when you edit the guardrails themselves; it never blocks.")
+      .text(
+        [
+          "You are editing the guardrails themselves.",
+          "If this edit weakens, disables or removes a guardrail or a permission because it just blocked you — stop and confirm with the user first.",
+          "Authoring new entries is always fine; loosening one to get an edit through is the user's call, not yours.",
+          "An AGENT DEFINITION is a permission surface too: its `tools:` list decides what that agent can do, and the installed link is live — the file you are editing is the one that takes effect, with nothing between your edit and every future session. Widening a tool list, or adding a permissionMode, is the user's call — a mode added as a hardening is as likely to be a loosening.",
+          "Whatever you are authoring here — a `.message(…)`, a finding format, a warning — name what was SEEN (which file, which commit, which command) and what that specific cause wants done. A condition that cannot produce a distinguishing message is two rules, not one: split it. A detector that emits the same sentence for causes the reader must answer differently teaches them to talk past it, and then fails silently on the one occasion it was right.",
+          "Every guardrail carries its own cases. Add the block case first — a rule whose block case passes is a rule that catches nothing, and `flow test` is what says so.",
+        ].join("\n"),
+      ),
 
-  noDeleteGuardrails: guardrail()
-    .at(deletion)
-    .on("flow.config.ts", ...repo.packs, ".githooks/pre-commit")
-    .description("Stops a command from deleting the committed guard surface. No bypass — disable entries in the file instead.")
-    .check(protectedPath({}))
-    .message(
-      "That command would delete this repo's guard surface (flow.config.ts binds every rule; the packs it imports are where this repo writes its own; .githooks/pre-commit is what runs them at the gate). Deleting any of them is the same attack. There is no bypass — `override(pack.entry).disabled(\"why\")` inside flow.config.ts is the visible, committed route.",
-    )
-    .test({ block: [{ path: "flow.config.ts", content: "" }, { path: ".githooks/pre-commit", content: "" }] }),
-}));
+    noDeleteGuardrails: guardrail()
+      .at(deletion)
+      .on("flow.config.ts", ...repo.packs, ".githooks/pre-commit")
+      .description("Stops a command from deleting the committed guard surface. No bypass — disable entries in the file instead.")
+      .check(protectedPath({}))
+      .message(
+        "That command would delete this repo's guard surface (flow.config.ts binds every rule; the packs it imports are where this repo writes its own; .githooks/pre-commit is what runs them at the gate). Deleting any of them is the same attack. There is no bypass — `override(pack.entry).disabled(\"why\")` inside flow.config.ts is the visible, committed route.",
+      )
+      .test({ block: [{ path: "flow.config.ts", content: "" }, { path: ".githooks/pre-commit", content: "" }] }),
+  };
+});

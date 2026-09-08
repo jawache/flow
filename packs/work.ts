@@ -6,9 +6,8 @@
 // absence of both. A session's own claim about itself is never consulted, because a permission that
 // rests on a claim rests on a lie.
 //
-// The trap the recipe makes unreachable, measured on the same probe: four verifier briefs matched
-// every builder pattern, because a verifier is briefed with what the builder did. Keying on the
-// brief first would have dressed four checkers as builders.
+// The trap the order exists to close: a verifier is briefed with what the builder did, so a read
+// that keyed on the brief first would dress a checker as a builder.
 //
 // The agent type names and brief needles below are TODAY'S work, and this pack moves into work's
 // own package when work-core rewrites these rules as edit-time rails over the plan.
@@ -156,9 +155,8 @@ export const work = definePack("work", {
     .at(command)
     .description("The inbox is the human's speccing queue — an agent raises a finding in chat, never files one.")
     // Anchored to a COMMAND POSITION — the start of the line, or just past a shell operator — so
-    // prose that merely mentions the verb is not an invocation. Measured the moment this rule was
-    // written: the unanchored pattern blocked the very command that was authoring its own test
-    // file, because the phrase appeared inside a heredoc.
+    // prose that merely mentions the verb is not an invocation. Unanchored, the pattern refuses the
+    // command that is WRITING about it, because the phrase sits inside the heredoc it is writing.
     .check(banCommands({ ban: ["(?:^|[\\n;&|(]\\s*)\\s*work\\s+inbox\\s+new\\b"] }))
     .message(
       [
