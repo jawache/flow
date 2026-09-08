@@ -83,7 +83,7 @@ const SHIPPED: readonly Shipped[] = [
   {
     pack: "secrets",
     bind: `pack(secrets, { dx: "./ci.sh dx", encrypt: "./ci.sh seal", names: "./ci.sh names" })`,
-    cases: 5,
+    cases: 6,
     guardrails: 3,
   },
   { pack: "tdd", bind: `pack(tdd, { run: "./ci.sh test" })`, cases: 12, guardrails: 6 },

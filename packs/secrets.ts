@@ -6,8 +6,14 @@
 
 import { breadcrumb, commit, definePack, guardrail, protectedPath, session, textBan, touch, write } from "../index.ts";
 
-/** The three local-only files. Named once — the protected set and the ignore list are the same fact. */
-const LOCAL_ONLY = [".env.keys", ".dev.vars", ".env.*.local"];
+/**
+ * The local-only files every dotenvx repo has: the decryption key, and the per-environment
+ * overrides. Named once — the protected set and the ignore list are the same fact.
+ *
+ * `.dev.vars` is NOT here: it is one platform's name for a local override file, so it lives in the
+ * `localFiles` default beside these and a repo that has never heard of it drops it.
+ */
+const LOCAL_ONLY = [".env.keys", ".env.*.local"];
 
 const AWS_KEY_SHAPE = ["AKIA", "IOSFODNN", "7EXAMPLE"].join("");
 
@@ -20,9 +26,39 @@ const AWS_KEY_SHAPE = ["AKIA", "IOSFODNN", "7EXAMPLE"].join("");
  * Mandatory, by tdd's rule: a default here is a wrong answer that never asks.
  */
 export interface Seam {
+  /**
+   * The value prefixes that stay plaintext in a committed env file. Defaults to `["PUBLIC_"]`.
+   *
+   * A public value is one a bundler inlines at build time, so sealing it would break the build for
+   * nothing. `DOTENV_PUBLIC_KEY` is always allowed beside these — it is dotenvx's own header, not a
+   * repo's choice.
+   */
+  readonly publicPrefixes?: readonly string[];
+
+  /**
+   * The files that must never be committed. Defaults to `[".env.keys", ".env.*.local",
+   * ".dev.vars"]`.
+   *
+   * These are also what `envEncrypted` ignores: a file nobody commits cannot carry a committed
+   * plaintext value, and the two lists being one is what stops them drifting apart.
+   */
+  readonly localFiles?: readonly string[];
+
+  /** The committed env files, as a glob. Defaults to `.env*`. */
+  readonly envFiles?: string;
+
+  /**
+   * Extra credential shapes to scan staged content for, added to the six this pack ships (Stripe
+   * live keys, AWS access keys, private key headers, GitHub and Slack tokens). Defaults to none.
+   *
+   * One regular expression per shape. A vendor whose token this pack has never heard of is a fact
+   * only the repo has.
+   */
+  readonly extraSecretShapes?: readonly string[];
+
   /** Decrypts and injects, and every env-dependent command goes through it: `<dx> <env> <cmd>`. */
   readonly dx: string;
-  /** Seals every env file in place, leaving the declared public prefixes plaintext. */
+  /** Seals every env file in place, leaving the public prefixes plaintext. */
   readonly encrypt: string;
   /** Lists a file's variable NAMES, decrypting nothing. */
   readonly names: string;
@@ -52,7 +88,17 @@ export interface Seam {
  * having in a repo that has never held a secret, and turns `envEncrypted` off BY NAME in its
  * config with the reason on the record — an entry sitting dead is not the same as one opted out of.
  */
-export const secrets = definePack("secrets", (repo: Seam) => ({
+export const secrets = definePack("secrets", (repo: Seam) => {
+  const publicPrefixes = repo.publicPrefixes ?? ["PUBLIC_"];
+  const localFiles = repo.localFiles ?? [...LOCAL_ONLY, ".dev.vars"];
+  const envFiles = repo.envFiles ?? ".env*";
+  const extraShapes = repo.extraSecretShapes ?? [];
+  // The public prefixes reach the scan as negative lookaheads, in the order they were given, and
+  // dotenvx's own header is allowed after them: a repo chooses its prefixes, never its own tool's.
+  const plaintextValue =
+    `^(?!\\s*#)${publicPrefixes.map((prefix) => `(?!${prefix})`).join("")}(?!DOTENV_PUBLIC_KEY)` +
+    `[A-Za-z_][A-Za-z0-9_]*\\s*=\\s*(?![\"']?encrypted:)(?![\"']?\\s*$).+`;
+  return {
   /**
    * Without it, an agent avoids the env files on instinct — the trained reflex is right nearly
    * everywhere else — and either works around the seam or asks a human for values that are
@@ -63,8 +109,8 @@ export const secrets = definePack("secrets", (repo: Seam) => ({
     .description("How secrets work here — the three tiers, the one seam, and what you may read.")
     .text(
       [
-        "Env files here are COMMITTED and ENCRYPTED (dotenvx): every value is an `encrypted:…` blob except PUBLIC_* config, which bundlers inline at build. Reading and editing them is expected work for you, not a violation — your training says avoid env files, and for plaintext env files it is right; here it is wrong.",
-        "Three tiers, and every value lives in exactly one. Committed and encrypted: `.env`, `.env.production`, `.env.staging`. Local ephemera, never committed and never encrypted: `.env.keys` (the decryption key — the ONE file you never read), `.dev.vars`, `.env.*.local`. Runtime platform secrets: set per environment on the host (`wrangler secret put NAME --env prod`) — a new runtime secret that skips that channel 500s the live route with nothing in the diff to show why.",
+        `Env files in this repo are COMMITTED and ENCRYPTED (dotenvx): every value is an \`encrypted:…\` blob except ${publicPrefixes.map((prefix) => `${prefix}*`).join(" / ")} config, which bundlers inline at build. Reading and editing them is expected work for you, not a violation — your training says avoid env files, and for plaintext env files it is right; for these it is wrong.`,
+        "Three tiers, and every value lives in exactly one. Committed and encrypted: `.env`, `.env.production`, `.env.staging`. Local ephemera, never committed and never encrypted: `.env.keys` (the decryption key — the ONE file you never read), `.env.*.local`. Runtime platform secrets: set per environment in the host platform's own secret store — a runtime secret added anywhere else does not reach the running service.",
         `One seam: \`${repo.dx} <env> <cmd>\` decrypts and injects. EVERYTHING env-dependent goes through it — the dev server, a migration, a one-off script. Never \`source .env\`, never a hand-rolled dotenv import.`,
         "The trap worth knowing: `dotenvx decrypt` with no key present succeeds and writes EMPTY values over your file. If a decrypt looks suspiciously quiet, check `.env.keys` exists before you commit anything.",
       ].join("\n"),
@@ -78,19 +124,19 @@ export const secrets = definePack("secrets", (repo: Seam) => ({
    */
   envEncrypted: guardrail()
     .at(write, commit)
-    .on(".env*")
-    .ignore(...LOCAL_ONLY)
-    .description("A committed .env* file carries no plaintext value — everything but the declared public prefixes is sealed.")
+    .on(envFiles)
+    .ignore(...localFiles)
+    .description(`A committed env file carries no plaintext value — everything but ${publicPrefixes.join(" / ")} is sealed.`)
     .check(
       textBan({
         // A KEY=VALUE line whose value is neither an `encrypted:` blob nor empty, and whose key is
         // none of the declared public prefixes. Stated here rather than hidden in a script: which
         // keys a secret-leak rule waves through is the one fact its reader most needs.
-        ban: ["^(?!\\s*#)(?!PUBLIC_)(?!DOTENV_PUBLIC_KEY)[A-Za-z_][A-Za-z0-9_]*\\s*=\\s*(?![\"']?encrypted:)(?![\"']?\\s*$).+"],
+        ban: [plaintextValue],
       }),
     )
     .message(
-      `A plaintext value in a committed env file — this is the leak the whole model exists to prevent, and git keeps it forever. Seal it with \`${repo.encrypt}\` (PUBLIC_* and the DOTENV_PUBLIC_KEY header stay plaintext by design).`,
+      `A plaintext value in a committed env file — this is the leak the whole model exists to prevent, and git keeps it forever. Seal it with \`${repo.encrypt}\` (${publicPrefixes.map((prefix) => `${prefix}*`).join(", ")} and the DOTENV_PUBLIC_KEY header stay plaintext by design).`,
     )
     .test({
       pass: [{ path: ".env", content: "DOTENV_PUBLIC_KEY=03ab\nAPI_KEY=encrypted:BE9d\nPUBLIC_URL=https://x" }],
@@ -99,13 +145,18 @@ export const secrets = definePack("secrets", (repo: Seam) => ({
 
   noKeysFileInCommits: guardrail()
     .at(commit)
-    .on(...LOCAL_ONLY)
+    .on(...localFiles)
     .description("The decryption key and the local overlays can never be committed — the backstop when gitignore breaks.")
     .check(protectedPath({}))
     .message(
       "This file is machine-local and must never be committed: `.env.keys` is the decryption key for every sealed value in this repo, and the `.local` overlays hold real, unencrypted values. The gitignore normally stops this — if you got here, the gitignore is broken.",
     )
-    .test({ block: [{ staged: [".env.keys"], world: { fs: { ".env.keys": "k" } } }] }),
+    // The pass side is the file the tier ABOVE this one is about: `.env` is committed, sealed, and
+    // nothing here judges it. Without the case, the rule proved only that it refuses something.
+    .test({
+      pass: [{ staged: [".env"], world: { fs: { ".env": "API_KEY=encrypted:BE9d" } } }],
+      block: [{ staged: [".env.keys"], world: { fs: { ".env.keys": "k" } } }],
+    }),
 
   noSecretsInCommits: guardrail()
     .at(commit)
@@ -121,6 +172,7 @@ export const secrets = definePack("secrets", (repo: Seam) => ({
           "-----BEGIN [A-Z ]*PRIVATE KEY-----",
           "ghp_[0-9A-Za-z]{30,}",
           "xox[baprs]-[0-9A-Za-z-]{10,}",
+          ...extraShapes,
         ],
       }),
     )
@@ -153,4 +205,5 @@ export const secrets = definePack("secrets", (repo: Seam) => ({
         `Sealing files is \`${repo.encrypt}\`. Listing what a file defines, without decrypting anything, is \`${repo.names} <file>\`.`,
       ].join("\n"),
     ),
-}));
+  };
+});
