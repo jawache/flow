@@ -55,56 +55,38 @@ export interface Gates {
  * wherever they are set.
  *
  * A shared base is still worth having, and a repo that keeps one names it in `tsconfigBase` and
- * `eslintBase`; the two rules then hold every project to it. Here is a base worth starting from,
- * to copy into the repo as `tsconfig.base.json` — every `tsconfig*.json` extends it:
+ * `eslintBase`; the two rules then hold every project to it. REFERENCE below, not a file to match:
+ * the smallest base that carries the opinion, to copy as `tsconfig.base.json` and then add a
+ * repo's own emit and module settings to. Every `tsconfig*.json` extends it.
  *
  * ```json
  * {
  *   "compilerOptions": {
- *     "target": "ES2022",
- *     "lib": ["ES2023"],
- *     "module": "NodeNext",
- *     "moduleResolution": "NodeNext",
- *     "moduleDetection": "force",
- *     "isolatedModules": true,
- *     "verbatimModuleSyntax": true,
- *     "skipLibCheck": true,
- *
  *     "strict": true,
  *     "noUncheckedIndexedAccess": true,
  *     "exactOptionalPropertyTypes": true,
  *     "noImplicitOverride": true,
  *     "noFallthroughCasesInSwitch": true,
  *     "noUnusedLocals": true,
- *     "noUnusedParameters": true,
- *
- *     "noEmit": true,
- *     "sourceMap": true,
- *     "declaration": true
+ *     "noUnusedParameters": true
  *   }
  * }
  * ```
  *
  * …and the lint half as `eslint.config.base.js`, which the repo's own `eslint.config.js` imports
- * and spreads. It is deliberately not a hand-rolled rule set: `strictTypeChecked` is the
- * maintained good-patterns set, and it supersedes every idiom rule a pack could write.
+ * and spreads. It is deliberately not a hand-rolled rule set: `strictTypeChecked` is the maintained
+ * good-patterns set, it already holds the escape hatches at error, and it supersedes every idiom
+ * rule a pack could write. `projectService` is what makes the type-aware rules work at all.
  *
  * ```js
  * import tseslint from "typescript-eslint";
- * import n from "eslint-plugin-n";
  *
  * export default tseslint.config(
- *   { ignores: ["dist/**", "build/**", "coverage/**", "node_modules/**"] },
+ *   { ignores: ["dist/**", "coverage/**"] },
  *   ...tseslint.configs.strictTypeChecked,
- *   n.configs["flat/recommended"],
  *   {
  *     languageOptions: {
  *       parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
- *     },
- *     rules: {
- *       "@typescript-eslint/ban-ts-comment": "error",
- *       "@typescript-eslint/no-explicit-any": "error",
- *       "@typescript-eslint/no-non-null-assertion": "error",
  *     },
  *   },
  * );

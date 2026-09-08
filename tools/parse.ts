@@ -26,32 +26,45 @@ export interface Parsed {
   readonly check: ReadonlyMap<string, string>;
 }
 
+/**
+ * A doc comment with the gutter taken off — the opener, the closer, and the leading asterisk of
+ * every line, and not one space beyond them.
+ *
+ * ONE READER FOR EVERY SLOT THE PAGE RENDERS. TypeScript's `getTextOfJSDocComment` gives the words
+ * back with the leading whitespace of every line thrown away, which is invisible in a sentence and
+ * ruinous in a fenced block: the file a reader is meant to copy arrives flat. A lead, a parameter's
+ * doc and an entry's why can each carry one, so all of them come through here — a slot left on the
+ * lossy reader is a slot `fenceFault` claims to cover and does not.
+ */
+function stripGutter(text: string): string {
+  return text
+    .replace(/^\/\*\*/, "")
+    .replace(/\*\/\s*$/, "")
+    .split("\n")
+    .map((held) => held.replace(/^[ \t]*\*[ \t]?/, ""))
+    .join("\n");
+}
+
+/** One doc comment's free prose, stopping where JSDoc itself does: the first line opening a tag. */
+function freeProse(doc: ts.JSDoc): string {
+  const lines = stripGutter(doc.getText()).split("\n");
+  const tag = lines.findIndex((held) => /^@\w/.test(held));
+  return (tag === -1 ? lines : lines.slice(0, tag)).join("\n").trim();
+}
+
 /** A node's doc comment — the free prose only. The named tags are read by `docTags`. */
 function docComment(node: ts.Node): string {
   return ts
     .getJSDocCommentsAndTags(node)
-    .flatMap((doc) => (ts.isJSDoc(doc) ? [ts.getTextOfJSDocComment(doc.comment) ?? ""] : []))
+    .flatMap((doc) => (ts.isJSDoc(doc) ? [freeProse(doc)] : []))
     .join("\n")
     .trim();
 }
 
-/**
- * One tag's body, read off the SOURCE with the comment gutter taken away — `@setup ` and the
- * leading ` * ` of every line after it, and nothing else.
- *
- * TypeScript's own `getTextOfJSDocComment` gives the words back with the leading whitespace of
- * every line thrown away. For prose that is invisible; for the one thing a named block now carries
- * — a file the reader is meant to copy, inside a fence — it is the difference between a config
- * somebody can paste and a flat wall of JSON. So the gutter is stripped here, one space after the
- * asterisk, and every space beyond it is the author's.
- */
+/** One tag's body: the same gutter-stripped text, without the `@setup` that opens it. */
 function tagBody(tag: ts.JSDocTag): string {
-  return tag
-    .getText()
+  return stripGutter(tag.getText())
     .replace(/^@\w+[ \t]*/, "")
-    .split("\n")
-    .map((held) => held.replace(/^[ \t]*\*[ \t]?/, ""))
-    .join("\n")
     .trim();
 }
 

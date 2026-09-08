@@ -29,12 +29,29 @@ export const plain = definePack("plain", {
 });
 `;
 
-/** A pack whose `@setup` block carries the file a reader is meant to copy, fence and all. */
+/** A pack carrying a file a reader is meant to copy in every slot the page renders one from. */
 const FENCED = `
-import { definePack } from "../index.ts";
+import { definePack, guardrail, commit, textBan } from "../index.ts";
+
+/** A pack with a fact it cannot know. */
+export interface Repo {
+  /**
+   * Where the repo keeps its tools.
+   *
+   * \`\`\`json
+   * { "tools": "bin" }
+   * \`\`\`
+   */
+  readonly tools?: string;
+}
 
 /**
  * A pack that ships nothing and shows the file instead.
+ *
+ * \`\`\`sh
+ * npm i -D dotenvx
+ *   # and nothing else
+ * \`\`\`
  *
  * @setup A base at the repo root, and this is one worth starting from:
  *
@@ -46,7 +63,20 @@ import { definePack } from "../index.ts";
  * }
  * \`\`\`
  */
-export const fenced = definePack("fenced", {});
+export const fenced = definePack("fenced", (repo: Repo) => {
+  const tools = repo.tools ?? "tools";
+  return {
+    /**
+     * Without it nobody knows where the code behind a recipe lives.
+     *
+     * \`\`\`just
+     * check:
+     *     ./bin/check
+     * \`\`\`
+     */
+    home: guardrail().at(commit).check(textBan({ ban: [tools] })).message("no").test({ block: ["x"] }),
+  };
+});
 `;
 
 /** A pack whose factory DEFAULTS a parameter, which forces a body and a return statement. */
@@ -96,7 +126,7 @@ describe("what a pack's source says that loading it cannot", () => {
   // leading whitespace of every line thrown away, which is right for prose and ruinous for the one
   // thing a `@setup` block now carries: a file to copy. Read off the source instead, the gutter
   // goes and nothing else does.
-  it("keeps a fenced file in a named block exactly as it is written, indentation and all", () => {
+  it("keeps a fenced file exactly as it is written, indentation and all, in every slot the page renders", () => {
     const parsed = parseSource("fenced.ts", FENCED);
     expect(parsed.blocks).toEqual([
       {
@@ -104,6 +134,12 @@ describe("what a pack's source says that loading it cannot", () => {
         body: 'A base at the repo root, and this is one worth starting from:\n\n```json\n{\n  "compilerOptions": {\n    "strict": true\n  }\n}\n```',
       },
     ]);
+    // The lead, a parameter's own doc and an entry's why reach the page down the same road, so a
+    // reader that kept the indentation for one and dropped it for the others would render three
+    // pastable files and one flat one — and `fenceFault` would be covering a slot nobody checked.
+    expect(parsed.lead).toBe("A pack that ships nothing and shows the file instead.\n\n```sh\nnpm i -D dotenvx\n  # and nothing else\n```");
+    expect(parsed.params).toEqual([{ name: "tools", type: "string", why: 'Where the repo keeps its tools.\n\n```json\n{ "tools": "bin" }\n```' }]);
+    expect(parsed.why.get("home")).toBe("Without it nobody knows where the code behind a recipe lives.\n\n```just\ncheck:\n    ./bin/check\n```");
   });
 
   // THE BUG THAT EARNED THIS FILE. Defaulting a parameter is what turns `(repo) => ({…})` into

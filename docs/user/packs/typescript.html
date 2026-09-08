@@ -108,50 +108,32 @@ fleet's opinion about target, module and lib, and a neutral engine has no busine
 so with no base named the pack holds only the opinion that travels — the strict options stay on
 wherever they are set.</p>
 <p>A shared base is still worth having, and a repo that keeps one names it in <code>tsconfigBase</code> and
-<code>eslintBase</code>; the two rules then hold every project to it. Here is a base worth starting from,
-to copy into the repo as <code>tsconfig.base.json</code> — every <code>tsconfig*.json</code> extends it:</p>
+<code>eslintBase</code>; the two rules then hold every project to it. REFERENCE below, not a file to match:
+the smallest base that carries the opinion, to copy as <code>tsconfig.base.json</code> and then add a
+repo's own emit and module settings to. Every <code>tsconfig*.json</code> extends it.</p>
 <pre><code>{
   &quot;compilerOptions&quot;: {
-    &quot;target&quot;: &quot;ES2022&quot;,
-    &quot;lib&quot;: [&quot;ES2023&quot;],
-    &quot;module&quot;: &quot;NodeNext&quot;,
-    &quot;moduleResolution&quot;: &quot;NodeNext&quot;,
-    &quot;moduleDetection&quot;: &quot;force&quot;,
-    &quot;isolatedModules&quot;: true,
-    &quot;verbatimModuleSyntax&quot;: true,
-    &quot;skipLibCheck&quot;: true,
-
     &quot;strict&quot;: true,
     &quot;noUncheckedIndexedAccess&quot;: true,
     &quot;exactOptionalPropertyTypes&quot;: true,
     &quot;noImplicitOverride&quot;: true,
     &quot;noFallthroughCasesInSwitch&quot;: true,
     &quot;noUnusedLocals&quot;: true,
-    &quot;noUnusedParameters&quot;: true,
-
-    &quot;noEmit&quot;: true,
-    &quot;sourceMap&quot;: true,
-    &quot;declaration&quot;: true
+    &quot;noUnusedParameters&quot;: true
   }
 }</code></pre>
 <p>…and the lint half as <code>eslint.config.base.js</code>, which the repo's own <code>eslint.config.js</code> imports
-and spreads. It is deliberately not a hand-rolled rule set: <code>strictTypeChecked</code> is the
-maintained good-patterns set, and it supersedes every idiom rule a pack could write.</p>
+and spreads. It is deliberately not a hand-rolled rule set: <code>strictTypeChecked</code> is the maintained
+good-patterns set, it already holds the escape hatches at error, and it supersedes every idiom
+rule a pack could write. <code>projectService</code> is what makes the type-aware rules work at all.</p>
 <pre><code>import tseslint from &quot;typescript-eslint&quot;;
-import n from &quot;eslint-plugin-n&quot;;
 
 export default tseslint.config(
-  { ignores: [&quot;dist/**&quot;, &quot;build/**&quot;, &quot;coverage/**&quot;, &quot;node_modules/**&quot;] },
+  { ignores: [&quot;dist/**&quot;, &quot;coverage/**&quot;] },
   ...tseslint.configs.strictTypeChecked,
-  n.configs[&quot;flat/recommended&quot;],
   {
     languageOptions: {
       parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
-    },
-    rules: {
-      &quot;@typescript-eslint/ban-ts-comment&quot;: &quot;error&quot;,
-      &quot;@typescript-eslint/no-explicit-any&quot;: &quot;error&quot;,
-      &quot;@typescript-eslint/no-non-null-assertion&quot;: &quot;error&quot;,
     },
   },
 );</code></pre>

@@ -98,28 +98,31 @@ export interface Seam {
  *
  * Nothing else is required: unbound, the sentences name dotenvx itself. THIS PACK SHIPS NO FILE
  * and nothing is copied into a repo. What a repo gains by wrapping the tool is one place to say
- * which env file each environment means, and this is the module worth copying — the three jobs an
- * env seam wants, of which this pack asks for two:
+ * which env file each environment means — REFERENCE below, not a file to match: it is a seam that
+ * works as written, to copy and then spell your own way. The environments are the repo's own fact,
+ * and so is the file list the sealing loop walks.
  *
  * ```just
  * [doc("Run any command with this environment's secrets injected — the ONE env seam. Usage: just dx dev npm run build")]
  * dx env +cmd:
  *     dotenvx run {{ if env == "prod" { "-f .env.production -f .env" } else { "-f .env.development.local -f .env" } }} -- {{cmd}}
  *
- * [doc("Encrypt every env file in place — everything sealed except PUBLIC_* (bundlers inline those at build).")]
+ * [doc("Seal every env file in place — everything encrypted except PUBLIC_* (bundlers inline those at build).")]
  * env-encrypt:
  *     #!/usr/bin/env bash
  *     set -euo pipefail
- *     for f in .env .env.development.local .env.staging .env.production; do
- *       [ -f "$f" ] && dotenvx encrypt -f "$f" -ek 'PUBLIC_*'
+ *     for f in .env .env.development.local .env.production; do
+ *       if [ -f "$f" ]; then dotenvx encrypt -f "$f" -ek 'PUBLIC_*'; fi
  *     done
  *
- * [doc("List the variable NAMES in an env file — no values, safe to paste. Usage: just env-names .env")]
+ * [doc("List the variable NAMES in an env file — no values, nothing decrypted. Usage: just env-names .env")]
  * env-names file=".env":
- *     dotenvx get -f {{file}} --mask --pretty-print
+ *     grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' {{file}} | tr -d '=' | sort
  * ```
  *
- * Bound, that repo hands over `dx: "just dx"` and `encrypt: "just env-encrypt"`.
+ * Bound, that repo hands over `dx: "just dx"` and `encrypt: "just env-encrypt"`. The third job is
+ * nobody's parameter — no sentence in this pack names it — and it is here because an env seam
+ * wants it.
  * @adopt A repo with no `.env*` at all binds this for `noSecretsInCommits` alone, which is worth
  * having in a repo that has never held a secret, and turns `envEncrypted` off BY NAME in its
  * config with the reason on the record — an entry sitting dead is not the same as one opted out of.

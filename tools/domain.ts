@@ -372,7 +372,7 @@ export function prose(text: string): string {
 function paragraphs(text: string): string {
   return text
     .split(/\n\s*\n/)
-    .flatMap((para) => (para.trim() === "" ? [] : [`<p>${esc(para.trim()).replace(/`([^`]+)`/g, "<code>$1</code>")}</p>`]))
+    .flatMap((para) => (para.trim() === "" ? [] : [`<p>${line(para.trim())}</p>`]))
     .join("\n");
 }
 

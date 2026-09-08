@@ -14,6 +14,28 @@ import { describe, it, expect } from "vitest";
 import * as packs from "./index.ts";
 import { defineConfig, loadConfig, pack } from "../index.ts";
 
+/** The entries a config loaded, or an empty list and the refusals in the failure message. */
+function loaded(result: ReturnType<typeof loadConfig>): { id: string; spec: unknown }[] {
+  expect(result.ok ? [] : result.refusals.map((refusal) => refusal.detail)).toEqual([]);
+  return result.ok ? [...result.entries] : [];
+}
+
+/**
+ * What an entry SAYS — a guardrail's refusal, a breadcrumb's prose — by id.
+ *
+ * The one thing a `.test({ pass, block })` case cannot see. A case drives the check and reads the
+ * verdict; the sentence the blocked person actually reads is beside it, and every parameter and
+ * every computed default that only ever reaches prose is invisible until something asserts on it.
+ */
+function sentence(entries: readonly { id: string; spec: unknown }[]): (id: string) => string {
+  return (id) => {
+    const found = entries.find((entry) => entry.id === id);
+    expect(found, `no entry ${id}`).toBeDefined();
+    const spec = (found as { spec: { message?: string; text?: string } }).spec;
+    return spec.message ?? spec.text ?? "";
+  };
+}
+
 describe("the packs surface", () => {
   // TEN PACKS AND THREE RUNGS, and nothing else. Five configured checks used to sit on this list
   // too, exported from a shared `checks.ts` beside the packs; not one was ever bound outside the
@@ -59,19 +81,44 @@ describe("the packs surface", () => {
         pack(packs.typescript, { typecheck: "make types", lint: "make lint" }),
       ]),
     );
-    const entries = result.ok ? result.entries : [];
-    /** What the entry says — a guardrail's refusal, a breadcrumb's prose. */
-    const said = (id: string): string => {
-      const found = entries.find((entry) => entry.id === id);
-      expect(found, `no entry ${id}`).toBeDefined();
-      const spec = (found as { spec: { message?: string; text?: string } }).spec;
-      return spec.message ?? spec.text ?? "";
-    };
+    const entries = loaded(result);
+    const said = sentence(entries);
     expect(said("git.orientation")).toContain("cargo release");
     expect(said("git.node.noHandEditedVersion")).toContain("cargo release");
     expect(said("typescript.commitRunsTsc")).toContain("make types");
     expect(said("typescript.commitRunsEslint")).toContain("make lint");
     // And nothing carries the fleet's own spelling any more — the point of the extraction.
+    for (const entry of entries) {
+      const spec = entry.spec as { message?: string; text?: string };
+      expect(`${spec.message ?? ""}\n${spec.text ?? ""}`, entry.id).not.toContain("just ");
+    }
+  });
+
+  // THE DEFAULTS, proved in the same place and for the same reason. Two packs now have an arm that
+  // exists only when a repo names nothing, and both arms live entirely in prose: `secrets` bound
+  // bare falls back to dotenvx's own spelling, and `typescript` with no shared base keeps only the
+  // strictness opinion. Nothing else in the suite can reach either sentence — the machine test
+  // drives both bindings but asserts on ids and counts, and a case cannot see a message. A default
+  // that silently became `undefined <file>` is exactly what this catches, because that is what one
+  // of them did before the parameter behind it was deleted.
+  it("names dotenvx itself when nothing wraps it, and the strict options when no base is named", () => {
+    const entries = loaded(
+      loadConfig(defineConfig([pack(packs.secrets), pack(packs.typescript, { typecheck: "make types", lint: "make lint" })])),
+    );
+    const said = sentence(entries);
+
+    expect(said("secrets.orientation")).toContain("One seam: `dotenvx run -f .env.<env> -- <cmd>`");
+    // Built from the pack's own `publicPrefixes`, so the command a refusal hands over is the one
+    // that leaves exactly those plaintext — a bare `dotenvx encrypt` would seal them.
+    expect(said("secrets.envEncrypted")).toContain("Seal it with `dotenvx encrypt -ek 'PUBLIC_*'`");
+    expect(said("secrets.noSecretsInCommits")).toContain("`dotenvx encrypt -ek 'PUBLIC_*'`");
+
+    expect(said("typescript.strictTypesNoInvalidStates")).toContain("`strict` and `noUncheckedIndexedAccess` stay on wherever they are set");
+    expect(said("typescript.tsconfigStrict")).toContain("turns off one of strict / noUncheckedIndexedAccess");
+    // NO BASE, NO ENTRY: a rule demanding an import of a file the package does not ship would
+    // refuse every repo that binds the pack.
+    expect(entries.map((entry) => entry.id)).not.toContain("typescript.eslintFromBase");
+    // And no sentence names a wrapper the repo never said it had.
     for (const entry of entries) {
       const spec = entry.spec as { message?: string; text?: string };
       expect(`${spec.message ?? ""}\n${spec.text ?? ""}`, entry.id).not.toContain("just ");
@@ -84,10 +131,11 @@ describe("the packs surface", () => {
   // as armed. A message can be read; a scope has to be looked at, which is what this does.
   it("scopes the flow pack on the folder the repo says its packs are in, and on no other", () => {
     const bound = (homes: readonly string[]): Record<string, readonly string[]> => {
-      const result = loadConfig(defineConfig([pack(packs.flow, { packs: homes })]));
-      expect(result.ok ? [] : result.refusals).toEqual([]);
       return Object.fromEntries(
-        (result.ok ? result.entries : []).map((entry) => [entry.id, (entry.spec as { on?: readonly string[] }).on ?? []]),
+        loaded(loadConfig(defineConfig([pack(packs.flow, { packs: homes })]))).map((entry) => [
+          entry.id,
+          (entry.spec as { on?: readonly string[] }).on ?? [],
+        ]),
       );
     };
 
