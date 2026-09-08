@@ -27,6 +27,7 @@ import { defineConfig, loadConfig, pack, type Cases, type EntrySpec, type Guardr
 import { docs, fcis, flow, git, justfile, node, secrets, tdd, typescript, work } from "../packs/index.ts";
 import {
   caseLine,
+  caseWorld,
   DOC_BLOCKS,
   renderPackPage,
   renderPacksIndex,
@@ -221,7 +222,7 @@ function literal(value: unknown): string {
 /** Every case an entry carries, pass side then block side, as the lines a reader scans. */
 function caseLines(cases: Cases | undefined): EntryDoc["cases"] {
   const side = (kind: "pass" | "block"): EntryDoc["cases"] =>
-    (cases?.[kind] ?? []).map((fact) => ({ kind, line: caseLine(fact as CaseFact) }));
+    (cases?.[kind] ?? []).map((fact) => ({ kind, line: caseLine(fact as CaseFact), given: caseWorld(fact as CaseFact) }));
   return [...side("pass"), ...side("block")];
 }
 

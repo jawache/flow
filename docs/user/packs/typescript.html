@@ -49,7 +49,8 @@
   .case.stop{background:var(--stopbg);border:1px solid #f0bfbb}
   .case b{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.25rem}
   .case.ok b{color:var(--ok)} .case.stop b{color:var(--stop)}
-  .case ul{margin:0;padding-left:1.1rem} .case li{margin:.15rem 0}
+  .case ul{margin:0;padding-left:1.1rem} .case li{margin:.3rem 0}
+  .given{display:block;font-size:.82rem;color:#5c6470;margin-top:.1rem}
   .toc{margin:.5rem 0 0;padding:0;list-style:none}
   .toc li{padding:.35rem 0;border-bottom:1px solid var(--line);display:flex;gap:.6rem;align-items:baseline;flex-wrap:wrap}
   .toc li .id{font-family:ui-monospace, Menlo, monospace;font-weight:700;min-width:15rem}
@@ -211,7 +212,7 @@ Fix: `import base from &quot;./eslint.config.base.js&quot;;` and spread it, then
     <h3>What the agent reads when refused</h3>
     <div class="says">The typecheck failed (`./ci.sh types`) — the commit is blocked until types are clean. tsc catches the cross-file mismatches a file-at-a-time build never sees: a change that compiled here and broke a caller there.</div>
     <h3>Proved by</h3>
-<div class="cases"><div class="case ok"><b>passes</b><ul><li>committing <code>cli/a.ts</code></li></ul></div><div class="case stop"><b>blocks</b><ul><li>committing <code>cli/a.ts</code></li></ul></div></div>
+<div class="cases"><div class="case ok"><b>passes</b><ul><li>committing <code>cli/a.ts</code><span class="given">given <code>./ci.sh types</code> exits 0</span></li></ul></div><div class="case stop"><b>blocks</b><ul><li>committing <code>cli/a.ts</code><span class="given">given <code>./ci.sh types</code> exits 1 and says <code>a.ts(1,1): error TS2322</code></span></li></ul></div></div>
 
   </section>
 
@@ -228,7 +229,7 @@ Fix: `import base from &quot;./eslint.config.base.js&quot;;` and spread it, then
     <h3>What the agent reads when refused</h3>
     <div class="says">The lint failed (`./ci.sh lint`) — the commit is blocked until it is clean. This is where the escape hatches are held (floating promises, explicit any, ts-comments); fix the finding, or override that one rule visibly and locally.</div>
     <h3>Proved by</h3>
-<div class="cases"><div class="case ok"><b>passes</b><ul><li>committing <code>cli/a.ts</code></li></ul></div><div class="case stop"><b>blocks</b><ul><li>committing <code>cli/a.ts</code></li></ul></div></div>
+<div class="cases"><div class="case ok"><b>passes</b><ul><li>committing <code>cli/a.ts</code><span class="given">given <code>./ci.sh lint</code> exits 0</span></li></ul></div><div class="case stop"><b>blocks</b><ul><li>committing <code>cli/a.ts</code><span class="given">given <code>./ci.sh lint</code> exits 1 and says <code>error Unsafe assignment</code></span></li></ul></div></div>
 
   </section>
 
@@ -237,11 +238,12 @@ Fix: `import base from &quot;./eslint.config.base.js&quot;;` and spread it, then
     <thead><tr><th>On the page</th><th>In the pack</th><th>Read how</th></tr></thead>
     <tbody>
       <tr><td>Lead, and the parameters table</td><td>The doc comment on <code>definePack</code>, and the doc comment on each member of the parameter interface</td><td>JSDoc, read with the TypeScript compiler API</td></tr>
+      <tr><td>The named sections above the entries</td><td>An <code>@install</code>, <code>@setup</code> or <code>@adopt</code> tag on that same doc comment. A tag nobody uses renders nothing.</td><td>JSDoc tags</td></tr>
       <tr><td>Entry id, kind, moments, globs, categories, description</td><td>The sentence — <code>.at()</code> <code>.on()</code> <code>.description()</code></td><td>Loaded, the same data the engine runs</td></tr>
       <tr><td>Why it exists</td><td>The doc comment on the entry's key — mandatory on a breadcrumb, optional on a guardrail whose message already carries its reason</td><td>JSDoc</td></tr>
       <tr><td>What the agent reads</td><td><code>.text()</code> or <code>.message()</code>, verbatim</td><td>Loaded</td></tr>
-      <tr><td>Check and its settings</td><td><code>.check(…)</code>'s argument, verbatim</td><td>Source text, so the settings are the rule's own and not a paraphrase</td></tr>
-      <tr><td>Proved by</td><td><code>.test({ pass, block })</code></td><td>Loaded</td></tr>
+      <tr><td>Check and its settings</td><td>The check the sentence asks, and the options it was configured with</td><td>The name from the pack's source; the settings read back off the check itself, so they are the RESOLVED values — the globs a parameter supplied, the recipe a repo named</td></tr>
+      <tr><td>Proved by, and the world under each case</td><td><code>.test({ pass, block })</code> — the event, and the <code>world</code> the case canned for whatever the check reaches for</td><td>Loaded</td></tr>
     </tbody>
   </table>
 

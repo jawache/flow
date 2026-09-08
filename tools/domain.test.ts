@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   bindingSnippet,
   caseLine,
+  caseWorld,
   DOC_BLOCKS,
   esc,
   firstSentence,
@@ -44,8 +45,8 @@ const rail: EntryDoc = {
   checkName: "canonicalFiles",
   says: "docs/ holds exactly two doors: `user/` and `agent/`.",
   cases: [
-    { kind: "pass", line: caseLine({ path: "docs/user/index.html", content: "" }) },
-    { kind: "block", line: caseLine({ path: "docs/notes/scratch.md", content: "" }) },
+    { kind: "pass", line: caseLine({ path: "docs/user/index.html", content: "" }), given: [] },
+    { kind: "block", line: caseLine({ path: "docs/notes/scratch.md", content: "" }), given: [] },
   ],
   disabled: "",
 };
@@ -89,6 +90,49 @@ describe("a case as one line", () => {
     const said = caseLine(long);
     expect(said.length).toBeLessThan(120);
     expect(said).toContain("…");
+  });
+});
+
+describe("the world a case canned", () => {
+  // THE POINT OF THE WHOLE THING: two identical commands in opposite columns, told apart by the
+  // answer the case supplied. The page dropped this until the first read of it found `git checkout
+  // -- src/x.ts` sitting under both "passes" and "blocks" with nothing between them.
+  it("says what a command was answered, so two identical commands are told apart", () => {
+    const clean: CaseFact = { command: "git checkout -- src/x.ts", world: { exec: { "git status --porcelain": { stdout: "" } } } };
+    const dirty: CaseFact = { command: "git checkout -- src/x.ts", world: { exec: { "git status --porcelain": { stdout: " M src/x.ts" } } } };
+    expect(caseWorld(clean)).toEqual(["`git status --porcelain` exits 0"]);
+    expect(caseWorld(dirty)).toEqual(["`git status --porcelain` exits 0 and says `M src/x.ts`"]);
+  });
+
+  it("says the exit code out loud, because a failing tool is the fact the case is making", () => {
+    expect(caseWorld({ staged: ["a.ts"], world: { exec: { "just test": { code: 1, stdout: "1 failed" } } } })).toEqual([
+      "`just test` exits 1 and says `1 failed`",
+    ]);
+  });
+
+  it("reads the other three dialects of a canned world", () => {
+    expect(caseWorld({ staged: ["a.ts"], world: { fs: { "a.ts": "export const x = 1;" } } })).toEqual(["`a.ts` holds `export const x = 1;`"]);
+    expect(caseWorld({ staged: ["a.ts"], world: { fs: { "a.ts": "" } } })).toEqual(["`a.ts` is empty"]);
+    expect(caseWorld({ command: "git commit", world: { gitDiff: "+ version" } })).toEqual(["the diff is `+ version`"]);
+    expect(caseWorld({ command: "git commit", world: { gitDiff: "" } })).toEqual(["the diff is empty"]);
+    expect(caseWorld({ command: "git commit", world: { staged: ["a.ts", "b.ts"] } })).toEqual(["the staged set is `a.ts`, `b.ts`"]);
+  });
+
+  // The page prints canned fixtures, and one of them is an AWS key shape — the secrets pack proves
+  // its rule with one. Printed whole, it made the committed HTML a file that pack's own rule
+  // refuses, which is how this was found.
+  it("cuts a credential shape down, and leaves an ordinary long identifier whole", () => {
+    const key = ["AKIA", "IOSFODNN7EXAMPLE"].join("");
+    expect(caseWorld({ staged: ["a.ts"], world: { fs: { "a.ts": `const k = '${key}';` } } })).toEqual(["`a.ts` holds `const k = 'AKIA…';`"]);
+    expect(caseLine({ path: "a.ts", content: `const k = '${key}';` })).toBe("writing `a.ts` — `const k = 'AKIA…';`");
+    expect(caseWorld({ staged: ["p.json"], world: { fs: { "p.json": '{"optionalDependencies":{"fsevents":"^2"}}' } } })).toEqual([
+      '`p.json` holds `{"optionalDependencies":{"fsevents":"^2"}}`',
+    ]);
+  });
+
+  it("has nothing to say about a case that canned nothing", () => {
+    expect(caseWorld("git push --force")).toEqual([]);
+    expect(caseWorld({ path: "a.ts", content: "" })).toEqual([]);
   });
 });
 
@@ -161,12 +205,25 @@ describe("a pack's page", () => {
     expect(page).toContain("&quot;kind&quot;: &quot;call_expression&quot;");
   });
 
+  it("prints the canned world under the case it belongs to", () => {
+    const told: EntryDoc = {
+      ...rail,
+      cases: [
+        { kind: "pass", line: "running `git checkout -- src/x.ts`", given: ["`git status --porcelain` exits 0"] },
+        { kind: "block", line: "running `git checkout -- src/x.ts`", given: ["`git status --porcelain` exits 0 and says `M src/x.ts`"] },
+      ],
+    };
+    const page = renderPackPage({ ...doc, entries: [told] });
+    expect(page).toContain('<span class="given">given <code>git status --porcelain</code> exits 0</span>');
+    expect(page).toContain("exits 0 and says <code>M src/x.ts</code>");
+  });
+
   it("shows both sides of every case, and says which side is empty", () => {
     expect(html).toContain("writing <code>docs/user/index.html</code>");
     expect(html).toContain("writing <code>docs/notes/scratch.md</code>");
     // A guardrail proved only by refusals — common, and the empty side is stated rather than left
     // blank, because a blank box reads as "the page forgot" instead of "the pack never said".
-    const oneSided: EntryDoc = { ...rail, cases: [{ kind: "block", line: "writing `docs/user/guide.md`" }] };
+    const oneSided: EntryDoc = { ...rail, cases: [{ kind: "block", line: "writing `docs/user/guide.md`", given: [] }] };
     expect(renderPackPage({ ...doc, entries: [oneSided] })).toContain("no pass case declared");
   });
 
@@ -262,7 +319,7 @@ describe("a check's settings, as rows", () => {
 
 describe("the model", () => {
   it("is plain data — a case line is a kind and a sentence, a setting a key and a value", () => {
-    const one: CaseLine = { kind: "pass", line: "writing `a.ts`" };
+    const one: CaseLine = { kind: "pass", line: "writing `a.ts`", given: [] };
     const row: SettingRow = { key: "root", value: "docs", block: false };
     expect([one.kind, row.key]).toEqual(["pass", "root"]);
   });

@@ -18,10 +18,19 @@
 
 // ── the model a page is rendered from ────────────────────────────────────────
 
-/** One `.test({ pass, block })` case, already reduced to the line a reader sees. */
+/** One `.test({ pass, block })` case, already reduced to the lines a reader sees. */
 export interface CaseLine {
   readonly kind: "pass" | "block";
   readonly line: string;
+  /**
+   * What the case CANNED for whatever the check reaches for — a command's answer, a file's body,
+   * the diff, the staged set. One phrase each.
+   *
+   * Without it a page lies by omission: `noGitDiscard` shows `git checkout -- src/x.ts` twice
+   * under "passes" and once under "blocks", because what separates them is a `git status` answer
+   * the case supplied and the page dropped.
+   */
+  readonly given: readonly string[];
 }
 
 /** One entry of a pack, as the page shows it. */
@@ -109,6 +118,12 @@ export type CaseFact =
       readonly content?: string;
       readonly staged?: readonly string[];
       readonly actions?: readonly unknown[];
+      readonly world?: {
+        readonly exec?: Readonly<Record<string, { stdout?: string; stderr?: string; code?: number }>>;
+        readonly fs?: Readonly<Record<string, string>>;
+        readonly gitDiff?: string;
+        readonly staged?: readonly string[];
+      };
     };
 
 /**
@@ -128,10 +143,55 @@ export function caseLine(fact: CaseFact): string {
   return "an event with no facts";
 }
 
-/** A file body on one line, short enough to sit in a list item. */
+/**
+ * A CREDENTIAL SHAPE, cut down to its first few characters wherever one appears in a fixture.
+ *
+ * The secrets pack proves `noSecretsInCommits` with a case whose canned world holds an AWS key
+ * shape, assembled from pieces in the pack source so that committing the pack does not trip its own
+ * rule. This page prints canned worlds — so the first time it did, it wrote that shape out whole
+ * into a committed HTML file and the same rule refused the commit, correctly. Masking here is not
+ * tidiness: a document carrying a live-key shape is what the rule exists to prevent, and a
+ * generated page is a document.
+ *
+ * An unbroken run of 16 or more token characters carrying BOTH a letter and a digit — which is
+ * what every one of those shapes is, and what an ordinary long identifier is not:
+ * `optionalDependencies` and `DOTENV_PUBLIC_KEY` are letters alone and stay whole. Redaction is
+ * VISIBLE — the run keeps its first four characters and an ellipsis — so a reader can still see
+ * which shape the case is about.
+ */
+function redact(text: string): string {
+  return text.replace(/[A-Za-z0-9_+/-]{16,}/g, (run) =>
+    /[A-Za-z]/.test(run) && /[0-9]/.test(run) ? `${run.slice(0, 4)}…` : run,
+  );
+}
+
+/** A file body on one line, short enough to sit in a list item, and never a live-key shape. */
 function oneLine(content: string): string {
-  const flat = content.replace(/\s+/g, " ").trim();
+  const flat = redact(content).replace(/\s+/g, " ").trim();
   return flat.length > 90 ? `${flat.slice(0, 89)}…` : flat;
+}
+
+/**
+ * The world a case canned, as the phrases that explain its verdict.
+ *
+ * A check reads the event AND whatever it reaches for, and the reach is what a case answers in its
+ * `world`. Dropped from the page, two cases with the same command sit in opposite columns with
+ * nothing between them — which is precisely what the first read of these pages found. An exit code
+ * of 0 is said out loud for the same reason: "succeeds" is the fact the case is making.
+ */
+export function caseWorld(fact: CaseFact): string[] {
+  if (typeof fact === "string" || fact.world === undefined) return [];
+  const world = fact.world;
+  const said: string[] = [];
+  for (const [command, answer] of Object.entries(world.exec ?? {})) {
+    const output = oneLine(`${answer.stdout ?? ""} ${answer.stderr ?? ""}`);
+    said.push(`\`${command}\` exits ${answer.code ?? 0}${output === "" ? "" : ` and says \`${output}\``}`);
+  }
+  for (const [path, content] of Object.entries(world.fs ?? {}))
+    said.push(content === "" ? `\`${path}\` is empty` : `\`${path}\` holds \`${oneLine(content)}\``);
+  if (world.gitDiff !== undefined) said.push(world.gitDiff === "" ? "the diff is empty" : `the diff is \`${oneLine(world.gitDiff)}\``);
+  if (world.staged !== undefined) said.push(`the staged set is ${world.staged.map((file) => `\`${file}\``).join(", ")}`);
+  return said;
 }
 
 // ── a check's settings, as rows ──────────────────────────────────────────────
@@ -262,7 +322,12 @@ export function kebab(name: string): string {
 /** The pass/block pair, as two boxes. An empty side says so rather than rendering nothing. */
 function casesBlock(cases: readonly CaseLine[]): string {
   const side = (kind: "pass" | "block"): string => {
-    const lines = cases.filter((c) => c.kind === kind).map((c) => `<li>${line(c.line)}</li>`);
+    const lines = cases
+      .filter((c) => c.kind === kind)
+      .map((c) => {
+        const given = c.given.length === 0 ? "" : `<span class="given">given ${c.given.map(line).join(" · ")}</span>`;
+        return `<li>${line(c.line)}${given}</li>`;
+      });
     const body = lines.length === 0 ? `<li class="none">no ${kind} case declared</li>` : lines.join("");
     return `<div class="case ${kind === "pass" ? "ok" : "stop"}"><b>${kind === "pass" ? "passes" : "blocks"}</b><ul>${body}</ul></div>`;
   };
@@ -416,7 +481,8 @@ const STYLE = `  :root{
   .case.stop{background:var(--stopbg);border:1px solid #f0bfbb}
   .case b{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.25rem}
   .case.ok b{color:var(--ok)} .case.stop b{color:var(--stop)}
-  .case ul{margin:0;padding-left:1.1rem} .case li{margin:.15rem 0}
+  .case ul{margin:0;padding-left:1.1rem} .case li{margin:.3rem 0}
+  .given{display:block;font-size:.82rem;color:#5c6470;margin-top:.1rem}
   .toc{margin:.5rem 0 0;padding:0;list-style:none}
   .toc li{padding:.35rem 0;border-bottom:1px solid var(--line);display:flex;gap:.6rem;align-items:baseline;flex-wrap:wrap}
   .toc li .id{font-family:ui-monospace, Menlo, monospace;font-weight:700;min-width:15rem}
@@ -451,11 +517,12 @@ const PROVENANCE = [
   "    <thead><tr><th>On the page</th><th>In the pack</th><th>Read how</th></tr></thead>",
   "    <tbody>",
   "      <tr><td>Lead, and the parameters table</td><td>The doc comment on <code>definePack</code>, and the doc comment on each member of the parameter interface</td><td>JSDoc, read with the TypeScript compiler API</td></tr>",
+  "      <tr><td>The named sections above the entries</td><td>An <code>@install</code>, <code>@setup</code> or <code>@adopt</code> tag on that same doc comment. A tag nobody uses renders nothing.</td><td>JSDoc tags</td></tr>",
   "      <tr><td>Entry id, kind, moments, globs, categories, description</td><td>The sentence — <code>.at()</code> <code>.on()</code> <code>.description()</code></td><td>Loaded, the same data the engine runs</td></tr>",
   "      <tr><td>Why it exists</td><td>The doc comment on the entry's key — mandatory on a breadcrumb, optional on a guardrail whose message already carries its reason</td><td>JSDoc</td></tr>",
   "      <tr><td>What the agent reads</td><td><code>.text()</code> or <code>.message()</code>, verbatim</td><td>Loaded</td></tr>",
-  "      <tr><td>Check and its settings</td><td><code>.check(…)</code>'s argument, verbatim</td><td>Source text, so the settings are the rule's own and not a paraphrase</td></tr>",
-  "      <tr><td>Proved by</td><td><code>.test({ pass, block })</code></td><td>Loaded</td></tr>",
+  "      <tr><td>Check and its settings</td><td>The check the sentence asks, and the options it was configured with</td><td>The name from the pack's source; the settings read back off the check itself, so they are the RESOLVED values — the globs a parameter supplied, the recipe a repo named</td></tr>",
+  "      <tr><td>Proved by, and the world under each case</td><td><code>.test({ pass, block })</code> — the event, and the <code>world</code> the case canned for whatever the check reaches for</td><td>Loaded</td></tr>",
   "    </tbody>",
   "  </table>",
 ].join("\n");
