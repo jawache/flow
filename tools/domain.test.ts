@@ -43,6 +43,7 @@ const rail: EntryDoc = {
   categories: ["supervised"],
   settings: settingRows({ root: "docs", allow: [], folders: ["user", "agent"] }),
   checkName: "canonicalFiles",
+  reference: true,
   says: "docs/ holds exactly two doors: `user/` and `agent/`.",
   cases: [
     { kind: "pass", line: caseLine({ path: "docs/user/index.html", content: "" }), given: [] },
@@ -64,6 +65,7 @@ const crumb: EntryDoc = {
   categories: [],
   settings: [],
   checkName: "",
+  reference: false,
   says: "Two audiences, two doors.",
   cases: [],
   disabled: "shipped off — nothing to watch until a repo has both doors",
@@ -189,13 +191,14 @@ describe("a pack's page", () => {
     expect(html).toContain("docs/ holds exactly two doors: `user/` and `agent/`.");
     expect(html).toContain("<b>root</b> <code>docs</code>");
     expect(html).toContain("<b>allow</b> <code>none</code>");
-    expect(html).toContain("<b>folders</b> <code>user · agent</code>");
+    // ONE PER LINE, never a dotted run: a list is a thing a reader compares item by item.
+    expect(html).toContain("<ul class=\"values\"><li><code>user</code></li><li><code>agent</code></li></ul>");
     expect(html).toContain('href="../checks/canonical-files.html"');
   });
 
   it("says a check has no options rather than printing an empty one", () => {
     const bare: EntryDoc = { ...rail, settings: [], checkName: "protectedPath" };
-    expect(renderPackPage({ ...doc, entries: [bare] })).toContain("no options; the sentence's own scope is the whole rule");
+    expect(renderPackPage({ ...doc, entries: [bare] })).toContain("no options. The scope above is the whole rule.");
   });
 
   it("puts a structured setting in a block, where it can be read", () => {
@@ -231,6 +234,15 @@ describe("a pack's page", () => {
     expect(html).toContain("1 guardrail · 1 breadcrumb · fires at: write · commit · touch · takes no parameters");
   });
 
+  // The human read git.html and could not: six banned patterns and eleven commit types arrived as
+  // one dotted line each, pushed right by an indent column. Every fact is a plain left-aligned
+  // line now, and a list is a list.
+  it("keeps the facts on plain lines rather than in an indented table", () => {
+    expect(html).toContain('<p class="fact"><b>Watches</b>');
+    expect(html).not.toContain("<dl");
+    expect(html).not.toContain("<dt>");
+  });
+
   it("prints the scope, the categories and the reason an entry ships off", () => {
     expect(html).toContain("<code>docs/**</code>");
     expect(html).toContain("<code>docs/user/legacy/**</code>");
@@ -246,12 +258,22 @@ describe("a pack's page", () => {
   });
 
   it("admits a missing lead in the reader's face", () => {
-    expect(renderPackPage({ ...doc, lead: "" })).toContain("This pack has no lead.");
+    expect(renderPackPage({ ...doc, lead: "" })).toContain("No lead. Add a doc comment");
+  });
+
+  // A pack may write its own check — `noGitDiscard`, `conventionalCommit` — and there is no
+  // reference page for one. A link to a page nobody wrote is worse than no link.
+  it("links a stock check and never invents a page for a pack's own", () => {
+    const own: EntryDoc = { ...rail, checkName: "noGitDiscard", reference: false };
+    const page = renderPackPage({ ...doc, entries: [own] });
+    expect(page).toContain("<code>noGitDiscard</code>");
+    expect(page).toContain("(written in this pack)");
+    expect(page).not.toContain("no-git-discard.html");
   });
 
   it("names a check written inline rather than pretending the entry has no check", () => {
     const inline: EntryDoc = { ...rail, settings: [], checkName: "" };
-    expect(renderPackPage({ ...doc, entries: [inline] })).toContain("a check written inline in this pack");
+    expect(renderPackPage({ ...doc, entries: [inline] })).toContain("written inline in this pack");
   });
 
   it("renders a named doc block as its own section, and an unused tag as nothing", () => {
@@ -273,12 +295,12 @@ describe("a pack's page", () => {
     const page = renderPackPage(bound);
     expect(page).toContain("The pack takes 2 parameters");
     expect(page).toContain("The recipe that runs the suite.");
-    expect(page).toContain("the interface member owes a doc comment");
+    expect(page).toContain("Add a doc comment on the interface member.");
     expect(page).toContain('pack(tdd, { run: &quot;./ci.sh test&quot; })');
   });
 
   it("says 'parameter' rather than 'parameters' when there is one", () => {
-    expect(renderPackPage({ ...doc, params: [param] })).toContain("takes 1 parameter —");
+    expect(renderPackPage({ ...doc, params: [param] })).toContain("takes 1 parameter.");
   });
 
   it("carries no date, no sha and no host path — the drift check compares bytes", () => {
@@ -301,7 +323,7 @@ describe("the listing page", () => {
 describe("a check's settings, as rows", () => {
   it("flattens what fits on a line and blocks what does not", () => {
     expect(settingRows({ run: "./ci.sh test" })).toEqual([{ key: "run", value: "./ci.sh test", block: false }]);
-    expect(settingRows({ ban: ["a", "b"] })).toEqual([{ key: "ban", value: "a · b", block: false }]);
+    expect(settingRows({ ban: ["a", "b"] })).toEqual([{ key: "ban", value: "a\nb", block: false }]);
     expect(settingRows({ allow: [] })).toEqual([{ key: "allow", value: "none", block: false }]);
     expect(settingRows({ deep: { a: 1 } })).toEqual([{ key: "deep", value: '{\n  "a": 1\n}', block: true }]);
     expect(settingRows({ n: 2, on: true })).toEqual([

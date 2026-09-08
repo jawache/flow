@@ -29,6 +29,7 @@ import {
   caseLine,
   caseWorld,
   DOC_BLOCKS,
+  kebab,
   renderPackPage,
   renderPacksIndex,
   settingRows,
@@ -41,6 +42,11 @@ import {
 
 /** Where the pages are written, under the user docs. */
 const OUT = join("docs", "user", "packs");
+
+/** The stock checks with a reference page. A pack's own check gets no link — there is no page. */
+const REFERENCED = new Set(
+  existsSync(join("docs", "user", "checks")) ? readdirSync(join("docs", "user", "checks")).map((file) => file.replace(/\.html$/, "")) : [],
+);
 
 /** One pack, and the example parameters every entry on its page is rendered with. */
 interface Shipped {
@@ -238,6 +244,7 @@ function read(shipped: Shipped): PackDoc {
   if (!load.ok) throw new Error(`${shipped.name} does not load: ${load.refusals.map((r) => r.detail).join("; ")}`);
 
   const entries: EntryDoc[] = load.entries.map((entry) => {
+    const named = checkName(parsed.check.get(entry.key) ?? "");
     return {
       id: entry.id,
       key: entry.key,
@@ -249,7 +256,8 @@ function read(shipped: Shipped): PackDoc {
       ignore: entry.spec.ignore ?? [],
       categories: entry.categories,
       settings: settingRows(entry.settings),
-      checkName: checkName(parsed.check.get(entry.key) ?? ""),
+      checkName: named,
+      reference: REFERENCED.has(kebab(named)),
       says: says(entry.spec),
       cases: caseLines((entry.spec as GuardrailSpec).test),
       disabled: entry.spec.disabled === undefined ? "" : (entry.spec.disabled.reason ?? "no reason given"),

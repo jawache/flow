@@ -33,12 +33,15 @@
   .entry{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1.1rem 1.4rem 1.2rem;margin:1rem 0;scroll-margin-top:1rem}
   .entry h2{border:0;margin:0;padding:0;font-size:1.15rem}
   .entry .desc{margin:.3rem 0 0;color:#39404a}
-  .entry .facts{display:grid;grid-template-columns:8.5rem 1fr;gap:.25rem .8rem;font-size:.9rem;margin:.7rem 0 .2rem}
-  .entry .facts dt{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;padding-top:.2rem}
-  .entry .facts dd{margin:0}
-  .entry .facts pre{margin:.2rem 0}
-  .set{margin:.15rem 0}
-  .set b{font-weight:700;font-size:.82rem;color:#4a5260;font-family:ui-monospace, Menlo, monospace}
+  .fact{margin:.25rem 0;font-size:.9rem;color:#39404a}
+  .fact b{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-right:.35rem}
+  .check{margin:.5rem 0 .2rem}
+  .check .fact{margin:0}
+  .set{margin:.3rem 0 .3rem 0;font-size:.9rem}
+  .set b{display:block;font-weight:700;font-size:.74rem;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-bottom:.1rem}
+  .set pre{margin:.1rem 0}
+  .values{list-style:none;margin:0;padding:0;overflow-x:auto}
+  .values li{margin:.1rem 0;white-space:pre}
   .why{border-left:4px solid var(--parent);background:#eef4fa;padding:.6rem .9rem;border-radius:0 8px 8px 0;margin:.8rem 0;font-size:.95rem}
   .why.gap{border-left-color:#c2a33a;background:var(--gapbg);color:#6b5a1e;font-style:italic}
   .why p:first-child{margin-top:0} .why p:last-child{margin-bottom:0}
@@ -74,10 +77,10 @@ description. Every entry here is the same arrow pointing at it: the orientation 
 first, <code>node/noPackageScripts</code> closes the decoy surface agents habitually read, and <code>justfileDocs</code>
 keeps the manifest readable.</p></div>
 
-  <p class="gen">Generated from <code>packs/justfile.ts</code> by <code>just docs-packs</code>. Edit the pack, not this page; the commit gate refuses a page that has drifted from its pack.</p>
+  <p class="gen">Generated from <code>packs/justfile.ts</code> by <code>just docs-packs</code>. Edit the pack, not this page. The commit gate refuses a page that has drifted.</p>
 
   <h2 id="binding">Binding it</h2>
-  <p>The pack takes 1 parameter — facts about the repo it cannot know:</p>
+  <p>The pack takes 1 parameter. These are facts the pack cannot know about your repo:</p>
   <table>
     <thead><tr><th>Parameter</th><th>Type</th><th>What it is</th></tr></thead>
     <tbody>
@@ -89,12 +92,12 @@ as an unreachable <code>with:</code> at the crossing and could never have been s
 <p><code>[private]</code> recipes need no entry here — <code>just --list</code> hides them, so the check skips them.</p></td></tr>
     </tbody>
   </table>
-  <p>Bound with a stranger's values, this is the whole binding — and it is what every glob, recipe and message on this page was rendered with:</p>
+  <p>Example config. The values are examples, and every glob and command on this page was rendered with them:</p>
 <pre><code>import { defineConfig, pack } from &quot;@jawache/flow&quot;;
 import { justfile } from &quot;@jawache/flow/packs&quot;;
 
 export default defineConfig([pack(justfile, { exempt: [] })]);</code></pre>
-  <p>Any entry below can be turned off in the config, as a committed change visible in review: <code>override(justfile.orientation).disabled("why")</code>.</p>
+  <p>To turn one entry off, say so in the config: <code>override(justfile.orientation).disabled("why")</code>. It is a committed change, so a reviewer sees it.</p>
 
   <h2 id="install">What to install first</h2>
 <p><code>just</code> itself — <code>brew install just</code>, or see https://just.systems. Every rule here reads
@@ -116,11 +119,9 @@ live npm scripts moves them into recipes first, or does not bind this pack.</p>
   <section class="entry" id="orientation">
     <h2><code>justfile.orientation</code><span class="badge crumb">breadcrumb</span></h2>
     <p class="desc">Where the repo's tooling is catalogued, what earns a recipe, and what stays a script.</p>
-    <dl class="facts">
-      <dt>Shown when</dt><dd>once, at the start of a session</dd>
-      <dt>Watches</dt><dd>—</dd>
-      <dt>Categories</dt><dd>every session</dd>
-    </dl>
+    <p class="fact"><b>Shown when</b> once, at the start of a session</p>
+    <p class="fact"><b>Watches</b> not scoped by path</p>
+    <p class="fact"><b>Categories</b> every session</p>
     <h3>Why it exists</h3>
     <div class="why"><p>Without it, an agent discovers commands from package.json, from memory, or from a README that
 has drifted — and reaches for a tool this repo does not have, or hand-runs the chain a recipe
@@ -136,11 +137,9 @@ If a service offers a CLI, prefer it over an MCP — a command is recorded, guar
   <section class="entry" id="toolsHome">
     <h2><code>justfile.toolsHome</code><span class="badge crumb">breadcrumb</span></h2>
     <p class="desc">The fork every file in the tools folder faces — catalogue entry, or one-shot.</p>
-    <dl class="facts">
-      <dt>Shown when</dt><dd>the first time in a session a file it watches is touched</dd>
-      <dt>Watches</dt><dd><code>tools/**</code></dd>
-      <dt>Categories</dt><dd>every session</dd>
-    </dl>
+    <p class="fact"><b>Shown when</b> the first time in a session a file it watches is touched</p>
+    <p class="fact"><b>Watches</b> <code>tools/**</code></p>
+    <p class="fact"><b>Categories</b> every session</p>
     <h3>Why it exists</h3>
     <div class="why"><p>Without it, everything in the tools folder is treated the same way: one-shots get promoted
 into the catalogue until <code>just --list</code> is noise, or a genuinely repeatable tool is left with
@@ -155,18 +154,17 @@ A one-off (a migration, a backfill, a workflow step)? Then it gets NO recipe —
   <section class="entry" id="node.noPackageScripts">
     <h2><code>justfile.node.noPackageScripts</code><span class="badge rail">guardrail</span></h2>
     <p class="desc">package.json scripts stays empty — the justfile is the single command source.</p>
-    <dl class="facts">
-      <dt>Refuses at</dt><dd>a file is written or edited · the commit gate, over the staged set</dd>
-      <dt>Watches</dt><dd><code>package.json</code></dd>
-      <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/json-invariant.html"><code>jsonInvariant</code></a>
-      <div class="set"><b>assert</b><pre><code>[
+    <p class="fact"><b>Refuses at</b> a file is written or edited · the commit gate, over the staged set</p>
+    <p class="fact"><b>Watches</b> <code>package.json</code></p>
+    <p class="fact"><b>Categories</b> every session</p>
+    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/json-invariant.html"><code>jsonInvariant</code></a></p>
+      <div class="set"><b>assert</b> <pre><code>[
   {
     &quot;path&quot;: &quot;scripts&quot;,
     &quot;keysPrefixedWith&quot;: &quot;//&quot;
   }
-]</code></pre></div></dd>
-    </dl>
+]</code></pre></div>
+    </div>
     <h3>Why it exists</h3>
     <div class="why"><p>Without it, package.json grows a second command surface — the one an agent reads FIRST, out
 of habit — and the two drift until the catalogue is no longer the truth about this repo.</p></div>
@@ -180,13 +178,12 @@ of habit — and the two drift until the catalogue is no longer the truth about 
   <section class="entry" id="justfileDocs">
     <h2><code>justfile.justfileDocs</code><span class="badge rail">guardrail</span></h2>
     <p class="desc">Every justfile recipe carries an explicit [doc] — <code>just --list</code> is the catalogue's help screen.</p>
-    <dl class="facts">
-      <dt>Refuses at</dt><dd>a file is written or edited · the commit gate, over the staged set</dd>
-      <dt>Watches</dt><dd><code>justfile</code></dd>
-      <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/justfile-docs.html"><code>justfileDocs</code></a>
-      <div class="set"><b>exempt</b> <code>none</code></div></dd>
-    </dl>
+    <p class="fact"><b>Refuses at</b> a file is written or edited · the commit gate, over the staged set</p>
+    <p class="fact"><b>Watches</b> <code>justfile</code></p>
+    <p class="fact"><b>Categories</b> every session</p>
+    <div class="check"><p class="fact"><b>Check</b> <code>justfileDocs</code> <span class="none">(written in this pack)</span></p>
+      <div class="set"><b>exempt</b> <code>none</code></div>
+    </div>
     <h3>Why it exists</h3>
     <div class="why"><p>Without it, <code>just --list</code> falls back to the last comment line above a recipe, which for a
 multi-line comment block is a mid-sentence fragment — a help screen assembled by accident, and
@@ -204,11 +201,11 @@ a tool nobody can choose from its description.</p></div>
     <tbody>
       <tr><td>Lead, and the parameters table</td><td>The doc comment on <code>definePack</code>, and the doc comment on each member of the parameter interface</td><td>JSDoc, read with the TypeScript compiler API</td></tr>
       <tr><td>The named sections above the entries</td><td>An <code>@install</code>, <code>@setup</code> or <code>@adopt</code> tag on that same doc comment. A tag nobody uses renders nothing.</td><td>JSDoc tags</td></tr>
-      <tr><td>Entry id, kind, moments, globs, categories, description</td><td>The sentence — <code>.at()</code> <code>.on()</code> <code>.description()</code></td><td>Loaded, the same data the engine runs</td></tr>
-      <tr><td>Why it exists</td><td>The doc comment on the entry's key — mandatory on a breadcrumb, optional on a guardrail whose message already carries its reason</td><td>JSDoc</td></tr>
+      <tr><td>Entry id, kind, moments, globs, categories, description</td><td>The entry itself — <code>.at()</code> <code>.on()</code> <code>.description()</code></td><td>Loaded: the same data the engine runs</td></tr>
+      <tr><td>Why it exists</td><td>The doc comment on the entry's key. Required on a breadcrumb; optional on a guardrail whose message already gives the reason.</td><td>JSDoc</td></tr>
       <tr><td>What the agent reads</td><td><code>.text()</code> or <code>.message()</code>, verbatim</td><td>Loaded</td></tr>
-      <tr><td>Check and its settings</td><td>The check the sentence asks, and the options it was configured with</td><td>The name from the pack's source; the settings read back off the check itself, so they are the RESOLVED values — the globs a parameter supplied, the recipe a repo named</td></tr>
-      <tr><td>Proved by, and the world under each case</td><td><code>.test({ pass, block })</code> — the event, and the <code>world</code> the case canned for whatever the check reaches for</td><td>Loaded</td></tr>
+      <tr><td>Check and its settings</td><td>The check the entry asks, and the options it was given</td><td>The name from the pack's source. The settings are read off the check, so they are the values a parameter supplied.</td></tr>
+      <tr><td>Proved by, and what each case was told</td><td><code>.test({ pass, block })</code> — the event, and the <code>world</code> the case supplies for whatever the check reads</td><td>Loaded</td></tr>
     </tbody>
   </table>
 

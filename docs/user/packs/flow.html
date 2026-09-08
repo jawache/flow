@@ -33,12 +33,15 @@
   .entry{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1.1rem 1.4rem 1.2rem;margin:1rem 0;scroll-margin-top:1rem}
   .entry h2{border:0;margin:0;padding:0;font-size:1.15rem}
   .entry .desc{margin:.3rem 0 0;color:#39404a}
-  .entry .facts{display:grid;grid-template-columns:8.5rem 1fr;gap:.25rem .8rem;font-size:.9rem;margin:.7rem 0 .2rem}
-  .entry .facts dt{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;padding-top:.2rem}
-  .entry .facts dd{margin:0}
-  .entry .facts pre{margin:.2rem 0}
-  .set{margin:.15rem 0}
-  .set b{font-weight:700;font-size:.82rem;color:#4a5260;font-family:ui-monospace, Menlo, monospace}
+  .fact{margin:.25rem 0;font-size:.9rem;color:#39404a}
+  .fact b{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-right:.35rem}
+  .check{margin:.5rem 0 .2rem}
+  .check .fact{margin:0}
+  .set{margin:.3rem 0 .3rem 0;font-size:.9rem}
+  .set b{display:block;font-weight:700;font-size:.74rem;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-bottom:.1rem}
+  .set pre{margin:.1rem 0}
+  .values{list-style:none;margin:0;padding:0;overflow-x:auto}
+  .values li{margin:.1rem 0;white-space:pre}
   .why{border-left:4px solid var(--parent);background:#eef4fa;padding:.6rem .9rem;border-radius:0 8px 8px 0;margin:.8rem 0;font-size:.95rem}
   .why.gap{border-left-color:#c2a33a;background:var(--gapbg);color:#6b5a1e;font-style:italic}
   .why p:first-child{margin-top:0} .why p:last-child{margin-bottom:0}
@@ -73,10 +76,10 @@ steering itself, and a refusal when a command would delete it. They were the <co
 home-directory library; they are a module now, and the only thing that changed on the way across
 is what they point AT — flow.config.ts and the packs it imports, not work.yaml and ~/.work/library.</p></div>
 
-  <p class="gen">Generated from <code>packs/flow.ts</code> by <code>just docs-packs</code>. Edit the pack, not this page; the commit gate refuses a page that has drifted from its pack.</p>
+  <p class="gen">Generated from <code>packs/flow.ts</code> by <code>just docs-packs</code>. Edit the pack, not this page. The commit gate refuses a page that has drifted.</p>
 
   <h2 id="binding">Binding it</h2>
-  <p>The pack takes 1 parameter — facts about the repo it cannot know:</p>
+  <p>The pack takes 1 parameter. These are facts the pack cannot know about your repo:</p>
   <table>
     <thead><tr><th>Parameter</th><th>Type</th><th>What it is</th></tr></thead>
     <tbody>
@@ -90,12 +93,12 @@ because it is asked in the broken state and can only read text. This is the same
 at a moment where the config loads, so it is stated once, here, and typed.</p></td></tr>
     </tbody>
   </table>
-  <p>Bound with a stranger's values, this is the whole binding — and it is what every glob, recipe and message on this page was rendered with:</p>
+  <p>Example config. The values are examples, and every glob and command on this page was rendered with them:</p>
 <pre><code>import { defineConfig, pack } from &quot;@jawache/flow&quot;;
 import { flow } from &quot;@jawache/flow/packs&quot;;
 
 export default defineConfig([pack(flow, { packs: [&quot;rules/**&quot;] })]);</code></pre>
-  <p>Any entry below can be turned off in the config, as a committed change visible in review: <code>override(flow.orientation).disabled("why")</code>.</p>
+  <p>To turn one entry off, say so in the config: <code>override(flow.orientation).disabled("why")</code>. It is a committed change, so a reviewer sees it.</p>
 
   <h2 id="setup">What the repo needs in place</h2>
 <p>A <code>flow.config.ts</code> at the repo root and a folder for the packs the repo writes itself —
@@ -115,11 +118,9 @@ not it agrees with a single other opinion in this package.</p>
   <section class="entry" id="orientation">
     <h2><code>flow.orientation</code><span class="badge crumb">breadcrumb</span></h2>
     <p class="desc">What the guard layer is and how it steers — shown at the start of every session.</p>
-    <dl class="facts">
-      <dt>Shown when</dt><dd>once, at the start of a session</dd>
-      <dt>Watches</dt><dd>—</dd>
-      <dt>Categories</dt><dd>every session</dd>
-    </dl>
+    <p class="fact"><b>Shown when</b> once, at the start of a session</p>
+    <p class="fact"><b>Watches</b> not scoped by path</p>
+    <p class="fact"><b>Categories</b> every session</p>
     <h3>Why it exists</h3>
     <div class="why"><p>Without it, an agent works in a guarded repo without knowing it is guarded: a refusal arrives
 with no model of where it came from, and the config that produced it is just another file.</p></div>
@@ -134,11 +135,9 @@ If the config will not load, every gated moment refuses until it is fixed. A gua
   <section class="entry" id="editingTheGuardrails">
     <h2><code>flow.editingTheGuardrails</code><span class="badge crumb">breadcrumb</span></h2>
     <p class="desc">A nudge when you edit the guardrails themselves; it never blocks.</p>
-    <dl class="facts">
-      <dt>Shown when</dt><dd>the first time in a session a file it watches is touched</dd>
-      <dt>Watches</dt><dd><code>flow.config.ts</code> · <code>rules/**</code> · <code>.claude/settings.json</code> · <code>.claude/settings.local.json</code> · <code>.claude/agents/**</code> · <code>.claude/skills/**</code></dd>
-      <dt>Categories</dt><dd>every session</dd>
-    </dl>
+    <p class="fact"><b>Shown when</b> the first time in a session a file it watches is touched</p>
+    <p class="fact"><b>Watches</b> <code>flow.config.ts</code> · <code>rules/**</code> · <code>.claude/settings.json</code> · <code>.claude/settings.local.json</code> · <code>.claude/agents/**</code> · <code>.claude/skills/**</code></p>
+    <p class="fact"><b>Categories</b> every session</p>
     <h3>Why it exists</h3>
     <div class="why"><p>Without it, the steering layer gets edited like any other file — a rule loosened in passing,
 a hook rewritten mid-task — and the guard changes without anybody deciding that it should.</p></div>
@@ -155,12 +154,10 @@ Every guardrail carries its own cases. Add the block case first — a rule whose
   <section class="entry" id="noDeleteGuardrails">
     <h2><code>flow.noDeleteGuardrails</code><span class="badge rail">guardrail</span></h2>
     <p class="desc">Stops a command from deleting the committed guard surface. No bypass — disable entries in the file instead.</p>
-    <dl class="facts">
-      <dt>Refuses at</dt><dd>a file is deleted</dd>
-      <dt>Watches</dt><dd><code>flow.config.ts</code> · <code>rules/**</code> · <code>.githooks/pre-commit</code></dd>
-      <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/protected-path.html"><code>protectedPath</code></a> — <span class="none">no options; the sentence's own scope is the whole rule</span></dd>
-    </dl>
+    <p class="fact"><b>Refuses at</b> a file is deleted</p>
+    <p class="fact"><b>Watches</b> <code>flow.config.ts</code> · <code>rules/**</code> · <code>.githooks/pre-commit</code></p>
+    <p class="fact"><b>Categories</b> every session</p>
+    <p class="fact"><b>Check</b> <a href="../checks/protected-path.html"><code>protectedPath</code></a> — no options. The scope above is the whole rule.</p>
     <h3>What the agent reads when refused</h3>
     <div class="says">That command would delete this repo's guard surface (flow.config.ts binds every rule; the packs it imports are where this repo writes its own; .githooks/pre-commit is what runs them at the gate). Deleting any of them is the same attack. There is no bypass — `override(pack.entry).disabled(&quot;why&quot;)` inside flow.config.ts is the visible, committed route.</div>
     <h3>Proved by</h3>
@@ -174,11 +171,11 @@ Every guardrail carries its own cases. Add the block case first — a rule whose
     <tbody>
       <tr><td>Lead, and the parameters table</td><td>The doc comment on <code>definePack</code>, and the doc comment on each member of the parameter interface</td><td>JSDoc, read with the TypeScript compiler API</td></tr>
       <tr><td>The named sections above the entries</td><td>An <code>@install</code>, <code>@setup</code> or <code>@adopt</code> tag on that same doc comment. A tag nobody uses renders nothing.</td><td>JSDoc tags</td></tr>
-      <tr><td>Entry id, kind, moments, globs, categories, description</td><td>The sentence — <code>.at()</code> <code>.on()</code> <code>.description()</code></td><td>Loaded, the same data the engine runs</td></tr>
-      <tr><td>Why it exists</td><td>The doc comment on the entry's key — mandatory on a breadcrumb, optional on a guardrail whose message already carries its reason</td><td>JSDoc</td></tr>
+      <tr><td>Entry id, kind, moments, globs, categories, description</td><td>The entry itself — <code>.at()</code> <code>.on()</code> <code>.description()</code></td><td>Loaded: the same data the engine runs</td></tr>
+      <tr><td>Why it exists</td><td>The doc comment on the entry's key. Required on a breadcrumb; optional on a guardrail whose message already gives the reason.</td><td>JSDoc</td></tr>
       <tr><td>What the agent reads</td><td><code>.text()</code> or <code>.message()</code>, verbatim</td><td>Loaded</td></tr>
-      <tr><td>Check and its settings</td><td>The check the sentence asks, and the options it was configured with</td><td>The name from the pack's source; the settings read back off the check itself, so they are the RESOLVED values — the globs a parameter supplied, the recipe a repo named</td></tr>
-      <tr><td>Proved by, and the world under each case</td><td><code>.test({ pass, block })</code> — the event, and the <code>world</code> the case canned for whatever the check reaches for</td><td>Loaded</td></tr>
+      <tr><td>Check and its settings</td><td>The check the entry asks, and the options it was given</td><td>The name from the pack's source. The settings are read off the check, so they are the values a parameter supplied.</td></tr>
+      <tr><td>Proved by, and what each case was told</td><td><code>.test({ pass, block })</code> — the event, and the <code>world</code> the case supplies for whatever the check reads</td><td>Loaded</td></tr>
     </tbody>
   </table>
 

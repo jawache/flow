@@ -33,12 +33,15 @@
   .entry{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1.1rem 1.4rem 1.2rem;margin:1rem 0;scroll-margin-top:1rem}
   .entry h2{border:0;margin:0;padding:0;font-size:1.15rem}
   .entry .desc{margin:.3rem 0 0;color:#39404a}
-  .entry .facts{display:grid;grid-template-columns:8.5rem 1fr;gap:.25rem .8rem;font-size:.9rem;margin:.7rem 0 .2rem}
-  .entry .facts dt{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;padding-top:.2rem}
-  .entry .facts dd{margin:0}
-  .entry .facts pre{margin:.2rem 0}
-  .set{margin:.15rem 0}
-  .set b{font-weight:700;font-size:.82rem;color:#4a5260;font-family:ui-monospace, Menlo, monospace}
+  .fact{margin:.25rem 0;font-size:.9rem;color:#39404a}
+  .fact b{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-right:.35rem}
+  .check{margin:.5rem 0 .2rem}
+  .check .fact{margin:0}
+  .set{margin:.3rem 0 .3rem 0;font-size:.9rem}
+  .set b{display:block;font-weight:700;font-size:.74rem;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-bottom:.1rem}
+  .set pre{margin:.1rem 0}
+  .values{list-style:none;margin:0;padding:0;overflow-x:auto}
+  .values li{margin:.1rem 0;white-space:pre}
   .why{border-left:4px solid var(--parent);background:#eef4fa;padding:.6rem .9rem;border-radius:0 8px 8px 0;margin:.8rem 0;font-size:.95rem}
   .why.gap{border-left-color:#c2a33a;background:var(--gapbg);color:#6b5a1e;font-style:italic}
   .why p:first-child{margin-top:0} .why p:last-child{margin-bottom:0}
@@ -74,22 +77,22 @@ that runs the wrong suite in every repo whose gate has another name.</p>
 <p>The <code>vitest/</code> sub-group holds FRAMEWORK spellings rather than testing principles: a repo on
 another runner disables the four of them without losing the artefacts or the gate.</p></div>
 
-  <p class="gen">Generated from <code>packs/tdd.ts</code> by <code>just docs-packs</code>. Edit the pack, not this page; the commit gate refuses a page that has drifted from its pack.</p>
+  <p class="gen">Generated from <code>packs/tdd.ts</code> by <code>just docs-packs</code>. Edit the pack, not this page. The commit gate refuses a page that has drifted.</p>
 
   <h2 id="binding">Binding it</h2>
-  <p>The pack takes 1 parameter — facts about the repo it cannot know:</p>
+  <p>The pack takes 1 parameter. These are facts the pack cannot know about your repo:</p>
   <table>
     <thead><tr><th>Parameter</th><th>Type</th><th>What it is</th></tr></thead>
     <tbody>
-      <tr><td><code>run</code></td><td><code>string</code></td><td><em class="none">not documented — the interface member owes a doc comment</em></td></tr>
+      <tr><td><code>run</code></td><td><code>string</code></td><td><em class="none">Not documented. Add a doc comment on the interface member.</em></td></tr>
     </tbody>
   </table>
-  <p>Bound with a stranger's values, this is the whole binding — and it is what every glob, recipe and message on this page was rendered with:</p>
+  <p>Example config. The values are examples, and every glob and command on this page was rendered with them:</p>
 <pre><code>import { defineConfig, pack } from &quot;@jawache/flow&quot;;
 import { tdd } from &quot;@jawache/flow/packs&quot;;
 
 export default defineConfig([pack(tdd, { run: &quot;./ci.sh test&quot; })]);</code></pre>
-  <p>Any entry below can be turned off in the config, as a committed change visible in review: <code>override(tdd.testingStrategy).disabled("why")</code>.</p>
+  <p>To turn one entry off, say so in the config: <code>override(tdd.testingStrategy).disabled("why")</code>. It is a committed change, so a reviewer sees it.</p>
 
   <h2 id="install">What to install first</h2>
 <p>vitest, unless the four <code>vitestIdioms</code> entries are disabled — every one of them reads a
@@ -118,11 +121,9 @@ framework rules are a sub-group rather than four loose entries.</p>
   <section class="entry" id="testingStrategy">
     <h2><code>tdd.testingStrategy</code><span class="badge crumb">breadcrumb</span></h2>
     <p class="desc">How to spend testing effort (mostly integration) and what to test (behaviour, not implementation).</p>
-    <dl class="facts">
-      <dt>Shown when</dt><dd>the first time in a session a file it watches is touched</dd>
-      <dt>Watches</dt><dd><code>**/*.test.*</code> · <code>**/*.spec.*</code> · <code>tests/**</code></dd>
-      <dt>Categories</dt><dd>every session</dd>
-    </dl>
+    <p class="fact"><b>Shown when</b> the first time in a session a file it watches is touched</p>
+    <p class="fact"><b>Watches</b> <code>**/*.test.*</code> · <code>**/*.spec.*</code> · <code>tests/**</code></p>
+    <p class="fact"><b>Categories</b> every session</p>
     <h3>Why it exists</h3>
     <div class="why"><p>Without it, testing effort goes where it is easiest to write rather than where confidence is
 cheapest — a thick unit layer pinned to implementation details, which then refuses every
@@ -137,20 +138,19 @@ Mock only at owned boundaries: the network edge (MSW), not your own modules.</di
   <section class="entry" id="vitest">
     <h2><code>tdd.vitest</code><span class="badge rail">guardrail</span></h2>
     <p class="desc">The fleet runs vitest — a second framework in a test file is a suite nothing here can check.</p>
-    <dl class="facts">
-      <dt>Refuses at</dt><dd>a file is written or edited · the commit gate, over the staged set</dd>
-      <dt>Watches</dt><dd><code>**/*.test.ts</code> · <code>**/*.test.tsx</code> · <code>**/*.spec.ts</code> · <code>**/*.spec.tsx</code></dd>
-      <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/ast-grep.html"><code>astGrep</code></a>
+    <p class="fact"><b>Refuses at</b> a file is written or edited · the commit gate, over the staged set</p>
+    <p class="fact"><b>Watches</b> <code>**/*.test.ts</code> · <code>**/*.test.tsx</code> · <code>**/*.spec.ts</code> · <code>**/*.spec.tsx</code></p>
+    <p class="fact"><b>Categories</b> every session</p>
+    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/ast-grep.html"><code>astGrep</code></a></p>
       <div class="set"><b>language</b> <code>typescript</code></div>
-      <div class="set"><b>rule</b><pre><code>{
+      <div class="set"><b>rule</b> <pre><code>{
   &quot;kind&quot;: &quot;import_statement&quot;,
   &quot;has&quot;: {
     &quot;kind&quot;: &quot;string&quot;,
     &quot;regex&quot;: &quot;^[\&quot;'](node:test|node:assert|node:assert/strict|jest|@jest/globals|mocha|jasmine|ava|tap|tape|uvu)[\&quot;']$&quot;
   }
-}</code></pre></div></dd>
-    </dl>
+}</code></pre></div>
+    </div>
     <h3>What the agent reads when refused</h3>
     <div class="says">A second test framework in a test file. This fleet runs vitest — every idiom rule below reads vitest spellings, so a file under another runner is a file nothing here can check, and a suite that only one command knows how to run. Import `test` / `expect` / `describe` / `vi` from &quot;vitest&quot;.
 A repo that genuinely runs another framework disables this entry in its config, on the record, rather than mixing two.</div>
@@ -162,13 +162,12 @@ A repo that genuinely runs another framework disables this entry in its config, 
   <section class="entry" id="vitestIdioms.noMockInternal">
     <h2><code>tdd.vitestIdioms.noMockInternal</code><span class="badge rail">guardrail</span></h2>
     <p class="desc">Mock at owned boundaries only — never your own modules.</p>
-    <dl class="facts">
-      <dt>Refuses at</dt><dd>a file is written or edited · the commit gate, over the staged set</dd>
-      <dt>Watches</dt><dd><code>**/*.test.ts</code> · <code>**/*.test.tsx</code> · <code>**/*.test.js</code> · <code>**/*.test.mjs</code> · <code>**/*.spec.ts</code> · <code>**/*.spec.tsx</code> · <code>**/*.spec.js</code></dd>
-      <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/ast-grep.html"><code>astGrep</code></a>
+    <p class="fact"><b>Refuses at</b> a file is written or edited · the commit gate, over the staged set</p>
+    <p class="fact"><b>Watches</b> <code>**/*.test.ts</code> · <code>**/*.test.tsx</code> · <code>**/*.test.js</code> · <code>**/*.test.mjs</code> · <code>**/*.spec.ts</code> · <code>**/*.spec.tsx</code> · <code>**/*.spec.js</code></p>
+    <p class="fact"><b>Categories</b> every session</p>
+    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/ast-grep.html"><code>astGrep</code></a></p>
       <div class="set"><b>language</b> <code>typescript</code></div>
-      <div class="set"><b>rule</b><pre><code>{
+      <div class="set"><b>rule</b> <pre><code>{
   &quot;kind&quot;: &quot;call_expression&quot;,
   &quot;all&quot;: [
     {
@@ -187,8 +186,8 @@ A repo that genuinely runs another framework disables this entry in its config, 
       }
     }
   ]
-}</code></pre></div></dd>
-    </dl>
+}</code></pre></div>
+    </div>
     <h3>What the agent reads when refused</h3>
     <div class="says">Module-mocking your own code (a relative import). This pins the test to the file layout and skips the real integration — test behaviour through the public surface and mock at the boundary you own instead (network → MSW; clock/random → inject).</div>
     <h3>Proved by</h3>
@@ -199,20 +198,19 @@ A repo that genuinely runs another framework disables this entry in its config, 
   <section class="entry" id="vitestIdioms.noOnlyInTests">
     <h2><code>tdd.vitestIdioms.noOnlyInTests</code><span class="badge rail">guardrail</span></h2>
     <p class="desc">A committed <code>.only</code> silently disables the rest of the suite.</p>
-    <dl class="facts">
-      <dt>Refuses at</dt><dd>a file is written or edited · the commit gate, over the staged set</dd>
-      <dt>Watches</dt><dd><code>**/*.test.ts</code> · <code>**/*.test.tsx</code> · <code>**/*.test.js</code> · <code>**/*.test.mjs</code> · <code>**/*.spec.ts</code> · <code>**/*.spec.tsx</code> · <code>**/*.spec.js</code></dd>
-      <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/ast-grep.html"><code>astGrep</code></a>
+    <p class="fact"><b>Refuses at</b> a file is written or edited · the commit gate, over the staged set</p>
+    <p class="fact"><b>Watches</b> <code>**/*.test.ts</code> · <code>**/*.test.tsx</code> · <code>**/*.test.js</code> · <code>**/*.test.mjs</code> · <code>**/*.spec.ts</code> · <code>**/*.spec.tsx</code> · <code>**/*.spec.js</code></p>
+    <p class="fact"><b>Categories</b> every session</p>
+    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/ast-grep.html"><code>astGrep</code></a></p>
       <div class="set"><b>language</b> <code>tsx</code></div>
-      <div class="set"><b>rule</b><pre><code>{
+      <div class="set"><b>rule</b> <pre><code>{
   &quot;kind&quot;: &quot;call_expression&quot;,
   &quot;has&quot;: {
     &quot;field&quot;: &quot;function&quot;,
     &quot;regex&quot;: &quot;\\.only$&quot;
   }
-}</code></pre></div></dd>
-    </dl>
+}</code></pre></div>
+    </div>
     <h3>What the agent reads when refused</h3>
     <div class="says">A focused test (.only) silently skips the rest of the suite — CI goes green while nothing runs. Remove the focus before you commit.</div>
     <h3>Proved by</h3>
@@ -223,13 +221,12 @@ A repo that genuinely runs another framework disables this entry in its config, 
   <section class="entry" id="vitestIdioms.noNetworkStubs">
     <h2><code>tdd.vitestIdioms.noNetworkStubs</code><span class="badge rail">guardrail</span></h2>
     <p class="desc">Stubbing fetch or mocking an HTTP client tests the stub; intercept at the network edge instead.</p>
-    <dl class="facts">
-      <dt>Refuses at</dt><dd>a file is written or edited · the commit gate, over the staged set</dd>
-      <dt>Watches</dt><dd><code>**/*.test.ts</code> · <code>**/*.test.tsx</code> · <code>**/*.test.js</code> · <code>**/*.test.mjs</code> · <code>**/*.spec.ts</code> · <code>**/*.spec.tsx</code> · <code>**/*.spec.js</code></dd>
-      <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/ast-grep.html"><code>astGrep</code></a>
+    <p class="fact"><b>Refuses at</b> a file is written or edited · the commit gate, over the staged set</p>
+    <p class="fact"><b>Watches</b> <code>**/*.test.ts</code> · <code>**/*.test.tsx</code> · <code>**/*.test.js</code> · <code>**/*.test.mjs</code> · <code>**/*.spec.ts</code> · <code>**/*.spec.tsx</code> · <code>**/*.spec.js</code></p>
+    <p class="fact"><b>Categories</b> every session</p>
+    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/ast-grep.html"><code>astGrep</code></a></p>
       <div class="set"><b>language</b> <code>tsx</code></div>
-      <div class="set"><b>rule</b><pre><code>{
+      <div class="set"><b>rule</b> <pre><code>{
   &quot;any&quot;: [
     {
       &quot;pattern&quot;: &quot;global.fetch = $X&quot;
@@ -258,8 +255,8 @@ A repo that genuinely runs another framework disables this entry in its config, 
       ]
     }
   ]
-}</code></pre></div></dd>
-    </dl>
+}</code></pre></div>
+    </div>
     <h3>What the agent reads when refused</h3>
     <div class="says">Hand-rolled network stub. Mock at the network boundary with MSW (Testing Trophy: mock only what you own — the edge, not the client), so request building, serialisation and error mapping stay under test.</div>
     <h3>Proved by</h3>
@@ -270,13 +267,12 @@ A repo that genuinely runs another framework disables this entry in its config, 
   <section class="entry" id="vitestIdioms.noEmptyTest">
     <h2><code>tdd.vitestIdioms.noEmptyTest</code><span class="badge rail">guardrail</span></h2>
     <p class="desc">A test with no assertions is a green light for nothing.</p>
-    <dl class="facts">
-      <dt>Refuses at</dt><dd>a file is written or edited · the commit gate, over the staged set</dd>
-      <dt>Watches</dt><dd><code>**/*.test.ts</code> · <code>**/*.test.tsx</code> · <code>**/*.test.js</code> · <code>**/*.test.mjs</code> · <code>**/*.spec.ts</code> · <code>**/*.spec.tsx</code> · <code>**/*.spec.js</code></dd>
-      <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/ast-grep.html"><code>astGrep</code></a>
+    <p class="fact"><b>Refuses at</b> a file is written or edited · the commit gate, over the staged set</p>
+    <p class="fact"><b>Watches</b> <code>**/*.test.ts</code> · <code>**/*.test.tsx</code> · <code>**/*.test.js</code> · <code>**/*.test.mjs</code> · <code>**/*.spec.ts</code> · <code>**/*.spec.tsx</code> · <code>**/*.spec.js</code></p>
+    <p class="fact"><b>Categories</b> every session</p>
+    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/ast-grep.html"><code>astGrep</code></a></p>
       <div class="set"><b>language</b> <code>tsx</code></div>
-      <div class="set"><b>rule</b><pre><code>{
+      <div class="set"><b>rule</b> <pre><code>{
   &quot;any&quot;: [
     {
       &quot;pattern&quot;: &quot;it($DESC, () =&gt; {})&quot;
@@ -291,8 +287,8 @@ A repo that genuinely runs another framework disables this entry in its config, 
       &quot;pattern&quot;: &quot;test($DESC, async () =&gt; {})&quot;
     }
   ]
-}</code></pre></div></dd>
-    </dl>
+}</code></pre></div>
+    </div>
     <h3>What the agent reads when refused</h3>
     <div class="says">Empty test body — it passes forever and counts as coverage. Write the assertion, or be honest with `it.todo('…')` until you do.</div>
     <h3>Proved by</h3>
@@ -303,13 +299,12 @@ A repo that genuinely runs another framework disables this entry in its config, 
   <section class="entry" id="commitRunsTests">
     <h2><code>tdd.commitRunsTests</code><span class="badge rail">guardrail</span></h2>
     <p class="desc">Runs the deterministic suite at commit and blocks if anything fails.</p>
-    <dl class="facts">
-      <dt>Refuses at</dt><dd>the commit gate, over the staged set</dd>
-      <dt>Watches</dt><dd>—</dd>
-      <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/exec-passes.html"><code>execPasses</code></a>
-      <div class="set"><b>run</b> <code>./ci.sh test</code></div></dd>
-    </dl>
+    <p class="fact"><b>Refuses at</b> the commit gate, over the staged set</p>
+    <p class="fact"><b>Watches</b> not scoped by path</p>
+    <p class="fact"><b>Categories</b> every session</p>
+    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/exec-passes.html"><code>execPasses</code></a></p>
+      <div class="set"><b>run</b> <code>./ci.sh test</code></div>
+    </div>
     <h3>What the agent reads when refused</h3>
     <div class="says">The commit suite failed — the commit is blocked until it is green. (Run it yourself to see what broke.)</div>
     <h3>Proved by</h3>
@@ -323,11 +318,11 @@ A repo that genuinely runs another framework disables this entry in its config, 
     <tbody>
       <tr><td>Lead, and the parameters table</td><td>The doc comment on <code>definePack</code>, and the doc comment on each member of the parameter interface</td><td>JSDoc, read with the TypeScript compiler API</td></tr>
       <tr><td>The named sections above the entries</td><td>An <code>@install</code>, <code>@setup</code> or <code>@adopt</code> tag on that same doc comment. A tag nobody uses renders nothing.</td><td>JSDoc tags</td></tr>
-      <tr><td>Entry id, kind, moments, globs, categories, description</td><td>The sentence — <code>.at()</code> <code>.on()</code> <code>.description()</code></td><td>Loaded, the same data the engine runs</td></tr>
-      <tr><td>Why it exists</td><td>The doc comment on the entry's key — mandatory on a breadcrumb, optional on a guardrail whose message already carries its reason</td><td>JSDoc</td></tr>
+      <tr><td>Entry id, kind, moments, globs, categories, description</td><td>The entry itself — <code>.at()</code> <code>.on()</code> <code>.description()</code></td><td>Loaded: the same data the engine runs</td></tr>
+      <tr><td>Why it exists</td><td>The doc comment on the entry's key. Required on a breadcrumb; optional on a guardrail whose message already gives the reason.</td><td>JSDoc</td></tr>
       <tr><td>What the agent reads</td><td><code>.text()</code> or <code>.message()</code>, verbatim</td><td>Loaded</td></tr>
-      <tr><td>Check and its settings</td><td>The check the sentence asks, and the options it was configured with</td><td>The name from the pack's source; the settings read back off the check itself, so they are the RESOLVED values — the globs a parameter supplied, the recipe a repo named</td></tr>
-      <tr><td>Proved by, and the world under each case</td><td><code>.test({ pass, block })</code> — the event, and the <code>world</code> the case canned for whatever the check reaches for</td><td>Loaded</td></tr>
+      <tr><td>Check and its settings</td><td>The check the entry asks, and the options it was given</td><td>The name from the pack's source. The settings are read off the check, so they are the values a parameter supplied.</td></tr>
+      <tr><td>Proved by, and what each case was told</td><td><code>.test({ pass, block })</code> — the event, and the <code>world</code> the case supplies for whatever the check reads</td><td>Loaded</td></tr>
     </tbody>
   </table>
 

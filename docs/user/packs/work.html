@@ -33,12 +33,15 @@
   .entry{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1.1rem 1.4rem 1.2rem;margin:1rem 0;scroll-margin-top:1rem}
   .entry h2{border:0;margin:0;padding:0;font-size:1.15rem}
   .entry .desc{margin:.3rem 0 0;color:#39404a}
-  .entry .facts{display:grid;grid-template-columns:8.5rem 1fr;gap:.25rem .8rem;font-size:.9rem;margin:.7rem 0 .2rem}
-  .entry .facts dt{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;padding-top:.2rem}
-  .entry .facts dd{margin:0}
-  .entry .facts pre{margin:.2rem 0}
-  .set{margin:.15rem 0}
-  .set b{font-weight:700;font-size:.82rem;color:#4a5260;font-family:ui-monospace, Menlo, monospace}
+  .fact{margin:.25rem 0;font-size:.9rem;color:#39404a}
+  .fact b{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-right:.35rem}
+  .check{margin:.5rem 0 .2rem}
+  .check .fact{margin:0}
+  .set{margin:.3rem 0 .3rem 0;font-size:.9rem}
+  .set b{display:block;font-weight:700;font-size:.74rem;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-bottom:.1rem}
+  .set pre{margin:.1rem 0}
+  .values{list-style:none;margin:0;padding:0;overflow-x:auto}
+  .values li{margin:.1rem 0;white-space:pre}
   .why{border-left:4px solid var(--parent);background:#eef4fa;padding:.6rem .9rem;border-radius:0 8px 8px 0;margin:.8rem 0;font-size:.95rem}
   .why.gap{border-left-color:#c2a33a;background:var(--gapbg);color:#6b5a1e;font-style:italic}
   .why p:first-child{margin-top:0} .why p:last-child{margin-bottom:0}
@@ -80,15 +83,15 @@ flow ship it without depending on the tool it is about.</p>
 team works, not of a guard engine. These three are the WORK lifecycle's, defined here beside the
 rules that bind to them — a builder may not do a parent's job, a checker may not write.</p></div>
 
-  <p class="gen">Generated from <code>packs/work.ts</code> by <code>just docs-packs</code>. Edit the pack, not this page; the commit gate refuses a page that has drifted from its pack.</p>
+  <p class="gen">Generated from <code>packs/work.ts</code> by <code>just docs-packs</code>. Edit the pack, not this page. The commit gate refuses a page that has drifted.</p>
 
   <h2 id="binding">Binding it</h2>
-  <p>The pack takes no parameters. In <code>flow.config.ts</code>:</p>
+  <p>The pack takes no parameters. Example config:</p>
 <pre><code>import { defineConfig, pack } from &quot;@jawache/flow&quot;;
 import { work } from &quot;@jawache/flow/packs&quot;;
 
 export default defineConfig([pack(work)]);</code></pre>
-  <p>Any entry below can be turned off in the config, as a committed change visible in review: <code>override(work.planIsTheParents).disabled("why")</code>.</p>
+  <p>To turn one entry off, say so in the config: <code>override(work.planIsTheParents).disabled("why")</code>. It is a committed change, so a reviewer sees it.</p>
 
   <h2 id="install">What to install first</h2>
 <p>The <code>work</code> CLI and its lifecycle skill. Every rule here reads a <code>work …</code> command line,
@@ -111,13 +114,12 @@ classified as a builder or a checker — a human at a keyboard is neither.</p>
   <section class="entry" id="planIsTheParents">
     <h2><code>work.planIsTheParents</code><span class="badge rail">guardrail</span></h2>
     <p class="desc">A builder owns its phase, not the plan — the verdict, the amendment and the cost record are the parent's.</p>
-    <dl class="facts">
-      <dt>Refuses at</dt><dd>a shell command is about to run</dd>
-      <dt>Watches</dt><dd>—</dd>
-      <dt>Categories</dt><dd><code>builder</code></dd>
-      <dt>Check</dt><dd><a href="../checks/ban-commands.html"><code>banCommands</code></a>
-      <div class="set"><b>ban</b> <code>(?:^|[\n;&amp;|(]\s*)\s*work\s+plan\s+(?:verdict|amend)\b · (?:^|[\n;&amp;|(]\s*)\s*work\s+(?:save|task)\b · (?:^|[\n;&amp;|(]\s*)\s*work\s+cost\s+record\b</code></div></dd>
-    </dl>
+    <p class="fact"><b>Refuses at</b> a shell command is about to run</p>
+    <p class="fact"><b>Watches</b> not scoped by path</p>
+    <p class="fact"><b>Categories</b> <code>builder</code></p>
+    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/ban-commands.html"><code>banCommands</code></a></p>
+      <div class="set"><b>ban</b> <ul class="values"><li><code>(?:^|[\n;&amp;|(]\s*)\s*work\s+plan\s+(?:verdict|amend)\b</code></li><li><code>(?:^|[\n;&amp;|(]\s*)\s*work\s+(?:save|task)\b</code></li><li><code>(?:^|[\n;&amp;|(]\s*)\s*work\s+cost\s+record\b</code></li></ul></div>
+    </div>
     <h3>What the agent reads when refused</h3>
     <div class="says">You are a builder, and this command is the parent's. Yours: `work plan status` · `work plan tick` · `work plan decision`.
 A verdict or an amendment needs the whole plan in view, and you can only see one phase. `work cost record` is worse than refused — it would succeed: every record is an INCREMENT since the last stamp, so filing one mid-phase bills the phase before yours for work it never did.
@@ -130,12 +132,10 @@ What you have is an ask. Say it to the parent — what you hit, what your boxes 
   <section class="entry" id="checkersDoNotWrite">
     <h2><code>work.checkersDoNotWrite</code><span class="badge rail">guardrail</span></h2>
     <p class="desc">A verifier and the review lenses sit at a boundary they must not write to.</p>
-    <dl class="facts">
-      <dt>Refuses at</dt><dd>a file is written or edited</dd>
-      <dt>Watches</dt><dd>—</dd>
-      <dt>Categories</dt><dd><code>checker</code></dd>
-      <dt>Check</dt><dd><em>a check written inline in this pack</em></dd>
-    </dl>
+    <p class="fact"><b>Refuses at</b> a file is written or edited</p>
+    <p class="fact"><b>Watches</b> not scoped by path</p>
+    <p class="fact"><b>Categories</b> <code>checker</code></p>
+    <p class="fact"><b>Check</b> written inline in this pack</p>
     <h3>What the agent reads when refused</h3>
     <div class="says">You were spawned to JUDGE this work, and a judge that edits the thing it is judging has destroyed the evidence. Report what you found — PASS or FAIL with citations — and let the rung that owns the code change it. (The verifier's own tool list already withholds Edit and Write; this is the half that holds for every review lens too, and it holds at the rail rather than in a frontmatter list somebody can widen.)</div>
     <h3>Proved by</h3>
@@ -146,13 +146,12 @@ What you have is an ask. Say it to the parent — what you hit, what your boxes 
   <section class="entry" id="ticksAreTheChilds">
     <h2><code>work.ticksAreTheChilds</code><span class="badge rail">guardrail</span></h2>
     <p class="desc">The parent records verdicts; a box is ticked by the child that built it, with its evidence.</p>
-    <dl class="facts">
-      <dt>Refuses at</dt><dd>a shell command is about to run</dd>
-      <dt>Watches</dt><dd>—</dd>
-      <dt>Categories</dt><dd><code>parent</code></dd>
-      <dt>Check</dt><dd><a href="../checks/ban-commands.html"><code>banCommands</code></a>
-      <div class="set"><b>ban</b> <code>(?:^|[\n;&amp;|(]\s*)\s*work\s+plan\s+tick\b</code></div></dd>
-    </dl>
+    <p class="fact"><b>Refuses at</b> a shell command is about to run</p>
+    <p class="fact"><b>Watches</b> not scoped by path</p>
+    <p class="fact"><b>Categories</b> <code>parent</code></p>
+    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/ban-commands.html"><code>banCommands</code></a></p>
+      <div class="set"><b>ban</b> <code>(?:^|[\n;&amp;|(]\s*)\s*work\s+plan\s+tick\b</code></div>
+    </div>
     <h3>What the agent reads when refused</h3>
     <div class="says">A box is ticked by the rung that built it. You are supervising: you did not do the work, so you cannot supply the evidence, and a tick whose proof came from reading a report is exactly the provenance the journal exists to prevent. If a child left a box unticked, that is the finding — record the verdict on it.</div>
     <h3>Proved by</h3>
@@ -163,13 +162,12 @@ What you have is an ask. Say it to the parent — what you hit, what your boxes 
   <section class="entry" id="noAgentInboxItems">
     <h2><code>work.noAgentInboxItems</code><span class="badge rail">guardrail</span></h2>
     <p class="desc">The inbox is the human's speccing queue — an agent raises a finding in chat, never files one.</p>
-    <dl class="facts">
-      <dt>Refuses at</dt><dd>a shell command is about to run</dd>
-      <dt>Watches</dt><dd>—</dd>
-      <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/ban-commands.html"><code>banCommands</code></a>
-      <div class="set"><b>ban</b> <code>(?:^|[\n;&amp;|(]\s*)\s*work\s+inbox\s+new\b</code></div></dd>
-    </dl>
+    <p class="fact"><b>Refuses at</b> a shell command is about to run</p>
+    <p class="fact"><b>Watches</b> not scoped by path</p>
+    <p class="fact"><b>Categories</b> every session</p>
+    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/ban-commands.html"><code>banCommands</code></a></p>
+      <div class="set"><b>ban</b> <code>(?:^|[\n;&amp;|(]\s*)\s*work\s+inbox\s+new\b</code></div>
+    </div>
     <h3>What the agent reads when refused</h3>
     <div class="says">`work inbox new` is the human's own door, and this command rail is only ever crossed by an agent — a person typing in a terminal has no hooks in front of them. So the fact that this fired means an agent is filing.
 The inbox is a SPECCING QUEUE, not a findings drawer: every item in it is something its owner has decided to think about, and an item nobody chose to add is a decision taken away from them and returned as a chore. Work is born through `/work spec`, which only a clear human instruction opens.
@@ -182,13 +180,12 @@ What you have is a finding. Say it in the chat — headline, why it matters, wha
   <section class="entry" id="noShellSubstitutionInProse">
     <h2><code>work.noShellSubstitutionInProse</code><span class="badge rail">guardrail</span></h2>
     <p class="desc">A backtick inside a double-quoted argument of a work verb that records prose is live command substitution, not Markdown.</p>
-    <dl class="facts">
-      <dt>Refuses at</dt><dd>a shell command is about to run</dd>
-      <dt>Watches</dt><dd>—</dd>
-      <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/ban-commands.html"><code>banCommands</code></a>
-      <div class="set"><b>ban</b> <code>(?:work\s+(?:plan|task|recap|record|spec|complete)\b)[^&quot;`]*(?:&quot;(?:(?!&lt;&lt;-?')[^&quot;])*&quot;[^&quot;`]*)*&quot;(?:(?!&lt;&lt;-?')[^&quot;])*`</code></div></dd>
-    </dl>
+    <p class="fact"><b>Refuses at</b> a shell command is about to run</p>
+    <p class="fact"><b>Watches</b> not scoped by path</p>
+    <p class="fact"><b>Categories</b> every session</p>
+    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/ban-commands.html"><code>banCommands</code></a></p>
+      <div class="set"><b>ban</b> <code>(?:work\s+(?:plan|task|recap|record|spec|complete)\b)[^&quot;`]*(?:&quot;(?:(?!&lt;&lt;-?')[^&quot;])*&quot;[^&quot;`]*)*&quot;(?:(?!&lt;&lt;-?')[^&quot;])*`</code></div>
+    </div>
     <h3>What the agent reads when refused</h3>
     <div class="says">You are recording prose through a shell command, and a backtick inside a DOUBLE-quoted argument is not Markdown — the shell RUNS it and splices its output into your text before the command ever sees it.
 On an append-only record there is no undo: no amend, no redact. And once the binary has argv the splice has already happened, so this is the only moment it can be caught.
@@ -206,11 +203,11 @@ Measured four times. A `work plan decision` whose double-quoted text carried bac
     <tbody>
       <tr><td>Lead, and the parameters table</td><td>The doc comment on <code>definePack</code>, and the doc comment on each member of the parameter interface</td><td>JSDoc, read with the TypeScript compiler API</td></tr>
       <tr><td>The named sections above the entries</td><td>An <code>@install</code>, <code>@setup</code> or <code>@adopt</code> tag on that same doc comment. A tag nobody uses renders nothing.</td><td>JSDoc tags</td></tr>
-      <tr><td>Entry id, kind, moments, globs, categories, description</td><td>The sentence — <code>.at()</code> <code>.on()</code> <code>.description()</code></td><td>Loaded, the same data the engine runs</td></tr>
-      <tr><td>Why it exists</td><td>The doc comment on the entry's key — mandatory on a breadcrumb, optional on a guardrail whose message already carries its reason</td><td>JSDoc</td></tr>
+      <tr><td>Entry id, kind, moments, globs, categories, description</td><td>The entry itself — <code>.at()</code> <code>.on()</code> <code>.description()</code></td><td>Loaded: the same data the engine runs</td></tr>
+      <tr><td>Why it exists</td><td>The doc comment on the entry's key. Required on a breadcrumb; optional on a guardrail whose message already gives the reason.</td><td>JSDoc</td></tr>
       <tr><td>What the agent reads</td><td><code>.text()</code> or <code>.message()</code>, verbatim</td><td>Loaded</td></tr>
-      <tr><td>Check and its settings</td><td>The check the sentence asks, and the options it was configured with</td><td>The name from the pack's source; the settings read back off the check itself, so they are the RESOLVED values — the globs a parameter supplied, the recipe a repo named</td></tr>
-      <tr><td>Proved by, and the world under each case</td><td><code>.test({ pass, block })</code> — the event, and the <code>world</code> the case canned for whatever the check reaches for</td><td>Loaded</td></tr>
+      <tr><td>Check and its settings</td><td>The check the entry asks, and the options it was given</td><td>The name from the pack's source. The settings are read off the check, so they are the values a parameter supplied.</td></tr>
+      <tr><td>Proved by, and what each case was told</td><td><code>.test({ pass, block })</code> — the event, and the <code>world</code> the case supplies for whatever the check reads</td><td>Loaded</td></tr>
     </tbody>
   </table>
 

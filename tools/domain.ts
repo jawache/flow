@@ -57,8 +57,13 @@ export interface EntryDoc {
   readonly categories: readonly string[];
   /** The settings the check was CONFIGURED with, resolved — one row per option. */
   readonly settings: readonly SettingRow[];
-  /** The check's name, as the pack spells it; the reference link is built from it. */
+  /** The check's name, as the pack spells it. */
   readonly checkName: string;
+  /**
+   * Does a stock-check reference page exist for it? A pack may write its own check — `noGitDiscard`
+   * and `conventionalCommit` are two — and a link to a page nobody wrote is worse than no link.
+   */
+  readonly reference: boolean;
   /** `.text()` or `.message()`, verbatim. This is the whole point of the page. */
   readonly says: string;
   readonly cases: readonly CaseLine[];
@@ -210,16 +215,16 @@ function flat(value: unknown): boolean {
 /**
  * The options a check was configured with, flattened into printable rows.
  *
- * RESOLVED VALUES, and that is the whole point: what reaches the page is the glob a parameter
- * supplied and the recipe a repo named, not the expression that produced them. A structure — an
- * ast-grep rule, a fence's layers — cannot be a line, so it becomes a JSON block; everything else
- * is a line, because a line is what a reader can compare between two entries.
+ * RESOLVED VALUES: what reaches the page is the glob a parameter supplied and the recipe a repo
+ * named, not the expression that produced them. A list becomes one value per line, because a list
+ * of six banned patterns joined onto one line is a wall nobody reads. A structure — an ast-grep
+ * rule, a fence's layers — becomes plain JSON.
  */
 export function settingRows(settings: unknown): SettingRow[] {
   if (settings === null || typeof settings !== "object" || Array.isArray(settings)) return [];
   return Object.entries(settings).map(([key, value]) => {
     if (Array.isArray(value) && value.length === 0) return { key, value: "none", block: false };
-    if (flat(value)) return { key, value: (Array.isArray(value) ? value.map(scalar).join(" · ") : scalar(value)), block: false };
+    if (flat(value)) return { key, value: (Array.isArray(value) ? value.map(scalar).join("\n") : scalar(value)), block: false };
     return { key, value: JSON.stringify(value, null, 2), block: true };
   });
 }
@@ -289,9 +294,9 @@ export function firstSentence(text: string): string {
   return end === null ? text : text.slice(0, end.index + 1);
 }
 
-/** A list of globs as inline code, or the em dash that means "the whole repo". */
+/** A list of globs as inline code, or the plain words for an entry that is not path-scoped. */
 function globs(list: readonly string[]): string {
-  return list.length === 0 ? "—" : list.map((g) => `<code>${esc(g)}</code>`).join(" · ");
+  return list.length === 0 ? "not scoped by path" : list.map((g) => `<code>${esc(g)}</code>`).join(" · ");
 }
 
 /**
@@ -303,15 +308,28 @@ function globs(list: readonly string[]): string {
  * whole description of a rule is what that was worth.
  */
 function checkBlock(entry: EntryDoc): string {
-  if (entry.checkName === "") return "<em>a check written inline in this pack</em>";
-  const named = `<a href="../checks/${kebab(entry.checkName)}.html"><code>${esc(entry.checkName)}</code></a>`;
-  if (entry.settings.length === 0) return `${named} — <span class="none">no options; the sentence's own scope is the whole rule</span>`;
-  const rows = entry.settings.map((row) =>
-    row.block
-      ? `<div class="set"><b>${esc(row.key)}</b><pre><code>${esc(row.value)}</code></pre></div>`
-      : `<div class="set"><b>${esc(row.key)}</b> <code>${esc(row.value)}</code></div>`,
-  );
-  return `${named}\n      ${rows.join("\n      ")}`;
+  if (entry.checkName === "") return '    <p class="fact"><b>Check</b> written inline in this pack</p>\n';
+  const named = entry.reference
+    ? `<a href="../checks/${kebab(entry.checkName)}.html"><code>${esc(entry.checkName)}</code></a>`
+    : `<code>${esc(entry.checkName)}</code> <span class="none">(written in this pack)</span>`;
+  if (entry.settings.length === 0)
+    return `    <p class="fact"><b>Check</b> ${named} — no options. The scope above is the whole rule.</p>\n`;
+
+  // ONE ITEM PER LINE. A rule's settings are a list of things a reader compares — six banned
+  // patterns, eleven commit types — and joined onto one line with dots they are a wall. A long
+  // value scrolls sideways inside its own box rather than being wrapped or cut.
+  const rows = entry.settings.map((row) => {
+    const value = row.block
+      ? `<pre><code>${esc(row.value)}</code></pre>`
+      : row.value.includes("\n")
+        ? `<ul class="values">${row.value
+            .split("\n")
+            .map((one) => `<li><code>${esc(one)}</code></li>`)
+            .join("")}</ul>`
+        : `<code>${esc(row.value)}</code>`;
+    return `      <div class="set"><b>${esc(row.key)}</b> ${value}</div>`;
+  });
+  return `    <div class="check"><p class="fact"><b>Check</b> ${named}</p>\n${rows.join("\n")}\n    </div>\n`;
 }
 
 /** `canonicalFiles` → `canonical-files`, which is what the stock check's page is called. */
@@ -334,9 +352,9 @@ function casesBlock(cases: readonly CaseLine[]): string {
   return `<div class="cases">${side("pass")}${side("block")}</div>`;
 }
 
-/** One `<dt>/<dd>` pair, dropped entirely when there is nothing to say. */
+/** One fact line — a short label, then the value. Left-aligned, no indent column. */
 function fact(label: string, value: string): string {
-  return value === "" ? "" : `      <dt>${label}</dt><dd>${value}</dd>\n`;
+  return value === "" ? "" : `    <p class="fact"><b>${label}</b> ${value}</p>\n`;
 }
 
 function entrySection(entry: EntryDoc): string {
@@ -347,14 +365,14 @@ function entrySection(entry: EntryDoc): string {
     fact("Watches", globs(entry.on)),
     entry.ignore.length === 0 ? "" : fact("Ignores", globs(entry.ignore)),
     fact("Categories", entry.categories.length === 0 ? "every session" : entry.categories.map((c) => `<code>${esc(c)}</code>`).join(" · ")),
-    rail ? fact("Check", checkBlock(entry)) : "",
     entry.disabled === "" ? "" : fact("Off by default", esc(entry.disabled)),
+    rail ? checkBlock(entry) : "",
   ].join("");
 
   const why =
     entry.why === ""
       ? entry.kind === "breadcrumb"
-        ? '    <h3>Why it exists</h3>\n    <div class="why gap"><p>Not stated. A breadcrumb owes a doc comment on its key saying what goes wrong in the repo without it.</p></div>\n'
+        ? '    <h3>Why it exists</h3>\n    <div class="why gap"><p>Not stated. Add a doc comment on the entry\'s key saying what goes wrong without it.</p></div>\n'
         : ""
       : `    <h3>Why it exists</h3>\n    <div class="why">${prose(entry.why)}</div>\n`;
 
@@ -369,7 +387,7 @@ function entrySection(entry: EntryDoc): string {
     `  <section class="entry" id="${esc(entry.key)}">`,
     `    <h2><code>${esc(entry.id)}</code>${badge}</h2>`,
     `    <p class="desc">${line(entry.description)}</p>`,
-    `    <dl class="facts">\n${facts}    </dl>`,
+    facts.trimEnd(),
     why + says + proved,
     "  </section>",
   ].join("\n");
@@ -388,18 +406,18 @@ function toc(entries: readonly EntryDoc[]): string {
 
 /** The parameters table, or the sentence that says there are none. */
 function params(doc: PackDoc): string {
-  if (doc.params.length === 0) return "  <p>The pack takes no parameters. In <code>flow.config.ts</code>:</p>";
+  if (doc.params.length === 0) return "  <p>The pack takes no parameters. Example config:</p>";
   const rows = doc.params.map(
     (p) =>
-      `      <tr><td><code>${esc(p.name)}</code></td><td><code>${esc(p.type)}</code></td><td>${p.why === "" ? '<em class="none">not documented — the interface member owes a doc comment</em>' : prose(p.why)}</td></tr>`,
+      `      <tr><td><code>${esc(p.name)}</code></td><td><code>${esc(p.type)}</code></td><td>${p.why === "" ? '<em class="none">Not documented. Add a doc comment on the interface member.</em>' : prose(p.why)}</td></tr>`,
   );
   return [
-    `  <p>The pack takes ${doc.params.length} parameter${doc.params.length === 1 ? "" : "s"} — facts about the repo it cannot know:</p>`,
+    `  <p>The pack takes ${doc.params.length} parameter${doc.params.length === 1 ? "" : "s"}. These are facts the pack cannot know about your repo:</p>`,
     "  <table>",
     "    <thead><tr><th>Parameter</th><th>Type</th><th>What it is</th></tr></thead>",
     `    <tbody>\n${rows.join("\n")}\n    </tbody>`,
     "  </table>",
-    "  <p>Bound with a stranger's values, this is the whole binding — and it is what every glob, recipe and message on this page was rendered with:</p>",
+    "  <p>Example config. The values are examples, and every glob and command on this page was rendered with them:</p>",
   ].join("\n");
 }
 
@@ -465,12 +483,15 @@ const STYLE = `  :root{
   .entry{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1.1rem 1.4rem 1.2rem;margin:1rem 0;scroll-margin-top:1rem}
   .entry h2{border:0;margin:0;padding:0;font-size:1.15rem}
   .entry .desc{margin:.3rem 0 0;color:#39404a}
-  .entry .facts{display:grid;grid-template-columns:8.5rem 1fr;gap:.25rem .8rem;font-size:.9rem;margin:.7rem 0 .2rem}
-  .entry .facts dt{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;padding-top:.2rem}
-  .entry .facts dd{margin:0}
-  .entry .facts pre{margin:.2rem 0}
-  .set{margin:.15rem 0}
-  .set b{font-weight:700;font-size:.82rem;color:#4a5260;font-family:ui-monospace, Menlo, monospace}
+  .fact{margin:.25rem 0;font-size:.9rem;color:#39404a}
+  .fact b{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-right:.35rem}
+  .check{margin:.5rem 0 .2rem}
+  .check .fact{margin:0}
+  .set{margin:.3rem 0 .3rem 0;font-size:.9rem}
+  .set b{display:block;font-weight:700;font-size:.74rem;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-bottom:.1rem}
+  .set pre{margin:.1rem 0}
+  .values{list-style:none;margin:0;padding:0;overflow-x:auto}
+  .values li{margin:.1rem 0;white-space:pre}
   .why{border-left:4px solid var(--parent);background:#eef4fa;padding:.6rem .9rem;border-radius:0 8px 8px 0;margin:.8rem 0;font-size:.95rem}
   .why.gap{border-left-color:#c2a33a;background:var(--gapbg);color:#6b5a1e;font-style:italic}
   .why p:first-child{margin-top:0} .why p:last-child{margin-bottom:0}
@@ -518,11 +539,11 @@ const PROVENANCE = [
   "    <tbody>",
   "      <tr><td>Lead, and the parameters table</td><td>The doc comment on <code>definePack</code>, and the doc comment on each member of the parameter interface</td><td>JSDoc, read with the TypeScript compiler API</td></tr>",
   "      <tr><td>The named sections above the entries</td><td>An <code>@install</code>, <code>@setup</code> or <code>@adopt</code> tag on that same doc comment. A tag nobody uses renders nothing.</td><td>JSDoc tags</td></tr>",
-  "      <tr><td>Entry id, kind, moments, globs, categories, description</td><td>The sentence — <code>.at()</code> <code>.on()</code> <code>.description()</code></td><td>Loaded, the same data the engine runs</td></tr>",
-  "      <tr><td>Why it exists</td><td>The doc comment on the entry's key — mandatory on a breadcrumb, optional on a guardrail whose message already carries its reason</td><td>JSDoc</td></tr>",
+  "      <tr><td>Entry id, kind, moments, globs, categories, description</td><td>The entry itself — <code>.at()</code> <code>.on()</code> <code>.description()</code></td><td>Loaded: the same data the engine runs</td></tr>",
+  "      <tr><td>Why it exists</td><td>The doc comment on the entry's key. Required on a breadcrumb; optional on a guardrail whose message already gives the reason.</td><td>JSDoc</td></tr>",
   "      <tr><td>What the agent reads</td><td><code>.text()</code> or <code>.message()</code>, verbatim</td><td>Loaded</td></tr>",
-  "      <tr><td>Check and its settings</td><td>The check the sentence asks, and the options it was configured with</td><td>The name from the pack's source; the settings read back off the check itself, so they are the RESOLVED values — the globs a parameter supplied, the recipe a repo named</td></tr>",
-  "      <tr><td>Proved by, and the world under each case</td><td><code>.test({ pass, block })</code> — the event, and the <code>world</code> the case canned for whatever the check reaches for</td><td>Loaded</td></tr>",
+  "      <tr><td>Check and its settings</td><td>The check the entry asks, and the options it was given</td><td>The name from the pack's source. The settings are read off the check, so they are the values a parameter supplied.</td></tr>",
+  "      <tr><td>Proved by, and what each case was told</td><td><code>.test({ pass, block })</code> — the event, and the <code>world</code> the case supplies for whatever the check reads</td><td>Loaded</td></tr>",
   "    </tbody>",
   "  </table>",
 ].join("\n");
@@ -542,15 +563,15 @@ export function renderPackPage(doc: PackDoc): string {
     `  <p class="scope">${esc(census(doc))}</p>`,
     "",
     doc.lead === ""
-      ? '  <p class="lead gap">This pack has no lead. A doc comment on <code>definePack</code> is what says, in a paragraph, what the pack is for.</p>'
+      ? '  <p class="lead gap">No lead. Add a doc comment on <code>definePack</code> saying what this pack is for.</p>'
       : `  <div class="lead">${prose(doc.lead)}</div>`,
     "",
-    `  <p class="gen">Generated from <code>packs/${esc(doc.name)}.ts</code> by <code>just docs-packs</code>. Edit the pack, not this page; the commit gate refuses a page that has drifted from its pack.</p>`,
+    `  <p class="gen">Generated from <code>packs/${esc(doc.name)}.ts</code> by <code>just docs-packs</code>. Edit the pack, not this page. The commit gate refuses a page that has drifted.</p>`,
     "",
     '  <h2 id="binding">Binding it</h2>',
     params(doc),
     `<pre><code>${esc(bindingSnippet(doc))}</code></pre>`,
-    `  <p>Any entry below can be turned off in the config, as a committed change visible in review: <code>override(${esc(doc.name)}.${esc(doc.entries[0]?.key ?? "entry")}).disabled("why")</code>.</p>`,
+    `  <p>To turn one entry off, say so in the config: <code>override(${esc(doc.name)}.${esc(doc.entries[0]?.key ?? "entry")}).disabled("why")</code>. It is a committed change, so a reviewer sees it.</p>`,
     "",
     blocks(doc),
     "",
@@ -593,14 +614,14 @@ export function renderPacksIndex(docs: readonly PackDoc[]): string {
     "  <h1>The packs</h1>",
     `  <p class="scope">${docs.length} packs · one page each · generated by <code>just docs-packs</code></p>`,
     "",
-    `  <p class="lead">Everything <code>@jawache/flow/packs</code> ships. A pack is content written in the grammar — a list of claims about a repo — and binding one is a single line in <code>flow.config.ts</code>. An unbound pack costs nothing.</p>`,
+    `  <p class="lead">The ten packs <code>@jawache/flow/packs</code> ships. Each is a list of rules about a repo. Binding one is a single line in <code>flow.config.ts</code>, and a pack you do not bind does nothing.</p>`,
     "",
     "  <table>",
-    "    <thead><tr><th>Pack</th><th>Rails · crumbs</th><th>Parameters</th><th>What it is about</th></tr></thead>",
+    "    <thead><tr><th>Pack</th><th>Guardrails · breadcrumbs</th><th>Parameters</th><th>What it is about</th></tr></thead>",
     `    <tbody>\n${rows.join("\n")}\n    </tbody>`,
     "  </table>",
     "",
-    '  <p class="gen">Generated from <code>packs/*.ts</code> by <code>just docs-packs</code>. Edit the packs, not these pages; the commit gate refuses a page that has drifted.</p>',
+    '  <p class="gen">Generated from <code>packs/*.ts</code> by <code>just docs-packs</code>. Edit the packs, not these pages. The commit gate refuses a page that has drifted.</p>',
     "",
     "  <footer>flow docs · <a href=\"../index.html\">all user docs</a> · generated page, do not edit</footer>",
     "</main>",
