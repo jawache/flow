@@ -378,6 +378,42 @@ describe("defineCheck", () => {
   });
 });
 
+describe("a pack whose parameters are all optional", () => {
+  // A pack that gains its first OPTIONAL parameter must not refuse the configs that already bound
+  // it. Measured as "is a factory", it did: `pack(docs)` stopped loading the day the docs pack took
+  // a defaulted `root`, and a config that will not load takes a whole repo's guard with it.
+  it("binds with no parameters at all, because arity is what is measured", () => {
+    const optional = definePack("optional", (repo: { root?: string } = {}) => ({
+      shape: guardrail()
+        .at(commit)
+        .on(`${repo.root ?? "docs"}/**`)
+        .description("a rule scoped by a defaulted parameter")
+        .check(() => ({ ok: true }))
+        .message("no")
+        .test({ block: [{ staged: ["docs/x.md"] }] }),
+    }));
+
+    const load = loadConfig(defineConfig([pack(optional)]));
+    expect(load.ok).toBe(true);
+    expect(load.ok && load.entries[0]?.spec.on).toEqual(["docs/**"]);
+  });
+
+  it("still refuses a pack that genuinely requires them", () => {
+    const required = definePack("required", (repo: { run: string }) => ({
+      gate: guardrail()
+        .at(commit)
+        .description("a rule that cannot be written without the fact")
+        .check(() => ({ ok: true }))
+        .message(repo.run)
+        .test({ block: [{ staged: ["a.ts"] }] }),
+    }));
+
+    const load = loadConfig(defineConfig([{ kind: "pack", pack: packDefinition(required), params: undefined, hasParams: false }]));
+    expect(load.ok).toBe(false);
+    expect(!load.ok && load.refusals[0]?.code).toBe("missing-parameter");
+  });
+});
+
 describe("hasCases", () => {
   it("is true when either arm carries a case", () => {
     expect(hasCases({ block: ["git push origin main"] })).toBe(true);

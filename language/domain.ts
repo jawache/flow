@@ -890,7 +890,11 @@ export interface PackDefinition {
   readonly name: string;
   /** Build the entry tree. A pack that takes no parameters ignores the argument. */
   readonly build: (params: unknown) => EntryGroup;
-  /** Does this pack's entries close over parameters? Measured from the factory's arity. */
+  /**
+   * Does this pack REQUIRE parameters? Measured from the factory's arity, so a factory whose
+   * parameter has a default — `(repo: Doors = {}) => …`, every field optional — is a pack
+   * `pack(docs)` may bind, exactly as the compiler already allows.
+   */
   readonly takesParams: boolean;
 }
 
@@ -991,7 +995,11 @@ export function definePack(
   name: string,
   entries: EntryGroup | ((params: never) => EntryGroup),
 ): Pack<EntryGroup, never> {
-  const takesParams = typeof entries === "function";
+  // ARITY, not "is a function": a parameter with a default does not count toward `length`, so a
+  // pack whose parameters are ALL optional stays bindable as `pack(x)`. Measured any other way, a
+  // pack that gains its first optional parameter refuses every config that already bound it — at
+  // load, which takes that repo's whole guard down over a default nobody changed.
+  const takesParams = typeof entries === "function" && entries.length > 0;
   const build = (params: unknown): EntryGroup =>
     typeof entries === "function" ? entries(params as never) : entries;
   return refProxy(name, [], { name, build, takesParams }) as Pack<EntryGroup, never>;
@@ -1053,7 +1061,11 @@ export function refTarget(value: unknown): RefTarget | undefined {
  */
 export function pack<T extends EntryGroup, Params>(
   definition: Pack<T, Params>,
-  ...params: undefined extends Params ? [] : [params: Params]
+  // OPTIONAL when the pack's own parameter is: `undefined extends Params` is true both for a pack
+  // that declares none and for one whose every field has a default, and the two want different
+  // things — the first may be given nothing, the second may be given nothing OR its object. A bare
+  // `[]` here made an all-optional pack impossible to configure at all.
+  ...params: undefined extends Params ? [params?: Params] : [params: Params]
 ): PackBinding;
 export function pack(definition: object, ...params: readonly unknown[]): PackBinding {
   // A value that is not a pack still produces a binding, holding nothing. Refusing here would

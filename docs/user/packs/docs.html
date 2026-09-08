@@ -66,28 +66,33 @@
 <main>
   <p class="scope"><a href="./index.html">flow packs</a> › docs</p>
   <h1>The <code>docs</code> pack</h1>
-  <p class="scope">2 guardrails · 2 breadcrumbs · fires at: touch · write · commit · takes no parameters</p>
+  <p class="scope">2 guardrails · 2 breadcrumbs · fires at: touch · write · commit · takes 2 parameters</p>
 
-  <div class="lead"><p>Two documentation audiences, one folder, nothing replicated.</p>
-<p>Every repo documents for exactly two readers who want opposite things: the end user wants the
-least possible cognitive load, and the agent wants almost nothing in context. So <code>docs/</code> has
-exactly two doors and everything inside follows its door's rules.</p></div>
+  <p class="lead gap">No lead. Add a doc comment on <code>definePack</code> saying what this pack is for.</p>
 
   <p class="gen">Generated from <code>packs/docs.ts</code> by <code>just docs-packs</code>. Edit the pack, not this page. The commit gate refuses a page that has drifted.</p>
 
   <h2 id="binding">Binding it</h2>
-  <p>The pack takes no parameters. Example config:</p>
+  <p>The pack takes 2 parameters. These are facts the pack cannot know about your repo:</p>
+  <table>
+    <thead><tr><th>Parameter</th><th>Type</th><th>What it is</th></tr></thead>
+    <tbody>
+      <tr><td><code>root</code></td><td><code>string</code></td><td><p>The documentation folder, as a path from the repo root. Defaults to <code>docs</code>.</p>
+<p>Both guardrails and both breadcrumbs are scoped to it, so a repo whose pages live in
+<code>documentation/</code> names that here and keeps every rule.</p></td></tr>
+      <tr><td><code>allow</code></td><td><code>readonly string[]</code></td><td><p>Filenames allowed to sit LOOSE at the top of that folder, beside the two doors. Defaults to
+none — every file belongs behind <code>user/</code> or <code>agent/</code>.</p>
+<p>A repo that keeps a <code>README.md</code> at the top of its docs folder names it here.</p></td></tr>
+    </tbody>
+  </table>
+  <p>Example config. The values are examples, and every glob and command on this page was rendered with them:</p>
 <pre><code>import { defineConfig, pack } from &quot;@jawache/flow&quot;;
 import { docs } from &quot;@jawache/flow/packs&quot;;
 
-export default defineConfig([pack(docs)]);</code></pre>
+export default defineConfig([pack(docs, { root: &quot;documentation&quot;, allow: [&quot;README.md&quot;] })]);</code></pre>
   <p>To turn one entry off, say so in the config: <code>override(docs.docs).disabled("why")</code>. It is a committed change, so a reviewer sees it.</p>
 
-  <h2 id="setup">What the repo needs in place</h2>
-<p>A <code>docs/</code> folder holding exactly <code>user/</code> and <code>agent/</code>, each with its own index —
-<code>docs/user/index.html</code> for people and <code>docs/agent/README.md</code> as a list of pointers. The two
-guardrails below refuse anything else at the top of the folder, so a repo with a different shape
-either moves its pages or does not bind this pack.</p>
+
 
   <h2 id="entries">Entries</h2>
   <ul class="toc">
@@ -101,7 +106,7 @@ either moves its pages or does not bind this pack.</p>
     <h2><code>docs.docs</code><span class="badge crumb">breadcrumb</span></h2>
     <p class="desc">The two audiences, the admission test, and the discipline that keeps docs true.</p>
     <p class="fact"><b>Shown when</b> the first time in a session a file it watches is touched</p>
-    <p class="fact"><b>Watches</b> <code>docs/**</code></p>
+    <p class="fact"><b>Watches</b> <code>documentation/**</code></p>
     <p class="fact"><b>Categories</b> every session</p>
     <h3>Why it exists</h3>
     <div class="why"><p>Without it, an agent writing under <code>docs/</code> has no way to know there are two audiences. User
@@ -119,7 +124,7 @@ The failure mode is silent staleness, not error: a doc stays literally correct w
     <h2><code>docs.userDocsStyle</code><span class="badge crumb">breadcrumb</span></h2>
     <p class="desc">The ruled style of docs/user — Diátaxis page discipline, the language rules, captured output.</p>
     <p class="fact"><b>Shown when</b> the first time in a session a file it watches is touched</p>
-    <p class="fact"><b>Watches</b> <code>docs/user/**</code></p>
+    <p class="fact"><b>Watches</b> <code>documentation/user/**</code></p>
     <p class="fact"><b>Categories</b> every session</p>
     <h3>Why it exists</h3>
     <div class="why"><p>Without it, every user page is written in whatever style that session had, and the docs read
@@ -138,12 +143,14 @@ style guide — so nothing in it is one repo's taste.</p></div>
     <h2><code>docs.docsShape</code><span class="badge rail">guardrail</span></h2>
     <p class="desc">docs/ holds exactly user/ and agent/ — the folder allowlist.</p>
     <p class="fact"><b>Refuses at</b> a file is written or edited · the commit gate, over the staged set</p>
-    <p class="fact"><b>Watches</b> <code>docs/**</code></p>
+    <p class="fact"><b>Watches</b> <code>documentation/**</code></p>
     <p class="fact"><b>Categories</b> every session</p>
     <p class="fact"><b>Check</b> <a href="../checks/canonical-files.html"><code>canonicalFiles</code></a></p>
     <details class="settings"><summary>settings</summary><pre><code>{
-  &quot;root&quot;: &quot;docs&quot;,
-  &quot;allow&quot;: [],
+  &quot;root&quot;: &quot;documentation&quot;,
+  &quot;allow&quot;: [
+    &quot;README.md&quot;
+  ],
   &quot;folders&quot;: [
     &quot;user&quot;,
     &quot;agent&quot;
@@ -156,7 +163,7 @@ drawer, and neither audience's rules can be applied to what is in it.</p></div>
     <h3>What the agent reads when refused</h3>
     <div class="says">docs/ holds exactly two doors: `user/` (HTML, for people) and `agent/` (archival context, for agents). A third folder or a loose file at the top is documentation with no declared audience, which is how a docs folder becomes a drawer.</div>
     <h3>Proved by</h3>
-<div class="cases"><div class="case ok"><b>passes</b><ul><li>writing <code>docs/user/index.html</code></li></ul></div><div class="case stop"><b>blocks</b><ul><li>writing <code>docs/notes/scratch.md</code></li></ul></div></div>
+<div class="cases"><div class="case ok"><b>passes</b><ul><li>writing <code>documentation/user/index.html</code></li></ul></div><div class="case stop"><b>blocks</b><ul><li>writing <code>documentation/notes/scratch.md</code></li></ul></div></div>
 
   </section>
 
@@ -164,13 +171,13 @@ drawer, and neither audience's rules can be applied to what is in it.</p></div>
     <h2><code>docs.noMarkdownInUserDocs</code><span class="badge rail">guardrail</span></h2>
     <p class="desc">No .md or .mdx under docs/user — user docs are HTML, and assets of every other kind are welcome.</p>
     <p class="fact"><b>Refuses at</b> a file is written or edited · the commit gate, over the staged set</p>
-    <p class="fact"><b>Watches</b> <code>docs/user/**/*.md</code> · <code>docs/user/**/*.mdx</code></p>
+    <p class="fact"><b>Watches</b> <code>documentation/user/**/*.md</code> · <code>documentation/user/**/*.mdx</code></p>
     <p class="fact"><b>Categories</b> every session</p>
     <p class="fact"><b>Check</b> <a href="../checks/protected-path.html"><code>protectedPath</code></a> — no options</p>
     <h3>What the agent reads when refused</h3>
     <div class="says">User docs are HTML — that is what makes them multimodal by default (images, SVGs, video inline) and what stops them turning into paragraphs nobody reads. Markdown belongs in `docs/agent/`. Every other asset type is welcome under `docs/user/`.</div>
     <h3>Proved by</h3>
-<div class="cases"><div class="case ok"><b>passes</b><ul><li class="none">no pass case declared</li></ul></div><div class="case stop"><b>blocks</b><ul><li>writing <code>docs/user/guide.md</code> — <code># hi</code></li></ul></div></div>
+<div class="cases"><div class="case ok"><b>passes</b><ul><li class="none">no pass case declared</li></ul></div><div class="case stop"><b>blocks</b><ul><li>writing <code>documentation/user/guide.md</code> — <code># hi</code></li></ul></div></div>
 
   </section>
 

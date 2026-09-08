@@ -60,6 +60,7 @@ interface Shipped {
 // THE STRANGER'S SPELLINGS: one shell script for the whole toolchain, `core/` for the pure home,
 // `rules/` for the pack the repo writes itself. Declared once each and used twice — bound, so the
 // compiler proves the example is a legal binding, and printed, so the page shows what was bound.
+const DOCS = { root: "documentation", allow: ["README.md"] };
 const FCIS = { files: ["core/**/*.ts"], homes: ["core/**"], coverage: "./ci.sh coverage", example: "core/clock.ts" };
 const FLOW = { packs: ["rules/**"] };
 const GIT = { release: "./ci.sh release" };
@@ -69,7 +70,7 @@ const TDD = { run: "./ci.sh test" };
 const TYPESCRIPT = { typecheck: "./ci.sh types", lint: "./ci.sh lint", tsconfigBase: "./tsconfig.base.json", eslintBase: "./eslint.config.base.js" };
 
 const SHIPPED: readonly Shipped[] = [
-  { name: "docs", binding: pack(docs), params: undefined },
+  { name: "docs", binding: pack(docs, DOCS), params: DOCS },
   { name: "fcis", binding: pack(fcis, FCIS), params: FCIS },
   { name: "flow", binding: pack(flow, FLOW), params: FLOW },
   { name: "git", binding: pack(git, GIT), params: GIT },
