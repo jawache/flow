@@ -66,7 +66,7 @@ const GIT = { release: "./ci.sh release" };
 const JUSTFILE = { exempt: [], recipes: { "npx vitest": "./ci.sh test" } };
 const SECRETS = { dx: "./ci.sh dx", encrypt: "./ci.sh seal", names: "./ci.sh names" };
 const TDD = { run: "./ci.sh test" };
-const TYPESCRIPT = { typecheck: "./ci.sh types", lint: "./ci.sh lint" };
+const TYPESCRIPT = { typecheck: "./ci.sh types", lint: "./ci.sh lint", tsconfigBase: "./tsconfig.base.json", eslintBase: "./eslint.config.base.js" };
 
 const SHIPPED: readonly Shipped[] = [
   { name: "docs", binding: pack(docs), params: undefined },

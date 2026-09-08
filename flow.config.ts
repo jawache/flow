@@ -93,7 +93,12 @@ export default defineConfig([
   // in this tree and no rule turned off in source: the per-rule overrides live in eslint.config.js,
   // each carrying the fact about THIS repo that earns it. Both gate recipes are this repo's own
   // spelling, handed over rather than assumed.
-  pack(typescript, { typecheck: "just typecheck", lint: "just lint" }),
+  pack(typescript, {
+    typecheck: "just typecheck",
+    lint: "just lint",
+    tsconfigBase: "./tsconfig.base.json",
+    eslintBase: "./eslint.config.base.js",
+  }),
 
   // ── FCIS: pure decisions in a functional core, effects in the thin shells ──
   //

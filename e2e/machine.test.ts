@@ -87,7 +87,9 @@ const SHIPPED: readonly Shipped[] = [
     guardrails: 3,
   },
   { pack: "tdd", bind: `pack(tdd, { run: "./ci.sh test" })`, cases: 12, guardrails: 6 },
-  { pack: "typescript", bind: `pack(typescript, { typecheck: "./ci.sh types", lint: "./ci.sh lint" })`, cases: 9, guardrails: 4 },
+  // The stranger names NO shared base, so `eslintFromBase` does not exist here and the tsconfig
+  // rule asks only for the strict options — which is the F2 ruling driven rather than described.
+  { pack: "typescript", bind: `pack(typescript, { typecheck: "./ci.sh types", lint: "./ci.sh lint" })`, cases: 7, guardrails: 3 },
   { pack: "work", bind: "pack(work)", cases: 16, guardrails: 5 },
 ];
 
@@ -191,9 +193,8 @@ const ENTRIES: readonly string[] = [
   "tdd.vitestIdioms.noOnlyInTests",
   "typescript.commitRunsEslint",
   "typescript.commitRunsTsc",
-  "typescript.eslintFromBase",
   "typescript.strictTypesNoInvalidStates",
-  "typescript.tsconfigFromBase",
+  "typescript.tsconfigStrict",
   "work.checkersDoNotWrite",
   "work.noAgentInboxItems",
   "work.noShellSubstitutionInProse",
