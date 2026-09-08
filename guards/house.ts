@@ -22,9 +22,11 @@ import {
   commitReason,
   definePack,
   depcruise,
+  execPasses,
   guardrail,
   session,
   touch,
+  write,
 } from "@jawache/flow";
 
 /**
@@ -44,6 +46,59 @@ import {
  * spell does not belong here, and the block case below is driven off a line `flow.ts` really has.
  */
 const REGISTERS = ['verb\\s*===\\s*"([a-z][a-z-]*)"'];
+
+/** The punctuation a finished line of prose ends on. Anything else is a sentence still going. */
+const FINISHED = /[.:;!?)"—]$/;
+
+/** A whole string literal, alone on its line — the shape every element of a prose array has. */
+const ELEMENT = /^\s*"((?:[^"\\]|\\.)*)",?$/;
+
+/**
+ * Every line of a pack's PROSE that is a hand-wrapped continuation of the line above it, 1-based.
+ *
+ * The rule it enforces is one sentence — a string in `.text(…)` or `.message(…)` is never broken
+ * across lines to fit an editor — and the reason is that nothing human reads it: the model gets one
+ * string, and the wrap is invisible there and load-bearing nowhere. What it costs is real, and the
+ * generated pack pages are where it shows: a paragraph arrives with newlines through the middle of
+ * it, and a reader comparing two entries cannot tell a deliberate line break from a wrap.
+ *
+ * A CONTINUATION, precisely: the previous element did not finish (no closing punctuation) and this
+ * one opens with a space or a lower-case letter. That pair is what separates a wrap from the two
+ * shapes that legitimately indent — an aligned table and a bulleted list — where every line is a
+ * complete unit of its own and the line above it ends on a full stop or a bracket. Both live in
+ * the fcis pack today, and neither is a wrap.
+ *
+ * Only prose is read. A `.check(…)`'s option arrays are full of one-word strings on their own
+ * lines — regexes, globs, command examples — and none of them is a sentence at all.
+ */
+export function handWrappedProse(text: string): number[] {
+  const lines = text.split("\n");
+  const wrapped: number[] = [];
+  let inProse = false;
+  let previous: string | null = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] as string;
+    if (/\.(text|message)\(\s*$/.test(line)) {
+      inProse = true;
+      previous = null;
+      continue;
+    }
+    if (!inProse) continue;
+    if (/^\s*(\]|\))/.test(line)) {
+      inProse = false;
+      continue;
+    }
+    const element = ELEMENT.exec(line);
+    if (element === null) {
+      previous = null;
+      continue;
+    }
+    const content = element[1] as string;
+    if (previous !== null && !FINISHED.test(previous.trimEnd()) && /^(\s|[a-z])/.test(content)) wrapped.push(i + 1);
+    previous = content;
+  }
+  return wrapped;
+}
 
 /** What this repo calls pure. The import fence's `pure` layer is exactly this list. */
 export interface Terrain {
@@ -68,46 +123,45 @@ export const house = definePack("house", (repo: Terrain) => ({
         "Layout is by PIPELINE STAGE, not by topic — `language → checks → engine → adapter`, one `domain.ts` per layer, fenced one way. See the layout breadcrumb, which fires on first touch of a layer folder.",
         "THE GUARD HERE IS flow ITSELF. `flow.config.ts` at the root binds the ten packs from `@jawache/flow/packs` — resolved through `node_modules/@jawache/flow`, a link back to this checkout — plus one pack written here, `guards/house.ts`. flow guarding flow is the dogfood: a door that stopped exporting, a rule that stopped loading or a bundle that stopped building refuses this repo's own next commit first. `flow status` answers whether the guard is working; `flow test` runs every bound rule's cases. flow's state is `.flow/` at the repo root, self-ignoring, never committed.",
         "Commands live in the justfile (`just` lists them) — `just build` · `just typecheck` · `just test` · `just link`. TWO suites answer two different questions and both are gates: `just test-rules` (`flow test`) proves the rules THIS repo binds, and `just test-packs` — the machine test — proves the ten the package SHIPS, in a throwaway repo that has never heard of flow. Tests are vitest; `just test-coverage` gates the pure home.",
-        "Docs are two audiences: `docs/user/` is HTML for people (the guidebook, the quick start, the config reference, one page per stock check), `docs/agent/` is archival context pulled on demand. `.work/` is the gitignored journal.",
+        "Docs are two audiences: `docs/user/` is HTML for people (the guidebook, the quick start, the config reference, one page per stock check, and one GENERATED page per shipped pack under `docs/user/packs/` — `just docs-packs` writes those from the packs themselves and the commit gate refuses one that has drifted), `docs/agent/` is archival context pulled on demand. `.work/` is the gitignored journal.",
         "Nothing is published yet. `npm link` from this checkout is flow's whole distribution, `private: true` in package.json is the catch that stops an accident reaching the registry, and `just release` computes a version from the commit headers without pushing or publishing anything.",
       ].join("\n"),
     ),
 
   layout: breadcrumb()
     .at(touch)
-    .on("language/**", "checks/**", "engine/**", "adapter/**", "packs/**")
+    .on("language/**", "checks/**", "engine/**", "adapter/**", "packs/**", "tools/**")
     .description("How the package is laid out — the pipeline layers, one domain.ts each, and the one shared file.")
     .text(
       [
         "This package is laid out by PIPELINE STAGE, not by topic:",
-        "· language/  the config grammar — sentences, packs, moments, categories, the Ctx",
-        "  contract, the load. What a config file and a pack import.",
+        "· language/  the config grammar — sentences, packs, moments, categories, the Ctx contract, the load. What a config file and a pack import.",
         "· checks/    the stock checks, as typed functions over ctx.",
         "· engine/    matching, categories, effects, the state home.",
         "· adapter/   everything that knows Claude Code — payloads, transcripts, hooks.",
-        "· packs/     the ten packs the package SHIPS, behind their own subpath export",
-        "  (`@jawache/flow/packs`). Not a pipeline stage: they are content written IN the grammar,",
-        "  which is why they sit beside the layers rather than in them. Each imports `../index.ts`",
-        "  — the public door — and nothing else in the package; nothing in the package imports",
-        "  them back.",
-        "Each layer folder holds ONE `domain.ts` plus its `domain.test.ts`, and that file is the",
-        "layer's whole pure home — there is no `pure/` folder anywhere here, and no `core/` folder",
-        "either. Both were considered and ruled out: a folder of one-file-per-topic modules is what",
-        "the old engine had, and it hid which checks were really the same check.",
-        "`glob.ts` is the ONE shared file of the PRODUCT, at the package root, because exactly one",
-        "thing is genuinely shared and one shared thing earns a name rather than a folder.",
-        "`e2e/` is the END-TO-END suites and nothing else, and it is not a pipeline stage either:",
-        "the three tests that spawn the built binary over a throwaway git repo (product · live ·",
-        "machine) plus `harness.ts`, the one road all three drive — the repo, the binary, the host's",
-        "CLAUDE_CONFIG_DIR and PATH seams. It ships with nothing (tsconfig.build.json excludes the",
-        "folder) and nothing in the package may import it. The fixture packs those suites write into",
-        "a temp repo live in `__fixtures__/`. Every OTHER test file sits beside the code it is about",
-        "and runs in milliseconds; these three take tens of seconds because they build and spawn.",
-        "The pipeline runs ONE WAY — language → checks → engine → adapter. A layer may import",
-        "backwards and never forwards; the fences are in the import-boundaries entry in",
-        "guards/house.ts, and they are why a recorded session can replay with no harness at all.",
-        "A domain file reaches the world ONLY through ctx: no node:fs, no child_process, no",
-        "process.env. eslint says so on the line, import-boundaries says so at the commit.",
+        "· packs/     the ten packs the package SHIPS, behind their own subpath export (`@jawache/flow/packs`). Not a pipeline stage: they are content written IN the grammar, which is why they sit beside the layers rather than in them. Each imports `../index.ts` — the public door — and nothing else in the package; nothing in the package imports them back.",
+        "· tools/     the code behind a justfile recipe, and nothing that ships. `pack-pages.ts` renders one page per shipped pack into `docs/user/packs/`, and `--check` refuses a page that has drifted from its pack; `domain.ts` beside it is its pure half. tsconfig.build.json excludes the folder, and nothing in the package may import it.",
+        "Each layer folder holds ONE `domain.ts` plus its `domain.test.ts`, and that file is the layer's whole pure home — there is no `pure/` folder anywhere here, and no `core/` folder either. Both were considered and ruled out: a folder of one-file-per-topic modules is what the old engine had, and it hid which checks were really the same check.",
+        "`glob.ts` is the ONE shared file of the PRODUCT, at the package root, because exactly one thing is genuinely shared and one shared thing earns a name rather than a folder.",
+        "`e2e/` is the END-TO-END suites and nothing else, and it is not a pipeline stage either: the three tests that spawn the built binary over a throwaway git repo (product · live · machine) plus `harness.ts`, the one road all three drive — the repo, the binary, the host's CLAUDE_CONFIG_DIR and PATH seams. It ships with nothing (tsconfig.build.json excludes the folder) and nothing in the package may import it. The fixture packs those suites write into a temp repo live in `__fixtures__/`. Every OTHER test file sits beside the code it is about and runs in milliseconds; these three take tens of seconds because they build and spawn.",
+        "The pipeline runs ONE WAY — language → checks → engine → adapter. A layer may import backwards and never forwards; the fences are in the import-boundaries entry in guards/house.ts, and they are why a recorded session can replay with no harness at all.",
+        "A domain file reaches the world ONLY through ctx: no node:fs, no child_process, no process.env. eslint says so on the line, import-boundaries says so at the commit.",
+      ].join("\n"),
+    ),
+
+  packAuthoring: breadcrumb()
+    .at(touch)
+    .on("packs/**")
+    .description("How a pack is written down — the doc-comment slots the pages are built from, and the no-wrapping rule.")
+    .text(
+      [
+        "You are in a SHIPPED pack — content, written in the grammar, that a repo somewhere binds without ever opening this file. What a stranger reads is not this source: it is the generated page, `docs/user/packs/<pack>.html`, rendered by `just docs-packs` from the loaded pack plus the doc comments below. Regenerate it in the same commit; the gate refuses a page that has drifted.",
+        "THREE DOC-COMMENT SLOTS, and they are the only prose on the page that does not come from the pack's own sentences:",
+        "· On `definePack` — the pack's LEAD. One paragraph saying what the pack is for, in the words somebody who has never seen this repo needs.",
+        "· On each member of the parameter interface — WHAT THE FACT IS, and why the pack cannot know it. A parameter with no doc comment is a page that asks a reader to supply something it never explains.",
+        "· On each entry's key — WHY THE ENTRY EXISTS, under the delete-it test: what goes wrong in the repo without it. MANDATORY on a breadcrumb, whose text is instructions and never explains itself; optional on a guardrail, whose refusal message usually carries its own reason, and worth writing when the message cannot say it.",
+        "Everything else stays an ordinary `//` comment: placement notes, the history of a fix, an aside to whoever edits the line next. Those never reach the page, which is what keeps the page readable.",
+        "PROSE STRINGS NEVER HAND-WRAP. A string in `.text(…)` or `.message(…)` is one line however long it is — only a model reads it, the wrap is invisible there, and on the page it arrives as a line break through the middle of a sentence. An aligned table or a bulleted list is not a wrap: every line is a complete unit and the line above it finishes. Doc comments are the other way round — a human reads those, so they wrap at the width the rest of the file uses.",
       ].join("\n"),
     ),
 
@@ -121,7 +175,7 @@ export const house = definePack("house", (repo: Terrain) => ({
         // Named folder by folder rather than swept with `**`, so the cruise never walks
         // node_modules, dist/ or the deliberately-wrong fixtures. The leading `*.ts` is the
         // package root — index.ts, flow.ts, glob.ts, errors.ts, version.ts.
-        scan: "{*.ts,language/**/*.ts,checks/**/*.ts,engine/**/*.ts,adapter/**/*.ts,packs/**/*.ts,guards/**/*.ts,e2e/**/*.ts}",
+        scan: "{*.ts,language/**/*.ts,checks/**/*.ts,engine/**/*.ts,adapter/**/*.ts,packs/**/*.ts,guards/**/*.ts,tools/**/*.ts,e2e/**/*.ts}",
         layers: {
           // THE SAME LIST the fcis rails are scoped to, handed in once by the config. This package
           // keeps no pure folder and states its pure home as a filename per pipeline layer, plus
@@ -155,6 +209,11 @@ export const house = definePack("house", (repo: Terrain) => ({
           // it. Their fence is the strictest here and it is two rules: a pack may reach the public
           // door and nothing else, and nothing may reach a pack.
           packs: ["packs/**"],
+          // THE CODE BEHIND THE RECIPES, and a layer for the same reason `guards` is one: it is a
+          // CONSUMER of the two public doors — it loads every shipped pack the way a config does —
+          // and nothing in the package may reach back into it. Without the layer these files belong
+          // to no layer at all, which is the hole the `root` entry above was added to close.
+          tools: ["tools/**"],
           // THIS REPO'S GUARD, as code. It is a CONSUMER of the public door and of nothing else —
           // the same fence a stranger's guard obeys from outside the package, which is what makes
           // this one worth having: it is the proof the door works from the outside.
@@ -209,6 +268,25 @@ export const house = definePack("house", (repo: Terrain) => ({
           { from: "engine", to: "guards", why: "the engine reads whatever config it is pointed at; importing this one would make our bindings everyone's" },
           { from: "adapter", to: "guards", why: "the adapter loads a config by path at run time — importing one would bake this repo's guard into the shipped bundle" },
           { from: "packs", to: "guards", why: "a shipped pack that imported this repo's own pack would ship it to everybody who installs flow" },
+          // THE TOOLS, both ways, and the outward half is the same claim the guard makes: the code
+          // behind a recipe reads this package through the doors a stranger reads it through, so a
+          // page it renders is a page rendered off the shipped surface rather than off our layers.
+          { from: "tools", to: "language", why: "a tool that reached the grammar's own file would be rendering a pack from a layer path, and the page would stop being what a consumer sees" },
+          { from: "tools", to: "checks", why: "the stock checks come through the public door here too — a second route to them is a second surface to keep working" },
+          { from: "tools", to: "engine", why: "a tool asks what a config SAYS; matching, effects and the state home are what happens next, and none of it belongs in a page" },
+          { from: "tools", to: "adapter", why: "nothing a recipe renders may depend on which harness is installed — the pages are the same in every repo that installs this package" },
+          { from: "tools", to: "guards", why: "the pages document what the package SHIPS; this repo's own bindings are not part of that, and importing them would put our spelling on a fleet page" },
+          // …and inward: nothing in the package imports a tool. It ships with nothing
+          // (tsconfig.build.json excludes the folder), so an import would be a bundle reaching for
+          // a file that is not in the tarball.
+          { from: "language", to: "tools", why: "the grammar cannot depend on a script that reads it" },
+          { from: "checks", to: "tools", why: "a check reads the world through ctx; a tool reads the disk directly, which is the opposite promise" },
+          { from: "engine", to: "tools", why: "the engine runs a config; rendering documentation about one is nothing it does" },
+          { from: "adapter", to: "tools", why: "the adapter is the shipped harness column, and tools/ is not in the package's files list at all" },
+          { from: "packs", to: "tools", why: "a shipped pack that imported a local script would ship a file the tarball does not carry" },
+          { from: "root", to: "tools", why: "index.ts IS the shipped surface — an import here would put a documentation generator into `@jawache/flow`" },
+          { from: "guards", to: "tools", why: "a rule fires at a gated moment and must load in milliseconds; the page generator parses every pack with the TypeScript compiler, and the guard reaches it through a recipe instead" },
+          { from: "tools", to: "e2e", why: "the end-to-end road builds temp repos and spawns binaries; a page generator needs none of it" },
           // NOTHING IMPORTS e2e/. It is test-only, it ships with nothing, and a product file that
           // reached into it would put a temp-repo builder and a binary spawner into the bundle.
           { from: "language", to: "e2e", why: "the grammar cannot depend on the suites that drive it" },
@@ -222,7 +300,7 @@ export const house = definePack("house", (repo: Terrain) => ({
       }),
     )
     .message(
-      "Import crosses a fence the wrong way (see the named check). The pipeline runs ONE WAY — language → checks → engine → adapter; packs/ sits outside it, reaching index.ts only, with nothing reaching back; guards/ is a consumer of the two public doors and nothing in the package may import it; e2e/ is test-only and nothing may import it, the package root included; and a pure `domain.ts` reaches pure code and node:path, nothing else.",
+      "Import crosses a fence the wrong way (see the named check). The pipeline runs ONE WAY — language → checks → engine → adapter; packs/ sits outside it, reaching index.ts only, with nothing reaching back; guards/ and tools/ are consumers of the two public doors and nothing in the package may import either; e2e/ is test-only and nothing may import it, the package root included; and a pure `domain.ts` reaches pure code and node:path, nothing else.",
     )
     .test({
       pass: [{ staged: ["engine/domain.ts"], world: { exec: { depcruise: { stdout: '{"summary":{"violations":[]}}' } } } }],
@@ -298,6 +376,68 @@ export const house = definePack("house", (repo: Terrain) => ({
         {
           command: 'git commit -m "feat: two at once"',
           world: { exec: { "diff HEAD -- 'flow.ts'": { stdout: '+} else if (verb === "status" || verb === "why") {' } } },
+        },
+      ],
+    }),
+
+  packPagesCurrent: guardrail()
+    .at(commit)
+    .description("The generated pack pages are regenerated in the same commit that changes a pack — drift is refused.")
+    // `changed` narrows it to the commits that could possibly have moved a page: the packs
+    // themselves, the generator, and the pages. Every other commit stands aside rather than
+    // spawning a TypeScript parse of ten files to prove nothing changed.
+    .check(execPasses({ run: "just docs-packs-check", changed: ["packs/**", "tools/**", "docs/user/packs/**"] }))
+    .message(
+      "A pack page has drifted from its pack. The pack is the source and the page is the print: run `just docs-packs` and stage what it rewrites. A page edited by hand is a claim nothing checks, which is the exact failure the pages exist to end.",
+    )
+    .test({
+      pass: [
+        // The commit that touches no pack: the gate stands aside without running anything.
+        { staged: ["README.md"] },
+        { staged: ["packs/docs.ts"], world: { exec: { "just docs-packs-check": { code: 0 } } } },
+      ],
+      block: [
+        {
+          staged: ["packs/docs.ts"],
+          world: { exec: { "just docs-packs-check": { code: 1, stdout: "docs/user/packs/docs.html has drifted from its pack" } } },
+        },
+      ],
+    }),
+
+  proseNeverHandWrapped: guardrail()
+    .at(write, commit)
+    .on("packs/**", "guards/**")
+    .description("A string in .text() or .message() is one line, however long — the wrap is invisible to the model and a break on the page.")
+    // INLINE, because the rule is one function and the function is above. A configured check would
+    // be a factory with no options, and a stock one cannot see the shape at all: the tell is not a
+    // pattern on a line, it is a line's relationship to the line before it.
+    .check((ctx) => {
+      const wrapped = handWrappedProse(ctx.file?.content ?? "");
+      return wrapped.length === 0
+        ? ctx.ok()
+        : ctx.fail(`line${wrapped.length === 1 ? "" : "s"} ${wrapped.join(", ")} continue${wrapped.length === 1 ? "s" : ""} the prose string above`);
+    })
+    .message(
+      "Hand-wrapped prose. A string in `.text(…)` or `.message(…)` stays on ONE line however long it gets: only a model reads it, so the wrap buys no reader anything, and on the generated pack page it arrives as a line break through the middle of a sentence. Join the fragments into one string. (An aligned table or a bulleted list is fine — there every line is a complete unit and the line above it finishes.)",
+    )
+    .test({
+      pass: [
+        // A list whose lines each finish: indented, and not a wrap.
+        {
+          path: "packs/x.ts",
+          content: '  .message(\n    [\n      "Effects to keep out of pure:",\n      "  clock   → new Date() (inject a `now`)",\n      "  random  → Math.random (inject an rng)",\n    ].join("\\n"),\n  )\n',
+        },
+        // A `.check(…)`'s options are not prose: one-word strings on their own lines, with no
+        // sentence anywhere near them.
+        {
+          path: "packs/x.ts",
+          content: '  .check(\n    textBan({\n      ban: [\n        "sk_live_[0-9a-z]{16,}",\n        "ghp_[0-9A-Za-z]{30,}",\n      ],\n    }),\n  )\n',
+        },
+      ],
+      block: [
+        {
+          path: "packs/x.ts",
+          content: '  .text(\n    [\n      "One page, one job: the quick start",\n      "  teaches by doing; the guide solves situations.",\n    ].join("\\n"),\n  )\n',
         },
       ],
     }),

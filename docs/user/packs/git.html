@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>The git pack — flow</title>
+<style>
+  :root{
+    --ink:#1a1a1a; --mut:#666; --line:#e2e6ea; --bg:#f7f8fa; --card:#fff; --soft:#eef1f4;
+    --parent:#2a6fb0; --stop:#b3261e; --ok:#2f8f4e; --crumb:#6d5bb0;
+    --okbg:#e9f3ec; --stopbg:#fdeceb; --crumbbg:#efeafb; --railbg:#fff8e6; --gapbg:#fdf6e3;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif}
+  main{max-width:52rem;margin:0 auto;padding:2.6rem 1.4rem 6rem}
+  a{color:var(--parent);text-decoration:none} a:hover{text-decoration:underline}
+  code{font-family:ui-monospace, Menlo, monospace;font-size:.86em;background:var(--soft);padding:.03em .32em;border-radius:4px}
+  pre{background:#1e2227;color:#e6e9ec;border-radius:10px;padding:.9rem 1.1rem;overflow-x:auto;font:.85rem/1.55 ui-monospace, Menlo, monospace;margin:.6rem 0}
+  pre code{background:none;padding:0;font-size:1em;color:inherit}
+  h1{font-size:1.7rem;font-weight:900;letter-spacing:-.02em;margin:0}
+  h1 code{font-size:.9em}
+  h2{font-size:1.25rem;font-weight:800;margin:2.2rem 0 .4rem;padding-top:1.2rem;border-top:2px solid var(--line)}
+  h3{font:700 .74rem system-ui;text-transform:uppercase;letter-spacing:.07em;color:var(--mut);margin:1.3rem 0 .3rem}
+  .scope{color:var(--mut);font-size:.9rem;margin:.35rem 0 0;font-family:ui-monospace, Menlo, monospace}
+  .lead{font-size:1.08rem;font-weight:600;color:#2c322b;margin:1.2rem 0 1rem;line-height:1.55}
+  .lead.gap{font-weight:400;color:var(--mut);font-style:italic}
+  table{border-collapse:collapse;width:100%;margin:.6rem 0;font-size:.92rem;background:var(--card)}
+  th,td{text-align:left;padding:.5rem .6rem;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);background:var(--soft)}
+  .badge{display:inline-block;font:700 .68rem ui-monospace, Menlo, monospace;padding:.12rem .5rem;border-radius:999px;vertical-align:middle;margin-left:.4rem;letter-spacing:.02em}
+  .badge.rail{background:var(--railbg);color:#8a6d00;border:1px solid #e6cf8a}
+  .badge.crumb{background:var(--crumbbg);color:var(--crumb);border:1px solid #cfc3ea}
+  .entry{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1.1rem 1.4rem 1.2rem;margin:1rem 0;scroll-margin-top:1rem}
+  .entry h2{border:0;margin:0;padding:0;font-size:1.15rem}
+  .entry .desc{margin:.3rem 0 0;color:#39404a}
+  .entry .facts{display:grid;grid-template-columns:8.5rem 1fr;gap:.25rem .8rem;font-size:.9rem;margin:.7rem 0 .2rem}
+  .entry .facts dt{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;padding-top:.2rem}
+  .entry .facts dd{margin:0}
+  .entry .facts pre{margin:.2rem 0}
+  .why{border-left:4px solid var(--parent);background:#eef4fa;padding:.6rem .9rem;border-radius:0 8px 8px 0;margin:.8rem 0;font-size:.95rem}
+  .why.gap{border-left-color:#c2a33a;background:var(--gapbg);color:#6b5a1e;font-style:italic}
+  .why p:first-child{margin-top:0} .why p:last-child{margin-bottom:0}
+  .says{background:#fbfbf7;border:1px dashed #cfc7a8;border-radius:8px;padding:.7rem 1rem;margin:.5rem 0;font-size:.93rem;white-space:pre-wrap;font-family:ui-monospace, Menlo, monospace;line-height:1.55}
+  .cases{display:grid;grid-template-columns:1fr 1fr;gap:.7rem;margin:.4rem 0}
+  .case{border-radius:8px;padding:.6rem .8rem;font-size:.88rem}
+  .case.ok{background:var(--okbg);border:1px solid #bcd9c5}
+  .case.stop{background:var(--stopbg);border:1px solid #f0bfbb}
+  .case b{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.25rem}
+  .case.ok b{color:var(--ok)} .case.stop b{color:var(--stop)}
+  .case ul{margin:0;padding-left:1.1rem} .case li{margin:.15rem 0}
+  .toc{margin:.5rem 0 0;padding:0;list-style:none}
+  .toc li{padding:.35rem 0;border-bottom:1px solid var(--line);display:flex;gap:.6rem;align-items:baseline;flex-wrap:wrap}
+  .toc li .id{font-family:ui-monospace, Menlo, monospace;font-weight:700;min-width:15rem}
+  .toc li .d{color:#39404a;font-size:.92rem;flex:1}
+  .gen{background:var(--soft);border-radius:8px;padding:.5rem .9rem;font-size:.82rem;color:var(--mut);margin:1.2rem 0 0}
+  .none{color:var(--mut);font-style:italic}
+  footer{margin-top:3rem;color:var(--mut);font-size:.85rem;border-top:1px solid var(--line);padding-top:1rem}
+  @media (max-width:640px){.cases{grid-template-columns:1fr}.entry .facts{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main>
+  <p class="scope"><a href="./index.html">flow packs</a> › git</p>
+  <h1>The <code>git</code> pack</h1>
+  <p class="scope">7 guardrails · 1 breadcrumb · fires at: session · command · write · commit · takes 1 parameter</p>
+
+  <p class="lead gap">This pack has no lead. A doc comment on <code>definePack</code> is what says, in a paragraph, what the pack is for.</p>
+
+  <p class="gen">Generated from <code>packs/git.ts</code> by <code>just docs-packs</code>. Edit the pack, not this page; the commit gate refuses a page that has drifted from its pack.</p>
+
+  <h2 id="binding">Binding it</h2>
+  <p>The pack takes 1 parameter — facts about the repo it cannot know:</p>
+  <table>
+    <thead><tr><th>Parameter</th><th>Type</th><th>What it is</th></tr></thead>
+    <tbody>
+      <tr><td><code>release</code></td><td><code>string</code></td><td><p>The recipe that computes the version from the history, writes the changelog, stamps the
+version file and tags — <code>just release</code> here, <code>npm run release</code> elsewhere.</p>
+<p>MANDATORY rather than defaulted, by the same rule tdd's suite recipe follows: a default is a
+rule that names the wrong command in every repo that spells it differently, and it names it in
+the one sentence a person reads at the moment they are blocked.</p></td></tr>
+    </tbody>
+  </table>
+  <p>Bound with a stranger's values, this is the whole binding — and it is what every glob, recipe and message on this page was rendered with:</p>
+<pre><code>import { defineConfig, pack } from &quot;@jawache/flow&quot;;
+import { git } from &quot;@jawache/flow/packs&quot;;
+
+export default defineConfig([pack(git, { release: &quot;./ci.sh release&quot; })]);</code></pre>
+  <p>Any entry below can be turned off in the config, as a committed change visible in review: <code>override(git.orientation).disabled("why")</code>.</p>
+
+  <h2 id="entries">Entries</h2>
+  <ul class="toc">
+    <li><span class="id"><a href="#orientation">git.orientation</a></span><span class="badge crumb">breadcrumb</span><span class="d">The whole commit contract — how commits are written here, how versions are computed, what is blocked.</span></li>
+    <li><span class="id"><a href="#noAiAttributionInCommits">git.noAiAttributionInCommits</a></span><span class="badge rail">guardrail</span><span class="d">Blocks Claude/Anthropic attribution in commits, PRs and issues.</span></li>
+    <li><span class="id"><a href="#noGitDiscard">git.noGitDiscard</a></span><span class="badge rail">guardrail</span><span class="d">Blocks a git command that would wipe uncommitted work — checkout/restore/reset --hard/clean -f. No bypass; use git stash.</span></li>
+    <li><span class="id"><a href="#noForcePush">git.noForcePush</a></span><span class="badge rail">guardrail</span><span class="d">Blocks a force-push — rewriting pushed history is the one loss a stash cannot undo.</span></li>
+    <li><span class="id"><a href="#conventionalCommitFormat">git.conventionalCommitFormat</a></span><span class="badge rail">guardrail</span><span class="d">The commit header must speak Conventional Commits v1.0.0 (checked before git commit runs).</span></li>
+    <li><span class="id"><a href="#noShellSubstitutionInProse">git.noShellSubstitutionInProse</a></span><span class="badge rail">guardrail</span><span class="d">A backtick inside a double-quoted argument of a commit or a PR body is live command substitution, not Markdown.</span></li>
+    <li><span class="id"><a href="#node.versionIsSemver">git.node.versionIsSemver</a></span><span class="badge rail">guardrail</span><span class="d">package.json version is valid SemVer 2.0.0 — the number the computed release writes. See https://semver.org/</span></li>
+    <li><span class="id"><a href="#node.noHandEditedVersion">git.node.noHandEditedVersion</a></span><span class="badge rail">guardrail</span><span class="d">The version field is written by the release commit, never by hand.</span></li>
+  </ul>
+
+  <section class="entry" id="orientation">
+    <h2><code>git.orientation</code><span class="badge crumb">breadcrumb</span></h2>
+    <p class="desc">The whole commit contract — how commits are written here, how versions are computed, what is blocked.</p>
+    <dl class="facts">
+      <dt>Shown when</dt><dd>once, at the start of a session</dd>
+      <dt>Watches</dt><dd>—</dd>
+      <dt>Categories</dt><dd>every session</dd>
+    </dl>
+    <h3>Why it exists</h3>
+    <div class="why gap"><p>Not stated. A breadcrumb owes a doc comment on its key saying what goes wrong in the repo without it.</p></div>
+    <h3>What the agent reads</h3>
+    <div class="says">Commits, PRs and issues carry NO Claude/Anthropic attribution — no Co-Authored-By line, no &quot;Generated with Claude&quot;, no mention. Author them as your own.
+Commit headers speak Conventional Commits — `type(scope)!: description`. The TYPE is your judgement: `fix` patches behaviour, `feat` adds it, `refactor` changes neither (and must not change test expectations); a `!` or a `BREAKING CHANGE:` footer drives the SemVer major. The grammar is enforced; the choice is yours.
+The version number is computed from this history at release (`./ci.sh release`) — never hand-edit a version field or a changelog.
+A `git checkout` / `git restore` / `reset --hard` / `clean -f` that would silently wipe uncommitted work is blocked outright — there is no bypass token. Use `git stash` instead; it is recoverable.</div>
+
+  </section>
+
+  <section class="entry" id="noAiAttributionInCommits">
+    <h2><code>git.noAiAttributionInCommits</code><span class="badge rail">guardrail</span></h2>
+    <p class="desc">Blocks Claude/Anthropic attribution in commits, PRs and issues.</p>
+    <dl class="facts">
+      <dt>Refuses at</dt><dd>a shell command is about to run</dd>
+      <dt>Watches</dt><dd>—</dd>
+      <dt>Categories</dt><dd>every session</dd>
+      <dt>Check</dt><dd><a href="../checks/ban-commands.html"><code>banCommands</code></a><pre><code>banCommands({
+        ban: [
+          `git commit[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(${VENDOR}|[Aa]nthropic)`,
+          `git commit[\\s\\S]*[Gg]enerated with[\\s\\S]*${VENDOR}`,
+          `git commit[\\s\\S]*(${SITE}|🤖 Generated)`,
+          `gh (pr|issue)[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(${VENDOR}|[Aa]nthropic)`,
+          `gh (pr|issue)[\\s\\S]*(${SITE}|🤖 Generated)`,
+        ],
+      })</code></pre></dd>
+    </dl>
+    <h3>What the agent reads when refused</h3>
+    <div class="says">Commit / PR / issue body contains Claude or Anthropic attribution. Remove it (the Co-Authored-By line, the 'Generated with Claude' line, any Claude/Anthropic mention) and retry.</div>
+    <h3>Proved by</h3>
+<div class="cases"><div class="case ok"><b>passes</b><ul><li>running <code>git commit -m &quot;fix(auth): renew the session&quot;</code></li></ul></div><div class="case stop"><b>blocks</b><ul><li>running <code>git commit -m &quot;fix(auth): renew the session
+
+Co-Authored-By: Claude &lt;noreply@anthropic.com&gt;&quot;</code></li><li>running <code>gh pr create --body &quot;Co-Authored-By: Claude&quot;</code></li></ul></div></div>
+
+  </section>
+
+  <section class="entry" id="noGitDiscard">
+    <h2><code>git.noGitDiscard</code><span class="badge rail">guardrail</span></h2>
+    <p class="desc">Blocks a git command that would wipe uncommitted work — checkout/restore/reset --hard/clean -f. No bypass; use git stash.</p>
+    <dl class="facts">
+      <dt>Refuses at</dt><dd>a shell command is about to run</dd>
+      <dt>Watches</dt><dd>—</dd>
+      <dt>Categories</dt><dd>every session</dd>
+      <dt>Check</dt><dd><a href="../checks/no-git-discard.html"><code>noGitDiscard</code></a><pre><code>noGitDiscard({})</code></pre></dd>
+    </dl>
+    <h3>What the agent reads when refused</h3>
+    <div class="says">This git command would discard uncommitted edits with no undo. Use `git stash` instead — it's recoverable. There is no opt-out token; disabling this entry in flow.config.ts is the visible route.</div>
+    <h3>Proved by</h3>
+<div class="cases"><div class="case ok"><b>passes</b><ul><li>running <code>git checkout main</code></li><li>running <code>git status</code></li><li>running <code>git restore --staged src/x.ts</code></li><li>running <code>git checkout -- src/x.ts</code></li><li>running <code>git checkout -- src/x.ts</code></li><li>running <code>git reset --soft HEAD~1</code></li><li>running <code>git clean -n</code></li></ul></div><div class="case stop"><b>blocks</b><ul><li>running <code>git checkout -- src/x.ts</code></li><li>running <code>git restore --staged --worktree src/x.ts</code></li><li>running <code>git clean -fd</code></li><li>running <code>git clean --force src/</code></li><li>running <code>git reset --hard</code></li><li>running <code>git status
+git checkout -- a.ts</code></li><li>running <code>git -C ../other checkout -- src/x.ts</code></li></ul></div></div>
+
+  </section>
+
+  <section class="entry" id="noForcePush">
+    <h2><code>git.noForcePush</code><span class="badge rail">guardrail</span></h2>
+    <p class="desc">Blocks a force-push — rewriting pushed history is the one loss a stash cannot undo.</p>
+    <dl class="facts">
+      <dt>Refuses at</dt><dd>a shell command is about to run</dd>
+      <dt>Watches</dt><dd>—</dd>
+      <dt>Categories</dt><dd>every session</dd>
+      <dt>Check</dt><dd><a href="../checks/ban-commands.html"><code>banCommands</code></a><pre><code>banCommands({
+        ban: [
+          &quot;(?:^|[\\n;&amp;|(]\\s*)\\s*git\\s+push[^\\n]*\\s(--force|-f)(\\s|$)&quot;,
+          &quot;(?:^|[\\n;&amp;|(]\\s*)\\s*git\\s+push[^\\n]*--force-with-lease&quot;,
+        ],
+      })</code></pre></dd>
+    </dl>
+    <h3>What the agent reads when refused</h3>
+    <div class="says">Force-push rewrites history that other clones (and every open PR) already have — the one loss no stash can undo. Push a new commit that corrects the old one. A repo whose workflow genuinely rewrites a scratch remote disables this entry in flow.config.ts, visibly.</div>
+    <h3>Proved by</h3>
+<div class="cases"><div class="case ok"><b>passes</b><ul><li>running <code>git push origin main</code></li><li>running <code>cat &gt; notes.md &lt;&lt;'EOF'
+never run git push --force here
+EOF</code></li></ul></div><div class="case stop"><b>blocks</b><ul><li>running <code>git push --force origin main</code></li><li>running <code>git push -f</code></li><li>running <code>git push --force-with-lease origin main</code></li><li>running <code>git status &amp;&amp; git push --force origin main</code></li></ul></div></div>
+
+  </section>
+
+  <section class="entry" id="conventionalCommitFormat">
+    <h2><code>git.conventionalCommitFormat</code><span class="badge rail">guardrail</span></h2>
+    <p class="desc">The commit header must speak Conventional Commits v1.0.0 (checked before git commit runs).</p>
+    <dl class="facts">
+      <dt>Refuses at</dt><dd>a shell command is about to run</dd>
+      <dt>Watches</dt><dd>—</dd>
+      <dt>Categories</dt><dd>every session</dd>
+      <dt>Check</dt><dd><a href="../checks/conventional-commit.html"><code>conventionalCommit</code></a><pre><code>conventionalCommit({ types: TYPES })</code></pre></dd>
+    </dl>
+    <h3>What the agent reads when refused</h3>
+    <div class="says">Commit header must match Conventional Commits v1.0.0: type(scope)!: description — e.g. `fix(auth): renew session on token refresh`.</div>
+    <h3>Proved by</h3>
+<div class="cases"><div class="case ok"><b>passes</b><ul><li>running <code>git commit -m &quot;fix(auth): renew session on token refresh&quot;</code></li><li>running <code>git status</code></li><li>running <code>git commit -m &quot;feat(cli)!: the config grammar is closed&quot;</code></li></ul></div><div class="case stop"><b>blocks</b><ul><li>running <code>git commit -m &quot;fixed the auth thing&quot;</code></li><li>running <code>git commit -m &quot;feat a thing&quot;</code></li><li>running <code>git commit -m 'tidied things up
+
+feat: the thing I actually did'</code></li></ul></div></div>
+
+  </section>
+
+  <section class="entry" id="noShellSubstitutionInProse">
+    <h2><code>git.noShellSubstitutionInProse</code><span class="badge rail">guardrail</span></h2>
+    <p class="desc">A backtick inside a double-quoted argument of a commit or a PR body is live command substitution, not Markdown.</p>
+    <dl class="facts">
+      <dt>Refuses at</dt><dd>a shell command is about to run</dd>
+      <dt>Watches</dt><dd>—</dd>
+      <dt>Categories</dt><dd>every session</dd>
+      <dt>Check</dt><dd><a href="../checks/ban-commands.html"><code>banCommands</code></a><pre><code>banCommands({ ban: [substitutionInProse([&quot;git\\s+commit\\b[^\\n]*?-{1,2}[a-zA-Z]*m&quot;, &quot;gh\\s+(?:pr|issue)\\b&quot;])] })</code></pre></dd>
+    </dl>
+    <h3>What the agent reads when refused</h3>
+    <div class="says">You are recording prose through a shell command, and a backtick inside a DOUBLE-quoted argument is not Markdown — the shell RUNS it and splices its output into your text before the command ever sees it.
+On an append-only record there is no undo: no amend, no redact. And once the binary has argv the splice has already happened, so this is the only moment it can be caught.
+Fix: SINGLE-quote the argument (backticks are literal there), or feed the prose on stdin with a QUOTED heredoc — `git commit -F -` plus `&lt;&lt;'EOF'`, which this rule treats as safe.
+ALREADY single-quoted and still blocked? Then your PROSE carries an unbalanced double quote before the backtick, and the matcher cannot tell that quote from a real open argument. Nothing would splice — this one is the rule's cost, not your mistake. Balance the quote, drop it, or use the heredoc; do not go back to double quotes to make it pass.
+Measured four times. A `work plan decision` whose double-quoted text carried backticks around a command name executed it and spliced a whole task-list dump into the Decision Log. A justfile @echo with backticks ran `npm unlink`, silently undoing the link the message was announcing.</div>
+    <h3>Proved by</h3>
+<div class="cases"><div class="case ok"><b>passes</b><ul><li>running <code>git commit -F - &lt;&lt;'EOF'
+fix: a </code>thing<code>
+EOF</code></li><li>running <code>git commit -m 'fix: run </code>just test<code> first'</code></li></ul></div><div class="case stop"><b>blocks</b><ul><li>running <code>git commit -m &quot;fix: run </code>just test<code> first&quot;</code></li><li>running <code>gh pr create --body &quot;see </code>just gate<code>&quot;</code></li></ul></div></div>
+
+  </section>
+
+  <section class="entry" id="node.versionIsSemver">
+    <h2><code>git.node.versionIsSemver</code><span class="badge rail">guardrail</span></h2>
+    <p class="desc">package.json version is valid SemVer 2.0.0 — the number the computed release writes. See https://semver.org/</p>
+    <dl class="facts">
+      <dt>Refuses at</dt><dd>a file is written or edited · the commit gate, over the staged set</dd>
+      <dt>Watches</dt><dd><code>package.json</code></dd>
+      <dt>Categories</dt><dd>every session</dd>
+      <dt>Check</dt><dd><a href="../checks/json-invariant.html"><code>jsonInvariant</code></a><pre><code>jsonInvariant({
+          assert: [
+            {
+              path: &quot;version&quot;,
+              matches: &quot;^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$&quot;,
+            },
+          ],
+        })</code></pre></dd>
+    </dl>
+    <h3>What the agent reads when refused</h3>
+    <div class="says">package.json `version` must be valid SemVer 2.0.0 (MAJOR.MINOR.PATCH[-prerelease][+build]).</div>
+    <h3>Proved by</h3>
+<div class="cases"><div class="case ok"><b>passes</b><ul><li>writing <code>package.json</code> — <code>{&quot;version&quot;:&quot;1.2.3&quot;}</code></li></ul></div><div class="case stop"><b>blocks</b><ul><li>writing <code>package.json</code> — <code>{&quot;version&quot;:&quot;1.2&quot;}</code></li></ul></div></div>
+
+  </section>
+
+  <section class="entry" id="node.noHandEditedVersion">
+    <h2><code>git.node.noHandEditedVersion</code><span class="badge rail">guardrail</span></h2>
+    <p class="desc">The version field is written by the release commit, never by hand.</p>
+    <dl class="facts">
+      <dt>Refuses at</dt><dd>a shell command is about to run</dd>
+      <dt>Watches</dt><dd>—</dd>
+      <dt>Categories</dt><dd>every session</dd>
+      <dt>Check</dt><dd><a href="../checks/no-hand-edited-version.html"><code>noHandEditedVersion</code></a><pre><code>noHandEditedVersion({ versionFile: &quot;package.json&quot;, recipe: repo.release })</code></pre></dd>
+    </dl>
+    <h3>What the agent reads when refused</h3>
+    <div class="says">The version is computed from the commit history at release time — run `./ci.sh release`, which writes the version, the changelog and the tag together. A real release commit (`release:` / `chore(release):`) passes.</div>
+    <h3>Proved by</h3>
+<div class="cases"><div class="case ok"><b>passes</b><ul><li>running <code>git commit -m &quot;chore(release): 1.2.3&quot;</code></li><li>running <code>git commit -m &quot;release: 1.2.3&quot;</code></li><li>running <code>git commit -m &quot;release(flow)!: 2.0.0&quot;</code></li><li>running <code>git commit -m &quot;chore: add a field&quot;</code></li><li>running <code>git commit -m &quot;fix: a thing&quot;</code></li><li>running <code>git commit -m &quot;Release: 1.2.3&quot;</code></li><li>running <code>git commit -m &quot;fix: a thing&quot;</code></li></ul></div><div class="case stop"><b>blocks</b><ul><li>running <code>git commit -m &quot;fix: a thing&quot;</code></li><li>running <code>git commit -m &quot;chore: tidy the readme&quot;</code></li><li>running <code>git commit -m 'feat: a thing
+
+release: 1.2.3'</code></li><li>running <code>git commit -m &quot;chore: add the field&quot;</code></li><li>running <code>git commit -m &quot;fix: a thing&quot;</code></li><li>running <code>git -C ../other commit -m &quot;fix: a thing&quot;</code></li></ul></div></div>
+
+  </section>
+
+  <h2 id="source">Where each part of this page comes from</h2>
+  <table>
+    <thead><tr><th>On the page</th><th>In the pack</th><th>Read how</th></tr></thead>
+    <tbody>
+      <tr><td>Lead, and the parameters table</td><td>The doc comment on <code>definePack</code>, and the doc comment on each member of the parameter interface</td><td>JSDoc, read with the TypeScript compiler API</td></tr>
+      <tr><td>Entry id, kind, moments, globs, categories, description</td><td>The sentence — <code>.at()</code> <code>.on()</code> <code>.description()</code></td><td>Loaded, the same data the engine runs</td></tr>
+      <tr><td>Why it exists</td><td>The doc comment on the entry's key — mandatory on a breadcrumb, optional on a guardrail whose message already carries its reason</td><td>JSDoc</td></tr>
+      <tr><td>What the agent reads</td><td><code>.text()</code> or <code>.message()</code>, verbatim</td><td>Loaded</td></tr>
+      <tr><td>Check and its settings</td><td><code>.check(…)</code>'s argument, verbatim</td><td>Source text, so the settings are the rule's own and not a paraphrase</td></tr>
+      <tr><td>Proved by</td><td><code>.test({ pass, block })</code></td><td>Loaded</td></tr>
+    </tbody>
+  </table>
+
+  <footer>flow docs · <a href="./index.html">the packs</a> · <code>git</code> · generated page, do not edit</footer>
+</main>
+</body>
+</html>

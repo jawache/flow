@@ -32,18 +32,10 @@ export const docs = definePack("docs", {
     .text(
       [
         "The user docs have a ruled style — hold it:",
-        "· One page, one job (the Diátaxis framework, https://diataxis.fr): the quick start",
-        "  teaches by doing (explanation is linked, never inlined); the guide solves",
-        "  situations; reference pages state facts for lookup, no narrative.",
-        "· Language (per the Google developer style guide,",
-        "  https://developers.google.com/style): second person, present tense, active voice.",
-        "  Define a term on first use or do not use it. Spend words in proportion to",
-        "  difficulty — one sentence for the simple thing, the full walkthrough for the hard",
-        "  one. No \"simply\", no filler.",
-        "· Code examples are TypeScript, formatted as the repo formats it — a config example is",
-        "  copied from a file that compiles, never typed into the page.",
-        "· Every claim and printed output is captured from the shipped binary, never",
-        "  paraphrased — re-run the example before you change its text.",
+        "· One page, one job (the Diátaxis framework, https://diataxis.fr): the quick start teaches by doing (explanation is linked, never inlined); the guide solves situations; reference pages state facts for lookup, no narrative.",
+        "· Language (per the Google developer style guide, https://developers.google.com/style): second person, present tense, active voice. Define a term on first use or do not use it. Spend words in proportion to difficulty — one sentence for the simple thing, the full walkthrough for the hard one. No \"simply\", no filler.",
+        "· Code examples are TypeScript, formatted as the repo formats it — a config example is copied from a file that compiles, never typed into the page.",
+        "· Every claim and printed output is captured from the shipped binary, never paraphrased — re-run the example before you change its text.",
       ].join("\n"),
     ),
 

@@ -129,8 +129,49 @@ export default defineConfig([
   replaces the pack's whole value, and its reason prints in <code>flow status</code>, so the
   divergence is visible.</p>
 
+  <h2>Writing the pack down — the three doc-comment slots</h2>
+
+  <p>A pack file is not a document. The sentence spreads a rule over <code>.at()</code>,
+  <code>.on()</code>, <code>.check()</code>, <code>.message()</code> and <code>.test()</code>, so
+  the way a pack is <em>read</em> is its generated page — one per pack, under
+  <a href="./packs/index.html">docs/user/packs/</a>, written by <code>just docs-packs</code>. Every
+  fact on that page is loaded from the pack itself. Three things are not loadable, and they are
+  doc comments you write:</p>
+
+  <table>
+    <thead><tr><th>Doc comment on</th><th>Says</th><th>Required</th></tr></thead>
+    <tbody>
+      <tr><td><code>definePack</code></td><td>The pack's <strong>lead</strong> — one paragraph on what the pack is for, in the words someone who has never seen your repo needs.</td><td>always</td></tr>
+      <tr><td>each member of the parameter interface</td><td>What the fact is, and why the pack cannot know it.</td><td>always</td></tr>
+      <tr><td>each entry's key</td><td><strong>Why the entry exists</strong>, under the delete-it test: what goes wrong in the repo without it.</td><td>every breadcrumb; a guardrail only when its refusal message cannot carry the reason</td></tr>
+    </tbody>
+  </table>
+
+  <p>Everything else stays an ordinary <code>//</code> comment — placement notes, the history of a
+  fix, an aside to the next editor. Those never reach the page, which is what keeps the page
+  readable.</p>
+
+  <h2>Prose strings never wrap</h2>
+
+  <p>A string in <code>.text(…)</code> or <code>.message(…)</code> stays on <strong>one
+  line</strong> however long it gets. Only a model reads it, so the wrap buys no reader anything,
+  and on the page it arrives as a line break through the middle of a sentence. An aligned table or
+  a bulleted list is not a wrap — there every line is a complete unit, and the line above it
+  finishes.</p>
+
+<pre><code>// wrapped to fit an editor — the page shows the break, the model sees a newline
+"· One page, one job: the quick start",
+"  teaches by doing; the guide solves situations.",
+
+// one line, however long
+"· One page, one job: the quick start teaches by doing; the guide solves situations.",</code></pre>
+
+  <p>Doc comments are the other way round: a human reads those, so they wrap at the width the rest
+  of the file uses.</p>
+
   <footer>docs/user/03 · Verified against the shipped binary. The built-ins to reach for first:
-  the <a href="./index.html#checks">stock checks</a>.</footer>
+  the <a href="./index.html#checks">stock checks</a>; the ten shipped packs, one page each:
+  <a href="./packs/index.html">the packs</a>.</footer>
 </main>
 </body>
 </html>

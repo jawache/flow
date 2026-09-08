@@ -36,7 +36,7 @@ typecheck:
 
 [doc("Lint every TypeScript surface — the pipeline layers, the packs, this repo's own guard and the two configs — with the fleet's shared eslint base (typescript-eslint strictTypeChecked + eslint-plugin-n). Type-aware: it sees what tsc alone cannot.")]
 lint:
-    npx eslint adapter checks e2e engine language packs guards *.ts
+    npx eslint adapter checks e2e engine language packs guards tools *.ts
 
 [doc("The whole unit suite: the grammar's pure model, the compiler-refusal matrix, the engine, the adapter driven through the built binary, and the machine test over every shipped pack.")]
 test:
@@ -56,6 +56,16 @@ test-packs:
     # FLOW_MACHINE_REPORT is what makes it PRINT its report: the file is in the suite, so
     # `just test` and the commit gate run it too, and they want the exit code rather than the page.
     FLOW_MACHINE_REPORT=1 npx vitest run e2e/machine.test.ts
+
+[doc("Render one page per shipped pack into docs/user/packs/ — the surface a pack is READ on. Each page is the LOADED pack (ids, moments, globs, the message or text verbatim, the check's settings as written, both sides of every case) plus the doc comments the source carries (the pack's lead, its parameters, why each entry exists). Run it after any edit under packs/ and stage what it rewrites.")]
+docs-packs:
+    # No build step and no binary: the generator imports the packs as SOURCE and loads them through
+    # the same `loadConfig` the engine calls, so a page is never one rebuild behind the pack it prints.
+    node tools/pack-pages.ts
+
+[doc("THE DRIFT GATE — regenerate every pack page into memory and compare it with the one on disk. Green when they match; names the stale page and exits non-zero when they do not. This is what the commit gate runs, and it writes no file.")]
+docs-packs-check:
+    node tools/pack-pages.ts --check
 
 [doc("Coverage gate for the pure home — one `domain.ts` per pipeline layer plus glob.ts, judged against the threshold in vitest.config.ts.")]
 test-coverage:
