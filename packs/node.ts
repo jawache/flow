@@ -5,6 +5,7 @@ import { breadcrumb, command, commit, commitReason, defineCheck, definePack, gua
 // ── node: the lockfile moves with the dependency, not with the file ──────────
 
 const DEP_BLOCKS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"] as const;
+/** Every lockfile spelling npm, pnpm, bun and yarn write. The breadcrumb and the gate read one list. */
 const LOCKFILES = ["package-lock.json", "pnpm-lock.yaml", "bun.lock", "bun.lockb", "yarn.lock"];
 
 /**
@@ -74,7 +75,7 @@ export const node = definePack("node", {
    */
   dependencies: breadcrumb()
     .at(touch)
-    .on("package.json", "package-lock.json", "pnpm-lock.yaml")
+    .on("package.json", ...LOCKFILES)
     .description("When to reach for a package, how to vet it, and what a commit that adds one owes.")
     .text(
       [
@@ -97,7 +98,7 @@ export const node = definePack("node", {
     .description("A commit that moves package.json must record why, and what else was checked.")
     .check(commitReason({ whenChanged: ["package.json"], token: "new-dep" }))
     .message(
-      "This commit moves package.json with no reason recorded. A dependency is a supply-chain surface — put `new-dep: <name> — <why, and what else was checked>` on a line of its own in the commit message. Doing it is fine; doing it silently is not, and the verifier reads that line at the next phase boundary.",
+      "This commit moves package.json with no reason recorded. A dependency is a supply-chain surface — put `new-dep: <name> — <why, and what else was checked>` on a line of its own in the commit message. Doing it is fine; doing it silently is not.",
     )
     .test({
       pass: [

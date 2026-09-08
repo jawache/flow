@@ -101,7 +101,7 @@ repo already has.</p>
     <h2><code>node.dependencies</code><span class="badge crumb">breadcrumb</span></h2>
     <p class="desc">When to reach for a package, how to vet it, and what a commit that adds one owes.</p>
     <p class="fact"><b>Shown when</b> the first time in a session a file it watches is touched</p>
-    <p class="fact"><b>Watches</b> <code>package.json</code> · <code>package-lock.json</code> · <code>pnpm-lock.yaml</code></p>
+    <p class="fact"><b>Watches</b> <code>package.json</code> · <code>package-lock.json</code> · <code>pnpm-lock.yaml</code> · <code>bun.lock</code> · <code>bun.lockb</code> · <code>yarn.lock</code></p>
     <p class="fact"><b>Categories</b> every session</p>
     <h3>Why it exists</h3>
     <div class="why"><p>Without it, the reflex is to hand-roll rather than to look, and a repo accumulates private
@@ -131,7 +131,7 @@ Pin the version; the lockfile change ships in the SAME commit.</div>
     <div class="why"><p>Without it, a dependency arrives with no record of what else was considered, and the next
 person to ask &quot;why do we depend on this&quot; has only the package name to go on.</p></div>
     <h3>What the agent reads when refused</h3>
-    <div class="says">This commit moves package.json with no reason recorded. A dependency is a supply-chain surface — put `new-dep: &lt;name&gt; — &lt;why, and what else was checked&gt;` on a line of its own in the commit message. Doing it is fine; doing it silently is not, and the verifier reads that line at the next phase boundary.</div>
+    <div class="says">This commit moves package.json with no reason recorded. A dependency is a supply-chain surface — put `new-dep: &lt;name&gt; — &lt;why, and what else was checked&gt;` on a line of its own in the commit message. Doing it is fine; doing it silently is not.</div>
     <h3>Proved by</h3>
 <div class="cases"><div class="case ok"><b>passes</b><ul><li>running <code>git commit -m 'feat: x
 
