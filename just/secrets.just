@@ -19,8 +19,12 @@ dx env +cmd:
 env-encrypt:
     #!/usr/bin/env bash
     set -euo pipefail
+    # `if`, NOT `[ -f "$f" ] && …`. Under `set -e` the test IS the last command of the loop body,
+    # so a missing final file — and .env.staging is missing in most repos — makes the whole recipe
+    # exit 1 having done its work. The `echo` below hid it here; a repo copying the seam without
+    # one got a red recipe for no reason.
     for f in .env .env.development.local .env.staging .env.production; do
-      [ -f "$f" ] && dotenvx encrypt -f "$f" -ek 'PUBLIC_*'
+      if [ -f "$f" ]; then dotenvx encrypt -f "$f" -ek 'PUBLIC_*'; fi
     done
     echo "sealed. Re-run after editing values; quote # / $ / space values with SINGLE quotes or they truncate."
 
