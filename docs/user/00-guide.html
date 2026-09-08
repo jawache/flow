@@ -137,37 +137,48 @@ flow test            # do the rules do what they claim? every rule's own cases, 
   <h2 id="demo">3 · The demo config, read line by line</h2>
 
   <p>Open the <code>flow.config.ts</code> that <code>flow init</code> wrote. It is ordinary code,
-  and it is the whole guard — a breadcrumb and three guardrails:</p>
+  and it is the whole guard. It binds two packs: <code>flow</code>, flow's own self-protection, which
+  brings the orientation note, the nudge when you edit the guard and the refusal to delete it; and a
+  <code>demo</code> pack of three guardrails written out in front of you:</p>
 
-<pre><code>import {
-  breadcrumb, command, commit, defineCategory, defineConfig, definePack, guardrail, pack, session,
-} from "@jawache/flow";
+<pre><code>// flow.config.ts — this repo's whole guard, and the only file that turns anything on.
+//
+// A rule not reachable from here does not run. Everything below is ordinary code: a pack is a
+// module, a check is a function of its ctx, and a category is a name with its recognizer aboard.
+// Nothing defaults — an absent key is absent — so a mistake fails in your editor, not at 3am.
+//
+//   flow status   what is bound, at which moments, and what is not wired yet
+//   flow test     every rule's own cases, run
+
+import { command, commit, defineCategory, defineConfig, definePack, guardrail, pack } from "@jawache/flow";
+import { flow } from "@jawache/flow/packs";
 
 // A category is a name and the HOST-WRITTEN evidence that recognises it — never a claim a session
-// made about itself. "the harness wrote a sidecar for you" is what a spawned subagent is.
-const subagent = defineCategory("subagent", (facts) => facts.subagent);
+// made about itself. This one is "the harness wrote a sidecar for you", which is what a spawned
+// subagent is and a chat is not.
+const subagent = defineCategory("subagent", (facts) =&gt; facts.subagent);
 
-// Spelled in pieces on purpose: written whole it would appear in this file, and the gate below
+// Spelled in pieces on purpose. Written whole it would appear in this very file, and the gate below
 // greps staged content — so the demo would refuse the commit that added it.
 const MARKER = ["DO", "NOT", "COMMIT"].join("-");
 
 export const demo = definePack("demo", {
-  orientation: breadcrumb()
-    .at(session)
-    .text("This repo is guarded by flow. The rules are in flow.config.ts — read them rather than routing around them."),
-
   noForcePush: guardrail()
     .at(command)
-    .check((ctx) =>
+    .check((ctx) =&gt;
       /git\s+push\b[^\n]*(--force|(^|\s)-f(\s|$))/.test(ctx.command ?? "")
         ? ctx.fail("rewrites history other clones already have")
-        : ctx.ok())
+        : ctx.ok(),
+    )
     .message("Force-pushing rewrites history everyone else has. Push a correcting commit, or ask first.")
     .test({ pass: ["git push origin main"], block: ["git push --force origin main"] }),
 
+  // No .on() here, and that is the sentence rather than an omission: an entry that names no paths is
+  // about THE COMMIT, so it is asked once and handed the whole staged set. (Name paths with .on()
+  // and the gate asks it once per staged file in scope instead, handing over each file.)
   noMarkedFiles: guardrail()
     .at(commit)
-    .check(async (ctx) => {
+    .check(async (ctx) =&gt; {
       for (const path of ctx.staged ?? [])
         if ((await ctx.fs.read(path)).includes(MARKER)) return ctx.fail(path + " carries the marker");
       return ctx.ok();
@@ -178,15 +189,23 @@ export const demo = definePack("demo", {
       block: [{ staged: ["a.txt"], world: { fs: { "a.txt": MARKER } } }],
     }),
 
+  // The same act, a different wearer, a different answer — a rule bound to WHO rather than to what.
   chatCommits: guardrail()
     .at(commit)
     .for(subagent)
-    .check((ctx) => ctx.fail((ctx.staged ?? []).length + " staged file(s)"))
+    .check((ctx) =&gt; ctx.fail((ctx.staged ?? []).length + " staged file(s)"))
     .message("A subagent does not commit — hand the change back to the chat that spawned it.")
     .test({ pass: [], block: [{ staged: ["a.txt"] }] }),
 });
 
-export default defineConfig([pack(demo)]);</code></pre>
+export default defineConfig([
+  // flow's own self-protection: what is steering you, a nudge when you edit it, and no deleting it.
+  // Its packs list is where YOUR OWN packs live. Everything here is in this file, so it is empty —
+  // move a pack out to a folder of its own and add that folder's glob, or the nudge and the delete
+  // refusal stop covering it.
+  pack(flow, { packs: [] }),
+  pack(demo),
+]);</code></pre>
 
   <p>Five things to take from it, and then you can write your own:</p>
 
@@ -320,7 +339,7 @@ export const house = definePack("house", {
 <pre><code>newDependency: guardrail()
   .at(command)
   .check(commitReason({ whenChanged: ["package.json"], token: "new-dep" }))
-  .message("Adding a dependency is fine; adding it silently is not — put `new-dep: <name> — <why>` in the message.")
+  .message("Adding a dependency is fine; adding it silently is not — put `new-dep: &lt;name&gt; — &lt;why&gt;` in the message.")
   .test({
     // the case records the git answers the check reaches for — the staged, added and untracked sets
     pass: [{ command: "git commit -m 'feat: x\\n\\nnew-dep: zod — checked ajv'", world: { exec: {
@@ -401,8 +420,8 @@ export const house = definePack("house", {
 
 <pre><code>flow 0.0.1 — the config will not load, so every guardrail and breadcrumb here is OFF.
   …
-  ✗ missing-mandatory: `demo.noMarkedFiles` never said .message(…). Nothing in this grammar
-    defaults — an absent key is absent, not a fallback.</code></pre>
+  ✗ missing-mandatory: `demo.noMarkedFiles` never said .message(…). Nothing in this grammar defaults — an absent key is absent, not a fallback.
+1 red line — flow is NOT fully in force here.</code></pre>
 
   <p>The one exception is the repair itself: while the config is broken, a write to
   <code>flow.config.ts</code> — or to a pack it imports, whatever you called that folder — still

@@ -26,7 +26,6 @@ import {
   CONFIG_FILE,
   GATE_PATH,
   HOOKS_DIR,
-  configLoadFault,
   initLines,
   planInit,
   status,
@@ -231,12 +230,12 @@ export async function runStatus(cwd: string, args: readonly string[]): Promise<V
   // are no entries to list and no fitting can make up for it. Exit 2, the same code `flow test`
   // uses, because "your rules are broken" and "your rules are not fully in force" are different
   // answers and a caller must be able to tell them apart.
-  if (regime.kind === "broken")
-    return {
-      stdout: "",
-      stderr: `${configLoadFault(CONFIG_FILE, regime.message, process.versions.node)}\n`,
-      exitCode: 2,
-    };
+  //
+  // `regime.message` is ALREADY the whole sentence: `loadRegime` builds it with `configLoadFault`,
+  // which is the point of that message being made in exactly one place. Wrapping it a second time
+  // here printed the prefix twice — "flow: flow.config.ts could not be loaded — flow: flow.config.ts
+  // could not be loaded — Cannot find module …" — which reads as two faults, not one.
+  if (regime.kind === "broken") return { stdout: "", stderr: `${regime.message}\n`, exitCode: 2 };
 
   const settingsPath = settingsFile();
   const facts: StatusFacts = {

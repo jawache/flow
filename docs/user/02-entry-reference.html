@@ -62,8 +62,24 @@ export default defineConfig([
       <tr><td><code>pack(x)</code></td><td>bind a pack: every entry in it goes live</td></tr>
       <tr><td><code>pack(x, params)</code></td><td>bind a pack that declares mandatory typed parameters — a repo fact it needs to work; omitting one does not compile</td></tr>
       <tr><td><code>override(x.entry)</code></td><td>bend one entry of a bound pack — chain the keys that change; each replaces the pack's whole value, never merges</td></tr>
+      <tr><td><code>defineConfig([…], settings)</code></td><td>the same guard, plus the engine's dials — an optional trailing object, below</td></tr>
     </tbody>
   </table>
+
+  <h3>Settings</h3>
+
+  <p>The dials are about the <em>run</em> rather than about any one entry, so they are
+  <code>defineConfig</code>'s optional second argument and not part of the sentence grammar. A
+  config that sets nothing writes <code>defineConfig([…])</code> as before.</p>
+
+  <table>
+    <thead><tr><th>Key</th><th>Type</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>driftTokens</code></td><td>number</td><td>context tokens between re-showings of a <code>touch</code> breadcrumb. Absent = the engine's own default. It is one answer for the whole repo, which is why it is not on entries</td></tr>
+    </tbody>
+  </table>
+
+<pre><code>export default defineConfig([pack(house)], { driftTokens: 120_000 });</code></pre>
 
   <h2>Defining a pack</h2>
 
@@ -110,7 +126,10 @@ export const house = definePack("house", {
       <tr><td><code>.at(…moments)</code></td><td><code>session · touch · turn-end</code></td><td><strong>mandatory.</strong> When the note shows</td></tr>
       <tr><td><code>.on(…globs)</code></td><td>globs</td><td>the files whose touch shows this note</td></tr>
       <tr><td><code>.ignore(…globs)</code></td><td>globs</td><td>carve-outs from <code>.on(…)</code></td></tr>
+      <tr><td><code>.for(category)</code></td><td>category</td><td>bind the note to an actor — only that category is shown it</td></tr>
       <tr><td><code>.text(str)</code> / <code>.file(path)</code></td><td>prose</td><td>the note itself — exactly one of the two</td></tr>
+      <tr><td><code>.description(str)</code></td><td>string</td><td>what the entry is for, for the reader</td></tr>
+      <tr><td><code>.disabled(why)</code></td><td>string</td><td>turn the entry off, on the record; the reason prints in <code>flow status</code></td></tr>
     </tbody>
   </table>
 

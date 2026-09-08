@@ -39,7 +39,7 @@
   checkout. This is the only step that will disappear the day flow ships on npm.</p>
 <pre><code>git clone https://github.com/jawache/flow.git
 cd flow
-npm install
+just install            # npm ci from the lockfile
 just link               # builds the binary and puts `flow` on your PATH</code></pre>
   <p>Undo it any time with <code>npm unlink -g @jawache/flow</code>.</p>
 
@@ -56,20 +56,26 @@ flow init</code></pre>
   + git config core.hooksPath .githooks
   next: `flow status` — what is bound, and what is not wired yet.</code></pre>
   <p><code>flow.config.ts</code> is a demo guard you can read in one screen — the only file that
-  turns anything on. It arrives with three guardrails and a breadcrumb, so you have something to
-  watch fire before you write your own. Re-run <code>flow init</code> whenever you like: it adds
-  only what is missing and says so.</p>
+  turns anything on. It binds two packs: flow's own self-protection, and a <code>demo</code> pack
+  of three guardrails, so you have something to watch fire before you write your own. Re-run
+  <code>flow init</code> whenever you like: it adds only what is missing and says so.</p>
 
   <h2>3 · See what is bound</h2>
 <pre><code>flow status</code></pre>
-<pre><code>flow is ON — 3 guardrails · 1 breadcrumb, every one resolved and able to fire
+<pre><code>flow is ON — 4 guardrails · 2 breadcrumbs, every one resolved and able to fire
   config     …/my-repo/flow.config.ts
   state      …/my-repo/.flow
   session    no live session has marked this worktree yet
   categories subagent — what the entries below bind to
   session
-    🍞 demo.orientation
-        This repo is guarded by flow. The rules are in flow.config.ts — read them rather than routing aroun…
+    🍞 flow.orientation
+        This repo is guarded by flow. Guardrails block risky edits before they land (and again at commit); …
+  touch
+    🍞 flow.editingTheGuardrails  —  on flow.config.ts .claude/settings.json .claude/settings.local.json .claude/agents/** .claude/skills/**
+        You are editing the guardrails themselves. If this edit weakens, disables or removes a guardrail or…
+  delete
+    ✗ flow.noDeleteGuardrails  —  on flow.config.ts .githooks/pre-commit
+        That command would delete this repo's guard surface (flow.config.ts binds every rule; the packs it …
   command
     ✗ demo.noForcePush
         Force-pushing rewrites history everyone else has. Push a correcting commit, or ask first.
@@ -120,7 +126,7 @@ Adjust the command, then retry.</code></pre>
   <p>Every rule carries what must pass it and what it must block. A rule with no block case does
   not load — so this is proof, not a formality:</p>
 <pre><code>flow test
-# flow test — 5 cases over 3 guardrails, all green</code></pre>
+# flow test — 7 cases over 4 guardrails, all green</code></pre>
 
   <h2>7 · Commit the guard</h2>
 <pre><code>git add flow.config.ts .githooks

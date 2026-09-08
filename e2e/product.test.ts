@@ -175,6 +175,10 @@ describe("flow status", () => {
       const said = flow(broken, ["status"]);
       expect(said.code, "exit 2 — your rules are broken, not merely not in force").toBe(2);
       expect(said.stderr).toContain("flow.config.ts could not be loaded");
+      // ONCE, and that is the assertion. `loadRegime` already builds the whole sentence with
+      // `configLoadFault`; status used to wrap it a second time, so the reader met the prefix twice
+      // and the one fault read as two.
+      expect(said.stderr.match(/could not be loaded/g), said.stderr).toHaveLength(1);
     } finally {
       rmSync(broken, { recursive: true, force: true });
     }
