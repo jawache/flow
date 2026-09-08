@@ -26,6 +26,7 @@ import {
   caseLines,
   checkName,
   EXAMPLE,
+  fenceFault,
   kebab,
   renderPackPage,
   renderPacksIndex,
@@ -95,7 +96,7 @@ function read(shipped: Shipped): PackDoc {
     };
   });
 
-  return {
+  const doc: PackDoc = {
     name: shipped.name,
     lead: parsed.lead,
     blocks: parsed.blocks,
@@ -103,6 +104,11 @@ function read(shipped: Shipped): PackDoc {
     bind: bindLine(shipped.name, shipped.params),
     entries,
   };
+  // REFUSED RATHER THAN RENDERED. A doc comment cut in half writes a page that looks finished, and
+  // the drift gate then compares the truncated page against itself forever, green.
+  const fault = fenceFault(doc);
+  if (fault !== "") throw new Error(fault);
+  return doc;
 }
 
 // ── writing, and refusing drift ──────────────────────────────────────────────

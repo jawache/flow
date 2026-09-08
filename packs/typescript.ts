@@ -49,10 +49,66 @@ export interface Gates {
  * repo's own configs pointing at a shared base, run both tools at the gate, and teach the design
  * habit no tool checks.
  *
- * @setup Two committed files at the repo root, and every project pointing at them: a
- * `tsconfig.base.json` every `tsconfig*.json` extends, and an `eslint.config.base.js` the repo's
- * `eslint.config.js` imports and spreads. The two rules below check exactly that, and say nothing
- * about what the base contains beyond `strict` and `noUncheckedIndexedAccess` staying on.
+ * @setup The two gate recipes, and nothing else. THIS PACK SHIPS NO FILE: a base states one
+ * fleet's opinion about target, module and lib, and a neutral engine has no business having one,
+ * so with no base named the pack holds only the opinion that travels — the strict options stay on
+ * wherever they are set.
+ *
+ * A shared base is still worth having, and a repo that keeps one names it in `tsconfigBase` and
+ * `eslintBase`; the two rules then hold every project to it. Here is a base worth starting from,
+ * to copy into the repo as `tsconfig.base.json` — every `tsconfig*.json` extends it:
+ *
+ * ```json
+ * {
+ *   "compilerOptions": {
+ *     "target": "ES2022",
+ *     "lib": ["ES2023"],
+ *     "module": "NodeNext",
+ *     "moduleResolution": "NodeNext",
+ *     "moduleDetection": "force",
+ *     "isolatedModules": true,
+ *     "verbatimModuleSyntax": true,
+ *     "skipLibCheck": true,
+ *
+ *     "strict": true,
+ *     "noUncheckedIndexedAccess": true,
+ *     "exactOptionalPropertyTypes": true,
+ *     "noImplicitOverride": true,
+ *     "noFallthroughCasesInSwitch": true,
+ *     "noUnusedLocals": true,
+ *     "noUnusedParameters": true,
+ *
+ *     "noEmit": true,
+ *     "sourceMap": true,
+ *     "declaration": true
+ *   }
+ * }
+ * ```
+ *
+ * …and the lint half as `eslint.config.base.js`, which the repo's own `eslint.config.js` imports
+ * and spreads. It is deliberately not a hand-rolled rule set: `strictTypeChecked` is the
+ * maintained good-patterns set, and it supersedes every idiom rule a pack could write.
+ *
+ * ```js
+ * import tseslint from "typescript-eslint";
+ * import n from "eslint-plugin-n";
+ *
+ * export default tseslint.config(
+ *   { ignores: ["dist/**", "build/**", "coverage/**", "node_modules/**"] },
+ *   ...tseslint.configs.strictTypeChecked,
+ *   n.configs["flat/recommended"],
+ *   {
+ *     languageOptions: {
+ *       parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
+ *     },
+ *     rules: {
+ *       "@typescript-eslint/ban-ts-comment": "error",
+ *       "@typescript-eslint/no-explicit-any": "error",
+ *       "@typescript-eslint/no-non-null-assertion": "error",
+ *     },
+ *   },
+ * );
+ * ```
  * @adopt Bind it with the two gate recipes this repo really has. Expect the first commit after
  * binding to run both tools over everything — a repo that has been typechecking one project at a
  * time usually finds errors in the ones nobody was checking.
@@ -78,9 +134,9 @@ export const typescript = definePack("typescript", (repo: Gates) => {
       .description("Use the type system as a design tool — strict stays on, impossible states stay impossible.")
       .text(
         [
-          "Strictness is not yours to weaken: `strict` and `noUncheckedIndexedAccess` come from the committed `tsconfig.base.json`. A red squiggle is a defect found, not a setting to relax — an exception is a visible, local, per-rule override, on the record.",
+          `Strictness is not yours to weaken: ${strictOptions.map((option) => `\`${option}\``).join(" and ")} ${base === undefined ? "stay on wherever they are set" : `come from the committed \`${base}\``}. A red squiggle is a defect found, not a setting to relax — an exception is a visible, local, per-rule override, on the record.`,
           'Model state so the impossible cannot be constructed. Two sibling booleans (isLoading + isError) are a smell: a discriminated union makes the invalid combination unrepresentable (Vanderkam, Effective TypeScript; Feldman, "Make Impossible States Impossible").',
-          "The linter holds the escape hatches (@ts-expect-error, explicit any, double assertions) at error, and it does that job better than any rule we could write — which is why this pack ships a config rather than patterns.",
+          "The linter holds the escape hatches (@ts-expect-error, explicit any, double assertions) at error, and it does that job better than any rule we could write — which is why this pack points at the linter rather than carrying patterns of its own.",
         ].join("\n"),
       ),
 

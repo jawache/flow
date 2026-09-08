@@ -17,6 +17,7 @@ import {
   DOC_BLOCKS,
   esc,
   EXAMPLE,
+  fenceFault,
   firstSentence,
   kebab,
   line,
@@ -82,6 +83,32 @@ const doc: PackDoc = { name: "docs", lead: "Two audiences, one folder.", params:
 
 /** One recorded turn action — the dialect the turn-end moment speaks. */
 const edit: TurnAction = { did: "edit", path: "core/clock.ts" };
+
+describe("a doc comment the page could only half read", () => {
+  // THE FAILURE THIS EXISTS FOR SHIPPED ONCE, on the way in. A JSDoc block ends at the next line
+  // starting with an `@`, so the secrets pack's copyable recipe — whose body began `@dotenvx run`
+  // — cut its own `@setup` in half: the page rendered, the drift gate compared it happily, and the
+  // file a reader was meant to copy was two lines long. An odd fence is what that always looks
+  // like, so it is refused rather than printed.
+  it("names the pack and the block whose fence never closes", () => {
+    const cut = { ...doc, blocks: [{ tag: "setup", body: "copy this:\n\n```just\ndx env +cmd:" }] };
+    expect(fenceFault(cut)).toContain("the docs pack: its @setup block");
+    expect(fenceFault(cut)).toContain("take the @ off that line");
+  });
+
+  it("says nothing about a pack whose fences close, or one that has no fence at all", () => {
+    expect(fenceFault(doc)).toBe("");
+    expect(fenceFault({ ...doc, blocks: [{ tag: "setup", body: "copy this:\n\n```just\ndx:\n```" }] })).toBe("");
+  });
+
+  // Every doc-comment surface the page renders, not just the named blocks: a lead, a parameter's
+  // own doc and an entry's why all reach `prose` by the same road.
+  it("reads the lead, the parameters and the entry whys as well as the blocks", () => {
+    expect(fenceFault({ ...doc, lead: "```json\n{" })).toContain("its lead");
+    expect(fenceFault({ ...doc, params: [{ ...param, why: "```sh\njust dx" }] })).toContain("the doc on its run parameter");
+    expect(fenceFault({ ...doc, entries: [{ ...crumb, why: "```sh\njust dx" }] })).toContain("the why on docs");
+  });
+});
 
 describe("a case as one line", () => {
   it("names what the event was, in the dialect of its moment", () => {
@@ -169,6 +196,21 @@ describe("text into HTML", () => {
   it("turns backticks into code and blank lines into paragraphs", () => {
     expect(prose("one `x`\n\ntwo")).toBe("<p>one <code>x</code></p>\n<p>two</p>");
     expect(line("a `b` c")).toBe("a <code>b</code> c");
+  });
+
+  // A FENCE IS COPYABLE TEXT, which is the whole reason it is not a paragraph. The two packs that
+  // used to claim they shipped a file put that file on their own page instead, and a reader is
+  // meant to select it and paste it. Down the paragraph path it would arrive with its lines run
+  // together and its quotes rewritten — a reference config nobody can use.
+  it("renders a fenced block as code, keeping every line and touching no backtick inside it", () => {
+    expect(prose('before\n\n```json\n{\n  "a": `b`\n}\n```\n\nafter')).toBe(
+      '<p>before</p>\n<pre><code>{\n  &quot;a&quot;: `b`\n}</code></pre>\n<p>after</p>',
+    );
+  });
+
+  it("renders a fence that is the whole of a block, and an unclosed one as the prose it still is", () => {
+    expect(prose("```\njust dx dev npm run build\n```")).toBe("<pre><code>just dx dev npm run build</code></pre>");
+    expect(prose("```\nno end")).toBe("<p>```\nno end</p>");
   });
 
   it("takes a first sentence without breaking on a path or a version", () => {

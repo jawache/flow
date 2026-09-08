@@ -88,7 +88,11 @@ const SHIPPED: readonly Shipped[] = [
   // `recipes` bound, so the entry that only exists when a repo has one is driven here too.
   { pack: "justfile", params: EXAMPLE.justfile, cases: 15, guardrails: 3 },
   { pack: "node", params: undefined, cases: 14, guardrails: 2 },
-  { pack: "secrets", params: EXAMPLE.secrets, cases: 6, guardrails: 3 },
+  // BARE, where the page binds both command names. They are optional now and default to dotenvx's
+  // own spelling, which is the path a repo that has wrapped nothing takes — so it is what runs
+  // here, while the page names a wrapper because a wrapper is what the parameters are for. The
+  // same split as `typescript` below, made for the same reason.
+  { pack: "secrets", params: undefined, cases: 6, guardrails: 3 },
   { pack: "tdd", params: EXAMPLE.tdd, cases: 12, guardrails: 6 },
   // NO SHARED BASE, where the page names both — `eslintFromBase` exists only when a repo names an
   // eslint base, so the page has to name one or that rule is invisible to a reader, and this has to
@@ -181,7 +185,6 @@ const ENTRIES: readonly string[] = [
   "node.dependencies",
   "node.lockfileInStep",
   "node.newDependencyNeedsReason",
-  "secrets.dxSeam",
   "secrets.envEncrypted",
   "secrets.noKeysFileInCommits",
   "secrets.noSecretsInCommits",

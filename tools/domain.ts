@@ -107,6 +107,30 @@ export interface PackDoc {
   readonly entries: readonly EntryDoc[];
 }
 
+/**
+ * A DOC COMMENT WHOSE FENCE NEVER CLOSES, named — or an empty string when every one of them does.
+ *
+ * The failure this exists for is silent and it has already happened once. A JSDoc block ends at the
+ * next line beginning with an `@`, so a copyable recipe whose body starts `@dotenvx run …` cut the
+ * secrets pack's `@setup` in half: the page rendered, the drift gate compared it happily, and the
+ * file a reader was meant to copy was two lines long. An odd fence is what that always looks like,
+ * whatever caused it, so it is refused rather than rendered.
+ *
+ * The shell throws on this. Pure code here returns the sentence and decides nothing else.
+ */
+export function fenceFault(doc: PackDoc): string {
+  const held: readonly { readonly what: string; readonly text: string }[] = [
+    { what: "its lead", text: doc.lead },
+    ...doc.blocks.map((block) => ({ what: `its @${block.tag} block`, text: block.body })),
+    ...doc.params.map((param) => ({ what: `the doc on its ${param.name} parameter`, text: param.why })),
+    ...doc.entries.map((entry) => ({ what: `the why on ${entry.key}`, text: entry.why })),
+  ];
+  const open = held.find((one) => (one.text.match(/```/g) ?? []).length % 2 === 1);
+  return open === undefined
+    ? ""
+    : `the ${doc.name} pack: ${open.what} opens a \`\`\` fence that never closes. A doc comment ends at the next line starting with an @, so a fenced block that carries one is cut off there — take the @ off that line.`;
+}
+
 // ── the stranger's spellings ─────────────────────────────────────────────────
 
 /**
@@ -123,10 +147,13 @@ export interface PackDoc {
  * them into a stranger's config and drives every rail against them. Two copies is a page that
  * documents a binding no test has ever run.
  *
- * Two packs are deliberately bound differently by the machine test, each saying so where it does
+ * Three packs are deliberately bound differently by the machine test, each saying so where it does
  * it: `docs` bare, because a pack whose parameters are all optional must stay bindable with no
- * object at all, and `typescript` with no shared base, because the rule that demands one exists
- * only when a base is named and the no-base path is the one a stranger takes.
+ * object at all; `secrets` bare, because both of its command names now default to dotenvx's own
+ * spelling and the default is the path a repo that has wrapped nothing takes; and `typescript`
+ * with no shared base, because the rule that demands one exists only when a base is named and the
+ * no-base path is the one a stranger takes. Each of the three is a wrapper or a base a real repo
+ * would have, which is why the PAGE names it and the test does not.
  */
 export const EXAMPLE = {
   docs: { root: "documentation", allow: ["README.md"] },
@@ -134,7 +161,7 @@ export const EXAMPLE = {
   flow: { packs: ["rules/**"] },
   git: { release: "./ci.sh release" },
   justfile: { exempt: [], recipes: { "npx vitest": "./ci.sh test" } },
-  secrets: { dx: "./ci.sh dx", encrypt: "./ci.sh seal", names: "./ci.sh names" },
+  secrets: { dx: "./ci.sh dx", encrypt: "./ci.sh seal" },
   tdd: { run: "./ci.sh test" },
   typescript: { typecheck: "./ci.sh types", lint: "./ci.sh lint", tsconfigBase: "./tsconfig.base.json", eslintBase: "./eslint.config.base.js" },
 } as const;
@@ -308,18 +335,44 @@ export function esc(text: string): string {
 }
 
 /**
- * A doc comment as HTML: escaped, backticks turned into code, blank lines into paragraphs.
+ * A FENCED BLOCK — three backticks, an optional language, the lines, three backticks. Lazy in the
+ * middle, so a doc comment holding two fences renders two code boxes rather than one.
+ */
+const FENCE = /```[^\n]*\n([\s\S]*?)\n?```/g;
+
+/**
+ * A doc comment as HTML: escaped, backticks turned into code, blank lines into paragraphs, and a
+ * fenced block as code.
  *
- * The two conversions are the whole of the markup this page understands, and they are here
- * because a doc comment is written for a reader of the SOURCE — where `\`.on(…)\`` is code and a
- * blank line is a paragraph — and a page that dropped both would read as one long blob. Prose the
- * AGENT is shown (`.text()`, `.message()`) never goes through here: that is quoted verbatim,
- * backticks and all, because the page's job there is to show exactly what the model receives.
+ * The conversions are the whole of the markup this page understands, and they are here because a
+ * doc comment is written for a reader of the SOURCE — where `\`.on(…)\`` is code and a blank line
+ * is a paragraph — and a page that dropped them would read as one long blob. Prose the AGENT is
+ * shown (`.text()`, `.message()`) never goes through here: that is quoted verbatim, backticks and
+ * all, because the page's job there is to show exactly what the model receives.
+ *
+ * THE FENCE IS WHAT COPYABLE TEXT NEEDS. A pack that names a file it does not ship — a shared
+ * tsconfig, the recipes behind an env seam — puts that file on its own page, and a file down the
+ * paragraph path arrives with its lines run together and its quotes rewritten. Inside a fence only
+ * escaping happens: a backtick there is a backtick, not the start of a `<code>`. An UNCLOSED fence
+ * is not a fence and stays the prose it was, rather than swallowing the rest of the block into a
+ * code box that never ends.
  */
 export function prose(text: string): string {
+  const said: string[] = [];
+  let at = 0;
+  for (const fence of text.matchAll(FENCE)) {
+    said.push(paragraphs(text.slice(at, fence.index)), `<pre><code>${esc(fence[1] ?? "")}</code></pre>`);
+    at = fence.index + fence[0].length;
+  }
+  said.push(paragraphs(text.slice(at)));
+  return said.filter((held) => held !== "").join("\n");
+}
+
+/** The plain half — blank lines into paragraphs, backticks into code, and nothing for whitespace. */
+function paragraphs(text: string): string {
   return text
     .split(/\n\s*\n/)
-    .map((para) => `<p>${esc(para).replace(/`([^`]+)`/g, "<code>$1</code>")}</p>`)
+    .flatMap((para) => (para.trim() === "" ? [] : [`<p>${esc(para.trim()).replace(/`([^`]+)`/g, "<code>$1</code>")}</p>`]))
     .join("\n");
 }
 

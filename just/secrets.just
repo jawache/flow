@@ -1,12 +1,12 @@
-# just/secrets.just — the env seam: the three recipes flow's `secrets` pack talks about.
+# just/secrets.just — THIS REPO'S OWN env seam, and nothing ships it.
 #
-# The pack ships the three JOBS and names them in its notes and its refusals; this file is how
-# THIS repo spells them, and flow.config.ts hands the pack the three command strings
-# (`just dx` · `just env-encrypt` · `just env-names`). Rename a recipe here and the config's
-# parameter is what has to follow it — nothing resolves by convention.
+# The `secrets` pack ships no file. It takes two optional command names, defaulting to dotenvx's
+# own spelling, and flow.config.ts hands it this repo's instead (`just dx` · `just env-encrypt`) so
+# that every sentence a stuck reader meets names a command this repo really has. Rename a recipe
+# here and the config's parameter is what has to follow it — nothing resolves by convention.
 #
-# It is a plain committed file, compared with nothing: the old library copied it in and checked it
-# for drift forever, and that machinery went with the old engine. What holds it now is review.
+# `env-names` is nobody's parameter: the pack stopped asking for a list-names command when the
+# breadcrumb that was its only reader went. The recipe stays because it is worth having.
 #
 # Which environments exist is the repo's own fact: the `dx` recipe below reads dev|staging|prod,
 # and a repo with only dev|prod simply never passes staging.

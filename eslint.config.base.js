@@ -1,7 +1,10 @@
-// eslint.config.base.js — shipped by the typescript pack in ~/.work/library.
+// eslint.config.base.js — THIS REPO'S OWN, and nothing ships it.
 //
-// Copied into the repo (CI must read it) and compared with the pack's version at every
-// `work guard status`: a copy is fine, a SILENT copy is not.
+// The typescript pack takes `eslintBase` as an optional parameter and flow.config.ts hands it this
+// path; that is what puts `typescript.eslintFromBase` in this repo's guard, refusing an
+// eslint.config.js that does not import this file. A repo that names no base gets no such rule at
+// all — a rule demanding a file the package does not ship would refuse every repo that binds the
+// pack. The pack's page carries a copy of this file for a repo that wants a base of its own.
 //
 // The whole point is that this file is not a hand-rolled rule set. typescript-eslint's
 // `strictTypeChecked` is the maintained good-patterns set — no-floating-promises,

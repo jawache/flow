@@ -103,10 +103,58 @@ export default defineConfig([pack(typescript, { typecheck: &quot;./ci.sh types&q
   <p>To turn one entry off, say so in the config: <code>override(typescript.strictTypesNoInvalidStates).disabled("why")</code>. It is a committed change, so a reviewer sees it.</p>
 
   <h2 id="setup">What the repo needs in place</h2>
-<p>Two committed files at the repo root, and every project pointing at them: a
-<code>tsconfig.base.json</code> every <code>tsconfig*.json</code> extends, and an <code>eslint.config.base.js</code> the repo's
-<code>eslint.config.js</code> imports and spreads. The two rules below check exactly that, and say nothing
-about what the base contains beyond <code>strict</code> and <code>noUncheckedIndexedAccess</code> staying on.</p>
+<p>The two gate recipes, and nothing else. THIS PACK SHIPS NO FILE: a base states one
+fleet's opinion about target, module and lib, and a neutral engine has no business having one,
+so with no base named the pack holds only the opinion that travels — the strict options stay on
+wherever they are set.</p>
+<p>A shared base is still worth having, and a repo that keeps one names it in <code>tsconfigBase</code> and
+<code>eslintBase</code>; the two rules then hold every project to it. Here is a base worth starting from,
+to copy into the repo as <code>tsconfig.base.json</code> — every <code>tsconfig*.json</code> extends it:</p>
+<pre><code>{
+  &quot;compilerOptions&quot;: {
+    &quot;target&quot;: &quot;ES2022&quot;,
+    &quot;lib&quot;: [&quot;ES2023&quot;],
+    &quot;module&quot;: &quot;NodeNext&quot;,
+    &quot;moduleResolution&quot;: &quot;NodeNext&quot;,
+    &quot;moduleDetection&quot;: &quot;force&quot;,
+    &quot;isolatedModules&quot;: true,
+    &quot;verbatimModuleSyntax&quot;: true,
+    &quot;skipLibCheck&quot;: true,
+
+    &quot;strict&quot;: true,
+    &quot;noUncheckedIndexedAccess&quot;: true,
+    &quot;exactOptionalPropertyTypes&quot;: true,
+    &quot;noImplicitOverride&quot;: true,
+    &quot;noFallthroughCasesInSwitch&quot;: true,
+    &quot;noUnusedLocals&quot;: true,
+    &quot;noUnusedParameters&quot;: true,
+
+    &quot;noEmit&quot;: true,
+    &quot;sourceMap&quot;: true,
+    &quot;declaration&quot;: true
+  }
+}</code></pre>
+<p>…and the lint half as <code>eslint.config.base.js</code>, which the repo's own <code>eslint.config.js</code> imports
+and spreads. It is deliberately not a hand-rolled rule set: <code>strictTypeChecked</code> is the
+maintained good-patterns set, and it supersedes every idiom rule a pack could write.</p>
+<pre><code>import tseslint from &quot;typescript-eslint&quot;;
+import n from &quot;eslint-plugin-n&quot;;
+
+export default tseslint.config(
+  { ignores: [&quot;dist/**&quot;, &quot;build/**&quot;, &quot;coverage/**&quot;, &quot;node_modules/**&quot;] },
+  ...tseslint.configs.strictTypeChecked,
+  n.configs[&quot;flat/recommended&quot;],
+  {
+    languageOptions: {
+      parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
+    },
+    rules: {
+      &quot;@typescript-eslint/ban-ts-comment&quot;: &quot;error&quot;,
+      &quot;@typescript-eslint/no-explicit-any&quot;: &quot;error&quot;,
+      &quot;@typescript-eslint/no-non-null-assertion&quot;: &quot;error&quot;,
+    },
+  },
+);</code></pre>
 
   <h2 id="adopt">Adopting it</h2>
 <p>Bind it with the two gate recipes this repo really has. Expect the first commit after
@@ -133,9 +181,9 @@ time usually finds errors in the ones nobody was checking.</p>
 get reached for under time pressure, and impossible states go on being representable because
 nothing ever said to model them out.</p></div>
     <h3>What the agent reads</h3>
-    <div class="says">Strictness is not yours to weaken: `strict` and `noUncheckedIndexedAccess` come from the committed `tsconfig.base.json`. A red squiggle is a defect found, not a setting to relax — an exception is a visible, local, per-rule override, on the record.
+    <div class="says">Strictness is not yours to weaken: `strict` and `noUncheckedIndexedAccess` come from the committed `./tsconfig.base.json`. A red squiggle is a defect found, not a setting to relax — an exception is a visible, local, per-rule override, on the record.
 Model state so the impossible cannot be constructed. Two sibling booleans (isLoading + isError) are a smell: a discriminated union makes the invalid combination unrepresentable (Vanderkam, Effective TypeScript; Feldman, &quot;Make Impossible States Impossible&quot;).
-The linter holds the escape hatches (@ts-expect-error, explicit any, double assertions) at error, and it does that job better than any rule we could write — which is why this pack ships a config rather than patterns.</div>
+The linter holds the escape hatches (@ts-expect-error, explicit any, double assertions) at error, and it does that job better than any rule we could write — which is why this pack points at the linter rather than carrying patterns of its own.</div>
 
   </section>
 

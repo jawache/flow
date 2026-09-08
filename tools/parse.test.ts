@@ -29,6 +29,26 @@ export const plain = definePack("plain", {
 });
 `;
 
+/** A pack whose `@setup` block carries the file a reader is meant to copy, fence and all. */
+const FENCED = `
+import { definePack } from "../index.ts";
+
+/**
+ * A pack that ships nothing and shows the file instead.
+ *
+ * @setup A base at the repo root, and this is one worth starting from:
+ *
+ * \`\`\`json
+ * {
+ *   "compilerOptions": {
+ *     "strict": true
+ *   }
+ * }
+ * \`\`\`
+ */
+export const fenced = definePack("fenced", {});
+`;
+
 /** A pack whose factory DEFAULTS a parameter, which forces a body and a return statement. */
 const DEFAULTED = `
 import { definePack, guardrail, commit, textBan } from "../index.ts";
@@ -70,6 +90,20 @@ describe("what a pack's source says that loading it cannot", () => {
     expect(parsed.why.get("oneRule")).toBe("Without it the repo drifts.");
     expect(parsed.check.get("oneRule")).toBe('textBan({ ban: ["x"] })');
     expect(parsed.params).toEqual([]);
+  });
+
+  // INDENTATION IS THE POINT. TypeScript's own reader of a doc comment returns the words with the
+  // leading whitespace of every line thrown away, which is right for prose and ruinous for the one
+  // thing a `@setup` block now carries: a file to copy. Read off the source instead, the gutter
+  // goes and nothing else does.
+  it("keeps a fenced file in a named block exactly as it is written, indentation and all", () => {
+    const parsed = parseSource("fenced.ts", FENCED);
+    expect(parsed.blocks).toEqual([
+      {
+        tag: "setup",
+        body: 'A base at the repo root, and this is one worth starting from:\n\n```json\n{\n  "compilerOptions": {\n    "strict": true\n  }\n}\n```',
+      },
+    ]);
   });
 
   // THE BUG THAT EARNED THIS FILE. Defaulting a parameter is what turns `(repo) => ({…})` into

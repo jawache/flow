@@ -36,6 +36,26 @@ function docComment(node: ts.Node): string {
 }
 
 /**
+ * One tag's body, read off the SOURCE with the comment gutter taken away — `@setup ` and the
+ * leading ` * ` of every line after it, and nothing else.
+ *
+ * TypeScript's own `getTextOfJSDocComment` gives the words back with the leading whitespace of
+ * every line thrown away. For prose that is invisible; for the one thing a named block now carries
+ * — a file the reader is meant to copy, inside a fence — it is the difference between a config
+ * somebody can paste and a flat wall of JSON. So the gutter is stripped here, one space after the
+ * asterisk, and every space beyond it is the author's.
+ */
+function tagBody(tag: ts.JSDocTag): string {
+  return tag
+    .getText()
+    .replace(/^@\w+[ \t]*/, "")
+    .split("\n")
+    .map((held) => held.replace(/^[ \t]*\*[ \t]?/, ""))
+    .join("\n")
+    .trim();
+}
+
+/**
  * The named blocks on a doc comment — `@install`, `@setup`, `@adopt` and nothing else.
  *
  * The tag set is the page's, declared once in tools/domain.ts, so a tag nobody rendered cannot sit
@@ -49,7 +69,7 @@ function docTags(node: ts.Node): DocBlock[] {
     .flatMap((doc) => (ts.isJSDoc(doc) ? [...(doc.tags ?? [])] : []))
     .flatMap((tag) => {
       const name = tag.tagName.text;
-      return known.has(name) ? [{ tag: name, body: (ts.getTextOfJSDocComment(tag.comment) ?? "").trim() }] : [];
+      return known.has(name) ? [{ tag: name, body: tagBody(tag) }] : [];
     });
 }
 

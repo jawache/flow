@@ -80,12 +80,12 @@ export default defineConfig([
   //
   // `noSecretsInCommits` scans every staged file for live-key shapes and is worth having in a repo
   // that has never held a secret. The env machinery has nothing to watch here yet, so it is off by
-  // NAME rather than sitting dead — which is the difference between an opt-out and a lie. The
-  // three recipe names are this repo's own: `just/secrets.just` is included by the justfile, so
-  // all three resolve even though there is nothing yet for them to decrypt.
-  pack(secrets, { dx: "just dx", encrypt: "just env-encrypt", names: "just env-names" }),
+  // NAME rather than sitting dead — which is the difference between an opt-out and a lie. Both
+  // command names are this repo's own: `just/secrets.just` is included by the justfile, so both
+  // resolve even though there is nothing yet for them to decrypt. Handed over rather than left to
+  // default, so the one sentence the orientation prints here names a command this repo has.
+  pack(secrets, { dx: "just dx", encrypt: "just env-encrypt" }),
   override(secrets.envEncrypted).disabled("no `.env*` in this repo — nothing to seal"),
-  override(secrets.dxSeam).disabled("no env seam, because there is no env"),
 
   // ── TypeScript: strict stays on, the checker is never silenced ──
   //
