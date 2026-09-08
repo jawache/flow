@@ -6,10 +6,8 @@
 // NO BYPASSES: `noGitDiscard` and `noForcePush` have no marker escape. The strictest variant in the
 // fleet is the one that shipped; a repo that wants out disables the entry in its config, visibly.
 //
-// The `node/` sub-group is release discipline that happens to be spelled in package.json — a
-// Python or Rust repo binds the same two jobs against pyproject.toml or Cargo.toml. It is nested
-// rather than flattened because `git.node.versionIsSemver` is what the entry is called, and a
-// pack's shape is what a reader navigates it by.
+// The `node/` sub-group is nested rather than flattened because `git.node.versionIsSemver` is what
+// the entry is called, and a pack's shape is what a reader navigates it by.
 
 import {
   banCommands,
