@@ -76,7 +76,7 @@ const SHIPPED: readonly Shipped[] = [
     guardrails: 7,
   },
   { pack: "flow", bind: `pack(flow, { packs: ["rules/**"] })`, cases: 2, guardrails: 1 },
-  { pack: "git", bind: `pack(git, { release: "./ci.sh release" })`, cases: 48, guardrails: 7 },
+  { pack: "git", bind: `pack(git, { release: "./ci.sh release" })`, cases: 51, guardrails: 7 },
   { pack: "justfile", bind: `pack(justfile, { exempt: [] })`, cases: 13, guardrails: 2 },
   { pack: "node", bind: "pack(node)", cases: 14, guardrails: 2 },
   {

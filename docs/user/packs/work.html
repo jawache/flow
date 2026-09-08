@@ -37,11 +37,9 @@
   .fact b{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-right:.35rem}
   .check{margin:.5rem 0 .2rem}
   .check .fact{margin:0}
-  .set{margin:.3rem 0 .3rem 0;font-size:.9rem}
-  .set b{display:block;font-weight:700;font-size:.74rem;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-bottom:.1rem}
-  .set pre{margin:.1rem 0}
-  .values{list-style:none;margin:0;padding:0;overflow-x:auto}
-  .values li{margin:.1rem 0;white-space:pre}
+  .settings{margin:.25rem 0 .4rem}
+  .settings summary{cursor:pointer;font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);font-weight:700}
+  .settings pre{margin:.3rem 0 0}
   .why{border-left:4px solid var(--parent);background:#eef4fa;padding:.6rem .9rem;border-radius:0 8px 8px 0;margin:.8rem 0;font-size:.95rem}
   .why.gap{border-left-color:#c2a33a;background:var(--gapbg);color:#6b5a1e;font-style:italic}
   .why p:first-child{margin-top:0} .why p:last-child{margin-bottom:0}
@@ -117,9 +115,14 @@ classified as a builder or a checker — a human at a keyboard is neither.</p>
     <p class="fact"><b>Refuses at</b> a shell command is about to run</p>
     <p class="fact"><b>Watches</b> not scoped by path</p>
     <p class="fact"><b>Categories</b> <code>builder</code></p>
-    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/ban-commands.html"><code>banCommands</code></a></p>
-      <div class="set"><b>ban</b> <ul class="values"><li><code>(?:^|[\n;&amp;|(]\s*)\s*work\s+plan\s+(?:verdict|amend)\b</code></li><li><code>(?:^|[\n;&amp;|(]\s*)\s*work\s+(?:save|task)\b</code></li><li><code>(?:^|[\n;&amp;|(]\s*)\s*work\s+cost\s+record\b</code></li></ul></div>
-    </div>
+    <p class="fact"><b>Check</b> <a href="../checks/ban-commands.html"><code>banCommands</code></a></p>
+    <details class="settings"><summary>settings</summary><pre><code>{
+  &quot;ban&quot;: [
+    &quot;(?:^|[\\n;&amp;|(]\\s*)\\s*work\\s+plan\\s+(?:verdict|amend)\\b&quot;,
+    &quot;(?:^|[\\n;&amp;|(]\\s*)\\s*work\\s+(?:save|task)\\b&quot;,
+    &quot;(?:^|[\\n;&amp;|(]\\s*)\\s*work\\s+cost\\s+record\\b&quot;
+  ]
+}</code></pre></details>
     <h3>What the agent reads when refused</h3>
     <div class="says">You are a builder, and this command is the parent's. Yours: `work plan status` · `work plan tick` · `work plan decision`.
 A verdict or an amendment needs the whole plan in view, and you can only see one phase. `work cost record` is worse than refused — it would succeed: every record is an INCREMENT since the last stamp, so filing one mid-phase bills the phase before yours for work it never did.
@@ -149,9 +152,12 @@ What you have is an ask. Say it to the parent — what you hit, what your boxes 
     <p class="fact"><b>Refuses at</b> a shell command is about to run</p>
     <p class="fact"><b>Watches</b> not scoped by path</p>
     <p class="fact"><b>Categories</b> <code>parent</code></p>
-    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/ban-commands.html"><code>banCommands</code></a></p>
-      <div class="set"><b>ban</b> <code>(?:^|[\n;&amp;|(]\s*)\s*work\s+plan\s+tick\b</code></div>
-    </div>
+    <p class="fact"><b>Check</b> <a href="../checks/ban-commands.html"><code>banCommands</code></a></p>
+    <details class="settings"><summary>settings</summary><pre><code>{
+  &quot;ban&quot;: [
+    &quot;(?:^|[\\n;&amp;|(]\\s*)\\s*work\\s+plan\\s+tick\\b&quot;
+  ]
+}</code></pre></details>
     <h3>What the agent reads when refused</h3>
     <div class="says">A box is ticked by the rung that built it. You are supervising: you did not do the work, so you cannot supply the evidence, and a tick whose proof came from reading a report is exactly the provenance the journal exists to prevent. If a child left a box unticked, that is the finding — record the verdict on it.</div>
     <h3>Proved by</h3>
@@ -165,9 +171,12 @@ What you have is an ask. Say it to the parent — what you hit, what your boxes 
     <p class="fact"><b>Refuses at</b> a shell command is about to run</p>
     <p class="fact"><b>Watches</b> not scoped by path</p>
     <p class="fact"><b>Categories</b> every session</p>
-    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/ban-commands.html"><code>banCommands</code></a></p>
-      <div class="set"><b>ban</b> <code>(?:^|[\n;&amp;|(]\s*)\s*work\s+inbox\s+new\b</code></div>
-    </div>
+    <p class="fact"><b>Check</b> <a href="../checks/ban-commands.html"><code>banCommands</code></a></p>
+    <details class="settings"><summary>settings</summary><pre><code>{
+  &quot;ban&quot;: [
+    &quot;(?:^|[\\n;&amp;|(]\\s*)\\s*work\\s+inbox\\s+new\\b&quot;
+  ]
+}</code></pre></details>
     <h3>What the agent reads when refused</h3>
     <div class="says">`work inbox new` is the human's own door, and this command rail is only ever crossed by an agent — a person typing in a terminal has no hooks in front of them. So the fact that this fired means an agent is filing.
 The inbox is a SPECCING QUEUE, not a findings drawer: every item in it is something its owner has decided to think about, and an item nobody chose to add is a decision taken away from them and returned as a chore. Work is born through `/work spec`, which only a clear human instruction opens.
@@ -183,15 +192,17 @@ What you have is a finding. Say it in the chat — headline, why it matters, wha
     <p class="fact"><b>Refuses at</b> a shell command is about to run</p>
     <p class="fact"><b>Watches</b> not scoped by path</p>
     <p class="fact"><b>Categories</b> every session</p>
-    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/ban-commands.html"><code>banCommands</code></a></p>
-      <div class="set"><b>ban</b> <code>(?:work\s+(?:plan|task|recap|record|spec|complete)\b)[^&quot;`]*(?:&quot;(?:(?!&lt;&lt;-?')[^&quot;])*&quot;[^&quot;`]*)*&quot;(?:(?!&lt;&lt;-?')[^&quot;])*`</code></div>
-    </div>
+    <p class="fact"><b>Check</b> <a href="../checks/ban-commands.html"><code>banCommands</code></a></p>
+    <details class="settings"><summary>settings</summary><pre><code>{
+  &quot;ban&quot;: [
+    &quot;(?:work\\s+(?:plan|task|recap|record|spec|complete)\\b)[^\&quot;`]*(?:\&quot;(?:(?!&lt;&lt;-?')[^\&quot;])*\&quot;[^\&quot;`]*)*\&quot;(?:(?!&lt;&lt;-?')[^\&quot;])*`&quot;
+  ]
+}</code></pre></details>
     <h3>What the agent reads when refused</h3>
     <div class="says">You are recording prose through a shell command, and a backtick inside a DOUBLE-quoted argument is not Markdown — the shell RUNS it and splices its output into your text before the command ever sees it.
 On an append-only record there is no undo: no amend, no redact. And once the binary has argv the splice has already happened, so this is the only moment it can be caught.
 Fix: SINGLE-quote the argument (backticks are literal there), or feed the prose on stdin with a QUOTED heredoc — `git commit -F -` plus `&lt;&lt;'EOF'`, which this rule treats as safe.
-ALREADY single-quoted and still blocked? Then your PROSE carries an unbalanced double quote before the backtick, and the matcher cannot tell that quote from a real open argument. Nothing would splice — this one is the rule's cost, not your mistake. Balance the quote, drop it, or use the heredoc; do not go back to double quotes to make it pass.
-Measured four times. A `work plan decision` whose double-quoted text carried backticks around a command name executed it and spliced a whole task-list dump into the Decision Log. A justfile @echo with backticks ran `npm unlink`, silently undoing the link the message was announcing.</div>
+ALREADY single-quoted and still blocked? Then your PROSE carries an unbalanced double quote before the backtick, and the matcher cannot tell that quote from a real open argument. Nothing would splice — this one is the rule's cost, not your mistake. Balance the quote, drop it, or use the heredoc; do not go back to double quotes to make it pass.</div>
     <h3>Proved by</h3>
 <div class="cases"><div class="case ok"><b>passes</b><ul><li>running <code>work plan decision 'chose the </code>chain<code> builder' --chose x --reverse y</code></li><li>running <code>work plan status --json</code></li></ul></div><div class="case stop"><b>blocks</b><ul><li>running <code>work plan decision &quot;chose the </code>chain<code> builder&quot; --chose x --reverse y</code></li></ul></div></div>
 

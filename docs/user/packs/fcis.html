@@ -37,11 +37,9 @@
   .fact b{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-right:.35rem}
   .check{margin:.5rem 0 .2rem}
   .check .fact{margin:0}
-  .set{margin:.3rem 0 .3rem 0;font-size:.9rem}
-  .set b{display:block;font-weight:700;font-size:.74rem;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-bottom:.1rem}
-  .set pre{margin:.1rem 0}
-  .values{list-style:none;margin:0;padding:0;overflow-x:auto}
-  .values li{margin:.1rem 0;white-space:pre}
+  .settings{margin:.25rem 0 .4rem}
+  .settings summary{cursor:pointer;font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);font-weight:700}
+  .settings pre{margin:.3rem 0 0}
   .why{border-left:4px solid var(--parent);background:#eef4fa;padding:.6rem .9rem;border-radius:0 8px 8px 0;margin:.8rem 0;font-size:.95rem}
   .why.gap{border-left-color:#c2a33a;background:var(--gapbg);color:#6b5a1e;font-style:italic}
   .why p:first-child{margin-top:0} .why p:last-child{margin-bottom:0}
@@ -166,46 +164,47 @@ The shell is covered by integration tests, not unit tests.</div>
     <p class="fact"><b>Watches</b> <code>core/**/*.ts</code></p>
     <p class="fact"><b>Ignores</b> <code>**/*.test.ts</code></p>
     <p class="fact"><b>Categories</b> every session</p>
-    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/ast-grep.html"><code>astGrep</code></a></p>
-      <div class="set"><b>language</b> <code>typescript</code></div>
-      <div class="set"><b>rule</b> <pre><code>{
-  &quot;any&quot;: [
-    {
-      &quot;pattern&quot;: &quot;Date.now()&quot;
-    },
-    {
-      &quot;pattern&quot;: &quot;new Date()&quot;
-    },
-    {
-      &quot;pattern&quot;: &quot;Math.random()&quot;
-    },
-    {
-      &quot;pattern&quot;: &quot;crypto.randomUUID()&quot;
-    },
-    {
-      &quot;pattern&quot;: &quot;crypto.getRandomValues($$$)&quot;
-    },
-    {
-      &quot;pattern&quot;: &quot;fetch($$$)&quot;
-    },
-    {
-      &quot;pattern&quot;: &quot;setTimeout($$$)&quot;
-    },
-    {
-      &quot;pattern&quot;: &quot;setInterval($$$)&quot;
-    },
-    {
-      &quot;pattern&quot;: &quot;process.env&quot;
-    },
-    {
-      &quot;pattern&quot;: &quot;Bun.spawn($$$)&quot;
-    },
-    {
-      &quot;pattern&quot;: &quot;Bun.file($$$)&quot;
-    }
-  ]
-}</code></pre></div>
-    </div>
+    <p class="fact"><b>Check</b> <a href="../checks/ast-grep.html"><code>astGrep</code></a></p>
+    <details class="settings"><summary>settings</summary><pre><code>{
+  &quot;language&quot;: &quot;typescript&quot;,
+  &quot;rule&quot;: {
+    &quot;any&quot;: [
+      {
+        &quot;pattern&quot;: &quot;Date.now()&quot;
+      },
+      {
+        &quot;pattern&quot;: &quot;new Date()&quot;
+      },
+      {
+        &quot;pattern&quot;: &quot;Math.random()&quot;
+      },
+      {
+        &quot;pattern&quot;: &quot;crypto.randomUUID()&quot;
+      },
+      {
+        &quot;pattern&quot;: &quot;crypto.getRandomValues($$$)&quot;
+      },
+      {
+        &quot;pattern&quot;: &quot;fetch($$$)&quot;
+      },
+      {
+        &quot;pattern&quot;: &quot;setTimeout($$$)&quot;
+      },
+      {
+        &quot;pattern&quot;: &quot;setInterval($$$)&quot;
+      },
+      {
+        &quot;pattern&quot;: &quot;process.env&quot;
+      },
+      {
+        &quot;pattern&quot;: &quot;Bun.spawn($$$)&quot;
+      },
+      {
+        &quot;pattern&quot;: &quot;Bun.file($$$)&quot;
+      }
+    ]
+  }
+}</code></pre></details>
     <h3>What the agent reads when refused</h3>
     <div class="says">Impurity in the functional core. Pure code takes no clock / randomness / I/O / process.env — inject them as arguments and keep the decision pure.
   clock   → new Date() / Date.now()      (accept an injected `now`)
@@ -225,16 +224,17 @@ Move the side effect to the shell and pass the pure input down.</div>
     <p class="fact"><b>Watches</b> <code>core/**/*.ts</code></p>
     <p class="fact"><b>Ignores</b> <code>**/*.test.ts</code></p>
     <p class="fact"><b>Categories</b> every session</p>
-    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/ast-grep.html"><code>astGrep</code></a></p>
-      <div class="set"><b>language</b> <code>typescript</code></div>
-      <div class="set"><b>rule</b> <pre><code>{
-  &quot;kind&quot;: &quot;import_statement&quot;,
-  &quot;has&quot;: {
-    &quot;kind&quot;: &quot;string&quot;,
-    &quot;regex&quot;: &quot;^[\&quot;'](node:)?(fs|fs/promises|child_process|net|dns|tls|http|https|http2|os|cluster|worker_threads|readline|repl|v8|vm|zlib|dgram|inspector)[\&quot;']$&quot;
+    <p class="fact"><b>Check</b> <a href="../checks/ast-grep.html"><code>astGrep</code></a></p>
+    <details class="settings"><summary>settings</summary><pre><code>{
+  &quot;language&quot;: &quot;typescript&quot;,
+  &quot;rule&quot;: {
+    &quot;kind&quot;: &quot;import_statement&quot;,
+    &quot;has&quot;: {
+      &quot;kind&quot;: &quot;string&quot;,
+      &quot;regex&quot;: &quot;^[\&quot;'](node:)?(fs|fs/promises|child_process|net|dns|tls|http|https|http2|os|cluster|worker_threads|readline|repl|v8|vm|zlib|dgram|inspector)[\&quot;']$&quot;
+    }
   }
-}</code></pre></div>
-    </div>
+}</code></pre></details>
     <h3>What the agent reads when refused</h3>
     <div class="says">A shell module imported into pure code. The functional core DECIDES; reaching for the filesystem, a process, a socket or the OS is the shell's job, and an import of one is a leak whatever the file then does with it.
   fs · child_process · net · dns · http(s) · os · worker_threads · cluster
@@ -251,19 +251,20 @@ Move the effect into the shell around this file and pass the values in. (`node:p
     <p class="fact"><b>Watches</b> <code>core/**/*.ts</code></p>
     <p class="fact"><b>Ignores</b> <code>**/*.test.ts</code></p>
     <p class="fact"><b>Categories</b> every session</p>
-    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/ast-grep.html"><code>astGrep</code></a></p>
-      <div class="set"><b>language</b> <code>typescript</code></div>
-      <div class="set"><b>rule</b> <pre><code>{
-  &quot;any&quot;: [
-    {
-      &quot;pattern&quot;: &quot;throw $X&quot;
-    },
-    {
-      &quot;pattern&quot;: &quot;Promise.reject($$$)&quot;
-    }
-  ]
-}</code></pre></div>
-    </div>
+    <p class="fact"><b>Check</b> <a href="../checks/ast-grep.html"><code>astGrep</code></a></p>
+    <details class="settings"><summary>settings</summary><pre><code>{
+  &quot;language&quot;: &quot;typescript&quot;,
+  &quot;rule&quot;: {
+    &quot;any&quot;: [
+      {
+        &quot;pattern&quot;: &quot;throw $X&quot;
+      },
+      {
+        &quot;pattern&quot;: &quot;Promise.reject($$$)&quot;
+      }
+    ]
+  }
+}</code></pre></details>
     <h3>What the agent reads when refused</h3>
     <div class="says">`throw` / Promise.reject in the functional core. Errors are VALUES here — return a Result / tagged union (ok/err) so the failure path shows in the signature and the caller must handle both arms. Adapt thrown errors to Results at the boundary, not inside pure code.</div>
     <h3>Proved by</h3>
@@ -278,9 +279,10 @@ Move the effect into the shell around this file and pass the values in. (`node:p
     <p class="fact"><b>Watches</b> <code>core/**/*.ts</code></p>
     <p class="fact"><b>Ignores</b> <code>**/*.test.ts</code></p>
     <p class="fact"><b>Categories</b> every session</p>
-    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/sibling-exists.html"><code>siblingExists</code></a></p>
-      <div class="set"><b>sibling</b> <code>{dir}/{name}.test.ts</code></div>
-    </div>
+    <p class="fact"><b>Check</b> <a href="../checks/sibling-exists.html"><code>siblingExists</code></a></p>
+    <details class="settings"><summary>settings</summary><pre><code>{
+  &quot;sibling&quot;: &quot;{dir}/{name}.test.ts&quot;
+}</code></pre></details>
     <h3>What the agent reads when refused</h3>
     <div class="says">The pure core is test-first (red → green): {dir}/{name}.test.ts is missing. Write the failing test, then the code.</div>
     <h3>Proved by</h3>
@@ -295,9 +297,10 @@ Move the effect into the shell around this file and pass the values in. (`node:p
     <p class="fact"><b>Watches</b> <code>core/**/*.ts</code></p>
     <p class="fact"><b>Ignores</b> <code>**/*.test.ts</code></p>
     <p class="fact"><b>Categories</b> every session</p>
-    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/symbols-in-sibling.html"><code>symbolsInSibling</code></a></p>
-      <div class="set"><b>sibling</b> <code>{dir}/{name}.test.ts</code></div>
-    </div>
+    <p class="fact"><b>Check</b> <a href="../checks/symbols-in-sibling.html"><code>symbolsInSibling</code></a></p>
+    <details class="settings"><summary>settings</summary><pre><code>{
+  &quot;sibling&quot;: &quot;{dir}/{name}.test.ts&quot;
+}</code></pre></details>
     <h3>What the agent reads when refused</h3>
     <div class="says">An exported pure function is never referenced in its test. Cheap nudge, not coverage — but 'added a function, wrote no test' is exactly the miss it catches.</div>
     <h3>Proved by</h3>
@@ -311,10 +314,13 @@ Move the effect into the shell around this file and pass the values in. (`node:p
     <p class="fact"><b>Refuses at</b> the commit gate, over the staged set</p>
     <p class="fact"><b>Watches</b> not scoped by path</p>
     <p class="fact"><b>Categories</b> every session</p>
-    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/exec-passes.html"><code>execPasses</code></a></p>
-      <div class="set"><b>changed</b> <code>core/**</code></div>
-      <div class="set"><b>run</b> <code>./ci.sh coverage</code></div>
-    </div>
+    <p class="fact"><b>Check</b> <a href="../checks/exec-passes.html"><code>execPasses</code></a></p>
+    <details class="settings"><summary>settings</summary><pre><code>{
+  &quot;changed&quot;: [
+    &quot;core/**&quot;
+  ],
+  &quot;run&quot;: &quot;./ci.sh coverage&quot;
+}</code></pre></details>
     <h3>What the agent reads when refused</h3>
     <div class="says">Coverage of the pure core fell below the bar — add tests for the new and changed code. (Runs only when pure files changed.)</div>
     <h3>Proved by</h3>
@@ -355,11 +361,16 @@ Move the effect into the shell around this file and pass the values in. (`node:p
     <p class="fact"><b>Refuses at</b> a shell command is about to run</p>
     <p class="fact"><b>Watches</b> not scoped by path</p>
     <p class="fact"><b>Categories</b> every session</p>
-    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/commit-reason.html"><code>commitReason</code></a></p>
-      <div class="set"><b>whenAdded</b> <code>core/**/*.ts</code></div>
-      <div class="set"><b>except</b> <code>**/*.test.*</code></div>
-      <div class="set"><b>token</b> <code>new-pure-file</code></div>
-    </div>
+    <p class="fact"><b>Check</b> <a href="../checks/commit-reason.html"><code>commitReason</code></a></p>
+    <details class="settings"><summary>settings</summary><pre><code>{
+  &quot;whenAdded&quot;: [
+    &quot;core/**/*.ts&quot;
+  ],
+  &quot;except&quot;: [
+    &quot;**/*.test.*&quot;
+  ],
+  &quot;token&quot;: &quot;new-pure-file&quot;
+}</code></pre></details>
     <h3>What the agent reads when refused</h3>
     <div class="says">Adding a file to the pure core must say why the pure file it belongs in isn't the place — put `new-pure-file: &lt;why not the existing file&gt;` on a line of its own in the commit message. The verifier reads that reason at the next phase boundary.</div>
     <h3>Proved by</h3>

@@ -19,7 +19,7 @@ import {
   prose,
   renderPackPage,
   renderPacksIndex,
-  settingRows,
+  settingsJson,
   whenText,
   type CaseFact,
   type CaseLine,
@@ -27,7 +27,6 @@ import {
   type EntryDoc,
   type PackDoc,
   type ParamDoc,
-  type SettingRow,
 } from "./domain.ts";
 
 /** A guardrail with everything filled in — the page's fullest row. */
@@ -41,7 +40,7 @@ const rail: EntryDoc = {
   on: ["docs/**"],
   ignore: ["docs/user/legacy/**"],
   categories: ["supervised"],
-  settings: settingRows({ root: "docs", allow: [], folders: ["user", "agent"] }),
+  settings: settingsJson({ root: "docs", allow: [], folders: ["user", "agent"] }),
   checkName: "canonicalFiles",
   reference: true,
   says: "docs/ holds exactly two doors: `user/` and `agent/`.",
@@ -63,7 +62,7 @@ const crumb: EntryDoc = {
   on: [],
   ignore: [],
   categories: [],
-  settings: [],
+  settings: "",
   checkName: "",
   reference: false,
   says: "Two audiences, two doors.",
@@ -187,25 +186,30 @@ describe("the binding snippet", () => {
 describe("a pack's page", () => {
   const html = renderPackPage(doc);
 
-  it("carries the facts a reader cannot get anywhere else — the message verbatim, the settings as values", () => {
+  // ONE SHAPE FOR EVERY CHECK: the options object as JSON, behind a collapsed toggle. Pulled apart
+  // per option it read as two different kinds of thing — a labelled list here, JSON there — and
+  // neither said what it was.
+  it("carries the facts a reader cannot get anywhere else — the message verbatim, the settings as JSON", () => {
     expect(html).toContain("docs/ holds exactly two doors: `user/` and `agent/`.");
-    expect(html).toContain("<b>root</b> <code>docs</code>");
-    expect(html).toContain("<b>allow</b> <code>none</code>");
-    // ONE PER LINE, never a dotted run: a list is a thing a reader compares item by item.
-    expect(html).toContain("<ul class=\"values\"><li><code>user</code></li><li><code>agent</code></li></ul>");
+    expect(html).toContain('<details class="settings"><summary>settings</summary>');
+    expect(html).toContain("&quot;root&quot;: &quot;docs&quot;");
+    expect(html).toContain("&quot;folders&quot;: [");
     expect(html).toContain('href="../checks/canonical-files.html"');
   });
 
   it("says a check has no options rather than printing an empty one", () => {
-    const bare: EntryDoc = { ...rail, settings: [], checkName: "protectedPath" };
-    expect(renderPackPage({ ...doc, entries: [bare] })).toContain("no options. The scope above is the whole rule.");
+    const bare: EntryDoc = { ...rail, settings: settingsJson({}), checkName: "protectedPath" };
+    const page = renderPackPage({ ...doc, entries: [bare] });
+    expect(page).toContain("no options");
+    expect(page).not.toContain("<details");
   });
 
-  it("puts a structured setting in a block, where it can be read", () => {
-    const nested: EntryDoc = { ...rail, checkName: "astGrep", settings: settingRows({ language: "tsx", rule: { kind: "call_expression" } }) };
+  it("prints a structured setting in the same block as a plain one", () => {
+    const nested: EntryDoc = { ...rail, checkName: "astGrep", settings: settingsJson({ language: "tsx", rule: { kind: "call_expression" } }) };
     const page = renderPackPage({ ...doc, entries: [nested] });
-    expect(page).toContain("<b>language</b> <code>tsx</code>");
+    expect(page).toContain("&quot;language&quot;: &quot;tsx&quot;");
     expect(page).toContain("&quot;kind&quot;: &quot;call_expression&quot;");
+    expect(page).toContain("<summary>settings</summary>");
   });
 
   it("prints the canned world under the case it belongs to", () => {
@@ -272,7 +276,7 @@ describe("a pack's page", () => {
   });
 
   it("names a check written inline rather than pretending the entry has no check", () => {
-    const inline: EntryDoc = { ...rail, settings: [], checkName: "" };
+    const inline: EntryDoc = { ...rail, settings: "", checkName: "" };
     expect(renderPackPage({ ...doc, entries: [inline] })).toContain("written inline in this pack");
   });
 
@@ -320,30 +324,23 @@ describe("the listing page", () => {
   });
 });
 
-describe("a check's settings, as rows", () => {
-  it("flattens what fits on a line and blocks what does not", () => {
-    expect(settingRows({ run: "./ci.sh test" })).toEqual([{ key: "run", value: "./ci.sh test", block: false }]);
-    expect(settingRows({ ban: ["a", "b"] })).toEqual([{ key: "ban", value: "a\nb", block: false }]);
-    expect(settingRows({ allow: [] })).toEqual([{ key: "allow", value: "none", block: false }]);
-    expect(settingRows({ deep: { a: 1 } })).toEqual([{ key: "deep", value: '{\n  "a": 1\n}', block: true }]);
-    expect(settingRows({ n: 2, on: true })).toEqual([
-      { key: "n", value: "2", block: false },
-      { key: "on", value: "true", block: false },
-    ]);
+describe("a check's settings", () => {
+  it("are the options object, pretty-printed, whatever the check is", () => {
+    expect(settingsJson({ run: "./ci.sh test" })).toBe('{\n  "run": "./ci.sh test"\n}');
+    expect(settingsJson({ ban: ["a", "b"] })).toBe('{\n  "ban": [\n    "a",\n    "b"\n  ]\n}');
   });
 
-  it("has nothing to say about a check that was never configured with an object", () => {
-    expect(settingRows(undefined)).toEqual([]);
-    expect(settingRows(null)).toEqual([]);
-    expect(settingRows(["a"])).toEqual([]);
+  it("are nothing at all for a check that took none", () => {
+    expect(settingsJson({})).toBe("");
+    expect(settingsJson(undefined)).toBe("");
+    expect(settingsJson(null)).toBe("");
   });
 });
 
 describe("the model", () => {
-  it("is plain data — a case line is a kind and a sentence, a setting a key and a value", () => {
+  it("is plain data — a case line is a kind, a sentence and what the case was told", () => {
     const one: CaseLine = { kind: "pass", line: "writing `a.ts`", given: [] };
-    const row: SettingRow = { key: "root", value: "docs", block: false };
-    expect([one.kind, row.key]).toEqual(["pass", "root"]);
+    expect(one.kind).toBe("pass");
   });
 
   it("declares the tag set once, and the page renders them in that order", () => {

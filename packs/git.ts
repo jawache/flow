@@ -157,17 +157,9 @@ const conventionalCommit = defineCheck(
  * `release: …` · `release(scope): …` · `release(scope)!: …` · `chore(release): …`, and a `chore`
  * ONLY with a release-ish scope.
  *
- * TWO FAULTS FIXED HERE, both found by writing the cases the crossing's audit asked for, and both
- * the same shape: a claim nobody had driven.
- *
- * The hole: the old expression was `^(release|chore)(\([^)]*release[^)]*\))?!?:` with the scope
- * group OPTIONAL, so a bare `chore:` matched — every `chore: tidy the readme` in this repo's
- * history was licensed to hand-edit the version, which is the whole thing this rule exists to
- * refuse. `chore` now REQUIRES its release scope.
- *
- * The lie: the doc line claimed `release(scope)!:` worked, and it could not — the scope group
- * demanded the word "release" inside the parentheses, so `release(flow): 1.0.0` was refused. That
- * spelling is about to be typed here for real, now that `work` and `flow` version independently.
+ * `chore` REQUIRES its release scope: a bare `chore:` licensing a hand-edited version is the one
+ * thing this rule exists to refuse. A `release(scope)` scope is free text — the word "release" is
+ * not demanded inside the parentheses, so `release(cli): 1.0.0` passes.
  */
 export function isReleaseCommit(message: string): boolean {
   const first = message.split("\n")[0] ?? "";
@@ -222,7 +214,7 @@ const noHandEditedVersion = defineCheck(
     },
 );
 
-/** The type words this repo accepts. Stated, never defaulted — the entry is the whole rule. */
+/** The type words a commit header may use. Stated, never defaulted — the entry is the whole rule. */
 const TYPES = ["feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert", "release"];
 
 // The words this pack bans from a commit message, ASSEMBLED rather than written out.
@@ -230,17 +222,26 @@ const TYPES = ["feat", "fix", "docs", "style", "refactor", "perf", "test", "buil
 // Not coyness. The rule fires on the command line, and every one of these entries is a command
 // line's worth of prose about it — spelled whole, the ban would refuse the very commit that adds
 // the file defining it, and the first thing anybody would do is turn the rule off to land it.
-// Measured while writing this file: a `python3 - <<'PY'` heredoc carrying the pattern was blocked
-// by the pattern, which is the rule working and the reason these three lines exist.
 const TRAILER = ["Co", "Authored", "By"].join("-");
 const VENDOR = ["Cl", "aude"].join("");
 const SITE = ["cl", "aude", "\\.com/", "cl", "aude", "-code"].join("");
+// The same link as plain text, for the cases, and the emoji the tool's footer carries.
+const LINK = ["cl", "aude", ".com/", "cl", "aude", "-code"].join("");
+const ROBOT = "\u{1F916}";
 
-/** The one fact this pack cannot know: which recipe cuts a release here. */
+/** What this pack cannot know: which recipe cuts a release, and which file carries the version. */
 export interface Release {
   /**
+   * The file the release writes the version into. Defaults to `package.json`.
+   *
+   * `noHandEditedVersion` reads whatever this names out of the commit's own diff, so any manifest
+   * works there. `versionIsSemver` reads it as JSON, so a repo whose manifest is TOML or YAML names
+   * the file here and disables that one entry.
+   */
+  readonly versionFile?: string;
+  /**
    * The recipe that computes the version from the history, writes the changelog, stamps the
-   * version file and tags — `just release` here, `npm run release` elsewhere.
+   * version file and tags — for example `just release` or `npm run release`.
    *
    * MANDATORY rather than defaulted, by the same rule tdd's suite recipe follows: a default is a
    * rule that names the wrong command in every repo that spells it differently, and it names it in
@@ -252,8 +253,7 @@ export interface Release {
 /**
  * Conventional commit headers, computed versions, and nothing destroys uncommitted work.
  *
- * The `node/` sub-group is release discipline that happens to be spelled in package.json — a
- * Python or Rust repo binds the same two jobs against pyproject.toml or Cargo.toml.
+ * The `node/` sub-group is release discipline spelled in package.json, and package.json only.
  *
  * @setup A release path the repo really has, named as the `release` parameter: the recipe that
  * computes the next version from the commit headers, writes the changelog and tags. The version
@@ -263,7 +263,9 @@ export interface Release {
  * refuse the first few commits while everyone re-learns the format — that is the rule working, and
  * `flow status` will show it firing.
  */
-export const git = definePack("git", (repo: Release) => ({
+export const git = definePack("git", (repo: Release) => {
+  const versionFile = repo.versionFile ?? "package.json";
+  return {
   /**
    * Without it, the commit surface is learned by trial and refusal: an agent writes a header the
    * changelog cannot read, reaches for a force push, or discards uncommitted work with a command
@@ -271,7 +273,7 @@ export const git = definePack("git", (repo: Release) => ({
    */
   orientation: breadcrumb()
     .at(session)
-    .description("The whole commit contract — how commits are written here, how versions are computed, what is blocked.")
+    .description("The whole commit contract — how commits are written, how versions are computed, what is blocked.")
     .text(
       [
         `Commits, PRs and issues carry NO Claude/Anthropic attribution — no ${TRAILER} line, no "Generated with Claude", no mention. Author them as your own.`,
@@ -298,11 +300,18 @@ export const git = definePack("git", (repo: Release) => ({
     .message(
       `Commit / PR / issue body contains Claude or Anthropic attribution. Remove it (the ${TRAILER} line, the 'Generated with Claude' line, any Claude/Anthropic mention) and retry.`,
     )
+    // EVERY LITERAL ASSEMBLED, the cases included: written whole, a case would carry the shape its
+    // own rule bans, and this file's next commit would be refused by it.
     .test({
       pass: ['git commit -m "fix(auth): renew the session"'],
       block: [
         `git commit -m "fix(auth): renew the session\n\n${TRAILER}: ${VENDOR} <noreply@anthropic.com>"`,
         `gh pr create --body "${TRAILER}: ${VENDOR}"`,
+        // The generated-with line, and the tool's own footer — the site link and the robot emoji
+        // beside it. Three of the five patterns had no case at all until this read.
+        `git commit -m "fix(auth): renew the session\n\nGenerated with ${VENDOR} Code"`,
+        `git commit -m "fix(auth): renew the session\n\n${ROBOT} Generated with ${LINK}"`,
+        `gh issue create --body "opened with ${LINK}"`,
       ],
     }),
 
@@ -383,10 +392,9 @@ export const git = definePack("git", (repo: Release) => ({
     .at(command)
     .description("Blocks a force-push — rewriting pushed history is the one loss a stash cannot undo.")
     // ANCHORED TO A COMMAND POSITION — the start of the line, or just past a shell operator —
-    // exactly as `work.noAgentInboxItems` is, and measured the same way: unanchored, this pattern
-    // refused a script four times over for EDITING the rule's own fixture text, because the words
-    // sat inside a heredoc it was writing. Four false refusals, and a rule that cries wolf is one
-    // agents learn to route around.
+    // exactly as `work.noAgentInboxItems` is. Unanchored, the pattern refuses a script for EDITING
+    // the words, wherever they sit inside a heredoc it is writing, and a rule that cries wolf is
+    // one agents learn to route around.
     .check(
       banCommands({
         ban: [
@@ -421,7 +429,10 @@ export const git = definePack("git", (repo: Release) => ({
     .description("The commit header must speak Conventional Commits v1.0.0 (checked before git commit runs).")
     .check(conventionalCommit({ types: TYPES }))
     .message(
-      "Commit header must match Conventional Commits v1.0.0: type(scope)!: description — e.g. `fix(auth): renew session on token refresh`.",
+      [
+        "Commit header must match Conventional Commits v1.0.0: type(scope)!: description — e.g. `fix(auth): renew session on token refresh`.",
+        `The type is one of: ${TYPES.join(" · ")}.`,
+      ].join("\n"),
     )
     .test({
       pass: [
@@ -444,12 +455,9 @@ export const git = definePack("git", (repo: Release) => ({
     }),
 
   // The commands in THIS pack that write a permanent record — `git commit -m` and the two `gh`
-  // verbs that open a PR or an issue. It arrived here when the packs moved into the package: it
-  // was one entry in the `flow` pack covering these AND the `work …` lifecycle verbs, which is two packs'
-  // worth of commands in one rule, so the head split along the pack line and the tail is shared
-  // (`substitutionInProse`, a core check beside `banCommands`). A repo that binds `work` gets the
-  // other head there; a
-  // repo that binds only `git` still gets this one, which is the half every repo has.
+  // verbs that open a PR or an issue. The lifecycle's own prose-writing verbs are the same rule in
+  // the `work` pack, and the shared tail is `substitutionInProse`, a core check beside
+  // `banCommands`: a repo that binds only `git` still gets the half every repo has.
   noShellSubstitutionInProse: guardrail()
     .at(command)
     .description("A backtick inside a double-quoted argument of a commit or a PR body is live command substitution, not Markdown.")
@@ -463,8 +471,8 @@ export const git = definePack("git", (repo: Release) => ({
   node: {
     versionIsSemver: guardrail()
       .at(write, commit)
-      .on("package.json")
-      .description("package.json version is valid SemVer 2.0.0 — the number the computed release writes. See https://semver.org/")
+      .on(versionFile)
+      .description("The manifest's version is valid SemVer 2.0.0 — the number the computed release writes. See https://semver.org/")
       .check(
         jsonInvariant({
           assert: [
@@ -475,16 +483,16 @@ export const git = definePack("git", (repo: Release) => ({
           ],
         }),
       )
-      .message("package.json `version` must be valid SemVer 2.0.0 (MAJOR.MINOR.PATCH[-prerelease][+build]).")
+      .message(`\`${versionFile}\` needs a valid SemVer 2.0.0 \`version\` (MAJOR.MINOR.PATCH[-prerelease][+build]).`)
       .test({
-        pass: [{ path: "package.json", content: '{"version":"1.2.3"}' }],
-        block: [{ path: "package.json", content: '{"version":"1.2"}' }],
+        pass: [{ path: versionFile, content: '{"version":"1.2.3"}' }],
+        block: [{ path: versionFile, content: '{"version":"1.2"}' }],
       }),
 
     noHandEditedVersion: guardrail()
       .at(command)
       .description("The version field is written by the release commit, never by hand.")
-      .check(noHandEditedVersion({ versionFile: "package.json", recipe: repo.release }))
+      .check(noHandEditedVersion({ versionFile, recipe: repo.release }))
       .message(
         `The version is computed from the commit history at release time — run \`${repo.release}\`, which writes the version, the changelog and the tag together. A real release commit (\`release:\` / \`chore(release):\`) passes.`,
       )
@@ -493,72 +501,72 @@ export const git = definePack("git", (repo: Release) => ({
           // A release commit may write it — the one shape that passes with the diff right there.
           {
             command: 'git commit -m "chore(release): 1.2.3"',
-            world: { exec: { "git diff HEAD -- 'package.json'": { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
+            world: { exec: { [`git diff HEAD -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
           },
           // The other two release spellings the header rule accepts, so all three arms are proved
           // rather than the one this repo happens to type.
           {
             command: 'git commit -m "release: 1.2.3"',
-            world: { exec: { "git diff HEAD -- 'package.json'": { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
+            world: { exec: { [`git diff HEAD -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
           },
           {
             command: 'git commit -m "release(flow)!: 2.0.0"',
-            world: { exec: { "git diff HEAD -- 'package.json'": { stdout: '-  "version": "1.2.2"\n+  "version": "2.0.0"' } } },
+            world: { exec: { [`git diff HEAD -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "2.0.0"' } } },
           },
           // A metadata edit that rewrites the version LINE without moving its value — adding a key
           // after it puts a comma on the end. Values are compared, never lines, or this would fire
           // on every reformat.
           {
             command: 'git commit -m "chore: add a field"',
-            world: { exec: { "git diff HEAD -- 'package.json'": { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.2",' } } },
+            world: { exec: { [`git diff HEAD -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.2",' } } },
           },
           {
             command: 'git commit -m "fix: a thing"',
-            world: { exec: { "git diff HEAD -- 'package.json'": { stdout: '-  "name": "a"\n+  "name": "b"' } } },
+            world: { exec: { [`git diff HEAD -- '${versionFile}'`]: { stdout: '-  "name": "a"\n+  "name": "b"' } } },
           },
           // The type word is read case-insensitively: a person typing `Release:` has written a
           // release commit, and refusing it would teach them the rule is about capitalisation.
           {
             command: 'git commit -m "Release: 1.2.3"',
-            world: { exec: { "git diff HEAD -- 'package.json'": { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
+            world: { exec: { [`git diff HEAD -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
           },
           // A `+++` line is the diff's own header naming the file, not a line OF the file — so a
           // path that happens to contain a version-shaped string changes nothing.
           {
             command: 'git commit -m "fix: a thing"',
-            world: { exec: { "git diff HEAD -- 'package.json'": { stdout: '+++ b/version = "9.9.9"\n--- a/x' } } },
+            world: { exec: { [`git diff HEAD -- '${versionFile}'`]: { stdout: '+++ b/version = "9.9.9"\n--- a/x' } } },
           },
         ],
         block: [
           {
             command: 'git commit -m "fix: a thing"',
-            world: { exec: { "git diff HEAD -- 'package.json'": { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
+            world: { exec: { [`git diff HEAD -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
           },
           // THE HOLE THIS CASE CLOSED: a bare `chore:` used to read as a release, so every
           // housekeeping commit in the repo was licensed to hand-edit the version. `chore` needs
           // its release scope now, and this case is what keeps it needing one.
           {
             command: 'git commit -m "chore: tidy the readme"',
-            world: { exec: { "git diff HEAD -- 'package.json'": { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
+            world: { exec: { [`git diff HEAD -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
           },
           // A release header in the BODY is not a release commit. The header is line one, the same
           // reading the format rule takes — and a message parser that searched the whole text would
           // hand every commit a free pass by way of a footer.
           {
             command: "git commit -m 'feat: a thing\n\nrelease: 1.2.3'",
-            world: { exec: { "git diff HEAD -- 'package.json'": { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
+            world: { exec: { [`git diff HEAD -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
           },
           // A version ADDED where the file had none: there is no removed value to compare against,
           // and writing the first one by hand is the same act as changing it.
           {
             command: 'git commit -m "chore: add the field"',
-            world: { exec: { "git diff HEAD -- 'package.json'": { stdout: '+  "version": "0.1.0"' } } },
+            world: { exec: { [`git diff HEAD -- '${versionFile}'`]: { stdout: '+  "version": "0.1.0"' } } },
           },
           // A prerelease suffix is part of the value, so `1.0.0` → `1.0.0-rc.1` is a change. A
           // comparison that read only the numeric core would wave through every rc a hand cut.
           {
             command: 'git commit -m "fix: a thing"',
-            world: { exec: { "git diff HEAD -- 'package.json'": { stdout: '-  "version": "1.0.0"\n+  "version": "1.0.0-rc.1"' } } },
+            world: { exec: { [`git diff HEAD -- '${versionFile}'`]: { stdout: '-  "version": "1.0.0"\n+  "version": "1.0.0-rc.1"' } } },
           },
           // A COMMIT AIMED ELSEWHERE, read where it lands. The world answers only the `-C` form,
           // so a check that diffed this repo would ask a question the case never answered and fail
@@ -567,11 +575,12 @@ export const git = definePack("git", (repo: Release) => ({
             command: 'git -C ../other commit -m "fix: a thing"',
             world: {
               exec: {
-                "git -C '../other' diff HEAD -- 'package.json'": { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' },
+                [`git -C '../other' diff HEAD -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' },
               },
             },
           },
         ],
       }),
-  },
-}));
+    },
+  };
+});

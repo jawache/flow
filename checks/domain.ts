@@ -198,7 +198,6 @@ export const SUBSTITUTION_MESSAGE = [
   "On an append-only record there is no undo: no amend, no redact. And once the binary has argv the splice has already happened, so this is the only moment it can be caught.",
   "Fix: SINGLE-quote the argument (backticks are literal there), or feed the prose on stdin with a QUOTED heredoc — `git commit -F -` plus `<<'EOF'`, which this rule treats as safe.",
   "ALREADY single-quoted and still blocked? Then your PROSE carries an unbalanced double quote before the backtick, and the matcher cannot tell that quote from a real open argument. Nothing would splice — this one is the rule's cost, not your mistake. Balance the quote, drop it, or use the heredoc; do not go back to double quotes to make it pass.",
-  "Measured four times. A `work plan decision` whose double-quoted text carried backticks around a command name executed it and spliced a whole task-list dump into the Decision Log. A justfile @echo with backticks ran `npm unlink`, silently undoing the link the message was announcing.",
 ].join("\n");
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════

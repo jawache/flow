@@ -37,11 +37,9 @@
   .fact b{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-right:.35rem}
   .check{margin:.5rem 0 .2rem}
   .check .fact{margin:0}
-  .set{margin:.3rem 0 .3rem 0;font-size:.9rem}
-  .set b{display:block;font-weight:700;font-size:.74rem;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-bottom:.1rem}
-  .set pre{margin:.1rem 0}
-  .values{list-style:none;margin:0;padding:0;overflow-x:auto}
-  .values li{margin:.1rem 0;white-space:pre}
+  .settings{margin:.25rem 0 .4rem}
+  .settings summary{cursor:pointer;font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);font-weight:700}
+  .settings pre{margin:.3rem 0 0}
   .why{border-left:4px solid var(--parent);background:#eef4fa;padding:.6rem .9rem;border-radius:0 8px 8px 0;margin:.8rem 0;font-size:.95rem}
   .why.gap{border-left-color:#c2a33a;background:var(--gapbg);color:#6b5a1e;font-style:italic}
   .why p:first-child{margin-top:0} .why p:last-child{margin-bottom:0}
@@ -140,23 +138,24 @@ The linter holds the escape hatches (@ts-expect-error, explicit any, double asse
     <p class="fact"><b>Refuses at</b> a file is written or edited · the commit gate, over the staged set</p>
     <p class="fact"><b>Watches</b> <code>**/tsconfig.json</code></p>
     <p class="fact"><b>Categories</b> every session</p>
-    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/json-invariant.html"><code>jsonInvariant</code></a></p>
-      <div class="set"><b>assert</b> <pre><code>[
-  {
-    &quot;path&quot;: &quot;extends&quot;,
-    &quot;matches&quot;: &quot;tsconfig\\.base\\.json$&quot;,
-    &quot;required&quot;: true
-  },
-  {
-    &quot;path&quot;: &quot;compilerOptions.strict&quot;,
-    &quot;equals&quot;: true
-  },
-  {
-    &quot;path&quot;: &quot;compilerOptions.noUncheckedIndexedAccess&quot;,
-    &quot;equals&quot;: true
-  }
-]</code></pre></div>
-    </div>
+    <p class="fact"><b>Check</b> <a href="../checks/json-invariant.html"><code>jsonInvariant</code></a></p>
+    <details class="settings"><summary>settings</summary><pre><code>{
+  &quot;assert&quot;: [
+    {
+      &quot;path&quot;: &quot;extends&quot;,
+      &quot;matches&quot;: &quot;tsconfig\\.base\\.json$&quot;,
+      &quot;required&quot;: true
+    },
+    {
+      &quot;path&quot;: &quot;compilerOptions.strict&quot;,
+      &quot;equals&quot;: true
+    },
+    {
+      &quot;path&quot;: &quot;compilerOptions.noUncheckedIndexedAccess&quot;,
+      &quot;equals&quot;: true
+    }
+  ]
+}</code></pre></details>
     <h3>Why it exists</h3>
     <div class="why"><p>Without it, a project quietly stops extending the shared base — or extends it and then turns
 <code>strict</code> back off — and the fleet's one standard becomes per-project taste that only shows up
@@ -174,19 +173,20 @@ as a bug much later.</p></div>
     <p class="fact"><b>Refuses at</b> a file is written or edited · the commit gate, over the staged set</p>
     <p class="fact"><b>Watches</b> <code>eslint.config.js</code> · <code>eslint.config.mjs</code></p>
     <p class="fact"><b>Categories</b> every session</p>
-    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/ast-grep.html"><code>astGrep</code></a></p>
-      <div class="set"><b>language</b> <code>javascript</code></div>
-      <div class="set"><b>rule</b> <pre><code>{
-  &quot;kind&quot;: &quot;program&quot;,
-  &quot;not&quot;: {
-    &quot;has&quot;: {
-      &quot;stopBy&quot;: &quot;end&quot;,
-      &quot;kind&quot;: &quot;string&quot;,
-      &quot;regex&quot;: &quot;eslint\\.config\\.base&quot;
+    <p class="fact"><b>Check</b> <a href="../checks/ast-grep.html"><code>astGrep</code></a></p>
+    <details class="settings"><summary>settings</summary><pre><code>{
+  &quot;language&quot;: &quot;javascript&quot;,
+  &quot;rule&quot;: {
+    &quot;kind&quot;: &quot;program&quot;,
+    &quot;not&quot;: {
+      &quot;has&quot;: {
+        &quot;stopBy&quot;: &quot;end&quot;,
+        &quot;kind&quot;: &quot;string&quot;,
+        &quot;regex&quot;: &quot;eslint\\.config\\.base&quot;
+      }
     }
   }
-}</code></pre></div>
-    </div>
+}</code></pre></details>
     <h3>Why it exists</h3>
     <div class="why"><p>Without it, a repo lints to its own private standard while its config claims the fleet's —
 the rules that catch the escape hatches this pack stopped hand-rolling are simply not on.</p></div>
@@ -204,9 +204,10 @@ Fix: `import base from &quot;./eslint.config.base.js&quot;;` and spread it, then
     <p class="fact"><b>Refuses at</b> the commit gate, over the staged set</p>
     <p class="fact"><b>Watches</b> not scoped by path</p>
     <p class="fact"><b>Categories</b> every session</p>
-    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/exec-passes.html"><code>execPasses</code></a></p>
-      <div class="set"><b>run</b> <code>./ci.sh types</code></div>
-    </div>
+    <p class="fact"><b>Check</b> <a href="../checks/exec-passes.html"><code>execPasses</code></a></p>
+    <details class="settings"><summary>settings</summary><pre><code>{
+  &quot;run&quot;: &quot;./ci.sh types&quot;
+}</code></pre></details>
     <h3>What the agent reads when refused</h3>
     <div class="says">The typecheck failed (`./ci.sh types`) — the commit is blocked until types are clean. tsc catches the cross-file mismatches a file-at-a-time build never sees: a change that compiled here and broke a caller there.</div>
     <h3>Proved by</h3>
@@ -220,9 +221,10 @@ Fix: `import base from &quot;./eslint.config.base.js&quot;;` and spread it, then
     <p class="fact"><b>Refuses at</b> the commit gate, over the staged set</p>
     <p class="fact"><b>Watches</b> not scoped by path</p>
     <p class="fact"><b>Categories</b> every session</p>
-    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/exec-passes.html"><code>execPasses</code></a></p>
-      <div class="set"><b>run</b> <code>./ci.sh lint</code></div>
-    </div>
+    <p class="fact"><b>Check</b> <a href="../checks/exec-passes.html"><code>execPasses</code></a></p>
+    <details class="settings"><summary>settings</summary><pre><code>{
+  &quot;run&quot;: &quot;./ci.sh lint&quot;
+}</code></pre></details>
     <h3>What the agent reads when refused</h3>
     <div class="says">The lint failed (`./ci.sh lint`) — the commit is blocked until it is clean. This is where the escape hatches are held (floating promises, explicit any, ts-comments); fix the finding, or override that one rule visibly and locally.</div>
     <h3>Proved by</h3>

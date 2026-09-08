@@ -37,11 +37,9 @@
   .fact b{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-right:.35rem}
   .check{margin:.5rem 0 .2rem}
   .check .fact{margin:0}
-  .set{margin:.3rem 0 .3rem 0;font-size:.9rem}
-  .set b{display:block;font-weight:700;font-size:.74rem;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-bottom:.1rem}
-  .set pre{margin:.1rem 0}
-  .values{list-style:none;margin:0;padding:0;overflow-x:auto}
-  .values li{margin:.1rem 0;white-space:pre}
+  .settings{margin:.25rem 0 .4rem}
+  .settings summary{cursor:pointer;font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);font-weight:700}
+  .settings pre{margin:.3rem 0 0}
   .why{border-left:4px solid var(--parent);background:#eef4fa;padding:.6rem .9rem;border-radius:0 8px 8px 0;margin:.8rem 0;font-size:.95rem}
   .why.gap{border-left-color:#c2a33a;background:var(--gapbg);color:#6b5a1e;font-style:italic}
   .why p:first-child{margin-top:0} .why p:last-child{margin-bottom:0}
@@ -141,16 +139,17 @@ Mock only at owned boundaries: the network edge (MSW), not your own modules.</di
     <p class="fact"><b>Refuses at</b> a file is written or edited · the commit gate, over the staged set</p>
     <p class="fact"><b>Watches</b> <code>**/*.test.ts</code> · <code>**/*.test.tsx</code> · <code>**/*.spec.ts</code> · <code>**/*.spec.tsx</code></p>
     <p class="fact"><b>Categories</b> every session</p>
-    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/ast-grep.html"><code>astGrep</code></a></p>
-      <div class="set"><b>language</b> <code>typescript</code></div>
-      <div class="set"><b>rule</b> <pre><code>{
-  &quot;kind&quot;: &quot;import_statement&quot;,
-  &quot;has&quot;: {
-    &quot;kind&quot;: &quot;string&quot;,
-    &quot;regex&quot;: &quot;^[\&quot;'](node:test|node:assert|node:assert/strict|jest|@jest/globals|mocha|jasmine|ava|tap|tape|uvu)[\&quot;']$&quot;
+    <p class="fact"><b>Check</b> <a href="../checks/ast-grep.html"><code>astGrep</code></a></p>
+    <details class="settings"><summary>settings</summary><pre><code>{
+  &quot;language&quot;: &quot;typescript&quot;,
+  &quot;rule&quot;: {
+    &quot;kind&quot;: &quot;import_statement&quot;,
+    &quot;has&quot;: {
+      &quot;kind&quot;: &quot;string&quot;,
+      &quot;regex&quot;: &quot;^[\&quot;'](node:test|node:assert|node:assert/strict|jest|@jest/globals|mocha|jasmine|ava|tap|tape|uvu)[\&quot;']$&quot;
+    }
   }
-}</code></pre></div>
-    </div>
+}</code></pre></details>
     <h3>What the agent reads when refused</h3>
     <div class="says">A second test framework in a test file. This fleet runs vitest — every idiom rule below reads vitest spellings, so a file under another runner is a file nothing here can check, and a suite that only one command knows how to run. Import `test` / `expect` / `describe` / `vi` from &quot;vitest&quot;.
 A repo that genuinely runs another framework disables this entry in its config, on the record, rather than mixing two.</div>
@@ -165,29 +164,30 @@ A repo that genuinely runs another framework disables this entry in its config, 
     <p class="fact"><b>Refuses at</b> a file is written or edited · the commit gate, over the staged set</p>
     <p class="fact"><b>Watches</b> <code>**/*.test.ts</code> · <code>**/*.test.tsx</code> · <code>**/*.test.js</code> · <code>**/*.test.mjs</code> · <code>**/*.spec.ts</code> · <code>**/*.spec.tsx</code> · <code>**/*.spec.js</code></p>
     <p class="fact"><b>Categories</b> every session</p>
-    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/ast-grep.html"><code>astGrep</code></a></p>
-      <div class="set"><b>language</b> <code>typescript</code></div>
-      <div class="set"><b>rule</b> <pre><code>{
-  &quot;kind&quot;: &quot;call_expression&quot;,
-  &quot;all&quot;: [
-    {
-      &quot;has&quot;: {
-        &quot;field&quot;: &quot;function&quot;,
-        &quot;regex&quot;: &quot;^vi\\.mock$&quot;
-      }
-    },
-    {
-      &quot;has&quot;: {
-        &quot;kind&quot;: &quot;arguments&quot;,
+    <p class="fact"><b>Check</b> <a href="../checks/ast-grep.html"><code>astGrep</code></a></p>
+    <details class="settings"><summary>settings</summary><pre><code>{
+  &quot;language&quot;: &quot;typescript&quot;,
+  &quot;rule&quot;: {
+    &quot;kind&quot;: &quot;call_expression&quot;,
+    &quot;all&quot;: [
+      {
         &quot;has&quot;: {
-          &quot;kind&quot;: &quot;string&quot;,
-          &quot;regex&quot;: &quot;^['\&quot;]\\.&quot;
+          &quot;field&quot;: &quot;function&quot;,
+          &quot;regex&quot;: &quot;^vi\\.mock$&quot;
+        }
+      },
+      {
+        &quot;has&quot;: {
+          &quot;kind&quot;: &quot;arguments&quot;,
+          &quot;has&quot;: {
+            &quot;kind&quot;: &quot;string&quot;,
+            &quot;regex&quot;: &quot;^['\&quot;]\\.&quot;
+          }
         }
       }
-    }
-  ]
-}</code></pre></div>
-    </div>
+    ]
+  }
+}</code></pre></details>
     <h3>What the agent reads when refused</h3>
     <div class="says">Module-mocking your own code (a relative import). This pins the test to the file layout and skips the real integration — test behaviour through the public surface and mock at the boundary you own instead (network → MSW; clock/random → inject).</div>
     <h3>Proved by</h3>
@@ -201,16 +201,17 @@ A repo that genuinely runs another framework disables this entry in its config, 
     <p class="fact"><b>Refuses at</b> a file is written or edited · the commit gate, over the staged set</p>
     <p class="fact"><b>Watches</b> <code>**/*.test.ts</code> · <code>**/*.test.tsx</code> · <code>**/*.test.js</code> · <code>**/*.test.mjs</code> · <code>**/*.spec.ts</code> · <code>**/*.spec.tsx</code> · <code>**/*.spec.js</code></p>
     <p class="fact"><b>Categories</b> every session</p>
-    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/ast-grep.html"><code>astGrep</code></a></p>
-      <div class="set"><b>language</b> <code>tsx</code></div>
-      <div class="set"><b>rule</b> <pre><code>{
-  &quot;kind&quot;: &quot;call_expression&quot;,
-  &quot;has&quot;: {
-    &quot;field&quot;: &quot;function&quot;,
-    &quot;regex&quot;: &quot;\\.only$&quot;
+    <p class="fact"><b>Check</b> <a href="../checks/ast-grep.html"><code>astGrep</code></a></p>
+    <details class="settings"><summary>settings</summary><pre><code>{
+  &quot;language&quot;: &quot;tsx&quot;,
+  &quot;rule&quot;: {
+    &quot;kind&quot;: &quot;call_expression&quot;,
+    &quot;has&quot;: {
+      &quot;field&quot;: &quot;function&quot;,
+      &quot;regex&quot;: &quot;\\.only$&quot;
+    }
   }
-}</code></pre></div>
-    </div>
+}</code></pre></details>
     <h3>What the agent reads when refused</h3>
     <div class="says">A focused test (.only) silently skips the rest of the suite — CI goes green while nothing runs. Remove the focus before you commit.</div>
     <h3>Proved by</h3>
@@ -224,39 +225,40 @@ A repo that genuinely runs another framework disables this entry in its config, 
     <p class="fact"><b>Refuses at</b> a file is written or edited · the commit gate, over the staged set</p>
     <p class="fact"><b>Watches</b> <code>**/*.test.ts</code> · <code>**/*.test.tsx</code> · <code>**/*.test.js</code> · <code>**/*.test.mjs</code> · <code>**/*.spec.ts</code> · <code>**/*.spec.tsx</code> · <code>**/*.spec.js</code></p>
     <p class="fact"><b>Categories</b> every session</p>
-    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/ast-grep.html"><code>astGrep</code></a></p>
-      <div class="set"><b>language</b> <code>tsx</code></div>
-      <div class="set"><b>rule</b> <pre><code>{
-  &quot;any&quot;: [
-    {
-      &quot;pattern&quot;: &quot;global.fetch = $X&quot;
-    },
-    {
-      &quot;pattern&quot;: &quot;globalThis.fetch = $X&quot;
-    },
-    {
-      &quot;kind&quot;: &quot;call_expression&quot;,
-      &quot;all&quot;: [
-        {
-          &quot;has&quot;: {
-            &quot;field&quot;: &quot;function&quot;,
-            &quot;regex&quot;: &quot;^vi\\.mock$&quot;
-          }
-        },
-        {
-          &quot;has&quot;: {
-            &quot;kind&quot;: &quot;arguments&quot;,
+    <p class="fact"><b>Check</b> <a href="../checks/ast-grep.html"><code>astGrep</code></a></p>
+    <details class="settings"><summary>settings</summary><pre><code>{
+  &quot;language&quot;: &quot;tsx&quot;,
+  &quot;rule&quot;: {
+    &quot;any&quot;: [
+      {
+        &quot;pattern&quot;: &quot;global.fetch = $X&quot;
+      },
+      {
+        &quot;pattern&quot;: &quot;globalThis.fetch = $X&quot;
+      },
+      {
+        &quot;kind&quot;: &quot;call_expression&quot;,
+        &quot;all&quot;: [
+          {
             &quot;has&quot;: {
-              &quot;kind&quot;: &quot;string&quot;,
-              &quot;regex&quot;: &quot;^['\&quot;](axios|node-fetch|got|ky|undici)['\&quot;]$&quot;
+              &quot;field&quot;: &quot;function&quot;,
+              &quot;regex&quot;: &quot;^vi\\.mock$&quot;
+            }
+          },
+          {
+            &quot;has&quot;: {
+              &quot;kind&quot;: &quot;arguments&quot;,
+              &quot;has&quot;: {
+                &quot;kind&quot;: &quot;string&quot;,
+                &quot;regex&quot;: &quot;^['\&quot;](axios|node-fetch|got|ky|undici)['\&quot;]$&quot;
+              }
             }
           }
-        }
-      ]
-    }
-  ]
-}</code></pre></div>
-    </div>
+        ]
+      }
+    ]
+  }
+}</code></pre></details>
     <h3>What the agent reads when refused</h3>
     <div class="says">Hand-rolled network stub. Mock at the network boundary with MSW (Testing Trophy: mock only what you own — the edge, not the client), so request building, serialisation and error mapping stay under test.</div>
     <h3>Proved by</h3>
@@ -270,25 +272,26 @@ A repo that genuinely runs another framework disables this entry in its config, 
     <p class="fact"><b>Refuses at</b> a file is written or edited · the commit gate, over the staged set</p>
     <p class="fact"><b>Watches</b> <code>**/*.test.ts</code> · <code>**/*.test.tsx</code> · <code>**/*.test.js</code> · <code>**/*.test.mjs</code> · <code>**/*.spec.ts</code> · <code>**/*.spec.tsx</code> · <code>**/*.spec.js</code></p>
     <p class="fact"><b>Categories</b> every session</p>
-    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/ast-grep.html"><code>astGrep</code></a></p>
-      <div class="set"><b>language</b> <code>tsx</code></div>
-      <div class="set"><b>rule</b> <pre><code>{
-  &quot;any&quot;: [
-    {
-      &quot;pattern&quot;: &quot;it($DESC, () =&gt; {})&quot;
-    },
-    {
-      &quot;pattern&quot;: &quot;it($DESC, async () =&gt; {})&quot;
-    },
-    {
-      &quot;pattern&quot;: &quot;test($DESC, () =&gt; {})&quot;
-    },
-    {
-      &quot;pattern&quot;: &quot;test($DESC, async () =&gt; {})&quot;
-    }
-  ]
-}</code></pre></div>
-    </div>
+    <p class="fact"><b>Check</b> <a href="../checks/ast-grep.html"><code>astGrep</code></a></p>
+    <details class="settings"><summary>settings</summary><pre><code>{
+  &quot;language&quot;: &quot;tsx&quot;,
+  &quot;rule&quot;: {
+    &quot;any&quot;: [
+      {
+        &quot;pattern&quot;: &quot;it($DESC, () =&gt; {})&quot;
+      },
+      {
+        &quot;pattern&quot;: &quot;it($DESC, async () =&gt; {})&quot;
+      },
+      {
+        &quot;pattern&quot;: &quot;test($DESC, () =&gt; {})&quot;
+      },
+      {
+        &quot;pattern&quot;: &quot;test($DESC, async () =&gt; {})&quot;
+      }
+    ]
+  }
+}</code></pre></details>
     <h3>What the agent reads when refused</h3>
     <div class="says">Empty test body — it passes forever and counts as coverage. Write the assertion, or be honest with `it.todo('…')` until you do.</div>
     <h3>Proved by</h3>
@@ -302,9 +305,10 @@ A repo that genuinely runs another framework disables this entry in its config, 
     <p class="fact"><b>Refuses at</b> the commit gate, over the staged set</p>
     <p class="fact"><b>Watches</b> not scoped by path</p>
     <p class="fact"><b>Categories</b> every session</p>
-    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/exec-passes.html"><code>execPasses</code></a></p>
-      <div class="set"><b>run</b> <code>./ci.sh test</code></div>
-    </div>
+    <p class="fact"><b>Check</b> <a href="../checks/exec-passes.html"><code>execPasses</code></a></p>
+    <details class="settings"><summary>settings</summary><pre><code>{
+  &quot;run&quot;: &quot;./ci.sh test&quot;
+}</code></pre></details>
     <h3>What the agent reads when refused</h3>
     <div class="says">The commit suite failed — the commit is blocked until it is green. (Run it yourself to see what broke.)</div>
     <h3>Proved by</h3>

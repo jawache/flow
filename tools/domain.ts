@@ -55,8 +55,11 @@ export interface EntryDoc {
   readonly ignore: readonly string[];
   /** Empty means every category. */
   readonly categories: readonly string[];
-  /** The settings the check was CONFIGURED with, resolved — one row per option. */
-  readonly settings: readonly SettingRow[];
+  /**
+   * The options the check was configured with, resolved and pretty-printed as JSON. Empty when the
+   * check took none, or was not made by `defineCheck` at all.
+   */
+  readonly settings: string;
   /** The check's name, as the pack spells it. */
   readonly checkName: string;
   /**
@@ -69,15 +72,6 @@ export interface EntryDoc {
   readonly cases: readonly CaseLine[];
   /** Why the pack ships it turned off, when it does. */
   readonly disabled: string;
-}
-
-/** One option a check was configured with, ready to print. */
-export interface SettingRow {
-  readonly key: string;
-  /** The value, already flattened to text — a scalar, a joined list, or a JSON block. */
-  readonly value: string;
-  /** True when the value is a structure and belongs in a code block rather than on the line. */
-  readonly block: boolean;
 }
 
 /** One named block of a pack's doc comment — an `@install`, `@setup` or `@adopt` tag. */
@@ -199,34 +193,26 @@ export function caseWorld(fact: CaseFact): string[] {
   return said;
 }
 
-// ── a check's settings, as rows ──────────────────────────────────────────────
-
-/** A scalar, printed as a reader sees it — never `[object Object]`, never a quoted string. */
-function scalar(value: unknown): string {
-  return typeof value === "string" ? value : String(value);
-}
-
-/** Is this a value that fits on the line — a scalar, or a list of them? */
-function flat(value: unknown): boolean {
-  if (Array.isArray(value)) return value.every((held) => held === null || typeof held !== "object");
-  return value === null || typeof value !== "object";
-}
+// ── a check's settings ──────────────────────────────────────────────────────
 
 /**
- * The options a check was configured with, flattened into printable rows.
+ * The options a check was configured with, as the JSON a reader can check against the pack.
  *
- * RESOLVED VALUES: what reaches the page is the glob a parameter supplied and the recipe a repo
- * named, not the expression that produced them. A list becomes one value per line, because a list
- * of six banned patterns joined onto one line is a wall nobody reads. A structure — an ast-grep
- * rule, a fence's layers — becomes plain JSON.
+ * ONE SHAPE FOR EVERY CHECK, and the reason is what the first two attempts were: the settings were
+ * pulled apart per option, some into labelled lists and some left as JSON, so `banCommands` and
+ * `jsonInvariant` printed as two different kinds of thing and neither said what it was. What every
+ * check really has is one options object; printing it whole means a reader learns the shape once.
+ *
+ * RESOLVED, so what appears is the glob a parameter supplied and the recipe a repo named, never
+ * the expression that produced them. An empty object is "no options" — a rule whose whole content
+ * is its scope and its message.
  */
-export function settingRows(settings: unknown): SettingRow[] {
-  if (settings === null || typeof settings !== "object" || Array.isArray(settings)) return [];
-  return Object.entries(settings).map(([key, value]) => {
-    if (Array.isArray(value) && value.length === 0) return { key, value: "none", block: false };
-    if (flat(value)) return { key, value: (Array.isArray(value) ? value.map(scalar).join("\n") : scalar(value)), block: false };
-    return { key, value: JSON.stringify(value, null, 2), block: true };
-  });
+export function settingsJson(settings: unknown): string {
+  // `undefined` never reaches JSON.stringify with a value it cannot print: a check's options are
+  // an object or they are nothing, and both nothings answer the same way here.
+  if (settings === null || settings === undefined) return "";
+  const printed = JSON.stringify(settings, null, 2);
+  return printed === "{}" ? "" : printed;
 }
 
 // ── the words the page puts on a moment ──────────────────────────────────────
@@ -312,25 +298,15 @@ function checkBlock(entry: EntryDoc): string {
   const named = entry.reference
     ? `<a href="../checks/${kebab(entry.checkName)}.html"><code>${esc(entry.checkName)}</code></a>`
     : `<code>${esc(entry.checkName)}</code> <span class="none">(written in this pack)</span>`;
-  if (entry.settings.length === 0)
-    return `    <p class="fact"><b>Check</b> ${named} — no options. The scope above is the whole rule.</p>\n`;
-
-  // ONE ITEM PER LINE. A rule's settings are a list of things a reader compares — six banned
-  // patterns, eleven commit types — and joined onto one line with dots they are a wall. A long
-  // value scrolls sideways inside its own box rather than being wrapped or cut.
-  const rows = entry.settings.map((row) => {
-    const value = row.block
-      ? `<pre><code>${esc(row.value)}</code></pre>`
-      : row.value.includes("\n")
-        ? `<ul class="values">${row.value
-            .split("\n")
-            .map((one) => `<li><code>${esc(one)}</code></li>`)
-            .join("")}</ul>`
-        : `<code>${esc(row.value)}</code>`;
-    return `      <div class="set"><b>${esc(row.key)}</b> ${value}</div>`;
-  });
-  return `    <div class="check"><p class="fact"><b>Check</b> ${named}</p>\n${rows.join("\n")}\n    </div>\n`;
+  if (entry.settings === "") return `    <p class="fact"><b>Check</b> ${named} — no options</p>\n`;
+  // COLLAPSED BY DEFAULT. The settings are the rule's exact content and a reader wants them one
+  // entry at a time; open on every entry, a page of twelve rules is a page of JSON.
+  return (
+    `    <p class="fact"><b>Check</b> ${named}</p>\n` +
+    `    <details class="settings"><summary>settings</summary><pre><code>${esc(entry.settings)}</code></pre></details>\n`
+  );
 }
+
 
 /** `canonicalFiles` → `canonical-files`, which is what the stock check's page is called. */
 export function kebab(name: string): string {
@@ -487,11 +463,9 @@ const STYLE = `  :root{
   .fact b{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-right:.35rem}
   .check{margin:.5rem 0 .2rem}
   .check .fact{margin:0}
-  .set{margin:.3rem 0 .3rem 0;font-size:.9rem}
-  .set b{display:block;font-weight:700;font-size:.74rem;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-bottom:.1rem}
-  .set pre{margin:.1rem 0}
-  .values{list-style:none;margin:0;padding:0;overflow-x:auto}
-  .values li{margin:.1rem 0;white-space:pre}
+  .settings{margin:.25rem 0 .4rem}
+  .settings summary{cursor:pointer;font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);font-weight:700}
+  .settings pre{margin:.3rem 0 0}
   .why{border-left:4px solid var(--parent);background:#eef4fa;padding:.6rem .9rem;border-radius:0 8px 8px 0;margin:.8rem 0;font-size:.95rem}
   .why.gap{border-left-color:#c2a33a;background:var(--gapbg);color:#6b5a1e;font-style:italic}
   .why p:first-child{margin-top:0} .why p:last-child{margin-bottom:0}

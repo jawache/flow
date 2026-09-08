@@ -37,11 +37,9 @@
   .fact b{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-right:.35rem}
   .check{margin:.5rem 0 .2rem}
   .check .fact{margin:0}
-  .set{margin:.3rem 0 .3rem 0;font-size:.9rem}
-  .set b{display:block;font-weight:700;font-size:.74rem;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-bottom:.1rem}
-  .set pre{margin:.1rem 0}
-  .values{list-style:none;margin:0;padding:0;overflow-x:auto}
-  .values li{margin:.1rem 0;white-space:pre}
+  .settings{margin:.25rem 0 .4rem}
+  .settings summary{cursor:pointer;font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);font-weight:700}
+  .settings pre{margin:.3rem 0 0}
   .why{border-left:4px solid var(--parent);background:#eef4fa;padding:.6rem .9rem;border-radius:0 8px 8px 0;margin:.8rem 0;font-size:.95rem}
   .why.gap{border-left-color:#c2a33a;background:var(--gapbg);color:#6b5a1e;font-style:italic}
   .why p:first-child{margin-top:0} .why p:last-child{margin-bottom:0}
@@ -157,7 +155,7 @@ Every guardrail carries its own cases. Add the block case first — a rule whose
     <p class="fact"><b>Refuses at</b> a file is deleted</p>
     <p class="fact"><b>Watches</b> <code>flow.config.ts</code> · <code>rules/**</code> · <code>.githooks/pre-commit</code></p>
     <p class="fact"><b>Categories</b> every session</p>
-    <p class="fact"><b>Check</b> <a href="../checks/protected-path.html"><code>protectedPath</code></a> — no options. The scope above is the whole rule.</p>
+    <p class="fact"><b>Check</b> <a href="../checks/protected-path.html"><code>protectedPath</code></a> — no options</p>
     <h3>What the agent reads when refused</h3>
     <div class="says">That command would delete this repo's guard surface (flow.config.ts binds every rule; the packs it imports are where this repo writes its own; .githooks/pre-commit is what runs them at the gate). Deleting any of them is the same attack. There is no bypass — `override(pack.entry).disabled(&quot;why&quot;)` inside flow.config.ts is the visible, committed route.</div>
     <h3>Proved by</h3>

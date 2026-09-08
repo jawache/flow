@@ -37,11 +37,9 @@
   .fact b{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-right:.35rem}
   .check{margin:.5rem 0 .2rem}
   .check .fact{margin:0}
-  .set{margin:.3rem 0 .3rem 0;font-size:.9rem}
-  .set b{display:block;font-weight:700;font-size:.74rem;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-bottom:.1rem}
-  .set pre{margin:.1rem 0}
-  .values{list-style:none;margin:0;padding:0;overflow-x:auto}
-  .values li{margin:.1rem 0;white-space:pre}
+  .settings{margin:.25rem 0 .4rem}
+  .settings summary{cursor:pointer;font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);font-weight:700}
+  .settings pre{margin:.3rem 0 0}
   .why{border-left:4px solid var(--parent);background:#eef4fa;padding:.6rem .9rem;border-radius:0 8px 8px 0;margin:.8rem 0;font-size:.95rem}
   .why.gap{border-left-color:#c2a33a;background:var(--gapbg);color:#6b5a1e;font-style:italic}
   .why p:first-child{margin-top:0} .why p:last-child{margin-bottom:0}
@@ -68,21 +66,24 @@
 <main>
   <p class="scope"><a href="./index.html">flow packs</a> › git</p>
   <h1>The <code>git</code> pack</h1>
-  <p class="scope">7 guardrails · 1 breadcrumb · fires at: session · command · write · commit · takes 1 parameter</p>
+  <p class="scope">7 guardrails · 1 breadcrumb · fires at: session · command · write · commit · takes 2 parameters</p>
 
   <div class="lead"><p>Conventional commit headers, computed versions, and nothing destroys uncommitted work.</p>
-<p>The <code>node/</code> sub-group is release discipline that happens to be spelled in package.json — a
-Python or Rust repo binds the same two jobs against pyproject.toml or Cargo.toml.</p></div>
+<p>The <code>node/</code> sub-group is release discipline spelled in package.json, and package.json only.</p></div>
 
   <p class="gen">Generated from <code>packs/git.ts</code> by <code>just docs-packs</code>. Edit the pack, not this page. The commit gate refuses a page that has drifted.</p>
 
   <h2 id="binding">Binding it</h2>
-  <p>The pack takes 1 parameter. These are facts the pack cannot know about your repo:</p>
+  <p>The pack takes 2 parameters. These are facts the pack cannot know about your repo:</p>
   <table>
     <thead><tr><th>Parameter</th><th>Type</th><th>What it is</th></tr></thead>
     <tbody>
+      <tr><td><code>versionFile</code></td><td><code>string</code></td><td><p>The file the release writes the version into. Defaults to <code>package.json</code>.</p>
+<p><code>noHandEditedVersion</code> reads whatever this names out of the commit's own diff, so any manifest
+works there. <code>versionIsSemver</code> reads it as JSON, so a repo whose manifest is TOML or YAML names
+the file here and disables that one entry.</p></td></tr>
       <tr><td><code>release</code></td><td><code>string</code></td><td><p>The recipe that computes the version from the history, writes the changelog, stamps the
-version file and tags — <code>just release</code> here, <code>npm run release</code> elsewhere.</p>
+version file and tags — for example <code>just release</code> or <code>npm run release</code>.</p>
 <p>MANDATORY rather than defaulted, by the same rule tdd's suite recipe follows: a default is a
 rule that names the wrong command in every repo that spells it differently, and it names it in
 the one sentence a person reads at the moment they are blocked.</p></td></tr>
@@ -108,26 +109,24 @@ refuse the first few commits while everyone re-learns the format — that is the
 
   <h2 id="entries">Entries</h2>
   <ul class="toc">
-    <li><span class="id"><a href="#orientation">git.orientation</a></span><span class="badge crumb">breadcrumb</span><span class="d">The whole commit contract — how commits are written here, how versions are computed, what is blocked.</span></li>
+    <li><span class="id"><a href="#orientation">git.orientation</a></span><span class="badge crumb">breadcrumb</span><span class="d">The whole commit contract — how commits are written, how versions are computed, what is blocked.</span></li>
     <li><span class="id"><a href="#noAiAttributionInCommits">git.noAiAttributionInCommits</a></span><span class="badge rail">guardrail</span><span class="d">Blocks Claude/Anthropic attribution in commits, PRs and issues.</span></li>
     <li><span class="id"><a href="#noGitDiscard">git.noGitDiscard</a></span><span class="badge rail">guardrail</span><span class="d">Blocks a git command that would wipe uncommitted work — checkout/restore/reset --hard/clean -f. No bypass; use git stash.</span></li>
     <li><span class="id"><a href="#noForcePush">git.noForcePush</a></span><span class="badge rail">guardrail</span><span class="d">Blocks a force-push — rewriting pushed history is the one loss a stash cannot undo.</span></li>
     <li><span class="id"><a href="#conventionalCommitFormat">git.conventionalCommitFormat</a></span><span class="badge rail">guardrail</span><span class="d">The commit header must speak Conventional Commits v1.0.0 (checked before git commit runs).</span></li>
     <li><span class="id"><a href="#noShellSubstitutionInProse">git.noShellSubstitutionInProse</a></span><span class="badge rail">guardrail</span><span class="d">A backtick inside a double-quoted argument of a commit or a PR body is live command substitution, not Markdown.</span></li>
-    <li><span class="id"><a href="#node.versionIsSemver">git.node.versionIsSemver</a></span><span class="badge rail">guardrail</span><span class="d">package.json version is valid SemVer 2.0.0 — the number the computed release writes. See https://semver.org/</span></li>
+    <li><span class="id"><a href="#node.versionIsSemver">git.node.versionIsSemver</a></span><span class="badge rail">guardrail</span><span class="d">The manifest's version is valid SemVer 2.0.0 — the number the computed release writes. See https://semver.org/</span></li>
     <li><span class="id"><a href="#node.noHandEditedVersion">git.node.noHandEditedVersion</a></span><span class="badge rail">guardrail</span><span class="d">The version field is written by the release commit, never by hand.</span></li>
   </ul>
 
   <section class="entry" id="orientation">
     <h2><code>git.orientation</code><span class="badge crumb">breadcrumb</span></h2>
-    <p class="desc">The whole commit contract — how commits are written here, how versions are computed, what is blocked.</p>
+    <p class="desc">The whole commit contract — how commits are written, how versions are computed, what is blocked.</p>
     <p class="fact"><b>Shown when</b> once, at the start of a session</p>
     <p class="fact"><b>Watches</b> not scoped by path</p>
     <p class="fact"><b>Categories</b> every session</p>
     <h3>Why it exists</h3>
-    <div class="why"><p>Without it, the commit surface is learned by trial and refusal: an agent writes a header the
-changelog cannot read, reaches for a force push, or discards uncommitted work with a command
-that has no undo.</p></div>
+    <div class="why gap"><p>Not stated. Add a doc comment on the entry's key saying what goes wrong without it.</p></div>
     <h3>What the agent reads</h3>
     <div class="says">Commits, PRs and issues carry NO Claude/Anthropic attribution — no Co-Authored-By line, no &quot;Generated with Claude&quot;, no mention. Author them as your own.
 Commit headers speak Conventional Commits — `type(scope)!: description`. The TYPE is your judgement: `fix` patches behaviour, `feat` adds it, `refactor` changes neither (and must not change test expectations); a `!` or a `BREAKING CHANGE:` footer drives the SemVer major. The grammar is enforced; the choice is yours.
@@ -142,15 +141,17 @@ A `git checkout` / `git restore` / `reset --hard` / `clean -f` that would silent
     <p class="fact"><b>Refuses at</b> a shell command is about to run</p>
     <p class="fact"><b>Watches</b> not scoped by path</p>
     <p class="fact"><b>Categories</b> every session</p>
-    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/ban-commands.html"><code>banCommands</code></a></p>
-      <div class="set"><b>ban</b> <ul class="values"><li><code>git commit[\s\S]*[Cc]o-[Aa]uthored-[Bb]y:[\s\S]*(Claude|[Aa]nthropic)</code></li><li><code>git commit[\s\S]*[Gg]enerated with[\s\S]*Claude</code></li><li><code>git commit[\s\S]*(claude\.com/claude-code|🤖 Generated)</code></li><li><code>gh (pr|issue)[\s\S]*[Cc]o-[Aa]uthored-[Bb]y:[\s\S]*(Claude|[Aa]nthropic)</code></li><li><code>gh (pr|issue)[\s\S]*(claude\.com/claude-code|🤖 Generated)</code></li></ul></div>
-    </div>
+    <p class="fact"><b>Check</b> written inline in this pack</p>
     <h3>What the agent reads when refused</h3>
     <div class="says">Commit / PR / issue body contains Claude or Anthropic attribution. Remove it (the Co-Authored-By line, the 'Generated with Claude' line, any Claude/Anthropic mention) and retry.</div>
     <h3>Proved by</h3>
 <div class="cases"><div class="case ok"><b>passes</b><ul><li>running <code>git commit -m &quot;fix(auth): renew the session&quot;</code></li></ul></div><div class="case stop"><b>blocks</b><ul><li>running <code>git commit -m &quot;fix(auth): renew the session
 
-Co-Authored-By: Claude &lt;noreply@anthropic.com&gt;&quot;</code></li><li>running <code>gh pr create --body &quot;Co-Authored-By: Claude&quot;</code></li></ul></div></div>
+Co-Authored-By: Claude &lt;noreply@anthropic.com&gt;&quot;</code></li><li>running <code>gh pr create --body &quot;Co-Authored-By: Claude&quot;</code></li><li>running <code>git commit -m &quot;fix(auth): renew the session
+
+Generated with Claude Code&quot;</code></li><li>running <code>git commit -m &quot;fix(auth): renew the session
+
+🤖 Generated with claude.com/claude-code&quot;</code></li><li>running <code>gh issue create --body &quot;opened with claude.com/claude-code&quot;</code></li></ul></div></div>
 
   </section>
 
@@ -160,7 +161,7 @@ Co-Authored-By: Claude &lt;noreply@anthropic.com&gt;&quot;</code></li><li>runnin
     <p class="fact"><b>Refuses at</b> a shell command is about to run</p>
     <p class="fact"><b>Watches</b> not scoped by path</p>
     <p class="fact"><b>Categories</b> every session</p>
-    <p class="fact"><b>Check</b> <code>noGitDiscard</code> <span class="none">(written in this pack)</span> — no options. The scope above is the whole rule.</p>
+    <p class="fact"><b>Check</b> written inline in this pack</p>
     <h3>What the agent reads when refused</h3>
     <div class="says">This git command would discard uncommitted edits with no undo. Use `git stash` instead — it's recoverable. There is no opt-out token; disabling this entry in flow.config.ts is the visible route.</div>
     <h3>Proved by</h3>
@@ -175,9 +176,7 @@ git checkout -- a.ts</code><span class="given">given <code>git status --porcelai
     <p class="fact"><b>Refuses at</b> a shell command is about to run</p>
     <p class="fact"><b>Watches</b> not scoped by path</p>
     <p class="fact"><b>Categories</b> every session</p>
-    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/ban-commands.html"><code>banCommands</code></a></p>
-      <div class="set"><b>ban</b> <ul class="values"><li><code>(?:^|[\n;&amp;|(]\s*)\s*git\s+push[^\n]*\s(--force|-f)(\s|$)</code></li><li><code>(?:^|[\n;&amp;|(]\s*)\s*git\s+push[^\n]*--force-with-lease</code></li></ul></div>
-    </div>
+    <p class="fact"><b>Check</b> written inline in this pack</p>
     <h3>What the agent reads when refused</h3>
     <div class="says">Force-push rewrites history that other clones (and every open PR) already have — the one loss no stash can undo. Push a new commit that corrects the old one. A repo whose workflow genuinely rewrites a scratch remote disables this entry in flow.config.ts, visibly.</div>
     <h3>Proved by</h3>
@@ -193,11 +192,10 @@ EOF</code></li></ul></div><div class="case stop"><b>blocks</b><ul><li>running <c
     <p class="fact"><b>Refuses at</b> a shell command is about to run</p>
     <p class="fact"><b>Watches</b> not scoped by path</p>
     <p class="fact"><b>Categories</b> every session</p>
-    <div class="check"><p class="fact"><b>Check</b> <code>conventionalCommit</code> <span class="none">(written in this pack)</span></p>
-      <div class="set"><b>types</b> <ul class="values"><li><code>feat</code></li><li><code>fix</code></li><li><code>docs</code></li><li><code>style</code></li><li><code>refactor</code></li><li><code>perf</code></li><li><code>test</code></li><li><code>build</code></li><li><code>ci</code></li><li><code>chore</code></li><li><code>revert</code></li><li><code>release</code></li></ul></div>
-    </div>
+    <p class="fact"><b>Check</b> written inline in this pack</p>
     <h3>What the agent reads when refused</h3>
-    <div class="says">Commit header must match Conventional Commits v1.0.0: type(scope)!: description — e.g. `fix(auth): renew session on token refresh`.</div>
+    <div class="says">Commit header must match Conventional Commits v1.0.0: type(scope)!: description — e.g. `fix(auth): renew session on token refresh`.
+The type is one of: feat · fix · docs · style · refactor · perf · test · build · ci · chore · revert · release.</div>
     <h3>Proved by</h3>
 <div class="cases"><div class="case ok"><b>passes</b><ul><li>running <code>git commit -m &quot;fix(auth): renew session on token refresh&quot;</code></li><li>running <code>git status</code></li><li>running <code>git commit -m &quot;feat(cli)!: the config grammar is closed&quot;</code></li></ul></div><div class="case stop"><b>blocks</b><ul><li>running <code>git commit -m &quot;fixed the auth thing&quot;</code></li><li>running <code>git commit -m &quot;feat a thing&quot;</code></li><li>running <code>git commit -m 'tidied things up
 
@@ -211,15 +209,12 @@ feat: the thing I actually did'</code></li></ul></div></div>
     <p class="fact"><b>Refuses at</b> a shell command is about to run</p>
     <p class="fact"><b>Watches</b> not scoped by path</p>
     <p class="fact"><b>Categories</b> every session</p>
-    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/ban-commands.html"><code>banCommands</code></a></p>
-      <div class="set"><b>ban</b> <code>(?:git\s+commit\b[^\n]*?-{1,2}[a-zA-Z]*m|gh\s+(?:pr|issue)\b)[^&quot;`]*(?:&quot;(?:(?!&lt;&lt;-?')[^&quot;])*&quot;[^&quot;`]*)*&quot;(?:(?!&lt;&lt;-?')[^&quot;])*`</code></div>
-    </div>
+    <p class="fact"><b>Check</b> written inline in this pack</p>
     <h3>What the agent reads when refused</h3>
     <div class="says">You are recording prose through a shell command, and a backtick inside a DOUBLE-quoted argument is not Markdown — the shell RUNS it and splices its output into your text before the command ever sees it.
 On an append-only record there is no undo: no amend, no redact. And once the binary has argv the splice has already happened, so this is the only moment it can be caught.
 Fix: SINGLE-quote the argument (backticks are literal there), or feed the prose on stdin with a QUOTED heredoc — `git commit -F -` plus `&lt;&lt;'EOF'`, which this rule treats as safe.
-ALREADY single-quoted and still blocked? Then your PROSE carries an unbalanced double quote before the backtick, and the matcher cannot tell that quote from a real open argument. Nothing would splice — this one is the rule's cost, not your mistake. Balance the quote, drop it, or use the heredoc; do not go back to double quotes to make it pass.
-Measured four times. A `work plan decision` whose double-quoted text carried backticks around a command name executed it and spliced a whole task-list dump into the Decision Log. A justfile @echo with backticks ran `npm unlink`, silently undoing the link the message was announcing.</div>
+ALREADY single-quoted and still blocked? Then your PROSE carries an unbalanced double quote before the backtick, and the matcher cannot tell that quote from a real open argument. Nothing would splice — this one is the rule's cost, not your mistake. Balance the quote, drop it, or use the heredoc; do not go back to double quotes to make it pass.</div>
     <h3>Proved by</h3>
 <div class="cases"><div class="case ok"><b>passes</b><ul><li>running <code>git commit -F - &lt;&lt;'EOF'
 fix: a </code>thing<code>
@@ -229,20 +224,13 @@ EOF</code></li><li>running <code>git commit -m 'fix: run </code>just test<code> 
 
   <section class="entry" id="node.versionIsSemver">
     <h2><code>git.node.versionIsSemver</code><span class="badge rail">guardrail</span></h2>
-    <p class="desc">package.json version is valid SemVer 2.0.0 — the number the computed release writes. See https://semver.org/</p>
+    <p class="desc">The manifest's version is valid SemVer 2.0.0 — the number the computed release writes. See https://semver.org/</p>
     <p class="fact"><b>Refuses at</b> a file is written or edited · the commit gate, over the staged set</p>
     <p class="fact"><b>Watches</b> <code>package.json</code></p>
     <p class="fact"><b>Categories</b> every session</p>
-    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/json-invariant.html"><code>jsonInvariant</code></a></p>
-      <div class="set"><b>assert</b> <pre><code>[
-  {
-    &quot;path&quot;: &quot;version&quot;,
-    &quot;matches&quot;: &quot;^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$&quot;
-  }
-]</code></pre></div>
-    </div>
+    <p class="fact"><b>Check</b> written inline in this pack</p>
     <h3>What the agent reads when refused</h3>
-    <div class="says">package.json `version` must be valid SemVer 2.0.0 (MAJOR.MINOR.PATCH[-prerelease][+build]).</div>
+    <div class="says">`package.json` needs a valid SemVer 2.0.0 `version` (MAJOR.MINOR.PATCH[-prerelease][+build]).</div>
     <h3>Proved by</h3>
 <div class="cases"><div class="case ok"><b>passes</b><ul><li>writing <code>package.json</code> — <code>{&quot;version&quot;:&quot;1.2.3&quot;}</code></li></ul></div><div class="case stop"><b>blocks</b><ul><li>writing <code>package.json</code> — <code>{&quot;version&quot;:&quot;1.2&quot;}</code></li></ul></div></div>
 
@@ -254,10 +242,7 @@ EOF</code></li><li>running <code>git commit -m 'fix: run </code>just test<code> 
     <p class="fact"><b>Refuses at</b> a shell command is about to run</p>
     <p class="fact"><b>Watches</b> not scoped by path</p>
     <p class="fact"><b>Categories</b> every session</p>
-    <div class="check"><p class="fact"><b>Check</b> <code>noHandEditedVersion</code> <span class="none">(written in this pack)</span></p>
-      <div class="set"><b>versionFile</b> <code>package.json</code></div>
-      <div class="set"><b>recipe</b> <code>./ci.sh release</code></div>
-    </div>
+    <p class="fact"><b>Check</b> written inline in this pack</p>
     <h3>What the agent reads when refused</h3>
     <div class="says">The version is computed from the commit history at release time — run `./ci.sh release`, which writes the version, the changelog and the tag together. A real release commit (`release:` / `chore(release):`) passes.</div>
     <h3>Proved by</h3>

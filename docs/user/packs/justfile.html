@@ -37,11 +37,9 @@
   .fact b{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-right:.35rem}
   .check{margin:.5rem 0 .2rem}
   .check .fact{margin:0}
-  .set{margin:.3rem 0 .3rem 0;font-size:.9rem}
-  .set b{display:block;font-weight:700;font-size:.74rem;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-bottom:.1rem}
-  .set pre{margin:.1rem 0}
-  .values{list-style:none;margin:0;padding:0;overflow-x:auto}
-  .values li{margin:.1rem 0;white-space:pre}
+  .settings{margin:.25rem 0 .4rem}
+  .settings summary{cursor:pointer;font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);font-weight:700}
+  .settings pre{margin:.3rem 0 0}
   .why{border-left:4px solid var(--parent);background:#eef4fa;padding:.6rem .9rem;border-radius:0 8px 8px 0;margin:.8rem 0;font-size:.95rem}
   .why.gap{border-left-color:#c2a33a;background:var(--gapbg);color:#6b5a1e;font-style:italic}
   .why p:first-child{margin-top:0} .why p:last-child{margin-bottom:0}
@@ -157,14 +155,15 @@ A one-off (a migration, a backfill, a workflow step)? Then it gets NO recipe —
     <p class="fact"><b>Refuses at</b> a file is written or edited · the commit gate, over the staged set</p>
     <p class="fact"><b>Watches</b> <code>package.json</code></p>
     <p class="fact"><b>Categories</b> every session</p>
-    <div class="check"><p class="fact"><b>Check</b> <a href="../checks/json-invariant.html"><code>jsonInvariant</code></a></p>
-      <div class="set"><b>assert</b> <pre><code>[
-  {
-    &quot;path&quot;: &quot;scripts&quot;,
-    &quot;keysPrefixedWith&quot;: &quot;//&quot;
-  }
-]</code></pre></div>
-    </div>
+    <p class="fact"><b>Check</b> <a href="../checks/json-invariant.html"><code>jsonInvariant</code></a></p>
+    <details class="settings"><summary>settings</summary><pre><code>{
+  &quot;assert&quot;: [
+    {
+      &quot;path&quot;: &quot;scripts&quot;,
+      &quot;keysPrefixedWith&quot;: &quot;//&quot;
+    }
+  ]
+}</code></pre></details>
     <h3>Why it exists</h3>
     <div class="why"><p>Without it, package.json grows a second command surface — the one an agent reads FIRST, out
 of habit — and the two drift until the catalogue is no longer the truth about this repo.</p></div>
@@ -181,9 +180,10 @@ of habit — and the two drift until the catalogue is no longer the truth about 
     <p class="fact"><b>Refuses at</b> a file is written or edited · the commit gate, over the staged set</p>
     <p class="fact"><b>Watches</b> <code>justfile</code></p>
     <p class="fact"><b>Categories</b> every session</p>
-    <div class="check"><p class="fact"><b>Check</b> <code>justfileDocs</code> <span class="none">(written in this pack)</span></p>
-      <div class="set"><b>exempt</b> <code>none</code></div>
-    </div>
+    <p class="fact"><b>Check</b> <code>justfileDocs</code> <span class="none">(written in this pack)</span></p>
+    <details class="settings"><summary>settings</summary><pre><code>{
+  &quot;exempt&quot;: []
+}</code></pre></details>
     <h3>Why it exists</h3>
     <div class="why"><p>Without it, <code>just --list</code> falls back to the last comment line above a recipe, which for a
 multi-line comment block is a mid-sentence fragment — a help screen assembled by accident, and
