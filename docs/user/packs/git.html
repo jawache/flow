@@ -126,7 +126,9 @@ refuse the first few commits while everyone re-learns the format — that is the
     <p class="fact"><b>Watches</b> not scoped by path</p>
     <p class="fact"><b>Categories</b> every session</p>
     <h3>Why it exists</h3>
-    <div class="why gap"><p>Not stated. Add a doc comment on the entry's key saying what goes wrong without it.</p></div>
+    <div class="why"><p>Without it, the commit surface is learned by trial and refusal: an agent writes a header the
+changelog cannot read, reaches for a force push, or discards uncommitted work with a command
+that has no undo.</p></div>
     <h3>What the agent reads</h3>
     <div class="says">Commits, PRs and issues carry NO Claude/Anthropic attribution — no Co-Authored-By line, no &quot;Generated with Claude&quot;, no mention. Author them as your own.
 Commit headers speak Conventional Commits — `type(scope)!: description`. The TYPE is your judgement: `fix` patches behaviour, `feat` adds it, `refactor` changes neither (and must not change test expectations); a `!` or a `BREAKING CHANGE:` footer drives the SemVer major. The grammar is enforced; the choice is yours.
@@ -141,7 +143,16 @@ A `git checkout` / `git restore` / `reset --hard` / `clean -f` that would silent
     <p class="fact"><b>Refuses at</b> a shell command is about to run</p>
     <p class="fact"><b>Watches</b> not scoped by path</p>
     <p class="fact"><b>Categories</b> every session</p>
-    <p class="fact"><b>Check</b> written inline in this pack</p>
+    <p class="fact"><b>Check</b> <a href="../checks/ban-commands.html"><code>banCommands</code></a></p>
+    <details class="settings"><summary>settings</summary><pre><code>{
+  &quot;ban&quot;: [
+    &quot;git commit[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(Claude|[Aa]nthropic)&quot;,
+    &quot;git commit[\\s\\S]*[Gg]enerated with[\\s\\S]*Claude&quot;,
+    &quot;git commit[\\s\\S]*(claude\\.com/claude-code|🤖 Generated)&quot;,
+    &quot;gh (pr|issue)[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(Claude|[Aa]nthropic)&quot;,
+    &quot;gh (pr|issue)[\\s\\S]*(claude\\.com/claude-code|🤖 Generated)&quot;
+  ]
+}</code></pre></details>
     <h3>What the agent reads when refused</h3>
     <div class="says">Commit / PR / issue body contains Claude or Anthropic attribution. Remove it (the Co-Authored-By line, the 'Generated with Claude' line, any Claude/Anthropic mention) and retry.</div>
     <h3>Proved by</h3>
@@ -161,7 +172,7 @@ Generated with Claude Code&quot;</code></li><li>running <code>git commit -m &quo
     <p class="fact"><b>Refuses at</b> a shell command is about to run</p>
     <p class="fact"><b>Watches</b> not scoped by path</p>
     <p class="fact"><b>Categories</b> every session</p>
-    <p class="fact"><b>Check</b> written inline in this pack</p>
+    <p class="fact"><b>Check</b> <code>noGitDiscard</code> <span class="none">(written in this pack)</span> — no options</p>
     <h3>What the agent reads when refused</h3>
     <div class="says">This git command would discard uncommitted edits with no undo. Use `git stash` instead — it's recoverable. There is no opt-out token; disabling this entry in flow.config.ts is the visible route.</div>
     <h3>Proved by</h3>
@@ -176,7 +187,13 @@ git checkout -- a.ts</code><span class="given">given <code>git status --porcelai
     <p class="fact"><b>Refuses at</b> a shell command is about to run</p>
     <p class="fact"><b>Watches</b> not scoped by path</p>
     <p class="fact"><b>Categories</b> every session</p>
-    <p class="fact"><b>Check</b> written inline in this pack</p>
+    <p class="fact"><b>Check</b> <a href="../checks/ban-commands.html"><code>banCommands</code></a></p>
+    <details class="settings"><summary>settings</summary><pre><code>{
+  &quot;ban&quot;: [
+    &quot;(?:^|[\\n;&amp;|(]\\s*)\\s*git\\s+push[^\\n]*\\s(--force|-f)(\\s|$)&quot;,
+    &quot;(?:^|[\\n;&amp;|(]\\s*)\\s*git\\s+push[^\\n]*--force-with-lease&quot;
+  ]
+}</code></pre></details>
     <h3>What the agent reads when refused</h3>
     <div class="says">Force-push rewrites history that other clones (and every open PR) already have — the one loss no stash can undo. Push a new commit that corrects the old one. A repo whose workflow genuinely rewrites a scratch remote disables this entry in flow.config.ts, visibly.</div>
     <h3>Proved by</h3>
@@ -192,7 +209,23 @@ EOF</code></li></ul></div><div class="case stop"><b>blocks</b><ul><li>running <c
     <p class="fact"><b>Refuses at</b> a shell command is about to run</p>
     <p class="fact"><b>Watches</b> not scoped by path</p>
     <p class="fact"><b>Categories</b> every session</p>
-    <p class="fact"><b>Check</b> written inline in this pack</p>
+    <p class="fact"><b>Check</b> <code>conventionalCommit</code> <span class="none">(written in this pack)</span></p>
+    <details class="settings"><summary>settings</summary><pre><code>{
+  &quot;types&quot;: [
+    &quot;feat&quot;,
+    &quot;fix&quot;,
+    &quot;docs&quot;,
+    &quot;style&quot;,
+    &quot;refactor&quot;,
+    &quot;perf&quot;,
+    &quot;test&quot;,
+    &quot;build&quot;,
+    &quot;ci&quot;,
+    &quot;chore&quot;,
+    &quot;revert&quot;,
+    &quot;release&quot;
+  ]
+}</code></pre></details>
     <h3>What the agent reads when refused</h3>
     <div class="says">Commit header must match Conventional Commits v1.0.0: type(scope)!: description — e.g. `fix(auth): renew session on token refresh`.
 The type is one of: feat · fix · docs · style · refactor · perf · test · build · ci · chore · revert · release.</div>
@@ -209,7 +242,12 @@ feat: the thing I actually did'</code></li></ul></div></div>
     <p class="fact"><b>Refuses at</b> a shell command is about to run</p>
     <p class="fact"><b>Watches</b> not scoped by path</p>
     <p class="fact"><b>Categories</b> every session</p>
-    <p class="fact"><b>Check</b> written inline in this pack</p>
+    <p class="fact"><b>Check</b> <a href="../checks/ban-commands.html"><code>banCommands</code></a></p>
+    <details class="settings"><summary>settings</summary><pre><code>{
+  &quot;ban&quot;: [
+    &quot;(?:git\\s+commit\\b[^\\n]*?-{1,2}[a-zA-Z]*m|gh\\s+(?:pr|issue)\\b)[^\&quot;`]*(?:\&quot;(?:(?!&lt;&lt;-?')[^\&quot;])*\&quot;[^\&quot;`]*)*\&quot;(?:(?!&lt;&lt;-?')[^\&quot;])*`&quot;
+  ]
+}</code></pre></details>
     <h3>What the agent reads when refused</h3>
     <div class="says">You are recording prose through a shell command, and a backtick inside a DOUBLE-quoted argument is not Markdown — the shell RUNS it and splices its output into your text before the command ever sees it.
 On an append-only record there is no undo: no amend, no redact. And once the binary has argv the splice has already happened, so this is the only moment it can be caught.
@@ -228,7 +266,15 @@ EOF</code></li><li>running <code>git commit -m 'fix: run </code>just test<code> 
     <p class="fact"><b>Refuses at</b> a file is written or edited · the commit gate, over the staged set</p>
     <p class="fact"><b>Watches</b> <code>package.json</code></p>
     <p class="fact"><b>Categories</b> every session</p>
-    <p class="fact"><b>Check</b> written inline in this pack</p>
+    <p class="fact"><b>Check</b> <a href="../checks/json-invariant.html"><code>jsonInvariant</code></a></p>
+    <details class="settings"><summary>settings</summary><pre><code>{
+  &quot;assert&quot;: [
+    {
+      &quot;path&quot;: &quot;version&quot;,
+      &quot;matches&quot;: &quot;^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$&quot;
+    }
+  ]
+}</code></pre></details>
     <h3>What the agent reads when refused</h3>
     <div class="says">`package.json` needs a valid SemVer 2.0.0 `version` (MAJOR.MINOR.PATCH[-prerelease][+build]).</div>
     <h3>Proved by</h3>
@@ -242,7 +288,11 @@ EOF</code></li><li>running <code>git commit -m 'fix: run </code>just test<code> 
     <p class="fact"><b>Refuses at</b> a shell command is about to run</p>
     <p class="fact"><b>Watches</b> not scoped by path</p>
     <p class="fact"><b>Categories</b> every session</p>
-    <p class="fact"><b>Check</b> written inline in this pack</p>
+    <p class="fact"><b>Check</b> <code>noHandEditedVersion</code> <span class="none">(written in this pack)</span></p>
+    <details class="settings"><summary>settings</summary><pre><code>{
+  &quot;versionFile&quot;: &quot;package.json&quot;,
+  &quot;recipe&quot;: &quot;./ci.sh release&quot;
+}</code></pre></details>
     <h3>What the agent reads when refused</h3>
     <div class="says">The version is computed from the commit history at release time — run `./ci.sh release`, which writes the version, the changelog and the tag together. A real release commit (`release:` / `chore(release):`) passes.</div>
     <h3>Proved by</h3>

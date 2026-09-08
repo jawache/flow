@@ -77,7 +77,8 @@ const SHIPPED: readonly Shipped[] = [
   },
   { pack: "flow", bind: `pack(flow, { packs: ["rules/**"] })`, cases: 2, guardrails: 1 },
   { pack: "git", bind: `pack(git, { release: "./ci.sh release" })`, cases: 51, guardrails: 7 },
-  { pack: "justfile", bind: `pack(justfile, { exempt: [] })`, cases: 13, guardrails: 2 },
+  // `recipes` bound, so the entry that only exists when a repo has one is driven here too.
+  { pack: "justfile", bind: `pack(justfile, { exempt: [], recipes: { "npx vitest": "./ci.sh test" } })`, cases: 15, guardrails: 3 },
   { pack: "node", bind: "pack(node)", cases: 14, guardrails: 2 },
   {
     pack: "secrets",
@@ -172,6 +173,7 @@ const ENTRIES: readonly string[] = [
   "justfile.node.noPackageScripts",
   "justfile.orientation",
   "justfile.toolsHome",
+  "justfile.useTheRecipe",
   "node.dependencies",
   "node.lockfileInStep",
   "node.newDependencyNeedsReason",

@@ -63,7 +63,7 @@ interface Shipped {
 const FCIS = { files: ["core/**/*.ts"], homes: ["core/**"], coverage: "./ci.sh coverage", example: "core/clock.ts" };
 const FLOW = { packs: ["rules/**"] };
 const GIT = { release: "./ci.sh release" };
-const JUSTFILE = { exempt: [] };
+const JUSTFILE = { exempt: [], recipes: { "npx vitest": "./ci.sh test" } };
 const SECRETS = { dx: "./ci.sh dx", encrypt: "./ci.sh seal", names: "./ci.sh names" };
 const TDD = { run: "./ci.sh test" };
 const TYPESCRIPT = { typecheck: "./ci.sh types", lint: "./ci.sh lint" };
@@ -122,12 +122,27 @@ function docTags(node: ts.Node): DocBlock[] {
     });
 }
 
-/** The object literal a `definePack` call states its entries with, through the factory if there is one. */
+/**
+ * The object literal a `definePack` call states its entries with, through the factory if there is
+ * one — and through the factory's BODY when it has one.
+ *
+ * A parameterised pack that defaults a value writes `(repo) => { const x = repo.x ?? "…"; return
+ * {…}; }` rather than `(repo) => ({…})`, and a reader that only understood the second form found no
+ * entries at all in those packs: every doc comment and every check name silently missing from the
+ * page, with the loaded half still there to make it look complete.
+ */
 function entriesObject(call: ts.CallExpression): ts.ObjectLiteralExpression | undefined {
   const arg = call.arguments[1];
   if (arg === undefined) return undefined;
   if (ts.isObjectLiteralExpression(arg)) return arg;
   if (!ts.isArrowFunction(arg)) return undefined;
+  if (ts.isBlock(arg.body)) {
+    const returned = arg.body.statements.find((statement) => ts.isReturnStatement(statement));
+    const expression = returned?.expression;
+    if (expression === undefined) return undefined;
+    const held = ts.isParenthesizedExpression(expression) ? expression.expression : expression;
+    return ts.isObjectLiteralExpression(held) ? held : undefined;
+  }
   const body = ts.isParenthesizedExpression(arg.body) ? arg.body.expression : arg.body;
   return ts.isObjectLiteralExpression(body) ? body : undefined;
 }
@@ -148,6 +163,21 @@ function paramTypeName(call: ts.CallExpression): string {
  */
 function walk(obj: ts.ObjectLiteralExpression, prefix: string, why: Map<string, string>, check: Map<string, string>): void {
   for (const property of obj.properties) {
+    // A SPREAD is how a pack makes an entry conditional — `...(map ? { entry: … } : {})` — and the
+    // entries inside one are entries like any other. Both arms are walked: only one of them is in
+    // the loaded pack, and the page joins on the key, so the arm that did not bind contributes
+    // nothing.
+    if (ts.isSpreadAssignment(property)) {
+      // Unwrapped first: the shape is `...(cond ? { … } : {})`, so the spread's own expression is
+      // the parentheses, not the conditional inside them.
+      const inner = ts.isParenthesizedExpression(property.expression) ? property.expression.expression : property.expression;
+      const arms = ts.isConditionalExpression(inner) ? [inner.whenTrue, inner.whenFalse] : [inner];
+      for (const arm of arms) {
+        const held = ts.isParenthesizedExpression(arm) ? arm.expression : arm;
+        if (ts.isObjectLiteralExpression(held)) walk(held, prefix, why, check);
+      }
+      continue;
+    }
     if (!ts.isPropertyAssignment(property)) continue;
     const key = `${prefix}${property.name.getText()}`;
     if (ts.isObjectLiteralExpression(property.initializer)) {

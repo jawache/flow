@@ -1,9 +1,22 @@
 // flow/packs/justfile.ts — the justfile is the repo's TOOL CATALOGUE.
 // Subtlety: which recipes are genuinely undocumentable is the one fact this pack cannot know, so `exempt` is a mandatory parameter — this repo binds `{ exempt: [] }` in flow.config.ts, stated rather than defaulted.
 
-import { breadcrumb, commit, defineCheck, definePack, guardrail, jsonInvariant, session, touch, write, type Check } from "../index.ts";
+import {
+  banCommands,
+  breadcrumb,
+  command,
+  commit,
+  defineCheck,
+  definePack,
+  guardrail,
+  jsonInvariant,
+  session,
+  touch,
+  write,
+  type Check,
+} from "../index.ts";
 
-/** The one fact this pack cannot know: which recipes are genuinely undocumentable here. */
+/** The one fact this pack cannot know: which recipes are genuinely undocumentable in a repo. */
 // ── the justfile: every recipe is discoverable ───────────────────────────────
 
 /** Words that open a non-recipe construct at column 0. */
@@ -68,12 +81,28 @@ export interface Catalogue {
    * the record rather than by default — an exemption list nobody stated is one nobody reviews.
    *
    * A parameter rather than an override, because `exempt` is the CHECK's option and an override
-   * speaks only the sentence keys (at · for · on · ignore · message · disabled). It was written
-   * as an unreachable `with:` at the crossing and could never have been set by any repo.
+   * speaks only the sentence keys (at · for · on · ignore · message · disabled).
    *
-   * `[private]` recipes need no entry here — `just --list` hides them, so the check skips them.
+   * `[private]` recipes need no entry — `just --list` hides them, so the check skips them.
    */
   readonly exempt: readonly string[];
+
+  /** The folder holding the code behind the recipes. Defaults to `tools`. */
+  readonly tools?: string;
+
+  /**
+   * Commands this repo has a recipe for, as a map from the command's pattern to the recipe that
+   * replaces it — `{ "npm run build": "just build" }`.
+   *
+   * OPTIONAL, and with no map there is no entry at all: which raw command a repo has wrapped is a
+   * fact only that repo has, and a rule with an empty list would be one more armed entry matching
+   * nothing. The patterns are regular expressions over the command line, so `npx vitest\\b` is a
+   * pattern and `npx vitest` is one too.
+   *
+   * The catalogue's whole promise is that the recipe is the thing to reach for; a breadcrumb says
+   * so once a session, and this refuses the raw command by name for the ones that matter.
+   */
+  readonly recipes?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -91,7 +120,10 @@ export interface Catalogue {
  * `package.json` whose `scripts` block holds nothing but `//`-prefixed comment keys. A repo with
  * live npm scripts moves them into recipes first, or does not bind this pack.
  */
-export const justfile = definePack("justfile", (repo: Catalogue) => ({
+export const justfile = definePack("justfile", (repo: Catalogue) => {
+  const tools = repo.tools ?? "tools";
+  const recipes = repo.recipes ?? {};
+  return {
   /**
    * Without it, an agent discovers commands from package.json, from memory, or from a README that
    * has drifted — and reaches for a tool this repo does not have, or hand-runs the chain a recipe
@@ -103,7 +135,7 @@ export const justfile = definePack("justfile", (repo: Catalogue) => ({
     .text(
       [
         "The justfile is this repo's tool catalogue — the single source of truth for the tooling you can confidently reach for. Run `just` FIRST to see what you can do here; do not discover commands from package.json or memory.",
-        "A recipe means: reach for this repeatedly, with confidence. Recipes stay thin — the code behind one lives in the tools folder; one-off operational scripts live there too and never become recipes.",
+        `A recipe means: reach for this repeatedly, with confidence. Recipes stay thin — the code behind one lives in \`${tools}/\`; one-off operational scripts live there too and never become recipes.`,
         "A one-off command or chain is fine to run directly. Anything you'll run more than once becomes a script; anything a human should also run becomes a recipe (with a [doc(\"…\")]).",
         "If a service offers a CLI, prefer it over an MCP — a command is recorded, guardable and reproducible.",
       ].join("\n"),
@@ -116,12 +148,12 @@ export const justfile = definePack("justfile", (repo: Catalogue) => ({
    */
   toolsHome: breadcrumb()
     .at(touch)
-    .on("tools/**")
-    .description("The fork every file in the tools folder faces — catalogue entry, or one-shot.")
+    .on(`${tools}/**`)
+    .description(`The fork every file in ${tools}/ faces — catalogue entry, or one-shot.`)
     .text(
       [
-        "You are writing into the tools folder — the implementation layer, not the catalogue. Decide which of two things this file is:",
-        "Repeatable — part of the catalogue? Then it also needs a thin justfile recipe pointing at it, with a [doc(\"…\")] — a tool that exists only in tools/ is undiscoverable.",
+        `You are writing into \`${tools}/\` — the implementation layer, not the catalogue. Decide which of two things this file is:`,
+        `Repeatable — part of the catalogue? Then it also needs a thin justfile recipe pointing at it, with a [doc("…")] — a tool that exists only in \`${tools}/\` is undiscoverable.`,
         "A one-off (a migration, a backfill, a workflow step)? Then it gets NO recipe — one-shots promoted into the catalogue are how `just --list` becomes noise and stops being trustworthy.",
       ].join("\n"),
     ),
@@ -161,9 +193,7 @@ export const justfile = definePack("justfile", (repo: Catalogue) => ({
     .test({
       pass: [
         { path: "justfile", content: '[doc("Run the suite.")]\ntest:\n    npx vitest run\n' },
-        // Hidden from `just --list`, so it is not in the catalogue and owes it nothing. The
-        // message has promised this since the rule was written; the walk only started honouring
-        // it at the crossing.
+        // Hidden from `just --list`, so it is not in the catalogue and owes it nothing.
         { path: "justfile", content: "[private]\n_helper:\n    echo hi\n" },
         // An assignment and a `set` line are not recipes at all.
         { path: "justfile", content: 'set shell := ["bash", "-c"]\nport := "3000"\n' },
@@ -192,4 +222,30 @@ export const justfile = definePack("justfile", (repo: Catalogue) => ({
         { path: "justfile", content: "@quiet:\n    echo hi\n" },
       ],
     }),
-}));
+
+    // NO MAP, NO ENTRY. Which raw commands a repo has wrapped is that repo's fact, and an entry
+    // bound with an empty list is one more armed rule matching nothing — the shape this pack
+    // exists to refuse.
+    ...(Object.keys(recipes).length === 0
+      ? {}
+      : {
+          useTheRecipe: guardrail()
+            .at(command)
+            .description("A command the repo has a recipe for is refused, and the refusal names the recipe.")
+            .check(banCommands({ ban: Object.keys(recipes) }))
+            .message(
+              [
+                "This repo has a recipe for that command — use it. The catalogue is the tooling you can reach for with confidence, and a raw command run beside it is the one nobody sees, nobody documents and nobody can change in one place.",
+                ...Object.entries(recipes).map(([pattern, recipe]) => `· \`${pattern}\` → \`${recipe}\``),
+              ].join("\n"),
+            )
+            // The first pair of the repo's own map, driven both ways: the recipe passes, the raw
+            // command it replaces is refused. A case written against a command no repo named would
+            // prove the pattern against itself.
+            .test({
+              pass: [Object.values(recipes)[0] ?? "just test"],
+              block: [Object.keys(recipes)[0] ?? "npx vitest run"],
+            }),
+        }),
+  };
+});
