@@ -66,7 +66,7 @@
 <main>
   <p class="scope"><a href="./index.html">flow packs</a> › fcis</p>
   <h1>The <code>fcis</code> pack</h1>
-  <p class="scope">9 guardrails · 1 breadcrumb · fires at: touch · write · commit · command · takes 4 parameters</p>
+  <p class="scope">7 guardrails · 1 breadcrumb · fires at: touch · write · commit · command · takes 6 parameters</p>
 
   <div class="lead"><p>Functional Core, Imperative Shell (Bernhardt, &quot;Boundaries&quot;, SCNA 2012).</p>
 <p>The one-stop shop for running FCIS in a repo: the model, the rules that hold both sides honest,
@@ -81,31 +81,28 @@ guarded repo's own house pack, where its layers are.</p></div>
   <p class="gen">Generated from <code>packs/fcis.ts</code> by <code>just docs-packs</code>. Edit the pack, not this page. The commit gate refuses a page that has drifted.</p>
 
   <h2 id="binding">Binding it</h2>
-  <p>The pack takes 4 parameters. These are facts the pack cannot know about your repo:</p>
+  <p>The pack takes 6 parameters. These are facts the pack cannot know about your repo:</p>
   <table>
     <thead><tr><th>Parameter</th><th>Type</th><th>What it is</th></tr></thead>
     <tbody>
       <tr><td><code>files</code></td><td><code>readonly string[]</code></td><td><p>Every pure FILE — what the rails judge, one glob per shape the repo actually uses.</p></td></tr>
       <tr><td><code>homes</code></td><td><code>readonly string[]</code></td><td><p>Every pure HOME — where the teaching breadcrumb fires, and what the coverage gate watches.</p></td></tr>
       <tr><td><code>coverage</code></td><td><code>string</code></td><td><p>The recipe that runs the coverage gate.</p></td></tr>
-      <tr><td><code>example</code></td><td><code>string</code></td><td><p>ONE PURE FILE, spelled out — a path this repo's <code>files</code> and <code>homes</code> globs both match.</p>
-<p>It is what the two entries below prove themselves WITH, and it is mandatory for the reason
-the rest of this parameter is: those two narrow inside their CHECK (<code>pureCovered</code>'s changed
-set, <code>newPureFileNeedsReason</code>'s added set) rather than through <code>.on(…)</code>, so their cases have
-to name a concrete path, and a path this pack invented is a path only the repo that wrote it
-matches. It was <code>cli/pure/a.ts</code> — one repo's spelling, hard-coded — and in every other repo
-the block case's file fell outside the check's own narrowing, the check correctly passed it,
-and the case FAILED: <code>flow test</code> red on day one, twice, for a pack that was working
-perfectly. Found by the machine test (<code>just test-packs</code>), which binds every pack with a
-stranger's parameters.</p>
-<p>ASKED FOR rather than computed from the globs above, on the ruling this pack's sibling
-already took (the <code>flow</code> pack's <code>Home</code>): inventing a concrete path out of a caller's glob is
-arithmetic that does not belong in a pack, and it needs a second glob dialect inside one to
-do it. A repo knows one of its own pure files; nothing else does.</p>
-<p><code>newPureFileNeedsReason</code>'s exempt case needs one more path — a pure file that is ALSO a test —
-and takes this one with <code>.test</code> before its extension. That is not a claim about anybody's
-sibling-naming convention: it is <code>TESTS</code>, the exemption glob two lines down, made concrete on
-a path the repo says is pure, and the two are read together on purpose.</p></td></tr>
+      <tr><td><code>example</code></td><td><code>string</code></td><td><p>ONE PURE FILE, spelled out — a path both <code>files</code> and <code>homes</code> match.</p>
+<p><code>pureCovered</code> and <code>newPureFileNeedsReason</code> narrow inside their CHECK rather than through
+<code>.on(…)</code>, so their cases have to name a concrete path, and a path the pack invented would fall
+outside the repo's own convention and prove nothing. Asked for rather than computed: turning a
+caller's glob into a concrete path is arithmetic that does not belong in a pack. A repo knows
+one of its own pure files; nothing else does.</p></td></tr>
+      <tr><td><code>sibling</code></td><td><code>string</code></td><td><p>Where a pure file's test sits, as a template over the file's own path. Defaults to
+<code>{dir}/{name}.test.ts</code>.</p>
+<p><code>{dir}</code> is the file's folder and <code>{name}</code> its basename without the extension.
+<code>pureHasTest</code> demands it exists and <code>pureExportsTested</code> reads it, so a repo whose tests live
+in <code>__tests__/</code> or end in <code>.spec.ts</code> states that here rather than turning both rules off.</p></td></tr>
+      <tr><td><code>tests</code></td><td><code>string</code></td><td><p>What a new pure file may be without owing a reason: a test. Defaults to a glob matching any
+file whose name carries <code>.test.</code>, at any depth.</p>
+<p>It is <code>newPureFileNeedsReason</code>'s exemption, and the <code>example</code> path with <code>.test</code> before its
+extension is what proves it, so the two are read together.</p></td></tr>
     </tbody>
   </table>
   <p>Example config. The values are examples, and every glob and command on this page was rendered with them:</p>
@@ -123,8 +120,7 @@ its pure code lives cannot bind this pack, by design.</p>
   <h2 id="adopt">Adopting it</h2>
 <p>Expect the coverage gate and the sibling-test rules to fire on the first commit that
 touches pure code; both are scoped to the home you named, so the way to narrow them is to narrow
-that, never to disable the rule. <code>noLogicInTypesOrIndex</code> and <code>strictLayout</code> arrive disabled —
-they encode one folder convention, and a repo that shares it turns them on by name.</p>
+that, never to disable the rule.</p>
 
   <h2 id="entries">Entries</h2>
   <ul class="toc">
@@ -135,8 +131,6 @@ they encode one folder convention, and a repo that shares it turns them on by na
     <li><span class="id"><a href="#pureHasTest">fcis.pureHasTest</a></span><span class="badge rail">guardrail</span><span class="d">A pure file has its sibling test — the test-first artefact exists.</span></li>
     <li><span class="id"><a href="#pureExportsTested">fcis.pureExportsTested</a></span><span class="badge rail">guardrail</span><span class="d">Every exported pure function is at least referenced in its test — the 'wrote no test' nudge.</span></li>
     <li><span class="id"><a href="#pureCovered">fcis.pureCovered</a></span><span class="badge rail">guardrail</span><span class="d">Blocks a commit if the pure core's coverage gate fails — only runs when pure files changed.</span></li>
-    <li><span class="id"><a href="#noLogicInTypesOrIndex">fcis.noLogicInTypesOrIndex</a></span><span class="badge rail">guardrail</span><span class="d">types.ts declares and index.ts re-exports — an exported function in either is logic in the wrong file.</span></li>
-    <li><span class="id"><a href="#strictLayout">fcis.strictLayout</a></span><span class="badge rail">guardrail</span><span class="d">A feature folder may hold only canonical filenames — no invented name to hide untested logic in.</span></li>
     <li><span class="id"><a href="#newPureFileNeedsReason">fcis.newPureFileNeedsReason</a></span><span class="badge rail">guardrail</span><span class="d">A commit adding a non-test file to the pure core must say why the pure file it belongs in isn't the place.</span></li>
   </ul>
 
@@ -325,33 +319,6 @@ Move the effect into the shell around this file and pass the values in. (`node:p
     <div class="says">Coverage of the pure core fell below the bar — add tests for the new and changed code. (Runs only when pure files changed.)</div>
     <h3>Proved by</h3>
 <div class="cases"><div class="case ok"><b>passes</b><ul><li>committing <code>README.md</code><span class="given">given <code>./ci.sh coverage</code> exits 1</span></li></ul></div><div class="case stop"><b>blocks</b><ul><li>committing <code>core/clock.ts</code><span class="given">given <code>./ci.sh coverage</code> exits 1 and says <code>ERROR: Coverage 91% &lt; 95%</code></span></li></ul></div></div>
-
-  </section>
-
-  <section class="entry" id="noLogicInTypesOrIndex">
-    <h2><code>fcis.noLogicInTypesOrIndex</code><span class="badge rail">guardrail</span></h2>
-    <p class="desc">types.ts declares and index.ts re-exports — an exported function in either is logic in the wrong file.</p>
-    <p class="fact"><b>Refuses at</b> a file is written or edited · the commit gate, over the staged set</p>
-    <p class="fact"><b>Watches</b> <code>src/lib/**/types.ts</code> · <code>src/lib/**/index.ts</code> · <code>src/core/**/types.ts</code> · <code>src/core/**/index.ts</code></p>
-    <p class="fact"><b>Categories</b> every session</p>
-    <p class="fact"><b>Off by default</b> the pack's own default: the feature-folder tier is a shape a repo opts into</p>
-    <p class="fact"><b>Check</b> written inline in this pack</p>
-    <h3>Proved by</h3>
-<div class="cases"><div class="case ok"><b>passes</b><ul><li class="none">no pass case declared</li></ul></div><div class="case stop"><b>blocks</b><ul><li class="none">no block case declared</li></ul></div></div>
-
-  </section>
-
-  <section class="entry" id="strictLayout">
-    <h2><code>fcis.strictLayout</code><span class="badge rail">guardrail</span></h2>
-    <p class="desc">A feature folder may hold only canonical filenames — no invented name to hide untested logic in.</p>
-    <p class="fact"><b>Refuses at</b> a file is written or edited · the commit gate, over the staged set</p>
-    <p class="fact"><b>Watches</b> <code>src/lib/**/*.ts</code></p>
-    <p class="fact"><b>Ignores</b> <code>**/*.d.ts</code></p>
-    <p class="fact"><b>Categories</b> every session</p>
-    <p class="fact"><b>Off by default</b> the pack's own default: the canon of a feature folder is a fact only the repo has</p>
-    <p class="fact"><b>Check</b> written inline in this pack</p>
-    <h3>Proved by</h3>
-<div class="cases"><div class="case ok"><b>passes</b><ul><li class="none">no pass case declared</li></ul></div><div class="case stop"><b>blocks</b><ul><li class="none">no block case declared</li></ul></div></div>
 
   </section>
 

@@ -111,12 +111,6 @@ export default defineConfig([
   // would fall outside this repo's convention and fail its own case. `glob.ts` is the oldest pure
   // file here and the least likely to move.
   pack(fcis, { files: PURE, homes: PURE, coverage: "just test-coverage", example: "glob.ts" }),
-  // Both already arrive disabled from the pack; they are named here so a reader of THIS file sees
-  // the whole answer without opening the pack.
-  override(fcis.noLogicInTypesOrIndex).disabled(
-    "index.ts here is the package's PUBLIC DOOR — a re-export surface with an exact-list test, not a barrel that grew",
-  ),
-  override(fcis.strictLayout).disabled("no feature-folder tier here — this package is laid out by pipeline stage"),
 
   // ── tdd: test-first artefacts, and tests that test behaviour ──
   //
