@@ -66,7 +66,7 @@
 <main>
   <p class="scope"><a href="./index.html">flow packs</a> › git</p>
   <h1>The <code>git</code> pack</h1>
-  <p class="scope">7 guardrails · 1 breadcrumb · fires at: session · command · write · commit · takes 2 parameters</p>
+  <p class="scope">7 guardrails · 1 breadcrumb · fires at: session · command · write · commit · takes 3 parameters</p>
 
   <div class="lead"><p>Conventional commit headers, computed versions, and nothing destroys uncommitted work.</p>
 <p>The <code>node/</code> sub-group is release discipline spelled in package.json, and package.json only.</p></div>
@@ -74,7 +74,7 @@
   <p class="gen">Generated from <code>packs/git.ts</code> by <code>just docs-packs</code>. Edit the pack, not this page. The commit gate refuses a page that has drifted.</p>
 
   <h2 id="binding">Binding it</h2>
-  <p>The pack takes 2 parameters. These are facts the pack cannot know about your repo:</p>
+  <p>The pack takes 3 parameters. These are facts the pack cannot know about your repo:</p>
   <table>
     <thead><tr><th>Parameter</th><th>Type</th><th>What it is</th></tr></thead>
     <tbody>
@@ -82,6 +82,11 @@
 <p><code>noHandEditedVersion</code> reads whatever this names out of the commit's own diff, so any manifest
 works there. <code>versionIsSemver</code> reads it as JSON, so a repo whose manifest is TOML or YAML names
 the file here and disables that one entry.</p></td></tr>
+      <tr><td><code>types</code></td><td><code>readonly string[]</code></td><td><p>The type words a commit header may use. Defaults to the eleven of Conventional Commits plus
+<code>release</code>: feat · fix · docs · style · refactor · perf · test · build · ci · chore · revert ·
+release.</p>
+<p>A repo with its own vocabulary states the WHOLE list, never an addition — the refusal prints
+what it was given, so a half-list would refuse a type it then failed to mention.</p></td></tr>
       <tr><td><code>release</code></td><td><code>string</code></td><td><p>The recipe that computes the version from the history, writes the changelog, stamps the
 version file and tags — for example <code>just release</code> or <code>npm run release</code>.</p>
 <p>MANDATORY rather than defaulted, by the same rule tdd's suite recipe follows: a default is a

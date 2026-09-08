@@ -214,7 +214,7 @@ const noHandEditedVersion = defineCheck(
     },
 );
 
-/** The type words a commit header may use. Stated, never defaulted — the entry is the whole rule. */
+/** The type words a commit header may use when the repo names none of its own. */
 const TYPES = ["feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert", "release"];
 
 // The words this pack bans from a commit message, ASSEMBLED rather than written out.
@@ -239,6 +239,16 @@ export interface Release {
    * the file here and disables that one entry.
    */
   readonly versionFile?: string;
+
+  /**
+   * The type words a commit header may use. Defaults to the eleven of Conventional Commits plus
+   * `release`: feat · fix · docs · style · refactor · perf · test · build · ci · chore · revert ·
+   * release.
+   *
+   * A repo with its own vocabulary states the WHOLE list, never an addition — the refusal prints
+   * what it was given, so a half-list would refuse a type it then failed to mention.
+   */
+  readonly types?: readonly string[];
   /**
    * The recipe that computes the version from the history, writes the changelog, stamps the
    * version file and tags — for example `just release` or `npm run release`.
@@ -265,6 +275,7 @@ export interface Release {
  */
 export const git = definePack("git", (repo: Release) => {
   const versionFile = repo.versionFile ?? "package.json";
+  const types = repo.types ?? TYPES;
   return {
   /**
    * Without it, the commit surface is learned by trial and refusal: an agent writes a header the
@@ -427,11 +438,11 @@ export const git = definePack("git", (repo: Release) => {
   conventionalCommitFormat: guardrail()
     .at(command)
     .description("The commit header must speak Conventional Commits v1.0.0 (checked before git commit runs).")
-    .check(conventionalCommit({ types: TYPES }))
+    .check(conventionalCommit({ types }))
     .message(
       [
         "Commit header must match Conventional Commits v1.0.0: type(scope)!: description — e.g. `fix(auth): renew session on token refresh`.",
-        `The type is one of: ${TYPES.join(" · ")}.`,
+        `The type is one of: ${types.join(" · ")}.`,
       ].join("\n"),
     )
     .test({
