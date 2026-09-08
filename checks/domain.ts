@@ -5,31 +5,20 @@
 // and knows nothing of matching, scoping, effects, or which harness reported the event. That is
 // the property `.test()` cases and recorded replay both stand on.
 //
-// ONE FILE, and the consolidation is the point rather than a tidy-up. These were fourteen modules
-// in the old engine, each a zod schema plus an adapter plus a pure decision, and the shape hid
-// what they had in common: `text-ban` and `command-guard` were the same regex sweep written twice
-// with different message text, three scripts each re-derived a changed-file set their own way,
-// and two carried their own copy of "read a command line as git invocations". Here the sharing is
-// visible — `patternHits` is the one matcher, `changedSet` the one changed-file read,
-// `gitInvocations` the one tokeniser — and a fifteenth check has to say what it reuses.
+// ONE FILE, so that what these checks SHARE is visible: `patternHits` is the one matcher,
+// `changedSet` the one changed-file read, `gitInvocations` the one tokeniser. A fifteenth check
+// says what it reuses, or it is a sixth copy of something already here.
 //
-// WHAT DIED IN THE MOVE, deliberately, because a typed grammar makes the tolerance pointless:
-//   · The one-or-many unions. `ban: "TODO"` and `ban: ["TODO"]` were both accepted because YAML
-//     could not say which one an author meant. A list is a list now, and the compiler says so.
-//   · The dual key spellings. `then-any` beside `thenAny`, `must_run` beside `mustRun` — kebab
-//     because YAML, camel because JavaScript. One spelling each, camelCase, because that is what
-//     the language this config is written in spells.
-//   · The zod schema factories. A `with:` box needed a runtime validator because it arrived as
-//     untyped data through a string route. An options object is checked where you type it.
-//   · `bindings-lint`, which lint-checked the YAML format. Its successor is the type system.
+// The options are ordinary typed arguments and nothing more: one spelling per key, a list where a
+// list is meant, and the compiler checking both where you type them. There is no runtime schema
+// anywhere in this file, and nothing here accepts two shapes of the same thing.
 //
 // HOW A CHECK REACHES THE WORLD, and it is the one rule this whole file obeys: through `ctx` and
 // no other way. There is no node:fs here, no child_process, no process.env — a test suite runs
 // through `ctx.exec`, a sibling file is read through `ctx.fs`, and the changed set arrives as an
-// event fact. eslint refuses those imports on the line and work.yaml's import-boundaries refuses
-// them at the commit, but the rails are not the reason: a check that reads the world directly
-// cannot be driven by a case and cannot be replayed, and both failures this package exists to
-// delete were first seen as a rule nobody could test.
+// event fact. eslint refuses those imports on the line and this repo's own `house.importBoundaries`
+// refuses them at the commit, but the rails are not the reason: a check that reads the world
+// directly cannot be driven by a case and cannot be replayed.
 //
 //   PATTERNS      the one regex sweep — textBan · banCommands
 //   PATHS         protectedPath · siblingExists · canonicalFiles
@@ -146,8 +135,7 @@ export const textBan = defineCheck(
  * invocation, and the patterns that police it span the newline on purpose. Swept line by line
  * (which is right for a file, where a hit must be able to name its line) every one of those
  * patterns matches nothing, silently: the rule loads, counts, and cannot catch the thing it
- * names. Measured at the crossing, on the attribution ban, which is the reason this comment is
- * here rather than a `// eslint-disable`-shaped shrug.
+ * names.
  */
 export const banCommands = defineCheck(
   (opts: { ban: readonly string[] }): Check =>
@@ -175,7 +163,7 @@ export const banCommands = defineCheck(
  * binds. One tail, two heads, and neither pack carries a copy of the other's — a second copy of
  * this expression is how the two would drift while both still read as armed.
  *
- * WHY IT IS CORE and not a helper beside the packs, which is where it lived until F5: TWO PACKS
+ * WHY IT IS CORE and not a helper beside the packs: TWO PACKS
  * SHARE IT, and that is the whole rule the fold settled — anything two packs share is a core
  * check. A shared file sitting beside the packs is a library with two users and no owner, and this
  * one proved it by growing four unrelated sections around this pair. Here it sits next to the
@@ -209,9 +197,8 @@ export const SUBSTITUTION_MESSAGE = [
  *
  * The entry's `.on()` IS the protected set and the engine has already filtered on it, so any file
  * that reaches this check is protected by definition: matching it is the violation. There is no
- * second list of paths inside the check — there used to be (`deny:` beside `on:`), it meant a rule
- * could be scoped one way and protect another, and a scalar `deny: "vendor/**"` protected nothing
- * at all for a year.
+ * second list of paths inside the check: a rule that could be scoped one way and protect another
+ * is a rule whose two halves can disagree in silence.
  *
  * `existingOnly` is what an APPEND-ONLY tree needs: a migrations folder, where yesterday's file is
  * history and may never move while today's is the whole point of the folder. Absent means no
@@ -252,9 +239,9 @@ export const siblingExists = defineCheck(
 /**
  * The canon a feature folder is judged against.
  *
- * `root` and `allow` are REQUIRED. They used to default to `src/lib` and one platform's own
- * eight-name union — a canon invented in one repo and applied silently in every other. The canon
- * is the whole content of the rule, so an entry that does not say it is an entry nobody can read.
+ * `root` and `allow` are REQUIRED: the canon IS the content of the rule, so an entry that does not
+ * state it is an entry nobody can read, and a default would be one repo's canon applied silently
+ * in every other.
  * `thinking` and `folders` stay optional because absent means "no exemption" and "the folder tier
  * is not policed" — the empty value in both cases.
  */
@@ -556,9 +543,9 @@ const OPERATORS = new Set([";", "&&", "||", "|", "&", "|&", "\n"]);
  *
  * They have to be known by name to find where the subcommand starts: `git -C ~/repo commit -m x`
  * puts two tokens between `git` and `commit`, and a scan that took the first argument as the
- * subcommand saw `-C` and walked away. The bug that earned the list: a scan for `-C` anywhere in
- * the token stream read `git commit -C HEAD` — git's reuse-this-message flag, nothing to do with
- * directories — as a command aimed at a directory named HEAD.
+ * subcommand saw `-C` and walked away. Knowing them by name is also what keeps `git commit -C
+ * HEAD` — the reuse-this-message flag, nothing to do with directories — from reading as a command
+ * aimed at a directory called HEAD.
  */
 export const GIT_VALUE_OPTS: ReadonlySet<string> = new Set([
   "-C",
@@ -695,9 +682,8 @@ export function gitInvocations(command: string): GitInvocation[] | null {
  *
  * `git commit -F -` reads its message on stdin, and a QUOTED heredoc is the safe way to write one
  * containing backticks — a form this codebase's own rules push commits toward. The argument scan
- * cannot see it: there is no `-m` token, so every message written that way went unjudged. Measured
- * 2026-08-09: all eight commits of one session used this form, and the three rules that read the
- * message were inert on every one of them.
+ * cannot see it: there is no `-m` token, so a message written that way goes unjudged, and every
+ * rule that reads a commit message is inert on it.
  *
  * Deliberately last-resort and deliberately dumb — it runs only when no inline message was found,
  * and reads the FIRST heredoc, because a commit command carrying two is not a shape anyone writes
@@ -775,13 +761,13 @@ export function quoteArg(value: string): string {
 /**
  * The `-C <path>` prefix a command's first git invocation carries, quoted, or the empty string.
  *
- * It is COPIED rather than resolved. The old engine turned it into an absolute root, because it
- * had a root to resolve against and a `spawnSync` cwd to point at one; a check has neither, and
- * inventing a `root` on ctx to get one back would put a filesystem fact into a contract whose whole
- * promise is that there is no filesystem in it. Copying the tokens through means the shell resolves
- * them exactly as git would have, relative to wherever `ctx.exec` runs — which is the repo.
+ * It is COPIED rather than resolved. Resolving it to an absolute root needs a root and a cwd to
+ * point at one, and a check has neither: inventing a `root` on ctx would put a filesystem fact into
+ * a contract whose whole promise is that there is no filesystem in it. Copying the tokens through
+ * means the shell resolves them exactly as git would have, relative to wherever `ctx.exec` runs —
+ * which is the repo.
  *
- * The misfire it preserves the fix for: a `git -C ~/other-repo commit` was once judged against THIS
+ * What it prevents: a `git -C ~/other-repo commit` judged against THIS
  * repo's staged state, and vetoed another repo's commit over files it could not see.
  *
  * The FIRST invocation decides. One ctx serves the whole command line, and a chain that commits in
@@ -1072,11 +1058,10 @@ function editedSinceRun(actions: readonly TurnAction[], edited: readonly string[
 /**
  * "You changed X this turn but never ran Y afterwards" — the turn-end rule.
  *
- * The actions arrive as harness-neutral facts on ctx. That is the change from the old engine, where
- * this rule read `$WORK_TURN_TRANSCRIPT` from the environment, opened the file itself and parsed
- * Claude Code's JSONL: three reads of the world inside a rule script, which made it the one core
- * rule no case could drive and no replay could reach. Which tool names count as an edit is the
- * adapter's knowledge and stays there.
+ * The actions arrive as harness-neutral facts on ctx, which is what makes this rule drivable by a
+ * case and reachable by a replay: a rule that opened the transcript and parsed it would be reading
+ * the world three times inside a check. Which tool names count as an edit is the adapter's
+ * knowledge and stays there.
  *
  * Stands aside when the moment carried no turn facts at all: there is nothing to judge, and a rule
  * that blocked on the absence of evidence would block every turn on a harness that supplies none.
@@ -1135,10 +1120,9 @@ export function failureExcerpt(output: string, cap = 8): string {
  * Some checks need the whole tree in a consistent state (a transitive import boundary, coverage,
  * the type graph) and cannot run per keystroke, so this belongs at commit or turn-end.
  *
- * IT IS HANDED THE CHANGED SET, which is what the old tool-gate was not. That rule spawned its tool
- * with empty argv and no file list, so a repo's own script had to re-scan the whole tree and could
- * never name the file that broke it — the whole of P6, and the reason a repo's own logic felt
- * second-class. Here the changed set is an event fact: it scopes the gate (`changed`), and
+ * IT IS HANDED THE CHANGED SET. A gate spawned with empty argv makes a repo's own script re-scan
+ * the whole tree and leaves it unable to name the file that broke it. Here the changed set is an
+ * event fact: it scopes the gate (`changed`), and
  * `{files}` in the run string expands to the files themselves, shell-quoted. A run string naming
  * `{files}` with nothing changed does not run at all, because a tool handed an empty file list
  * usually reads that as "do everything".
@@ -1495,15 +1479,14 @@ type LangResult = { readonly ok: true; readonly lang: unknown } | { readonly ok:
 /**
  * Resolve a grammar name to something `parse()` accepts.
  *
- * TWO ROUTES, down from the old engine's three. A tier-0 native is free. A published
+ * TWO ROUTES. A tier-0 native is free. A published
  * `@ast-grep/lang-<name>` package (sql, python, go, rust…) is registered on first use — its
  * compiled binary lives in node_modules, and `registerDynamicLanguage` is safe to call per grammar.
  *
- * The route that did NOT come across is the third: a hand-built grammar declared in an
- * `sgconfig.yml` under the rule library. flow has no library — that is the whole of P1 — and
- * resolving one would mean reading a YAML file from a path this layer may not touch. It can come
- * back the day someone needs it, as a parameter naming a built `.so`, which would be a decision
- * rather than a leftover.
+ * A THIRD ROUTE is deliberately absent: a hand-built grammar declared in an `sgconfig.yml` under a
+ * rule library. flow has no library, and resolving one would mean reading a YAML file from a path
+ * this layer may not touch. It can arrive the day someone needs it, as a parameter naming a built
+ * `.so`, which would be a decision rather than a leftover.
  *
  * An unknown name is a REFUSAL VALUE, and it never falls through to Tsx. The check turns it into a
  * block, which is the fail-loud doctrine at its narrowest and most useful: a silent fall-through is
@@ -1549,9 +1532,9 @@ export async function astGrepHits(
  * STRING and the matches come back — no subprocess, no temp file — which is what lets a structural
  * rule run pre-emptively on every edit as well as at commit.
  *
- * `language` is mandatory. It used to default to tsx, which mis-parses some .ts and then silently
- * matched nothing: a private fallback the entry could not show, which is exactly what "nothing
- * defaults" exists to delete.
+ * `language` is mandatory. A default here is a private fallback the entry cannot show — and the
+ * wrong parser mis-parses a file and then matches nothing, silently, which is the failure this
+ * package exists to delete.
  */
 export const astGrep = defineCheck(
   (opts: { rule: unknown; language: string }): Check =>
