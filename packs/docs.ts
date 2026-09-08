@@ -1,12 +1,25 @@
 // flow/packs/docs.ts — two documentation audiences, one folder, nothing replicated.
-//
-// Every repo documents for exactly two readers who want opposite things: the end user wants the
-// least possible cognitive load, and the agent wants almost nothing in context. So `docs/` has
-// exactly two doors and everything inside follows its door's rules.
 
 import { breadcrumb, canonicalFiles, commit, definePack, guardrail, protectedPath, touch, write } from "../index.ts";
 
+/**
+ * Two documentation audiences, one folder, nothing replicated.
+ *
+ * Every repo documents for exactly two readers who want opposite things: the end user wants the
+ * least possible cognitive load, and the agent wants almost nothing in context. So `docs/` has
+ * exactly two doors and everything inside follows its door's rules.
+ *
+ * @setup A `docs/` folder holding exactly `user/` and `agent/`, each with its own index —
+ * `docs/user/index.html` for people and `docs/agent/README.md` as a list of pointers. The two
+ * guardrails below refuse anything else at the top of the folder, so a repo with a different shape
+ * either moves its pages or does not bind this pack.
+ */
 export const docs = definePack("docs", {
+  /**
+   * Without it, an agent writing under `docs/` has no way to know there are two audiences. User
+   * pages fill with rationale nobody asked for, and agent pages fill with copies of what the code
+   * already says, which go stale silently while still reading as true.
+   */
   docs: breadcrumb()
     .at(touch)
     .on("docs/**")
@@ -20,11 +33,14 @@ export const docs = definePack("docs", {
       ].join("\n"),
     ),
 
-  // The style the user half is held to. It sits BESIDE `docs`, not inside it, because the two
-  // breadcrumbs answer different questions at different moments: `docs` fires anywhere under
-  // docs/ and says which door you are behind; this one fires only behind the user door and says
-  // how a page there is written. Every source it cites is a public standard — Diátaxis, the
-  // Google developer style guide — so nothing in it is one repo's taste.
+  // It sits BESIDE `docs`, not inside it, because the two breadcrumbs answer different questions
+  // at different moments: `docs` fires anywhere under docs/ and says which door you are behind;
+  // this one fires only behind the user door and says how a page there is written.
+  /**
+   * Without it, every user page is written in whatever style that session had, and the docs read
+   * as ten authors. Every source it cites is a public standard — Diátaxis, the Google developer
+   * style guide — so nothing in it is one repo's taste.
+   */
   userDocsStyle: breadcrumb()
     .at(touch)
     .on("docs/user/**")
@@ -39,6 +55,11 @@ export const docs = definePack("docs", {
       ].join("\n"),
     ),
 
+  /**
+   * Without it, `docs/` grows a third folder nobody chose — notes, scratch, drafts — and the two
+   * doors stop being a rule. A folder with no declared audience is how a docs folder becomes a
+   * drawer, and neither audience's rules can be applied to what is in it.
+   */
   docsShape: guardrail()
     .at(write, commit)
     .on("docs/**")

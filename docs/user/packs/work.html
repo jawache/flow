@@ -37,6 +37,8 @@
   .entry .facts dt{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;padding-top:.2rem}
   .entry .facts dd{margin:0}
   .entry .facts pre{margin:.2rem 0}
+  .set{margin:.15rem 0}
+  .set b{font-weight:700;font-size:.82rem;color:#4a5260;font-family:ui-monospace, Menlo, monospace}
   .why{border-left:4px solid var(--parent);background:#eef4fa;padding:.6rem .9rem;border-radius:0 8px 8px 0;margin:.8rem 0;font-size:.95rem}
   .why.gap{border-left-color:#c2a33a;background:var(--gapbg);color:#6b5a1e;font-style:italic}
   .why p:first-child{margin-top:0} .why p:last-child{margin-bottom:0}
@@ -64,7 +66,18 @@
   <h1>The <code>work</code> pack</h1>
   <p class="scope">5 guardrails · 0 breadcrumbs · fires at: command · write · takes no parameters</p>
 
-  <p class="lead gap">This pack has no lead. A doc comment on <code>definePack</code> is what says, in a paragraph, what the pack is for.</p>
+  <div class="lead"><p>The WORK LIFECYCLE's rungs: who is acting, and what each rung may do.</p>
+<p>A pack for repos that run the <code>work</code> lifecycle skill — spec · plan · start · build · review ·
+reflect · complete. It names the three rungs the lifecycle has (parent · builder · checker),
+binds one rule per rung to keep them from doing each other's jobs, and adds the two rules about
+the commands that write the journal: the inbox is the human's queue, and prose recorded through
+a shell is prose the shell can rewrite first.</p>
+<p>IT IMPORTS NOTHING FROM WORK. It is a plain consumer of flow's public door, exactly like every
+other pack here, and it knows the work CLI only as command strings on a rail. That is what lets
+flow ship it without depending on the tool it is about.</p>
+<p>flow ships no category names and never will: what a rung is called is a property of the way a
+team works, not of a guard engine. These three are the WORK lifecycle's, defined here beside the
+rules that bind to them — a builder may not do a parent's job, a checker may not write.</p></div>
 
   <p class="gen">Generated from <code>packs/work.ts</code> by <code>just docs-packs</code>. Edit the pack, not this page; the commit gate refuses a page that has drifted from its pack.</p>
 
@@ -75,6 +88,15 @@ import { work } from &quot;@jawache/flow/packs&quot;;
 
 export default defineConfig([pack(work)]);</code></pre>
   <p>Any entry below can be turned off in the config, as a committed change visible in review: <code>override(work.planIsTheParents).disabled("why")</code>.</p>
+
+  <h2 id="install">What to install first</h2>
+<p>The <code>work</code> CLI and its lifecycle skill. Every rule here reads a <code>work …</code> command line,
+so in a repo that does not run the lifecycle they are five rules that can never fire.</p>
+
+  <h2 id="adopt">Adopting it</h2>
+<p>Bind it only in a repo whose tasks are actually run through the lifecycle. The three rung
+rules are scoped to categories this pack defines, so they judge nobody until a session is
+classified as a builder or a checker — a human at a keyboard is neither.</p>
 
   <h2 id="entries">Entries</h2>
   <ul class="toc">
@@ -92,13 +114,8 @@ export default defineConfig([pack(work)]);</code></pre>
       <dt>Refuses at</dt><dd>a shell command is about to run</dd>
       <dt>Watches</dt><dd>—</dd>
       <dt>Categories</dt><dd><code>builder</code></dd>
-      <dt>Check</dt><dd><a href="../checks/ban-commands.html"><code>banCommands</code></a><pre><code>banCommands({
-        ban: [
-          &quot;(?:^|[\\n;&amp;|(]\\s*)\\s*work\\s+plan\\s+(?:verdict|amend)\\b&quot;,
-          &quot;(?:^|[\\n;&amp;|(]\\s*)\\s*work\\s+(?:save|task)\\b&quot;,
-          &quot;(?:^|[\\n;&amp;|(]\\s*)\\s*work\\s+cost\\s+record\\b&quot;,
-        ],
-      })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/ban-commands.html"><code>banCommands</code></a>
+      <div class="set"><b>ban</b> <code>(?:^|[\n;&amp;|(]\s*)\s*work\s+plan\s+(?:verdict|amend)\b · (?:^|[\n;&amp;|(]\s*)\s*work\s+(?:save|task)\b · (?:^|[\n;&amp;|(]\s*)\s*work\s+cost\s+record\b</code></div></dd>
     </dl>
     <h3>What the agent reads when refused</h3>
     <div class="says">You are a builder, and this command is the parent's. Yours: `work plan status` · `work plan tick` · `work plan decision`.
@@ -116,7 +133,7 @@ What you have is an ask. Say it to the parent — what you hit, what your boxes 
       <dt>Refuses at</dt><dd>a file is written or edited</dd>
       <dt>Watches</dt><dd>—</dd>
       <dt>Categories</dt><dd><code>checker</code></dd>
-      <dt>Check</dt><dd><pre><code>(ctx) =&gt; ctx.fail(`${ctx.file?.path ?? &quot;a file&quot;} — a checker reads`)</code></pre></dd>
+      <dt>Check</dt><dd><em>a check written inline in this pack</em></dd>
     </dl>
     <h3>What the agent reads when refused</h3>
     <div class="says">You were spawned to JUDGE this work, and a judge that edits the thing it is judging has destroyed the evidence. Report what you found — PASS or FAIL with citations — and let the rung that owns the code change it. (The verifier's own tool list already withholds Edit and Write; this is the half that holds for every review lens too, and it holds at the rail rather than in a frontmatter list somebody can widen.)</div>
@@ -132,7 +149,8 @@ What you have is an ask. Say it to the parent — what you hit, what your boxes 
       <dt>Refuses at</dt><dd>a shell command is about to run</dd>
       <dt>Watches</dt><dd>—</dd>
       <dt>Categories</dt><dd><code>parent</code></dd>
-      <dt>Check</dt><dd><a href="../checks/ban-commands.html"><code>banCommands</code></a><pre><code>banCommands({ ban: [&quot;(?:^|[\\n;&amp;|(]\\s*)\\s*work\\s+plan\\s+tick\\b&quot;] })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/ban-commands.html"><code>banCommands</code></a>
+      <div class="set"><b>ban</b> <code>(?:^|[\n;&amp;|(]\s*)\s*work\s+plan\s+tick\b</code></div></dd>
     </dl>
     <h3>What the agent reads when refused</h3>
     <div class="says">A box is ticked by the rung that built it. You are supervising: you did not do the work, so you cannot supply the evidence, and a tick whose proof came from reading a report is exactly the provenance the journal exists to prevent. If a child left a box unticked, that is the finding — record the verdict on it.</div>
@@ -148,7 +166,8 @@ What you have is an ask. Say it to the parent — what you hit, what your boxes 
       <dt>Refuses at</dt><dd>a shell command is about to run</dd>
       <dt>Watches</dt><dd>—</dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/ban-commands.html"><code>banCommands</code></a><pre><code>banCommands({ ban: [&quot;(?:^|[\\n;&amp;|(]\\s*)\\s*work\\s+inbox\\s+new\\b&quot;] })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/ban-commands.html"><code>banCommands</code></a>
+      <div class="set"><b>ban</b> <code>(?:^|[\n;&amp;|(]\s*)\s*work\s+inbox\s+new\b</code></div></dd>
     </dl>
     <h3>What the agent reads when refused</h3>
     <div class="says">`work inbox new` is the human's own door, and this command rail is only ever crossed by an agent — a person typing in a terminal has no hooks in front of them. So the fact that this fired means an agent is filing.
@@ -166,7 +185,8 @@ What you have is a finding. Say it in the chat — headline, why it matters, wha
       <dt>Refuses at</dt><dd>a shell command is about to run</dd>
       <dt>Watches</dt><dd>—</dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/ban-commands.html"><code>banCommands</code></a><pre><code>banCommands({ ban: [substitutionInProse([&quot;work\\s+(?:plan|task|recap|record|spec|complete)\\b&quot;])] })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/ban-commands.html"><code>banCommands</code></a>
+      <div class="set"><b>ban</b> <code>(?:work\s+(?:plan|task|recap|record|spec|complete)\b)[^&quot;`]*(?:&quot;(?:(?!&lt;&lt;-?')[^&quot;])*&quot;[^&quot;`]*)*&quot;(?:(?!&lt;&lt;-?')[^&quot;])*`</code></div></dd>
     </dl>
     <h3>What the agent reads when refused</h3>
     <div class="says">You are recording prose through a shell command, and a backtick inside a DOUBLE-quoted argument is not Markdown — the shell RUNS it and splices its output into your text before the command ever sees it.

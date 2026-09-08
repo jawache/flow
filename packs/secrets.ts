@@ -1,15 +1,4 @@
-// flow/packs/secrets.ts — env files committed encrypted, decrypted through one seam, and the
-// local-only files kept out of git.
-//
-// The orientation is at SESSION, and that is the whole design. Models arrive with a trained
-// aversion to env files — usually correct, and reinforced by permission denials — which is exactly
-// wrong for the dotenvx model, where the committed files are encrypted and reading them is the
-// expected way to work. A touch breadcrumb cannot fix that: the sessions where an agent silently
-// avoids env work are the sessions it never fires in. So it is said up front, every time.
-//
-// Three tiers, and every value lives in exactly one: committed-and-encrypted (`.env*`), local
-// ephemera that must never be committed (`.env.keys`, `.dev.vars`, `.env.*.local`), and runtime
-// secrets set per environment on the platform.
+// flow/packs/secrets.ts — env files committed encrypted, decrypted through one seam.
 //
 // Subtlety: the three RECIPE NAMES are mandatory parameters. This pack ships the `secrets.just`
 // module that defines the three jobs, but not the command a repo types to reach them — and every
@@ -39,7 +28,36 @@ export interface Seam {
   readonly names: string;
 }
 
+/**
+ * Env files committed encrypted, decrypted through one seam, and the local-only files kept out of
+ * git.
+ *
+ * The orientation is at SESSION, and that is the whole design. Models arrive with a trained
+ * aversion to env files — usually correct, and reinforced by permission denials — which is exactly
+ * wrong for the dotenvx model, where the committed files are encrypted and reading them is the
+ * expected way to work. A touch breadcrumb cannot fix that: the sessions where an agent silently
+ * avoids env work are the sessions it never fires in. So it is said up front, every time.
+ *
+ * Three tiers, and every value lives in exactly one: committed-and-encrypted (`.env*`), local
+ * ephemera that must never be committed (`.env.keys`, `.dev.vars`, `.env.*.local`), and runtime
+ * secrets set per environment on the platform.
+ *
+ * @install dotenvx — https://dotenvx.com. It is what encrypts the committed files and what runs a
+ * command with them decrypted; the three recipe names this pack takes as parameters are whatever
+ * the repo calls its wrappers around it.
+ * @setup `.env.keys`, `.dev.vars` and `.env.*.local` in `.gitignore` (the rules below refuse them
+ * in a commit, and an ignore entry is what stops anyone reaching that refusal), plus the three
+ * jobs the parameters name — encrypt, run-with-env, list-names.
+ * @adopt A repo with no `.env*` at all binds this for `noSecretsInCommits` alone, which is worth
+ * having in a repo that has never held a secret, and turns `envEncrypted` off BY NAME in its
+ * config with the reason on the record — an entry sitting dead is not the same as one opted out of.
+ */
 export const secrets = definePack("secrets", (repo: Seam) => ({
+  /**
+   * Without it, an agent avoids the env files on instinct — the trained reflex is right nearly
+   * everywhere else — and either works around the seam or asks a human for values that are
+   * committed, encrypted, three feet away.
+   */
   orientation: breadcrumb()
     .at(session)
     .description("How secrets work here — the three tiers, the one seam, and what you may read.")
@@ -54,6 +72,10 @@ export const secrets = definePack("secrets", (repo: Seam) => ({
 
   // The sealed-file rule, and it needs a repo that HAS env files. A repo with none turns it off by
   // name in flow.config.ts, with the reason on the record, rather than leaving it sitting dead.
+  /**
+   * Without it, one plaintext value lands in a committed `.env` and the whole model is gone: the
+   * files are committed on the promise that everything in them is sealed.
+   */
   envEncrypted: guardrail()
     .at(write, commit)
     .on(".env*")
@@ -117,6 +139,10 @@ export const secrets = definePack("secrets", (repo: Seam) => ({
   // breadcrumb moments are `session` and `touch`, and both carry a path; there is no command-shaped
   // breadcrumb, because a note about a command you are already running arrives after it ran. The
   // note is worth the same thing one keystroke earlier — when you open the env file.
+  /**
+   * Without it, a stuck reader reaches for `source .env` or exports a value by hand, and the seam
+   * that keeps every environment reading the same file stops being the only way in.
+   */
   dxSeam: breadcrumb()
     .at(touch)
     .on(".env*", "**/*.env")

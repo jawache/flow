@@ -37,6 +37,8 @@
   .entry .facts dt{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;padding-top:.2rem}
   .entry .facts dd{margin:0}
   .entry .facts pre{margin:.2rem 0}
+  .set{margin:.15rem 0}
+  .set b{font-weight:700;font-size:.82rem;color:#4a5260;font-family:ui-monospace, Menlo, monospace}
   .why{border-left:4px solid var(--parent);background:#eef4fa;padding:.6rem .9rem;border-radius:0 8px 8px 0;margin:.8rem 0;font-size:.95rem}
   .why.gap{border-left-color:#c2a33a;background:var(--gapbg);color:#6b5a1e;font-style:italic}
   .why p:first-child{margin-top:0} .why p:last-child{margin-bottom:0}
@@ -64,7 +66,10 @@
   <h1>The <code>docs</code> pack</h1>
   <p class="scope">2 guardrails · 2 breadcrumbs · fires at: touch · write · commit · takes no parameters</p>
 
-  <p class="lead gap">This pack has no lead. A doc comment on <code>definePack</code> is what says, in a paragraph, what the pack is for.</p>
+  <div class="lead"><p>Two documentation audiences, one folder, nothing replicated.</p>
+<p>Every repo documents for exactly two readers who want opposite things: the end user wants the
+least possible cognitive load, and the agent wants almost nothing in context. So <code>docs/</code> has
+exactly two doors and everything inside follows its door's rules.</p></div>
 
   <p class="gen">Generated from <code>packs/docs.ts</code> by <code>just docs-packs</code>. Edit the pack, not this page; the commit gate refuses a page that has drifted from its pack.</p>
 
@@ -75,6 +80,12 @@ import { docs } from &quot;@jawache/flow/packs&quot;;
 
 export default defineConfig([pack(docs)]);</code></pre>
   <p>Any entry below can be turned off in the config, as a committed change visible in review: <code>override(docs.docs).disabled("why")</code>.</p>
+
+  <h2 id="setup">What the repo needs in place</h2>
+<p>A <code>docs/</code> folder holding exactly <code>user/</code> and <code>agent/</code>, each with its own index —
+<code>docs/user/index.html</code> for people and <code>docs/agent/README.md</code> as a list of pointers. The two
+guardrails below refuse anything else at the top of the folder, so a repo with a different shape
+either moves its pages or does not bind this pack.</p>
 
   <h2 id="entries">Entries</h2>
   <ul class="toc">
@@ -93,7 +104,9 @@ export default defineConfig([pack(docs)]);</code></pre>
       <dt>Categories</dt><dd>every session</dd>
     </dl>
     <h3>Why it exists</h3>
-    <div class="why gap"><p>Not stated. A breadcrumb owes a doc comment on its key saying what goes wrong in the repo without it.</p></div>
+    <div class="why"><p>Without it, an agent writing under <code>docs/</code> has no way to know there are two audiences. User
+pages fill with rationale nobody asked for, and agent pages fill with copies of what the code
+already says, which go stale silently while still reading as true.</p></div>
     <h3>What the agent reads</h3>
     <div class="says">Two audiences, two doors, opposite rules. `docs/user/` is for PEOPLE: always HTML, entered through index.html, and multimodal on purpose — images, SVGs and short recordings are encouraged wherever they explain better than sentences. The measure of a user doc is how little work the reader has to do.
 `docs/agent/` is ARCHIVAL CONTEXT, loaded on demand, entered through README.md as an index of pointers. The admission test: could a fresh agent derive this from the code, the config or the guard layer? Then it does not belong — derivable content is replication, and replication goes stale silently while still reading as true. Only expensive syntheses live here: understanding that took hours to establish and would take hours to re-derive. Pointers outward, never copies inward; this folder must never compete with the breadcrumb layer.
@@ -111,7 +124,9 @@ The failure mode is silent staleness, not error: a doc stays literally correct w
       <dt>Categories</dt><dd>every session</dd>
     </dl>
     <h3>Why it exists</h3>
-    <div class="why gap"><p>Not stated. A breadcrumb owes a doc comment on its key saying what goes wrong in the repo without it.</p></div>
+    <div class="why"><p>Without it, every user page is written in whatever style that session had, and the docs read
+as ten authors. Every source it cites is a public standard — Diátaxis, the Google developer
+style guide — so nothing in it is one repo's taste.</p></div>
     <h3>What the agent reads</h3>
     <div class="says">The user docs have a ruled style — hold it:
 · One page, one job (the Diátaxis framework, https://diataxis.fr): the quick start teaches by doing (explanation is linked, never inlined); the guide solves situations; reference pages state facts for lookup, no narrative.
@@ -128,8 +143,15 @@ The failure mode is silent staleness, not error: a doc stays literally correct w
       <dt>Refuses at</dt><dd>a file is written or edited · the commit gate, over the staged set</dd>
       <dt>Watches</dt><dd><code>docs/**</code></dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/canonical-files.html"><code>canonicalFiles</code></a><pre><code>canonicalFiles({ root: &quot;docs&quot;, allow: [], folders: [&quot;user&quot;, &quot;agent&quot;] })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/canonical-files.html"><code>canonicalFiles</code></a>
+      <div class="set"><b>root</b> <code>docs</code></div>
+      <div class="set"><b>allow</b> <code>none</code></div>
+      <div class="set"><b>folders</b> <code>user · agent</code></div></dd>
     </dl>
+    <h3>Why it exists</h3>
+    <div class="why"><p>Without it, <code>docs/</code> grows a third folder nobody chose — notes, scratch, drafts — and the two
+doors stop being a rule. A folder with no declared audience is how a docs folder becomes a
+drawer, and neither audience's rules can be applied to what is in it.</p></div>
     <h3>What the agent reads when refused</h3>
     <div class="says">docs/ holds exactly two doors: `user/` (HTML, for people) and `agent/` (archival context, for agents). A third folder or a loose file at the top is documentation with no declared audience, which is how a docs folder becomes a drawer.</div>
     <h3>Proved by</h3>
@@ -144,7 +166,7 @@ The failure mode is silent staleness, not error: a doc stays literally correct w
       <dt>Refuses at</dt><dd>a file is written or edited · the commit gate, over the staged set</dd>
       <dt>Watches</dt><dd><code>docs/user/**/*.md</code> · <code>docs/user/**/*.mdx</code></dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/protected-path.html"><code>protectedPath</code></a><pre><code>protectedPath({})</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/protected-path.html"><code>protectedPath</code></a> — <span class="none">no options; the sentence's own scope is the whole rule</span></dd>
     </dl>
     <h3>What the agent reads when refused</h3>
     <div class="says">User docs are HTML — that is what makes them multimodal by default (images, SVGs, video inline) and what stops them turning into paragraphs nobody reads. Markdown belongs in `docs/agent/`. Every other asset type is welcome under `docs/user/`.</div>

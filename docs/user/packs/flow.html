@@ -37,6 +37,8 @@
   .entry .facts dt{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;padding-top:.2rem}
   .entry .facts dd{margin:0}
   .entry .facts pre{margin:.2rem 0}
+  .set{margin:.15rem 0}
+  .set b{font-weight:700;font-size:.82rem;color:#4a5260;font-family:ui-monospace, Menlo, monospace}
   .why{border-left:4px solid var(--parent);background:#eef4fa;padding:.6rem .9rem;border-radius:0 8px 8px 0;margin:.8rem 0;font-size:.95rem}
   .why.gap{border-left-color:#c2a33a;background:var(--gapbg);color:#6b5a1e;font-style:italic}
   .why p:first-child{margin-top:0} .why p:last-child{margin-bottom:0}
@@ -64,7 +66,11 @@
   <h1>The <code>flow</code> pack</h1>
   <p class="scope">1 guardrail · 2 breadcrumbs · fires at: session · touch · delete · takes 1 parameter</p>
 
-  <p class="lead gap">This pack has no lead. A doc comment on <code>definePack</code> is what says, in a paragraph, what the pack is for.</p>
+  <div class="lead"><p>flow's own orientation and self-protection, as a pack any repo binds.</p>
+<p>Every guarded repo wants these: a note saying what is steering you, a nudge when you edit the
+steering itself, and a refusal when a command would delete it. They were the <code>guard</code> pack in the
+home-directory library; they are a module now, and the only thing that changed on the way across
+is what they point AT — flow.config.ts and the packs it imports, not work.yaml and ~/.work/library.</p></div>
 
   <p class="gen">Generated from <code>packs/flow.ts</code> by <code>just docs-packs</code>. Edit the pack, not this page; the commit gate refuses a page that has drifted from its pack.</p>
 
@@ -90,6 +96,14 @@ import { flow } from &quot;@jawache/flow/packs&quot;;
 export default defineConfig([pack(flow, { packs: [&quot;rules/**&quot;] })]);</code></pre>
   <p>Any entry below can be turned off in the config, as a committed change visible in review: <code>override(flow.orientation).disabled("why")</code>.</p>
 
+  <h2 id="setup">What the repo needs in place</h2>
+<p>A <code>flow.config.ts</code> at the repo root and a folder for the packs the repo writes itself —
+whatever it is called, named here as the <code>packs</code> parameter. <code>flow init</code> writes both.</p>
+
+  <h2 id="adopt">Adopting it</h2>
+<p>Bind it first, before any other pack: it is the one every guarded repo wants whether or
+not it agrees with a single other opinion in this package.</p>
+
   <h2 id="entries">Entries</h2>
   <ul class="toc">
     <li><span class="id"><a href="#orientation">flow.orientation</a></span><span class="badge crumb">breadcrumb</span><span class="d">What the guard layer is and how it steers — shown at the start of every session.</span></li>
@@ -106,7 +120,8 @@ export default defineConfig([pack(flow, { packs: [&quot;rules/**&quot;] })]);</c
       <dt>Categories</dt><dd>every session</dd>
     </dl>
     <h3>Why it exists</h3>
-    <div class="why gap"><p>Not stated. A breadcrumb owes a doc comment on its key saying what goes wrong in the repo without it.</p></div>
+    <div class="why"><p>Without it, an agent works in a guarded repo without knowing it is guarded: a refusal arrives
+with no model of where it came from, and the config that produced it is just another file.</p></div>
     <h3>What the agent reads</h3>
     <div class="says">This repo is guarded by flow. Guardrails block risky edits before they land (and again at commit); breadcrumbs steer you by area as you touch files.
 The whole guard is `flow.config.ts` — every rule that fires is reachable from that one file, whether it comes from a pack the config imports or from a pack this repo writes itself. Nothing resolves at run time and nothing defaults: what you read there is what fires. Authoring a new entry is always welcome; never loosen a guardrail to get an edit through — that is the user's call.
@@ -124,7 +139,8 @@ If the config will not load, every gated moment refuses until it is fixed. A gua
       <dt>Categories</dt><dd>every session</dd>
     </dl>
     <h3>Why it exists</h3>
-    <div class="why gap"><p>Not stated. A breadcrumb owes a doc comment on its key saying what goes wrong in the repo without it.</p></div>
+    <div class="why"><p>Without it, the steering layer gets edited like any other file — a rule loosened in passing,
+a hook rewritten mid-task — and the guard changes without anybody deciding that it should.</p></div>
     <h3>What the agent reads</h3>
     <div class="says">You are editing the guardrails themselves.
 If this edit weakens, disables or removes a guardrail or a permission because it just blocked you — stop and confirm with the user first.
@@ -142,7 +158,7 @@ Every guardrail carries its own cases. Add the block case first — a rule whose
       <dt>Refuses at</dt><dd>a file is deleted</dd>
       <dt>Watches</dt><dd><code>flow.config.ts</code> · <code>rules/**</code> · <code>.githooks/pre-commit</code></dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/protected-path.html"><code>protectedPath</code></a><pre><code>protectedPath({})</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/protected-path.html"><code>protectedPath</code></a> — <span class="none">no options; the sentence's own scope is the whole rule</span></dd>
     </dl>
     <h3>What the agent reads when refused</h3>
     <div class="says">That command would delete this repo's guard surface (flow.config.ts binds every rule; the packs it imports are where this repo writes its own; .githooks/pre-commit is what runs them at the gate). Deleting any of them is the same attack. There is no bypass — `override(pack.entry).disabled(&quot;why&quot;)` inside flow.config.ts is the visible, committed route.</div>

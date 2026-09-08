@@ -1,15 +1,11 @@
-// flow/packs/fcis.ts — Functional Core, Imperative Shell (Bernhardt, "Boundaries", SCNA 2012).
+// flow/packs/fcis.ts — Functional Core, Imperative Shell.
+//
+// The convention used to be a private default inside each script (`**/pure/**` plus one platform's
+// `src/lib` tier), which meant every repo that did not happen to use that layout bound eight rules
+// watching directories it does not have — armed, counted, and matching nothing. That history stays
+// a comment rather than joining the pack's doc comment, for the plainest of reasons: a glob with
+// `**/` in it closes a block comment.
 // Subtlety: fcis OWNS the sibling-test trio (hasTest · exportsTested · coverageGate) — tdd does not — and `Convention` is a mandatory typed parameter, so binding it without naming this repo's pure home does not compile.
-//
-// The one-stop shop for running FCIS in a repo: the model, the rules that hold both sides honest,
-// the tests that prove the pure side, and the gate on growing it.
-//
-// EVERY RULE KEYS OFF ONE IDENTITY CONVENTION — the single way a repo names its pure code — and
-// the pack DEMANDS it rather than guessing: `Convention` is a mandatory typed parameter, so a repo
-// that binds this pack without saying where its pure code lives does not compile. It used to be a
-// private default inside each script (`**/pure/**` plus one platform's `src/lib` tier), which meant
-// every repo that did not happen to use that layout bound eight rules watching directories it does
-// not have — armed, counted, and matching nothing.
 //
 // A parameter rather than eight `.on(…)` overrides, and the difference is the point: three of these
 // rules narrow through their CHECK's options (`pureCovered`'s changed set, `newPureFileNeedsReason`'s
@@ -79,7 +75,33 @@ const TESTS = "**/*.test.*";
 /** `example`, as a test file — the same path, matched by `TESTS`, still inside the repo's pure globs. */
 const asTest = (file: string): string => file.replace(/(\.[^./]+)$/, ".test$1");
 
+/**
+ * Functional Core, Imperative Shell (Bernhardt, "Boundaries", SCNA 2012).
+ *
+ * The one-stop shop for running FCIS in a repo: the model, the rules that hold both sides honest,
+ * the tests that prove the pure side, and the gate on growing it.
+ *
+ * EVERY RULE KEYS OFF ONE IDENTITY CONVENTION — the single way a repo names its pure code — and
+ * the pack DEMANDS it rather than guessing: `Convention` is a mandatory typed parameter, so a repo
+ * that binds this pack without saying where its pure code lives does not compile.
+ *
+ * The import FENCE is not here and cannot be: its layers ARE a repo's architecture. What the pack
+ * ships is the half that is true everywhere (no shell IMPORTS in pure); the fence lives in the
+ * guarded repo's own house pack, where its layers are.
+ *
+ * @setup A pure home the repo can name in globs, one real pure file to point at, and a coverage
+ * recipe — all four parameters. The sibling-test trio reads them, so a repo that cannot say where
+ * its pure code lives cannot bind this pack, by design.
+ * @adopt Expect the coverage gate and the sibling-test rules to fire on the first commit that
+ * touches pure code; both are scoped to the home you named, so the way to narrow them is to narrow
+ * that, never to disable the rule. `noLogicInTypesOrIndex` and `strictLayout` arrive disabled —
+ * they encode one folder convention, and a repo that shares it turns them on by name.
+ */
 export const fcis = definePack("fcis", (repo: Convention) => ({
+  /**
+   * Without it, the split is a rule with no model behind it: an agent moves a side effect out of a
+   * pure file because a guardrail refused it, learns nothing, and puts the next one back.
+   */
   fcis: breadcrumb()
     .at(touch)
     .on(...repo.homes)

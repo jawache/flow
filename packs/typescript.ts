@@ -1,14 +1,4 @@
-// flow/packs/typescript.ts — TypeScript discipline as shared configuration: strict stays on, the
-// checker is never silenced.
-//
-// This pack does not re-implement a linter. Five hand-rolled idiom rules (no-ts-ignore ·
-// no-any-in-exports · no-double-assertion · no-unsafe-unwrap · date-default-no-nullish) retired
-// into typescript-eslint's `strictTypeChecked`, which is the maintained version of all of them
-// plus the ones nobody here wrote — and one of ours had a description that did not match its
-// pattern for months, which is the argument in miniature.
-//
-// What is left is the half a linter cannot do: keep the repo's own configs pointing at the shared
-// base, run both tools at the gate, and teach the design habit no tool checks.
+// flow/packs/typescript.ts — TypeScript discipline as shared configuration.
 //
 // Subtlety: BOTH gate recipes are mandatory parameters, on the `{ run }` shape tdd already uses.
 // `just typecheck` is this fleet's spelling and nothing more — a pack that wrote it in would run
@@ -29,7 +19,32 @@ export interface Gates {
   readonly lint: string;
 }
 
+/**
+ * TypeScript discipline as shared configuration: strict stays on, the checker is never silenced.
+ *
+ * This pack does not re-implement a linter. Five hand-rolled idiom rules (no-ts-ignore ·
+ * no-any-in-exports · no-double-assertion · no-unsafe-unwrap · date-default-no-nullish) retired
+ * into typescript-eslint's `strictTypeChecked`, which is the maintained version of all of them
+ * plus the ones nobody here wrote — and one of ours had a description that did not match its
+ * pattern for months, which is the argument in miniature.
+ *
+ * What is left is the half a linter cannot do: keep the repo's own configs pointing at the shared
+ * base, run both tools at the gate, and teach the design habit no tool checks.
+ *
+ * @setup Two committed files at the repo root, and every project pointing at them: a
+ * `tsconfig.base.json` every `tsconfig*.json` extends, and an `eslint.config.base.js` the repo's
+ * `eslint.config.js` imports and spreads. The two rules below check exactly that, and say nothing
+ * about what the base contains beyond `strict` and `noUncheckedIndexedAccess` staying on.
+ * @adopt Bind it with the two gate recipes this repo really has. Expect the first commit after
+ * binding to run both tools over everything — a repo that has been typechecking one project at a
+ * time usually finds errors in the ones nobody was checking.
+ */
 export const typescript = definePack("typescript", (repo: Gates) => ({
+  /**
+   * Without it, strictness is treated as a setting rather than a design tool: the escape hatches
+   * get reached for under time pressure, and impossible states go on being representable because
+   * nothing ever said to model them out.
+   */
   strictTypesNoInvalidStates: breadcrumb()
     .at(touch)
     .on("**/tsconfig*.json", "eslint.config.*")
@@ -46,6 +61,11 @@ export const typescript = definePack("typescript", (repo: Gates) => ({
   // repo has four TypeScript projects, the root one did not exist, and the three that did were
   // invisible for as long as the rule watched only the repo root. Widening it turned one silent
   // pass into three real checks and 69 type errors (2026-08-13).
+  /**
+   * Without it, a project quietly stops extending the shared base — or extends it and then turns
+   * `strict` back off — and the fleet's one standard becomes per-project taste that only shows up
+   * as a bug much later.
+   */
   tsconfigFromBase: guardrail()
     .at(write, commit)
     .on("**/tsconfig.json")
@@ -71,8 +91,11 @@ export const typescript = definePack("typescript", (repo: Gates) => ({
     }),
 
   // ast-grep rather than jsonInvariant for one reason: an eslint flat config is JavaScript, so
-  // there is no JSON to read a key out of. A missing import is a repo linting to its own private
-  // standard while its config claims the fleet's.
+  // there is no JSON to read a key out of.
+  /**
+   * Without it, a repo lints to its own private standard while its config claims the fleet's —
+   * the rules that catch the escape hatches this pack stopped hand-rolling are simply not on.
+   */
   eslintFromBase: guardrail()
     .at(write, commit)
     .on("eslint.config.js", "eslint.config.mjs")

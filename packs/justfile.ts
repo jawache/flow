@@ -1,11 +1,5 @@
 // flow/packs/justfile.ts — the justfile is the repo's TOOL CATALOGUE.
 // Subtlety: which recipes are genuinely undocumentable is the one fact this pack cannot know, so `exempt` is a mandatory parameter — this repo binds `{ exempt: [] }` in flow.config.ts, stated rather than defaulted.
-//
-// The frame: the justfile plays the role MCP tools play elsewhere — the discovery surface an agent
-// can reach for with confidence. `just --list` is the manifest and each `[doc]` string is a tool
-// description. Every entry here is the same arrow pointing at it: the orientation says look here
-// first, `node/noPackageScripts` closes the decoy surface agents habitually read, and `justfileDocs`
-// keeps the manifest readable.
 
 import { breadcrumb, commit, defineCheck, definePack, guardrail, jsonInvariant, session, touch, write, type Check } from "../index.ts";
 
@@ -82,7 +76,27 @@ export interface Catalogue {
   readonly exempt: readonly string[];
 }
 
+/**
+ * The justfile is the repo's TOOL CATALOGUE.
+ *
+ * The frame: the justfile plays the role MCP tools play elsewhere — the discovery surface an agent
+ * can reach for with confidence. `just --list` is the manifest and each `[doc]` string is a tool
+ * description. Every entry here is the same arrow pointing at it: the orientation says look here
+ * first, `node/noPackageScripts` closes the decoy surface agents habitually read, and `justfileDocs`
+ * keeps the manifest readable.
+ *
+ * @install `just` itself — `brew install just`, or see https://just.systems. Every rule here reads
+ * a `justfile` at the repo root and none of them shells out, so nothing else is needed.
+ * @setup A `justfile` at the root whose every non-private recipe carries a `[doc("…")]`, and a
+ * `package.json` whose `scripts` block holds nothing but `//`-prefixed comment keys. A repo with
+ * live npm scripts moves them into recipes first, or does not bind this pack.
+ */
 export const justfile = definePack("justfile", (repo: Catalogue) => ({
+  /**
+   * Without it, an agent discovers commands from package.json, from memory, or from a README that
+   * has drifted — and reaches for a tool this repo does not have, or hand-runs the chain a recipe
+   * already spells correctly.
+   */
   orientation: breadcrumb()
     .at(session)
     .description("Where the repo's tooling is catalogued, what earns a recipe, and what stays a script.")
@@ -95,6 +109,11 @@ export const justfile = definePack("justfile", (repo: Catalogue) => ({
       ].join("\n"),
     ),
 
+  /**
+   * Without it, everything in the tools folder is treated the same way: one-shots get promoted
+   * into the catalogue until `just --list` is noise, or a genuinely repeatable tool is left with
+   * no recipe pointing at it and nobody finds it again.
+   */
   toolsHome: breadcrumb()
     .at(touch)
     .on("tools/**")
@@ -108,6 +127,10 @@ export const justfile = definePack("justfile", (repo: Catalogue) => ({
     ),
 
   node: {
+    /**
+     * Without it, package.json grows a second command surface — the one an agent reads FIRST, out
+     * of habit — and the two drift until the catalogue is no longer the truth about this repo.
+     */
     noPackageScripts: guardrail()
       .at(write, commit)
       .on("package.json")
@@ -122,6 +145,11 @@ export const justfile = definePack("justfile", (repo: Catalogue) => ({
       }),
   },
 
+  /**
+   * Without it, `just --list` falls back to the last comment line above a recipe, which for a
+   * multi-line comment block is a mid-sentence fragment — a help screen assembled by accident, and
+   * a tool nobody can choose from its description.
+   */
   justfileDocs: guardrail()
     .at(write, commit)
     .on("justfile")

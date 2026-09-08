@@ -1,5 +1,4 @@
-// flow/packs/git.ts — conventional commit headers, computed versions, and nothing destroys
-// uncommitted work.
+// flow/packs/git.ts — the git surface.
 // Subtlety: these rules read COMMAND STRINGS, not files at rest — an agent writes file text through commands (heredocs), so the attribution literals are ASSEMBLED from pieces (TRAILER/VENDOR/SITE below) or committing this file would trip its own ban.
 //
 // Subtlety: the release RECIPE is a mandatory parameter, not `just release` written into the pack — which command cuts a release is the repo's fact, and it is named in the sentence a blocked person reads.
@@ -250,7 +249,26 @@ export interface Release {
   readonly release: string;
 }
 
+/**
+ * Conventional commit headers, computed versions, and nothing destroys uncommitted work.
+ *
+ * The `node/` sub-group is release discipline that happens to be spelled in package.json — a
+ * Python or Rust repo binds the same two jobs against pyproject.toml or Cargo.toml.
+ *
+ * @setup A release path the repo really has, named as the `release` parameter: the recipe that
+ * computes the next version from the commit headers, writes the changelog and tags. The version
+ * rules refuse a hand-edited version in favour of it, so a repo without one has nowhere to send a
+ * blocked reader.
+ * @adopt Bind it in a repo that already writes conventional commits, or expect the header rule to
+ * refuse the first few commits while everyone re-learns the format — that is the rule working, and
+ * `flow status` will show it firing.
+ */
 export const git = definePack("git", (repo: Release) => ({
+  /**
+   * Without it, the commit surface is learned by trial and refusal: an agent writes a header the
+   * changelog cannot read, reaches for a force push, or discards uncommitted work with a command
+   * that has no undo.
+   */
   orientation: breadcrumb()
     .at(session)
     .description("The whole commit contract — how commits are written here, how versions are computed, what is blocked.")

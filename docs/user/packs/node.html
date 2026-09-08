@@ -37,6 +37,8 @@
   .entry .facts dt{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;padding-top:.2rem}
   .entry .facts dd{margin:0}
   .entry .facts pre{margin:.2rem 0}
+  .set{margin:.15rem 0}
+  .set b{font-weight:700;font-size:.82rem;color:#4a5260;font-family:ui-monospace, Menlo, monospace}
   .why{border-left:4px solid var(--parent);background:#eef4fa;padding:.6rem .9rem;border-radius:0 8px 8px 0;margin:.8rem 0;font-size:.95rem}
   .why.gap{border-left-color:#c2a33a;background:var(--gapbg);color:#6b5a1e;font-style:italic}
   .why p:first-child{margin-top:0} .why p:last-child{margin-bottom:0}
@@ -64,7 +66,12 @@
   <h1>The <code>node</code> pack</h1>
   <p class="scope">2 guardrails · 1 breadcrumb · fires at: touch · command · commit · takes no parameters</p>
 
-  <p class="lead gap">This pack has no lead. A doc comment on <code>definePack</code> is what says, in a paragraph, what the pack is for.</p>
+  <div class="lead"><p>package.json discipline: reach for a maintained package, say why, pin it, move the lockfile with
+it.</p>
+<p>The dependencies breadcrumb's POLARITY is deliberate. It does not read as &quot;adding a dependency is
+a risk&quot;; it reads as &quot;check whether it is already solved&quot; — because the code we hand-roll to
+avoid a package has no users, no reviewers and no fixes coming, which is the larger risk most of
+the time.</p></div>
 
   <p class="gen">Generated from <code>packs/node.ts</code> by <code>just docs-packs</code>. Edit the pack, not this page; the commit gate refuses a page that has drifted from its pack.</p>
 
@@ -75,6 +82,11 @@ import { node } from &quot;@jawache/flow/packs&quot;;
 
 export default defineConfig([pack(node)]);</code></pre>
   <p>Any entry below can be turned off in the config, as a committed change visible in review: <code>override(node.dependencies).disabled("why")</code>.</p>
+
+  <h2 id="setup">What the repo needs in place</h2>
+<p>A lockfile the repo commits — <code>package-lock.json</code>, <code>pnpm-lock.yaml</code>, <code>bun.lock</code>,
+<code>bun.lockb</code> or <code>yarn.lock</code>; <code>lockfileInStep</code> recognises all five and asks for whichever one the
+repo already has.</p>
 
   <h2 id="entries">Entries</h2>
   <ul class="toc">
@@ -92,7 +104,8 @@ export default defineConfig([pack(node)]);</code></pre>
       <dt>Categories</dt><dd>every session</dd>
     </dl>
     <h3>Why it exists</h3>
-    <div class="why gap"><p>Not stated. A breadcrumb owes a doc comment on its key saying what goes wrong in the repo without it.</p></div>
+    <div class="why"><p>Without it, the reflex is to hand-roll rather than to look, and a repo accumulates private
+versions of solved problems — code with no users, no reviewers and no fixes coming.</p></div>
     <h3>What the agent reads</h3>
     <div class="says">Before building it, check whether it's been solved: a maintained package that does the job beats hand-rolled code — ours has no users, no reviewers and no fixes coming.
 When you DO add one, vet it: is it alive — downloads, recent releases, active issues? Most-downloaded isn't the bar (a newer, trending package can be the right call); the red flag is a package nobody uses and nobody maintains — that is the supply-chain risk (OWASP A03).
@@ -108,8 +121,13 @@ Pin the version; the lockfile change ships in the SAME commit.</div>
       <dt>Refuses at</dt><dd>a shell command is about to run</dd>
       <dt>Watches</dt><dd>—</dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/commit-reason.html"><code>commitReason</code></a><pre><code>commitReason({ whenChanged: [&quot;package.json&quot;], token: &quot;new-dep&quot; })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/commit-reason.html"><code>commitReason</code></a>
+      <div class="set"><b>whenChanged</b> <code>package.json</code></div>
+      <div class="set"><b>token</b> <code>new-dep</code></div></dd>
     </dl>
+    <h3>Why it exists</h3>
+    <div class="why"><p>Without it, a dependency arrives with no record of what else was considered, and the next
+person to ask &quot;why do we depend on this&quot; has only the package name to go on.</p></div>
     <h3>What the agent reads when refused</h3>
     <div class="says">This commit moves package.json with no reason recorded. A dependency is a supply-chain surface — put `new-dep: &lt;name&gt; — &lt;why, and what else was checked&gt;` on a line of its own in the commit message. Doing it is fine; doing it silently is not, and the verifier reads that line at the next phase boundary.</div>
     <h3>Proved by</h3>
@@ -126,8 +144,12 @@ new-dep: zod — checked ajv'</code></li></ul></div><div class="case stop"><b>bl
       <dt>Refuses at</dt><dd>the commit gate, over the staged set</dd>
       <dt>Watches</dt><dd>—</dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/lockfile-in-step.html"><code>lockfileInStep</code></a><pre><code>lockfileInStep({})</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/lockfile-in-step.html"><code>lockfileInStep</code></a> — <span class="none">no options; the sentence's own scope is the whole rule</span></dd>
     </dl>
+    <h3>Why it exists</h3>
+    <div class="why"><p>Without it, a dependency moves in one commit and the lockfile in another (or never), so a
+fresh clone installs something nobody tested and the two files disagree about what this repo
+depends on.</p></div>
     <h3>What the agent reads when refused</h3>
     <div class="says">A dependency moved in package.json but no lockfile is staged. Run the install and stage the lockfile in the same commit — a lockfile one commit behind is a build that resolves differently on the next machine.</div>
     <h3>Proved by</h3>

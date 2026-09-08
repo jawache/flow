@@ -37,6 +37,8 @@
   .entry .facts dt{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;padding-top:.2rem}
   .entry .facts dd{margin:0}
   .entry .facts pre{margin:.2rem 0}
+  .set{margin:.15rem 0}
+  .set b{font-weight:700;font-size:.82rem;color:#4a5260;font-family:ui-monospace, Menlo, monospace}
   .why{border-left:4px solid var(--parent);background:#eef4fa;padding:.6rem .9rem;border-radius:0 8px 8px 0;margin:.8rem 0;font-size:.95rem}
   .why.gap{border-left-color:#c2a33a;background:var(--gapbg);color:#6b5a1e;font-style:italic}
   .why p:first-child{margin-top:0} .why p:last-child{margin-bottom:0}
@@ -64,7 +66,14 @@
   <h1>The <code>typescript</code> pack</h1>
   <p class="scope">4 guardrails · 1 breadcrumb · fires at: touch · write · commit · takes 2 parameters</p>
 
-  <p class="lead gap">This pack has no lead. A doc comment on <code>definePack</code> is what says, in a paragraph, what the pack is for.</p>
+  <div class="lead"><p>TypeScript discipline as shared configuration: strict stays on, the checker is never silenced.</p>
+<p>This pack does not re-implement a linter. Five hand-rolled idiom rules (no-ts-ignore ·
+no-any-in-exports · no-double-assertion · no-unsafe-unwrap · date-default-no-nullish) retired
+into typescript-eslint's <code>strictTypeChecked</code>, which is the maintained version of all of them
+plus the ones nobody here wrote — and one of ours had a description that did not match its
+pattern for months, which is the argument in miniature.</p>
+<p>What is left is the half a linter cannot do: keep the repo's own configs pointing at the shared
+base, run both tools at the gate, and teach the design habit no tool checks.</p></div>
 
   <p class="gen">Generated from <code>packs/typescript.ts</code> by <code>just docs-packs</code>. Edit the pack, not this page; the commit gate refuses a page that has drifted from its pack.</p>
 
@@ -84,6 +93,17 @@ import { typescript } from &quot;@jawache/flow/packs&quot;;
 export default defineConfig([pack(typescript, { typecheck: &quot;./ci.sh types&quot;, lint: &quot;./ci.sh lint&quot; })]);</code></pre>
   <p>Any entry below can be turned off in the config, as a committed change visible in review: <code>override(typescript.strictTypesNoInvalidStates).disabled("why")</code>.</p>
 
+  <h2 id="setup">What the repo needs in place</h2>
+<p>Two committed files at the repo root, and every project pointing at them: a
+<code>tsconfig.base.json</code> every <code>tsconfig*.json</code> extends, and an <code>eslint.config.base.js</code> the repo's
+<code>eslint.config.js</code> imports and spreads. The two rules below check exactly that, and say nothing
+about what the base contains beyond <code>strict</code> and <code>noUncheckedIndexedAccess</code> staying on.</p>
+
+  <h2 id="adopt">Adopting it</h2>
+<p>Bind it with the two gate recipes this repo really has. Expect the first commit after
+binding to run both tools over everything — a repo that has been typechecking one project at a
+time usually finds errors in the ones nobody was checking.</p>
+
   <h2 id="entries">Entries</h2>
   <ul class="toc">
     <li><span class="id"><a href="#strictTypesNoInvalidStates">typescript.strictTypesNoInvalidStates</a></span><span class="badge crumb">breadcrumb</span><span class="d">Use the type system as a design tool — strict stays on, impossible states stay impossible.</span></li>
@@ -102,7 +122,9 @@ export default defineConfig([pack(typescript, { typecheck: &quot;./ci.sh types&q
       <dt>Categories</dt><dd>every session</dd>
     </dl>
     <h3>Why it exists</h3>
-    <div class="why gap"><p>Not stated. A breadcrumb owes a doc comment on its key saying what goes wrong in the repo without it.</p></div>
+    <div class="why"><p>Without it, strictness is treated as a setting rather than a design tool: the escape hatches
+get reached for under time pressure, and impossible states go on being representable because
+nothing ever said to model them out.</p></div>
     <h3>What the agent reads</h3>
     <div class="says">Strictness is not yours to weaken: `strict` and `noUncheckedIndexedAccess` come from the committed `tsconfig.base.json`. A red squiggle is a defect found, not a setting to relax — an exception is a visible, local, per-rule override, on the record.
 Model state so the impossible cannot be constructed. Two sibling booleans (isLoading + isError) are a smell: a discriminated union makes the invalid combination unrepresentable (Vanderkam, Effective TypeScript; Feldman, &quot;Make Impossible States Impossible&quot;).
@@ -117,14 +139,27 @@ The linter holds the escape hatches (@ts-expect-error, explicit any, double asse
       <dt>Refuses at</dt><dd>a file is written or edited · the commit gate, over the staged set</dd>
       <dt>Watches</dt><dd><code>**/tsconfig.json</code></dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/json-invariant.html"><code>jsonInvariant</code></a><pre><code>jsonInvariant({
-        assert: [
-          { path: &quot;extends&quot;, matches: &quot;tsconfig\\.base\\.json$&quot;, required: true },
-          { path: &quot;compilerOptions.strict&quot;, equals: true },
-          { path: &quot;compilerOptions.noUncheckedIndexedAccess&quot;, equals: true },
-        ],
-      })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/json-invariant.html"><code>jsonInvariant</code></a>
+      <div class="set"><b>assert</b><pre><code>[
+  {
+    &quot;path&quot;: &quot;extends&quot;,
+    &quot;matches&quot;: &quot;tsconfig\\.base\\.json$&quot;,
+    &quot;required&quot;: true
+  },
+  {
+    &quot;path&quot;: &quot;compilerOptions.strict&quot;,
+    &quot;equals&quot;: true
+  },
+  {
+    &quot;path&quot;: &quot;compilerOptions.noUncheckedIndexedAccess&quot;,
+    &quot;equals&quot;: true
+  }
+]</code></pre></div></dd>
     </dl>
+    <h3>Why it exists</h3>
+    <div class="why"><p>Without it, a project quietly stops extending the shared base — or extends it and then turns
+<code>strict</code> back off — and the fleet's one standard becomes per-project taste that only shows up
+as a bug much later.</p></div>
     <h3>What the agent reads when refused</h3>
     <div class="says">This tsconfig must extend the committed `./tsconfig.base.json`, and it must not turn `strict` or `noUncheckedIndexedAccess` back off. Weakening the fleet's strictness means changing the base file once, visibly, not this repo quietly.</div>
     <h3>Proved by</h3>
@@ -139,11 +174,22 @@ The linter holds the escape hatches (@ts-expect-error, explicit any, double asse
       <dt>Refuses at</dt><dd>a file is written or edited · the commit gate, over the staged set</dd>
       <dt>Watches</dt><dd><code>eslint.config.js</code> · <code>eslint.config.mjs</code></dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/ast-grep.html"><code>astGrep</code></a><pre><code>astGrep({
-        language: &quot;javascript&quot;,
-        rule: { kind: &quot;program&quot;, not: { has: { stopBy: &quot;end&quot;, kind: &quot;string&quot;, regex: &quot;eslint\\.config\\.base&quot; } } },
-      })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/ast-grep.html"><code>astGrep</code></a>
+      <div class="set"><b>language</b> <code>javascript</code></div>
+      <div class="set"><b>rule</b><pre><code>{
+  &quot;kind&quot;: &quot;program&quot;,
+  &quot;not&quot;: {
+    &quot;has&quot;: {
+      &quot;stopBy&quot;: &quot;end&quot;,
+      &quot;kind&quot;: &quot;string&quot;,
+      &quot;regex&quot;: &quot;eslint\\.config\\.base&quot;
+    }
+  }
+}</code></pre></div></dd>
     </dl>
+    <h3>Why it exists</h3>
+    <div class="why"><p>Without it, a repo lints to its own private standard while its config claims the fleet's —
+the rules that catch the escape hatches this pack stopped hand-rolling are simply not on.</p></div>
     <h3>What the agent reads when refused</h3>
     <div class="says">This eslint config does not import the shared base. The fleet's lint rules live in `eslint.config.base.js` — a config that does not import it lints to a private standard while this repo's guard claims the shared one.
 Fix: `import base from &quot;./eslint.config.base.js&quot;;` and spread it, then add only what is genuinely local to this repo.</div>
@@ -159,7 +205,8 @@ Fix: `import base from &quot;./eslint.config.base.js&quot;;` and spread it, then
       <dt>Refuses at</dt><dd>the commit gate, over the staged set</dd>
       <dt>Watches</dt><dd>—</dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/exec-passes.html"><code>execPasses</code></a><pre><code>execPasses({ run: repo.typecheck })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/exec-passes.html"><code>execPasses</code></a>
+      <div class="set"><b>run</b> <code>./ci.sh types</code></div></dd>
     </dl>
     <h3>What the agent reads when refused</h3>
     <div class="says">The typecheck failed (`./ci.sh types`) — the commit is blocked until types are clean. tsc catches the cross-file mismatches a file-at-a-time build never sees: a change that compiled here and broke a caller there.</div>
@@ -175,7 +222,8 @@ Fix: `import base from &quot;./eslint.config.base.js&quot;;` and spread it, then
       <dt>Refuses at</dt><dd>the commit gate, over the staged set</dd>
       <dt>Watches</dt><dd>—</dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/exec-passes.html"><code>execPasses</code></a><pre><code>execPasses({ run: repo.lint })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/exec-passes.html"><code>execPasses</code></a>
+      <div class="set"><b>run</b> <code>./ci.sh lint</code></div></dd>
     </dl>
     <h3>What the agent reads when refused</h3>
     <div class="says">The lint failed (`./ci.sh lint`) — the commit is blocked until it is clean. This is where the escape hatches are held (floating promises, explicit any, ts-comments); fix the finding, or override that one rule visibly and locally.</div>

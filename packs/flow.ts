@@ -1,9 +1,4 @@
-// flow/packs/flow.ts — flow's own orientation and self-protection, as a pack any repo binds.
-//
-// Every guarded repo wants these: a note saying what is steering you, a nudge when you edit the
-// steering itself, and a refusal when a command would delete it. They were the `guard` pack in the
-// home-directory library; they are a module now, and the only thing that changed on the way across
-// is what they point AT — flow.config.ts and the packs it imports, not work.yaml and ~/.work/library.
+// flow/packs/flow.ts — flow's own orientation and self-protection.
 //
 // AND THEY ARE THE `flow` PACK NOW, not `guard`, which is a rename worth its churn: every entry in
 // every pack here is a guardrail or a breadcrumb, so `guard.` as a prefix said nothing that was not
@@ -49,7 +44,24 @@ export interface Home {
   readonly packs: readonly string[];
 }
 
+/**
+ * flow's own orientation and self-protection, as a pack any repo binds.
+ *
+ * Every guarded repo wants these: a note saying what is steering you, a nudge when you edit the
+ * steering itself, and a refusal when a command would delete it. They were the `guard` pack in the
+ * home-directory library; they are a module now, and the only thing that changed on the way across
+ * is what they point AT — flow.config.ts and the packs it imports, not work.yaml and ~/.work/library.
+ *
+ * @setup A `flow.config.ts` at the repo root and a folder for the packs the repo writes itself —
+ * whatever it is called, named here as the `packs` parameter. `flow init` writes both.
+ * @adopt Bind it first, before any other pack: it is the one every guarded repo wants whether or
+ * not it agrees with a single other opinion in this package.
+ */
 export const flow = definePack("flow", (repo: Home) => ({
+  /**
+   * Without it, an agent works in a guarded repo without knowing it is guarded: a refusal arrives
+   * with no model of where it came from, and the config that produced it is just another file.
+   */
   orientation: breadcrumb()
     .at(session)
     .description("What the guard layer is and how it steers — shown at the start of every session.")
@@ -66,6 +78,10 @@ export const flow = definePack("flow", (repo: Home) => ({
   // `.claude/skills/**`, because a skill is prose an agent reads and is worth a word of caution
   // before you edit it. The engine keeps the narrower list for a different question, and the
   // argument for not sharing one is written out at HOST_SURFACE in the adapter's pure home.
+  /**
+   * Without it, the steering layer gets edited like any other file — a rule loosened in passing,
+   * a hook rewritten mid-task — and the guard changes without anybody deciding that it should.
+   */
   editingTheGuardrails: breadcrumb()
     .at(touch)
     .on(

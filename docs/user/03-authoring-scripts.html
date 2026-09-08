@@ -151,6 +151,27 @@ export default defineConfig([
   fix, an aside to the next editor. Those never reach the page, which is what keeps the page
   readable.</p>
 
+  <p>Three JSDoc tags on that same <code>definePack</code> comment become their own sections on the
+  page. A tag nobody uses renders nothing; a tag outside the three is not read at all.</p>
+
+  <table>
+    <thead><tr><th>Tag</th><th>Section</th><th>Says</th></tr></thead>
+    <tbody>
+      <tr><td><code>@install</code></td><td>What to install first</td><td>The tool a rule here shells out to, and how to get it.</td></tr>
+      <tr><td><code>@setup</code></td><td>What the repo needs in place</td><td>A file, a recipe or a script the rules assume — with the copyable text where there is any.</td></tr>
+      <tr><td><code>@adopt</code></td><td>Adopting it</td><td>What happens on the first run in a repo that has never bound this pack, and what to fix first.</td></tr>
+    </tbody>
+  </table>
+
+<pre><code>/**
+ * Test-first artefacts exist, and the suite gates the commit.
+ *
+ * @install vitest, and a recipe that runs it.
+ * @adopt Bind it with your suite recipe; expect the commit gate to run the suite from the first
+ * commit, so land a green suite before you bind it.
+ */
+export const tdd = definePack("tdd", (repo: Suite) =&gt; ({ /* … */ }));</code></pre>
+
   <h2>Prose strings never wrap</h2>
 
   <p>A string in <code>.text(…)</code> or <code>.message(…)</code> stays on <strong>one

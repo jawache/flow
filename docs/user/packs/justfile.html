@@ -37,6 +37,8 @@
   .entry .facts dt{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;padding-top:.2rem}
   .entry .facts dd{margin:0}
   .entry .facts pre{margin:.2rem 0}
+  .set{margin:.15rem 0}
+  .set b{font-weight:700;font-size:.82rem;color:#4a5260;font-family:ui-monospace, Menlo, monospace}
   .why{border-left:4px solid var(--parent);background:#eef4fa;padding:.6rem .9rem;border-radius:0 8px 8px 0;margin:.8rem 0;font-size:.95rem}
   .why.gap{border-left-color:#c2a33a;background:var(--gapbg);color:#6b5a1e;font-style:italic}
   .why p:first-child{margin-top:0} .why p:last-child{margin-bottom:0}
@@ -64,7 +66,12 @@
   <h1>The <code>justfile</code> pack</h1>
   <p class="scope">2 guardrails · 2 breadcrumbs · fires at: session · touch · write · commit · takes 1 parameter</p>
 
-  <p class="lead gap">This pack has no lead. A doc comment on <code>definePack</code> is what says, in a paragraph, what the pack is for.</p>
+  <div class="lead"><p>The justfile is the repo's TOOL CATALOGUE.</p>
+<p>The frame: the justfile plays the role MCP tools play elsewhere — the discovery surface an agent
+can reach for with confidence. <code>just --list</code> is the manifest and each <code>[doc]</code> string is a tool
+description. Every entry here is the same arrow pointing at it: the orientation says look here
+first, <code>node/noPackageScripts</code> closes the decoy surface agents habitually read, and <code>justfileDocs</code>
+keeps the manifest readable.</p></div>
 
   <p class="gen">Generated from <code>packs/justfile.ts</code> by <code>just docs-packs</code>. Edit the pack, not this page; the commit gate refuses a page that has drifted from its pack.</p>
 
@@ -88,6 +95,15 @@ import { justfile } from &quot;@jawache/flow/packs&quot;;
 export default defineConfig([pack(justfile, { exempt: [] })]);</code></pre>
   <p>Any entry below can be turned off in the config, as a committed change visible in review: <code>override(justfile.orientation).disabled("why")</code>.</p>
 
+  <h2 id="install">What to install first</h2>
+<p><code>just</code> itself — <code>brew install just</code>, or see https://just.systems. Every rule here reads
+a <code>justfile</code> at the repo root and none of them shells out, so nothing else is needed.</p>
+
+  <h2 id="setup">What the repo needs in place</h2>
+<p>A <code>justfile</code> at the root whose every non-private recipe carries a <code>[doc(&quot;…&quot;)]</code>, and a
+<code>package.json</code> whose <code>scripts</code> block holds nothing but <code>//</code>-prefixed comment keys. A repo with
+live npm scripts moves them into recipes first, or does not bind this pack.</p>
+
   <h2 id="entries">Entries</h2>
   <ul class="toc">
     <li><span class="id"><a href="#orientation">justfile.orientation</a></span><span class="badge crumb">breadcrumb</span><span class="d">Where the repo's tooling is catalogued, what earns a recipe, and what stays a script.</span></li>
@@ -105,7 +121,9 @@ export default defineConfig([pack(justfile, { exempt: [] })]);</code></pre>
       <dt>Categories</dt><dd>every session</dd>
     </dl>
     <h3>Why it exists</h3>
-    <div class="why gap"><p>Not stated. A breadcrumb owes a doc comment on its key saying what goes wrong in the repo without it.</p></div>
+    <div class="why"><p>Without it, an agent discovers commands from package.json, from memory, or from a README that
+has drifted — and reaches for a tool this repo does not have, or hand-runs the chain a recipe
+already spells correctly.</p></div>
     <h3>What the agent reads</h3>
     <div class="says">The justfile is this repo's tool catalogue — the single source of truth for the tooling you can confidently reach for. Run `just` FIRST to see what you can do here; do not discover commands from package.json or memory.
 A recipe means: reach for this repeatedly, with confidence. Recipes stay thin — the code behind one lives in the tools folder; one-off operational scripts live there too and never become recipes.
@@ -123,7 +141,9 @@ If a service offers a CLI, prefer it over an MCP — a command is recorded, guar
       <dt>Categories</dt><dd>every session</dd>
     </dl>
     <h3>Why it exists</h3>
-    <div class="why gap"><p>Not stated. A breadcrumb owes a doc comment on its key saying what goes wrong in the repo without it.</p></div>
+    <div class="why"><p>Without it, everything in the tools folder is treated the same way: one-shots get promoted
+into the catalogue until <code>just --list</code> is noise, or a genuinely repeatable tool is left with
+no recipe pointing at it and nobody finds it again.</p></div>
     <h3>What the agent reads</h3>
     <div class="says">You are writing into the tools folder — the implementation layer, not the catalogue. Decide which of two things this file is:
 Repeatable — part of the catalogue? Then it also needs a thin justfile recipe pointing at it, with a [doc(&quot;…&quot;)] — a tool that exists only in tools/ is undiscoverable.
@@ -138,8 +158,17 @@ A one-off (a migration, a backfill, a workflow step)? Then it gets NO recipe —
       <dt>Refuses at</dt><dd>a file is written or edited · the commit gate, over the staged set</dd>
       <dt>Watches</dt><dd><code>package.json</code></dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/json-invariant.html"><code>jsonInvariant</code></a><pre><code>jsonInvariant({ assert: [{ path: &quot;scripts&quot;, keysPrefixedWith: &quot;//&quot; }] })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/json-invariant.html"><code>jsonInvariant</code></a>
+      <div class="set"><b>assert</b><pre><code>[
+  {
+    &quot;path&quot;: &quot;scripts&quot;,
+    &quot;keysPrefixedWith&quot;: &quot;//&quot;
+  }
+]</code></pre></div></dd>
     </dl>
+    <h3>Why it exists</h3>
+    <div class="why"><p>Without it, package.json grows a second command surface — the one an agent reads FIRST, out
+of habit — and the two drift until the catalogue is no longer the truth about this repo.</p></div>
     <h3>What the agent reads when refused</h3>
     <div class="says">package.json `scripts` must stay empty — the justfile is the catalogue, and a second command surface is one an agent reads instead of it. Only //-prefixed comment keys are allowed; move the command into a justfile recipe.</div>
     <h3>Proved by</h3>
@@ -154,8 +183,13 @@ A one-off (a migration, a backfill, a workflow step)? Then it gets NO recipe —
       <dt>Refuses at</dt><dd>a file is written or edited · the commit gate, over the staged set</dd>
       <dt>Watches</dt><dd><code>justfile</code></dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/justfile-docs.html"><code>justfileDocs</code></a><pre><code>justfileDocs({ exempt: repo.exempt })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/justfile-docs.html"><code>justfileDocs</code></a>
+      <div class="set"><b>exempt</b> <code>none</code></div></dd>
     </dl>
+    <h3>Why it exists</h3>
+    <div class="why"><p>Without it, <code>just --list</code> falls back to the last comment line above a recipe, which for a
+multi-line comment block is a mid-sentence fragment — a help screen assembled by accident, and
+a tool nobody can choose from its description.</p></div>
     <h3>What the agent reads when refused</h3>
     <div class="says">Every non-private justfile recipe needs an explicit [doc(&quot;…&quot;)] — `just --list` is the tool catalogue's help screen, and an undocumented recipe is a tool nobody can choose. ([private] recipes are exempt; they're hidden from the listing.)</div>
     <h3>Proved by</h3>

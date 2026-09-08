@@ -37,6 +37,8 @@
   .entry .facts dt{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;padding-top:.2rem}
   .entry .facts dd{margin:0}
   .entry .facts pre{margin:.2rem 0}
+  .set{margin:.15rem 0}
+  .set b{font-weight:700;font-size:.82rem;color:#4a5260;font-family:ui-monospace, Menlo, monospace}
   .why{border-left:4px solid var(--parent);background:#eef4fa;padding:.6rem .9rem;border-radius:0 8px 8px 0;margin:.8rem 0;font-size:.95rem}
   .why.gap{border-left-color:#c2a33a;background:var(--gapbg);color:#6b5a1e;font-style:italic}
   .why p:first-child{margin-top:0} .why p:last-child{margin-bottom:0}
@@ -64,7 +66,15 @@
   <h1>The <code>fcis</code> pack</h1>
   <p class="scope">9 guardrails · 1 breadcrumb · fires at: touch · write · commit · command · takes 4 parameters</p>
 
-  <p class="lead gap">This pack has no lead. A doc comment on <code>definePack</code> is what says, in a paragraph, what the pack is for.</p>
+  <div class="lead"><p>Functional Core, Imperative Shell (Bernhardt, &quot;Boundaries&quot;, SCNA 2012).</p>
+<p>The one-stop shop for running FCIS in a repo: the model, the rules that hold both sides honest,
+the tests that prove the pure side, and the gate on growing it.</p>
+<p>EVERY RULE KEYS OFF ONE IDENTITY CONVENTION — the single way a repo names its pure code — and
+the pack DEMANDS it rather than guessing: <code>Convention</code> is a mandatory typed parameter, so a repo
+that binds this pack without saying where its pure code lives does not compile.</p>
+<p>The import FENCE is not here and cannot be: its layers ARE a repo's architecture. What the pack
+ships is the half that is true everywhere (no shell IMPORTS in pure); the fence lives in the
+guarded repo's own house pack, where its layers are.</p></div>
 
   <p class="gen">Generated from <code>packs/fcis.ts</code> by <code>just docs-packs</code>. Edit the pack, not this page; the commit gate refuses a page that has drifted from its pack.</p>
 
@@ -103,6 +113,17 @@ import { fcis } from &quot;@jawache/flow/packs&quot;;
 export default defineConfig([pack(fcis, { files: [&quot;core/**/*.ts&quot;], homes: [&quot;core/**&quot;], coverage: &quot;./ci.sh coverage&quot;, example: &quot;core/clock.ts&quot; })]);</code></pre>
   <p>Any entry below can be turned off in the config, as a committed change visible in review: <code>override(fcis.fcis).disabled("why")</code>.</p>
 
+  <h2 id="setup">What the repo needs in place</h2>
+<p>A pure home the repo can name in globs, one real pure file to point at, and a coverage
+recipe — all four parameters. The sibling-test trio reads them, so a repo that cannot say where
+its pure code lives cannot bind this pack, by design.</p>
+
+  <h2 id="adopt">Adopting it</h2>
+<p>Expect the coverage gate and the sibling-test rules to fire on the first commit that
+touches pure code; both are scoped to the home you named, so the way to narrow them is to narrow
+that, never to disable the rule. <code>noLogicInTypesOrIndex</code> and <code>strictLayout</code> arrive disabled —
+they encode one folder convention, and a repo that shares it turns them on by name.</p>
+
   <h2 id="entries">Entries</h2>
   <ul class="toc">
     <li><span class="id"><a href="#fcis">fcis.fcis</a></span><span class="badge crumb">breadcrumb</span><span class="d">The functional-core/imperative-shell mental model, for when you're working in pure-core code.</span></li>
@@ -126,7 +147,8 @@ export default defineConfig([pack(fcis, { files: [&quot;core/**/*.ts&quot;], hom
       <dt>Categories</dt><dd>every session</dd>
     </dl>
     <h3>Why it exists</h3>
-    <div class="why gap"><p>Not stated. A breadcrumb owes a doc comment on its key saying what goes wrong in the repo without it.</p></div>
+    <div class="why"><p>Without it, the split is a rule with no model behind it: an agent moves a side effect out of a
+pure file because a guardrail refused it, learns nothing, and puts the next one back.</p></div>
     <h3>What the agent reads</h3>
     <div class="says">Functional Core, Imperative Shell (Bernhardt, &quot;Boundaries&quot;, SCNA 2012).
 Decisions live in pure functions, in this repo's declared pure home (see the fcis entries in flow.config.ts): no I/O, no clock, no randomness, no env — inject them as arguments; determinism IS testability.
@@ -143,24 +165,45 @@ The shell is covered by integration tests, not unit tests.</div>
       <dt>Watches</dt><dd><code>core/**/*.ts</code></dd>
       <dt>Ignores</dt><dd><code>**/*.test.ts</code></dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/ast-grep.html"><code>astGrep</code></a><pre><code>astGrep({
-        language: &quot;typescript&quot;,
-        rule: {
-          any: [
-            { pattern: &quot;Date.now()&quot; },
-            { pattern: &quot;new Date()&quot; },
-            { pattern: &quot;Math.random()&quot; },
-            { pattern: &quot;crypto.randomUUID()&quot; },
-            { pattern: &quot;crypto.getRandomValues($$$)&quot; },
-            { pattern: &quot;fetch($$$)&quot; },
-            { pattern: &quot;setTimeout($$$)&quot; },
-            { pattern: &quot;setInterval($$$)&quot; },
-            { pattern: &quot;process.env&quot; },
-            { pattern: &quot;Bun.spawn($$$)&quot; },
-            { pattern: &quot;Bun.file($$$)&quot; },
-          ],
-        },
-      })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/ast-grep.html"><code>astGrep</code></a>
+      <div class="set"><b>language</b> <code>typescript</code></div>
+      <div class="set"><b>rule</b><pre><code>{
+  &quot;any&quot;: [
+    {
+      &quot;pattern&quot;: &quot;Date.now()&quot;
+    },
+    {
+      &quot;pattern&quot;: &quot;new Date()&quot;
+    },
+    {
+      &quot;pattern&quot;: &quot;Math.random()&quot;
+    },
+    {
+      &quot;pattern&quot;: &quot;crypto.randomUUID()&quot;
+    },
+    {
+      &quot;pattern&quot;: &quot;crypto.getRandomValues($$$)&quot;
+    },
+    {
+      &quot;pattern&quot;: &quot;fetch($$$)&quot;
+    },
+    {
+      &quot;pattern&quot;: &quot;setTimeout($$$)&quot;
+    },
+    {
+      &quot;pattern&quot;: &quot;setInterval($$$)&quot;
+    },
+    {
+      &quot;pattern&quot;: &quot;process.env&quot;
+    },
+    {
+      &quot;pattern&quot;: &quot;Bun.spawn($$$)&quot;
+    },
+    {
+      &quot;pattern&quot;: &quot;Bun.file($$$)&quot;
+    }
+  ]
+}</code></pre></div></dd>
     </dl>
     <h3>What the agent reads when refused</h3>
     <div class="says">Impurity in the functional core. Pure code takes no clock / randomness / I/O / process.env — inject them as arguments and keep the decision pure.
@@ -182,17 +225,15 @@ Move the side effect to the shell and pass the pure input down.</div>
       <dt>Watches</dt><dd><code>core/**/*.ts</code></dd>
       <dt>Ignores</dt><dd><code>**/*.test.ts</code></dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/ast-grep.html"><code>astGrep</code></a><pre><code>astGrep({
-        language: &quot;typescript&quot;,
-        rule: {
-          kind: &quot;import_statement&quot;,
-          has: {
-            kind: &quot;string&quot;,
-            regex:
-              &quot;^[\&quot;'](node:)?(fs|fs/promises|child_process|net|dns|tls|http|https|http2|os|cluster|worker_threads|readline|repl|v8|vm|zlib|dgram|inspector)[\&quot;']$&quot;,
-          },
-        },
-      })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/ast-grep.html"><code>astGrep</code></a>
+      <div class="set"><b>language</b> <code>typescript</code></div>
+      <div class="set"><b>rule</b><pre><code>{
+  &quot;kind&quot;: &quot;import_statement&quot;,
+  &quot;has&quot;: {
+    &quot;kind&quot;: &quot;string&quot;,
+    &quot;regex&quot;: &quot;^[\&quot;'](node:)?(fs|fs/promises|child_process|net|dns|tls|http|https|http2|os|cluster|worker_threads|readline|repl|v8|vm|zlib|dgram|inspector)[\&quot;']$&quot;
+  }
+}</code></pre></div></dd>
     </dl>
     <h3>What the agent reads when refused</h3>
     <div class="says">A shell module imported into pure code. The functional core DECIDES; reaching for the filesystem, a process, a socket or the OS is the shell's job, and an import of one is a leak whatever the file then does with it.
@@ -211,7 +252,18 @@ Move the effect into the shell around this file and pass the values in. (`node:p
       <dt>Watches</dt><dd><code>core/**/*.ts</code></dd>
       <dt>Ignores</dt><dd><code>**/*.test.ts</code></dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/ast-grep.html"><code>astGrep</code></a><pre><code>astGrep({ language: &quot;typescript&quot;, rule: { any: [{ pattern: &quot;throw $X&quot; }, { pattern: &quot;Promise.reject($$$)&quot; }] } })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/ast-grep.html"><code>astGrep</code></a>
+      <div class="set"><b>language</b> <code>typescript</code></div>
+      <div class="set"><b>rule</b><pre><code>{
+  &quot;any&quot;: [
+    {
+      &quot;pattern&quot;: &quot;throw $X&quot;
+    },
+    {
+      &quot;pattern&quot;: &quot;Promise.reject($$$)&quot;
+    }
+  ]
+}</code></pre></div></dd>
     </dl>
     <h3>What the agent reads when refused</h3>
     <div class="says">`throw` / Promise.reject in the functional core. Errors are VALUES here — return a Result / tagged union (ok/err) so the failure path shows in the signature and the caller must handle both arms. Adapt thrown errors to Results at the boundary, not inside pure code.</div>
@@ -228,7 +280,8 @@ Move the effect into the shell around this file and pass the values in. (`node:p
       <dt>Watches</dt><dd><code>core/**/*.ts</code></dd>
       <dt>Ignores</dt><dd><code>**/*.test.ts</code></dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/sibling-exists.html"><code>siblingExists</code></a><pre><code>siblingExists({ sibling: &quot;{dir}/{name}.test.ts&quot; })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/sibling-exists.html"><code>siblingExists</code></a>
+      <div class="set"><b>sibling</b> <code>{dir}/{name}.test.ts</code></div></dd>
     </dl>
     <h3>What the agent reads when refused</h3>
     <div class="says">The pure core is test-first (red → green): {dir}/{name}.test.ts is missing. Write the failing test, then the code.</div>
@@ -245,7 +298,8 @@ Move the effect into the shell around this file and pass the values in. (`node:p
       <dt>Watches</dt><dd><code>core/**/*.ts</code></dd>
       <dt>Ignores</dt><dd><code>**/*.test.ts</code></dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/symbols-in-sibling.html"><code>symbolsInSibling</code></a><pre><code>symbolsInSibling({ sibling: &quot;{dir}/{name}.test.ts&quot; })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/symbols-in-sibling.html"><code>symbolsInSibling</code></a>
+      <div class="set"><b>sibling</b> <code>{dir}/{name}.test.ts</code></div></dd>
     </dl>
     <h3>What the agent reads when refused</h3>
     <div class="says">An exported pure function is never referenced in its test. Cheap nudge, not coverage — but 'added a function, wrote no test' is exactly the miss it catches.</div>
@@ -261,7 +315,9 @@ Move the effect into the shell around this file and pass the values in. (`node:p
       <dt>Refuses at</dt><dd>the commit gate, over the staged set</dd>
       <dt>Watches</dt><dd>—</dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/exec-passes.html"><code>execPasses</code></a><pre><code>execPasses({ changed: repo.homes, run: repo.coverage })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/exec-passes.html"><code>execPasses</code></a>
+      <div class="set"><b>changed</b> <code>core/**</code></div>
+      <div class="set"><b>run</b> <code>./ci.sh coverage</code></div></dd>
     </dl>
     <h3>What the agent reads when refused</h3>
     <div class="says">Coverage of the pure core fell below the bar — add tests for the new and changed code. (Runs only when pure files changed.)</div>
@@ -277,7 +333,7 @@ Move the effect into the shell around this file and pass the values in. (`node:p
       <dt>Refuses at</dt><dd>a file is written or edited · the commit gate, over the staged set</dd>
       <dt>Watches</dt><dd><code>src/lib/**/types.ts</code> · <code>src/lib/**/index.ts</code> · <code>src/core/**/types.ts</code> · <code>src/core/**/index.ts</code></dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><em>a check written inline in the pack</em></dd>
+      <dt>Check</dt><dd><em>a check written inline in this pack</em></dd>
       <dt>Off by default</dt><dd>the pack's own default: the feature-folder tier is a shape a repo opts into</dd>
     </dl>
     <h3>Proved by</h3>
@@ -293,7 +349,7 @@ Move the effect into the shell around this file and pass the values in. (`node:p
       <dt>Watches</dt><dd><code>src/lib/**/*.ts</code></dd>
       <dt>Ignores</dt><dd><code>**/*.d.ts</code></dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><em>a check written inline in the pack</em></dd>
+      <dt>Check</dt><dd><em>a check written inline in this pack</em></dd>
       <dt>Off by default</dt><dd>the pack's own default: the canon of a feature folder is a fact only the repo has</dd>
     </dl>
     <h3>Proved by</h3>
@@ -308,11 +364,10 @@ Move the effect into the shell around this file and pass the values in. (`node:p
       <dt>Refuses at</dt><dd>a shell command is about to run</dd>
       <dt>Watches</dt><dd>—</dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/commit-reason.html"><code>commitReason</code></a><pre><code>commitReason({
-        whenAdded: repo.files,
-        except: [TESTS],
-        token: &quot;new-pure-file&quot;,
-      })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/commit-reason.html"><code>commitReason</code></a>
+      <div class="set"><b>whenAdded</b> <code>core/**/*.ts</code></div>
+      <div class="set"><b>except</b> <code>**/*.test.*</code></div>
+      <div class="set"><b>token</b> <code>new-pure-file</code></div></dd>
     </dl>
     <h3>What the agent reads when refused</h3>
     <div class="says">Adding a file to the pure core must say why the pure file it belongs in isn't the place — put `new-pure-file: &lt;why not the existing file&gt;` on a line of its own in the commit message. The verifier reads that reason at the next phase boundary.</div>

@@ -1,10 +1,4 @@
-// flow/packs/node.ts — package.json discipline: reach for a maintained package, say why, pin it, move
-// the lockfile with it.
-//
-// The dependencies breadcrumb's POLARITY is deliberate. It does not read as "adding a dependency is
-// a risk"; it reads as "check whether it is already solved" — because the code we hand-roll to
-// avoid a package has no users, no reviewers and no fixes coming, which is the larger risk most of
-// the time.
+// flow/packs/node.ts — package.json discipline.
 
 import { breadcrumb, command, commit, commitReason, defineCheck, definePack, guardrail, touch, type Check } from "../index.ts";
 
@@ -60,7 +54,24 @@ const lockfileInStep = defineCheck(
     },
 );
 
+/**
+ * package.json discipline: reach for a maintained package, say why, pin it, move the lockfile with
+ * it.
+ *
+ * The dependencies breadcrumb's POLARITY is deliberate. It does not read as "adding a dependency is
+ * a risk"; it reads as "check whether it is already solved" — because the code we hand-roll to
+ * avoid a package has no users, no reviewers and no fixes coming, which is the larger risk most of
+ * the time.
+ *
+ * @setup A lockfile the repo commits — `package-lock.json`, `pnpm-lock.yaml`, `bun.lock`,
+ * `bun.lockb` or `yarn.lock`; `lockfileInStep` recognises all five and asks for whichever one the
+ * repo already has.
+ */
 export const node = definePack("node", {
+  /**
+   * Without it, the reflex is to hand-roll rather than to look, and a repo accumulates private
+   * versions of solved problems — code with no users, no reviewers and no fixes coming.
+   */
   dependencies: breadcrumb()
     .at(touch)
     .on("package.json", "package-lock.json", "pnpm-lock.yaml")
@@ -77,6 +88,10 @@ export const node = definePack("node", {
   // The condition is the FILE, not the diff. A package.json commit that is only a version bump owes
   // a line too — a pin change is a supply-chain decision on the same grounds as an addition, and a
   // mechanism a reader can understand from the entry is worth that.
+  /**
+   * Without it, a dependency arrives with no record of what else was considered, and the next
+   * person to ask "why do we depend on this" has only the package name to go on.
+   */
   newDependencyNeedsReason: guardrail()
     .at(command)
     .description("A commit that moves package.json must record why, and what else was checked.")
@@ -113,6 +128,11 @@ export const node = definePack("node", {
 
   // Keyed on the dependency BLOCKS, not on the file: a repository.url fix moves no lockfile, and
   // the file-keyed version blocked exactly that commit (2026-08-13).
+  /**
+   * Without it, a dependency moves in one commit and the lockfile in another (or never), so a
+   * fresh clone installs something nobody tested and the two files disagree about what this repo
+   * depends on.
+   */
   lockfileInStep: guardrail()
     .at(commit)
     .description("A dependency move and the lockfile land in the same commit — deps stay exactly pinned.")

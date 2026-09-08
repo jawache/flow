@@ -100,6 +100,34 @@ export function handWrappedProse(text: string): number[] {
   return wrapped;
 }
 
+/** A breadcrumb entry opening: the key, and the verb that says which kind of entry it is. */
+const BREADCRUMB_KEY = /^\s*([A-Za-z_][A-Za-z0-9_]*):\s*breadcrumb\(\)/;
+
+/**
+ * Every breadcrumb whose key carries no doc comment, as `{ name, line }` (1-based).
+ *
+ * A breadcrumb's text is INSTRUCTIONS — it tells an agent what to do and never explains itself —
+ * so the only place its reason can live is a doc comment on its key, and that comment is what the
+ * generated pack page prints under "Why it exists". Left empty, the page says "Not stated" and the
+ * entry is one nobody can judge: the delete-it test — what goes wrong in a repo without this —
+ * has no answer on the page or in the file.
+ *
+ * IMMEDIATELY ABOVE, and that strictness is the parser's rather than a preference: the page reads
+ * these with the TypeScript compiler API, and a note wedged between the comment and the key is a
+ * comment it may no longer attach to anything. Placement notes go above the doc comment.
+ */
+export function breadcrumbsWithoutWhy(text: string): { name: string; line: number }[] {
+  const lines = text.split("\n");
+  const bare: { name: string; line: number }[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const opening = BREADCRUMB_KEY.exec(lines[i] as string);
+    if (opening === null) continue;
+    if ((lines[i - 1] ?? "").trimEnd().endsWith("*/")) continue;
+    bare.push({ name: opening[1] as string, line: i + 1 });
+  }
+  return bare;
+}
+
 /** What this repo calls pure. The import fence's `pure` layer is exactly this list. */
 export interface Terrain {
   /**
@@ -112,7 +140,20 @@ export interface Terrain {
   readonly pure: readonly string[];
 }
 
+/**
+ * This repo's own terrain — the half of its guard that could never travel.
+ *
+ * The project map, the package's internal layout, the one-way import fences that ARE its
+ * architecture, the ratchet on its own verb surface, and the two rules that keep the generated pack
+ * pages honest. Everything a stranger's repo would recognise is bound from `@jawache/flow/packs`
+ * instead; "house" is what a repo's own pack is called, and the line between it and a shipped pack
+ * is a module boundary and nothing more.
+ */
 export const house = definePack("house", (repo: Terrain) => ({
+  /**
+   * Without it, every session in this repo starts by rediscovering what flow is, which of the two
+   * doors it is behind, and which of the two suites answers the question it is about to ask.
+   */
   orientation: breadcrumb()
     .at(session)
     .description("The project map — what flow is, where things live, how a change is proved.")
@@ -128,6 +169,11 @@ export const house = definePack("house", (repo: Terrain) => ({
       ].join("\n"),
     ),
 
+  /**
+   * Without it, a file lands wherever the last repo the author worked in would have put it — a
+   * `pure/` folder, a `core/` folder, a second shared module — and the pipeline's one-way shape
+   * survives only as long as whoever knows it is in the room.
+   */
   layout: breadcrumb()
     .at(touch)
     .on("language/**", "checks/**", "engine/**", "adapter/**", "packs/**", "tools/**")
@@ -149,6 +195,11 @@ export const house = definePack("house", (repo: Terrain) => ({
       ].join("\n"),
     ),
 
+  /**
+   * Without it, a pack is edited as source rather than as the page a stranger reads: the doc-comment
+   * slots the page is built from go unfilled, prose gets wrapped to fit an editor, and the page that
+   * the whole read depends on quietly becomes worth less than the file it came from.
+   */
   packAuthoring: breadcrumb()
     .at(touch)
     .on("packs/**")
@@ -159,7 +210,8 @@ export const house = definePack("house", (repo: Terrain) => ({
         "THREE DOC-COMMENT SLOTS, and they are the only prose on the page that does not come from the pack's own sentences:",
         "· On `definePack` — the pack's LEAD. One paragraph saying what the pack is for, in the words somebody who has never seen this repo needs.",
         "· On each member of the parameter interface — WHAT THE FACT IS, and why the pack cannot know it. A parameter with no doc comment is a page that asks a reader to supply something it never explains.",
-        "· On each entry's key — WHY THE ENTRY EXISTS, under the delete-it test: what goes wrong in the repo without it. MANDATORY on a breadcrumb, whose text is instructions and never explains itself; optional on a guardrail, whose refusal message usually carries its own reason, and worth writing when the message cannot say it.",
+        "· On each entry's key — WHY THE ENTRY EXISTS, under the delete-it test: what goes wrong in the repo without it. MANDATORY on a breadcrumb, whose text is instructions and never explains itself, and refused at the commit gate when it is missing; optional on a guardrail, whose refusal message usually carries its own reason, and worth writing when the message cannot say it.",
+        "THREE NAMED BLOCKS, as JSDoc tags on that same `definePack` comment, each rendered as its own section on the page: `@install` (what to install before a rule here can pass), `@setup` (what has to exist in the repo — a file, a recipe, a script), `@adopt` (what happens on the first run, and what to fix first). A tag nobody uses renders nothing, and a tag outside the three is not read at all — instructions with no home are what a lead paragraph turns into otherwise.",
         "Everything else stays an ordinary `//` comment: placement notes, the history of a fix, an aside to whoever edits the line next. Those never reach the page, which is what keeps the page readable.",
         "PROSE STRINGS NEVER HAND-WRAP. A string in `.text(…)` or `.message(…)` is one line however long it is — only a model reads it, the wrap is invisible there, and on the page it arrives as a line break through the middle of a sentence. An aligned table or a bulleted list is not a wrap: every line is a complete unit and the line above it finishes. Doc comments are the other way round — a human reads those, so they wrap at the width the rest of the file uses.",
       ].join("\n"),
@@ -400,6 +452,40 @@ export const house = definePack("house", (repo: Terrain) => ({
         {
           staged: ["packs/docs.ts"],
           world: { exec: { "just docs-packs-check": { code: 1, stdout: "docs/user/packs/docs.html has drifted from its pack" } } },
+        },
+      ],
+    }),
+
+  breadcrumbSaysWhy: guardrail()
+    .at(commit)
+    .on("packs/**", "guards/**")
+    .description("Every breadcrumb's key carries a doc comment saying why the entry exists — the page prints it, and nothing else can.")
+    .check((ctx) => {
+      const bare = breadcrumbsWithoutWhy(ctx.file?.content ?? "");
+      return bare.length === 0 ? ctx.ok() : ctx.fail(bare.map((one) => `\`${one.name}\` (line ${one.line}) has no doc comment`).join("\n"));
+    })
+    .message(
+      "A breadcrumb with no `why`. Its text is instructions and never explains itself, so a doc comment on the key — immediately above it — is the only place the reason can live, and it is what the pack page prints under \"Why it exists\". Write the delete-it test: what goes wrong in a repo without this entry. (A guardrail owes one only when its refusal message cannot carry the reason.)",
+    )
+    // THE COMMIT DIALECT, because the entry fires at the gate: a staged path, and the file's body
+    // in the world beside it. The rule reads a whole file, and a commit is the moment a whole file
+    // is finished being written.
+    .test({
+      pass: [
+        {
+          staged: ["packs/x.ts"],
+          world: { fs: { "packs/x.ts": "  /** Without it, nobody knows which door they are behind. */\n  docs: breadcrumb()\n    .at(touch)\n" } },
+        },
+        // A guardrail owes nothing here: its message is the explanation.
+        { staged: ["packs/x.ts"], world: { fs: { "packs/x.ts": "  docsShape: guardrail()\n    .at(commit)\n" } } },
+      ],
+      block: [
+        { staged: ["packs/x.ts"], world: { fs: { "packs/x.ts": "  docs: breadcrumb()\n    .at(touch)\n" } } },
+        // A `//` note is not a doc comment: the compiler API does not read it, so the page cannot
+        // print it, and this is exactly the shape every pack carried before the convention.
+        {
+          staged: ["packs/x.ts"],
+          world: { fs: { "packs/x.ts": "  // the two audiences, in one place\n  docs: breadcrumb()\n    .at(touch)\n" } },
         },
       ],
     }),

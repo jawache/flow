@@ -37,6 +37,8 @@
   .entry .facts dt{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;padding-top:.2rem}
   .entry .facts dd{margin:0}
   .entry .facts pre{margin:.2rem 0}
+  .set{margin:.15rem 0}
+  .set b{font-weight:700;font-size:.82rem;color:#4a5260;font-family:ui-monospace, Menlo, monospace}
   .why{border-left:4px solid var(--parent);background:#eef4fa;padding:.6rem .9rem;border-radius:0 8px 8px 0;margin:.8rem 0;font-size:.95rem}
   .why.gap{border-left-color:#c2a33a;background:var(--gapbg);color:#6b5a1e;font-style:italic}
   .why p:first-child{margin-top:0} .why p:last-child{margin-bottom:0}
@@ -64,7 +66,12 @@
   <h1>The <code>tdd</code> pack</h1>
   <p class="scope">6 guardrails · 1 breadcrumb · fires at: touch · write · commit · takes 1 parameter</p>
 
-  <p class="lead gap">This pack has no lead. A doc comment on <code>definePack</code> is what says, in a paragraph, what the pack is for.</p>
+  <div class="lead"><p>Test-first artefacts exist; tests test behaviour, not implementation; the suite gates the commit.</p>
+<p><code>commitRunsTests</code> takes the suite recipe as a mandatory PARAMETER rather than defaulting to
+<code>just test</code>: which command is the deterministic gate is a repo's fact, and a default is a rule
+that runs the wrong suite in every repo whose gate has another name.</p>
+<p>The <code>vitest/</code> sub-group holds FRAMEWORK spellings rather than testing principles: a repo on
+another runner disables the four of them without losing the artefacts or the gate.</p></div>
 
   <p class="gen">Generated from <code>packs/tdd.ts</code> by <code>just docs-packs</code>. Edit the pack, not this page; the commit gate refuses a page that has drifted from its pack.</p>
 
@@ -82,6 +89,19 @@ import { tdd } from &quot;@jawache/flow/packs&quot;;
 
 export default defineConfig([pack(tdd, { run: &quot;./ci.sh test&quot; })]);</code></pre>
   <p>Any entry below can be turned off in the config, as a committed change visible in review: <code>override(tdd.testingStrategy).disabled("why")</code>.</p>
+
+  <h2 id="install">What to install first</h2>
+<p>vitest, unless the four <code>vitestIdioms</code> entries are disabled — every one of them reads a
+vitest spelling.</p>
+
+  <h2 id="setup">What the repo needs in place</h2>
+<p>One recipe that runs the deterministic suite, named as the <code>run</code> parameter. It is what
+the commit gate runs, so it has to be the whole suite and it has to be green.</p>
+
+  <h2 id="adopt">Adopting it</h2>
+<p>A repo on another runner binds the pack and disables <code>vitest</code> and the <code>vitestIdioms</code>
+group by name, keeping the strategy breadcrumb and the commit gate — that split is why the
+framework rules are a sub-group rather than four loose entries.</p>
 
   <h2 id="entries">Entries</h2>
   <ul class="toc">
@@ -103,7 +123,9 @@ export default defineConfig([pack(tdd, { run: &quot;./ci.sh test&quot; })]);</co
       <dt>Categories</dt><dd>every session</dd>
     </dl>
     <h3>Why it exists</h3>
-    <div class="why gap"><p>Not stated. A breadcrumb owes a doc comment on its key saying what goes wrong in the repo without it.</p></div>
+    <div class="why"><p>Without it, testing effort goes where it is easiest to write rather than where confidence is
+cheapest — a thick unit layer pinned to implementation details, which then refuses every
+behaviour-preserving refactor.</p></div>
     <h3>What the agent reads</h3>
     <div class="says">Spend where confidence-per-cost is highest (the Testing Trophy, Kent C. Dodds): static analysis base, modest unit layer, DOMINANT integration layer, thin e2e cap.
 Test behaviour as the user sees it, never implementation details — if a behaviour-preserving refactor breaks a test, the test was wrong.
@@ -118,16 +140,15 @@ Mock only at owned boundaries: the network edge (MSW), not your own modules.</di
       <dt>Refuses at</dt><dd>a file is written or edited · the commit gate, over the staged set</dd>
       <dt>Watches</dt><dd><code>**/*.test.ts</code> · <code>**/*.test.tsx</code> · <code>**/*.spec.ts</code> · <code>**/*.spec.tsx</code></dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/ast-grep.html"><code>astGrep</code></a><pre><code>astGrep({
-        language: &quot;typescript&quot;,
-        rule: {
-          kind: &quot;import_statement&quot;,
-          has: {
-            kind: &quot;string&quot;,
-            regex: &quot;^[\&quot;'](node:test|node:assert|node:assert/strict|jest|@jest/globals|mocha|jasmine|ava|tap|tape|uvu)[\&quot;']$&quot;,
-          },
-        },
-      })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/ast-grep.html"><code>astGrep</code></a>
+      <div class="set"><b>language</b> <code>typescript</code></div>
+      <div class="set"><b>rule</b><pre><code>{
+  &quot;kind&quot;: &quot;import_statement&quot;,
+  &quot;has&quot;: {
+    &quot;kind&quot;: &quot;string&quot;,
+    &quot;regex&quot;: &quot;^[\&quot;'](node:test|node:assert|node:assert/strict|jest|@jest/globals|mocha|jasmine|ava|tap|tape|uvu)[\&quot;']$&quot;
+  }
+}</code></pre></div></dd>
     </dl>
     <h3>What the agent reads when refused</h3>
     <div class="says">A second test framework in a test file. This fleet runs vitest — every idiom rule below reads vitest spellings, so a file under another runner is a file nothing here can check, and a suite that only one command knows how to run. Import `test` / `expect` / `describe` / `vi` from &quot;vitest&quot;.
@@ -144,16 +165,28 @@ A repo that genuinely runs another framework disables this entry in its config, 
       <dt>Refuses at</dt><dd>a file is written or edited · the commit gate, over the staged set</dd>
       <dt>Watches</dt><dd><code>**/*.test.ts</code> · <code>**/*.test.tsx</code> · <code>**/*.test.js</code> · <code>**/*.test.mjs</code> · <code>**/*.spec.ts</code> · <code>**/*.spec.tsx</code> · <code>**/*.spec.js</code></dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/ast-grep.html"><code>astGrep</code></a><pre><code>astGrep({
-          language: &quot;typescript&quot;,
-          rule: {
-            kind: &quot;call_expression&quot;,
-            all: [
-              { has: { field: &quot;function&quot;, regex: &quot;^vi\\.mock$&quot; } },
-              { has: { kind: &quot;arguments&quot;, has: { kind: &quot;string&quot;, regex: &quot;^['\&quot;]\\.&quot; } } },
-            ],
-          },
-        })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/ast-grep.html"><code>astGrep</code></a>
+      <div class="set"><b>language</b> <code>typescript</code></div>
+      <div class="set"><b>rule</b><pre><code>{
+  &quot;kind&quot;: &quot;call_expression&quot;,
+  &quot;all&quot;: [
+    {
+      &quot;has&quot;: {
+        &quot;field&quot;: &quot;function&quot;,
+        &quot;regex&quot;: &quot;^vi\\.mock$&quot;
+      }
+    },
+    {
+      &quot;has&quot;: {
+        &quot;kind&quot;: &quot;arguments&quot;,
+        &quot;has&quot;: {
+          &quot;kind&quot;: &quot;string&quot;,
+          &quot;regex&quot;: &quot;^['\&quot;]\\.&quot;
+        }
+      }
+    }
+  ]
+}</code></pre></div></dd>
     </dl>
     <h3>What the agent reads when refused</h3>
     <div class="says">Module-mocking your own code (a relative import). This pins the test to the file layout and skips the real integration — test behaviour through the public surface and mock at the boundary you own instead (network → MSW; clock/random → inject).</div>
@@ -169,7 +202,15 @@ A repo that genuinely runs another framework disables this entry in its config, 
       <dt>Refuses at</dt><dd>a file is written or edited · the commit gate, over the staged set</dd>
       <dt>Watches</dt><dd><code>**/*.test.ts</code> · <code>**/*.test.tsx</code> · <code>**/*.test.js</code> · <code>**/*.test.mjs</code> · <code>**/*.spec.ts</code> · <code>**/*.spec.tsx</code> · <code>**/*.spec.js</code></dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/ast-grep.html"><code>astGrep</code></a><pre><code>astGrep({ language: &quot;tsx&quot;, rule: { kind: &quot;call_expression&quot;, has: { field: &quot;function&quot;, regex: &quot;\\.only$&quot; } } })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/ast-grep.html"><code>astGrep</code></a>
+      <div class="set"><b>language</b> <code>tsx</code></div>
+      <div class="set"><b>rule</b><pre><code>{
+  &quot;kind&quot;: &quot;call_expression&quot;,
+  &quot;has&quot;: {
+    &quot;field&quot;: &quot;function&quot;,
+    &quot;regex&quot;: &quot;\\.only$&quot;
+  }
+}</code></pre></div></dd>
     </dl>
     <h3>What the agent reads when refused</h3>
     <div class="says">A focused test (.only) silently skips the rest of the suite — CI goes green while nothing runs. Remove the focus before you commit.</div>
@@ -185,22 +226,38 @@ A repo that genuinely runs another framework disables this entry in its config, 
       <dt>Refuses at</dt><dd>a file is written or edited · the commit gate, over the staged set</dd>
       <dt>Watches</dt><dd><code>**/*.test.ts</code> · <code>**/*.test.tsx</code> · <code>**/*.test.js</code> · <code>**/*.test.mjs</code> · <code>**/*.spec.ts</code> · <code>**/*.spec.tsx</code> · <code>**/*.spec.js</code></dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/ast-grep.html"><code>astGrep</code></a><pre><code>astGrep({
-          language: &quot;tsx&quot;,
-          rule: {
-            any: [
-              { pattern: &quot;global.fetch = $X&quot; },
-              { pattern: &quot;globalThis.fetch = $X&quot; },
-              {
-                kind: &quot;call_expression&quot;,
-                all: [
-                  { has: { field: &quot;function&quot;, regex: &quot;^vi\\.mock$&quot; } },
-                  { has: { kind: &quot;arguments&quot;, has: { kind: &quot;string&quot;, regex: &quot;^['\&quot;](axios|node-fetch|got|ky|undici)['\&quot;]$&quot; } } },
-                ],
-              },
-            ],
-          },
-        })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/ast-grep.html"><code>astGrep</code></a>
+      <div class="set"><b>language</b> <code>tsx</code></div>
+      <div class="set"><b>rule</b><pre><code>{
+  &quot;any&quot;: [
+    {
+      &quot;pattern&quot;: &quot;global.fetch = $X&quot;
+    },
+    {
+      &quot;pattern&quot;: &quot;globalThis.fetch = $X&quot;
+    },
+    {
+      &quot;kind&quot;: &quot;call_expression&quot;,
+      &quot;all&quot;: [
+        {
+          &quot;has&quot;: {
+            &quot;field&quot;: &quot;function&quot;,
+            &quot;regex&quot;: &quot;^vi\\.mock$&quot;
+          }
+        },
+        {
+          &quot;has&quot;: {
+            &quot;kind&quot;: &quot;arguments&quot;,
+            &quot;has&quot;: {
+              &quot;kind&quot;: &quot;string&quot;,
+              &quot;regex&quot;: &quot;^['\&quot;](axios|node-fetch|got|ky|undici)['\&quot;]$&quot;
+            }
+          }
+        }
+      ]
+    }
+  ]
+}</code></pre></div></dd>
     </dl>
     <h3>What the agent reads when refused</h3>
     <div class="says">Hand-rolled network stub. Mock at the network boundary with MSW (Testing Trophy: mock only what you own — the edge, not the client), so request building, serialisation and error mapping stay under test.</div>
@@ -216,17 +273,24 @@ A repo that genuinely runs another framework disables this entry in its config, 
       <dt>Refuses at</dt><dd>a file is written or edited · the commit gate, over the staged set</dd>
       <dt>Watches</dt><dd><code>**/*.test.ts</code> · <code>**/*.test.tsx</code> · <code>**/*.test.js</code> · <code>**/*.test.mjs</code> · <code>**/*.spec.ts</code> · <code>**/*.spec.tsx</code> · <code>**/*.spec.js</code></dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/ast-grep.html"><code>astGrep</code></a><pre><code>astGrep({
-          language: &quot;tsx&quot;,
-          rule: {
-            any: [
-              { pattern: &quot;it($DESC, () =&gt; {})&quot; },
-              { pattern: &quot;it($DESC, async () =&gt; {})&quot; },
-              { pattern: &quot;test($DESC, () =&gt; {})&quot; },
-              { pattern: &quot;test($DESC, async () =&gt; {})&quot; },
-            ],
-          },
-        })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/ast-grep.html"><code>astGrep</code></a>
+      <div class="set"><b>language</b> <code>tsx</code></div>
+      <div class="set"><b>rule</b><pre><code>{
+  &quot;any&quot;: [
+    {
+      &quot;pattern&quot;: &quot;it($DESC, () =&gt; {})&quot;
+    },
+    {
+      &quot;pattern&quot;: &quot;it($DESC, async () =&gt; {})&quot;
+    },
+    {
+      &quot;pattern&quot;: &quot;test($DESC, () =&gt; {})&quot;
+    },
+    {
+      &quot;pattern&quot;: &quot;test($DESC, async () =&gt; {})&quot;
+    }
+  ]
+}</code></pre></div></dd>
     </dl>
     <h3>What the agent reads when refused</h3>
     <div class="says">Empty test body — it passes forever and counts as coverage. Write the assertion, or be honest with `it.todo('…')` until you do.</div>
@@ -242,7 +306,8 @@ A repo that genuinely runs another framework disables this entry in its config, 
       <dt>Refuses at</dt><dd>the commit gate, over the staged set</dd>
       <dt>Watches</dt><dd>—</dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/exec-passes.html"><code>execPasses</code></a><pre><code>execPasses({ run: repo.run })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/exec-passes.html"><code>execPasses</code></a>
+      <div class="set"><b>run</b> <code>./ci.sh test</code></div></dd>
     </dl>
     <h3>What the agent reads when refused</h3>
     <div class="says">The commit suite failed — the commit is blocked until it is green. (Run it yourself to see what broke.)</div>

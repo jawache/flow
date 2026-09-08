@@ -46,15 +46,30 @@ export interface EntryDoc {
   readonly ignore: readonly string[];
   /** Empty means every category. */
   readonly categories: readonly string[];
-  /** `.check(…)`'s argument, verbatim from the source — the settings, not a paraphrase. */
-  readonly check: string;
-  /** The stock check's name, when the argument is a call of one; used for the doc-page link. */
+  /** The settings the check was CONFIGURED with, resolved — one row per option. */
+  readonly settings: readonly SettingRow[];
+  /** The check's name, as the pack spells it; the reference link is built from it. */
   readonly checkName: string;
   /** `.text()` or `.message()`, verbatim. This is the whole point of the page. */
   readonly says: string;
   readonly cases: readonly CaseLine[];
   /** Why the pack ships it turned off, when it does. */
   readonly disabled: string;
+}
+
+/** One option a check was configured with, ready to print. */
+export interface SettingRow {
+  readonly key: string;
+  /** The value, already flattened to text — a scalar, a joined list, or a JSON block. */
+  readonly value: string;
+  /** True when the value is a structure and belongs in a code block rather than on the line. */
+  readonly block: boolean;
+}
+
+/** One named block of a pack's doc comment — an `@install`, `@setup` or `@adopt` tag. */
+export interface DocBlock {
+  readonly tag: string;
+  readonly body: string;
 }
 
 /** One parameter the pack takes, from the doc comment on its interface member. */
@@ -70,6 +85,8 @@ export interface PackDoc {
   /** The doc comment on `definePack` — the pack's lead. Empty is shown as a gap. */
   readonly lead: string;
   readonly params: readonly ParamDoc[];
+  /** The named blocks the pack's doc comment carries, in the order the tag set declares them. */
+  readonly blocks: readonly DocBlock[];
   /** The example binding line, parameters and all, exactly as a config would write it. */
   readonly bind: string;
   readonly entries: readonly EntryDoc[];
@@ -115,6 +132,36 @@ export function caseLine(fact: CaseFact): string {
 function oneLine(content: string): string {
   const flat = content.replace(/\s+/g, " ").trim();
   return flat.length > 90 ? `${flat.slice(0, 89)}…` : flat;
+}
+
+// ── a check's settings, as rows ──────────────────────────────────────────────
+
+/** A scalar, printed as a reader sees it — never `[object Object]`, never a quoted string. */
+function scalar(value: unknown): string {
+  return typeof value === "string" ? value : String(value);
+}
+
+/** Is this a value that fits on the line — a scalar, or a list of them? */
+function flat(value: unknown): boolean {
+  if (Array.isArray(value)) return value.every((held) => held === null || typeof held !== "object");
+  return value === null || typeof value !== "object";
+}
+
+/**
+ * The options a check was configured with, flattened into printable rows.
+ *
+ * RESOLVED VALUES, and that is the whole point: what reaches the page is the glob a parameter
+ * supplied and the recipe a repo named, not the expression that produced them. A structure — an
+ * ast-grep rule, a fence's layers — cannot be a line, so it becomes a JSON block; everything else
+ * is a line, because a line is what a reader can compare between two entries.
+ */
+export function settingRows(settings: unknown): SettingRow[] {
+  if (settings === null || typeof settings !== "object" || Array.isArray(settings)) return [];
+  return Object.entries(settings).map(([key, value]) => {
+    if (Array.isArray(value) && value.length === 0) return { key, value: "none", block: false };
+    if (flat(value)) return { key, value: (Array.isArray(value) ? value.map(scalar).join(" · ") : scalar(value)), block: false };
+    return { key, value: JSON.stringify(value, null, 2), block: true };
+  });
 }
 
 // ── the words the page puts on a moment ──────────────────────────────────────
@@ -188,16 +235,23 @@ function globs(list: readonly string[]): string {
 }
 
 /**
- * The check's settings, and a link to the stock check's own page when it is one.
+ * The check the entry asks, and the settings it was configured with — as VALUES.
  *
- * The argument is shown VERBATIM rather than described: a paraphrase of a rule's settings is a
- * second statement of the rule that goes stale, which is the failure this whole page exists to
- * end.
+ * The name comes from the pack's own source and links to the check's reference page; the settings
+ * are read back off the check itself, so what prints is what the rule really watches. The page
+ * showed the `.check(…)` source until the first read of these pages, and `noGitDiscard({})` as the
+ * whole description of a rule is what that was worth.
  */
 function checkBlock(entry: EntryDoc): string {
-  if (entry.check === "") return "<em>a check written inline in the pack</em>";
-  const named = entry.checkName === "" ? "" : `<a href="../checks/${kebab(entry.checkName)}.html"><code>${esc(entry.checkName)}</code></a>`;
-  return `${named}<pre><code>${esc(entry.check)}</code></pre>`;
+  if (entry.checkName === "") return "<em>a check written inline in this pack</em>";
+  const named = `<a href="../checks/${kebab(entry.checkName)}.html"><code>${esc(entry.checkName)}</code></a>`;
+  if (entry.settings.length === 0) return `${named} — <span class="none">no options; the sentence's own scope is the whole rule</span>`;
+  const rows = entry.settings.map((row) =>
+    row.block
+      ? `<div class="set"><b>${esc(row.key)}</b><pre><code>${esc(row.value)}</code></pre></div>`
+      : `<div class="set"><b>${esc(row.key)}</b> <code>${esc(row.value)}</code></div>`,
+  );
+  return `${named}\n      ${rows.join("\n      ")}`;
 }
 
 /** `canonicalFiles` → `canonical-files`, which is what the stock check's page is called. */
@@ -284,6 +338,31 @@ function params(doc: PackDoc): string {
   ].join("\n");
 }
 
+/**
+ * THE NAMED BLOCKS a pack's doc comment may carry, in the order the page prints them.
+ *
+ * Three tags and no more, because each answers a question a reader asks in a fixed order — what do
+ * I have to install before a rule here can pass, what has to exist in the repo, and what happens
+ * on the first run. Everything else a pack has to say is its lead, or an entry's own why. A tag
+ * nobody uses renders nothing, so a pack that needs none reads exactly as it does today.
+ */
+export const DOC_BLOCKS: readonly { readonly tag: string; readonly title: string }[] = [
+  { tag: "install", title: "What to install first" },
+  { tag: "setup", title: "What the repo needs in place" },
+  { tag: "adopt", title: "Adopting it" },
+];
+
+/** The named blocks this pack filled in, as their own sections, in the tag set's order. */
+function blocks(doc: PackDoc): string {
+  const said = DOC_BLOCKS.flatMap((known) => {
+    const held = doc.blocks.find((block) => block.tag === known.tag);
+    return held === undefined || held.body === ""
+      ? []
+      : [`  <h2 id="${esc(known.tag)}">${esc(known.title)}</h2>\n${prose(held.body)}`];
+  });
+  return said.join("\n\n");
+}
+
 /** The counts line under the title: what is in the pack, and where it fires. */
 function census(doc: PackDoc): string {
   const rails = doc.entries.filter((e) => e.kind === "guardrail").length;
@@ -325,6 +404,8 @@ const STYLE = `  :root{
   .entry .facts dt{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;padding-top:.2rem}
   .entry .facts dd{margin:0}
   .entry .facts pre{margin:.2rem 0}
+  .set{margin:.15rem 0}
+  .set b{font-weight:700;font-size:.82rem;color:#4a5260;font-family:ui-monospace, Menlo, monospace}
   .why{border-left:4px solid var(--parent);background:#eef4fa;padding:.6rem .9rem;border-radius:0 8px 8px 0;margin:.8rem 0;font-size:.95rem}
   .why.gap{border-left-color:#c2a33a;background:var(--gapbg);color:#6b5a1e;font-style:italic}
   .why p:first-child{margin-top:0} .why p:last-child{margin-bottom:0}
@@ -403,6 +484,8 @@ export function renderPackPage(doc: PackDoc): string {
     params(doc),
     `<pre><code>${esc(bindingSnippet(doc))}</code></pre>`,
     `  <p>Any entry below can be turned off in the config, as a committed change visible in review: <code>override(${esc(doc.name)}.${esc(doc.entries[0]?.key ?? "entry")}).disabled("why")</code>.</p>`,
+    "",
+    blocks(doc),
     "",
     '  <h2 id="entries">Entries</h2>',
     toc(doc.entries),

@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   bindingSnippet,
   caseLine,
+  DOC_BLOCKS,
   esc,
   firstSentence,
   kebab,
@@ -17,12 +18,15 @@ import {
   prose,
   renderPackPage,
   renderPacksIndex,
+  settingRows,
   whenText,
   type CaseFact,
   type CaseLine,
+  type DocBlock,
   type EntryDoc,
   type PackDoc,
   type ParamDoc,
+  type SettingRow,
 } from "./domain.ts";
 
 /** A guardrail with everything filled in — the page's fullest row. */
@@ -36,7 +40,7 @@ const rail: EntryDoc = {
   on: ["docs/**"],
   ignore: ["docs/user/legacy/**"],
   categories: ["supervised"],
-  check: 'canonicalFiles({ root: "docs", allow: [], folders: ["user", "agent"] })',
+  settings: settingRows({ root: "docs", allow: [], folders: ["user", "agent"] }),
   checkName: "canonicalFiles",
   says: "docs/ holds exactly two doors: `user/` and `agent/`.",
   cases: [
@@ -57,7 +61,7 @@ const crumb: EntryDoc = {
   on: [],
   ignore: [],
   categories: [],
-  check: "",
+  settings: [],
   checkName: "",
   says: "Two audiences, two doors.",
   cases: [],
@@ -66,7 +70,7 @@ const crumb: EntryDoc = {
 
 const param: ParamDoc = { name: "run", type: "string", why: "The recipe that runs the suite." };
 
-const doc: PackDoc = { name: "docs", lead: "Two audiences, one folder.", params: [], bind: "pack(docs)", entries: [rail, crumb] };
+const doc: PackDoc = { name: "docs", lead: "Two audiences, one folder.", params: [], blocks: [], bind: "pack(docs)", entries: [rail, crumb] };
 
 describe("a case as one line", () => {
   it("names what the event was, in the dialect of its moment", () => {
@@ -137,10 +141,24 @@ describe("the binding snippet", () => {
 describe("a pack's page", () => {
   const html = renderPackPage(doc);
 
-  it("carries the facts a reader cannot get anywhere else — the message and the settings, verbatim", () => {
+  it("carries the facts a reader cannot get anywhere else — the message verbatim, the settings as values", () => {
     expect(html).toContain("docs/ holds exactly two doors: `user/` and `agent/`.");
-    expect(html).toContain("canonicalFiles({ root: &quot;docs&quot;, allow: [], folders: [&quot;user&quot;, &quot;agent&quot;] })");
+    expect(html).toContain("<b>root</b> <code>docs</code>");
+    expect(html).toContain("<b>allow</b> <code>none</code>");
+    expect(html).toContain("<b>folders</b> <code>user · agent</code>");
     expect(html).toContain('href="../checks/canonical-files.html"');
+  });
+
+  it("says a check has no options rather than printing an empty one", () => {
+    const bare: EntryDoc = { ...rail, settings: [], checkName: "protectedPath" };
+    expect(renderPackPage({ ...doc, entries: [bare] })).toContain("no options; the sentence's own scope is the whole rule");
+  });
+
+  it("puts a structured setting in a block, where it can be read", () => {
+    const nested: EntryDoc = { ...rail, checkName: "astGrep", settings: settingRows({ language: "tsx", rule: { kind: "call_expression" } }) };
+    const page = renderPackPage({ ...doc, entries: [nested] });
+    expect(page).toContain("<b>language</b> <code>tsx</code>");
+    expect(page).toContain("&quot;kind&quot;: &quot;call_expression&quot;");
   });
 
   it("shows both sides of every case, and says which side is empty", () => {
@@ -175,12 +193,26 @@ describe("a pack's page", () => {
   });
 
   it("names a check written inline rather than pretending the entry has no check", () => {
-    const inline: EntryDoc = { ...rail, check: "", checkName: "" };
-    expect(renderPackPage({ ...doc, entries: [inline] })).toContain("a check written inline in the pack");
+    const inline: EntryDoc = { ...rail, settings: [], checkName: "" };
+    expect(renderPackPage({ ...doc, entries: [inline] })).toContain("a check written inline in this pack");
+  });
+
+  it("renders a named doc block as its own section, and an unused tag as nothing", () => {
+    const install: DocBlock = { tag: "install", body: "`just`, from https://just.systems." };
+    const page = renderPackPage({ ...doc, blocks: [install, { tag: "setup", body: "" }] });
+    expect(page).toContain("What to install first");
+    expect(page).toContain("from https://just.systems.");
+    expect(page).not.toContain("What the repo needs in place");
+    expect(renderPackPage(doc)).not.toContain("Adopting it");
   });
 
   it("tabulates parameters, and marks an undocumented one", () => {
-    const bound: PackDoc = { ...doc, name: "tdd", params: [param, { name: "x", type: "string", why: "" }], bind: 'pack(tdd, { run: "./ci.sh test" })' };
+    const bound: PackDoc = {
+      ...doc,
+      name: "tdd",
+      params: [param, { name: "x", type: "string", why: "" }],
+      bind: 'pack(tdd, { run: "./ci.sh test" })',
+    };
     const page = renderPackPage(bound);
     expect(page).toContain("The pack takes 2 parameters");
     expect(page).toContain("The recipe that runs the suite.");
@@ -209,9 +241,33 @@ describe("the listing page", () => {
   });
 });
 
+describe("a check's settings, as rows", () => {
+  it("flattens what fits on a line and blocks what does not", () => {
+    expect(settingRows({ run: "./ci.sh test" })).toEqual([{ key: "run", value: "./ci.sh test", block: false }]);
+    expect(settingRows({ ban: ["a", "b"] })).toEqual([{ key: "ban", value: "a · b", block: false }]);
+    expect(settingRows({ allow: [] })).toEqual([{ key: "allow", value: "none", block: false }]);
+    expect(settingRows({ deep: { a: 1 } })).toEqual([{ key: "deep", value: '{\n  "a": 1\n}', block: true }]);
+    expect(settingRows({ n: 2, on: true })).toEqual([
+      { key: "n", value: "2", block: false },
+      { key: "on", value: "true", block: false },
+    ]);
+  });
+
+  it("has nothing to say about a check that was never configured with an object", () => {
+    expect(settingRows(undefined)).toEqual([]);
+    expect(settingRows(null)).toEqual([]);
+    expect(settingRows(["a"])).toEqual([]);
+  });
+});
+
 describe("the model", () => {
-  it("is plain data — a case line is a kind and a sentence, and nothing else", () => {
+  it("is plain data — a case line is a kind and a sentence, a setting a key and a value", () => {
     const one: CaseLine = { kind: "pass", line: "writing `a.ts`" };
-    expect(one.kind).toBe("pass");
+    const row: SettingRow = { key: "root", value: "docs", block: false };
+    expect([one.kind, row.key]).toEqual(["pass", "root"]);
+  });
+
+  it("declares the tag set once, and the page renders them in that order", () => {
+    expect(DOC_BLOCKS.map((block) => block.tag)).toEqual(["install", "setup", "adopt"]);
   });
 });

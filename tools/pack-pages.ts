@@ -25,7 +25,18 @@ import { join } from "node:path";
 import ts from "typescript";
 import { defineConfig, loadConfig, pack, type Cases, type EntrySpec, type GuardrailSpec, type PackBinding } from "../index.ts";
 import { docs, fcis, flow, git, justfile, node, secrets, tdd, typescript, work } from "../packs/index.ts";
-import { caseLine, renderPackPage, renderPacksIndex, type CaseFact, type EntryDoc, type PackDoc, type ParamDoc } from "./domain.ts";
+import {
+  caseLine,
+  DOC_BLOCKS,
+  renderPackPage,
+  renderPacksIndex,
+  settingRows,
+  type CaseFact,
+  type DocBlock,
+  type EntryDoc,
+  type PackDoc,
+  type ParamDoc,
+} from "./domain.ts";
 
 /** Where the pages are written, under the user docs. */
 const OUT = join("docs", "user", "packs");
@@ -68,6 +79,8 @@ const SHIPPED: readonly Shipped[] = [
 /** What the source says about one pack, over and above what loading it says. */
 interface Parsed {
   readonly lead: string;
+  /** The `@install` / `@setup` / `@adopt` tags on the pack's own doc comment. */
+  readonly blocks: readonly DocBlock[];
   readonly params: readonly ParamDoc[];
   /** Doc comment per entry, by dotted key. */
   readonly why: ReadonlyMap<string, string>;
@@ -75,13 +88,31 @@ interface Parsed {
   readonly check: ReadonlyMap<string, string>;
 }
 
-/** A node's doc comment as one paragraph — the prose only, never the tags. */
+/** A node's doc comment — the free prose only. The named tags are read by `docTags`. */
 function docComment(node: ts.Node): string {
   return ts
     .getJSDocCommentsAndTags(node)
-    .map((tag) => ts.getTextOfJSDocComment((tag as ts.JSDoc).comment) ?? "")
+    .flatMap((doc) => (ts.isJSDoc(doc) ? [ts.getTextOfJSDocComment(doc.comment) ?? ""] : []))
     .join("\n")
     .trim();
+}
+
+/**
+ * The named blocks on a doc comment — `@install`, `@setup`, `@adopt` and nothing else.
+ *
+ * The tag set is the page's, declared once in tools/domain.ts, so a tag nobody rendered cannot sit
+ * in a pack looking like documentation. An unknown tag is left where it is: TypeScript's own
+ * `@param` and `@see` are none of this file's business.
+ */
+function docTags(node: ts.Node): DocBlock[] {
+  const known = new Set(DOC_BLOCKS.map((block) => block.tag));
+  return ts
+    .getJSDocCommentsAndTags(node)
+    .flatMap((doc) => (ts.isJSDoc(doc) ? [...(doc.tags ?? [])] : []))
+    .flatMap((tag) => {
+      const name = tag.tagName.text;
+      return known.has(name) ? [{ tag: name, body: (ts.getTextOfJSDocComment(tag.comment) ?? "").trim() }] : [];
+    });
 }
 
 /** The object literal a `definePack` call states its entries with, through the factory if there is one. */
@@ -139,6 +170,7 @@ function parse(file: string): Parsed {
   const check = new Map<string, string>();
   let lead = "";
   let wanted = "";
+  let tags: DocBlock[] = [];
 
   ts.forEachChild(source, (node) => {
     if (!ts.isVariableStatement(node)) return;
@@ -146,6 +178,7 @@ function parse(file: string): Parsed {
     if (initializer === undefined || !ts.isCallExpression(initializer)) return;
     if (initializer.expression.getText() !== "definePack") return;
     lead = docComment(node);
+    tags = docTags(node);
     wanted = paramTypeName(initializer);
     const object = entriesObject(initializer);
     if (object !== undefined) walk(object, "", why, check);
@@ -164,7 +197,7 @@ function parse(file: string): Parsed {
       }
     });
 
-  return { lead, params, why, check };
+  return { lead, blocks: tags, params, why, check };
 }
 
 // ── joining the two halves ───────────────────────────────────────────────────
@@ -204,7 +237,6 @@ function read(shipped: Shipped): PackDoc {
   if (!load.ok) throw new Error(`${shipped.name} does not load: ${load.refusals.map((r) => r.detail).join("; ")}`);
 
   const entries: EntryDoc[] = load.entries.map((entry) => {
-    const check = parsed.check.get(entry.key) ?? "";
     return {
       id: entry.id,
       key: entry.key,
@@ -215,8 +247,8 @@ function read(shipped: Shipped): PackDoc {
       on: entry.spec.on ?? [],
       ignore: entry.spec.ignore ?? [],
       categories: entry.categories,
-      check,
-      checkName: checkName(check),
+      settings: settingRows(entry.settings),
+      checkName: checkName(parsed.check.get(entry.key) ?? ""),
       says: says(entry.spec),
       cases: caseLines((entry.spec as GuardrailSpec).test),
       disabled: entry.spec.disabled === undefined ? "" : (entry.spec.disabled.reason ?? "no reason given"),
@@ -226,6 +258,7 @@ function read(shipped: Shipped): PackDoc {
   return {
     name: shipped.name,
     lead: parsed.lead,
+    blocks: parsed.blocks,
     params: parsed.params,
     bind: shipped.params === undefined ? `pack(${shipped.name})` : `pack(${shipped.name}, ${literal(shipped.params)})`,
     entries,

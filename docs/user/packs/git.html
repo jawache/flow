@@ -37,6 +37,8 @@
   .entry .facts dt{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;padding-top:.2rem}
   .entry .facts dd{margin:0}
   .entry .facts pre{margin:.2rem 0}
+  .set{margin:.15rem 0}
+  .set b{font-weight:700;font-size:.82rem;color:#4a5260;font-family:ui-monospace, Menlo, monospace}
   .why{border-left:4px solid var(--parent);background:#eef4fa;padding:.6rem .9rem;border-radius:0 8px 8px 0;margin:.8rem 0;font-size:.95rem}
   .why.gap{border-left-color:#c2a33a;background:var(--gapbg);color:#6b5a1e;font-style:italic}
   .why p:first-child{margin-top:0} .why p:last-child{margin-bottom:0}
@@ -64,7 +66,9 @@
   <h1>The <code>git</code> pack</h1>
   <p class="scope">7 guardrails · 1 breadcrumb · fires at: session · command · write · commit · takes 1 parameter</p>
 
-  <p class="lead gap">This pack has no lead. A doc comment on <code>definePack</code> is what says, in a paragraph, what the pack is for.</p>
+  <div class="lead"><p>Conventional commit headers, computed versions, and nothing destroys uncommitted work.</p>
+<p>The <code>node/</code> sub-group is release discipline that happens to be spelled in package.json — a
+Python or Rust repo binds the same two jobs against pyproject.toml or Cargo.toml.</p></div>
 
   <p class="gen">Generated from <code>packs/git.ts</code> by <code>just docs-packs</code>. Edit the pack, not this page; the commit gate refuses a page that has drifted from its pack.</p>
 
@@ -87,6 +91,17 @@ import { git } from &quot;@jawache/flow/packs&quot;;
 export default defineConfig([pack(git, { release: &quot;./ci.sh release&quot; })]);</code></pre>
   <p>Any entry below can be turned off in the config, as a committed change visible in review: <code>override(git.orientation).disabled("why")</code>.</p>
 
+  <h2 id="setup">What the repo needs in place</h2>
+<p>A release path the repo really has, named as the <code>release</code> parameter: the recipe that
+computes the next version from the commit headers, writes the changelog and tags. The version
+rules refuse a hand-edited version in favour of it, so a repo without one has nowhere to send a
+blocked reader.</p>
+
+  <h2 id="adopt">Adopting it</h2>
+<p>Bind it in a repo that already writes conventional commits, or expect the header rule to
+refuse the first few commits while everyone re-learns the format — that is the rule working, and
+<code>flow status</code> will show it firing.</p>
+
   <h2 id="entries">Entries</h2>
   <ul class="toc">
     <li><span class="id"><a href="#orientation">git.orientation</a></span><span class="badge crumb">breadcrumb</span><span class="d">The whole commit contract — how commits are written here, how versions are computed, what is blocked.</span></li>
@@ -108,7 +123,9 @@ export default defineConfig([pack(git, { release: &quot;./ci.sh release&quot; })
       <dt>Categories</dt><dd>every session</dd>
     </dl>
     <h3>Why it exists</h3>
-    <div class="why gap"><p>Not stated. A breadcrumb owes a doc comment on its key saying what goes wrong in the repo without it.</p></div>
+    <div class="why"><p>Without it, the commit surface is learned by trial and refusal: an agent writes a header the
+changelog cannot read, reaches for a force push, or discards uncommitted work with a command
+that has no undo.</p></div>
     <h3>What the agent reads</h3>
     <div class="says">Commits, PRs and issues carry NO Claude/Anthropic attribution — no Co-Authored-By line, no &quot;Generated with Claude&quot;, no mention. Author them as your own.
 Commit headers speak Conventional Commits — `type(scope)!: description`. The TYPE is your judgement: `fix` patches behaviour, `feat` adds it, `refactor` changes neither (and must not change test expectations); a `!` or a `BREAKING CHANGE:` footer drives the SemVer major. The grammar is enforced; the choice is yours.
@@ -124,15 +141,8 @@ A `git checkout` / `git restore` / `reset --hard` / `clean -f` that would silent
       <dt>Refuses at</dt><dd>a shell command is about to run</dd>
       <dt>Watches</dt><dd>—</dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/ban-commands.html"><code>banCommands</code></a><pre><code>banCommands({
-        ban: [
-          `git commit[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(${VENDOR}|[Aa]nthropic)`,
-          `git commit[\\s\\S]*[Gg]enerated with[\\s\\S]*${VENDOR}`,
-          `git commit[\\s\\S]*(${SITE}|🤖 Generated)`,
-          `gh (pr|issue)[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(${VENDOR}|[Aa]nthropic)`,
-          `gh (pr|issue)[\\s\\S]*(${SITE}|🤖 Generated)`,
-        ],
-      })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/ban-commands.html"><code>banCommands</code></a>
+      <div class="set"><b>ban</b> <code>git commit[\s\S]*[Cc]o-[Aa]uthored-[Bb]y:[\s\S]*(Claude|[Aa]nthropic) · git commit[\s\S]*[Gg]enerated with[\s\S]*Claude · git commit[\s\S]*(claude\.com/claude-code|🤖 Generated) · gh (pr|issue)[\s\S]*[Cc]o-[Aa]uthored-[Bb]y:[\s\S]*(Claude|[Aa]nthropic) · gh (pr|issue)[\s\S]*(claude\.com/claude-code|🤖 Generated)</code></div></dd>
     </dl>
     <h3>What the agent reads when refused</h3>
     <div class="says">Commit / PR / issue body contains Claude or Anthropic attribution. Remove it (the Co-Authored-By line, the 'Generated with Claude' line, any Claude/Anthropic mention) and retry.</div>
@@ -150,7 +160,7 @@ Co-Authored-By: Claude &lt;noreply@anthropic.com&gt;&quot;</code></li><li>runnin
       <dt>Refuses at</dt><dd>a shell command is about to run</dd>
       <dt>Watches</dt><dd>—</dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/no-git-discard.html"><code>noGitDiscard</code></a><pre><code>noGitDiscard({})</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/no-git-discard.html"><code>noGitDiscard</code></a> — <span class="none">no options; the sentence's own scope is the whole rule</span></dd>
     </dl>
     <h3>What the agent reads when refused</h3>
     <div class="says">This git command would discard uncommitted edits with no undo. Use `git stash` instead — it's recoverable. There is no opt-out token; disabling this entry in flow.config.ts is the visible route.</div>
@@ -167,12 +177,8 @@ git checkout -- a.ts</code></li><li>running <code>git -C ../other checkout -- sr
       <dt>Refuses at</dt><dd>a shell command is about to run</dd>
       <dt>Watches</dt><dd>—</dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/ban-commands.html"><code>banCommands</code></a><pre><code>banCommands({
-        ban: [
-          &quot;(?:^|[\\n;&amp;|(]\\s*)\\s*git\\s+push[^\\n]*\\s(--force|-f)(\\s|$)&quot;,
-          &quot;(?:^|[\\n;&amp;|(]\\s*)\\s*git\\s+push[^\\n]*--force-with-lease&quot;,
-        ],
-      })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/ban-commands.html"><code>banCommands</code></a>
+      <div class="set"><b>ban</b> <code>(?:^|[\n;&amp;|(]\s*)\s*git\s+push[^\n]*\s(--force|-f)(\s|$) · (?:^|[\n;&amp;|(]\s*)\s*git\s+push[^\n]*--force-with-lease</code></div></dd>
     </dl>
     <h3>What the agent reads when refused</h3>
     <div class="says">Force-push rewrites history that other clones (and every open PR) already have — the one loss no stash can undo. Push a new commit that corrects the old one. A repo whose workflow genuinely rewrites a scratch remote disables this entry in flow.config.ts, visibly.</div>
@@ -190,7 +196,8 @@ EOF</code></li></ul></div><div class="case stop"><b>blocks</b><ul><li>running <c
       <dt>Refuses at</dt><dd>a shell command is about to run</dd>
       <dt>Watches</dt><dd>—</dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/conventional-commit.html"><code>conventionalCommit</code></a><pre><code>conventionalCommit({ types: TYPES })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/conventional-commit.html"><code>conventionalCommit</code></a>
+      <div class="set"><b>types</b> <code>feat · fix · docs · style · refactor · perf · test · build · ci · chore · revert · release</code></div></dd>
     </dl>
     <h3>What the agent reads when refused</h3>
     <div class="says">Commit header must match Conventional Commits v1.0.0: type(scope)!: description — e.g. `fix(auth): renew session on token refresh`.</div>
@@ -208,7 +215,8 @@ feat: the thing I actually did'</code></li></ul></div></div>
       <dt>Refuses at</dt><dd>a shell command is about to run</dd>
       <dt>Watches</dt><dd>—</dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/ban-commands.html"><code>banCommands</code></a><pre><code>banCommands({ ban: [substitutionInProse([&quot;git\\s+commit\\b[^\\n]*?-{1,2}[a-zA-Z]*m&quot;, &quot;gh\\s+(?:pr|issue)\\b&quot;])] })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/ban-commands.html"><code>banCommands</code></a>
+      <div class="set"><b>ban</b> <code>(?:git\s+commit\b[^\n]*?-{1,2}[a-zA-Z]*m|gh\s+(?:pr|issue)\b)[^&quot;`]*(?:&quot;(?:(?!&lt;&lt;-?')[^&quot;])*&quot;[^&quot;`]*)*&quot;(?:(?!&lt;&lt;-?')[^&quot;])*`</code></div></dd>
     </dl>
     <h3>What the agent reads when refused</h3>
     <div class="says">You are recording prose through a shell command, and a backtick inside a DOUBLE-quoted argument is not Markdown — the shell RUNS it and splices its output into your text before the command ever sees it.
@@ -230,14 +238,13 @@ EOF</code></li><li>running <code>git commit -m 'fix: run </code>just test<code> 
       <dt>Refuses at</dt><dd>a file is written or edited · the commit gate, over the staged set</dd>
       <dt>Watches</dt><dd><code>package.json</code></dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/json-invariant.html"><code>jsonInvariant</code></a><pre><code>jsonInvariant({
-          assert: [
-            {
-              path: &quot;version&quot;,
-              matches: &quot;^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$&quot;,
-            },
-          ],
-        })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/json-invariant.html"><code>jsonInvariant</code></a>
+      <div class="set"><b>assert</b><pre><code>[
+  {
+    &quot;path&quot;: &quot;version&quot;,
+    &quot;matches&quot;: &quot;^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$&quot;
+  }
+]</code></pre></div></dd>
     </dl>
     <h3>What the agent reads when refused</h3>
     <div class="says">package.json `version` must be valid SemVer 2.0.0 (MAJOR.MINOR.PATCH[-prerelease][+build]).</div>
@@ -253,7 +260,9 @@ EOF</code></li><li>running <code>git commit -m 'fix: run </code>just test<code> 
       <dt>Refuses at</dt><dd>a shell command is about to run</dd>
       <dt>Watches</dt><dd>—</dd>
       <dt>Categories</dt><dd>every session</dd>
-      <dt>Check</dt><dd><a href="../checks/no-hand-edited-version.html"><code>noHandEditedVersion</code></a><pre><code>noHandEditedVersion({ versionFile: &quot;package.json&quot;, recipe: repo.release })</code></pre></dd>
+      <dt>Check</dt><dd><a href="../checks/no-hand-edited-version.html"><code>noHandEditedVersion</code></a>
+      <div class="set"><b>versionFile</b> <code>package.json</code></div>
+      <div class="set"><b>recipe</b> <code>./ci.sh release</code></div></dd>
     </dl>
     <h3>What the agent reads when refused</h3>
     <div class="says">The version is computed from the commit history at release time — run `./ci.sh release`, which writes the version, the changelog and the tag together. A real release commit (`release:` / `chore(release):`) passes.</div>

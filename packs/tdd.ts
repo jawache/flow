@@ -1,17 +1,9 @@
-// flow/packs/tdd.ts — test-first artefacts exist; tests test behaviour, not implementation; the suite
-// gates the commit.
+// flow/packs/tdd.ts — the testing discipline.
 // Subtlety: the sibling-test trio lives in `fcis`, not here; `commitRunsTests` takes the suite recipe as a mandatory parameter rather than defaulting to `just test`.
 //
 // The sibling-test machinery (hasTest · exportsTested · coverageGate) is NOT here — `fcis` owns
 // the trio, scoped to the pure homes it is handed as a parameter. The ruling and its reasons are
 // written at the trio's old spot below, where whoever comes looking for it will land.
-//
-// `commitRunsTests` takes the suite recipe as a mandatory PARAMETER rather than defaulting to
-// `just test`: which command is the deterministic gate is a repo's fact, and a default is a rule
-// that runs the wrong suite in every repo whose gate has another name.
-//
-// The `vitest/` sub-group holds FRAMEWORK spellings rather than testing principles: a repo on
-// another runner disables the four of them without losing the artefacts or the gate.
 
 import { astGrep, breadcrumb, commit, definePack, execPasses, guardrail, touch, write } from "../index.ts";
 
@@ -23,7 +15,30 @@ export interface Suite {
   readonly run: string;
 }
 
+/**
+ * Test-first artefacts exist; tests test behaviour, not implementation; the suite gates the commit.
+ *
+ * `commitRunsTests` takes the suite recipe as a mandatory PARAMETER rather than defaulting to
+ * `just test`: which command is the deterministic gate is a repo's fact, and a default is a rule
+ * that runs the wrong suite in every repo whose gate has another name.
+ *
+ * The `vitest/` sub-group holds FRAMEWORK spellings rather than testing principles: a repo on
+ * another runner disables the four of them without losing the artefacts or the gate.
+ *
+ * @install vitest, unless the four `vitestIdioms` entries are disabled — every one of them reads a
+ * vitest spelling.
+ * @setup One recipe that runs the deterministic suite, named as the `run` parameter. It is what
+ * the commit gate runs, so it has to be the whole suite and it has to be green.
+ * @adopt A repo on another runner binds the pack and disables `vitest` and the `vitestIdioms`
+ * group by name, keeping the strategy breadcrumb and the commit gate — that split is why the
+ * framework rules are a sub-group rather than four loose entries.
+ */
 export const tdd = definePack("tdd", (repo: Suite) => ({
+  /**
+   * Without it, testing effort goes where it is easiest to write rather than where confidence is
+   * cheapest — a thick unit layer pinned to implementation details, which then refuses every
+   * behaviour-preserving refactor.
+   */
   testingStrategy: breadcrumb()
     .at(touch)
     .on("**/*.test.*", "**/*.spec.*", "tests/**")

@@ -18,6 +18,7 @@ import {
   type Cases,
   chain,
   type Check,
+  checkSettings,
   command,
   commit,
   type ConfigSentence,
@@ -336,7 +337,7 @@ describe("cannedWorld — the ONE recorded world", () => {
 });
 
 describe("defineCheck", () => {
-  it("hands back the factory, so options close over into a plain check", async () => {
+  it("builds a plain check whose options close over into it", async () => {
     const bansWord = defineCheck((opts: { word: string }): Check => {
       return (c) => (c.file?.content.includes(opts.word) ? c.fail(`found ${opts.word}`) : c.ok());
     });
@@ -357,6 +358,23 @@ describe("defineCheck", () => {
     const red = ctx({ exec: () => Promise.resolve({ stdout: "", stderr: "boom", code: 1 }) });
     expect(await suitePasses({ run: "just test" })(red)).toEqual({ ok: false, detail: "just test failed" });
     expect(await suitePasses({ run: "just test" })(ctx())).toEqual(ok);
+  });
+
+  // The settings a check was configured with survive on it, which is what lets a reader be told
+  // what a rule really watches — a closure alone answers nothing, and the pack pages printed the
+  // source of the call instead until this existed.
+  it("keeps the options ON the check, and a check made any other way carries none", () => {
+    const bansWord = defineCheck((opts: { word: string }): Check => (c) => (c.file?.content.includes(opts.word) ? c.fail() : c.ok()));
+
+    expect(checkSettings(bansWord({ word: "TODO" }))).toEqual({ word: "TODO" });
+    expect(checkSettings((c) => c.ok())).toBeUndefined();
+    expect(checkSettings(undefined)).toBeUndefined();
+  });
+
+  it("keeps them off every enumeration — a check is still an ordinary function", () => {
+    const check = defineCheck((_opts: { word: string }): Check => () => ({ ok: true }))({ word: "TODO" });
+    expect(Object.keys(check)).toEqual([]);
+    expect(JSON.stringify({ check })).toBe("{}");
   });
 });
 

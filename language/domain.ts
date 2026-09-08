@@ -356,16 +356,43 @@ export function makeCtx(moment: Moment, facts: Partial<Ctx>, world: World): Ctx 
   };
 }
 
+/** The options a configured check was built with, riding on the check itself. Never enumerable. */
+const SETTINGS = Symbol.for("flow.settings");
+
 /**
  * Declare a CONFIGURED check: a function that takes options and returns a check.
  *
- * It is an identity function and that is deliberate — there is no framework machinery here, only
- * JavaScript, and its whole job is to give `ctx` its type inside the closure so the body is
- * written against the contract with no annotation. The other two forms need nothing at all: an
- * inline check is a lambda in the sentence, and a named one is `export const x: Check = …`.
+ * Its whole job is to give `ctx` its type inside the closure, so the body is written against the
+ * contract with no annotation. The other two forms need nothing at all: an inline check is a
+ * lambda in the sentence, and a named one is `export const x: Check = …`.
+ *
+ * IT DOES ONE THING BESIDES, and it was a plain identity function until it did: the options a
+ * check was configured with are kept ON the returned check, under a symbol nothing enumerates. A
+ * check is a closure, so once it is built the settings inside it are unreachable — and a reader
+ * that cannot see them cannot say what a rule really watches. The generated pack pages printed the
+ * `.check(…)` SOURCE instead, which is how `noGitDiscard({})`, a bare `TESTS` constant and a
+ * helper call reached a page as the whole description of a rule. Read back through `settings` on
+ * the loaded entry they are RESOLVED values: the globs a parameter supplied, the recipe a repo
+ * named. Nothing in the run reads them — the engine calls the check and asks it nothing else — so
+ * this cannot change what any rule decides.
  */
 export function defineCheck<Options, C extends Check>(factory: (options: Options) => C): (options: Options) => C {
-  return factory;
+  return (options: Options): C => {
+    const check = factory(options);
+    // On the check, not in a side table: a check outlives the call that made it — overlaid, copied
+    // into a draft, handed to the runner — and every one of those carries the function itself. A
+    // WeakMap here would be a second thing to keep in step.
+    Object.defineProperty(check, SETTINGS, { value: options, enumerable: false, configurable: true });
+    return check;
+  };
+}
+
+/**
+ * The options a check was configured with, or `undefined` for one that never came through
+ * `defineCheck` — an inline lambda in a sentence, or a bespoke `const x: Check = …`.
+ */
+export function checkSettings(check: Check | undefined): unknown {
+  return check === undefined ? undefined : (check as { readonly [SETTINGS]?: unknown })[SETTINGS];
 }
 
 // ── cases: a canned ctx, declared on the entry ───────────────────────────────
@@ -1211,6 +1238,12 @@ export interface LoadedEntry {
   readonly categories: readonly string[];
   /** The engine phases this entry fires at. Empty for a breadcrumb, which has no rail. */
   readonly phases: readonly string[];
+  /**
+   * The options this entry's check was configured with, RESOLVED — what a parameter supplied, not
+   * what the source typed. `undefined` for a breadcrumb, and for a check that never came through
+   * `defineCheck`. Nothing in the run reads it; it is how a reader is told what a rule watches.
+   */
+  readonly settings?: unknown;
 }
 
 export type LoadResult =
@@ -1324,6 +1357,7 @@ export function loadConfig(config: FlowConfig): LoadResult {
       source: d.source,
       categories: (d.spec.for ?? []).map((c) => c.name),
       phases: d.spec.kind === "guardrail" ? phasesOf(d.spec.at ?? []) : [],
+      settings: d.spec.kind === "guardrail" ? checkSettings(d.spec.check) : undefined,
     })),
   };
 }

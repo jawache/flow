@@ -1,18 +1,4 @@
-// flow/packs/work.ts — the WORK LIFECYCLE's rungs: who is acting, and what each rung may do.
-//
-// A pack for repos that run the `work` lifecycle skill — spec · plan · start · build · review ·
-// reflect · complete. It names the three rungs the lifecycle has (parent · builder · checker),
-// binds one rule per rung to keep them from doing each other's jobs, and adds the two rules about
-// the commands that write the journal: the inbox is the human's queue, and prose recorded through
-// a shell is prose the shell can rewrite first.
-//
-// IT IMPORTS NOTHING FROM WORK. It is a plain consumer of flow's public door, exactly like every
-// other pack here, and it knows the work CLI only as command strings on a rail. That is what lets
-// flow ship it without depending on the tool it is about.
-//
-// flow ships no category names and never will: what a rung is called is a property of the way a
-// team works, not of a guard engine. These three are the WORK lifecycle's, defined here beside the
-// rules that bind to them — a builder may not do a parent's job, a checker may not write.
+// flow/packs/work.ts — the WORK LIFECYCLE's rungs.
 //
 // EVERY ONE OF THEM READS HOST-WRITTEN EVIDENCE AND NOTHING ELSE. `spawnedAs` enforces the order
 // the 335-transcript probe settled (flow F3): the sidecar's `agentType` decides and ends the read;
@@ -84,6 +70,29 @@ export const checker = defineCategory(
   }),
 );
 
+/**
+ * The WORK LIFECYCLE's rungs: who is acting, and what each rung may do.
+ *
+ * A pack for repos that run the `work` lifecycle skill — spec · plan · start · build · review ·
+ * reflect · complete. It names the three rungs the lifecycle has (parent · builder · checker),
+ * binds one rule per rung to keep them from doing each other's jobs, and adds the two rules about
+ * the commands that write the journal: the inbox is the human's queue, and prose recorded through
+ * a shell is prose the shell can rewrite first.
+ *
+ * IT IMPORTS NOTHING FROM WORK. It is a plain consumer of flow's public door, exactly like every
+ * other pack here, and it knows the work CLI only as command strings on a rail. That is what lets
+ * flow ship it without depending on the tool it is about.
+ *
+ * flow ships no category names and never will: what a rung is called is a property of the way a
+ * team works, not of a guard engine. These three are the WORK lifecycle's, defined here beside the
+ * rules that bind to them — a builder may not do a parent's job, a checker may not write.
+ *
+ * @install The `work` CLI and its lifecycle skill. Every rule here reads a `work …` command line,
+ * so in a repo that does not run the lifecycle they are five rules that can never fire.
+ * @adopt Bind it only in a repo whose tasks are actually run through the lifecycle. The three rung
+ * rules are scoped to categories this pack defines, so they judge nobody until a session is
+ * classified as a builder or a checker — a human at a keyboard is neither.
+ */
 export const work = definePack("work", {
   // ── THE LADDER, mechanised ──
   //
