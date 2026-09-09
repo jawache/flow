@@ -18,6 +18,10 @@ import {
   esc,
   EXAMPLE,
   fenceFault,
+  localLinks,
+  unbalanced,
+  unescapedInCode,
+  unknownElements,
   firstSentence,
   kebab,
   line,
@@ -457,5 +461,72 @@ describe("the model", () => {
 
   it("declares the tag set once, and the page renders them in that order", () => {
     expect(DOC_BLOCKS.map((block) => block.tag)).toEqual(["install", "setup", "adopt"]);
+  });
+});
+
+// ── the page as MARKUP ───────────────────────────────────────────────────────
+//
+// Every fixture below is a page that a browser accepts without a word of complaint. That is the
+// whole difficulty: none of these is a broken FILE, each is a file whose meaning the parser
+// changes, and the only way to see it is to ask what the parser will do.
+
+describe("what a parser will make of a page", () => {
+  const page = (body: string): string => `<!doctype html>\n<html lang="en">\n<head><title>t</title></head>\n<body>\n${body}\n</body>\n</html>\n`;
+
+  describe("unbalanced — a tag that never closes, or one that closes the wrong thing", () => {
+    it("passes a page whose markup balances, implicit closes and all", () => {
+      expect(unbalanced(page("<main><ul><li>one<li>two</ul><table><tr><td>a<td>b</table></main>"))).toStrictEqual([]);
+    });
+
+    it("names a tag that never closes, and where it opened", () => {
+      const faults = unbalanced(page("<main><div>lost"));
+      expect(faults.join(" ")).toContain("<div> never closed");
+      expect(faults.join(" ")).toContain("<main> never closed");
+    });
+
+    it("names a closing tag that shuts the wrong element", () => {
+      expect(unbalanced(page("<main><span>x</main></span>")).join(" ")).toContain("</main> closes <span>");
+    });
+
+    it("reads no markup inside <style> or <script>, where a `<` is arithmetic", () => {
+      expect(unbalanced(page("<main><script>if (a<b) go();</script><style>a{}</style></main>"))).toStrictEqual([]);
+    });
+  });
+
+  describe("unescapedInCode — the shapes a reader is meant to type", () => {
+    it("passes a code block whose brackets are already entities", () => {
+      expect(unescapedInCode(page("<pre><code>put &lt;name&gt; here</code></pre>"))).toStrictEqual([]);
+    });
+
+    it("catches the fault that shipped on the guidebook", () => {
+      // Verbatim from docs/user/00-guide.html before F3: the parser read <name> and <why> as
+      // elements and rendered them as nothing, so the page taught `put new-dep:  —  in the message`.
+      const faults = unescapedInCode(page("<pre><code>.message(\"put `new-dep: <name> — <why>` in the message\")</code></pre>"));
+      expect(faults).toHaveLength(2);
+      expect(faults[0]).toContain("unescaped `<` inside <code>");
+    });
+
+    it("does not mistake a <code> nested inside a <pre> for the fault", () => {
+      expect(unescapedInCode(page("<pre><code>plain text</code></pre>"))).toStrictEqual([]);
+    });
+  });
+
+  describe("unknownElements — a `<word>` the browser deletes", () => {
+    it("passes a page built only of elements that exist", () => {
+      expect(unknownElements(page("<main><p>a <code>b</code> <em>c</em></p><svg><path/></svg></main>"))).toStrictEqual([]);
+    });
+
+    it("names the invented element and says what becomes of it", () => {
+      const faults = unknownElements(page("<main><p>put <name> — <why> in it</p></main>"));
+      expect(faults).toHaveLength(2);
+      expect(faults[0]).toContain("renders as nothing");
+    });
+  });
+
+  describe("localLinks — what has to be on disk", () => {
+    it("returns the relative targets and drops the fragment, the absolute and the external", () => {
+      const links = localLinks(page('<a href="./a.html#x">a</a><a href="https://x.dev">b</a><a href="#top">c</a><img src="i.png">'));
+      expect(links).toStrictEqual(["./a.html", "i.png"]);
+    });
   });
 });

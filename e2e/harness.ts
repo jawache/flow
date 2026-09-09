@@ -199,3 +199,40 @@ export function cleanBundles(): void {
   rmSync(bundleRoot, { recursive: true, force: true });
   bundleRoot = null;
 }
+
+/**
+ * THE FOUR WAYS A CONFIG STOPS LOADING — a breaker per way, given the config's own text.
+ *
+ * It lives here rather than in either suite because both need it and they need it to be the SAME
+ * four. `live.test.ts` drives them through the hook rail (does the repair get through, does
+ * everything else refuse, does the turn end); `product.test.ts` drives them through the verbs
+ * (does every one of them answer 2). A second copy in either file is a copy that would stop
+ * agreeing about what "broken" means, and the whole F3 finding was that the two ways of breaking
+ * had drifted into two behaviours while everyone believed they were one.
+ *
+ * THE FIRST will not import. THE OTHER THREE import perfectly and the grammar refuses them — and
+ * the second of those, a deleted `.message(…)`, is the break the README and the guidebook both
+ * tell a reader to make, which is why it is the one that mattered.
+ *
+ * Each breaker is a text edit, so it works on any config carrying the shape it names: the deleted
+ * `.message` needs one, and the last two rewrite the `defineConfig([…])` line the caller passes in.
+ */
+export const BREAKS: Readonly<Record<string, (good: string) => string>> = {
+  "will not import at all": (good) => `${good}\nthis is not typescript at all(((\n`,
+  "a deleted .message(…)": (good) => good.replace(/\n\s*\.message\([^\n]*\n/, "\n"),
+  "an override naming an entry the pack does not have": (good) =>
+    good
+      .replace(/^import \{/m, "import { override,")
+      .replace(/export default defineConfig\(\[(.*)\]\);/s, (_m, bound: string) =>
+        `export default defineConfig([${bound}, override((demo as unknown as Record<string, never>)["notAnEntry"]).disabled("x")]);`,
+      ),
+  "a mandatory parameter nobody supplied": (good) =>
+    good.replace(/export default defineConfig\(\[(.*)\]\);/s, (_m, bound: string) =>
+      [
+        `const needs = definePack("needs", (repo: { run: string }) => ({`,
+        `  gate: guardrail().at(commit).check(() => ({ ok: true })).message(repo.run).test({ pass: [], block: [{ staged: ["a.txt"] }] }),`,
+        `}));`,
+        `export default defineConfig([${bound}, pack(needs)]);`,
+      ].join("\n"),
+    ),
+};

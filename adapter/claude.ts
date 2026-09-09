@@ -590,6 +590,11 @@ export async function runCommit(root: string, files: readonly string[]): Promise
   const regime = await loadRegime(root);
   if (regime.kind === "none") return ALLOW;
   if (isOff(root)) return ALLOW;
+  // THE GATE USES THE ENGINE'S OWN FAULT, not `whileBroken` next door, and the difference is the
+  // point rather than an oversight: `whileBroken` exists to carve out the repair and to let a turn
+  // end, and the commit moment has neither. Nothing written under the repair exception may reach a
+  // commit until the config loads green, so this rail stays fully shut however the config broke —
+  // the import fault here, and a load refusal through `guard()`'s own `!load.ok` branch below.
   if (regime.kind === "broken") return refused([{ moment: "commit", block: fault(regime.message) }]) ?? ALLOW;
   if (files.length === 0) return ALLOW;
 

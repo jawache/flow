@@ -545,14 +545,28 @@ export function repairs(event: AdapterEvent, surface: readonly string[]): boolea
  * TURN-END IS TOLD, NOT REFUSED. Holding a turn open on a broken config prevents nothing risky —
  * every write, command and commit is already refused and the commit gate stays shut — while it does
  * stop the agent handing back to the one person who can fix it. So the fault is reported and the
- * turn ends. `told` is that sentence, and it is separate from `shown` because the Stop rail has no
- * context channel to inject prose into: the shell writes it to stderr and answers 0.
+ * turn ends.
+ *
+ * THE ENGINE HAS ITS OWN PAIR OF `!load.ok` BRANCHES — `guard()` blocks with the fault, `brief()`
+ * notices it — and they are NOT this rule written twice. They answer a different question: "there
+ * is nothing to run, say so", for the two callers that have no repair to make and no turn to end,
+ * namely `replay` and the commit gate. Deleting them was considered at F3.B3 and measured first:
+ * `flow replay` over a config the grammar refuses reaches `brief()`'s branch and emits the fault
+ * notice, so the branch is live and its deletion would have dropped that notice silently. What IS
+ * shared is the shape — `Outage extends Answer`, so the hook rail's answer and every other answer
+ * are one type rather than two that happen to match.
  */
-export function whileBroken(
-  events: readonly AdapterEvent[],
-  surface: readonly string[],
-  message: string,
-): { readonly refused: readonly Refused[]; readonly shown: readonly Shown[]; readonly told: string | null } {
+export interface Outage extends Answer {
+  /**
+   * The sentence turn-end is TOLD instead of being refused with, or null when no turn ended here.
+   *
+   * It is not `shown`: the Stop rail has no context channel to inject prose into, which is what
+   * `DELIVERS` already says, so the shell writes this one to stderr and answers 0.
+   */
+  readonly told: string | null;
+}
+
+export function whileBroken(events: readonly AdapterEvent[], surface: readonly string[], message: string): Outage {
   const rails = events.filter((event) => event.rail === "guard");
   return {
     refused: rails

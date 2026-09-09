@@ -714,3 +714,109 @@ export function renderPacksIndex(docs: readonly PackDoc[]): string {
     "",
   ].join("\n");
 }
+
+// ── the page as MARKUP: what a browser will make of what we wrote ────────────
+//
+// The pages under docs/user/ are the surface flow is read on, and half of them are hand-written
+// rather than generated — so nothing regenerates them and nothing compared them with anything.
+// F3 found the cost live: `new-dep: <name> — <why>` sat unescaped inside a code block on the
+// guidebook, a parser read the two placeholders as unknown ELEMENTS, and every reader was taught
+// `put new-dep:  —  in the message`. The words the sentence existed to teach were the words the
+// browser deleted, and every byte of the file was exactly as its author typed it.
+//
+// So these three ask what a PARSER will do, not what the text says. They are here in the pure
+// home because that is what makes them assertable over a fixture as well as over the real folder.
+
+/** Elements that carry no closing tag, plus the doctype, which is not one. */
+const VOID_ELEMENTS = new Set(
+  "area base br col embed hr img input link meta param source track wbr".split(" "),
+);
+
+/** Elements an HTML parser closes for you, so an unclosed one is legal markup and not a fault. */
+const SELF_CLOSING_IN_PRACTICE = new Set("li p td th tr thead tbody option dt dd".split(" "));
+
+/** Every element name HTML actually has, for the sweep below. Anything else renders as nothing. */
+const HTML_ELEMENTS = new Set(
+  ("a abbr address area article aside audio b base bdi bdo blockquote body br button canvas caption cite code col colgroup data datalist dd del details dfn dialog div dl dt em embed fieldset figcaption figure footer form h1 h2 h3 h4 h5 h6 head header hgroup hr html i iframe img input ins kbd label legend li link main map mark menu meta meter nav noscript object ol optgroup option output p param picture pre progress q rp rt ruby s samp script section select slot small source span strong style sub summary sup table tbody td template textarea tfoot th thead time title tr track u ul var video wbr " +
+    "svg path circle rect line polyline polygon g text defs marker").split(" "),
+);
+
+/** `<style>` and `<script>` bodies are not markup — blanked, keeping the line count for the report. */
+function withoutRawText(html: string): string {
+  return html.replace(/<(style|script)\b[^>]*>[\s\S]*?<\/\1>/gi, (block) => block.replace(/[^\n]/g, " "));
+}
+
+const lineOf = (text: string, index: number): number => text.slice(0, index).split("\n").length;
+
+/**
+ * Tags that never close, and closing tags that shut the wrong thing.
+ *
+ * A page whose markup does not balance still renders — that is the trouble with it. The parser
+ * silently reshapes the tree, and what a reader loses is whatever fell inside the element that
+ * should have ended, with no error anywhere to say so.
+ */
+export function unbalanced(html: string): string[] {
+  const text = withoutRawText(html);
+  const faults: string[] = [];
+  const open: { name: string; line: number }[] = [];
+  for (const tag of text.matchAll(/<(\/?)([a-zA-Z][a-zA-Z0-9-]*)\b[^>]*?(\/?)>/g)) {
+    const name = (tag[2] ?? "").toLowerCase();
+    if (VOID_ELEMENTS.has(name) || tag[3] === "/") continue;
+    const at = lineOf(text, tag.index);
+    if (tag[1] === "") {
+      open.push({ name, line: at });
+      continue;
+    }
+    while (open.length > 0 && open.at(-1)?.name !== name && SELF_CLOSING_IN_PRACTICE.has(open.at(-1)?.name ?? "")) open.pop();
+    const top = open.at(-1);
+    if (top === undefined || top.name !== name)
+      faults.push(`line ${at}: </${name}> closes ${top === undefined ? "nothing" : `<${top.name}> opened at line ${top.line}`}`);
+    else open.pop();
+  }
+  for (const stray of open) if (!SELF_CLOSING_IN_PRACTICE.has(stray.name)) faults.push(`line ${stray.line}: <${stray.name}> never closed`);
+  return faults;
+}
+
+/**
+ * A `<` inside a code element that the author meant as text.
+ *
+ * Inside `<code>` every angle bracket must already be an entity, because that is the one place a
+ * page prints the shapes a reader is meant to TYPE — a placeholder, a generic, a shell redirect.
+ * The innermost code element is the subject, so a `<code>` legitimately nested in a `<pre>` is not
+ * mistaken for the fault.
+ */
+export function unescapedInCode(html: string): string[] {
+  const text = withoutRawText(html);
+  const faults: string[] = [];
+  for (const block of text.matchAll(/<code\b[^>]*>((?:(?!<\/?code\b)[\s\S])*?)<\/code>/gi)) {
+    const body = block[1] ?? "";
+    for (const bracket of body.matchAll(/</g)) {
+      const at = bracket.index;
+      faults.push(
+        `line ${lineOf(text, block.index + at)}: unescaped \`<\` inside <code> — ${JSON.stringify(body.slice(Math.max(0, at - 25), at + 35))}`,
+      );
+    }
+  }
+  return faults;
+}
+
+/**
+ * A `<word>` that is not an HTML element, anywhere on the page.
+ *
+ * This is the fault that shipped. The parser accepts an unknown element without complaint and
+ * renders it as nothing at all, so the page looks finished and the words are gone — and the words
+ * in question are placeholders, which is to say the part a reader most needs.
+ */
+export function unknownElements(html: string): string[] {
+  const text = withoutRawText(html);
+  return [...text.matchAll(/<\/?([a-zA-Z][a-zA-Z0-9-]*)\b[^>]*>/g)]
+    .filter((tag) => !HTML_ELEMENTS.has((tag[1] ?? "").toLowerCase()))
+    .map((tag) => `line ${lineOf(text, tag.index)}: ${tag[0]} — not an element, so it renders as nothing`);
+}
+
+/** Every relative href and src on a page — what the caller has to find on disk. */
+export function localLinks(html: string): string[] {
+  return [...withoutRawText(html).matchAll(/(?:href|src)="([^"]+)"/g)]
+    .map((link) => (link[1] ?? "").split("#")[0] ?? "")
+    .filter((path) => path !== "" && !/^(https?:|mailto:|data:)/.test(path));
+}

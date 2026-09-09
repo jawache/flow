@@ -26,6 +26,7 @@ import {
   fixturePack,
   newRepo,
   pre,
+  BREAKS,
   flow as runFlow,
   git as runGit,
   type Ran,
@@ -369,33 +370,6 @@ describe("a config that will not load", () => {
   // that can end the outage, and the doctrine's own instruction — "adjust the change so it passes,
   // then retry" — cannot be obeyed by anything that meets a hook. A human in an editor never hits
   // it. An agent that broke the config is locked out of repairing it.
-  /**
-   * THE FOUR WAYS A CONFIG STOPS LOADING, and the whole point of the list is that they are ONE fact.
-   *
-   * The first will not import. The other three import perfectly and the GRAMMAR refuses them, and
-   * until F3 only the first reached the repair exception — so the break the README and the
-   * guidebook both tell a reader to make, deleting a `.message(…)`, was the one break an agent
-   * could not repair itself out of. Every rail must answer all four the same way.
-   */
-  const BREAKS: Readonly<Record<string, (good: string) => string>> = {
-    "will not import at all": (good) => `${good}\nthis is not typescript at all(((\n`,
-    "a deleted .message(…)": (good) => good.replace(/\n\s*\.message\([^\n]*\n/, "\n"),
-    "an override naming an entry the pack does not have": (good) =>
-      good
-        .replace("import { breadcrumb,", "import { override, breadcrumb,")
-        .replace("pack(demo), pack(house)", 'pack(demo), pack(house), override((demo as unknown as Record<string, never>)["notAnEntry"]).disabled("x")'),
-    "a mandatory parameter nobody supplied": (good) =>
-      good.replace(
-        "export default defineConfig([pack(demo), pack(house)]);",
-        [
-          "const needs = definePack(\"needs\", (repo: { run: string }) => ({",
-          "  gate: guardrail().at(commit).check(() => ({ ok: true })).message(repo.run).test({ pass: [], block: [{ staged: [\"a.txt\"] }] }),",
-          "}));",
-          "export default defineConfig([pack(demo), pack(house), pack(needs)]);",
-        ].join("\n"),
-      ),
-  };
-
   describe("the write that can fix it is allowed through, and nothing else is", () => {
     const withBrokenConfig = (drive: () => void, how = "will not import at all"): void => {
       const good = readFileSync(join(repo, "flow.config.ts"), "utf8");

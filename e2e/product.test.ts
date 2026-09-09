@@ -27,6 +27,7 @@ import {
   pre,
   settingsHome,
   shimBin,
+  BREAKS,
   flow as runFlow,
   git as runGit,
   type Ran,
@@ -251,11 +252,19 @@ function quoted(opening: string): string {
   return (block as string).trim();
 }
 
-/** One machine's output, in the spelling the README quotes. */
-function asQuoted(output: string, repo: string, settingsHome: string): string {
+/**
+ * One machine's output, in the spelling a page quotes.
+ *
+ * THE REPO'S PLACEHOLDER IS AN ARGUMENT because it is the only substitution the two pages disagree
+ * about: the README walks a reader through `/tmp/flow-demo` and the quick start through their own
+ * `…/my-repo`. The checkout and the host's config directory are spelled the same on both, so they
+ * are not arguments — a second copy of this function differing in one string is how the quick
+ * start's transcripts drifted for a release in the first place.
+ */
+function asQuoted(output: string, repo: string, settingsHome: string, repoAs: string = DEMO_REPO): string {
   return output
-    .replaceAll(realpathSync(repo), DEMO_REPO)
-    .replaceAll(repo, DEMO_REPO)
+    .replaceAll(realpathSync(repo), repoAs)
+    .replaceAll(repo, repoAs)
     .replaceAll(realpathSync(builtPackage()), CHECKOUT)
     .replaceAll(builtPackage(), CHECKOUT)
     .replaceAll(PACKAGE.replace(/\/$/, ""), CHECKOUT)
@@ -322,17 +331,9 @@ function paged(page: string, opening: string): string {
 }
 
 describe("the quick start's transcripts", () => {
-  // The page stands in for two paths — the reader's repo and this checkout — and for the host's
-  // config directory, exactly as the README does.
-  const asPaged = (output: string, repo: string, settingsHome: string): string =>
-    output
-      .replaceAll(realpathSync(repo), "…/my-repo")
-      .replaceAll(repo, "…/my-repo")
-      .replaceAll(realpathSync(builtPackage()), CHECKOUT)
-      .replaceAll(builtPackage(), CHECKOUT)
-      .replaceAll(PACKAGE.replace(/\/$/, ""), CHECKOUT)
-      .replaceAll(settingsHome, "~/.claude")
-      .trim();
+  // The page walks a reader through their OWN repo, so that is the one placeholder it spells
+  // differently from the README. Everything else is `asQuoted`'s, unchanged.
+  const MY_REPO = "…/my-repo";
 
   it("are what `flow init`, `flow status`, `flow test` and both refusals really print", () => {
     const mine = newRepo();
@@ -340,7 +341,7 @@ describe("the quick start's transcripts", () => {
     const page = (opening: string): string => paged("01-quick-start.html", opening);
     const said = (args: readonly string[], stdin = ""): string => {
       const ran = runFlow(mine, args, { home: firstTime, bin }, stdin);
-      return asPaged(ran.stdout || ran.stderr, mine, firstTime);
+      return asQuoted(ran.stdout || ran.stderr, mine, firstTime, MY_REPO);
     };
     try {
       expect(said(["init"]), "§2").toBe(page("flow init — created:"));
@@ -417,13 +418,11 @@ describe("the README's exit-code table", () => {
       expect(code(["hook", "pre-tool-use"], forced), "a rule blocked at a hook").toBe(2);
       runGit(repo, ["reset", "bad.txt"]);
 
-      // … or the config would not load, BOTH ways it can fail to. This is the row that was wrong:
-      // status answered 1 for a grammar refusal and 2 for an import fault, one fact under two codes.
-      for (const [how, broken] of [
-        ["will not import", 'import { nope } from "./missing.ts";\nexport default nope;\n'],
-        ["the grammar refuses it", good.replace(/\n\s*\.message\([^\n]*\n/, "\n")],
-      ] as const) {
-        writeFileSync(config, broken);
+      // … or the config would not load — EVERY way it can fail to, from the table `live.test.ts`
+      // drives through the hook rail. This is the row that was wrong: status answered 1 for a
+      // grammar refusal and 2 for an import fault, which is one fact wearing two codes.
+      for (const [how, breaker] of Object.entries(BREAKS)) {
+        writeFileSync(config, breaker(good));
         for (const verb of [["status"], ["test"], ["commit", "flow.config.ts"]])
           expect(code(verb), `${verb[0] as string}, ${how}`).toBe(2);
       }
