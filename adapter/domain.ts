@@ -2402,7 +2402,11 @@ export function initLines(plan: InitPlan, failures: readonly string[]): string[]
   if (plan.config) wrote.push(plan.config.path);
   if (plan.gate) wrote.push(plan.gate.path);
   if (plan.flowDir) wrote.push(`${FLOW_DIR}/ — flow's own state, self-ignoring, never committed`);
-  if (plan.link) wrote.push(`node_modules/@jawache/flow → ${plan.link} (npm link is flow's distribution until it is published)`);
+  // WHY it linked, not what linking is for. The parenthetical used to read "npm link is flow's
+  // distribution until it is published", which stopped being true at 0.1.0 and left the reader
+  // with a line about the project's release state where the reason for a file in their repo
+  // belongs. `npm i -D @jawache/flow` and this line is simply absent.
+  if (plan.link) wrote.push(`node_modules/@jawache/flow → ${plan.link} (a link to the flow that is running — nothing here resolved @jawache/flow)`);
   if (plan.settings) wrote.push(`${plan.settings.path} — ${plan.registered.join(" · ")}`);
   if (plan.hooksPath) wrote.push(SET_HOOKS_PATH);
 

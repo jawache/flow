@@ -17,11 +17,20 @@ install:
 [doc("Build the package — the `flow` binary (dist/flow.mjs), the library a flow.config.ts imports (dist/index.mjs), the packs behind their own subpath export (dist/packs.mjs), and the types for all of it (dist/types/). All four are what `exports` and `files` promise; a bundle without the types would ship a config grammar the editor cannot check.")]
 build:
     node esbuild.mjs
-    npx tsc -p tsconfig.build.json
+    just emit-types
 
 [doc("Build as it ships: minified, and with NO sourcemap comment — the map is not in the package's published files list, so a dev build would point at a file that isn't there.")]
 build-release:
     node esbuild.mjs --production
+    just emit-types
+
+[doc("Emit dist/types/ FROM SCRATCH — the declaration half of the package, and the half that rots. tsc overwrites what it emits and deletes nothing, so a renamed or deleted source leaves its .d.ts behind forever and `npm pack` ships it. The three bundles cannot drift that way (esbuild rewrites all three every run); this tree mirrors the source tree, so it is cleared first.")]
+emit-types:
+    # MEASURED on the eve of 0.1.0, from this very tarball: dist/types/packs/guard.d.ts and
+    # dist/types/packs/checks.d.ts — declarations for two packs deleted commits ago — plus
+    # dist/types/e2e/harness.d.ts, emitted before tsconfig.build.json excluded that folder. Three
+    # files no clean clone could produce, one `npm publish` away from being part of the package.
+    rm -rf dist/types
     npx tsc -p tsconfig.build.json
 
 [doc("Typecheck the whole repo against the shared tsconfig.base.json — the package AND this repo's own guard (flow.config.ts + guards/house.ts), which is ordinary TypeScript and has to typecheck like any other. This is what the commit gate runs.")]
@@ -87,7 +96,7 @@ gate:
 guard-status:
     flow status
 
-[doc("Build the binary, then put `flow` on PATH from this checkout (npm link) — the dogfood loop, and flow's whole distribution until it publishes.")]
+[doc("Build the binary, then put `flow` on PATH from this checkout (npm link) — the dogfood loop, and how you run flow while you are changing it. A guarded repo installs `@jawache/flow` from npm instead.")]
 link:
     just build
     npm link
@@ -123,7 +132,7 @@ release-check:
     just test-commit
     just build-release
     npm pack --dry-run
-    # `private: true` in package.json is the safety catch: npm refuses to publish while it
-    # is set, so no accident can reach the registry. Clearing it is a deliberate step.
+    # READ THE FILE LIST ABOVE before typing the publish line. It is the whole of what strangers
+    # get, `files` is an allowlist, and a package is not unpublishable after 72 hours.
     @echo ''
-    @echo 'To publish, in order:  npm pkg delete private  &&  npm publish  &&  npm pkg set private=true'
+    @echo 'To publish:  npm publish'

@@ -22,8 +22,11 @@
 // breaking change is a minor, a feature is a patch. That is not configurable, and it is right:
 // 0.x makes no compatibility promise there would be anything to demote from.
 //
-// Nothing has been released yet. 0.1.0 is cut when the pack-by-pack content review closes, and
-// `private: true` in package.json is what stops an accident reaching the registry before then.
+// THE FIRST RELEASE WAS THE ONE EXCEPTION, and it is worth knowing why it will not recur. preMajor
+// demotes from the CURRENT version, so a repo sitting at 0.0.1 computes 0.0.2 for a feature and
+// 0.0.2 for a breaking change alike — there was no commit header that could reach 0.1.0. It was cut
+// once with `npx commit-and-tag-version --release-as 0.1.0`, naming the number by hand because
+// nothing else could name it. Every release after it is computed: `just release`, no argument.
 
 export default {
   // The defaults also name bower.json and manifest.json (packageFiles), plus npm-shrinkwrap.json

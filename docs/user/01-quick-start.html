@@ -35,13 +35,14 @@
   <strong>Node&nbsp;&ge;&nbsp;24</strong>.</p>
 
   <h2>1 · Put <code>flow</code> on your PATH, once</h2>
-  <p>flow is not published yet, so it reaches your machine by <code>npm&nbsp;link</code> from a
-  checkout. This is the only step that will disappear the day flow ships on npm.</p>
-<pre><code>git clone https://github.com/jawache/flow.git
-cd flow
-just install            # npm ci from the lockfile
-just link               # builds the binary and puts `flow` on your PATH</code></pre>
-  <p>Undo it any time with <code>npm unlink -g @jawache/flow</code>.</p>
+  <p>One install, and the binary answers in every repo you are about to guard.</p>
+<pre><code>npm i -g @jawache/flow</code></pre>
+  <p>Undo it any time with <code>npm uninstall -g @jawache/flow</code>. In a repo that has a
+  <code>package.json</code> of its own, prefer <code>npm i -D @jawache/flow</code> and
+  <code>npx flow</code>: the version is then pinned in that repo's lockfile, and the link line in
+  §2 does not appear at all. To work <em>on</em> flow rather than with it, clone it and run
+  <code>just install</code> then <code>just link</code>, which puts your checkout on PATH in place
+  of the install.</p>
 
   <h2>2 · Guard a repo</h2>
 <pre><code>cd my-repo              # any git repo
@@ -51,7 +52,7 @@ flow init</code></pre>
   + flow.config.ts
   + .githooks/pre-commit
   + .flow/ — flow's own state, self-ignoring, never committed
-  + node_modules/@jawache/flow → …/flow (npm link is flow's distribution until it is published)
+  + node_modules/@jawache/flow → …/flow (a link to the flow that is running — nothing here resolved @jawache/flow)
   + ~/.claude/settings.json — SessionStart · PreToolUse · PostToolUse · Stop
   + git config core.hooksPath .githooks
   next: `flow status` — what is bound, and what is not wired yet.</code></pre>

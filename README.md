@@ -33,18 +33,27 @@ flow's answer is that **nothing defaults and nothing loads quietly**:
 
 ## Install
 
-flow is not published yet. Until it has been lived on, it reaches a repo by `npm link` from a
-checkout:
+In the repo you want guarded, as a dev dependency — so every clone and every CI run gets the same
+flow, pinned in your lockfile:
 
 ```sh
-git clone https://github.com/jawache/flow.git
-cd flow
-just install            # npm ci from the lockfile
-just link               # builds the package and puts `flow` on your PATH
+npm i -D @jawache/flow
+npx flow init
 ```
 
-Undo it any time with `npm unlink -g @jawache/flow`. You never link it into a guarded repo by
-hand — `flow init` does that itself when nothing resolves, which is the next section.
+Or on your PATH, for a folder with no `package.json` of its own — which is what the five-minute
+walkthrough below uses:
+
+```sh
+npm i -g @jawache/flow
+```
+
+Either way `flow init` does the wiring, and you never link anything by hand. When `@jawache/flow`
+does not resolve from the repo — a global install, a bare demo folder — init links the flow that is
+running and says so on the line. Install it as a dependency instead and that step is simply absent.
+
+To work *on* flow rather than with it: clone it, `just install`, `just link` — the binary then runs
+from your checkout, undone with `npm unlink -g @jawache/flow`.
 
 ## Five minutes, from nothing
 
@@ -60,7 +69,7 @@ flow init — created:
   + flow.config.ts
   + .githooks/pre-commit
   + .flow/ — flow's own state, self-ignoring, never committed
-  + node_modules/@jawache/flow → …/flow (npm link is flow's distribution until it is published)
+  + node_modules/@jawache/flow → …/flow (a link to the flow that is running — nothing here resolved @jawache/flow)
   + ~/.claude/settings.json — SessionStart · PreToolUse · PostToolUse · Stop
   + git config core.hooksPath .githooks
   next: `flow status` — what is bound, and what is not wired yet.
@@ -73,7 +82,7 @@ Six things, and each one is checkable:
 | `flow.config.ts` | flow's own `flow` pack plus a demo guard you can read in one screen — the only file that turns anything on |
 | `.githooks/pre-commit` | the commit gate. Never written over one you already have |
 | `.flow/` | flow's own state and logs. It ignores itself, so your `.gitignore` is untouched |
-| `node_modules/@jawache/flow` | a link, because nothing is published yet. Once flow is on npm, this step disappears |
+| `node_modules/@jawache/flow` | a link to the flow that is running, because this folder resolves no `@jawache/flow` of its own. `npm i -D @jawache/flow` and this row disappears |
 | the host's `settings.json` | four hook registrations, so a coding agent in any repo asks flow first |
 | `core.hooksPath` | what makes git run the gate. It is per-clone, so every fresh checkout runs `flow init` |
 
