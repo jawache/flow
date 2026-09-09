@@ -504,6 +504,28 @@ describe("gitDirPrefix and quoteArg", () => {
     expect(gitDirPrefix("ls -la")).toBe("");
   });
 
+  // THE OTHER WAY OUT OF THIS REPO, and the one a person actually types. Until F3 only git's own
+  // option was read, so `cd other && git checkout x` was judged against the SESSION's tree — where
+  // the path does not exist, so there was nothing to lose and the discard went through.
+  it("reads a leading `cd <path> &&` as the working tree the command is about", () => {
+    expect(gitDirPrefix("cd ../other && git checkout -- x")).toBe("-C '../other'");
+    expect(gitDirPrefix("cd ../other; git checkout -- x")).toBe("-C '../other'");
+  });
+
+  it("chains both, in the order the shell applies them — git chains -C exactly as a shell chains cd", () => {
+    // `cd /a && git -C b status` runs in /a/b, and this says precisely that.
+    expect(gitDirPrefix("cd /a && git -C b status")).toBe("-C '/a' -C 'b'");
+  });
+
+  it("guesses at no `cd` it cannot name", () => {
+    expect(gitDirPrefix("cd && git status"), "a bare cd goes home, and home is not knowable here").toBe("");
+    expect(gitDirPrefix("cd - && git status"), "the previous directory is not a path").toBe("");
+    expect(gitDirPrefix("cd /a"), "no operator after the path, so nothing was chained to it").toBe("");
+    // Only a LEADING cd: one in the middle of a chain may follow another that already moved, and a
+    // line that walks two trees is beyond what one answer can honestly describe.
+    expect(gitDirPrefix("git status && cd /a && git checkout -- x")).toBe("");
+  });
+
   it("single-quotes an argument so nothing in it can be re-parsed", () => {
     expect(quoteArg("a b")).toBe("'a b'");
     // A quote inside single quotes cannot be escaped — POSIX shells have no escape there — so the

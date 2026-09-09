@@ -759,7 +759,7 @@ export function quoteArg(value: string): string {
 }
 
 /**
- * The `-C <path>` prefix a command's first git invocation carries, quoted, or the empty string.
+ * WHICH WORKING TREE THIS COMMAND IS ABOUT, as a `-C` prefix to copy onto every read — or "".
  *
  * It is COPIED rather than resolved. Resolving it to an absolute root needs a root and a cwd to
  * point at one, and a check has neither: inventing a `root` on ctx would put a filesystem fact into
@@ -767,16 +767,40 @@ export function quoteArg(value: string): string {
  * means the shell resolves them exactly as git would have, relative to wherever `ctx.exec` runs —
  * which is the repo.
  *
- * What it prevents: a `git -C ~/other-repo commit` judged against THIS
- * repo's staged state, and vetoed another repo's commit over files it could not see.
+ * TWO WAYS A COMMAND LEAVES THIS REPO, and until F3 only one of them was read.
  *
- * The FIRST invocation decides. One ctx serves the whole command line, and a chain that commits in
- * two different repos is beyond what one answer can honestly describe.
+ *   · `git -C <path> …`   — git's own option.
+ *   · `cd <path> && git …` — the shell's, and the one a person actually types.
+ *
+ * The second was found the way the first was: live, by a guard allowing what it existed to refuse.
+ * The F3 builder ran `git checkout <path>` from a session rooted in another worktree, and every
+ * git read the check made answered about the session's tree, where the path did not exist — so the
+ * discard was judged against a repo it was never aimed at, found nothing to lose, and went through.
+ * A rule that reads the wrong tree does not fail loudly; it passes quietly, which is the whole
+ * failure this package is about.
+ *
+ * BOTH ARE EMITTED, in the order the shell would apply them, because git chains multiple `-C`
+ * options exactly as a shell chains directory changes: `cd /a && git -C b status` runs in `/a/b`,
+ * and `-C '/a' -C 'b'` says precisely that. Nothing has to decide which of the two wins.
+ *
+ * ONLY A LEADING `cd`, and only when an operator follows its path. A `cd` in the middle of a chain
+ * can be preceded by another that already moved, and a command line that walks two trees is beyond
+ * what one answer can honestly describe — the same reason the FIRST git invocation decides below.
+ *
+ * A path the SHELL would have expanded — `~`, a variable — is quoted here and so reaches git
+ * literally, which makes the read fail rather than lie. Every caller treats a failed read as "not
+ * a repo, git owns that error" and passes: a false negative, which is this pack's stated trade.
  */
 export function gitDirPrefix(command: string): string {
-  const first = gitInvocations(command)?.[0];
-  if (!first) return "";
   const out: string[] = [];
+  const tokens = tokenizeCommand(command);
+  const path = tokens?.[1];
+  // `cd <path> &&` or `cd <path>;` at the head of the line. A bare `cd`, a `cd -`, or a `cd` whose
+  // path is not followed by an operator is not a move this can name, so none of them is guessed at.
+  if (tokens?.[0] === "cd" && path !== undefined && !path.startsWith("-") && !OPERATORS.has(path) && OPERATORS.has(tokens[2] ?? ""))
+    out.push("-C", quoteArg(path));
+  const first = gitInvocations(command)?.[0];
+  if (!first) return out.join(" ");
   for (let i = 0; i < first.globals.length - 1; i++) {
     if (first.globals[i] === "-C") out.push("-C", quoteArg(first.globals[i + 1] as string));
   }

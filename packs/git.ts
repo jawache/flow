@@ -396,6 +396,12 @@ export const git = definePack("git", (repo: Release) => {
         // A NEW branch named after a folder that exists: `-b` swallows its value, so `docs` is
         // never offered to `ls-files` and the folder underneath it is never mistaken for a target.
         "git checkout -b docs",
+        // A `cd` into ANOTHER repo whose tree is clean. The reads carry `-C ../other`, so the
+        // answer is about the tree the command is aimed at rather than about the session's.
+        {
+          command: "cd ../other && git checkout -- src/x.ts",
+          world: { exec: { "git -C '../other' status --porcelain": { stdout: "" } } },
+        },
         "git status",
         // `git restore --staged` touches the INDEX, not the tree — nothing is lost, so nothing is
         // refused. `--staged --worktree` together DO touch the tree, and are blocked below.
@@ -428,6 +434,18 @@ export const git = definePack("git", (repo: Release) => {
         {
           command: "git checkout src/x.ts",
           world: { exec: { "git ls-files": { stdout: "src/x.ts" }, "git status --porcelain": { stdout: " M src/x.ts" } } },
+        },
+        // THE OTHER WAY OUT OF THIS REPO. `cd other && git checkout <path>` was judged against the
+        // SESSION's tree, where the path does not exist — so the check found nothing to lose and
+        // let the discard through. The F3 builder did exactly this to its own uncommitted work.
+        {
+          command: "cd ../other && git checkout src/x.ts",
+          world: {
+            exec: {
+              "git -C '../other' ls-files": { stdout: "src/x.ts" },
+              "git -C '../other' status --porcelain": { stdout: " M src/x.ts" },
+            },
+          },
         },
         // `git restore <path>` never had the gap — it counts a bare path already — and this case is
         // what keeps that true rather than accidental.
