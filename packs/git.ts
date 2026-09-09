@@ -60,11 +60,15 @@ function restoreWorktreePaths(args: readonly string[]): string[] {
 }
 
 /**
- * The working-tree paths a command line would discard, or [] when it is safe to run.
+ * The working-tree paths a command line would discard OUTRIGHT, or [] when it is safe to run.
  *
- * Deliberately narrow — false negatives beat blocking real work. Only the `--` pathspec form of
- * checkout counts (branch switching passes), only the restore forms that touch the tree, and
- * `reset --hard` / `clean -f`, whose target is the tree itself.
+ * Deliberately narrow — false negatives beat blocking real work. Every path here is one the
+ * command line itself declares: the `--` pathspec form of checkout, the restore forms that touch
+ * the tree, and `reset --hard` / `clean -f`, whose target is the tree itself.
+ *
+ * The BARE form of checkout — `git checkout <thing>` with no `--` — is not here and cannot be:
+ * whether `<thing>` is a path or a branch is a fact about the repo, not about the string, and this
+ * function is pure. `checkoutBarePaths` below names the candidates and the check asks git.
  */
 export function discardPaths(command: string): string[] {
   const invocations = gitInvocations(command);
@@ -88,6 +92,43 @@ export function discardPaths(command: string): string[] {
   return paths;
 }
 
+/**
+ * Options of `git checkout` that swallow the word after them, so it is a value and never a target.
+ *
+ * The list is short on purpose. `git ls-files` below is the real filter — a branch name it cannot
+ * match is dropped whatever we do here — so this exists for the one case the filter gets wrong:
+ * a NEW branch named after a folder that exists. `git checkout -b docs` in a repo with a `docs/`
+ * would otherwise look exactly like a discard of every tracked file under it.
+ */
+const CHECKOUT_TAKES_VALUE = new Set(["-b", "-B", "--orphan", "--pathspec-from-file"]);
+
+/**
+ * The words a bare `git checkout` might be aiming at — candidates, not answers.
+ *
+ * `git checkout <path>` discards that path exactly as `git checkout -- <path>` does, and until F3
+ * only the second was refused. The comment above this rule claimed the narrowing was deliberate
+ * ("branch switching passes"), and it was — but it bought that pass by missing the form a person
+ * actually types, which the F3 builder proved on itself by running `git checkout adapter/claude.ts`
+ * over an hour of uncommitted work and watching the guard allow it.
+ *
+ * An invocation carrying `--` is skipped: `discardPaths` already has it, and everything before the
+ * `--` there is a tree-ish by definition.
+ */
+export function checkoutBarePaths(command: string): string[] {
+  const invocations = gitInvocations(command);
+  if (!invocations) return [];
+  const out: string[] = [];
+  for (const { subcommand, args } of invocations) {
+    if (subcommand !== "checkout" || args.includes("--")) continue;
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i] as string;
+      if (CHECKOUT_TAKES_VALUE.has(arg)) i++;
+      else if (!arg.startsWith("-")) out.push(arg);
+    }
+  }
+  return out;
+}
+
 /** Of some porcelain lines, the paths with real uncommitted work. */
 export function dirtyIn(porcelain: string, includeUntracked: boolean): string[] {
   return porcelain
@@ -107,13 +148,22 @@ const noGitDiscard = defineCheck(
   (_opts: Record<string, never>): Check =>
     async (ctx) => {
       const command = ctx.command ?? "";
-      const targets = discardPaths(command);
-      if (targets.length === 0) return ctx.ok();
       const cleaning = /(^|[;&|\n]\s*)git\s+clean\b/.test(command);
-      // THE COMMAND'S OWN `-C`, copied onto the read, exactly as `commitReason` copies it: a
+      // THE COMMAND'S OWN `-C`, copied onto every read, exactly as `commitReason` copies it: a
       // `git -C ~/other-repo checkout -- x` is about THAT repo's tree, and a status read here would
       // answer about files the command was never aimed at — clean ones, so the loss goes through.
       const git = `git ${gitDirPrefix(command)}`.trimEnd();
+      const targets = discardPaths(command);
+      // ASK GIT WHICH OF THEM IS A PATH. A bare `git checkout <thing>` discards the tree when
+      // `<thing>` names a path and switches branch when it names a ref, and only the repo knows
+      // which — so the candidates go to `ls-files`, whose answer IS the tracked set they match.
+      // A branch matches nothing and falls out here; that is what keeps branch switching passing.
+      const candidates = checkoutBarePaths(command);
+      if (candidates.length > 0) {
+        const tracked = await ctx.exec(`${git} ls-files -- ${candidates.map(quoteArg).join(" ")}`);
+        if (tracked.code === 0) targets.push(...tracked.stdout.split("\n").filter((line) => line !== ""));
+      }
+      if (targets.length === 0) return ctx.ok();
       // `quoteArg` rather than a pair of typed quotes: a path with an apostrophe in it closes a
       // hand-rolled quote and the rest of the pathspec becomes shell. One quoter in this package,
       // and this is the call that was the second one.
@@ -334,8 +384,18 @@ export const git = definePack("git", (repo: Release) => {
     )
     .test({
       pass: [
-        // Branch switching passes: only the `--` pathspec form discards.
-        "git checkout main",
+        // BRANCH SWITCHING PASSES, and this is now a fact about the repo rather than about the
+        // string: `main` goes to `ls-files`, which matches nothing, so there is no target at all.
+        { command: "git checkout main", world: { exec: { "git ls-files": { stdout: "" } } } },
+        // A bare checkout of a path in a CLEAN tree is still a pass — the path resolves, and the
+        // status read that follows finds nothing to lose.
+        {
+          command: "git checkout src/x.ts",
+          world: { exec: { "git ls-files": { stdout: "src/x.ts" }, "git status --porcelain": { stdout: "" } } },
+        },
+        // A NEW branch named after a folder that exists: `-b` swallows its value, so `docs` is
+        // never offered to `ls-files` and the folder underneath it is never mistaken for a target.
+        "git checkout -b docs",
         "git status",
         // `git restore --staged` touches the INDEX, not the tree — nothing is lost, so nothing is
         // refused. `--staged --worktree` together DO touch the tree, and are blocked below.
@@ -360,6 +420,19 @@ export const git = definePack("git", (repo: Release) => {
       block: [
         {
           command: "git checkout -- src/x.ts",
+          world: { exec: { "git status --porcelain": { stdout: " M src/x.ts" } } },
+        },
+        // THE BARE FORM, which is the one a person types. It was allowed for as long as this rule
+        // existed, because the comment above it reasoned about the string instead of the repo —
+        // and the F3 builder discarded an hour of its own uncommitted work through the gap.
+        {
+          command: "git checkout src/x.ts",
+          world: { exec: { "git ls-files": { stdout: "src/x.ts" }, "git status --porcelain": { stdout: " M src/x.ts" } } },
+        },
+        // `git restore <path>` never had the gap — it counts a bare path already — and this case is
+        // what keeps that true rather than accidental.
+        {
+          command: "git restore src/x.ts",
           world: { exec: { "git status --porcelain": { stdout: " M src/x.ts" } } },
         },
         {
