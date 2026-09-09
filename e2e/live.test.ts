@@ -369,16 +369,75 @@ describe("a config that will not load", () => {
   // that can end the outage, and the doctrine's own instruction — "adjust the change so it passes,
   // then retry" — cannot be obeyed by anything that meets a hook. A human in an editor never hits
   // it. An agent that broke the config is locked out of repairing it.
+  /**
+   * THE FOUR WAYS A CONFIG STOPS LOADING, and the whole point of the list is that they are ONE fact.
+   *
+   * The first will not import. The other three import perfectly and the GRAMMAR refuses them, and
+   * until F3 only the first reached the repair exception — so the break the README and the
+   * guidebook both tell a reader to make, deleting a `.message(…)`, was the one break an agent
+   * could not repair itself out of. Every rail must answer all four the same way.
+   */
+  const BREAKS: Readonly<Record<string, (good: string) => string>> = {
+    "will not import at all": (good) => `${good}\nthis is not typescript at all(((\n`,
+    "a deleted .message(…)": (good) => good.replace(/\n\s*\.message\([^\n]*\n/, "\n"),
+    "an override naming an entry the pack does not have": (good) =>
+      good
+        .replace("import { breadcrumb,", "import { override, breadcrumb,")
+        .replace("pack(demo), pack(house)", 'pack(demo), pack(house), override((demo as unknown as Record<string, never>)["notAnEntry"]).disabled("x")'),
+    "a mandatory parameter nobody supplied": (good) =>
+      good.replace(
+        "export default defineConfig([pack(demo), pack(house)]);",
+        [
+          "const needs = definePack(\"needs\", (repo: { run: string }) => ({",
+          "  gate: guardrail().at(commit).check(() => ({ ok: true })).message(repo.run).test({ pass: [], block: [{ staged: [\"a.txt\"] }] }),",
+          "}));",
+          "export default defineConfig([pack(demo), pack(house), pack(needs)]);",
+        ].join("\n"),
+      ),
+  };
+
   describe("the write that can fix it is allowed through, and nothing else is", () => {
-    const withBrokenConfig = (drive: () => void): void => {
+    const withBrokenConfig = (drive: () => void, how = "will not import at all"): void => {
       const good = readFileSync(join(repo, "flow.config.ts"), "utf8");
-      writeFileSync(join(repo, "flow.config.ts"), `${good}\nthis is not typescript at all(((\n`);
+      const breaker = BREAKS[how];
+      expect(breaker, `no break called "${how}"`).toBeDefined();
+      writeFileSync(join(repo, "flow.config.ts"), (breaker as (good: string) => string)(good));
       try {
         drive();
       } finally {
         writeFileSync(join(repo, "flow.config.ts"), good);
       }
     };
+
+    // EVERY WAY OF BREAKING IT, not just the one the shell happened to catch as a thrown error.
+    it.each(Object.keys(BREAKS))("lets the repair through and refuses the rest — %s", (how) => {
+      withBrokenConfig(() => {
+        const broken = hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "src/g.ts"), content: "fine" }));
+        expect(broken.code, "the guard cannot run, so ordinary work is refused").toBe(2);
+
+        const repair = hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "flow.config.ts"), content: "// fixed" }));
+        expect(repair.code, "the repair is refused, so the repo stays broken until a human arrives").toBe(0);
+
+        const pack = hook("pre-tool-use", inThisSession("Edit", { file_path: join(repo, "guards", "house.ts"), new_string: "// fixed" }));
+        expect(pack.code, "a pack the config imports is as much the repair as the config is").toBe(0);
+
+        const command = hook("pre-tool-use", inThisSession("Bash", { command: "git push --force" }));
+        expect(command.code, "a command names a string, never a target — the rail stays shut").toBe(2);
+
+        const gate = runFlow(repo, ["commit", "flow.config.ts"]);
+        expect(gate.code, "nothing written under the exception lands unguarded").toBe(2);
+      }, how);
+    });
+
+    // THE TURN ENDS. Holding it prevents nothing — every write, command and commit above is already
+    // refused — while it does stop the agent handing back to the one person who can fix the config.
+    it.each(Object.keys(BREAKS))("reports the fault at Stop and lets the turn end — %s", (how) => {
+      withBrokenConfig(() => {
+        const stop = hook("stop", { session_id: "live-stop", hook_event_name: "Stop" });
+        expect(stop.code, "a held turn cannot hand back to the human who would fix it").toBe(0);
+        expect(stop.stderr, "and it is not silent — the turn ends knowing why").not.toBe("");
+      }, how);
+    });
 
     it("lets a write reach the config itself and the packs it imports", () => {
       withBrokenConfig(() => {

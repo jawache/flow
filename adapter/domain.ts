@@ -47,6 +47,7 @@ import {
 import {
   covers,
   FLOW_DIR,
+  fault,
   formatBlock,
   insideRepo,
   momentsView,
@@ -506,6 +507,75 @@ export interface Shown {
 export interface Answer {
   readonly refused: readonly Refused[];
   readonly shown: readonly Shown[];
+}
+
+/**
+ * Is this event the WRITE that could fix a config that will not load?
+ *
+ * The one exception to fail-loud, and it is deliberately the narrowest shape that works: a write
+ * (or a delete) whose target is the guard's own source. `configSurface` above says why that surface
+ * is read out of the config's own text rather than resolved.
+ *
+ * A COMMAND is never a repair, however plausible it looks. `sed -i` on the config would qualify by
+ * intent and there is no way to tell it from `rm -rf` before it runs — a command rail sees a string,
+ * not a target — so the command rail stays fully closed in the broken state, and the agent's route
+ * back is the edit tools, which name the file they are about to write.
+ *
+ * It lives HERE rather than in the shell beside its caller because it decides and reads nothing.
+ * The coverage gate over this file is what keeps the exception's exact width asserted.
+ */
+export function repairs(event: AdapterEvent, surface: readonly string[]): boolean {
+  if (event.rail !== "guard") return false;
+  if (event.moment !== "write" && event.moment !== "delete") return false;
+  return event.file !== undefined && matchAny(event.file.path, surface);
+}
+
+/**
+ * WHAT EVERY RAIL ANSWERS WHILE THE CONFIG WILL NOT LOAD — one decision for both ways it can break.
+ *
+ * A config has two ways of not loading, and they used to get two different answers. One will not
+ * IMPORT — a missing module, a syntax error — which the shell catches as a thrown error. The other
+ * imports fine and the GRAMMAR refuses it: a missing `.message(…)`, an override naming an entry the
+ * pack does not have, a mandatory parameter nobody supplied. Only the first ever reached the repair
+ * exception, because the second was refused a layer deeper inside `guard()` — so the break the
+ * README and the guidebook both tell a reader to make was the one break an agent could not repair
+ * itself out of. To everyone who meets them the two are the same fact, "the guard is entirely off",
+ * and now they are the same answer as well.
+ *
+ * TURN-END IS TOLD, NOT REFUSED. Holding a turn open on a broken config prevents nothing risky —
+ * every write, command and commit is already refused and the commit gate stays shut — while it does
+ * stop the agent handing back to the one person who can fix it. So the fault is reported and the
+ * turn ends. `told` is that sentence, and it is separate from `shown` because the Stop rail has no
+ * context channel to inject prose into: the shell writes it to stderr and answers 0.
+ */
+export function whileBroken(
+  events: readonly AdapterEvent[],
+  surface: readonly string[],
+  message: string,
+): { readonly refused: readonly Refused[]; readonly shown: readonly Shown[]; readonly told: string | null } {
+  const rails = events.filter((event) => event.rail === "guard");
+  return {
+    refused: rails
+      .filter((event) => event.moment !== "turn-end" && !repairs(event, surface))
+      .map((event) => ({ moment: event.moment, block: fault(message) })),
+    shown: events.filter((event) => event.rail === "brief").map(() => ({ entry: null, cause: "fault", body: message })),
+    told: rails.some((event) => event.moment === "turn-end") ? message : null,
+  };
+}
+
+/**
+ * The one code `flow status` answers with.
+ *
+ * THE 1/2 SPLIT IS THE WHOLE POINT of there being two non-zero codes: "your guard caught something
+ * or is not fully wired" and "your guard cannot run at all" are different facts and a setup script,
+ * a hook or a CI step has to tell them apart. Status used to break that itself — a config that would
+ * not IMPORT answered 2 while a config the grammar REFUSED answered 1, which is the same fact under
+ * two codes. A refusal list means the document was refused whole and every rail is off, so it is 2
+ * however it broke; anything else that is not green is 1.
+ */
+export function statusCode(answer: Status): 0 | 1 | 2 {
+  if (answer.refusals.length > 0) return 2;
+  return answer.green ? 0 : 1;
 }
 
 /**

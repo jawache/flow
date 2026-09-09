@@ -34,6 +34,7 @@ import {
   type Category,
   type ExecResult,
   type FlowConfig,
+  refusalText,
   type LoadResult,
   type Settings,
   type TurnAction,
@@ -56,7 +57,6 @@ import {
   type Row,
 } from "../engine/domain.ts";
 import { quoteArg } from "../checks/domain.ts";
-import { matchAny } from "../glob.ts";
 import {
   appendRows,
   appendSteps,
@@ -86,6 +86,7 @@ import {
   tokensFromTranscript,
   toolRow,
   turnActions,
+  whileBroken,
   type AdapterEvent,
   type Answer,
   type EventWorld,
@@ -280,25 +281,6 @@ export async function loadRegime(root: string): Promise<Regime> {
   }
 }
 
-/**
- * Is this event the WRITE that could fix the broken config?
- *
- * The one exception to fail-loud, and it is deliberately the narrowest shape that works: a write
- * (or a delete) whose target is the guard's own source. `configSurface` next door says why.
- *
- * The SURFACE is handed in, because it is read out of the config's own text — the files it imports
- * relatively, and their folders. `configSurface` says why the text and not the module.
- *
- * A COMMAND is never a repair, however plausible it looks. `sed -i` on the config would qualify by
- * intent and there is no way to tell it from `rm -rf` before it runs — a command rail sees a string,
- * not a target — so the command rail stays fully closed in the broken state, and the agent's route
- * back is the edit tools, which name the file they are about to write.
- */
-function repairs(event: AdapterEvent, surface: readonly string[]): boolean {
-  if (event.rail !== "guard") return false;
-  if (event.moment !== "write" && event.moment !== "delete") return false;
-  return event.file !== undefined && matchAny(event.file.path, surface);
-}
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE RUN — one payload, from stdin to an exit code
@@ -417,27 +399,31 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
   if (hook === "pre-tool-use" && !off && session.id !== "unknown")
     writeMarker(root, session.id, session.agent, session.branch);
 
-  if (regime.kind === "broken") {
-    // A config that is present and will not import. Gated moments refuse; a breadcrumb moment has no
-    // rail to refuse with and says it instead — the engine's own load-failure path makes exactly
-    // that split, and this is the same split one step earlier, before there is a LoadResult at all.
+  // THE CONFIG WILL NOT LOAD, either way it can fail to. `kind: "broken"` is a module that would
+  // not import; a LoadResult carrying refusals is a module that imported and whose grammar was
+  // refused. They were two branches with two behaviours until the F3 read found that only the first
+  // reached the repair exception — so a deleted `.message(…)`, which is the break both the README
+  // and the guidebook tell a reader to make, locked the agent out of its own repair. One sentence,
+  // one answer, one place. They are asked in sequence only because the second needs the LoadResult
+  // the first does not have; `outage` is the answer both of them give.
+  const outage = (sentence: string): HookResult => {
     if (off) return ALLOW;
-    // The config's TEXT, not its module: the module is what will not load, and the surface the
-    // repair may reach is whatever this config imports. Read once, here, and only in this branch.
+    // The config's TEXT, not its module: the module is the thing that will not load, and the
+    // surface a repair may reach is whatever this config imports. Read once, here, and only here.
     const surface = configSurface(readText(root, CONFIG_FILE));
-    const events = toEvent(hook, payload, eventWorld(root, session));
-    const blocked: Refused[] = events
-      .filter((event) => event.rail === "guard")
-      .filter((event) => !repairs(event, surface))
-      .map((event) => ({ moment: event.moment, block: fault(regime.message) }));
-    const shown: Shown[] = events
-      .filter((event) => event.rail === "brief")
-      .map(() => ({ entry: null, cause: "fault", body: regime.message }));
-    return toResult(hook, { refused: blocked, shown });
-  }
+    const answer = whileBroken(toEvent(hook, payload, eventWorld(root, session)), surface, sentence);
+    const result = toResult(hook, answer);
+    // TURN-END IS TOLD RATHER THAN HELD. `whileBroken` says why; this is the only place that can
+    // write it, because the Stop rail has no context channel and `toResult` speaks only the two the
+    // host reads. Exit 0 — the turn ends, and the sentence goes where a human and the log see it.
+    return answer.told === null || result.exitCode !== 0 ? result : { ...result, stderr: `${answer.told}\n` };
+  };
+  if (regime.kind === "broken") return outage(regime.message);
 
   const { load, config } = regime;
-  const entries = load.ok ? load.entries : [];
+  if (!load.ok) return outage(refusalText(load.refusals));
+
+  const entries = load.entries;
   const identity = identityOf(session, payload, categoriesIn(entries));
 
   const events = toEvent(hook, payload, eventWorld(root, session));

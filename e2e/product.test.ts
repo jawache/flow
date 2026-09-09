@@ -297,3 +297,143 @@ describe("flow init --empty", () => {
     }
   });
 });
+
+// ── the hand-written pages, pinned to the binary ─────────────────────────────
+//
+// THE PRINCIPLE, ruled with the human on 2026-09-09: a GENERATED page is captured from the code
+// (that is `just docs-packs` and its drift gate); a HAND-WRITTEN page is pinned by a test that
+// fails when it and the binary disagree. The README's two transcripts had that already, and were
+// the only pages that had not drifted — the quick start claimed a scaffold that stopped existing
+// at the split, and the exit-code table published a 1/2 split the binary never made.
+//
+// The three substitutions above are this file's, and the quick start quotes the same spellings.
+
+/** The `<pre><code>` block on a docs page that opens with this line, as text. */
+function paged(page: string, opening: string): string {
+  const html = readFileSync(join(PACKAGE, "docs", "user", page), "utf8");
+  const found = html
+    .split("<pre><code>")
+    .slice(1)
+    .map((part) => part.slice(0, part.indexOf("</code></pre>")))
+    .map((body) => body.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", '"').replaceAll("&amp;", "&"))
+    .find((body) => body.trimStart().startsWith(opening));
+  expect(found, `${page} has no block starting "${opening}"`).toBeDefined();
+  return (found as string).trim();
+}
+
+describe("the quick start's transcripts", () => {
+  // The page stands in for two paths — the reader's repo and this checkout — and for the host's
+  // config directory, exactly as the README does.
+  const asPaged = (output: string, repo: string, settingsHome: string): string =>
+    output
+      .replaceAll(realpathSync(repo), "…/my-repo")
+      .replaceAll(repo, "…/my-repo")
+      .replaceAll(realpathSync(builtPackage()), CHECKOUT)
+      .replaceAll(builtPackage(), CHECKOUT)
+      .replaceAll(PACKAGE.replace(/\/$/, ""), CHECKOUT)
+      .replaceAll(settingsHome, "~/.claude")
+      .trim();
+
+  it("are what `flow init`, `flow status`, `flow test` and both refusals really print", () => {
+    const mine = newRepo();
+    const firstTime = mkdtempSync(join(tmpdir(), "flow-quickstart-"));
+    const page = (opening: string): string => paged("01-quick-start.html", opening);
+    const said = (args: readonly string[], stdin = ""): string => {
+      const ran = runFlow(mine, args, { home: firstTime, bin }, stdin);
+      return asPaged(ran.stdout || ran.stderr, mine, firstTime);
+    };
+    try {
+      expect(said(["init"]), "§2").toBe(page("flow init — created:"));
+      expect(said(["status"]), "§3").toBe(page("flow is ON —"));
+
+      // §4 — the gate's refusal, driven the way the page drives it.
+      writeFileSync(join(mine, "bad.txt"), "DO-NOT-COMMIT here\n");
+      runGit(mine, ["add", "bad.txt"]);
+      expect(said(["commit", "bad.txt"]), "§4").toBe(page("flow — commit blocked:"));
+
+      // §5 — a banned command, on the rail the host sends it on.
+      const forced = JSON.stringify(pre("Bash", { command: "git push --force origin main" }));
+      expect(said(["hook", "pre-tool-use"], forced), "§5").toBe(page("flow — command blocked before it ran:"));
+
+      // §6 — the census the page quotes as a comment beside the command.
+      expect(page("flow test").split("\n").at(-1), "§6").toBe(`# ${said(["test"])}`);
+    } finally {
+      for (const dir of [mine, firstTime]) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("the README's exit-code table", () => {
+  /** The table's rows, as `{ "0": "yes — …" }` — the codes it publishes and what it says they mean. */
+  function published(): Record<string, string> {
+    const text = readFileSync(join(PACKAGE, "README.md"), "utf8");
+    const table = text.slice(text.indexOf("## Exit codes"));
+    const rows = [...table.matchAll(/^\| `(\d)` \| (.+?) \|$/gm)];
+    expect(rows.length, "the exit-code table has three rows").toBe(3);
+    return Object.fromEntries(rows.map((row) => [row[1] as string, row[2] as string]));
+  }
+
+  it("publishes exactly the codes the binary answers with, on every path it names", () => {
+    const table = published();
+    expect(Object.keys(table).sort()).toStrictEqual(["0", "1", "2"]);
+
+    // THE ROW HAS TO NAME THE RIGHT CAUSES, not just the right number. The fault this pin exists
+    // for was a row that read "the answer is no — a rule refused, or a fitting is missing" beside
+    // the `1`, when a refusing rule has always answered 2. A pin over the codes alone would have
+    // watched that sentence for another year.
+    expect(table["1"], "1 is the two verbs you ASK").toMatch(/flow status/);
+    expect(table["1"]).toMatch(/flow test/);
+    expect(table["1"], "a refusing rule is not a 1, and never was").not.toMatch(/\brule\b/);
+    expect(table["2"], "2 is every refusal").toMatch(/\brule\b/);
+    expect(table["2"]).toMatch(/config/);
+    expect(table["2"]).toMatch(/verb/);
+
+    const repo = newRepo();
+    const home = mkdtempSync(join(tmpdir(), "flow-codes-"));
+    const codeIn = (where: string, args: readonly string[], stdin = ""): number => runFlow(where, args, { home, bin }, stdin).code;
+    const code = (args: readonly string[], stdin = ""): number => codeIn(repo, args, stdin);
+    const config = join(repo, "flow.config.ts");
+    try {
+      flow(repo, ["init"], home);
+
+      // ── 0 · nothing refused, every fitting in place
+      expect(code(["status"]), "green status").toBe(0);
+      expect(code(["test"]), "every case green").toBe(0);
+
+      // ── 1 · the two verbs you ASK: a fitting missing, or a case that fails
+      const unwired = newRepo();
+      expect(codeIn(unwired, ["status"]), "no config at all — a fitting is missing").toBe(1);
+      rmSync(unwired, { recursive: true, force: true });
+      const good = readFileSync(config, "utf8");
+      writeFileSync(config, good.replace('pass: ["git push origin main"]', 'pass: ["git push --force origin main"]'));
+      expect(code(["test"]), "a case that should pass, failing").toBe(1);
+      writeFileSync(config, good);
+
+      // ── 2 · something refused: a rule blocked …
+      writeFileSync(join(repo, "bad.txt"), "DO-NOT-COMMIT here\n");
+      runGit(repo, ["add", "bad.txt"]);
+      expect(code(["commit", "bad.txt"]), "a rule blocked at the gate").toBe(2);
+      const forced = JSON.stringify(pre("Bash", { command: "git push --force origin main" }));
+      expect(code(["hook", "pre-tool-use"], forced), "a rule blocked at a hook").toBe(2);
+      runGit(repo, ["reset", "bad.txt"]);
+
+      // … or the config would not load, BOTH ways it can fail to. This is the row that was wrong:
+      // status answered 1 for a grammar refusal and 2 for an import fault, one fact under two codes.
+      for (const [how, broken] of [
+        ["will not import", 'import { nope } from "./missing.ts";\nexport default nope;\n'],
+        ["the grammar refuses it", good.replace(/\n\s*\.message\([^\n]*\n/, "\n")],
+      ] as const) {
+        writeFileSync(config, broken);
+        for (const verb of [["status"], ["test"], ["commit", "flow.config.ts"]])
+          expect(code(verb), `${verb[0] as string}, ${how}`).toBe(2);
+      }
+      writeFileSync(config, good);
+
+      // … or a verb was misused.
+      expect(code(["wibble"]), "a verb that does not exist").toBe(2);
+      expect(code([]), "no verb at all — the usage banner").toBe(2);
+    } finally {
+      for (const dir of [repo, home]) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

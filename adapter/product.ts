@@ -29,6 +29,7 @@ import {
   initLines,
   planInit,
   status,
+  statusCode,
   statusLines,
   type InitFacts,
   type InitPlan,
@@ -252,8 +253,11 @@ export async function runStatus(cwd: string, args: readonly string[]): Promise<V
     session: liveSession(root),
   };
 
+  // ONE CODE FOR A CONFIG THAT WILL NOT LOAD, however it broke — `statusCode` says why. The branch
+  // above already answers 2 for a config that will not import; a config the GRAMMAR refused used to
+  // come through here as a 1, which is the same fact wearing the other code.
   const answer = status(facts);
-  if (args.includes("--json"))
-    return { stdout: `${JSON.stringify(answer, null, 2)}\n`, stderr: "", exitCode: answer.green ? 0 : 1 };
-  return { stdout: `${statusLines(answer).join("\n")}\n`, stderr: "", exitCode: answer.green ? 0 : 1 };
+  const exitCode = statusCode(answer);
+  if (args.includes("--json")) return { stdout: `${JSON.stringify(answer, null, 2)}\n`, stderr: "", exitCode };
+  return { stdout: `${statusLines(answer).join("\n")}\n`, stderr: "", exitCode };
 }

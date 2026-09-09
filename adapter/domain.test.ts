@@ -47,6 +47,9 @@ import {
   CONFIG_FILE,
   configImports,
   configSurface,
+  repairs,
+  statusCode,
+  whileBroken,
   guardPaths,
   HOST_SURFACE,
   formatFacts,
@@ -98,6 +101,7 @@ import {
   status,
   statusLines,
   type InitFacts,
+  type Status,
   type StatusFacts,
 } from "./domain.ts";
 
@@ -1374,6 +1378,72 @@ describe("the config surface — what a write may target while the guard is brok
     // it only ever WIDENS the repair surface, and only while the config is already refusing every
     // other write — so the cost is one extra repairable path at a moment when nothing can commit.
     expect(configImports(`.message("write it as: import { x } from './guards/x.ts'")`)).toStrictEqual(["guards/x.ts"]);
+  });
+});
+
+describe("what every rail answers while the config will not load", () => {
+  const SURFACE = ["flow.config.ts", "guards/house.ts", "guards/**"];
+  const FAULT = "flow: the config will not load — 1 refusal.";
+  const write = (path: string): AdapterEvent => ({ rail: "guard", moment: "write", file: { path, content: "x" } });
+
+  describe("repairs — the exception is exactly as wide as the repair", () => {
+    it("is the config and the packs it imports, at a write or a delete", () => {
+      expect(repairs(write("flow.config.ts"), SURFACE)).toBe(true);
+      expect(repairs(write("guards/house.ts"), SURFACE)).toBe(true);
+      expect(repairs(write("guards/nested/helper.ts"), SURFACE), "the folder comes with the file").toBe(true);
+      expect(repairs({ rail: "guard", moment: "delete", file: { path: "flow.config.ts", content: "" } }, SURFACE)).toBe(true);
+    });
+
+    it("is nothing else — not another file, not a command, not a rail without a target", () => {
+      expect(repairs(write("src/a.ts"), SURFACE)).toBe(false);
+      // A command names a STRING, never a target: `sed -i` on the config reads exactly like
+      // `rm -rf` before either runs, so the command rail stays fully shut in the broken state.
+      expect(repairs({ rail: "guard", moment: "command", command: "sed -i s/x/y/ flow.config.ts" }, SURFACE)).toBe(false);
+      expect(repairs({ rail: "guard", moment: "commit", staged: ["flow.config.ts"] }, SURFACE)).toBe(false);
+      expect(repairs({ rail: "brief", moment: "touch", path: "flow.config.ts" }, SURFACE)).toBe(false);
+    });
+  });
+
+  describe("whileBroken — one answer, whichever way it broke", () => {
+    it("refuses every gated moment but the repair, and hands the fault to a breadcrumb rail", () => {
+      const answer = whileBroken(
+        [write("src/a.ts"), write("flow.config.ts"), { rail: "brief", moment: "session" }],
+        SURFACE,
+        FAULT,
+      );
+      expect(answer.refused.map((r) => r.moment), "the repair is not among them").toStrictEqual(["write"]);
+      expect(answer.refused[0]?.block.message).toBe(FAULT);
+      expect(answer.refused[0]?.block.entry, "the guard itself refused, not a rule").toBeNull();
+      expect(answer.shown.map((s) => s.body), "a breadcrumb rail has no rail to refuse with").toStrictEqual([FAULT]);
+      expect(answer.told).toBeNull();
+    });
+
+    it("tells turn-end rather than holding it, which is the only rail that changes", () => {
+      const answer = whileBroken([{ rail: "guard", moment: "turn-end", turn: [] }], SURFACE, FAULT);
+      expect(answer.refused, "a held turn cannot hand back to the human who would fix it").toStrictEqual([]);
+      expect(answer.told, "and it is not silent either").toBe(FAULT);
+    });
+
+    it("says nothing at all when the payload carried no rail", () => {
+      const answer = whileBroken([], SURFACE, FAULT);
+      expect(answer).toStrictEqual({ refused: [], shown: [], told: null });
+    });
+  });
+
+  describe("statusCode — one code for a config that will not load, however it broke", () => {
+    // 2 is "your guard cannot run", 1 is "your guard is not fully in force". A config the GRAMMAR
+    // refused used to answer 1 while one that would not IMPORT answered 2 — the same fact under two
+    // codes, and a setup script reading the split got a different answer for the same outage.
+    const answer = (over: Partial<Status>): Status => ({ ...status(statusFacts({})), ...over });
+
+    it("is 2 for any refusal list, green or not", () => {
+      expect(statusCode(answer({ refusals: [{ code: "missing-mandatory", entry: "demo.x", detail: "`demo.x` never said .message(…)" }], green: false }))).toBe(2);
+    });
+
+    it("is 0 when green and 1 when merely not in force", () => {
+      expect(statusCode(answer({ refusals: [], green: true }))).toBe(0);
+      expect(statusCode(answer({ refusals: [], green: false }))).toBe(1);
+    });
   });
 });
 

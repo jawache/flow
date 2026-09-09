@@ -262,12 +262,22 @@ touch .flow/record     # capture sessions so `flow replay` can run them again
 
 | | |
 | --- | --- |
-| `0` | yes |
-| `1` | the answer is no — a rule refused, or a fitting is missing |
-| `2` | **your rules are broken** — the config would not load, or a verb was misused |
+| `0` | yes — nothing refused, and every fitting is in place |
+| `1` | **the report is no** — `flow status` found a fitting missing, or `flow test` found a case that fails |
+| `2` | **something refused** — a rule blocked, or the config would not load, or a verb was misused |
 
-The 1/2 split is load-bearing: "your guard caught something" and "your guard cannot run" are
-different facts, and a script, a hook or a CI step has to be able to tell them apart.
+**Exit 2 is a refusal at every rail, and it has to be.** It is the host's own refusal channel, and
+a hook has exactly two codes to answer with — so a blocked write and a config that will not load
+are both 2, because from a hook's seat they are one instruction: *this did not happen, read
+stderr*. The commit gate answers the same way, for the same reason.
+
+**Exit 1 belongs to the two verbs you ask rather than obey.** `flow status` and `flow test` are
+asked a question, so they have room for a third answer, and "not fully in force" is a genuinely
+different fact from "caught something". A config that will not load collapses even that room: it
+makes both of them answer 2, because there is nothing left to report on.
+
+This table is pinned by the suite — `e2e/product.test.ts` drives every row against the binary, so a
+code that moves fails a test rather than quietly making this page wrong.
 
 ## Working on flow
 
