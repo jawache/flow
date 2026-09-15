@@ -25,16 +25,25 @@
 // The hook and commit verbs are one line each here, and that is the seam working: everything they
 // do is the adapter's, and this file only owns argv, the three IO edges and the exit code.
 
-import { existsSync } from "node:fs";
-import { pathToFileURL } from "node:url";
+import { existsSync, readFileSync } from "node:fs";
+import { registerHooks, stripTypeScriptTypes } from "node:module";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { join, resolve } from "node:path";
 import { VERSION } from "./version.ts";
 import { entriesOrThrow, FlowConfigError } from "./errors.ts";
 import { loadConfig, type FlowConfig, type LoadedEntry } from "./language/domain.ts";
 import { runCases, type CaseResult } from "./checks/domain.ts";
-import { commitEntry, hookEntry, loadConsumerTypeScript } from "./adapter/claude.ts";
+import { commitEntry, hookEntry } from "./adapter/claude.ts";
 import { facts } from "./adapter/archive.ts";
-import { CONFIG_FILE, HOOK_EVENTS, configLoadFault, formatFacts, snip, type HookResult } from "./adapter/domain.ts";
+import {
+  CONFIG_FILE,
+  HOOK_EVENTS,
+  configLoadFault,
+  formatFacts,
+  loadsAsStrippedModule,
+  snip,
+  type HookResult,
+} from "./adapter/domain.ts";
 import { runInit, runStatus, type VerbResult } from "./adapter/product.ts";
 import { diffRows, replay, type Row } from "./engine/domain.ts";
 import { loadRecording, readRowsFile } from "./engine/state.ts";
@@ -52,12 +61,42 @@ process.on("warning", (w: Error) => {
   if (w.name !== "ExperimentalWarning") process.stderr.write(`${w.stack ?? w.message}\n`);
 });
 
-// The OTHER piece of housekeeping before anything is imported, and the more important one: flow
-// loads the guarded repo's TypeScript itself, so that a repo whose package.json is not
-// `type: "module"` — which is what `npm init` writes — can still be guarded. See
-// `loadConsumerTypeScript`. It has to run before the first `import()` of a config, and both doors
-// onto one are below.
-loadConsumerTypeScript();
+/*
+ * TEACH THIS PROCESS TO LOAD THE GUARDED REPO'S TYPESCRIPT ITSELF — registered here, at the top of
+ * the binary, before either door below imports a config. The reason flow works in a repo that is
+ * not `type: "module"`.
+ *
+ * `module.registerHooks` is node's synchronous, in-thread loader hook (node >= 22.15, and flow's
+ * floor is 24). The load hook is handed a url and returns the source and the format to evaluate it
+ * as, so `loadsAsStrippedModule` picks out the consumer's own `.ts` files and this hands node the
+ * type-stripped text as `module`. The nearest `package.json` never gets a say, which is the whole
+ * point: a config is written in `import` statements and a guard may not require a repo to change
+ * its own module system to be guarded.
+ *
+ * WHY THE SOURCE IS READ HERE rather than asked of `nextLoad`: node decides the format BEFORE the
+ * hook chain returns, and `nextLoad(url, { ...context, format: "module" })` is not a request to
+ * strip — it hands the raw TypeScript to the ESM compiler, which dies on the first `interface`.
+ * Measured on node v24.1.0 while this was written; the failure is a `SyntaxError: Unexpected strict
+ * mode reserved word`, pointing at a line that is valid TypeScript.
+ *
+ * ONE REGISTRATION, at module scope rather than behind a function somebody has to remember to
+ * call: the binary has two doors onto a config file (`flow test` loads one by path, the live rails
+ * load the repo's own) and this covers both without either knowing it is there.
+ *
+ * `stripTypeScriptTypes` in `strip` mode erases types and rewrites nothing, so a line number in a
+ * stack trace is still the line in the file; `sourceUrl` is what keeps the file's own name on it.
+ */
+registerHooks({
+  load(url, context, nextLoad) {
+    if (!loadsAsStrippedModule(url)) return nextLoad(url, context);
+    const source = readFileSync(fileURLToPath(url), "utf8");
+    return {
+      format: "module",
+      shortCircuit: true,
+      source: stripTypeScriptTypes(source, { mode: "strip", sourceUrl: url }),
+    };
+  },
+});
 
 /**
  * Load a config FILE — the one thing in flow that turns a path into a regime.

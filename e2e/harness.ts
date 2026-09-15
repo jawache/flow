@@ -201,6 +201,35 @@ export function cleanBundles(): void {
 }
 
 /**
+ * Add a binding to a config that already has one — the `export default defineConfig([…])` rewrite,
+ * in one place.
+ *
+ * THREE CALLERS wanted the same edit and each had written it out: two of the four `BREAKS` below,
+ * and the package.json-shape table in product.test.ts. The regex is the fiddly part (the list runs
+ * over several lines in the scaffold and one line in a hand-written config, and the scaffold's
+ * last entry carries a trailing comma), so three copies of it is three chances to match nothing
+ * and silently return the config unchanged — which is a test that passes because it tested the
+ * wrong file.
+ *
+ * It THROWS rather than returning the input when the shape is not there, for exactly that reason.
+ *
+ * `above` goes at the top of the file (an import the new binding needs) and `before` immediately
+ * ahead of the export (a pack declared inline). Both are optional; `bind` is the binding itself.
+ */
+export function bindInConfig(
+  config: string,
+  added: { readonly above?: string; readonly before?: string; readonly bind: string },
+): string {
+  const source = added.above ? `${added.above}\n${config}` : config;
+  const out = source.replace(/export default defineConfig\(\[(.*)\]\);/s, (_m, bound: string) => {
+    const kept = bound.trimEnd().replace(/,$/, "");
+    return `${added.before ? `${added.before}\n` : ""}export default defineConfig([${kept}, ${added.bind}]);`;
+  });
+  if (out === source) throw new Error(`bindInConfig: no \`export default defineConfig([…]);\` to add \`${added.bind}\` to`);
+  return out;
+}
+
+/**
  * THE FOUR WAYS A CONFIG STOPS LOADING — a breaker per way, given the config's own text.
  *
  * It lives here rather than in either suite because both need it and they need it to be the SAME
@@ -221,18 +250,16 @@ export const BREAKS: Readonly<Record<string, (good: string) => string>> = {
   "will not import at all": (good) => `${good}\nthis is not typescript at all(((\n`,
   "a deleted .message(…)": (good) => good.replace(/\n\s*\.message\([^\n]*\n/, "\n"),
   "an override naming an entry the pack does not have": (good) =>
-    good
-      .replace(/^import \{/m, "import { override,")
-      .replace(/export default defineConfig\(\[(.*)\]\);/s, (_m, bound: string) =>
-        `export default defineConfig([${bound}, override((demo as unknown as Record<string, never>)["notAnEntry"]).disabled("x")]);`,
-      ),
+    bindInConfig(good.replace(/^import \{/m, "import { override,"), {
+      bind: `override((demo as unknown as Record<string, never>)["notAnEntry"]).disabled("x")`,
+    }),
   "a mandatory parameter nobody supplied": (good) =>
-    good.replace(/export default defineConfig\(\[(.*)\]\);/s, (_m, bound: string) =>
-      [
+    bindInConfig(good, {
+      before: [
         `const needs = definePack("needs", (repo: { run: string }) => ({`,
         `  gate: guardrail().at(commit).check(() => ({ ok: true })).message(repo.run).test({ pass: [], block: [{ staged: ["a.txt"] }] }),`,
         `}));`,
-        `export default defineConfig([${bound}, pack(needs)]);`,
       ].join("\n"),
-    ),
+      bind: "pack(needs)",
+    }),
 };

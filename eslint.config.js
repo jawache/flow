@@ -166,7 +166,7 @@ export default [
   // stderr. If either changes shape, `the repo's package.json type` in e2e/product.test.ts goes
   // red across three of its four rows — the table is the tripwire, not this comment.
   {
-    files: ["adapter/claude.ts"],
+    files: ["flow.ts"],
     rules: {
       "n/no-unsupported-features/node-builtins": ["error", { ignores: ["module.registerHooks", "module.stripTypeScriptTypes"] }],
     },

@@ -15,6 +15,26 @@
 import { defineCategory, definePack, guardrail, spawnedAs, turnEnd } from "../index.ts";
 
 /**
+ * What this pack counts as an action, and the ONE TypeScript-only construct in this file — on
+ * purpose.
+ *
+ * A guarded repo's own pack is `.ts`, and node decides a `.ts` file's module system from the
+ * nearest `package.json`: flow strips the types and evaluates it as ESM itself, so that a repo
+ * which is not `type: "module"` can still be guarded (see the load hook at the top of flow.ts).
+ * Written in plain JavaScript syntax, this fixture would prove only that the file was reached —
+ * an interface and an annotation are what make it prove the stripping, in every suite that drives
+ * it.
+ */
+interface Action {
+  readonly did: string;
+}
+
+/** Untested work, as this pack counts it: more than three actions this turn, and every one an edit. */
+function nothingRun(actions: readonly Action[]): boolean {
+  return actions.length > 3 && actions.every((action) => action.did === "edit");
+}
+
+/**
  * A rung, recognised from what the HOST wrote — never from a claim the session made about itself.
  * A rule bound `.for(builder)` fires for a spawned builder and for nobody else.
  */
@@ -33,9 +53,7 @@ export const house = definePack("house", {
     .description("A turn that edited all the way through and ran nothing hands back untested work.")
     .check((ctx) => {
       const did = ctx.turn ?? [];
-      return did.length > 3 && did.every((action) => action.did === "edit")
-        ? ctx.fail(`${did.length} edits, nothing run`)
-        : ctx.ok();
+      return nothingRun(did) ? ctx.fail(`${did.length} edits, nothing run`) : ctx.ok();
     })
     .message("You edited all turn and ran nothing. Run the suite before you hand back.")
     .test({

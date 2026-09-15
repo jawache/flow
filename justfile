@@ -134,5 +134,10 @@ release-check:
     npm pack --dry-run
     # READ THE FILE LIST ABOVE before typing the publish line. It is the whole of what strangers
     # get, `files` is an allowlist, and a package is not unpublishable after 72 hours.
+    #
+    # IN A REAL TERMINAL, and that is not a style note: npm's `otplease` helper rethrows EOTP when
+    # stdin or stdout is not a TTY, so a publish run through anything that captures output — a
+    # subprocess, an agent's shell, CI without a token — fails at the two-factor step instead of
+    # prompting, and can never reach the browser. Learned at 0.1.0.
     @echo ''
-    @echo 'To publish:  npm publish'
+    @echo 'To publish, in a terminal:  npm publish'

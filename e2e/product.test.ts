@@ -28,6 +28,8 @@ import {
   settingsHome,
   shimBin,
   BREAKS,
+  bindInConfig,
+  fixturePack,
   flow as runFlow,
   git as runGit,
   type Ran,
@@ -353,28 +355,25 @@ describe("the repo's package.json type", () => {
       const pkg = { name: "c", version: "1.0.0", type: "commonjs" };
       writeFileSync(join(repo, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
       expect(flow(repo, ["init"]).code).toBe(0);
+
+      // THE FIXTURE the other two suites drive (flow/__fixtures__/repo-pack.ts), written here as a
+      // repo's own pack is: a `.ts` file next door, reached by a relative import. It carries an
+      // interface and an annotated function for this row's sake — plain JavaScript syntax would
+      // prove the file was reached and nothing about the stripping. `@jawache/flow` is the
+      // specifier because `flow init` linked it, this repo having no dependency of its own.
       mkdirSync(join(repo, "guards"), { recursive: true });
-      writeFileSync(
-        join(repo, "guards", "house.ts"),
-        [
-          `import { breadcrumb, definePack, session } from "@jawache/flow";`,
-          ``,
-          `interface Terrain { readonly what: string }`,
-          ``,
-          `export const house = definePack("house", (repo: Terrain) => ({`,
-          `  orientation: breadcrumb().at(session).description("the map").text(\`this is \${repo.what}\`),`,
-          `}));`,
-          ``,
-        ].join("\n"),
-      );
-      const config = `import { house } from "./guards/house.ts";\n${readFileSync(join(repo, "flow.config.ts"), "utf8")}`;
+      writeFileSync(join(repo, "guards", "house.ts"), fixturePack("repo-pack", "@jawache/flow"));
       writeFileSync(
         join(repo, "flow.config.ts"),
-        config.replace(/export default defineConfig\(\[/, `export default defineConfig([\n  pack(house, { what: "a commonjs repo" }),`),
+        bindInConfig(readFileSync(join(repo, "flow.config.ts"), "utf8"), {
+          above: `import { house } from "./guards/house.ts";`,
+          bind: "pack(house)",
+        }),
       );
       const said = flow(repo, ["status"]);
-      expect(said.stdout, "the repo's own pack is bound").toContain("house.orientation");
+      expect(said.stdout, "the repo's own pack is bound").toContain("house.ranSomething");
       expect(said.stdout).toContain("green — every rule loads");
+      expect(said.stderr, "silent, as every row above").toBe("");
       expect(said.code).toBe(0);
     } finally {
       rmSync(repo, { recursive: true, force: true });
