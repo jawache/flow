@@ -85,6 +85,7 @@ import {
   type SpawnRecord,
   NODE_FLOOR,
   configLoadFault,
+  loadsAsStrippedModule,
   HOOK_REGISTRATIONS,
   ourHookCommand,
   registeredEvents,
@@ -1142,6 +1143,38 @@ describe("the config load's one fault sentence", () => {
     const said = configLoadFault("flow.config.ts", "Cannot find package 'left-pad'", "24.1.0");
     expect(said).toContain("Cannot find package 'left-pad'");
     expect(said).not.toContain(`Node >= ${NODE_FLOOR}`);
+  });
+});
+
+describe("which modules flow strips and evaluates itself", () => {
+  const url = (path: string): string => `file://${path}`;
+
+  it("takes the guarded repo's own TypeScript — the config, and what it imports", () => {
+    expect(loadsAsStrippedModule(url("/repo/flow.config.ts"))).toBe(true);
+    expect(loadsAsStrippedModule(url("/repo/guards/house.ts"))).toBe(true);
+  });
+
+  it("leaves node_modules alone, because node refuses to strip there and that refusal is not flow's to overrule", () => {
+    expect(loadsAsStrippedModule(url("/repo/node_modules/some-pkg/index.ts"))).toBe(false);
+    expect(loadsAsStrippedModule(url("/repo/node_modules/@scope/pkg/deep/src/x.ts"))).toBe(false);
+  });
+
+  it("leaves everything that is not a .ts file, declarations included", () => {
+    expect(loadsAsStrippedModule(url("/repo/flow.config.js"))).toBe(false);
+    expect(loadsAsStrippedModule(url("/repo/flow.config.mjs"))).toBe(false);
+    expect(loadsAsStrippedModule(url("/repo/types/x.d.ts")), "types all the way down, evaluating to nothing").toBe(false);
+  });
+
+  it("answers only for file urls — an http or data specifier is nothing flow put there", () => {
+    expect(loadsAsStrippedModule("data:text/typescript,export default 1")).toBe(false);
+    expect(loadsAsStrippedModule("https://example.com/config.ts")).toBe(false);
+    expect(loadsAsStrippedModule("node:fs")).toBe(false);
+  });
+
+  it("reads past a query or a fragment, which a cache-busting import adds", () => {
+    expect(loadsAsStrippedModule(url("/repo/flow.config.ts?v=2"))).toBe(true);
+    expect(loadsAsStrippedModule(url("/repo/flow.config.ts#frag"))).toBe(true);
+    expect(loadsAsStrippedModule(url("/repo/x.js?name=y.ts")), "the query is not the extension").toBe(false);
   });
 });
 

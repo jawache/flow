@@ -32,7 +32,7 @@ import { VERSION } from "./version.ts";
 import { entriesOrThrow, FlowConfigError } from "./errors.ts";
 import { loadConfig, type FlowConfig, type LoadedEntry } from "./language/domain.ts";
 import { runCases, type CaseResult } from "./checks/domain.ts";
-import { commitEntry, hookEntry } from "./adapter/claude.ts";
+import { commitEntry, hookEntry, loadConsumerTypeScript } from "./adapter/claude.ts";
 import { facts } from "./adapter/archive.ts";
 import { CONFIG_FILE, HOOK_EVENTS, configLoadFault, formatFacts, snip, type HookResult } from "./adapter/domain.ts";
 import { runInit, runStatus, type VerbResult } from "./adapter/product.ts";
@@ -51,6 +51,13 @@ process.removeAllListeners("warning");
 process.on("warning", (w: Error) => {
   if (w.name !== "ExperimentalWarning") process.stderr.write(`${w.stack ?? w.message}\n`);
 });
+
+// The OTHER piece of housekeeping before anything is imported, and the more important one: flow
+// loads the guarded repo's TypeScript itself, so that a repo whose package.json is not
+// `type: "module"` — which is what `npm init` writes — can still be guarded. See
+// `loadConsumerTypeScript`. It has to run before the first `import()` of a config, and both doors
+// onto one are below.
+loadConsumerTypeScript();
 
 /**
  * Load a config FILE — the one thing in flow that turns a path into a regime.

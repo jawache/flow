@@ -27,8 +27,9 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { registerHooks, stripTypeScriptTypes } from "node:module";
 import { isAbsolute, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   loadConfig,
   type Category,
@@ -77,6 +78,7 @@ import {
   faultText,
   hermeticEnv,
   isHookEvent,
+  loadsAsStrippedModule,
   relativise,
   sessionFactsFrom,
   sidecarPath,
@@ -242,6 +244,47 @@ export function wearer(root: string): {
  */
 export function projectRoot(cwd: string): string {
   return process.env["CLAUDE_PROJECT_DIR"] || cwd;
+}
+
+/**
+ * Teach this process to load the guarded repo's TypeScript itself — CALLED ONCE, before any config
+ * is imported, and the reason flow works in a repo that is not `type: "module"`.
+ *
+ * `module.registerHooks` is node's synchronous, in-thread loader hook (node >= 22.15, and flow's
+ * floor is 24). The load hook is handed a url and returns the source and the format to evaluate it
+ * as, so `loadsAsStrippedModule` picks out the consumer's own `.ts` files and this hands node the
+ * type-stripped text as `module`. The nearest `package.json` never gets a say, which is the whole
+ * point: a config is written in `import` statements and a guard may not require a repo to change
+ * its own module system to be guarded.
+ *
+ * WHY THE SOURCE IS READ HERE rather than asked of `nextLoad`: node decides the format BEFORE the
+ * hook chain returns, and `nextLoad(url, { ...context, format: "module" })` is not a request to
+ * strip — it hands the raw TypeScript to the ESM compiler, which dies on the first `interface`.
+ * Measured on node v24.1.0 while this was written; the failure is a `SyntaxError: Unexpected strict
+ * mode reserved word`, pointing at a line that is valid TypeScript.
+ *
+ * IDEMPOTENT because two registrations would strip every config twice, and because the binary has
+ * more than one door onto a config file (`flow test` loads one by path, the live rails load the
+ * repo's own).
+ *
+ * `stripTypeScriptTypes` in `strip` mode erases types and rewrites nothing, so a line number in a
+ * stack trace is still the line in the file; `sourceUrl` is what keeps the file's own name on it.
+ */
+let hooked = false;
+export function loadConsumerTypeScript(): void {
+  if (hooked) return;
+  hooked = true;
+  registerHooks({
+    load(url, context, nextLoad) {
+      if (!loadsAsStrippedModule(url)) return nextLoad(url, context);
+      const source = readFileSync(fileURLToPath(url), "utf8");
+      return {
+        format: "module",
+        shortCircuit: true,
+        source: stripTypeScriptTypes(source, { mode: "strip", sourceUrl: url }),
+      };
+    },
+  });
 }
 
 /**

@@ -48,7 +48,7 @@
     "dependency-cruiser": "^18.1.0"
   },
   "devDependencies": {
-    "@types/node": "^20.14.0",
+    "@types/node": "^24.13.4",
     "@vitest/coverage-v8": "4.1.10",
     "commit-and-tag-version": "^13.1.2",
     "esbuild": "^0.28.1",

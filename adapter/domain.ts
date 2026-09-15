@@ -2011,6 +2011,39 @@ export function formatFacts(facts: Facts): string[] {
 export const NODE_FLOOR = 24;
 
 /**
+ * Is this module one of the GUARDED REPO'S OWN TypeScript files — the config, and whatever it
+ * imports — which flow has to evaluate itself?
+ *
+ * Node decides a `.ts` file's module system from the nearest `package.json`: `type: "module"` makes
+ * it ESM, anything else makes it CommonJS, and there is no syntax detection for `.ts` the way there
+ * is for an extensionless-type `.js`. A config is written in `import` statements, so in a repo whose
+ * package.json says `commonjs` — or says nothing, which is what `npm init` writes, and is the
+ * ordinary JS repo — the config flow's own `init` just scaffolded cannot be loaded at all. Measured
+ * at 0.1.0's pre-flight over all four shapes: absent green (no package.json, so node falls back to
+ * syntax detection), `module` green, NO TYPE FIELD red, `commonjs` red. Every suite had missed it
+ * because the harness's throwaway repos carry no package.json.
+ *
+ * So flow loads its own config the way eslint and vitest load theirs: it reads the file, strips the
+ * types and hands node ESM, and the repo's package.json never enters into it. This is the pure half
+ * — WHICH urls that treatment is for — and `loadConsumerTypeScript` in the shell is the doing.
+ *
+ * THREE EXCLUSIONS, each a case that must keep node's own answer:
+ *
+ * · not a `file:` url — an http or data specifier is nothing flow put there.
+ * · `.d.ts` — declarations, which are types all the way down and evaluate to nothing.
+ * · anything under `node_modules` — node REFUSES to strip types there
+ *   (ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING), on the grounds that a dependency ships built
+ *   files. Stripping them here because a config happened to import one would quietly overrule that,
+ *   for every package in the tree, from a guard. flow's own bundles are `.mjs` and never reach here.
+ */
+export function loadsAsStrippedModule(url: string): boolean {
+  if (!url.startsWith("file://")) return false;
+  const path = url.split(/[?#]/)[0] ?? url;
+  if (!path.endsWith(".ts") || path.endsWith(".d.ts")) return false;
+  return !path.includes("/node_modules/");
+}
+
+/**
  * The one sentence for "this config would not load", and the one place a version floor is named.
  *
  * A node too old to strip types fails on the IMPORT, with a syntax error about a colon. That is a

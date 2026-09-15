@@ -150,4 +150,25 @@ export default [
       ],
     },
   },
+
+  // ── override 6 · the two node APIs flow loads a config through ───────────────────
+  //
+  // `module.registerHooks` and `module.stripTypeScriptTypes` are marked experimental, and
+  // eslint-plugin-n is right to say so — on every other line it would be a finding worth keeping.
+  // Here it names the only two functions that let a repo which is not `type: "module"` be guarded
+  // at all, and there is no stable alternative to move to: node decides a `.ts` file's module
+  // system from the nearest package.json and offers no other seam to overrule it. The choice is
+  // these two functions or a loader dependency in a package that has two, and the ruling of
+  // 2026-09-15 was these two. Scoped to the ONE file that may call them, so the rule still fires
+  // everywhere else and a third experimental builtin cannot arrive quietly.
+  //
+  // WHAT TO WATCH: both are behind `ExperimentalWarning`, which flow.ts suppresses for its own
+  // stderr. If either changes shape, `the repo's package.json type` in e2e/product.test.ts goes
+  // red across three of its four rows — the table is the tripwire, not this comment.
+  {
+    files: ["adapter/claude.ts"],
+    rules: {
+      "n/no-unsupported-features/node-builtins": ["error", { ignores: ["module.registerHooks", "module.stripTypeScriptTypes"] }],
+    },
+  },
 ];

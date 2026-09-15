@@ -288,6 +288,100 @@ describe("the README's quickstart", () => {
   });
 });
 
+// ── the guarded repo's own module system ─────────────────────────────────────
+//
+// THE TABLE THAT WOULD HAVE CAUGHT IT. Node decides a `.ts` file's module system from the nearest
+// `package.json`, and `flow.config.ts` is written in `import` statements — so before flow loaded its
+// own config, `npm init && npx flow init` produced a repo whose guard could not be loaded at all.
+// Found by installing the 0.1.0 tarball into a throwaway repo on the eve of publishing, and missed
+// by every suite for one reason: the harness's repos have no package.json, which is the one shape
+// node falls back to syntax detection for, and the only two real repos flow had ever run in were
+// both `type: "module"`.
+//
+// FOUR SHAPES, and they fail in three different ways without the hook — worth knowing, because the
+// middle two look alike and are not:
+//
+// · ABSENT — no package.json. Node has no declared type, so it detects the syntax and loads it.
+//   Green before the fix, and the reason this went unseen: it is what `newRepo` builds.
+// · NO TYPE FIELD — node detects the syntax and loads it, then warns MODULE_TYPELESS_PACKAGE_JSON
+//   on stderr, EVERY RUN. Not a failure to load; a failure to stay quiet, on the one stream a
+//   guard's refusals are read on and on a binary that fires on every tool call.
+// · COMMONJS — the hard one, and the ordinary case: `npm init` writes `"type": "commonjs"`
+//   verbatim (checked on npm 11.4.1), so this is what a person gets, not an exotic choice. The
+//   config does not load: `Cannot use import statement outside a module`, exit 2, no guard at all.
+// · MODULE — always worked. flow's own repo and the work repo, which is why nobody noticed.
+//
+// All four must init, load, go green and say NOTHING on stderr. A fifth shape is one row.
+
+describe("the repo's package.json type", () => {
+  const SHAPES = [
+    { what: "absent", json: null },
+    { what: "no type field — loads by detection, but node warns every run", json: { name: "consumer", version: "1.0.0" } },
+    { what: "commonjs — verbatim what `npm init` writes", json: { name: "consumer", version: "1.0.0", type: "commonjs" } },
+    { what: "module", json: { name: "consumer", version: "1.0.0", type: "module" } },
+  ] as const;
+
+  for (const shape of SHAPES) {
+    it(`does not decide whether the guard runs — ${shape.what}`, () => {
+      const repo = newRepo();
+      try {
+        if (shape.json) writeFileSync(join(repo, "package.json"), `${JSON.stringify(shape.json, null, 2)}\n`);
+        expect(flow(repo, ["init"]).code, "init").toBe(0);
+
+        // The whole point, and the exact line that was red: the scaffolded config LOADS.
+        const said = flow(repo, ["status"]);
+        expect(said.stdout, "status").toContain("green — every rule loads");
+        expect(said.stderr, "nothing on stderr — not node's ESM complaint, not an ExperimentalWarning").toBe("");
+        expect(said.code, "status exit").toBe(0);
+
+        // And its rules really run, which is a different fact from the config importing.
+        expect(flow(repo, ["test"]).stdout, "test").toContain("all green");
+      } finally {
+        rmSync(repo, { recursive: true, force: true });
+      }
+    });
+  }
+
+  it("loads a pack the config imports from a plain .ts file beside it", () => {
+    // The config is never alone: a repo's own pack sits next door and is reached by a relative
+    // import, so it is loaded through the same hook and has to be stripped the same way. A fix that
+    // only handled the entry file would pass every row above and break the first real repo.
+    const repo = newRepo();
+    try {
+      // `commonjs`, deliberately — the shape that does not load at all, so this row fails when the
+      // hook stops covering a config's relative imports rather than only its entry file.
+      const pkg = { name: "c", version: "1.0.0", type: "commonjs" };
+      writeFileSync(join(repo, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
+      expect(flow(repo, ["init"]).code).toBe(0);
+      mkdirSync(join(repo, "guards"), { recursive: true });
+      writeFileSync(
+        join(repo, "guards", "house.ts"),
+        [
+          `import { breadcrumb, definePack, session } from "@jawache/flow";`,
+          ``,
+          `interface Terrain { readonly what: string }`,
+          ``,
+          `export const house = definePack("house", (repo: Terrain) => ({`,
+          `  orientation: breadcrumb().at(session).description("the map").text(\`this is \${repo.what}\`),`,
+          `}));`,
+          ``,
+        ].join("\n"),
+      );
+      const config = `import { house } from "./guards/house.ts";\n${readFileSync(join(repo, "flow.config.ts"), "utf8")}`;
+      writeFileSync(
+        join(repo, "flow.config.ts"),
+        config.replace(/export default defineConfig\(\[/, `export default defineConfig([\n  pack(house, { what: "a commonjs repo" }),`),
+      );
+      const said = flow(repo, ["status"]);
+      expect(said.stdout, "the repo's own pack is bound").toContain("house.orientation");
+      expect(said.stdout).toContain("green — every rule loads");
+      expect(said.code).toBe(0);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("flow init --empty", () => {
   it("leaves the wiring and no opinions", () => {
     const bare = newRepo();
