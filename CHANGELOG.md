@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.1.2](https://github.com/jawache/flow/compare/v0.1.1...v0.1.2) (2026-09-16)
+
+### Features
+
+* **flow:** a fence layer that is not a glob refuses to load, and a layer may have holes in it ([5e956e4](https://github.com/jawache/flow/commit/5e956e4d651f9565cfd0c6eb78dd1394529cf4de))
 ## [0.1.1](https://github.com/jawache/flow/compare/v0.1.0...v0.1.1) (2026-09-16)
 
 ### Features
