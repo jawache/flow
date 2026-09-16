@@ -139,5 +139,11 @@ release-check:
     # stdin or stdout is not a TTY, so a publish run through anything that captures output — a
     # subprocess, an agent's shell, CI without a token — fails at the two-factor step instead of
     # prompting, and can never reach the browser. Learned at 0.1.0.
+    #
+    # AND IT RETURNS BEFORE IT IS VISIBLE. npm answers the publish with 202 Accepted — the upload is
+    # taken, not yet served — so the registry can still say the old version for a minute or two
+    # afterwards. Learned at 0.1.1. `npm view @jawache/flow version` is the honest check, and a
+    # consumer's `npm i -D @jawache/flow@<new>` that 404s a few seconds after a successful publish is
+    # this, not a failed release: wait, then ask again.
     @echo ''
     @echo 'To publish, in a terminal:  npm publish'
