@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.1.1](https://github.com/jawache/flow/compare/v0.1.0...v0.1.1) (2026-09-16)
+
+### Features
+
+* **flow:** a config may declare its own ast-grep grammar, and a note may be attached to a command ([1e9f603](https://github.com/jawache/flow/commit/1e9f6038ccd28500acebd82423899ad517ef9fde))
 ## 0.1.0 (2026-09-15)
 
 ### ⚠ BREAKING CHANGES
