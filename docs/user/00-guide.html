@@ -93,16 +93,15 @@ export default defineConfig([
   <code>guards/</code>, or one you installed from npm — of identical shape. Publishing a pack is
   promotion, not a rewrite (§8).</p>
 
-  <p>A guardrail fires at one or more <strong>moments</strong>. A breadcrumb has its own three:</p>
+  <p>A guardrail fires at one or more <strong>moments</strong>. A breadcrumb has its own four:</p>
 
   <table>
     <thead><tr><th>Moment</th><th>For</th><th>When</th></tr></thead>
     <tbody>
       <tr><td><code>session</code></td><td>breadcrumb</td><td>a chat starts, resumes, or is compacted</td></tr>
       <tr><td><code>touch</code></td><td>breadcrumb</td><td>a tool call first names a matching file, then again after drift</td></tr>
-      <tr><td><code>command</code></td><td>either</td><td>before a shell command runs — a guardrail refuses it, a breadcrumb says what you should know before it runs</td></tr>
       <tr><td><code>write</code></td><td>guardrail</td><td>before an edit lands — the would-be file is checked in memory, nothing touches disk</td></tr>
-      <tr><td><code>command</code></td><td>guardrail</td><td>before a shell command runs</td></tr>
+      <tr><td><code>command</code></td><td>either</td><td>before a shell command runs — a guardrail refuses it, a breadcrumb says what you should know before it runs</td></tr>
       <tr><td><code>delete</code></td><td>guardrail</td><td>before a command that removes a matching file</td></tr>
       <tr><td><code>commit</code></td><td>guardrail</td><td>the git pre-commit gate, over the staged set — this one fires for humans too</td></tr>
       <tr><td><code>turn-end</code></td><td>either</td><td>when the agent hands back</td></tr>

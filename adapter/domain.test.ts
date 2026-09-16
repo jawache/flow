@@ -17,6 +17,7 @@
 import { describe, it, expect } from "vitest";
 import type { TurnAction } from "../index.ts";
 import { metrics, momentsView, type Block, type Bound, type Row } from "../engine/domain.ts";
+import { missingGrammarText } from "../checks/domain.ts";
 import { matchAny } from "../glob.ts";
 import {
   ALLOW,
@@ -1576,8 +1577,9 @@ describe("the grammar fitting", () => {
     const red = status(statusFacts({ grammars: [{ name: "astro", libraryPath: "/repo/grammars/astro.dylib", present: false }] }));
     const fitting = red.fittings.find((f) => f.id === "grammars");
     expect(fitting?.ok).toBe(false);
-    expect(fitting?.detail).toContain("/repo/grammars/astro.dylib");
-    expect(fitting?.detail).toContain("build it");
+    // The same sentence the resolver gives when a rule on that language is reached — pinned at both
+    // ends, because two accounts of one fact is how the worse one survives.
+    expect(fitting?.detail).toBe(missingGrammarText("astro", "/repo/grammars/astro.dylib"));
     expect(red.green).toBe(false);
   });
 });

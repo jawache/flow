@@ -57,6 +57,7 @@ import {
   quoteArg,
   ranSinceEdit,
   reasonHits,
+  missingGrammarText,
   resolveLang,
   useGrammars,
   runCase,
@@ -1140,10 +1141,12 @@ describe("the ast-grep grammar registry", () => {
       const resolved = await resolveLang("invented-lang");
       expect(resolved.ok).toBe(false);
       const detail = resolved.ok ? "" : resolved.detail;
-      // The library sentence, not the npm one: it names the path, says the artefact is not
-      // committed, and never sends the reader to a package that does not exist.
+      // THE ONE SENTENCE, pinned here and in the status fitting's own test: `flow status` says it
+      // before anything runs and this says it when a rule is reached, and the two must not drift
+      // into two accounts of the same fact. Never the npm one — a reader sent to a package that does
+      // not exist is a reader who cannot fix this.
+      expect(detail).toBe(missingGrammarText("invented-lang", "/nowhere/invented.dylib"));
       expect(detail).toContain("/nowhere/invented.dylib");
-      expect(detail).toContain("Build it");
       expect(detail).not.toContain("npm i -D");
     });
 

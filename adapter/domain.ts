@@ -65,7 +65,7 @@ import {
 // would remove is event ASSEMBLY — the adapter's job — but quote-aware shell tokenising is a
 // question the checks layer already answers, and the old engine's second answer (a regex split on
 // `&&|\|\||;`) is exactly the near-duplicate this rewrite exists to delete.
-import { tokenizeCommand } from "../checks/domain.ts";
+import { missingGrammarText, tokenizeCommand } from "../checks/domain.ts";
 // The one glob engine. A coverage question asked with a second matcher is a coverage answer about
 // files the guard never judged — see flow/glob.ts on why there is exactly one.
 import { matchAny } from "../glob.ts";
@@ -2581,10 +2581,7 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
               ? `${facts.grammars.map((grammar) => grammar.name).join(" · ")} — declared in ${CONFIG_FILE}, and their libraries are built`
               : facts.grammars
                   .filter((grammar) => !grammar.present)
-                  .map(
-                    (grammar) =>
-                      `\`${grammar.name}\`: no library at ${grammar.libraryPath}. It is a build artefact and is not committed — build it, or every ast-grep rule on that language refuses rather than passing quietly.`,
-                  )
+                  .map((grammar) => missingGrammarText(grammar.name, grammar.libraryPath))
                   .join("\n"),
           },
         ]),

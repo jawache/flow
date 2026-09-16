@@ -1530,6 +1530,22 @@ function registry(): GrammarRegistry {
 }
 
 /**
+ * WHAT A MISSING GRAMMAR LIBRARY SAYS — one sentence, in one place.
+ *
+ * It is read at two moments that must not disagree: `flow status` says it before anything runs, and
+ * `resolveLang` says it when a rule on that language is reached. Two spellings would be two accounts
+ * of the same fact, and the day one of them was improved the other would quietly become the older,
+ * worse answer — which is the drift this package refuses everywhere else.
+ */
+export function missingGrammarText(name: string, libraryPath: string): string {
+  return (
+    `\`${name}\`: no library at ${libraryPath}. A grammar is a BUILD ARTEFACT — machine-specific, never ` +
+    `committed — so this is the ordinary state of a fresh clone. Build it (the repo that declares a grammar ` +
+    `carries the recipe that builds it), or every ast-grep rule on that language refuses rather than passing quietly.`
+  );
+}
+
+/**
  * Declare the config's grammars, and how to tell whether one is built.
  *
  * Called once per config read; the last config read wins, and one declaring none clears the list —
@@ -1572,14 +1588,7 @@ export async function resolveLang(name: string): Promise<LangResult> {
   const { declared, present } = registry();
   const own = declared.find((grammar) => grammar.name === name);
   if (own !== undefined) {
-    if (!present(own.libraryPath))
-      return {
-        ok: false,
-        detail:
-          `ast-grep grammar '${name}' is declared in this repo's flow.config.ts, but its library is not there: ${own.libraryPath}. ` +
-          `A grammar is a BUILD ARTEFACT — machine-specific, never committed — so this is the ordinary state of a fresh clone. ` +
-          `Build it (the repo that declares a grammar carries the recipe that builds it), then run again.`,
-      };
+    if (!present(own.libraryPath)) return { ok: false, detail: missingGrammarText(name, own.libraryPath) };
     registerDynamicLanguage({
       [name]: {
         libraryPath: own.libraryPath,

@@ -58,6 +58,16 @@ import { bindLine, EXAMPLE } from "../tools/domain.ts";
 interface Shipped {
   /** The pack's exported name, which is also the prefix of every entry id it contributes. */
   readonly pack: string;
+  /**
+   * Where this pack is imported FROM when it is the repo's own — the file, relative to `probe/`.
+   *
+   * Absent means the package, which is the ordinary case. It is a field rather than a branch per
+   * pack in the generator below: the two the stranger writes differ from the ten only in this one
+   * fact, and a second template is a second place for "how a config imports a pack" to be spelled.
+   */
+  readonly from?: string;
+  /** Whether this binding declares the repo's own grammar — the settings block rides with it. */
+  readonly declaresGrammar?: boolean;
   /** What this repo binds it with. `undefined` binds it bare. */
   readonly params: Readonly<Record<string, unknown>> | undefined;
   /** What `flow test` runs over this pack alone. Pinned: a deleted case shows up here, by name. */
@@ -102,7 +112,7 @@ const SHIPPED: readonly Shipped[] = [
   { pack: "work", params: undefined, cases: 16, guardrails: 5 },
 ];
 /** The stranger's own pack — the eleventh binding, and the only turn-end rule in the config. */
-const HOUSE: Shipped = { pack: "house", params: undefined, cases: 2, guardrails: 1 };
+const HOUSE: Shipped = { pack: "house", params: undefined, cases: 2, guardrails: 1, from: "../rules/house.ts" };
 
 /**
  * The stranger's SECOND pack — the twelfth binding, and the only user of the two capabilities no
@@ -110,7 +120,14 @@ const HOUSE: Shipped = { pack: "house", params: undefined, cases: 2, guardrails:
  *
  * Its guardrail carries two cases; its note carries none, because a note has no rail to block with.
  */
-const STRANGER: Shipped = { pack: "stranger", params: undefined, cases: 2, guardrails: 1 };
+const STRANGER: Shipped = {
+  pack: "stranger",
+  params: undefined,
+  cases: 2,
+  guardrails: 1,
+  from: "../rules/stranger.ts",
+  declaresGrammar: true,
+};
 
 /**
  * The name the stranger's declared grammar goes by, and the whole proof of the route.
@@ -121,6 +138,9 @@ const STRANGER: Shipped = { pack: "stranger", params: undefined, cases: 2, guard
  * whatever platform this is running, with no build step and nothing checked in.
  */
 const DECLARED_GRAMMAR = "declared-python";
+
+/** A library path that is deliberately not there — the fresh-clone state, which must never read green. */
+const MISSING_LIBRARY = "grammars/nowhere.so";
 
 /**
  * The stranger's own pack, in the folder the stranger chose.
@@ -165,11 +185,12 @@ ${SHIPPED.map((s) => `  ${bind(s)},`).join("\n")}
 
 /** One pack alone, so `flow test` can be asked about it by itself. */
 const only = (entry: Shipped, libraryPath: string): string =>
-  entry.pack === HOUSE.pack
-    ? `import { defineConfig, pack } from "@jawache/flow";\nimport { house } from "../rules/house.ts";\nexport default defineConfig([${bind(entry)}]);\n`
-    : entry.pack === STRANGER.pack
-      ? `import { defineConfig, pack } from "@jawache/flow";\nimport { stranger } from "../rules/stranger.ts";\nexport default defineConfig([${bind(entry)}]${settingsBlock(libraryPath)});\n`
-      : `import { defineConfig, pack } from "@jawache/flow";\nimport { ${entry.pack} } from "@jawache/flow/packs";\nexport default defineConfig([${bind(entry)}]);\n`;
+  [
+    `import { defineConfig, pack } from "@jawache/flow";`,
+    `import { ${entry.pack} } from ${JSON.stringify(entry.from ?? "@jawache/flow/packs")};`,
+    `export default defineConfig([${bind(entry)}]${entry.declaresGrammar === true ? settingsBlock(libraryPath) : ""});`,
+    "",
+  ].join("\n");
 
 /** The stranger's entire toolchain: one script, one job per argument. */
 const CI_SH = `#!/bin/sh
@@ -464,25 +485,31 @@ describe("the machine test", () => {
   // failure this package exists to delete. It is a red line naming the file, and the rules on that
   // language refuse rather than pass.
   it("turns a declared grammar whose library is missing into a red line naming the file", () => {
+    // The SAME generator the real probe configs use, with one fact changed — the library path. A
+    // second hand-written config here would be a second spelling of the settings block, and the day
+    // the block changed shape this test would go on proving the old one.
     const probe = join(repo, "probe", "missing-grammar.config.ts");
-    writeFileSync(
-      probe,
-      `import { defineConfig, pack } from "@jawache/flow";\nimport { stranger } from "../rules/stranger.ts";\n` +
-        `export default defineConfig([pack(stranger)], { grammars: [{ name: ${JSON.stringify(DECLARED_GRAMMAR)}, libraryPath: "grammars/nowhere.so", extensions: ["py"] }] });\n`,
-    );
+    writeFileSync(probe, only({ ...STRANGER, cases: 0, guardrails: 0 }, MISSING_LIBRARY));
     const cases = flow(["test", join("probe", "missing-grammar.config.ts")]);
     expect(cases.code, "a rule whose grammar is missing must not pass quietly").toBe(1);
-    expect(cases.stdout).toContain("grammars/nowhere.so");
+    expect(cases.stdout).toContain(MISSING_LIBRARY);
 
     // And `flow status` says so before any rule runs, with the path and the exit code.
+    //
+    // THE LIVE CONFIG IS MUTATED HERE, so the restore is in a `finally`: a failed expectation throws,
+    // and every test after this one runs against whatever the config was left as. That is the shape
+    // where one red test becomes six and the first of them is the only real failure.
     const here = join(repo, "flow.config.ts");
     const held = readFileSync(here, "utf8");
-    writeFileSync(here, held.replace(JSON.stringify(grammarLibrary), JSON.stringify("grammars/nowhere.so")));
-    const said = flow(["status"]);
-    expect(said.code, "a repo whose grammar is not built is not fully guarded").not.toBe(0);
-    expect(said.stdout).toContain("grammars/nowhere.so");
-    expect(said.stdout).toContain("build it");
-    writeFileSync(here, held);
+    try {
+      writeFileSync(here, held.replace(JSON.stringify(grammarLibrary), JSON.stringify(MISSING_LIBRARY)));
+      const said = flow(["status"]);
+      expect(said.code, "a repo whose grammar is not built is not fully guarded").not.toBe(0);
+      expect(said.stdout).toContain(MISSING_LIBRARY);
+      expect(said.stdout).toContain("Build it");
+    } finally {
+      writeFileSync(here, held);
+    }
     expect(flow(["status"]).code, "and it is green again once the library is back").toBe(0);
   });
 
