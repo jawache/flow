@@ -47,6 +47,7 @@ import {
   override,
   pack,
   BRIEF_SCOPE_MOMENTS,
+  withFaults,
   isScopable,
   PATH_MOMENTS,
   type Pack,
@@ -984,6 +985,30 @@ describe("the load refuses", () => {
     expect(shape(refusalsOf([empty]))).toEqual([["no-cases", "empty.x"]]);
   });
 
+  // A CHECK THAT SAID ITS OWN OPTIONS ARE UNUSABLE. The loader does not know what makes a depcruise
+  // layer or an ast-grep rule nonsense — the check does — so a check marks its own options and this
+  // turns that into the ordinary refusal every other load failure already is.
+  it("refuses an entry whose check declared its options unusable, in the check's own words", () => {
+    // A FRESH CLOSURE, never the shared `passes`: the mark rides ON the check, so marking a check
+    // other tests hold would hand every one of them the fault. That is also the contract for the
+    // caller — mark a check you just built, which is what `depcruise` does.
+    const check = withFaults((ctx: Ctx) => ctx.ok(), ["binds a layer that is a regex, not a glob: `^src/pages/`"]);
+    const sick = rawPack("sick", {
+      x: { spec: { kind: "guardrail", at: [write], on: ["src/**"], check, message: "m", test: cases } },
+    });
+    const refusals = refusalsOf([sick]);
+    expect(shape(refusals)).toEqual([["bad-check-options", "sick.x"]]);
+    expect(refusals[0]?.detail).toContain("sick.x");
+    expect(refusals[0]?.detail).toContain("regex, not a glob");
+  });
+
+  it("says nothing about a check that declared none — the ordinary case", () => {
+    const well = rawPack("well", {
+      x: { spec: { kind: "guardrail", at: [write], on: ["src/**"], check: passes, message: "m", test: cases } },
+    });
+    expect(refusalsOf([well])).toEqual([]);
+  });
+
   it("a scope on an entry whose every moment names no path — P2's dead fence, refused", () => {
     const dead = rawPack("dead", {
       x: {
@@ -1109,6 +1134,7 @@ describe("REFUSAL_CODES", () => {
       "no-cases",
       "duplicate-id",
       "dead-scope",
+      "bad-check-options",
     ]);
   });
 });

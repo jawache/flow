@@ -33,6 +33,7 @@ describe("the public surface", () => {
       "entriesOrThrow",
       "escapeRe",
       "execPasses",
+      "faultsOf",
       "gitDirPrefix",
       "gitInvocations",
       "givesReason",
@@ -54,6 +55,7 @@ describe("the public surface", () => {
       "tokenizeCommand",
       "touch",
       "turnEnd",
+      "withFaults",
       "write",
     ]);
   });

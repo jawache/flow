@@ -40,6 +40,8 @@ export {
 // BUILDS a ctx — see the CHECKS section of flow/language/domain.ts.
 export {
   defineCheck,
+  withFaults,
+  faultsOf,
   type Check,
   type Ctx,
   type World,
@@ -80,6 +82,7 @@ export {
   type CanonOptions,
   type ChangeGroup,
   type Dialect,
+  type Layer,
   type DiffAdds,
   type ForbidEdge,
   type JsonAssert,

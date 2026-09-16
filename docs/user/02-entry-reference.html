@@ -233,6 +233,7 @@ export const house = definePack("house", {
       <tr><td><code>undeclared-category</code></td><td><code>.for(…)</code> a category nothing declared</td></tr>
       <tr><td><code>no-cases</code></td><td>a guardrail with no block case — the class this whole grammar exists to catch</td></tr>
       <tr><td><code>duplicate-id</code></td><td>two entries share a name in one pack</td></tr>
+      <tr><td><code>bad-check-options</code></td><td>a check was configured with options it cannot work with, and said so — a depcruise layer written as a regex where the dialect takes globs, for instance. The check's own sentence is the refusal</td></tr>
       <tr><td><code>dead-scope</code></td><td>an <code>.on(…)</code> that could never narrow anything — refused, not ignored</td></tr>
     </tbody>
   </table>

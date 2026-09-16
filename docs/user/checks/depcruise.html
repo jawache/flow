@@ -38,13 +38,28 @@
     <thead><tr><th>Key</th><th>Type</th><th>Required</th><th>Meaning</th></tr></thead>
     <tbody>
       <tr><td><code>scan</code></td><td>glob</td><td>yes</td><td>what to cruise — a glob, because a bare directory cruises zero modules</td></tr>
-      <tr><td><code>layers</code></td><td>map of name → globs</td><td>yes</td><td>the named regions of the graph</td></tr>
+      <tr><td><code>layers</code></td><td>map of name → globs, or <code>{ path, not }</code></td><td>yes</td><td>the named regions of the graph. <b>Globs, never regexes</b> — a regex is escaped into a literal and the fence then matches nothing, so one is refused at load, naming the layer and the entry. For a layer with holes in it (a folder minus a few subtrees), say <code>{ path: ["src/pages/**"], not: ["src/pages/api/**"] }</code> rather than a lookahead</td></tr>
       <tr><td><code>forbid</code></td><td>list of edges</td><td>no</td><td>each: <code>from</code> · <code>to</code> · <code>why</code> — the edge that must not exist</td></tr>
       <tr><td><code>only</code></td><td>map</td><td>no</td><td>fail-closed allowlist: a layer may reach ONLY these layers</td></tr>
       <tr><td><code>require</code></td><td>list</td><td>no</td><td>an inverted fence: modules in a path MUST import a target</td></tr>
       <tr><td><code>except</code></td><td>list</td><td>no</td><td>carve-outs — <code>type-only</code> above all</td></tr>
     </tbody>
   </table>
+
+  <h2>A layer with holes in it</h2>
+  <p>The shape a real architecture usually wants is “this folder, except these”: the marketing
+  surface of a site is everything under <code>src/pages/</code> apart from the handful of subtrees
+  that are endpoints. Say that with <code>not</code>, which compiles to dependency-cruiser's own
+  <code>pathNot</code>:</p>
+<pre><code>layers: {
+  "marketing-pages": { path: ["src/pages/**"], not: ["src/pages/app/**", "src/pages/api/**", "src/pages/admin/**"] },
+  "per-user-runtime": ["src/lib/auth/**", "src/lib/session/**"],
+},
+forbid: [{ from: "marketing-pages", to: "per-user-runtime", why: "a cached page must render the same for everyone" }],</code></pre>
+  <p>Enumerating what IS in the layer instead is the trap: the fence quietly stops covering the next
+  folder somebody adds. One place <code>not</code> is refused — inside an <code>only</code> allowlist,
+  which is compiled by inverting the layers it names and would drop the holes silently; give that
+  layer plain globs, or say the exclusion as a <code>forbid</code> edge.</p>
 
   <h2>Example</h2>
 <pre><code>layersFenced: guardrail()

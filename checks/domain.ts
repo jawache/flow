@@ -29,7 +29,7 @@
 //   TOOLS         execPasses · depcruise · astGrep, each orchestrating, never reimplementing
 //   CASES         the canned ctx a `.test()` case becomes, and the runner that walks them
 
-import { cannedWorld, defineCheck, inScope, makeCtx } from "../language/domain.ts";
+import { cannedWorld, defineCheck, inScope, makeCtx, withFaults } from "../language/domain.ts";
 import type {
   Case,
   CaseWorld,
@@ -1208,10 +1208,25 @@ export interface RequireEdge {
  * language, and a fence written in regexes is a fence nobody re-reads — the compiled literals of
  * one such config were dead for four days while the guard's own status reported it healthy.
  */
+/**
+ * One layer: the globs that are in it, and — optionally — the globs that are NOT.
+ *
+ * `not` exists because the shape a real architecture wants is "this folder, except these few": the
+ * marketing surface of a site is `src/pages/**` minus the handful of subtrees that are endpoints.
+ * Written as an enumeration of what IS marketing, the fence silently stops covering the next folder
+ * somebody adds — which is the failure this dialect is supposed to prevent, not cause. It compiles
+ * to dependency-cruiser's own `pathNot`, which is the same pair the `only` rule already uses.
+ */
+export interface Layer {
+  readonly path: readonly string[];
+  readonly not?: readonly string[];
+}
+
 export interface Dialect {
   /** What to cruise. A GLOB, because a bare directory makes depcruise cruise zero modules. */
   readonly scan: string;
-  readonly layers: Readonly<Record<string, readonly string[]>>;
+  /** Each layer, as globs — a bare list, or `{ path, not }` when it has holes in it. */
+  readonly layers: Readonly<Record<string, readonly string[] | Layer>>;
   /** Fail-closed allowlist: a layer may reach ONLY these layers. */
   readonly only?: Readonly<Record<string, readonly string[]>>;
   /** Forbidden edges, each carrying the `why` its violation prints. */
@@ -1269,21 +1284,34 @@ export function entryToMatcher(entry: string): { core?: true; path?: string } {
 }
 
 /** Layer names → a depcruise matcher fragment. `path` is an OR-list; builtins become a type. */
+/** The globs a layer holds, whichever of the two ways it was written. */
+export function layerGlobs(layer: readonly string[] | Layer | undefined): { path: readonly string[]; not: readonly string[] } {
+  if (layer === undefined) return { path: [], not: [] };
+  return Array.isArray(layer) ? { path: layer, not: [] } : { path: (layer as Layer).path, not: (layer as Layer).not ?? [] };
+}
+
 export function layersMatcher(
   names: readonly string[],
-  layers: Readonly<Record<string, readonly string[]>>,
+  layers: Readonly<Record<string, readonly string[] | Layer>>,
 ): Matcher {
   const path: string[] = [];
+  const pathNot: string[] = [];
   let core = false;
   for (const name of names) {
-    for (const entry of layers[name] ?? []) {
+    const { path: globs, not } = layerGlobs(layers[name]);
+    for (const entry of globs) {
       const m = entryToMatcher(entry);
       if (m.core) core = true;
       else if (m.path) path.push(m.path);
     }
+    for (const entry of not) {
+      const m = entryToMatcher(entry);
+      if (m.path) pathNot.push(m.path);
+    }
   }
   const out: Matcher = {};
   if (path.length) out["path"] = path;
+  if (pathNot.length) out["pathNot"] = pathNot;
   if (core) out["dependencyTypes"] = ["core"];
   return out;
 }
@@ -1335,7 +1363,7 @@ export function compileDialect(rule: Dialect): NativeConfig {
       // A feature importing a DIFFERENT feature (sideways). Capture the feature folder from the
       // layer's first glob and forbid an import into a sibling feature via a backreference.
       const cyc = f.cyclesBetween;
-      const first = (layers[cyc] ?? [])[0] ?? "";
+      const first = layerGlobs(layers[cyc]).path[0] ?? "";
       const base = globToRe(first)
         .replace(/\$$/, "")
         .replace(/\[\^\/\]\*$/, "([^/]+)"); // last * → capture
@@ -1459,18 +1487,79 @@ export function depcruiseHits(result: ExecResult): string[] {
 }
 
 /**
+ * The regex tells that say a layer was written against the OLD engine, or against dependency-cruiser
+ * directly, rather than in this dialect.
+ *
+ * Four shapes, and each one is a thing a glob cannot contain: a leading `^`, a `(?` group, an
+ * unescaped `|`, or a trailing `$`. They are not a general regex detector and are not trying to be —
+ * every one of them is a character the glob compiler escapes into a literal, which is how a fence
+ * comes to match nothing at all. `escapeRe` is what does the escaping, so these are exactly its
+ * silent failures.
+ */
+export function notAGlob(entry: string): boolean {
+  return entry.startsWith("^") || entry.includes("(?") || /(^|[^\\])\|/.test(entry) || entry.endsWith("$");
+}
+
+/**
+ * Every layer entry that is a regex where a glob belongs — the fault `depcruise` refuses to load with.
+ *
+ * MEASURED, NOT IMAGINED: the first repo to convert its guard to flow brought its fence across
+ * verbatim, layers and all, from an engine whose layers WERE regexes. They compiled to
+ * `^\^src/pages/\([^/]!app/…` — a pattern no module path can match — and the fence loaded, reported
+ * armed, walked the graph and found nothing, for as long as it took somebody to plant a probe and
+ * watch the commit sail through. A rule that cannot do its job must refuse to load.
+ */
+export function nonGlobLayers(layers: Readonly<Record<string, readonly string[] | Layer>>): string[] {
+  const faults: string[] = [];
+  for (const [name, layer] of Object.entries(layers)) {
+    const { path, not } = layerGlobs(layer);
+    for (const entry of [...path, ...not])
+      if (notAGlob(entry))
+        faults.push(
+          `binds a depcruise layer \`${name}\` whose entry is a regular expression, not a glob: \`${entry}\`. ` +
+            `Layers are GLOBS here — \`src/pages/**\`, \`src/lib/auth/**\` — and a regex is escaped into a literal, ` +
+            `so the fence would load, report armed and match nothing. For a layer with holes in it, say ` +
+            `\`{ path: ["src/pages/**"], not: ["src/pages/api/**"] }\` rather than a lookahead.`,
+        );
+  }
+  return faults;
+}
+
+/**
+ * A layer with holes, named in an `only` allowlist — refused, because the holes would be silent.
+ *
+ * `only` is compiled by INVERTING the allowed layers: everything not in them blocks. The inversion
+ * reads the `path` globs and nothing else, so a layer's `not` would simply not be there — the
+ * allowlist would quietly be wider than the layer it names. Rather than half-apply it, this says so
+ * at load: use plain globs for a layer that an `only` names, or express the exclusion as a `forbid`.
+ */
+export function holesInAnOnlyList(opts: Dialect): string[] {
+  const faults: string[] = [];
+  for (const [from, allowed] of Object.entries(opts.only ?? {}))
+    for (const name of allowed)
+      if (layerGlobs(opts.layers[name]).not.length > 0)
+        faults.push(
+          `binds a depcruise \`only\` for \`${from}\` naming the layer \`${name}\`, which has a \`not\` list. ` +
+            `An allowlist is compiled by inverting the layers it names, and that inversion reads \`path\` alone — ` +
+            `so \`${name}\`'s exclusions would be silently dropped and the allowlist would be wider than it reads. ` +
+            `Give \`${name}\` plain globs, or say the exclusion as a \`forbid\` edge.`,
+        );
+  return faults;
+}
+
+/**
  * The generic import-fence runner.
  *
  * A whole-graph check: bind it at commit or turn-end, never per keystroke. It orchestrates and
  * never reimplements — the graph walk is dependency-cruiser's job, and the dialect above exists
  * only so the fences are readable by the person who has to change them.
  */
-export const depcruise = defineCheck(
-  (opts: Dialect): Check =>
-    async (ctx) => {
-      return answer(ctx, depcruiseHits(await ctx.exec(depcruiseCommand(opts))), "\n");
-    },
-);
+export const depcruise = defineCheck((opts: Dialect): Check => {
+  const run: Check = async (ctx) => answer(ctx, depcruiseHits(await ctx.exec(depcruiseCommand(opts))), "\n");
+  // The options are judged when the check is BUILT, and a fault refuses the load rather than
+  // waiting for a commit: a fence that cannot match is worse than no fence, because it reports.
+  return withFaults(run, [...nonGlobLayers(opts.layers), ...holesInAnOnlyList(opts)]);
+});
 
 // ── ast-grep: ban or require a code SHAPE, parsed rather than matched ────────────────────────
 

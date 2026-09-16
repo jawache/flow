@@ -377,6 +377,36 @@ export function makeCtx(moment: Moment, facts: Partial<Ctx>, world: World): Ctx 
 /** The options a configured check was built with, riding on the check itself. Never enumerable. */
 const SETTINGS = Symbol.for("flow.settings");
 
+/** Why a configured check's OPTIONS are unusable — the same trick, and refused at load. */
+const FAULTS = Symbol.for("flow.faults");
+
+/**
+ * Mark a configured check as built with options it cannot work with, and say why.
+ *
+ * WHY IT IS A VALUE AND NOT A THROW: a check factory runs while the config module is evaluating, so
+ * a throw there is a module that will not import, and the reader gets one fault with a stack trace
+ * instead of every fault with its entry named. Marked instead, the load collects it beside the
+ * grammar's own refusals and the engine blocks every gated moment with the same text — which is the
+ * shape every other load failure already has.
+ *
+ * WHY IT EXISTS AT ALL: an option can be well-TYPED and still be nonsense — the class that bit here
+ * was a depcruise layer written as a regex where the dialect takes globs, which compiled to a
+ * pattern matching nothing. The fence loaded, `flow status` called it armed, and it walked no graph
+ * for as long as nobody planted a probe. A rule that cannot do its job must refuse to load, never
+ * report green.
+ */
+export function withFaults<C extends Check>(check: C, faults: readonly string[]): C {
+  if (faults.length > 0) Object.defineProperty(check, FAULTS, { value: faults, enumerable: false, configurable: true });
+  return check;
+}
+
+/** What a configured check said is wrong with its own options. Empty for every healthy check. */
+export function faultsOf(check: Check | undefined): readonly string[] {
+  if (check === undefined) return [];
+  const found = (check as unknown as Record<symbol, unknown>)[FAULTS];
+  return Array.isArray(found) ? (found as string[]) : [];
+}
+
 /**
  * Declare a CONFIGURED check: a function that takes options and returns a check.
  *
@@ -1274,6 +1304,7 @@ export const REFUSAL_CODES = [
   "no-cases",
   "duplicate-id",
   "dead-scope",
+  "bad-check-options",
 ] as const;
 
 export type RefusalCode = (typeof REFUSAL_CODES)[number];
@@ -1513,6 +1544,12 @@ function judge(draft: Draft): Refusal[] {
       "no-cases",
       `\`${id}\` carries no cases. A rule declares what must pass it and what it must block (\`.test({ pass, block })\`) — a fence whose block-case was never written is a fence nothing proves is alive.`,
     );
+
+  // A CHECK THAT SAID ITS OWN OPTIONS ARE UNUSABLE. The check answers this, not the loader: what
+  // makes an option nonsense is the check's own knowledge, and a loader that judged it would be a
+  // second place every stock check's contract is written down.
+  for (const fault of faultsOf(spec.kind === "guardrail" ? spec.check : undefined))
+    say("bad-check-options", `\`${id}\` ${fault}`);
 
   return out;
 }

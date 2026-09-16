@@ -283,7 +283,7 @@ const report: string[] = [];
  * complete report with a hole in it — the worst of the three possible outputs. So each step signs
  * its own name, and `afterAll` says which never did.
  */
-const STEPS = ["scaffold", "bind", "cases", "write", "delete", "command", "note", "grammar", "commit", "turn-end"] as const;
+const STEPS = ["scaffold", "bind", "cases", "write", "delete", "command", "note", "grammar", "fence", "commit", "turn-end"] as const;
 const finished = new Set<string>();
 const step = (name: (typeof STEPS)[number], ...lines: string[]): void => {
   finished.add(name);
@@ -477,6 +477,39 @@ describe("the machine test", () => {
       hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "scripts/build.py"), content: "def run(src):\n    return eval(src)\n" })),
       "stranger.noEvalInScripts",
     );
+  });
+
+  // A FENCE THAT CANNOT MATCH MUST NOT LOAD, and this is the live half of that promise. The shape
+  // is the one a real conversion produced: layers brought across verbatim from an engine whose
+  // layers were regexes, which this dialect's compiler escapes into patterns no module path can
+  // match. It loaded, reported armed, and refused nothing until a probe went through it.
+  it("refuses a config whose fence layers are regexes, before any commit reaches it", () => {
+    writeFileSync(
+      join(repo, "rules", "fence.ts"),
+      [
+        `import { commit, definePack, depcruise, guardrail } from "@jawache/flow";`,
+        `export const fence = definePack("fence", {`,
+        `  imports: guardrail()`,
+        `    .at(commit)`,
+        `    .description("The architecture, as regexes — which is the bug.")`,
+        `    .check(depcruise({ scan: "core/**", layers: { pages: ["^core/pages/(?!api/)"], session: ["core/session/**"] }, forbid: [{ from: "pages", to: "session" }] }))`,
+        `    .message("no")`,
+        `    .test({ pass: [{ staged: ["core/a.ts"], world: { exec: { depcruise: { stdout: '{"summary":{"violations":[]}}' } } } }], block: [{ staged: ["core/a.ts"], world: { exec: { depcruise: { code: 1, stdout: '{"summary":{"violations":[{"rule":{"name":"no-pages-to-session"},"from":"a","to":"b"}]}}' } } } }] }),`,
+        `});`,
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(repo, "probe", "bad-fence.config.ts"),
+      `import { defineConfig, pack } from "@jawache/flow";\nimport { fence } from "../rules/fence.ts";\nexport default defineConfig([pack(fence)]);\n`,
+    );
+    const said = flow(["test", join("probe", "bad-fence.config.ts")]);
+    expect(said.code, "a fence that can match nothing must not load").not.toBe(0);
+    const told = said.stdout + said.stderr;
+    expect(told).toContain("bad-check-options");
+    expect(told).toContain("fence.imports");
+    expect(told).toContain("^core/pages/(?!api/)");
+    step("fence", "    fence     ✗ a regex layer refuses the LOAD — bad-check-options, naming the layer and the entry");
   });
 
   // THE OTHER HALF OF THE SAME FACT, and the one that decides whether this route can be trusted: a

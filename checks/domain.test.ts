@@ -18,6 +18,7 @@ import {
   type Unanswered,
 } from "../language/domain.ts";
 import { existsSync } from "node:fs";
+import { faultsOf } from "../language/domain.ts";
 import { globToRegExp } from "../glob.ts";
 import {
   addedNames,
@@ -34,6 +35,8 @@ import {
   commitMessage,
   commitReason,
   compileDialect,
+  layerGlobs,
+  notAGlob,
   depcruise,
   depcruiseCommand,
   depcruiseHits,
@@ -996,6 +999,66 @@ describe("the depcruise dialect", () => {
     const rule = config.forbidden.find((r: NativeRule) => r.name === "pure-only");
     expect(rule?.comment).toContain("pure may import only: pure, node");
     expect(rule?.to?.["pathNot"]).toEqual(["^src/pure/", "^node:path$"]);
+  });
+
+  // ── a layer with holes, and a layer that is not a glob at all ──────────────
+  //
+  // Both come from one real failure: a repo converting its guard brought its fence across from an
+  // engine whose layers were REGEXES, and this dialect's compiler escaped them into patterns that
+  // could never match. The fence loaded, said armed, and walked the graph finding nothing.
+  it("compiles a layer's `not` list into dependency-cruiser's own pathNot", () => {
+    const config = compileDialect({
+      scan: "src/**",
+      layers: { marketing: { path: ["src/pages/**"], not: ["src/pages/app/**", "src/pages/api/**"] }, session: ["src/lib/auth/**"] },
+      forbid: [{ from: "marketing", to: "session", why: "a cached page must render the same for everyone" }],
+    });
+    const rule = config.forbidden[0];
+    expect(rule?.from?.["path"]).toEqual(["^src/pages/"]);
+    expect(rule?.from?.["pathNot"]).toEqual(["^src/pages/app/", "^src/pages/api/"]);
+    expect(rule?.to?.["path"]).toEqual(["^src/lib/auth/"]);
+  });
+
+  it("reads either spelling of a layer, and an absent one as empty", () => {
+    expect(layerGlobs(["a/**"])).toEqual({ path: ["a/**"], not: [] });
+    expect(layerGlobs({ path: ["a/**"], not: ["a/b/**"] })).toEqual({ path: ["a/**"], not: ["a/b/**"] });
+    expect(layerGlobs(undefined)).toEqual({ path: [], not: [] });
+  });
+
+  it("knows the four shapes a glob cannot contain", () => {
+    for (const regex of ["^src/pages/", "src/(?!app)/**", "src/a|src/b", "src/lib/auth(/|$)", "src/x$"])
+      expect(notAGlob(regex), regex).toBe(true);
+    for (const glob of ["src/pages/**", "src/lib/**/domain.ts", "node:path", "**/*.{ts,tsx}", "src/a\\|b/**"])
+      expect(notAGlob(glob), glob).toBe(false);
+  });
+
+  it("refuses a regex layer at LOAD, naming the layer and the entry, and says what to write instead", () => {
+    const check = depcruise({
+      scan: "src/**",
+      layers: { marketing: ["^src/pages/(?!app/|api/)"], session: ["src/lib/auth/**"] },
+      forbid: [{ from: "marketing", to: "session" }],
+    });
+    const faults = faultsOf(check);
+    expect(faults).toHaveLength(1);
+    expect(faults[0]).toContain("`marketing`");
+    expect(faults[0]).toContain("^src/pages/(?!app/|api/)");
+    expect(faults[0]).toContain("not: [");
+    // …and a dialect written in globs declares nothing, which is what makes the fault meaningful.
+    expect(
+      faultsOf(depcruise({ scan: "src/**", layers: { marketing: { path: ["src/pages/**"], not: ["src/pages/api/**"] } } })),
+    ).toEqual([]);
+  });
+
+  it("refuses a layer with holes inside an `only` allowlist, because the holes would be dropped", () => {
+    const faults = faultsOf(
+      depcruise({
+        scan: "src/**",
+        layers: { pure: { path: ["src/pure/**"], not: ["src/pure/io/**"] } },
+        only: { pure: ["pure"] },
+      }),
+    );
+    expect(faults).toHaveLength(1);
+    expect(faults[0]).toContain("`only`");
+    expect(faults[0]).toContain("silently dropped");
   });
 
   it("compiles forbid edges, transitive and plain, with the fence's own why", () => {
