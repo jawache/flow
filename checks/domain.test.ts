@@ -564,6 +564,12 @@ describe("commitMessage", () => {
     expect(commitMessage(command)).toBe("feat: x\n\nnew-dep: zod — checked ajv");
   });
 
+  it("reads a heredoc only when the commit itself says -F -, so another command's script is never the message", () => {
+    const script = "cd /x && python3 - <<'PY'\np='a.ts'\nopen(p,'w').write('x')\nPY\ngit add -A && git commit -F /tmp/msg.txt";
+    expect(commitMessage(script)).toBeNull();
+    expect(commitMessage("git commit --file=- <<'EOF'\nfeat: x\nEOF")).toBe("feat: x");
+  });
+
   it("is not our business when there is no judgeable commit", () => {
     expect(commitMessage("git status")).toBeNull();
     expect(commitMessage("git commit")).toBeNull();

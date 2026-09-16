@@ -513,6 +513,11 @@ export const house = definePack("house", (repo: Terrain) => ({
           path: "packs/x.ts",
           content: '  .message(\n    [\n      "Effects to keep out of pure:",\n      "  clock   → new Date() (inject a `now`)",\n      "  random  → Math.random (inject an rng)",\n    ].join("\\n"),\n  )\n',
         },
+        // A line that ends on a dash is finished, so the lowercase line after it is its own element.
+        {
+          path: "packs/x.ts",
+          content: '  .message(\n    [\n      "Two doors —",\n      "user docs are HTML, agent docs are markdown.",\n    ].join("\\n"),\n  )\n',
+        },
         // A `.check(…)`'s options are not prose: one-word strings on their own lines, with no
         // sentence anywhere near them.
         {
@@ -524,6 +529,11 @@ export const house = definePack("house", (repo: Terrain) => ({
         {
           path: "packs/x.ts",
           content: '  .text(\n    [\n      "One page, one job: the quick start",\n      "  teaches by doing; the guide solves situations.",\n    ].join("\\n"),\n  )\n',
+        },
+        // The lowercase tell on its own: no indent, the line simply carries the sentence on.
+        {
+          path: "packs/x.ts",
+          content: '  .text(\n    [\n      "One page, one job: the quick start",\n      "teaches by doing; the guide solves situations.",\n    ].join("\\n"),\n  )\n',
         },
       ],
     }),

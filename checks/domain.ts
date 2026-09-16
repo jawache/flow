@@ -719,7 +719,10 @@ export function heredocBody(command: string): string | null {
  *
  *   git commit -m MSG · -mMSG · --message MSG · --message=MSG      judged
  *   git commit -m SUBJECT -m BODY   (repeated, any mix of forms)   judged, joined as git joins them
- *   git commit -F - <<'EOF' … EOF   (any heredoc on the line)      judged, via the heredoc body
+ *   git commit -F - <<'EOF' … EOF   (the commit reads stdin)        judged, via the heredoc body
+ *   python3 - <<'PY' … PY; git commit -F msg.txt                    NOT judged — the heredoc is
+ *                                                                  another command's script, and
+ *                                                                  the message is on disk
  *   git commit -F path/to/file                                     NOT judged — the message is on
  *                                                                  disk, and reading it is a read
  *                                                                  of the world this layer does not
@@ -749,9 +752,16 @@ export function commitMessage(command: string): string | null {
     else if (a.startsWith("--message=")) parts.push(a.slice("--message=".length));
   }
   if (parts.length) return parts.join("\n\n");
-  // No inline message: it may still be on stdin. An EDITOR commit (neither `-m` nor a heredoc)
-  // returns null and passes, which is the narrow scope this rail has always kept.
-  return heredocBody(command);
+  // No inline message: it may still be on stdin, and ONLY when the commit itself says so. `-F -`
+  // (or `--file=-`) is the one form that reads stdin. A heredoc that belongs to ANOTHER command on
+  // the line — a python edit ahead of the commit — is a script, not a message, and reading it as
+  // one refused nine legitimate commits in one run: no conventional header in a script, no
+  // `new-dep:` line, and once the attribution rule's own fixture text. An EDITOR commit (neither
+  // `-m` nor `-F -`) returns null and passes, which is the narrow scope this rail has always kept.
+  const readsStdin = commit.args.some(
+    (a, i) => ((a === "-F" || a === "--file") && commit.args[i + 1] === "-") || a === "-F-" || a === "--file=-",
+  );
+  return readsStdin ? heredocBody(command) : null;
 }
 
 /** One shell argument, single-quoted so nothing in it can be expanded or re-parsed. */
