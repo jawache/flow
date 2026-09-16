@@ -57,9 +57,11 @@
 },
 forbid: [{ from: "marketing-pages", to: "per-user-runtime", why: "a cached page must render the same for everyone" }],</code></pre>
   <p>Enumerating what IS in the layer instead is the trap: the fence quietly stops covering the next
-  folder somebody adds. One place <code>not</code> is refused — inside an <code>only</code> allowlist,
-  which is compiled by inverting the layers it names and would drop the holes silently; give that
-  layer plain globs, or say the exclusion as a <code>forbid</code> edge.</p>
+  folder somebody adds. Two places <code>not</code> is refused rather than half-applied: inside an
+  <code>only</code> allowlist, which is compiled by inverting the layers it names and would drop the
+  holes silently; and excluding <code>node:*</code>, because a builtin is matched as a dependency
+  type and the only exclusion available says “not a core module at all”, which is wider than the
+  layer means. A NAMED builtin (<code>node:fs</code>) is an ordinary path and excludes cleanly.</p>
 
   <h2>Example</h2>
 <pre><code>layersFenced: guardrail()

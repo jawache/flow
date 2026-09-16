@@ -19,7 +19,7 @@ import {
 } from "../language/domain.ts";
 import { existsSync } from "node:fs";
 import { faultsOf } from "../language/domain.ts";
-import { globToRegExp } from "../glob.ts";
+import { globToRegExp, notAGlob } from "../glob.ts";
 import {
   addedNames,
   astGrep,
@@ -36,7 +36,6 @@ import {
   commitReason,
   compileDialect,
   layerGlobs,
-  notAGlob,
   depcruise,
   depcruiseCommand,
   depcruiseHits,
@@ -1027,8 +1026,12 @@ describe("the depcruise dialect", () => {
   it("knows the four shapes a glob cannot contain", () => {
     for (const regex of ["^src/pages/", "src/(?!app)/**", "src/a|src/b", "src/lib/auth(/|$)", "src/x$"])
       expect(notAGlob(regex), regex).toBe(true);
-    for (const glob of ["src/pages/**", "src/lib/**/domain.ts", "node:path", "**/*.{ts,tsx}", "src/a\\|b/**"])
+    for (const glob of ["src/pages/**", "src/lib/**/domain.ts", "node:path", "**/*.{ts,tsx}", "src/{a,b}/**"])
       expect(notAGlob(glob), glob).toBe(false);
+    // NO CARVE-OUT FOR A BACKSLASH: this dialect has no escape character, so `\|` is a backslash and
+    // a pipe, and a path with either in it is not a path anyone has. A carve-out here would wave
+    // through the one shape it was written to catch.
+    expect(notAGlob("src/a\\|b/**")).toBe(true);
   });
 
   it("refuses a regex layer at LOAD, naming the layer and the entry, and says what to write instead", () => {
@@ -1046,6 +1049,18 @@ describe("the depcruise dialect", () => {
     expect(
       faultsOf(depcruise({ scan: "src/**", layers: { marketing: { path: ["src/pages/**"], not: ["src/pages/api/**"] } } })),
     ).toEqual([]);
+  });
+
+  it("refuses a `not` list that tries to exclude the builtins, which no matcher can say", () => {
+    const faults = faultsOf(
+      depcruise({ scan: "src/**", layers: { pure: { path: ["src/pure/**"], not: ["node:*"] } } }),
+    );
+    expect(faults).toHaveLength(1);
+    expect(faults[0]).toContain("`node:*`");
+    expect(faults[0]).toContain("wider than this layer means");
+    // A NAMED builtin is an ordinary path matcher and excludes cleanly — it is the wildcard alone
+    // that has no negative form.
+    expect(faultsOf(depcruise({ scan: "src/**", layers: { pure: { path: ["src/pure/**"], not: ["node:fs"] } } }))).toEqual([]);
   });
 
   it("refuses a layer with holes inside an `only` allowlist, because the holes would be dropped", () => {

@@ -45,7 +45,7 @@ import type {
   Verdict,
   World,
 } from "../language/domain.ts";
-import { escapeRe, expandTemplate, globTokenToRegExp, matchAny, tokenizeGlob } from "../glob.ts";
+import { escapeRe, expandTemplate, globTokenToRegExp, matchAny, notAGlob, tokenizeGlob } from "../glob.ts";
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE TWO SHAPES EVERY CHECK HAS
@@ -1487,20 +1487,6 @@ export function depcruiseHits(result: ExecResult): string[] {
 }
 
 /**
- * The regex tells that say a layer was written against the OLD engine, or against dependency-cruiser
- * directly, rather than in this dialect.
- *
- * Four shapes, and each one is a thing a glob cannot contain: a leading `^`, a `(?` group, an
- * unescaped `|`, or a trailing `$`. They are not a general regex detector and are not trying to be —
- * every one of them is a character the glob compiler escapes into a literal, which is how a fence
- * comes to match nothing at all. `escapeRe` is what does the escaping, so these are exactly its
- * silent failures.
- */
-export function notAGlob(entry: string): boolean {
-  return entry.startsWith("^") || entry.includes("(?") || /(^|[^\\])\|/.test(entry) || entry.endsWith("$");
-}
-
-/**
  * Every layer entry that is a regex where a glob belongs — the fault `depcruise` refuses to load with.
  *
  * MEASURED, NOT IMAGINED: the first repo to convert its guard to flow brought its fence across
@@ -1513,6 +1499,17 @@ export function nonGlobLayers(layers: Readonly<Record<string, readonly string[] 
   const faults: string[] = [];
   for (const [name, layer] of Object.entries(layers)) {
     const { path, not } = layerGlobs(layer);
+    // A BUILTIN CANNOT BE EXCLUDED, and this is a refusal rather than a best effort. `node:*` is the
+    // one entry that compiles to a dependency TYPE rather than a path, and the matcher's only way to
+    // say "not that" is `dependencyTypesNot: ["core"]` — which excludes EVERY builtin, not the one
+    // the layer named. Emitting it would quietly make the layer mean something wider than it says,
+    // which is the whole class this check exists to refuse; dropping it silently would be worse.
+    if (not.includes("node:*"))
+      faults.push(
+        `binds a depcruise layer \`${name}\` whose \`not\` list excludes \`node:*\`. A builtin is matched as a ` +
+          `dependency TYPE, not a path, and the only exclusion available says "not a core module at all" — wider ` +
+          `than this layer means. Say the layer's globs without it, or forbid the edge you actually mean.`,
+      );
     for (const entry of [...path, ...not])
       if (notAGlob(entry))
         faults.push(

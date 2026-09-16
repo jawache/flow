@@ -26,6 +26,26 @@ export function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * Is that a REGULAR EXPRESSION where this dialect wants a glob?
+ *
+ * It lives beside `escapeRe` because it is that function read backwards: these are the shapes
+ * `escapeRe` turns into literals, which is how a pattern written as a regex comes to match nothing
+ * at all while reading as a fence. Four of them — a leading `^`, a `(?` group, a `|`, a trailing `$`
+ * — and nothing broader is claimed: this is not a regex detector, it is the list of characters whose
+ * meaning is silently lost here.
+ *
+ * ANY `|` COUNTS, with no carve-out for a backslash before it. The dialect has no escape character:
+ * `\|` is a literal backslash followed by a pipe, and a path with either in it is not a path anyone
+ * has. A carve-out would only ever wave through the thing it was meant to catch.
+ *
+ * It was found the hard way — a repo's fence, brought across from an engine whose layers WERE
+ * regexes, loaded green and refused nothing for a week.
+ */
+export function notAGlob(entry: string): boolean {
+  return entry.startsWith("^") || entry.includes("(?") || entry.includes("|") || entry.endsWith("$");
+}
+
 // ── the dialect, parsed once ─────────────────────────────────────────────────
 //
 // ONE PARSER, TWO EMITTERS, and the split exists because of a bug it now makes impossible.
