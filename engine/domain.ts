@@ -228,6 +228,8 @@ export interface BriefEvent {
   readonly moment: BreadcrumbMoment;
   /** touch: the path the tool call is about. A call carrying no path narrows nothing. */
   readonly path?: string | undefined;
+  /** command: the line about to run — what a command note's `on` is matched against. */
+  readonly command?: string | undefined;
   readonly wearing: readonly string[];
   /** How far this session has drifted, in context tokens. The adapter measures it. */
   readonly tokens: number;
@@ -571,6 +573,11 @@ export function brief({ load, event, marks, settings, off = false }: BriefArgs):
     // A path narrows only when the event carries one: `session` and `turn-end` are about the whole
     // session, so an entry scoped with `on` at those moments is simply not narrowed by it.
     if (event.path !== undefined && !inScope(entry.spec, event.path)) continue;
+    // AT `command`, THE SUBJECT IS THE COMMAND LINE, and the scope is not optional in practice: a
+    // command note without one would show on every shell call in the session. An unscoped one is
+    // still legal and still shows — the grammar refuses a scope that narrows nothing, never a
+    // missing one — so the test is the scope's, not the event's.
+    if (event.command !== undefined && !inScope(entry.spec, event.command)) continue;
     const last = next[entry.id];
     const cause: Cause = event.moment === "session" ? "session" : last === undefined ? "first-touch" : "drift";
     if (last !== undefined && (cause !== "drift" || event.tokens - last < limit)) continue;
@@ -1630,6 +1637,7 @@ export type RecordedStep =
       readonly rail: "brief";
       readonly moment: BreadcrumbMoment;
       readonly path?: string | undefined;
+      readonly command?: string | undefined;
       readonly wearing: readonly string[];
       readonly tokens: number;
     }
@@ -1751,7 +1759,7 @@ export async function replay({ load, recording, settings, marks = {} }: ReplayAr
     }
     const briefing = brief({
       load,
-      event: { moment: step.moment, path: step.path, wearing: step.wearing, tokens: step.tokens },
+      event: { moment: step.moment, path: step.path, command: step.command, wearing: step.wearing, tokens: step.tokens },
       marks: held,
       settings,
     });

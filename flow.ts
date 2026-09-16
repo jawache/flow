@@ -28,12 +28,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import { registerHooks, stripTypeScriptTypes } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { VERSION } from "./version.ts";
 import { entriesOrThrow, FlowConfigError } from "./errors.ts";
 import { loadConfig, type FlowConfig, type LoadedEntry } from "./language/domain.ts";
 import { runCases, type CaseResult } from "./checks/domain.ts";
-import { commitEntry, hookEntry } from "./adapter/claude.ts";
+import { commitEntry, hookEntry, registerGrammars } from "./adapter/claude.ts";
 import { facts } from "./adapter/archive.ts";
 import {
   CONFIG_FILE,
@@ -120,6 +120,11 @@ async function loadFile(path: string): Promise<FlowConfig> {
       `${path} has no default export from \`defineConfig([…])\` — that call IS the config, and its result is what flow reads.`,
     );
   }
+  // The grammars a config declares are registered the moment it is read, against the config's OWN
+  // directory — the same call the hook rail makes, so `flow test` and a live write resolve a
+  // language the same way. A config that declares none clears the list, which is what makes
+  // `flow test <other-config>` an honest answer rather than one coloured by the last file read.
+  registerGrammars((config as FlowConfig).settings, dirname(absolute));
   return config as FlowConfig;
 }
 

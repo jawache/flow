@@ -36,6 +36,7 @@ import {
   type FlowConfig,
   refusalText,
   type LoadResult,
+  type Grammar,
   type Settings,
   type TurnAction,
   type World,
@@ -56,7 +57,7 @@ import {
   type RecordedStep,
   type Row,
 } from "../engine/domain.ts";
-import { quoteArg } from "../checks/domain.ts";
+import { quoteArg, useGrammars } from "../checks/domain.ts";
 import {
   appendRows,
   appendSteps,
@@ -261,6 +262,27 @@ export type Regime =
   | { readonly kind: "loaded"; readonly config: FlowConfig; readonly load: LoadResult }
   | { readonly kind: "broken"; readonly message: string };
 
+/**
+ * Register the grammars this config declared, with their library paths made absolute.
+ *
+ * ONE SPELLING, called by both doors that read a config — the CLI's `loadFile` and the hook rail's
+ * `loadRegime` — because which grammars exist must not depend on which verb you typed. The path is
+ * resolved against the CONFIG'S OWN ROOT rather than the process's cwd: a hook runs wherever the
+ * harness happened to be, which is the whole reason `projectRoot` exists.
+ *
+ * It is here rather than in the adapter's pure half because `join` is an effect-shaped answer about
+ * this machine, and `adapter/domain.ts` is a pure home.
+ */
+export function grammarsAt(settings: Settings, root: string): readonly Grammar[] {
+  return (settings.grammars ?? []).map((grammar) =>
+    isAbsolute(grammar.libraryPath) ? grammar : { ...grammar, libraryPath: join(root, grammar.libraryPath) },
+  );
+}
+
+export function registerGrammars(settings: Settings, root: string): void {
+  useGrammars(grammarsAt(settings, root), existsSync);
+}
+
 export async function loadRegime(root: string): Promise<Regime> {
   const path = join(root, CONFIG_FILE);
   if (!existsSync(path)) return { kind: "none" };
@@ -272,6 +294,7 @@ export async function loadRegime(root: string): Promise<Regime> {
         kind: "broken",
         message: `flow: ${CONFIG_FILE} has no default export from \`defineConfig([…])\` — that call IS the config, and its result is what flow reads.`,
       };
+    registerGrammars(config.settings, root);
     return { kind: "loaded", config, load: loadConfig(config) };
   } catch (error) {
     // `configLoadFault`, not a sentence of its own: the same breakage reaches a person through
@@ -521,12 +544,19 @@ async function judge(args: {
       rail: "brief",
       moment: event.moment,
       ...(event.path === undefined ? {} : { path: event.path }),
+      ...(event.command === undefined ? {} : { command: event.command }),
       wearing: identity.wearing,
       tokens: session.tokens(),
     });
     const briefing = brief({
       load,
-      event: { moment: event.moment, path: event.path, wearing: identity.wearing, tokens: session.tokens() },
+      event: {
+        moment: event.moment,
+        path: event.path,
+        command: event.command,
+        wearing: identity.wearing,
+        tokens: session.tokens(),
+      },
       marks,
       settings,
       off,

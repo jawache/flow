@@ -36,6 +36,7 @@ import type {
   Check,
   Ctx,
   ExecResult,
+  Grammar,
   GuardrailMoment,
   LoadedEntry,
   Moment,
@@ -1497,20 +1498,67 @@ export const NATIVE_LANGUAGES: readonly string[] = Object.keys(NATIVE);
 /** Dynamic grammars registered in this process. Registration is idempotent and lazy. */
 const registered = new Set<string>();
 
+/**
+ * The grammars the loaded config declared, and how to tell whether one is built — PROCESS state,
+ * kept where the whole process can see it.
+ *
+ * WHY A GLOBAL SYMBOL AND NOT A MODULE VARIABLE, which is what this was until it did not work: the
+ * package ships THREE bundles, and each one carries its own copy of this module. The binary reads
+ * the config and would set the copy inside `dist/flow.mjs`; the `astGrep` closure a config builds
+ * comes from `dist/index.mjs` and would read the copy in there. Two copies, one of them always
+ * empty, and the symptom is a declared grammar reported as unknown — which is exactly what
+ * happened. A `Symbol.for` key is the one slot every bundle in a process agrees on, and it is the
+ * same technique `defineCheck` already uses to brand a check with its settings.
+ *
+ * `present` defaults to "no", which is fail-closed on purpose: a caller that declares grammars and
+ * never says how to check them gets a refusal naming the file, never a process abort.
+ */
+const REGISTRY = Symbol.for("flow.grammars");
+
+interface GrammarRegistry {
+  declared: readonly Grammar[];
+  present: (path: string) => boolean;
+}
+
+function registry(): GrammarRegistry {
+  const host = globalThis as unknown as Record<symbol, GrammarRegistry | undefined>;
+  const found = host[REGISTRY];
+  if (found !== undefined) return found;
+  const fresh: GrammarRegistry = { declared: [], present: () => false };
+  host[REGISTRY] = fresh;
+  return fresh;
+}
+
+/**
+ * Declare the config's grammars, and how to tell whether one is built.
+ *
+ * Called once per config read; the last config read wins, and one declaring none clears the list —
+ * which is what makes `flow test <other-config>` an honest answer rather than one coloured by the
+ * file read before it.
+ */
+export function useGrammars(grammars: readonly Grammar[], exists: (path: string) => boolean = () => false): void {
+  const slot = registry();
+  slot.declared = grammars;
+  slot.present = exists;
+}
+
 /** A resolved grammar, or the sentence saying why there is none. */
 type LangResult = { readonly ok: true; readonly lang: unknown } | { readonly ok: false; readonly detail: string };
 
 /**
  * Resolve a grammar name to something `parse()` accepts.
  *
- * TWO ROUTES. A tier-0 native is free. A published
- * `@ast-grep/lang-<name>` package (sql, python, go, rust…) is registered on first use — its
- * compiled binary lives in node_modules, and `registerDynamicLanguage` is safe to call per grammar.
+ * THREE ROUTES, in this order. A tier-0 native is free. A grammar the CONFIG DECLARED is registered
+ * from the library the repo built — this is how a language nobody publishes (astro, vue, svelte)
+ * gets in, and it is tried SECOND, before the package route, because a repo that went to the trouble
+ * of building and declaring one has said which library it means. A published
+ * `@ast-grep/lang-<name>` package (sql, python, go, rust…) is registered on first use; its compiled
+ * binary lives in node_modules, and `registerDynamicLanguage` is safe to call per grammar.
  *
- * A THIRD ROUTE is deliberately absent: a hand-built grammar declared in an `sgconfig.yml` under a
- * rule library. flow has no library, and resolving one would mean reading a YAML file from a path
- * this layer may not touch. It can arrive the day someone needs it, as a parameter naming a built
- * `.so`, which would be a decision rather than a leftover.
+ * A DECLARED GRAMMAR THAT WILL NOT LOAD IS ITS OWN REFUSAL, naming the library file. The path is a
+ * build artefact, machine-specific and never committed, so "missing" is the ordinary state of a
+ * fresh clone and the message has to say which file and who builds it — not "unknown grammar",
+ * which sends the reader looking for a package that does not exist.
  *
  * An unknown name is a REFUSAL VALUE, and it never falls through to Tsx. The check turns it into a
  * block, which is the fail-loud doctrine at its narrowest and most useful: a silent fall-through is
@@ -1521,6 +1569,27 @@ export async function resolveLang(name: string): Promise<LangResult> {
   const member = NATIVE[name];
   if (member !== undefined) return { ok: true, lang: (Lang as unknown as Record<string, unknown>)[member] };
   if (registered.has(name)) return { ok: true, lang: name };
+  const { declared, present } = registry();
+  const own = declared.find((grammar) => grammar.name === name);
+  if (own !== undefined) {
+    if (!present(own.libraryPath))
+      return {
+        ok: false,
+        detail:
+          `ast-grep grammar '${name}' is declared in this repo's flow.config.ts, but its library is not there: ${own.libraryPath}. ` +
+          `A grammar is a BUILD ARTEFACT — machine-specific, never committed — so this is the ordinary state of a fresh clone. ` +
+          `Build it (the repo that declares a grammar carries the recipe that builds it), then run again.`,
+      };
+    registerDynamicLanguage({
+      [name]: {
+        libraryPath: own.libraryPath,
+        extensions: [...own.extensions],
+        ...(own.languageSymbol === undefined ? {} : { languageSymbol: own.languageSymbol }),
+      },
+    });
+    registered.add(name);
+    return { ok: true, lang: name };
+  }
   try {
     const mod = (await import(`@ast-grep/lang-${name}`)) as { default?: unknown };
     registerDynamicLanguage({ [name]: (mod.default ?? mod) as never });
@@ -1531,7 +1600,8 @@ export async function resolveLang(name: string): Promise<LangResult> {
       ok: false,
       detail:
         `unknown ast-grep grammar: '${name}'. Built in: ${NATIVE_LANGUAGES.join(", ")}. ` +
-        `Anything else installs as a package — \`npm i -D @ast-grep/lang-${name}\` — and is picked up here on the next run.`,
+        `Anything else is either a published package — \`npm i -D @ast-grep/lang-${name}\` — or a grammar you build ` +
+        `yourself and declare in flow.config.ts's \`grammars\` setting.`,
     };
   }
 }

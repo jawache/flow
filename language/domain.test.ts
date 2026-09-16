@@ -46,6 +46,8 @@ import {
   overlay,
   override,
   pack,
+  BRIEF_SCOPE_MOMENTS,
+  isScopable,
   PATH_MOMENTS,
   type Pack,
   type PackBinding,
@@ -76,8 +78,18 @@ describe("the moment vocabulary", () => {
     expect(GUARDRAIL_MOMENTS).toEqual(["write", "command", "commit", "delete", "turn-end"]);
   });
 
-  it("is the three breadcrumb words, which are not the same list", () => {
-    expect(BREADCRUMB_MOMENTS).toEqual(["session", "touch", "turn-end"]);
+  it("is the four breadcrumb words, which are not the same list", () => {
+    expect(BREADCRUMB_MOMENTS).toEqual(["session", "touch", "command", "turn-end"]);
+  });
+
+  it("says which of them a NOTE's scope can narrow — the paths, plus the command line", () => {
+    expect(BRIEF_SCOPE_MOMENTS).toEqual([...PATH_MOMENTS, "command"]);
+    // The kind is half the question: the same word answers differently for the two kinds, which is
+    // why `isScopable` takes it and a reader of PATH_MOMENTS alone would get command wrong.
+    expect(isScopable("breadcrumb", "command")).toBe(true);
+    expect(isScopable("guardrail", "command")).toBe(false);
+    expect(isScopable("breadcrumb", "session")).toBe(false);
+    expect(isScopable("guardrail", "write")).toBe(true);
   });
 
   it("exports each word as a value, so a config imports it rather than spelling it", () => {
@@ -993,6 +1005,23 @@ describe("the load refuses", () => {
       x: { spec: { kind: "breadcrumb", at: [session], on: ["docs/**"], text: "hi" } },
     });
     expect(shape(refusalsOf([note]))).toEqual([["dead-scope", "note.x"]]);
+  });
+
+  // THE ONE MOMENT WHERE THE TWO KINDS DIFFER, and it is the whole reason the rule asks the kind.
+  // A command GUARDRAIL's patterns are its scope, so `.on(…)` there is decoration and stays refused.
+  // A command NOTE has no patterns at all, so its scope is the only thing that says which commands
+  // it is about — without one it would show on every shell call, which is the same as showing on
+  // none.
+  it("a NOTE at the command moment may be scoped; a guardrail there still may not", () => {
+    const note = rawPack("note", {
+      x: { spec: { kind: "breadcrumb", at: [command], on: ["npm install*"], text: "restart the dev server" } },
+    });
+    expect(refusalsOf([note])).toEqual([]);
+
+    const rail = rawPack("rail", {
+      x: { spec: { kind: "guardrail", at: [command], on: ["npm install*"], check: passes, message: "m", test: cases } },
+    });
+    expect(shape(refusalsOf([rail]))).toEqual([["dead-scope", "rail.x"]]);
   });
 
   it("but not when ONE of the moments carries a path — the scope is live there", () => {

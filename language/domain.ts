@@ -79,7 +79,7 @@ export type BreadcrumbMoment = (typeof BREADCRUMB_MOMENTS)[number];
 export type Moment = GuardrailMoment | BreadcrumbMoment;
 
 export const GUARDRAIL_MOMENTS: readonly GuardrailMoment[] = Object.keys(PHASES) as GuardrailMoment[];
-export const BREADCRUMB_MOMENTS = ["session", "touch", "turn-end"] as const;
+export const BREADCRUMB_MOMENTS = ["session", "touch", "command", "turn-end"] as const;
 
 // ── the words, as values ─────────────────────────────────────────────────────
 //
@@ -132,6 +132,24 @@ export type PathMoment = (typeof PATH_MOMENTS)[number];
 /** Does this moment carry a path for `on` / `ignore` to narrow? */
 export function isPathMoment(m: string): m is PathMoment {
   return (PATH_MOMENTS as readonly string[]).includes(m);
+}
+
+/**
+ * THE SUBJECT A NOTE'S SCOPE IS MATCHED AGAINST — a path at the path moments, and the COMMAND LINE
+ * at `command`, which is the one moment where the two kinds of entry are scoped differently.
+ *
+ * A command GUARDRAIL needs no scope and must not have one: its patterns are its scope, and a rule
+ * that could be narrowed one way and match another is a rule whose halves can disagree in silence.
+ * A command NOTE is the opposite case — it has no patterns at all, so without `.on(…)` it would show
+ * on every shell call in the session, which is the same as showing on none. `.on("npm install*")` is
+ * how it says which commands it is about, matched as a glob over the line about to run.
+ */
+export const BRIEF_SCOPE_MOMENTS = [...PATH_MOMENTS, "command"] as const;
+export type BriefScopeMoment = (typeof BRIEF_SCOPE_MOMENTS)[number];
+
+/** Does a scope narrow anything for this KIND of entry at this moment? */
+export function isScopable(kind: EntrySpec["kind"], m: string): boolean {
+  return kind === "breadcrumb" ? (BRIEF_SCOPE_MOMENTS as readonly string[]).includes(m) : isPathMoment(m);
 }
 
 
@@ -669,7 +687,7 @@ type DeadScope =
  * every scope is live. Saying `.on(…)` above `.at(command)` is the same mistake with the words in
  * the other order, and the load's `dead-scope` refusal is what catches it. Both halves, always.
  */
-type Scoping<At extends Moment, Verb> = [Extract<At, PathMoment>] extends [never]
+type Scoping<At extends Moment, Verb, Scopable extends Moment = PathMoment> = [Extract<At, Scopable>] extends [never]
   ? (dead: DeadScope) => never
   : Verb;
 
@@ -720,11 +738,15 @@ export interface BreadcrumbSentence<
     <M extends BreadcrumbMoment[]>(...moments: M) => BreadcrumbSentence<Spoken | "at", M[number]>
   >;
   readonly for: Once<Spoken, "for", (...categories: Category[]) => BreadcrumbSentence<Spoken | "for", At>>;
-  readonly on: Once<Spoken, "on", Scoping<At, (...globs: string[]) => BreadcrumbSentence<Spoken | "on", At>>>;
+  readonly on: Once<
+    Spoken,
+    "on",
+    Scoping<At, (...globs: string[]) => BreadcrumbSentence<Spoken | "on", At>, BriefScopeMoment>
+  >;
   readonly ignore: Once<
     Spoken,
     "ignore",
-    Scoping<At, (...globs: string[]) => BreadcrumbSentence<Spoken | "ignore", At>>
+    Scoping<At, (...globs: string[]) => BreadcrumbSentence<Spoken | "ignore", At>, BriefScopeMoment>
   >;
   readonly text: Once<Spoken, "text", (text: string) => BreadcrumbSentence<Spoken | "text", At>>;
   readonly file: Once<Spoken, "file", (path: string) => BreadcrumbSentence<Spoken | "file", At>>;
@@ -969,6 +991,35 @@ export type Binding = PackBinding | OverrideBinding;
 export interface Settings {
   /** Context tokens between re-showings of a breadcrumb. Absent = the engine's own default. */
   readonly driftTokens?: number;
+  /**
+   * Grammars this repo built itself, for `astGrep` rules whose language has no published package.
+   *
+   * ast-grep parses five languages out of the box and resolves anything else as an
+   * `@ast-grep/lang-<name>` package. A grammar that nobody publishes — astro, vue, svelte — has no
+   * third route unless a repo can hand over the tree-sitter library it built, which is what this is.
+   * Declared here rather than on the entry because a grammar is a fact about the MACHINE the guard
+   * runs on, not about any one rule: two rules on the same language must never be able to resolve
+   * it two ways.
+   */
+  readonly grammars?: readonly Grammar[];
+}
+
+/**
+ * One hand-built tree-sitter grammar, as `registerDynamicLanguage` wants it.
+ *
+ * `libraryPath` is a path to a compiled library (`.so` / `.dylib`), relative to the repo root or
+ * absolute. It is a BUILD ARTEFACT — machine-specific, never committed — so a repo declaring one
+ * carries the recipe that builds it, and the refusal when it is missing names that file.
+ */
+export interface Grammar {
+  /** The name an `astGrep` rule spells as its `language`. */
+  readonly name: string;
+  /** The compiled tree-sitter library, relative to the repo root or absolute. */
+  readonly libraryPath: string;
+  /** The file extensions the grammar is for — ast-grep wants them, and they document the rule's reach. */
+  readonly extensions: readonly string[];
+  /** The symbol inside the library. Defaults to ast-grep's own `tree_sitter_<name>`. */
+  readonly languageSymbol?: string;
 }
 
 /** A whole guard, as its config file states it: bindings, in the order they were spoken. */
@@ -1451,10 +1502,10 @@ function judge(draft: Draft): Refusal[] {
   // a fence and is decoration. The sentence types refuse it where the moments were named first;
   // this catches the other word order, and every config built outside an editor.
   const scoped = (spec.on?.length ?? 0) > 0 || (spec.ignore?.length ?? 0) > 0;
-  if (scoped && at.length > 0 && !at.some((m) => isPathMoment(m)))
+  if (scoped && at.length > 0 && !at.some((m) => isScopable(spec.kind, m)))
     say(
       "dead-scope",
-      `\`${id}\` narrows by path but fires only at ${at.map((m) => `\`${m}\``).join(", ")}, which name no path — its \`on\`/\`ignore\` would be read by nothing. Drop the scope, or add a moment that carries a file (${PATH_MOMENTS.join(" · ")}).`,
+      `\`${id}\` narrows by path but fires only at ${at.map((m) => `\`${m}\``).join(", ")}, which name no subject to narrow — its \`on\`/\`ignore\` would be read by nothing. Drop the scope, or add a moment that carries one (${(spec.kind === "breadcrumb" ? BRIEF_SCOPE_MOMENTS : PATH_MOMENTS).join(" · ")}).`,
     );
 
   if (spec.kind === "guardrail" && !hasCases(spec.test))

@@ -99,7 +99,8 @@ export default defineConfig([
     <thead><tr><th>Moment</th><th>For</th><th>When</th></tr></thead>
     <tbody>
       <tr><td><code>session</code></td><td>breadcrumb</td><td>a chat starts, resumes, or is compacted</td></tr>
-      <tr><td><code>touch</code></td><td>breadcrumb</td><td>a tool call first names a matching file or command, then again after drift</td></tr>
+      <tr><td><code>touch</code></td><td>breadcrumb</td><td>a tool call first names a matching file, then again after drift</td></tr>
+      <tr><td><code>command</code></td><td>either</td><td>before a shell command runs — a guardrail refuses it, a breadcrumb says what you should know before it runs</td></tr>
       <tr><td><code>write</code></td><td>guardrail</td><td>before an edit lands — the would-be file is checked in memory, nothing touches disk</td></tr>
       <tr><td><code>command</code></td><td>guardrail</td><td>before a shell command runs</td></tr>
       <tr><td><code>delete</code></td><td>guardrail</td><td>before a command that removes a matching file</td></tr>

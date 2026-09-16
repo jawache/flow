@@ -592,6 +592,10 @@ describe("a recorded session, replayed", () => {
       "brief touch",
       "guard write",
       "guard command",
+      // A Bash call is two rails, and the recording says so: the command guardrails judge the line
+      // and a command NOTE may ride the same answer. Both are canonical events, so a replay of this
+      // file re-runs both.
+      "brief command",
       "guard commit",
     ]);
     // Nothing in the file names Claude Code. That is the standing proof of the seam: the engine

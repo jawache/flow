@@ -35,7 +35,7 @@ import {
   type InitPlan,
   type StatusFacts,
 } from "./domain.ts";
-import { loadRegime, readText, wearer } from "./claude.ts";
+import { grammarsAt, loadRegime, readText, wearer } from "./claude.ts";
 
 /** What a verb answers with. The same three edges a hook answers on, minus the decision object. */
 export interface VerbResult {
@@ -250,6 +250,14 @@ export async function runStatus(cwd: string, args: readonly string[]): Promise<V
     hooksPath: hooksPath(root),
     settingsPath,
     settings: parsedFile(root, settingsPath).value,
+    grammars:
+      regime.kind === "loaded"
+        ? grammarsAt(regime.config.settings, root).map((grammar) => ({
+            name: grammar.name,
+            libraryPath: grammar.libraryPath,
+            present: existsSync(grammar.libraryPath),
+          }))
+        : [],
     session: liveSession(root),
   };
 

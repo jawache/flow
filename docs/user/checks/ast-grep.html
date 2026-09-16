@@ -37,7 +37,7 @@
   <table>
     <thead><tr><th>Key</th><th>Type</th><th>Required</th><th>Meaning</th></tr></thead>
     <tbody>
-      <tr><td><code>language</code></td><td>string</td><td>yes</td><td>the grammar to parse with — html · css · javascript · typescript · tsx are built in</td></tr>
+      <tr><td><code>language</code></td><td>string</td><td>yes</td><td>the grammar to parse with — html · css · javascript · typescript · tsx (and the <code>js</code> · <code>ts</code> · <code>jsx</code> spellings) are built in</td></tr>
       <tr><td><code>rule</code></td><td>ast-grep rule</td><td>yes</td><td>the pattern to find; wrap in <code>not:</code> to require its absence</td></tr>
     </tbody>
   </table>
@@ -55,6 +55,28 @@
     pass: [{ path: "eslint.config.js", content: 'import base from "./eslint.config.base.js";\nexport default [...base];\n' }],
     block: [{ path: "eslint.config.js", content: "export default [];\n" }],
   }),</code></pre>
+
+  <h2>Which grammars resolve, and in what order</h2>
+  <p>Three routes, tried in this order. A name that matches none of them is a <strong>refusal</strong>,
+  never a silent fall-through to another parser — the wrong grammar matches nothing and reports green
+  forever, which is the failure this check exists to delete.</p>
+  <ol>
+    <li><strong>Built in.</strong> <code>html · css · javascript · typescript · tsx</code>, with the
+    <code>js</code> · <code>ts</code> · <code>jsx</code> spellings. Nothing to install.</li>
+    <li><strong>Declared by your config.</strong> A grammar you built yourself, named in
+    <code>defineConfig</code>'s settings — this is the route for a language nobody publishes
+    (astro, vue, svelte):
+<pre><code>export default defineConfig([pack(house)], {
+  grammars: [{ name: "astro", libraryPath: "grammars/astro.dylib", extensions: ["astro"], languageSymbol: "tree_sitter_astro" }],
+});</code></pre>
+    <code>libraryPath</code> is relative to the repo root or absolute, and it points at a compiled
+    tree-sitter library — a <em>build artefact</em>, machine-specific, which you do not commit. Carry
+    the recipe that builds it (<code>tree-sitter build --output grammars/astro.dylib</code>) and
+    gitignore the output. Until the file is there, <code>flow status</code> shows a red line naming
+    it and every rule on that language refuses.</li>
+    <li><strong>A published package.</strong> <code>npm i -D @ast-grep/lang-&lt;name&gt;</code> (sql,
+    python, go, rust…), picked up on the next run.</li>
+  </ol>
 
   <footer><a href="../index.html#checks">All stock checks</a> · the sentence around it:
   <a href="../02-entry-reference.html">the config reference</a> · this page's example is copied

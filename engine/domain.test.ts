@@ -612,6 +612,29 @@ describe("a breadcrumb across one session", () => {
     expect(noticeIds(tight)).toEqual(["rails.notes.area"]);
   });
 
+  // ── a note about a COMMAND ───────────────────────────────────────────────────
+  //
+  // The other subject a note can be narrowed by, and the reason the scope is not optional in
+  // practice: an unscoped command note would show on every shell call in the session.
+  it("shows a command note only for the commands its scope names", () => {
+    const ran = (line: string, marks: Marks = {}): (string | null)[] =>
+      noticeIds(briefing({ event: { moment: "command", command: line, tokens: 10, wearing: [] }, marks }));
+    expect(ran("npm install lodash")).toEqual(["rails.notes.installing"]);
+    expect(ran("npm i -D vitest")).toEqual(["rails.notes.installing"]);
+    expect(ran("npm run build")).toEqual([]);
+    expect(ran("git status")).toEqual([]);
+  });
+
+  it("marks a command note as shown, so it does not repeat on the next install", () => {
+    const first = briefing({ event: { moment: "command", command: "npm install lodash", tokens: 10, wearing: [] }, marks: {} });
+    expect(noticeIds(first)).toEqual(["rails.notes.installing"]);
+    const again = briefing({
+      event: { moment: "command", command: "npm install zod", tokens: 200, wearing: [] },
+      marks: first.marks,
+    });
+    expect(again.notices).toEqual([]);
+  });
+
   it("never shows a note for an area this touch is not in", () => {
     expect(briefing({ event: touched("docs/a.md", 10), marks: {} }).notices).toEqual([]);
   });
@@ -1181,7 +1204,7 @@ describe("the moments lens", () => {
   it("arranges the universe by moment, in the order a session meets them", () => {
     const view = momentsView(bound, null);
     expect(view.moments.map((m) => m.moment)).toEqual(MOMENT_ORDER.filter((m) => m !== "delete"));
-    expect(view.totals).toEqual({ breadcrumbs: 3, guardrails: 10, disabled: 1 });
+    expect(view.totals).toEqual({ breadcrumbs: 4, guardrails: 10, disabled: 1 });
   });
 
   it("an entry stands in EVERY moment it fires at, carrying whatever the record says about it", () => {

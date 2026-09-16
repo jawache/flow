@@ -139,5 +139,7 @@ export const rails = definePack("rails", {
     orientation: breadcrumb().at(session).text("This repo is guarded by flow."),
     /** A note scoped to an actor, and one whose prose lives in a file rather than inline. */
     forBuilders: breadcrumb().at(touch).on("src/**").for(builder).file("docs/builder.md"),
+    /** A note about a COMMAND, scoped to the lines it is about rather than to a file. */
+    installing: breadcrumb().at(command).on("npm install*", "npm i *").text("Restart the dev server after an install."),
   },
 });

@@ -76,6 +76,7 @@ export default defineConfig([
     <thead><tr><th>Key</th><th>Type</th><th>Meaning</th></tr></thead>
     <tbody>
       <tr><td><code>driftTokens</code></td><td>number</td><td>context tokens between re-showings of a <code>touch</code> breadcrumb. Absent = the engine's own default. It is one answer for the whole repo, which is why it is not on entries</td></tr>
+      <tr><td><code>grammars</code></td><td>array</td><td>grammars this repo built itself, for <code>astGrep</code> rules whose language nobody publishes — each <code>{ name, libraryPath, extensions, languageSymbol? }</code>. The path is relative to the repo root or absolute, and it is a build artefact: <code>flow status</code> is a red line naming the file until it is built, and the rules on that language refuse rather than passing quietly</td></tr>
     </tbody>
   </table>
 
@@ -123,8 +124,8 @@ export const house = definePack("house", {
   <table>
     <thead><tr><th>Verb</th><th>Value</th><th>Meaning</th></tr></thead>
     <tbody>
-      <tr><td><code>.at(…moments)</code></td><td><code>session · touch · turn-end</code></td><td><strong>mandatory.</strong> When the note shows</td></tr>
-      <tr><td><code>.on(…globs)</code></td><td>globs</td><td>the files whose touch shows this note</td></tr>
+      <tr><td><code>.at(…moments)</code></td><td><code>session · touch · command · turn-end</code></td><td><strong>mandatory.</strong> When the note shows</td></tr>
+      <tr><td><code>.on(…globs)</code></td><td>globs</td><td>what the note is about — the files whose touch shows it, or, at <code>command</code>, the command lines it is about (<code>"npm install*"</code>)</td></tr>
       <tr><td><code>.ignore(…globs)</code></td><td>globs</td><td>carve-outs from <code>.on(…)</code></td></tr>
       <tr><td><code>.for(category)</code></td><td>category</td><td>bind the note to an actor — only that category is shown it</td></tr>
       <tr><td><code>.text(str)</code> / <code>.file(path)</code></td><td>prose</td><td>the note itself — exactly one of the two</td></tr>
@@ -147,9 +148,16 @@ export const house = definePack("house", {
       <tr><td><code>commit</code></td><td>commit</td><td>guardrail</td><td>the git pre-commit gate, over the staged set — for humans too</td></tr>
       <tr><td><code>turnEnd</code></td><td>turn-end</td><td>either</td><td>when the agent hands back</td></tr>
       <tr><td><code>session</code></td><td>session</td><td>breadcrumb</td><td>a chat starts, resumes, or is compacted</td></tr>
-      <tr><td><code>touch</code></td><td>touch</td><td>breadcrumb</td><td>a tool first names a matching file or command, then again after drift</td></tr>
+      <tr><td><code>touch</code></td><td>touch</td><td>breadcrumb</td><td>a tool first names a matching file, then again after drift</td></tr>
+      <tr><td><code>command</code></td><td>command</td><td>either</td><td>before a shell command runs. A guardrail refuses it; a breadcrumb rides the same answer as a note, scoped by <code>.on(…)</code> to the commands it is about</td></tr>
     </tbody>
   </table>
+
+  <p><code>command</code> is the one moment where the two kinds are scoped differently. A command
+  <em>guardrail</em> takes no <code>.on(…)</code> — its patterns are its scope, and a second way to
+  narrow it is two halves that can disagree. A command <em>breadcrumb</em> has no patterns at all, so
+  <code>.on(…)</code> is the only thing that says which commands it is about; without one it would
+  show on every shell call, which is the same as showing on none.</p>
 
   <h2>The <code>ctx</code> a check reads</h2>
 

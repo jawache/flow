@@ -266,20 +266,26 @@ describe("toEvent — one payload, every moment it carries", () => {
     expect(asked, "the write rail must never pay for the turn").toStrictEqual([]);
   });
 
-  it("turns a Bash call into the command moment, plus a delete moment per file it would remove", () => {
-    // One call, two rails — which is why toEvent answers with a list. The delete rail sees the file
-    // as it still is, so a content rule can ask what is about to be lost.
+  it("turns a Bash call into the command moment on BOTH rails, plus a delete moment per file it would remove", () => {
+    // One call, three rails — which is why toEvent answers with a list. The guard rail decides
+    // whether the command may run and the brief rail says what the agent should know before it does;
+    // the delete rail sees the file as it still is, so a content rule can ask what is about to be
+    // lost.
     const w = world({ "secret/a.ts": "the content" });
     const events = toEvent("pre-tool-use", pre("Bash", { command: "rm secret/a.ts" }), w);
     expect(events).toStrictEqual([
       { rail: "guard", moment: "command", command: "rm secret/a.ts" },
+      { rail: "brief", moment: "command", command: "rm secret/a.ts" },
       { rail: "guard", moment: "delete", file: { path: "secret/a.ts", content: "the content" } },
     ]);
   });
 
   it("raises no delete moment for a file that is already gone", () => {
     const events = toEvent("pre-tool-use", pre("Bash", { command: "rm nowhere.ts" }), world());
-    expect(events).toStrictEqual([{ rail: "guard", moment: "command", command: "rm nowhere.ts" }]);
+    expect(events).toStrictEqual([
+      { rail: "guard", moment: "command", command: "rm nowhere.ts" },
+      { rail: "brief", moment: "command", command: "rm nowhere.ts" },
+    ]);
   });
 
   it("turns a post-tool-use call on a file into a touch, and a pathless one into silence", () => {
@@ -1545,8 +1551,35 @@ const statusFacts = (over: Partial<StatusFacts> = {}): StatusFacts => ({
   hooksPath: HOOKS_DIR,
   settingsPath: "/home/.claude/settings.json",
   settings: withRegistrations({}).settings,
+  grammars: [],
   session: null,
   ...over,
+});
+
+describe("the grammar fitting", () => {
+  it("says nothing at all when the config declares no grammar", () => {
+    expect(status(statusFacts()).fittings.map((f) => f.id)).not.toContain("grammars");
+  });
+
+  it("is green when every declared library is built, and names them", () => {
+    const green = status(statusFacts({ grammars: [{ name: "astro", libraryPath: "/repo/grammars/astro.dylib", present: true }] }));
+    const fitting = green.fittings.find((f) => f.id === "grammars");
+    expect(fitting?.ok).toBe(true);
+    expect(fitting?.detail).toContain("astro");
+    expect(green.green).toBe(true);
+  });
+
+  // THE RED LINE, and the whole reason the fitting exists: a declared grammar whose library is not
+  // there is a repo where every rule on that language refuses. Green there would be the exact lie
+  // this package was written to delete — a rule that loads, reports armed, and checks nothing.
+  it("is a red line naming the FILE when a declared library is missing", () => {
+    const red = status(statusFacts({ grammars: [{ name: "astro", libraryPath: "/repo/grammars/astro.dylib", present: false }] }));
+    const fitting = red.fittings.find((f) => f.id === "grammars");
+    expect(fitting?.ok).toBe(false);
+    expect(fitting?.detail).toContain("/repo/grammars/astro.dylib");
+    expect(fitting?.detail).toContain("build it");
+    expect(red.green).toBe(false);
+  });
 });
 
 /** One loaded entry, as the load hands it over — the shape `status` reads. */

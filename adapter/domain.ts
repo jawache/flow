@@ -215,13 +215,16 @@ const HOST_EVENT: Record<HookEvent, string> = {
  *   · turn-end BRIEFING is not delivered. Stop's decision object carries no context channel, so a
  *     `breadcrumb().at(turnEnd)` has nowhere to be shown; the guardrail rail at that moment works
  *     perfectly. Reporting an entry that goes dark is `flow status`'s job (F6).
+ *   · command BRIEFING is delivered, on the same PreToolUse answer the command guardrails use: when
+ *     nothing blocks, the hook's `additionalContext` carries the note, and when something does, the
+ *     refusal wins — which is the right order, since a blocked command is not about to run.
  *
  * It is two lists rather than one because "turn-end" is a word in both vocabularies and the answer
  * differs between them — a single flat list could only lie about one of them.
  */
 export const DELIVERS = {
   guard: ["write", "delete", "command", "commit", "turn-end"] as readonly GuardrailMoment[],
-  brief: ["session", "touch"] as readonly BreadcrumbMoment[],
+  brief: ["session", "touch", "command"] as readonly BreadcrumbMoment[],
 };
 
 // `delivers` — the reader of the two lists — lives with `flow status`, its only caller, at the foot
@@ -261,7 +264,12 @@ export type AdapterEvent =
       readonly staged?: readonly string[] | undefined;
       readonly turn?: readonly TurnAction[] | undefined;
     }
-  | { readonly rail: "brief"; readonly moment: BreadcrumbMoment; readonly path?: string | undefined };
+  | {
+      readonly rail: "brief";
+      readonly moment: BreadcrumbMoment;
+      readonly path?: string | undefined;
+      readonly command?: string | undefined;
+    };
 
 /**
  * What a payload needs from the world before it can become an event. Injected, never reached for.
@@ -412,7 +420,16 @@ export function toEvent(hook: HookEvent, payload: HookPayload, world: EventWorld
       if (tool === "Bash") {
         const command = text(input["command"]);
         if (!command) return [];
-        const events: AdapterEvent[] = [{ rail: "guard", moment: "command", command }];
+        // TWO RAILS OFF ONE BASH CALL, and they are different questions: the guard rail decides
+        // whether the command may run, and the brief rail says what the agent should know before it
+        // does. The note rides the same PreToolUse answer the block would have used — it is the
+        // `additionalContext` channel this hook already carries — so a repo can attach a warning to
+        // a command (`npm install …` corrupting a running dev server's cache) without inventing a
+        // rule that refuses it.
+        const events: AdapterEvent[] = [
+          { rail: "guard", moment: "command", command },
+          { rail: "brief", moment: "command", command },
+        ];
         for (const target of deleteTargets(command)) {
           // The file is still there at PreToolUse, so a content rule can ask what is about to be
           // lost ("this matched X — did you move the code first?"). One that is already gone yields
@@ -2493,6 +2510,15 @@ export interface StatusFacts {
   readonly hooksPath: string | null;
   readonly settingsPath: string;
   readonly settings: unknown;
+  /**
+   * The grammars the config declared, each with its library path made absolute and a straight
+   * answer about whether that file is there.
+   *
+   * A grammar is a BUILD ARTEFACT and is not committed, so "declared but not built" is the ordinary
+   * state of a fresh clone — and every `astGrep` rule on that language refuses until it is built.
+   * That is a repo whose guard is not fully in force, which is exactly what a red line is for.
+   */
+  readonly grammars: readonly { readonly name: string; readonly libraryPath: string; readonly present: boolean }[];
   /** Who last worked in this worktree, from the marker the write rail leaves. Null when nobody has. */
   readonly session: { readonly id: string; readonly agent: string | null; readonly wearing: readonly string[] } | null;
 }
@@ -2543,6 +2569,25 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
           ? `core.hooksPath = ${HOOKS_DIR}`
           : `core.hooksPath is ${facts.hooksPath ?? "unset"} — run \`${SET_HOOKS_PATH}\`. It is per-clone, so every fresh checkout needs it.`,
     },
+    // NO GRAMMARS, NO ROW. A repo that declares none has nothing to be told, and a fitting saying so
+    // would be a green tick about a feature nobody used.
+    ...(facts.grammars.length === 0
+      ? []
+      : [
+          {
+            id: "grammars",
+            ok: facts.grammars.every((grammar) => grammar.present),
+            detail: facts.grammars.every((grammar) => grammar.present)
+              ? `${facts.grammars.map((grammar) => grammar.name).join(" · ")} — declared in ${CONFIG_FILE}, and their libraries are built`
+              : facts.grammars
+                  .filter((grammar) => !grammar.present)
+                  .map(
+                    (grammar) =>
+                      `\`${grammar.name}\`: no library at ${grammar.libraryPath}. It is a build artefact and is not committed — build it, or every ast-grep rule on that language refuses rather than passing quietly.`,
+                  )
+                  .join("\n"),
+          },
+        ]),
     {
       id: "hooks",
       ok: missing.length === 0,

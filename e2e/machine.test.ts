@@ -27,7 +27,7 @@
 // product.test.ts, one scale up.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   buildBundles,
@@ -105,6 +105,24 @@ const SHIPPED: readonly Shipped[] = [
 const HOUSE: Shipped = { pack: "house", params: undefined, cases: 2, guardrails: 1 };
 
 /**
+ * The stranger's SECOND pack — the twelfth binding, and the only user of the two capabilities no
+ * shipped pack touches: a note attached to a command, and a rule on a grammar the repo declared.
+ *
+ * Its guardrail carries two cases; its note carries none, because a note has no rail to block with.
+ */
+const STRANGER: Shipped = { pack: "stranger", params: undefined, cases: 2, guardrails: 1 };
+
+/**
+ * The name the stranger's declared grammar goes by, and the whole proof of the route.
+ *
+ * NOTHING PUBLISHES `@ast-grep/lang-declared-python`, so a rule that matches under this name can
+ * only have resolved through the library the config named. The library itself is the one an
+ * installed `@ast-grep/lang-python` already put in node_modules — a real tree-sitter parser, on
+ * whatever platform this is running, with no build step and nothing checked in.
+ */
+const DECLARED_GRAMMAR = "declared-python";
+
+/**
  * The stranger's own pack, in the folder the stranger chose.
  *
  * ONE RULE, and it is at turn-end deliberately: not one of the ten shipped packs carries a
@@ -118,23 +136,40 @@ const HOUSE: Shipped = { pack: "house", params: undefined, cases: 2, guardrails:
  */
 const HOUSE_PACK = fixturePack("repo-pack", "@jawache/flow");
 
-/** The whole guard of a repo that binds everything flow ships, plus the one pack it writes itself. */
-const CONFIG = `// flow.config.ts — this repo's whole guard.
+/** The stranger's second pack, in the same folder. */
+const STRANGER_PACK = fixturePack("repo-grammar-pack", "@jawache/flow");
+
+/**
+ * The settings block, and it is the second argument `defineConfig` takes rather than part of the
+ * sentence grammar: which grammars exist is a fact about the MACHINE this guard runs on.
+ *
+ * The path is absolute because a test's temp repo is not where the library lives. A real repo writes
+ * a relative one (`grammars/astro.dylib`) and flow resolves it against the repo root.
+ */
+const settingsBlock = (libraryPath: string): string =>
+  `, { grammars: [{ name: ${JSON.stringify(DECLARED_GRAMMAR)}, libraryPath: ${JSON.stringify(libraryPath)}, extensions: ["py"], languageSymbol: "tree_sitter_python" }] }`;
+
+/** The whole guard of a repo that binds everything flow ships, plus the two packs it writes itself. */
+const config = (libraryPath: string): string => `// flow.config.ts — this repo's whole guard.
 import { defineConfig, pack } from "@jawache/flow";
 import { docs, fcis, flow, git, justfile, node, secrets, tdd, typescript, work } from "@jawache/flow/packs";
 import { house } from "./rules/house.ts";
+import { stranger } from "./rules/stranger.ts";
 
 export default defineConfig([
 ${SHIPPED.map((s) => `  ${bind(s)},`).join("\n")}
   ${bind(HOUSE)},
-]);
+  ${bind(STRANGER)},
+]${settingsBlock(libraryPath)});
 `;
 
 /** One pack alone, so `flow test` can be asked about it by itself. */
-const only = (entry: Shipped): string =>
+const only = (entry: Shipped, libraryPath: string): string =>
   entry.pack === HOUSE.pack
     ? `import { defineConfig, pack } from "@jawache/flow";\nimport { house } from "../rules/house.ts";\nexport default defineConfig([${bind(entry)}]);\n`
-    : `import { defineConfig, pack } from "@jawache/flow";\nimport { ${entry.pack} } from "@jawache/flow/packs";\nexport default defineConfig([${bind(entry)}]);\n`;
+    : entry.pack === STRANGER.pack
+      ? `import { defineConfig, pack } from "@jawache/flow";\nimport { stranger } from "../rules/stranger.ts";\nexport default defineConfig([${bind(entry)}]${settingsBlock(libraryPath)});\n`
+      : `import { defineConfig, pack } from "@jawache/flow";\nimport { ${entry.pack} } from "@jawache/flow/packs";\nexport default defineConfig([${bind(entry)}]);\n`;
 
 /** The stranger's entire toolchain: one script, one job per argument. */
 const CI_SH = `#!/bin/sh
@@ -189,6 +224,8 @@ const ENTRIES: readonly string[] = [
   "secrets.noKeysFileInCommits",
   "secrets.noSecretsInCommits",
   "secrets.orientation",
+  "stranger.installing",
+  "stranger.noEvalInScripts",
   "tdd.commitRunsTests",
   "tdd.testingStrategy",
   "tdd.vitest",
@@ -225,7 +262,7 @@ const report: string[] = [];
  * complete report with a hole in it — the worst of the three possible outputs. So each step signs
  * its own name, and `afterAll` says which never did.
  */
-const STEPS = ["scaffold", "bind", "cases", "write", "delete", "command", "commit", "turn-end"] as const;
+const STEPS = ["scaffold", "bind", "cases", "write", "delete", "command", "note", "grammar", "commit", "turn-end"] as const;
 const finished = new Set<string>();
 const step = (name: (typeof STEPS)[number], ...lines: string[]): void => {
   finished.add(name);
@@ -258,7 +295,21 @@ function refusal(moment: (typeof STEPS)[number], said: Ran, entry: string): void
   step(moment, `    ${moment.padEnd(9)} ✗ ${entry}`);
 }
 
-beforeAll(() => {
+/**
+ * The library the declared grammar points at — an installed `@ast-grep/lang-*` package's own parser,
+ * whose path the package computes for this platform.
+ *
+ * NOTHING IS CHECKED IN AND NOTHING IS BUILT HERE. A hand-built grammar is the route's real
+ * audience, but building one needs a tree-sitter toolchain that flow does not carry and must not
+ * start carrying to have a test; a packaged parser is the same kind of file reached the same way, so
+ * it proves the route without the machine having to be a build host.
+ */
+let grammarLibrary = "";
+
+beforeAll(async () => {
+  const python = ((await import("@ast-grep/lang-python")) as { default: { libraryPath: string } }).default;
+  grammarLibrary = python.libraryPath;
+
   // The BUILT bundles, deliberately: `@jawache/flow` and `@jawache/flow/packs` resolve to
   // dist/index.mjs and dist/packs.mjs through the link `flow init` makes, so this is the only
   // place the packs subpath export is exercised as an INSTALL rather than as a source import.
@@ -275,9 +326,11 @@ beforeAll(() => {
   writeFileSync(join(repo, "ci.sh"), CI_SH, { mode: 0o755 });
   mkdirSync(join(repo, "rules"), { recursive: true });
   writeFileSync(join(repo, "rules", "house.ts"), HOUSE_PACK);
-  writeFileSync(join(repo, "flow.config.ts"), CONFIG);
+  writeFileSync(join(repo, "rules", "stranger.ts"), STRANGER_PACK);
+  writeFileSync(join(repo, "flow.config.ts"), config(grammarLibrary));
   mkdirSync(join(repo, "probe"), { recursive: true });
-  for (const entry of [...SHIPPED, HOUSE]) writeFileSync(join(repo, "probe", `${entry.pack}.config.ts`), only(entry));
+  for (const entry of [...SHIPPED, HOUSE, STRANGER])
+    writeFileSync(join(repo, "probe", `${entry.pack}.config.ts`), only(entry, grammarLibrary));
 });
 
 afterAll(() => {
@@ -318,16 +371,18 @@ describe("the machine test", () => {
     // The exact list, not a count: "one fewer" is a puzzle, "flow.noDeleteGuardrails is gone" is
     // an answer.
     expect(ids).toEqual([...ENTRIES]);
-    expect([...new Set(entries.map((e) => e.pack))].sort()).toEqual([...SHIPPED.map((s) => s.pack), HOUSE.pack].sort());
+    expect([...new Set(entries.map((e) => e.pack))].sort()).toEqual(
+      [...SHIPPED.map((s) => s.pack), HOUSE.pack, STRANGER.pack].sort(),
+    );
     expect(read.green, `flow status is not green:\n${flow(["status"]).stdout}`).toBe(true);
     expect(said.code).toBe(0);
 
     const totals = read.moments.totals;
     step(
       "bind",
-      `  bind       ${SHIPPED.length} shipped packs + the repo's own · ${ids.length} entries ` +
+      `  bind       ${SHIPPED.length} shipped packs + the two the repo writes · ${ids.length} entries ` +
         `(${totals["guardrails"]} guardrails · ${totals["breadcrumbs"]} breadcrumbs · ${totals["disabled"]} disabled)`,
-      `             ${[...SHIPPED.map((s) => s.pack), `${HOUSE.pack} (this repo's own)`].join(" · ")}`,
+      `             ${[...SHIPPED.map((s) => s.pack), `${HOUSE.pack} · ${STRANGER.pack} (this repo's own)`].join(" · ")}`,
       "  status     green — every rule resolves and can fire, every fitting is in place",
     );
   });
@@ -335,7 +390,7 @@ describe("the machine test", () => {
   it("runs every pack's own cases, and each pack's count is exactly what it was", () => {
     // PER PACK, so a deleted case NAMES the pack it was deleted from. One config each, so the
     // number that moves is attributable — the whole-config run below can only say "one fewer".
-    const measured = [...SHIPPED, HOUSE].map((entry) => {
+    const measured = [...SHIPPED, HOUSE, STRANGER].map((entry) => {
       const said = flow(["test", join("probe", `${entry.pack}.config.ts`)]);
       const { cases, guardrails, red } = ran(said);
       // Every case of every pack, green under somebody else's parameters. A pack whose own case
@@ -344,14 +399,14 @@ describe("the machine test", () => {
       expect(red, `${entry.pack} failed its own cases:\n${said.stdout}`).toEqual([]);
       return { pack: entry.pack, cases, guardrails };
     });
-    expect(measured).toEqual([...SHIPPED, HOUSE].map(({ pack, cases, guardrails }) => ({ pack, cases, guardrails })));
+    expect(measured).toEqual([...SHIPPED, HOUSE, STRANGER].map(({ pack, cases, guardrails }) => ({ pack, cases, guardrails })));
 
     // …and the same run over the whole config: green, and the cases add up — which is the
     // arithmetic that catches a case moving between packs rather than disappearing.
     const said = flow(["test"]);
     expect(said.code, said.stdout + said.stderr).toBe(0);
     expect(said.stdout).toContain("all green");
-    const total = [...SHIPPED, HOUSE].reduce((sum, entry) => sum + entry.cases, 0);
+    const total = [...SHIPPED, HOUSE, STRANGER].reduce((sum, entry) => sum + entry.cases, 0);
     expect(ran(said).cases).toBe(total);
 
     step("cases", `  cases      ${total} green over ${measured.reduce((sum, m) => sum + m.guardrails, 0)} guardrails, pack by pack`, "  live");
@@ -375,6 +430,60 @@ describe("the machine test", () => {
 
   it("refuses the command", () => {
     refusal("command", hook("pre-tool-use", inThisSession("Bash", { command: "git push --force origin main" })), "git.noForcePush");
+  });
+
+  // ── the two capabilities no shipped pack uses, driven live ─────────────────
+  //
+  // Both arrive through the SAME PreToolUse answer the command guardrails use, which is the whole
+  // reason neither needed a new rail: a note rides the `additionalContext` channel, and a rule on a
+  // declared grammar is an ordinary write refusal whose parser came from a file the config named.
+  it("shows a note attached to a COMMAND, on the same rail that refuses one", () => {
+    const said = hook("pre-tool-use", inThisSession("Bash", { command: "npm install left-pad" }));
+    expect(said.code, `the note blocked the command:\n${said.stderr}`).toBe(0);
+    const answer = JSON.parse(said.stdout) as { hookSpecificOutput?: { hookEventName?: string; additionalContext?: string } };
+    expect(answer.hookSpecificOutput?.hookEventName).toBe("PreToolUse");
+    expect(answer.hookSpecificOutput?.additionalContext).toContain("corrupts its dependency cache");
+
+    // The scope is what makes it usable: an unscoped command note would ride every shell call.
+    const quiet = hook("pre-tool-use", inThisSession("Bash", { command: "npm run build" }));
+    expect(quiet.stdout).not.toContain("dependency cache");
+    step("note", "    note      🍞 stranger.installing — shown on `npm install …`, silent on `npm run build`");
+  });
+
+  it("refuses a write judged by a grammar THIS REPO declared, which nothing publishes", () => {
+    refusal(
+      "grammar",
+      hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "scripts/build.py"), content: "def run(src):\n    return eval(src)\n" })),
+      "stranger.noEvalInScripts",
+    );
+  });
+
+  // THE OTHER HALF OF THE SAME FACT, and the one that decides whether this route can be trusted: a
+  // grammar is a build artefact, so "declared but not built" is the ordinary state of a fresh clone.
+  // Silence there would be a rule that loads, reports armed, and checks nothing — which is the exact
+  // failure this package exists to delete. It is a red line naming the file, and the rules on that
+  // language refuse rather than pass.
+  it("turns a declared grammar whose library is missing into a red line naming the file", () => {
+    const probe = join(repo, "probe", "missing-grammar.config.ts");
+    writeFileSync(
+      probe,
+      `import { defineConfig, pack } from "@jawache/flow";\nimport { stranger } from "../rules/stranger.ts";\n` +
+        `export default defineConfig([pack(stranger)], { grammars: [{ name: ${JSON.stringify(DECLARED_GRAMMAR)}, libraryPath: "grammars/nowhere.so", extensions: ["py"] }] });\n`,
+    );
+    const cases = flow(["test", join("probe", "missing-grammar.config.ts")]);
+    expect(cases.code, "a rule whose grammar is missing must not pass quietly").toBe(1);
+    expect(cases.stdout).toContain("grammars/nowhere.so");
+
+    // And `flow status` says so before any rule runs, with the path and the exit code.
+    const here = join(repo, "flow.config.ts");
+    const held = readFileSync(here, "utf8");
+    writeFileSync(here, held.replace(JSON.stringify(grammarLibrary), JSON.stringify("grammars/nowhere.so")));
+    const said = flow(["status"]);
+    expect(said.code, "a repo whose grammar is not built is not fully guarded").not.toBe(0);
+    expect(said.stdout).toContain("grammars/nowhere.so");
+    expect(said.stdout).toContain("build it");
+    writeFileSync(here, held);
+    expect(flow(["status"]).code, "and it is green again once the library is back").toBe(0);
   });
 
   it("refuses the commit, at git's own hook, and passes the same commit once it is clean", () => {

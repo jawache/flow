@@ -7,7 +7,7 @@
 // hooks will — so the harness is proved by every test in the file rather than by one test of its
 // own. A check that could only be tested by reaching around ctx would fail here first.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import {
   loadConfig,
   verdict,
@@ -17,6 +17,7 @@ import {
   type LoadedEntry,
   type Unanswered,
 } from "../language/domain.ts";
+import { existsSync } from "node:fs";
 import { globToRegExp } from "../glob.ts";
 import {
   addedNames,
@@ -57,6 +58,7 @@ import {
   ranSinceEdit,
   reasonHits,
   resolveLang,
+  useGrammars,
   runCase,
   runCases,
   siblingExists,
@@ -1099,6 +1101,13 @@ describe("depcruiseHits", () => {
   });
 });
 
+/** What an `@ast-grep/lang-*` package hands over — the same three facts a declared grammar carries. */
+interface PackagedGrammar {
+  readonly libraryPath: string;
+  readonly extensions: readonly string[];
+  readonly languageSymbol: string;
+}
+
 describe("the ast-grep grammar registry", () => {
   it("resolves every tier-0 native without an install", async () => {
     expect(NATIVE_LANGUAGES).toContain("typescript");
@@ -1113,6 +1122,85 @@ describe("the ast-grep grammar registry", () => {
     expect(resolved.ok).toBe(false);
     expect(resolved.ok ? "" : resolved.detail).toContain("no-such-grammar");
     expect(resolved.ok ? "" : resolved.detail).toContain("@ast-grep/lang-no-such-grammar");
+  });
+
+  // ── the declared route: a grammar the repo built itself ────────────────────
+  //
+  // THE THREE BRANCHES ARE THREE DIFFERENT SENTENCES, and that is the point of testing them apart:
+  // a name that is native resolves free, a name the CONFIG declared resolves from the library the
+  // repo built, and a name that is neither is sent to npm. A reader who gets the wrong one of those
+  // three goes looking in the wrong place, which is most of the cost of a guard that will not run.
+  describe("a grammar declared in the config", () => {
+    afterEach(() => {
+      useGrammars([]);
+    });
+
+    it("is tried before the package route, and a library that is not built names the FILE", async () => {
+      useGrammars([{ name: "invented-lang", libraryPath: "/nowhere/invented.dylib", extensions: ["inv"] }], () => false);
+      const resolved = await resolveLang("invented-lang");
+      expect(resolved.ok).toBe(false);
+      const detail = resolved.ok ? "" : resolved.detail;
+      // The library sentence, not the npm one: it names the path, says the artefact is not
+      // committed, and never sends the reader to a package that does not exist.
+      expect(detail).toContain("/nowhere/invented.dylib");
+      expect(detail).toContain("Build it");
+      expect(detail).not.toContain("npm i -D");
+    });
+
+    // THE CHECK BEFORE THE CALL, and the reason it is not a try/catch. Handed a path that is not
+    // there, `registerDynamicLanguage` panics on the native side and ABORTS the process — a Rust
+    // backtrace in place of a sentence, and a commit gate that dies rather than refusing. Nothing
+    // in JavaScript can catch that, so the existence question is asked first and fail-closed.
+    it("never reaches the native call when the library is absent", async () => {
+      let asked = "";
+      useGrammars([{ name: "invented-lang", libraryPath: "/nowhere/invented.dylib", extensions: ["inv"] }], (path) => {
+        asked = path;
+        return false;
+      });
+      await resolveLang("invented-lang");
+      expect(asked).toBe("/nowhere/invented.dylib");
+    });
+
+    it("is forgotten when the next config declares none", async () => {
+      useGrammars([{ name: "invented-lang", libraryPath: "/nowhere/invented.dylib", extensions: ["inv"] }]);
+      useGrammars([]);
+      const resolved = await resolveLang("invented-lang");
+      expect(resolved.ok ? "" : resolved.detail).toContain("@ast-grep/lang-invented-lang");
+    });
+
+    // THE REAL THING, with a real library and a real parse, and it is deterministic on any machine
+    // that ran `npm install`: the library is the one an installed `@ast-grep/lang-*` package already
+    // placed in node_modules, and the package hands over exactly the three facts a declared grammar
+    // carries — libraryPath, extensions, languageSymbol.
+    //
+    // THE NAME IS WHAT PROVES THE ROUTE. It is declared as `declared-python`, and there is no
+    // `@ast-grep/lang-declared-python` to fall back on, so a pass here can only have come from the
+    // declared route. Nothing about the test is astro-specific — the hand-built grammar this route
+    // exists for is proved where such a grammar is actually built, in the repo that builds it.
+    it("registers the library the config named, and the rule then parses that language", async () => {
+      const python = ((await import("@ast-grep/lang-python")) as { default: PackagedGrammar }).default;
+      useGrammars(
+        [
+          {
+            name: "declared-python",
+            libraryPath: python.libraryPath,
+            extensions: [...python.extensions],
+            languageSymbol: python.languageSymbol,
+          },
+        ],
+        existsSync,
+      );
+      // A KIND RULE rather than a pattern: a pattern with a `$METAVAR` in it needs the grammar's own
+      // expando character (python's is `µ`, because `$` is not valid in python source), and that is
+      // a fourth fact a declared grammar does not carry. Every rule the route exists for — the astro
+      // pair this was built for among them — is written against node kinds.
+      const rule = { kind: "call", has: { field: "function", regex: "^eval$" } };
+      const blocked = await astGrepHits("def run(src):\n    return eval(src)\n", rule, "declared-python");
+      expect(blocked.ok && blocked.hits).toHaveLength(1);
+      expect(blocked.ok && blocked.hits[0]).toContain("2:");
+      const passes = await astGrepHits("def run(src):\n    return json.loads(src)\n", rule, "declared-python");
+      expect(passes.ok && passes.hits).toEqual([]);
+    });
   });
 });
 
