@@ -42,7 +42,7 @@ const OUT = join("docs", "user", "packs");
 
 /** The stock checks with a reference page. A pack's own check gets no link — there is no page. */
 const REFERENCED = new Set(
-  existsSync(join("docs", "user", "checks")) ? readdirSync(join("docs", "user", "checks")).map((file) => file.replace(/\.html$/, "")) : [],
+  existsSync(join("docs", "user", "checks")) ? readdirSync(join("docs", "user", "checks")).map((file) => file.replace(/\.md$/, "")) : [],
 );
 
 /** One pack, and the example parameters every entry on its page is rendered with. */
@@ -117,8 +117,8 @@ function read(shipped: Shipped): PackDoc {
 function pages(): Map<string, string> {
   const read_ = SHIPPED.map(read);
   const out = new Map<string, string>();
-  for (const doc of read_) out.set(`${doc.name}.html`, renderPackPage(doc));
-  out.set("index.html", renderPacksIndex(read_));
+  for (const doc of read_) out.set(`${doc.name}.md`, renderPackPage(doc));
+  out.set("index.md", renderPacksIndex(read_));
   return out;
 }
 
@@ -136,7 +136,7 @@ if (checking) {
           .map((f) => f.name)
       : [],
   );
-  const stale = [...written].filter(([name, html]) => !onDisk.has(name) || readFileSync(join(OUT, name), "utf8") !== html).map(([name]) => name);
+  const stale = [...written].filter(([name, page]) => !onDisk.has(name) || readFileSync(join(OUT, name), "utf8") !== page).map(([name]) => name);
   const orphans = [...onDisk].filter((name) => !written.has(name));
   if (stale.length === 0 && orphans.length === 0) {
     process.stdout.write(`docs-packs — ${written.size} pages, all current with packs/\n`);
@@ -148,6 +148,6 @@ if (checking) {
   }
 } else {
   mkdirSync(OUT, { recursive: true });
-  for (const [name, html] of written) writeFileSync(join(OUT, name), html);
+  for (const [name, page] of written) writeFileSync(join(OUT, name), page);
   process.stdout.write(`docs-packs — ${written.size} pages written to ${OUT}/\n`);
 }

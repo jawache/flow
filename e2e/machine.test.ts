@@ -84,7 +84,7 @@ const SHIPPED: readonly Shipped[] = [
   // and a pack in that state must stay bindable with no object at all — a config that had already
   // bound it refuses to load, fail-closed, the day the pack gains its first parameter otherwise.
   // Nothing else in this file drives that path: `node` and `work` take no parameters to begin with.
-  { pack: "docs", params: undefined, cases: 3, guardrails: 2 },
+  { pack: "docs", params: undefined, cases: 2, guardrails: 1 },
   // `example` is the field this command's first run earned. Two of the pack's entries narrow
   // inside their own check (`changed`, `whenAdded`) rather than through `.on(…)`, and both used
   // to prove themselves with `cli/pure/a.ts` written out — one repo's spelling, inside the pack.
@@ -221,7 +221,6 @@ esac
 const ENTRIES: readonly string[] = [
   "docs.docs",
   "docs.docsShape",
-  "docs.noMarkdownInUserDocs",
   "docs.userDocsStyle",
   "fcis.fcis",
   "fcis.newPureFileNeedsReason",

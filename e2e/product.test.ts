@@ -410,14 +410,12 @@ describe("flow init --empty", () => {
 //
 // The three substitutions above are this file's, and the quick start quotes the same spellings.
 
-/** The `<pre><code>` block on a docs page that opens with this line, as text. */
+/** The fenced block on a docs page that opens with this line, as text. */
 function paged(page: string, opening: string): string {
-  const html = readFileSync(join(PACKAGE, "docs", "user", page), "utf8");
-  const found = html
-    .split("<pre><code>")
-    .slice(1)
-    .map((part) => part.slice(0, part.indexOf("</code></pre>")))
-    .map((body) => body.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", '"').replaceAll("&amp;", "&"))
+  const markdown = readFileSync(join(PACKAGE, "docs", "user", page), "utf8");
+  const found = markdown
+    .split(/^```[^\n]*$/m)
+    .filter((_part, at) => at % 2 === 1)
     .find((body) => body.trimStart().startsWith(opening));
   expect(found, `${page} has no block starting "${opening}"`).toBeDefined();
   return (found as string).trim();
@@ -431,7 +429,7 @@ describe("the quick start's transcripts", () => {
   it("are what `flow init`, `flow status`, `flow test` and both refusals really print", () => {
     const mine = newRepo();
     const firstTime = mkdtempSync(join(tmpdir(), "flow-quickstart-"));
-    const page = (opening: string): string => paged("01-quick-start.html", opening);
+    const page = (opening: string): string => paged("01-quick-start.md", opening);
     const said = (args: readonly string[], stdin = ""): string => {
       const ran = runFlow(mine, args, { home: firstTime, bin }, stdin);
       return asQuoted(ran.stdout || ran.stderr, mine, firstTime, MY_REPO);

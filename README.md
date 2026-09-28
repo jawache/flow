@@ -301,7 +301,7 @@ flow guards itself: `flow.config.ts` at the root binds the ten packs above throu
 `guards/house.ts`. A door that stops exporting, a rule that stops loading or a bundle that stops
 building refuses this repo's own next commit first.
 
-Longer documentation is in [`docs/user/`](docs/user/index.html): the guidebook, the five-minute
+Longer documentation is in [`docs/user/`](docs/user/index.md): the guidebook, the five-minute
 quick start, the config reference, how to author a pack, and one page per stock check.
 
 ## Licence

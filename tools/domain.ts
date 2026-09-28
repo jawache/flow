@@ -9,7 +9,7 @@
 // pair into one page.
 //
 // PURE, and gated as this repo's pure home is: the shell beside it (pack-pages.ts) reads the
-// files, parses the TypeScript and writes the HTML; everything below is text in, text out. That
+// files, parses the TypeScript and writes the markdown; everything below is text in, text out. That
 // is what makes a page assertable in a unit test rather than by eye.
 //
 // DETERMINISTIC — no date, no commit sha, no host path anywhere in the output. The page is
@@ -323,63 +323,6 @@ export function whenText(at: readonly string[]): string {
   return said.length === 0 ? "—" : said.join(" · ");
 }
 
-// ── HTML ─────────────────────────────────────────────────────────────────────
-
-/** Every character that could close a tag or open an entity. Prose is full of all of them. */
-export function esc(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-/**
- * A FENCED BLOCK — three backticks, an optional language, the lines, three backticks. Lazy in the
- * middle, so a doc comment holding two fences renders two code boxes rather than one.
- */
-const FENCE = /```[^\n]*\n([\s\S]*?)\n?```/g;
-
-/**
- * A doc comment as HTML: escaped, backticks turned into code, blank lines into paragraphs, and a
- * fenced block as code.
- *
- * The conversions are the whole of the markup this page understands, and they are here because a
- * doc comment is written for a reader of the SOURCE — where `\`.on(…)\`` is code and a blank line
- * is a paragraph — and a page that dropped them would read as one long blob. Prose the AGENT is
- * shown (`.text()`, `.message()`) never goes through here: that is quoted verbatim, backticks and
- * all, because the page's job there is to show exactly what the model receives.
- *
- * THE FENCE IS WHAT COPYABLE TEXT NEEDS. A pack that names a file it does not ship — a shared
- * tsconfig, the recipes behind an env seam — puts that file on its own page, and a file down the
- * paragraph path arrives with its lines run together and its quotes rewritten. Inside a fence only
- * escaping happens: a backtick there is a backtick, not the start of a `<code>`. An UNCLOSED fence
- * is not a fence and stays the prose it was, rather than swallowing the rest of the block into a
- * code box that never ends.
- */
-export function prose(text: string): string {
-  const said: string[] = [];
-  let at = 0;
-  for (const fence of text.matchAll(FENCE)) {
-    said.push(paragraphs(text.slice(at, fence.index)), `<pre><code>${esc(fence[1] ?? "")}</code></pre>`);
-    at = fence.index + fence[0].length;
-  }
-  said.push(paragraphs(text.slice(at)));
-  return said.filter((held) => held !== "").join("\n");
-}
-
-/** The plain half — blank lines into paragraphs, backticks into code, and nothing for whitespace. */
-function paragraphs(text: string): string {
-  return text
-    .split(/\n\s*\n/)
-    .flatMap((para) => (para.trim() === "" ? [] : [`<p>${line(para.trim())}</p>`]))
-    .join("\n");
-}
-
-/** One line of prose — escaped, with backticks as code, and no paragraph wrapper. */
-export function line(text: string): string {
-  return esc(text).replace(/`([^`]+)`/g, "<code>$1</code>");
-}
 
 /**
  * A lead's first sentence, for the listing page.
@@ -392,9 +335,129 @@ export function firstSentence(text: string): string {
   return end === null ? text : text.slice(0, end.index + 1);
 }
 
+// ── markdown ─────────────────────────────────────────────────────────────────
+
+/**
+ * A HEADING'S ANCHOR, spelled the way GitHub spells it — lowercased, punctuation dropped, spaces
+ * turned into hyphens.
+ *
+ * It is here rather than in the shell because it is what makes a link on one page land on a heading
+ * of another: the table of contents on a pack's page points at its own entry headings, and the
+ * hand-written pages point at each other's sections. GitHub derives the anchor from the heading
+ * text, so a page that spells it any other way links to nothing at all — silently, which is the
+ * fault this whole folder exists to refuse.
+ */
+export function headingSlug(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\p{M} _-]/gu, "")
+    .replace(/ /g, "-");
+}
+
+/** Every heading a page carries, as its anchor — code fences skipped, where a `#` is not a heading. */
+export function headingSlugs(markdown: string): string[] {
+  return [...withoutFences(markdown).matchAll(/^#{1,6} +(.+)$/gm)].map((found) => headingSlug((found[1] ?? "").trim()));
+}
+
+/**
+ * A PAGE WITH ITS FENCED BLOCKS BLANKED. Inside a fence a `#` is a shell comment and a `[x](y)` is
+ * a line of someone's config — neither is a heading or a link, and a sweep that read them as such
+ * would go red over a page that is perfectly correct.
+ */
+function withoutFences(markdown: string): string {
+  let open = "";
+  return markdown
+    .split("\n")
+    .map((line) => {
+      const fence = /^ {0,3}(`{3,})/.exec(line);
+      if (open === "") {
+        if (fence === null) return line;
+        open = fence[1] ?? "";
+        return "";
+      }
+      if (fence !== null && (fence[1] ?? "").length >= open.length && line.trim() === fence[1]) open = "";
+      return "";
+    })
+    .join("\n");
+}
+
+/** One link a page makes: where it points, and the heading it expects to find there. */
+export interface PageLink {
+  /** The relative path, or empty for a link into the page's own headings. */
+  readonly path: string;
+  /** The `#anchor`, without the hash, or empty when the link names a whole page. */
+  readonly anchor: string;
+}
+
+/**
+ * EVERY LOCAL LINK A PAGE MAKES — markdown links and the inline HTML a markdown page still carries.
+ *
+ * The anchor comes back beside the path because a markdown anchor is derived from a heading rather
+ * than written on one: `index.md#checks` resolves to a file that exists and a heading that does
+ * not, and nothing about the page looks wrong. So the sweep beside this asks for both halves.
+ */
+export function localLinks(markdown: string): PageLink[] {
+  const text = withoutFences(markdown);
+  const targets = [
+    ...[...text.matchAll(/\[[^\]]*\]\(([^)\s]+)\)/g)].map((found) => found[1] ?? ""),
+    ...[...text.matchAll(/(?:href|src)="([^"]+)"/g)].map((found) => found[1] ?? ""),
+  ];
+  return targets
+    .filter((target) => !/^(https?:|mailto:|data:)/.test(target))
+    .map((target) => ({ path: target.split("#")[0] ?? "", anchor: target.split("#")[1] ?? "" }))
+    .filter((link) => link.path !== "" || link.anchor !== "");
+}
+
+/**
+ * A VERBATIM BLOCK, fenced with enough backticks to survive its own content.
+ *
+ * What goes through here is prose the AGENT is shown — `.text()`, `.message()` — and the page's job
+ * with it is to show exactly what the model receives, backticks and all. A fence is the one
+ * markdown construct that promises that; three backticks around a message that carries three of
+ * its own would end the block in the middle of it, so the fence is always one longer than the
+ * longest run inside.
+ */
+function fenced(text: string): string {
+  const runs = [...text.matchAll(/`+/g)].map((run) => run[0].length);
+  const fence = "`".repeat(Math.max(2, ...runs) + 1);
+  return `${fence}\n${text}\n${fence}`;
+}
+
+/**
+ * A doc comment in a TABLE CELL — its paragraphs joined by a line break, because a cell holds one
+ * line and nothing else.
+ *
+ * The inline HTML is deliberate: markdown has no multi-paragraph cell, and the choice is between a
+ * `<br>` and dropping half of what the pack's author wrote. Copyable text never comes through here
+ * — a file a pack names goes in its `@setup` block, which is prose on the page and keeps its fence.
+ */
+function proseCell(text: string): string {
+  return text
+    .split(/\n\s*\n/)
+    .map((para) => para.trim().replace(/\s+/g, " "))
+    .filter((para) => para !== "")
+    .join("<br><br>");
+}
+
+/** One cell, safe to sit in a row: a `|` of its own would end the cell early. */
+function cell(text: string): string {
+  return text.replaceAll("|", "\\|");
+}
+
+/** A table, header row and all. */
+function table(head: readonly string[], rows: readonly (readonly string[])[]): string {
+  const row = (cells: readonly string[]): string => `| ${cells.map(cell).join(" | ")} |`;
+  return [row(head), `|${" --- |".repeat(head.length)}`, ...rows.map(row)].join("\n");
+}
+
 /** A list of globs as inline code, or the plain words for an entry that is not path-scoped. */
 function globs(list: readonly string[]): string {
-  return list.length === 0 ? "not scoped by path" : list.map((g) => `<code>${esc(g)}</code>`).join(" · ");
+  return list.length === 0 ? "not scoped by path" : list.map((glob) => `\`${glob}\``).join(" · ");
+}
+
+/** `canonicalFiles` → `canonical-files`, which is what the stock check's page is called. */
+export function kebab(name: string): string {
+  return name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
 }
 
 /**
@@ -405,108 +468,89 @@ function globs(list: readonly string[]): string {
  * showed the `.check(…)` source until the first read of these pages, and `noGitDiscard({})` as the
  * whole description of a rule is what that was worth.
  */
-function checkBlock(entry: EntryDoc): string {
-  if (entry.checkName === "") return '    <p class="fact"><b>Check</b> written inline in this pack</p>\n';
+function checkFact(entry: EntryDoc): string {
+  if (entry.checkName === "") return "**Check** written inline in this pack";
   const named = entry.reference
-    ? `<a href="../checks/${kebab(entry.checkName)}.html"><code>${esc(entry.checkName)}</code></a>`
-    : `<code>${esc(entry.checkName)}</code> <span class="none">(written in this pack)</span>`;
-  if (entry.settings === "") return `    <p class="fact"><b>Check</b> ${named} — no options</p>\n`;
-  // COLLAPSED BY DEFAULT. The settings are the rule's exact content and a reader wants them one
-  // entry at a time; open on every entry, a page of twelve rules is a page of JSON.
-  return (
-    `    <p class="fact"><b>Check</b> ${named}</p>\n` +
-    `    <details class="settings"><summary>settings</summary><pre><code>${esc(entry.settings)}</code></pre></details>\n`
-  );
+    ? `[\`${entry.checkName}\`](../checks/${kebab(entry.checkName)}.md)`
+    : `\`${entry.checkName}\` *(written in this pack)*`;
+  return entry.settings === "" ? `**Check** ${named} — no options` : `**Check** ${named}`;
 }
 
-
-/** `canonicalFiles` → `canonical-files`, which is what the stock check's page is called. */
-export function kebab(name: string): string {
-  return name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+/**
+ * The settings, COLLAPSED BY DEFAULT — the one construct markdown has none of, kept as the HTML a
+ * markdown page may carry.
+ *
+ * The settings are the rule's exact content and a reader wants them one entry at a time; open on
+ * every entry, a page of twelve rules is a page of JSON.
+ */
+function settingsBlock(entry: EntryDoc): string {
+  return entry.settings === "" ? "" : `<details><summary>settings</summary>\n\n${fenced(entry.settings)}\n\n</details>`;
 }
 
-/** The pass/block pair, as two boxes. An empty side says so rather than rendering nothing. */
+/** The pass/block pair, as two lists. An empty side says so rather than rendering nothing. */
 function casesBlock(cases: readonly CaseLine[]): string {
   const side = (kind: "pass" | "block"): string => {
     const lines = cases
-      .filter((c) => c.kind === kind)
-      .map((c) => {
-        const given = c.given.length === 0 ? "" : `<span class="given">given ${c.given.map(line).join(" · ")}</span>`;
-        return `<li>${line(c.line)}${given}</li>`;
-      });
-    const body = lines.length === 0 ? `<li class="none">no ${kind} case declared</li>` : lines.join("");
-    return `<div class="case ${kind === "pass" ? "ok" : "stop"}"><b>${kind === "pass" ? "passes" : "blocks"}</b><ul>${body}</ul></div>`;
+      .filter((one) => one.kind === kind)
+      .map((one) => (one.given.length === 0 ? `- ${one.line}` : `- ${one.line}\n  - given ${one.given.join(" · ")}`));
+    const body = lines.length === 0 ? `- *no ${kind} case declared*` : lines.join("\n");
+    return `**${kind === "pass" ? "passes" : "blocks"}**\n\n${body}`;
   };
-  return `<div class="cases">${side("pass")}${side("block")}</div>`;
+  return `${side("pass")}\n\n${side("block")}`;
 }
 
-/** One fact line — a short label, then the value. Left-aligned, no indent column. */
-function fact(label: string, value: string): string {
-  return value === "" ? "" : `    <p class="fact"><b>${label}</b> ${value}</p>\n`;
-}
-
+/** One entry, in full — the facts, then why it exists, what it says, and what proves it. */
 function entrySection(entry: EntryDoc): string {
   const rail = entry.kind === "guardrail";
-  const badge = rail ? '<span class="badge rail">guardrail</span>' : '<span class="badge crumb">breadcrumb</span>';
   const facts = [
-    fact(rail ? "Refuses at" : "Shown when", esc(whenText(entry.at))),
-    fact("Watches", globs(entry.on)),
-    entry.ignore.length === 0 ? "" : fact("Ignores", globs(entry.ignore)),
-    fact("Categories", entry.categories.length === 0 ? "every session" : entry.categories.map((c) => `<code>${esc(c)}</code>`).join(" · ")),
-    entry.disabled === "" ? "" : fact("Off by default", esc(entry.disabled)),
-    rail ? checkBlock(entry) : "",
-  ].join("");
+    `**${rail ? "Refuses at" : "Shown when"}** ${whenText(entry.at)}`,
+    `**Watches** ${globs(entry.on)}`,
+    entry.ignore.length === 0 ? "" : `**Ignores** ${globs(entry.ignore)}`,
+    `**Categories** ${entry.categories.length === 0 ? "every session" : entry.categories.map((one) => `\`${one}\``).join(" · ")}`,
+    entry.disabled === "" ? "" : `**Off by default** ${entry.disabled}`,
+    rail ? checkFact(entry) : "",
+  ].filter((line) => line !== "");
 
   const why =
     entry.why === ""
       ? entry.kind === "breadcrumb"
-        ? '    <h3>Why it exists</h3>\n    <div class="why gap"><p>Not stated. Add a doc comment on the entry\'s key saying what goes wrong without it.</p></div>\n'
+        ? "### Why it exists\n\n*Not stated. Add a doc comment on the entry's key saying what goes wrong without it.*"
         : ""
-      : `    <h3>Why it exists</h3>\n    <div class="why">${prose(entry.why)}</div>\n`;
-
-  const says =
-    entry.says === ""
-      ? ""
-      : `    <h3>What the agent reads${rail ? " when refused" : ""}</h3>\n    <div class="says">${esc(entry.says)}</div>\n`;
-
-  const proved = rail ? `    <h3>Proved by</h3>\n${casesBlock(entry.cases)}\n` : "";
+      : `### Why it exists\n\n${entry.why.trim()}`;
 
   return [
-    `  <section class="entry" id="${esc(entry.key)}">`,
-    `    <h2><code>${esc(entry.id)}</code>${badge}</h2>`,
-    `    <p class="desc">${line(entry.description)}</p>`,
-    facts.trimEnd(),
-    why + says + proved,
-    "  </section>",
-  ].join("\n");
+    `## \`${entry.id}\` — ${entry.kind}`,
+    entry.description,
+    facts.map((line) => `- ${line}`).join("\n"),
+    rail ? settingsBlock(entry) : "",
+    why,
+    entry.says === "" ? "" : `### What the agent reads${rail ? " when refused" : ""}\n\n${fenced(entry.says)}`,
+    rail ? `### Proved by\n\n${casesBlock(entry.cases)}` : "",
+  ]
+    .filter((block) => block !== "")
+    .join("\n\n");
 }
 
 /** The table of contents — every entry, its kind, and what it is for, in one screen. */
 function toc(entries: readonly EntryDoc[]): string {
-  const rows = entries.map(
-    (e) =>
-      `    <li><span class="id"><a href="#${esc(e.key)}">${esc(e.id)}</a></span>` +
-      `<span class="badge ${e.kind === "guardrail" ? "rail" : "crumb"}">${e.kind}</span>` +
-      `<span class="d">${line(e.description)}</span></li>`,
-  );
-  return `  <ul class="toc">\n${rows.join("\n")}\n  </ul>`;
+  return entries
+    .map((entry) => `- [\`${entry.id}\`](#${headingSlug(`\`${entry.id}\` — ${entry.kind}`)}) · ${entry.kind} · ${entry.description}`)
+    .join("\n");
 }
 
 /** The parameters table, or the sentence that says there are none. */
 function params(doc: PackDoc): string {
-  if (doc.params.length === 0) return "  <p>The pack takes no parameters. Example config:</p>";
-  const rows = doc.params.map(
-    (p) =>
-      `      <tr><td><code>${esc(p.name)}</code></td><td><code>${esc(p.type)}</code></td><td>${p.why === "" ? '<em class="none">Not documented. Add a doc comment on the interface member.</em>' : prose(p.why)}</td></tr>`,
-  );
+  if (doc.params.length === 0) return "The pack takes no parameters. Example config:";
+  const rows = doc.params.map((param) => [
+    `\`${param.name}\``,
+    `\`${param.type}\``,
+    param.why === "" ? "*Not documented. Add a doc comment on the interface member.*" : proseCell(param.why),
+  ]);
   return [
-    `  <p>The pack takes ${doc.params.length} parameter${doc.params.length === 1 ? "" : "s"}. These are facts the pack cannot know about your repo:</p>`,
-    "  <table>",
-    "    <thead><tr><th>Parameter</th><th>Type</th><th>What it is</th></tr></thead>",
-    `    <tbody>\n${rows.join("\n")}\n    </tbody>`,
-    "  </table>",
-    "  <p>Example config. The values are examples, and every glob and command on this page was rendered with them:</p>",
-  ].join("\n");
+    `The pack takes ${doc.params.length} parameter${doc.params.length === 1 ? "" : "s"}. These are facts the pack cannot know about your repo:`,
+    table(["Parameter", "Type", "What it is"], rows),
+    "Example config. The values are examples, and every glob and command on this page was rendered with them:",
+  ].join("\n\n");
 }
 
 /**
@@ -525,112 +569,61 @@ export const DOC_BLOCKS: readonly { readonly tag: string; readonly title: string
 
 /** The named blocks this pack filled in, as their own sections, in the tag set's order. */
 function blocks(doc: PackDoc): string {
-  const said = DOC_BLOCKS.flatMap((known) => {
+  return DOC_BLOCKS.flatMap((known) => {
     const held = doc.blocks.find((block) => block.tag === known.tag);
-    return held === undefined || held.body === ""
-      ? []
-      : [`  <h2 id="${esc(known.tag)}">${esc(known.title)}</h2>\n${prose(held.body)}`];
-  });
-  return said.join("\n\n");
+    return held === undefined || held.body === "" ? [] : [`## ${known.title}\n\n${held.body.trim()}`];
+  }).join("\n\n");
 }
 
 /** The counts line under the title: what is in the pack, and where it fires. */
 function census(doc: PackDoc): string {
-  const rails = doc.entries.filter((e) => e.kind === "guardrail").length;
+  const rails = doc.entries.filter((entry) => entry.kind === "guardrail").length;
   const crumbs = doc.entries.length - rails;
-  const moments = [...new Set(doc.entries.flatMap((e) => e.at))];
+  const moments = [...new Set(doc.entries.flatMap((entry) => entry.at))];
   const takes = doc.params.length === 0 ? "takes no parameters" : `takes ${doc.params.length} parameter${doc.params.length === 1 ? "" : "s"}`;
   return `${rails} guardrail${rails === 1 ? "" : "s"} · ${crumbs} breadcrumb${crumbs === 1 ? "" : "s"} · fires at: ${moments.join(" · ")} · ${takes}`;
 }
 
-const STYLE = `  :root{
-    --ink:#1a1a1a; --mut:#666; --line:#e2e6ea; --bg:#f7f8fa; --card:#fff; --soft:#eef1f4;
-    --parent:#2a6fb0; --stop:#b3261e; --ok:#2f8f4e; --crumb:#6d5bb0;
-    --okbg:#e9f3ec; --stopbg:#fdeceb; --crumbbg:#efeafb; --railbg:#fff8e6; --gapbg:#fdf6e3;
-  }
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif}
-  main{max-width:52rem;margin:0 auto;padding:2.6rem 1.4rem 6rem}
-  a{color:var(--parent);text-decoration:none} a:hover{text-decoration:underline}
-  code{font-family:ui-monospace, Menlo, monospace;font-size:.86em;background:var(--soft);padding:.03em .32em;border-radius:4px}
-  pre{background:#1e2227;color:#e6e9ec;border-radius:10px;padding:.9rem 1.1rem;overflow-x:auto;font:.85rem/1.55 ui-monospace, Menlo, monospace;margin:.6rem 0}
-  pre code{background:none;padding:0;font-size:1em;color:inherit}
-  h1{font-size:1.7rem;font-weight:900;letter-spacing:-.02em;margin:0}
-  h1 code{font-size:.9em}
-  h2{font-size:1.25rem;font-weight:800;margin:2.2rem 0 .4rem;padding-top:1.2rem;border-top:2px solid var(--line)}
-  h3{font:700 .74rem system-ui;text-transform:uppercase;letter-spacing:.07em;color:var(--mut);margin:1.3rem 0 .3rem}
-  .scope{color:var(--mut);font-size:.9rem;margin:.35rem 0 0;font-family:ui-monospace, Menlo, monospace}
-  .lead{font-size:1.08rem;font-weight:600;color:#2c322b;margin:1.2rem 0 1rem;line-height:1.55}
-  .lead.gap{font-weight:400;color:var(--mut);font-style:italic}
-  table{border-collapse:collapse;width:100%;margin:.6rem 0;font-size:.92rem;background:var(--card)}
-  th,td{text-align:left;padding:.5rem .6rem;border-bottom:1px solid var(--line);vertical-align:top}
-  th{font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);background:var(--soft)}
-  .badge{display:inline-block;font:700 .68rem ui-monospace, Menlo, monospace;padding:.12rem .5rem;border-radius:999px;vertical-align:middle;margin-left:.4rem;letter-spacing:.02em}
-  .badge.rail{background:var(--railbg);color:#8a6d00;border:1px solid #e6cf8a}
-  .badge.crumb{background:var(--crumbbg);color:var(--crumb);border:1px solid #cfc3ea}
-  .entry{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1.1rem 1.4rem 1.2rem;margin:1rem 0;scroll-margin-top:1rem}
-  .entry h2{border:0;margin:0;padding:0;font-size:1.15rem}
-  .entry .desc{margin:.3rem 0 0;color:#39404a}
-  .fact{margin:.25rem 0;font-size:.9rem;color:#39404a}
-  .fact b{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin-right:.35rem}
-  .settings{margin:.25rem 0 .4rem}
-  .settings summary{cursor:pointer;font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);font-weight:700}
-  .settings pre{margin:.3rem 0 0}
-  .why{border-left:4px solid var(--parent);background:#eef4fa;padding:.6rem .9rem;border-radius:0 8px 8px 0;margin:.8rem 0;font-size:.95rem}
-  .why.gap{border-left-color:#c2a33a;background:var(--gapbg);color:#6b5a1e;font-style:italic}
-  .why p:first-child{margin-top:0} .why p:last-child{margin-bottom:0}
-  .says{background:#fbfbf7;border:1px dashed #cfc7a8;border-radius:8px;padding:.7rem 1rem;margin:.5rem 0;font-size:.93rem;white-space:pre-wrap;font-family:ui-monospace, Menlo, monospace;line-height:1.55}
-  .cases{display:grid;grid-template-columns:1fr 1fr;gap:.7rem;margin:.4rem 0}
-  .case{border-radius:8px;padding:.6rem .8rem;font-size:.88rem}
-  .case.ok{background:var(--okbg);border:1px solid #bcd9c5}
-  .case.stop{background:var(--stopbg);border:1px solid #f0bfbb}
-  .case b{display:block;font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.25rem}
-  .case.ok b{color:var(--ok)} .case.stop b{color:var(--stop)}
-  .case ul{margin:0;padding-left:1.1rem} .case li{margin:.3rem 0}
-  .given{display:block;font-size:.82rem;color:#5c6470;margin-top:.1rem}
-  .toc{margin:.5rem 0 0;padding:0;list-style:none}
-  .toc li{padding:.35rem 0;border-bottom:1px solid var(--line);display:flex;gap:.6rem;align-items:baseline;flex-wrap:wrap}
-  .toc li .id{font-family:ui-monospace, Menlo, monospace;font-weight:700;min-width:15rem}
-  .toc li .d{color:#39404a;font-size:.92rem;flex:1}
-  .gen{background:var(--soft);border-radius:8px;padding:.5rem .9rem;font-size:.82rem;color:var(--mut);margin:1.2rem 0 0}
-  .none{color:var(--mut);font-style:italic}
-  footer{margin-top:3rem;color:var(--mut);font-size:.85rem;border-top:1px solid var(--line);padding-top:1rem}
-  @media (max-width:640px){.cases{grid-template-columns:1fr}}`;
-
-/** The `<head>` every generated page shares, title apart. */
-function head(title: string): string {
-  return [
-    "<!doctype html>",
-    '<html lang="en">',
-    "<head>",
-    '<meta charset="utf-8" />',
-    '<meta name="viewport" content="width=device-width, initial-scale=1" />',
-    `<title>${esc(title)}</title>`,
-    "<style>",
-    STYLE,
-    "</style>",
-    "</head>",
-    "<body>",
-    "<main>",
-  ].join("\n");
-}
-
 /** Where every part of the page came from — the page explaining itself, once, at the bottom. */
 const PROVENANCE = [
-  '  <h2 id="source">Where each part of this page comes from</h2>',
-  "  <table>",
-  "    <thead><tr><th>On the page</th><th>In the pack</th><th>Read how</th></tr></thead>",
-  "    <tbody>",
-  "      <tr><td>Lead, and the parameters table</td><td>The doc comment on <code>definePack</code>, and the doc comment on each member of the parameter interface</td><td>JSDoc, read with the TypeScript compiler API</td></tr>",
-  "      <tr><td>The named sections above the entries</td><td>An <code>@install</code>, <code>@setup</code> or <code>@adopt</code> tag on that same doc comment. A tag nobody uses renders nothing.</td><td>JSDoc tags</td></tr>",
-  "      <tr><td>Entry id, kind, moments, globs, categories, description</td><td>The entry itself — <code>.at()</code> <code>.on()</code> <code>.description()</code></td><td>Loaded: the same data the engine runs</td></tr>",
-  "      <tr><td>Why it exists</td><td>The doc comment on the entry's key. Required on a breadcrumb; optional on a guardrail whose message already gives the reason.</td><td>JSDoc</td></tr>",
-  "      <tr><td>What the agent reads</td><td><code>.text()</code> or <code>.message()</code>, verbatim</td><td>Loaded</td></tr>",
-  "      <tr><td>Check and its settings</td><td>The check the entry asks, and the options it was given</td><td>The name from the pack's source. The settings are read off the check, so they are the values a parameter supplied.</td></tr>",
-  "      <tr><td>Proved by, and what each case was told</td><td><code>.test({ pass, block })</code> — the event, and the <code>world</code> the case supplies for whatever the check reads</td><td>Loaded</td></tr>",
-  "    </tbody>",
-  "  </table>",
-].join("\n");
+  "## Where each part of this page comes from",
+  table(
+    ["On the page", "In the pack", "Read how"],
+    [
+      [
+        "Lead, and the parameters table",
+        "The doc comment on `definePack`, and the doc comment on each member of the parameter interface",
+        "JSDoc, read with the TypeScript compiler API",
+      ],
+      [
+        "The named sections above the entries",
+        "An `@install`, `@setup` or `@adopt` tag on that same doc comment. A tag nobody uses renders nothing.",
+        "JSDoc tags",
+      ],
+      [
+        "Entry id, kind, moments, globs, categories, description",
+        "The entry itself — `.at()` `.on()` `.description()`",
+        "Loaded: the same data the engine runs",
+      ],
+      [
+        "Why it exists",
+        "The doc comment on the entry's key. Required on a breadcrumb; optional on a guardrail whose message already gives the reason.",
+        "JSDoc",
+      ],
+      ["What the agent reads", "`.text()` or `.message()`, verbatim", "Loaded"],
+      [
+        "Check and its settings",
+        "The check the entry asks, and the options it was given",
+        "The name from the pack's source. The settings are read off the check, so they are the values a parameter supplied.",
+      ],
+      [
+        "Proved by, and what each case was told",
+        "`.test({ pass, block })` — the event, and the `world` the case supplies for whatever the check reads",
+        "Loaded",
+      ],
+    ],
+  ),
+].join("\n\n");
 
 /**
  * ONE PACK, ONE PAGE.
@@ -640,38 +633,26 @@ const PROVENANCE = [
  * is regenerated and byte-compared at the commit gate, so a hand edit is refused.
  */
 export function renderPackPage(doc: PackDoc): string {
-  return [
-    head(`The ${doc.name} pack — flow`),
-    `  <p class="scope"><a href="./index.html">flow packs</a> › ${esc(doc.name)}</p>`,
-    `  <h1>The <code>${esc(doc.name)}</code> pack</h1>`,
-    `  <p class="scope">${esc(census(doc))}</p>`,
-    "",
-    doc.lead === ""
-      ? '  <p class="lead gap">No lead. Add a doc comment on <code>definePack</code> saying what this pack is for.</p>'
-      : `  <div class="lead">${prose(doc.lead)}</div>`,
-    "",
-    `  <p class="gen">Generated from <code>packs/${esc(doc.name)}.ts</code> by <code>just docs-packs</code>. Edit the pack, not this page. The commit gate refuses a page that has drifted.</p>`,
-    "",
-    '  <h2 id="binding">Binding it</h2>',
+  return `${[
+    `[flow packs](./index.md) › ${doc.name}`,
+    `# The \`${doc.name}\` pack`,
+    census(doc),
+    doc.lead === "" ? "*No lead. Add a doc comment on `definePack` saying what this pack is for.*" : doc.lead.trim(),
+    "Generated from `packs/" + doc.name + ".ts` by `just docs-packs`. Edit the pack, not this page. The commit gate refuses a page that has drifted.",
+    "## Binding it",
     params(doc),
-    `<pre><code>${esc(bindingSnippet(doc))}</code></pre>`,
-    `  <p>To turn one entry off, say so in the config: <code>override(${esc(doc.name)}.${esc(doc.entries[0]?.key ?? "entry")}).disabled("why")</code>. It is a committed change, so a reviewer sees it.</p>`,
-    "",
+    fenced(bindingSnippet(doc)),
+    `To turn one entry off, say so in the config: \`override(${doc.name}.${doc.entries[0]?.key ?? "entry"}).disabled("why")\`. It is a committed change, so a reviewer sees it.`,
     blocks(doc),
-    "",
-    '  <h2 id="entries">Entries</h2>',
+    "## Entries",
     toc(doc.entries),
-    "",
-    doc.entries.map(entrySection).join("\n\n"),
-    "",
+    ...doc.entries.map(entrySection),
     PROVENANCE,
-    "",
-    `  <footer>flow docs · <a href="./index.html">the packs</a> · <code>${esc(doc.name)}</code> · generated page, do not edit</footer>`,
-    "</main>",
-    "</body>",
-    "</html>",
-    "",
-  ].join("\n");
+    "---",
+    `flow docs · [the packs](./index.md) · \`${doc.name}\` · generated page, do not edit`,
+  ]
+    .filter((block) => block !== "")
+    .join("\n\n")}\n`;
 }
 
 /** The config lines that bind this pack, ready to paste. */
@@ -686,137 +667,37 @@ export function bindingSnippet(doc: PackDoc): string {
 
 /** The front page of the set: every pack, its size, and what it is about. */
 export function renderPacksIndex(docs: readonly PackDoc[]): string {
-  const rows = docs.map((d) => {
-    const rails = d.entries.filter((e) => e.kind === "guardrail").length;
-    const crumbs = d.entries.length - rails;
-    const lead = d.lead === "" ? '<em class="none">no lead yet</em>' : line(firstSentence(d.lead));
-    return `      <tr><td><a href="./${esc(d.name)}.html"><code>${esc(d.name)}</code></a></td><td>${rails} · ${crumbs}</td><td>${d.params.length === 0 ? "—" : d.params.map((p) => `<code>${esc(p.name)}</code>`).join(" ")}</td><td>${lead}</td></tr>`;
+  const rows = docs.map((doc) => {
+    const rails = doc.entries.filter((entry) => entry.kind === "guardrail").length;
+    return [
+      `[\`${doc.name}\`](./${doc.name}.md)`,
+      `${rails} · ${doc.entries.length - rails}`,
+      doc.params.length === 0 ? "—" : doc.params.map((param) => `\`${param.name}\``).join(" "),
+      doc.lead === "" ? "*no lead yet*" : firstSentence(doc.lead.trim()).replace(/\s+/g, " "),
+    ];
   });
-  return [
-    head("The packs — flow"),
-    '  <p class="scope"><a href="../index.html">flow</a> › packs</p>',
-    "  <h1>The packs</h1>",
-    `  <p class="scope">${docs.length} packs · one page each · generated by <code>just docs-packs</code></p>`,
-    "",
-    `  <p class="lead">The ten packs <code>@jawache/flow/packs</code> ships. Each is a list of rules about a repo. Binding one is a single line in <code>flow.config.ts</code>, and a pack you do not bind does nothing.</p>`,
-    "",
-    "  <table>",
-    "    <thead><tr><th>Pack</th><th>Guardrails · breadcrumbs</th><th>Parameters</th><th>What it is about</th></tr></thead>",
-    `    <tbody>\n${rows.join("\n")}\n    </tbody>`,
-    "  </table>",
-    "",
-    '  <p class="gen">Generated from <code>packs/*.ts</code> by <code>just docs-packs</code>. Edit the packs, not these pages. The commit gate refuses a page that has drifted.</p>',
-    "",
-    "  <footer>flow docs · <a href=\"../index.html\">all user docs</a> · generated page, do not edit</footer>",
-    "</main>",
-    "</body>",
-    "</html>",
-    "",
-  ].join("\n");
+  return `${[
+    "[flow](../index.md) › packs",
+    "# The packs",
+    `${docs.length} packs · one page each · generated by \`just docs-packs\``,
+    "The ten packs `@jawache/flow/packs` ships. Each is a list of rules about a repo. Binding one is a single line in `flow.config.ts`, and a pack you do not bind does nothing.",
+    table(["Pack", "Guardrails · breadcrumbs", "Parameters", "What it is about"], rows),
+    "Generated from `packs/*.ts` by `just docs-packs`. Edit the packs, not these pages. The commit gate refuses a page that has drifted.",
+    "---",
+    "flow docs · [all user docs](../index.md) · generated page, do not edit",
+  ].join("\n\n")}\n`;
 }
 
-// ── the page as MARKUP: what a browser will make of what we wrote ────────────
+// ── what the three markup checkers were, and why they are gone ───────────────
 //
-// The pages under docs/user/ are the surface flow is read on, and half of them are hand-written
-// rather than generated — so nothing regenerates them and nothing compared them with anything.
-// F3 found the cost live: `new-dep: <name> — <why>` sat unescaped inside a code block on the
-// guidebook, a parser read the two placeholders as unknown ELEMENTS, and every reader was taught
-// `put new-dep:  —  in the message`. The words the sentence existed to teach were the words the
-// browser deleted, and every byte of the file was exactly as its author typed it.
+// `unbalanced`, `unescapedInCode` and `unknownElements` lived here while docs/user/ was HTML. Each
+// asked what a PARSER would do rather than what the text said, and the one that earned them found a
+// live fault: `new-dep: <name> — <why>` sat unescaped inside a code block on the guidebook, a parser
+// read the two placeholders as unknown ELEMENTS, and every reader was taught `put new-dep:  —  in
+// the message`. Every byte of the file was exactly as its author typed it.
 //
-// So these three ask what a PARSER will do, not what the text says. They are here in the pure
-// home because that is what makes them assertable over a fixture as well as over the real folder.
-
-/** Elements that carry no closing tag, plus the doctype, which is not one. */
-const VOID_ELEMENTS = new Set(
-  "area base br col embed hr img input link meta param source track wbr".split(" "),
-);
-
-/** Elements an HTML parser closes for you, so an unclosed one is legal markup and not a fault. */
-const SELF_CLOSING_IN_PRACTICE = new Set("li p td th tr thead tbody option dt dd".split(" "));
-
-/** Every element name HTML actually has, for the sweep below. Anything else renders as nothing. */
-const HTML_ELEMENTS = new Set(
-  ("a abbr address area article aside audio b base bdi bdo blockquote body br button canvas caption cite code col colgroup data datalist dd del details dfn dialog div dl dt em embed fieldset figcaption figure footer form h1 h2 h3 h4 h5 h6 head header hgroup hr html i iframe img input ins kbd label legend li link main map mark menu meta meter nav noscript object ol optgroup option output p param picture pre progress q rp rt ruby s samp script section select slot small source span strong style sub summary sup table tbody td template textarea tfoot th thead time title tr track u ul var video wbr " +
-    "svg path circle rect line polyline polygon g text defs marker").split(" "),
-);
-
-/** `<style>` and `<script>` bodies are not markup — blanked, keeping the line count for the report. */
-function withoutRawText(html: string): string {
-  return html.replace(/<(style|script)\b[^>]*>[\s\S]*?<\/\1>/gi, (block) => block.replace(/[^\n]/g, " "));
-}
-
-const lineOf = (text: string, index: number): number => text.slice(0, index).split("\n").length;
-
-/**
- * Tags that never close, and closing tags that shut the wrong thing.
- *
- * A page whose markup does not balance still renders — that is the trouble with it. The parser
- * silently reshapes the tree, and what a reader loses is whatever fell inside the element that
- * should have ended, with no error anywhere to say so.
- */
-export function unbalanced(html: string): string[] {
-  const text = withoutRawText(html);
-  const faults: string[] = [];
-  const open: { name: string; line: number }[] = [];
-  for (const tag of text.matchAll(/<(\/?)([a-zA-Z][a-zA-Z0-9-]*)\b[^>]*?(\/?)>/g)) {
-    const name = (tag[2] ?? "").toLowerCase();
-    if (VOID_ELEMENTS.has(name) || tag[3] === "/") continue;
-    const at = lineOf(text, tag.index);
-    if (tag[1] === "") {
-      open.push({ name, line: at });
-      continue;
-    }
-    while (open.length > 0 && open.at(-1)?.name !== name && SELF_CLOSING_IN_PRACTICE.has(open.at(-1)?.name ?? "")) open.pop();
-    const top = open.at(-1);
-    if (top === undefined || top.name !== name)
-      faults.push(`line ${at}: </${name}> closes ${top === undefined ? "nothing" : `<${top.name}> opened at line ${top.line}`}`);
-    else open.pop();
-  }
-  for (const stray of open) if (!SELF_CLOSING_IN_PRACTICE.has(stray.name)) faults.push(`line ${stray.line}: <${stray.name}> never closed`);
-  return faults;
-}
-
-/**
- * A `<` inside a code element that the author meant as text.
- *
- * Inside `<code>` every angle bracket must already be an entity, because that is the one place a
- * page prints the shapes a reader is meant to TYPE — a placeholder, a generic, a shell redirect.
- * The innermost code element is the subject, so a `<code>` legitimately nested in a `<pre>` is not
- * mistaken for the fault.
- */
-export function unescapedInCode(html: string): string[] {
-  const text = withoutRawText(html);
-  const faults: string[] = [];
-  for (const block of text.matchAll(/<code\b[^>]*>((?:(?!<\/?code\b)[\s\S])*?)<\/code>/gi)) {
-    const body = block[1] ?? "";
-    for (const bracket of body.matchAll(/</g)) {
-      const at = bracket.index;
-      faults.push(
-        `line ${lineOf(text, block.index + at)}: unescaped \`<\` inside <code> — ${JSON.stringify(body.slice(Math.max(0, at - 25), at + 35))}`,
-      );
-    }
-  }
-  return faults;
-}
-
-/**
- * A `<word>` that is not an HTML element, anywhere on the page.
- *
- * This is the fault that shipped. The parser accepts an unknown element without complaint and
- * renders it as nothing at all, so the page looks finished and the words are gone — and the words
- * in question are placeholders, which is to say the part a reader most needs.
- */
-export function unknownElements(html: string): string[] {
-  const text = withoutRawText(html);
-  return [...text.matchAll(/<\/?([a-zA-Z][a-zA-Z0-9-]*)\b[^>]*>/g)]
-    .filter((tag) => !HTML_ELEMENTS.has((tag[1] ?? "").toLowerCase()))
-    .map((tag) => `line ${lineOf(text, tag.index)}: ${tag[0]} — not an element, so it renders as nothing`);
-}
-
-/** Every relative href and src on a page — what the caller has to find on disk. */
-export function localLinks(html: string): string[] {
-  return [...withoutRawText(html).matchAll(/(?:href|src)="([^"]+)"/g)]
-    .map((link) => (link[1] ?? "").split("#")[0] ?? "")
-    .filter((path) => path !== "" && !/^(https?:|mailto:|data:)/.test(path));
-}
+// Markdown cannot lose a word that way: inside a fence or a backtick span nothing is markup, and a
+// `<word>` in prose is text. So the three are retired rather than ported, and what replaces them is
+// the fault markdown DOES have — an anchor that resolves to nothing, because a markdown anchor is
+// derived from a heading rather than written on one. That is `localLinks` and `headingSlugs` above,
+// swept over the real folder by tools/pages.test.ts.

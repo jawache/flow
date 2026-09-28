@@ -15,18 +15,14 @@ import {
   caseWorld,
   checkName,
   DOC_BLOCKS,
-  esc,
   EXAMPLE,
   fenceFault,
-  localLinks,
-  unbalanced,
-  unescapedInCode,
-  unknownElements,
   firstSentence,
+  headingSlug,
+  headingSlugs,
   kebab,
-  line,
   literal,
-  prose,
+  localLinks,
   renderPackPage,
   renderPacksIndex,
   says,
@@ -36,6 +32,7 @@ import {
   type DocBlock,
   type EntryDoc,
   type PackDoc,
+  type PageLink,
   type ParamDoc,
 } from "./domain.ts";
 import type { Case, TurnAction } from "../index.ts";
@@ -56,7 +53,7 @@ const rail: EntryDoc = {
   reference: true,
   says: "docs/ holds exactly two doors: `user/` and `agent/`.",
   cases: [
-    { kind: "pass", line: caseLine({ path: "docs/user/index.html", content: "" }), given: [] },
+    { kind: "pass", line: caseLine({ path: "docs/user/index.md", content: "" }), given: [] },
     { kind: "block", line: caseLine({ path: "docs/notes/scratch.md", content: "" }), given: [] },
   ],
   disabled: "",
@@ -192,34 +189,15 @@ describe("the words on a moment", () => {
   });
 });
 
-describe("text into HTML", () => {
-  it("escapes everything that could close a tag or open an entity", () => {
-    expect(esc('<a href="x"> & </a>')).toBe("&lt;a href=&quot;x&quot;&gt; &amp; &lt;/a&gt;");
-  });
-
-  it("turns backticks into code and blank lines into paragraphs", () => {
-    expect(prose("one `x`\n\ntwo")).toBe("<p>one <code>x</code></p>\n<p>two</p>");
-    expect(line("a `b` c")).toBe("a <code>b</code> c");
-  });
-
-  // A FENCE IS COPYABLE TEXT, which is the whole reason it is not a paragraph. The two packs that
-  // used to claim they shipped a file put that file on their own page instead, and a reader is
-  // meant to select it and paste it. Down the paragraph path it would arrive with its lines run
-  // together and its quotes rewritten — a reference config nobody can use.
-  it("renders a fenced block as code, keeping every line and touching no backtick inside it", () => {
-    expect(prose('before\n\n```json\n{\n  "a": `b`\n}\n```\n\nafter')).toBe(
-      '<p>before</p>\n<pre><code>{\n  &quot;a&quot;: `b`\n}</code></pre>\n<p>after</p>',
-    );
-  });
-
-  it("renders a fence that is the whole of a block, and an unclosed one as the prose it still is", () => {
-    expect(prose("```\njust dx dev npm run build\n```")).toBe("<pre><code>just dx dev npm run build</code></pre>");
-    expect(prose("```\nno end")).toBe("<p>```\nno end</p>");
-  });
-
+describe("text into markdown", () => {
+  // A DOC COMMENT IS ALREADY MARKDOWN, and that is the whole of the conversion now. It was written
+  // for a reader of the SOURCE — where `.on(…)` in backticks is code, a blank line is a paragraph
+  // and a fenced block is copyable text — so the page carries it through untouched rather than
+  // translating it into anything. Prose the AGENT is shown goes in a fence instead: there the
+  // page's job is to show exactly what the model receives, backticks and all.
   it("takes a first sentence without breaking on a path or a version", () => {
     expect(firstSentence("Two doors. And more.")).toBe("Two doors.");
-    expect(firstSentence("It writes docs/user/index.html and stops. Then more.")).toBe("It writes docs/user/index.html and stops.");
+    expect(firstSentence("It writes docs/user/index.md and stops. Then more.")).toBe("It writes docs/user/index.md and stops.");
     expect(firstSentence("No full stop here")).toBe("No full stop here");
   });
 
@@ -240,15 +218,23 @@ describe("the binding snippet", () => {
 describe("a pack's page", () => {
   const html = renderPackPage(doc);
 
-  // ONE SHAPE FOR EVERY CHECK: the options object as JSON, behind a collapsed toggle. Pulled apart
+  // ONE SHAPE FOR EVERY CHECK: the options object as JSON, behind a collapsed toggle — the one
+  // construct markdown has none of, so it stays the HTML a markdown page may carry. Pulled apart
   // per option it read as two different kinds of thing — a labelled list here, JSON there — and
   // neither said what it was.
   it("carries the facts a reader cannot get anywhere else — the message verbatim, the settings as JSON", () => {
     expect(html).toContain("docs/ holds exactly two doors: `user/` and `agent/`.");
-    expect(html).toContain('<details class="settings"><summary>settings</summary>');
-    expect(html).toContain("&quot;root&quot;: &quot;docs&quot;");
-    expect(html).toContain("&quot;folders&quot;: [");
-    expect(html).toContain('href="../checks/canonical-files.html"');
+    expect(html).toContain("<details><summary>settings</summary>");
+    expect(html).toContain('"root": "docs"');
+    expect(html).toContain('"folders": [');
+    expect(html).toContain("](../checks/canonical-files.md)");
+  });
+
+  // A MESSAGE MAY CARRY A FENCE OF ITS OWN, and three backticks around one would end the block in
+  // the middle of it — the page would print half a message and read as finished.
+  it("fences a message that carries a fence of its own, without ending the block early", () => {
+    const talky: EntryDoc = { ...rail, says: "copy this:\n```sh\njust dx\n```" };
+    expect(renderPackPage({ ...doc, entries: [talky] })).toContain("````\ncopy this:\n```sh\njust dx\n```\n````");
   });
 
   it("says a check has no options rather than printing an empty one", () => {
@@ -261,8 +247,8 @@ describe("a pack's page", () => {
   it("prints a structured setting in the same block as a plain one", () => {
     const nested: EntryDoc = { ...rail, checkName: "astGrep", settings: settingsJson({ language: "tsx", rule: { kind: "call_expression" } }) };
     const page = renderPackPage({ ...doc, entries: [nested] });
-    expect(page).toContain("&quot;language&quot;: &quot;tsx&quot;");
-    expect(page).toContain("&quot;kind&quot;: &quot;call_expression&quot;");
+    expect(page).toContain('"language": "tsx"');
+    expect(page).toContain('"kind": "call_expression"');
     expect(page).toContain("<summary>settings</summary>");
   });
 
@@ -275,13 +261,13 @@ describe("a pack's page", () => {
       ],
     };
     const page = renderPackPage({ ...doc, entries: [told] });
-    expect(page).toContain('<span class="given">given <code>git status --porcelain</code> exits 0</span>');
-    expect(page).toContain("exits 0 and says <code>M src/x.ts</code>");
+    expect(page).toContain("  - given `git status --porcelain` exits 0\n");
+    expect(page).toContain("exits 0 and says `M src/x.ts`");
   });
 
   it("shows both sides of every case, and says which side is empty", () => {
-    expect(html).toContain("writing <code>docs/user/index.html</code>");
-    expect(html).toContain("writing <code>docs/notes/scratch.md</code>");
+    expect(html).toContain("writing `docs/user/index.md`");
+    expect(html).toContain("writing `docs/notes/scratch.md`");
     // A guardrail proved only by refusals — common, and the empty side is stated rather than left
     // blank, because a blank box reads as "the page forgot" instead of "the pack never said".
     const oneSided: EntryDoc = { ...rail, cases: [{ kind: "block", line: "writing `docs/user/guide.md`", given: [] }] };
@@ -293,20 +279,24 @@ describe("a pack's page", () => {
   });
 
   // The human read git.html and could not: six banned patterns and eleven commit types arrived as
-  // one dotted line each, pushed right by an indent column. Every fact is a plain left-aligned
-  // line now, and a list is a list.
+  // one dotted line each, pushed right by an indent column. Every fact is a plain line of its own
+  // now, and a list is a list.
   it("keeps the facts on plain lines rather than in an indented table", () => {
-    expect(html).toContain('<p class="fact"><b>Watches</b>');
+    expect(html).toContain("- **Watches** ");
     expect(html).not.toContain("<dl");
-    expect(html).not.toContain("<dt>");
+    expect(html).not.toContain("<td>");
   });
 
   it("prints the scope, the categories and the reason an entry ships off", () => {
-    expect(html).toContain("<code>docs/**</code>");
-    expect(html).toContain("<code>docs/user/legacy/**</code>");
-    expect(html).toContain("<code>supervised</code>");
+    expect(html).toContain("`docs/**`");
+    expect(html).toContain("`docs/user/legacy/**`");
+    expect(html).toContain("`supervised`");
     expect(html).toContain("every session");
     expect(html).toContain("shipped off — nothing to watch until a repo has both doors");
+  });
+
+  it("says an entry is not path-scoped rather than leaving the line blank", () => {
+    expect(html).toContain("**Watches** not scoped by path");
   });
 
   it("says a breadcrumb owes a why when it has none, rather than showing nothing", () => {
@@ -324,14 +314,20 @@ describe("a pack's page", () => {
   it("links a stock check and never invents a page for a pack's own", () => {
     const own: EntryDoc = { ...rail, checkName: "noGitDiscard", reference: false };
     const page = renderPackPage({ ...doc, entries: [own] });
-    expect(page).toContain("<code>noGitDiscard</code>");
+    expect(page).toContain("`noGitDiscard`");
     expect(page).toContain("(written in this pack)");
-    expect(page).not.toContain("no-git-discard.html");
+    expect(page).not.toContain("no-git-discard.md");
   });
 
-  it("names a check written inline rather than pretending the entry has no check", () => {
-    const inline: EntryDoc = { ...rail, settings: "", checkName: "" };
-    expect(renderPackPage({ ...doc, entries: [inline] })).toContain("written inline in this pack");
+  // A guardrail's refusal usually carries its own reason, so the why is optional there and the
+  // section is absent rather than filled with an apology — and an entry may have nothing to say at
+  // all, which is not the same as a page that forgot to print it.
+  it("names a check written inline, and prints no section for a why or a sentence the entry has not got", () => {
+    const inline: EntryDoc = { ...rail, settings: "", checkName: "", why: "", says: "" };
+    const page = renderPackPage({ ...doc, entries: [inline] });
+    expect(page).toContain("written inline in this pack");
+    expect(page).not.toContain("### Why it exists");
+    expect(page).not.toContain("### What the agent reads");
   });
 
   it("renders a named doc block as its own section, and an unused tag as nothing", () => {
@@ -354,11 +350,28 @@ describe("a pack's page", () => {
     expect(page).toContain("The pack takes 2 parameters");
     expect(page).toContain("The recipe that runs the suite.");
     expect(page).toContain("Add a doc comment on the interface member.");
-    expect(page).toContain('pack(tdd, { run: &quot;./ci.sh test&quot; })');
+    expect(page).toContain('pack(tdd, { run: "./ci.sh test" })');
+  });
+
+  // A CELL ENDS AT A `|`, so a parameter whose type is a union would have ended it three columns
+  // early — and a table one cell out of line is a table a reader cannot read at all.
+  it("escapes a pipe in a cell, and keeps a parameter's paragraphs apart inside one", () => {
+    const piped: PackDoc = { ...doc, params: [{ name: "x", type: "string | undefined", why: "One.\n\nOr the other." }] };
+    const page = renderPackPage(piped);
+    expect(page).toContain("`string \\| undefined`");
+    expect(page).toContain("One.<br><br>Or the other.");
   });
 
   it("says 'parameter' rather than 'parameters' when there is one", () => {
     expect(renderPackPage({ ...doc, params: [param] })).toContain("takes 1 parameter.");
+  });
+
+  // THE TABLE OF CONTENTS HAS TO LAND. A markdown anchor is derived from the heading rather than
+  // written on it, so the link and the heading are computed from the same sentence or the whole
+  // list points at nothing — silently, which is the fault this page's own sweep exists to catch.
+  it("links every entry in the contents at an anchor its own heading makes", () => {
+    expect(html).toContain("- [`docs.docsShape`](#docsdocsshape--guardrail) · guardrail ·");
+    expect(headingSlugs(html)).toContain("docsdocsshape--guardrail");
   });
 
   it("carries no date, no sha and no host path — the drift check compares bytes", () => {
@@ -370,11 +383,11 @@ describe("a pack's page", () => {
 describe("the listing page", () => {
   it("gives one row per pack, with its size, its parameters and its first sentence", () => {
     const index = renderPacksIndex([doc, { ...doc, name: "tdd", lead: "", params: [param] }]);
-    expect(index).toContain('href="./docs.html"');
+    expect(index).toContain("](./docs.md)");
     expect(index).toContain("1 · 1");
     expect(index).toContain("Two audiences, one folder.");
     expect(index).toContain("no lead yet");
-    expect(index).toContain("<code>run</code>");
+    expect(index).toContain("`run`");
   });
 });
 
@@ -464,69 +477,52 @@ describe("the model", () => {
   });
 });
 
-// ── the page as MARKUP ───────────────────────────────────────────────────────
+// ── the page as MARKDOWN ─────────────────────────────────────────────────────
 //
-// Every fixture below is a page that a browser accepts without a word of complaint. That is the
-// whole difficulty: none of these is a broken FILE, each is a file whose meaning the parser
-// changes, and the only way to see it is to ask what the parser will do.
+// THE THREE HTML CHECKERS ARE GONE, and what they were is worth saying once: `unbalanced`,
+// `unescapedInCode` and `unknownElements` asked what a PARSER would do with a page rather than what
+// the text said, because the fault that earned them was silent — `new-dep: <name> — <why>` sat
+// unescaped in a code block on the guidebook, the parser read the placeholders as unknown elements
+// and deleted them, and the page taught `put new-dep:  —  in the message`.
+//
+// Markdown cannot lose a word that way. What it can lose is a LINK: an anchor is derived from a
+// heading rather than written on one, so `index.md#checks` resolves to a file that exists and a
+// heading that does not. These three prove the pair that catches it.
 
-describe("what a parser will make of a page", () => {
-  const page = (body: string): string => `<!doctype html>\n<html lang="en">\n<head><title>t</title></head>\n<body>\n${body}\n</body>\n</html>\n`;
-
-  describe("unbalanced — a tag that never closes, or one that closes the wrong thing", () => {
-    it("passes a page whose markup balances, implicit closes and all", () => {
-      expect(unbalanced(page("<main><ul><li>one<li>two</ul><table><tr><td>a<td>b</table></main>"))).toStrictEqual([]);
-    });
-
-    it("names a tag that never closes, and where it opened", () => {
-      const faults = unbalanced(page("<main><div>lost"));
-      expect(faults.join(" ")).toContain("<div> never closed");
-      expect(faults.join(" ")).toContain("<main> never closed");
-    });
-
-    it("names a closing tag that shuts the wrong element", () => {
-      expect(unbalanced(page("<main><span>x</main></span>")).join(" ")).toContain("</main> closes <span>");
-    });
-
-    it("reads no markup inside <style> or <script>, where a `<` is arithmetic", () => {
-      expect(unbalanced(page("<main><script>if (a<b) go();</script><style>a{}</style></main>"))).toStrictEqual([]);
+describe("what a reader will make of a markdown page", () => {
+  describe("headingSlug — the anchor GitHub derives from a heading", () => {
+    it("lowercases, drops the punctuation and hyphenates what is left", () => {
+      expect(headingSlug("The stock checks — one page each")).toBe("the-stock-checks--one-page-each");
+      expect(headingSlug("`docs.docsShape` — guardrail")).toBe("docsdocsshape--guardrail");
+      expect(headingSlug("4 · The cookbook — “I want to…”")).toBe("4--the-cookbook--i-want-to");
     });
   });
 
-  describe("unescapedInCode — the shapes a reader is meant to type", () => {
-    it("passes a code block whose brackets are already entities", () => {
-      expect(unescapedInCode(page("<pre><code>put &lt;name&gt; here</code></pre>"))).toStrictEqual([]);
-    });
-
-    it("catches the fault that shipped on the guidebook", () => {
-      // Verbatim from docs/user/00-guide.html before F3: the parser read <name> and <why> as
-      // elements and rendered them as nothing, so the page taught `put new-dep:  —  in the message`.
-      const faults = unescapedInCode(page("<pre><code>.message(\"put `new-dep: <name> — <why>` in the message\")</code></pre>"));
-      expect(faults).toHaveLength(2);
-      expect(faults[0]).toContain("unescaped `<` inside <code>");
-    });
-
-    it("does not mistake a <code> nested inside a <pre> for the fault", () => {
-      expect(unescapedInCode(page("<pre><code>plain text</code></pre>"))).toStrictEqual([]);
+  describe("headingSlugs — every anchor a page offers", () => {
+    it("reads a heading at any level, and no `#` inside a fence", () => {
+      expect(headingSlugs("# One\n\n```sh\n# not a heading\n```\n\n### Two words\n")).toStrictEqual(["one", "two-words"]);
     });
   });
 
-  describe("unknownElements — a `<word>` the browser deletes", () => {
-    it("passes a page built only of elements that exist", () => {
-      expect(unknownElements(page("<main><p>a <code>b</code> <em>c</em></p><svg><path/></svg></main>"))).toStrictEqual([]);
+  describe("localLinks — what has to be on disk, and the heading it points at", () => {
+    it("returns both halves of a local link, and drops the external", () => {
+      const links: readonly PageLink[] = localLinks('[a](./a.md#top) [b](https://x.dev) [c](#here)\n<img src="i.png">');
+      expect(links).toStrictEqual([
+        { path: "./a.md", anchor: "top" },
+        { path: "", anchor: "here" },
+        { path: "i.png", anchor: "" },
+      ]);
     });
 
-    it("names the invented element and says what becomes of it", () => {
-      const faults = unknownElements(page("<main><p>put <name> — <why> in it</p></main>"));
-      expect(faults).toHaveLength(2);
-      expect(faults[0]).toContain("renders as nothing");
+    it("reads no link inside a fenced block, where a `[x](y)` is somebody's config", () => {
+      expect(localLinks("before\n\n```\n[a](./gone.md)\n```\n\nafter\n")).toStrictEqual([]);
     });
-  });
 
-  describe("localLinks — what has to be on disk", () => {
-    it("returns the relative targets and drops the fragment, the absolute and the external", () => {
-      const links = localLinks(page('<a href="./a.html#x">a</a><a href="https://x.dev">b</a><a href="#top">c</a><img src="i.png">'));
-      expect(links).toStrictEqual(["./a.html", "i.png"]);
+    // A FENCE CLOSES ONLY ON ONE AT LEAST AS LONG, which is how a page prints a message that
+    // carries a fence of its own. Read the inner one as the end and the rest of the block becomes
+    // prose the sweep then judges.
+    it("closes a fence only on one at least as long as the one that opened it", () => {
+      expect(localLinks("````\n```\n[a](./gone.md)\n```\n````\n")).toStrictEqual([]);
     });
   });
 });

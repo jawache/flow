@@ -1,6 +1,6 @@
 // flow/packs/docs.ts — two documentation audiences, one folder, nothing replicated.
 
-import { breadcrumb, canonicalFiles, commit, definePack, guardrail, protectedPath, touch, write } from "../index.ts";
+import { breadcrumb, canonicalFiles, commit, definePack, guardrail, touch, write } from "../index.ts";
 
 /**
  * Two documentation audiences, one folder, nothing replicated.
@@ -9,9 +9,9 @@ import { breadcrumb, canonicalFiles, commit, definePack, guardrail, protectedPat
  * least possible cognitive load, and the agent wants almost nothing in context. So `docs/` has
  * exactly two doors and everything inside follows its door's rules.
  *
- * @setup A `docs/` folder holding exactly `user/` and `agent/`, each with its own index —
- * `docs/user/index.html` for people and `docs/agent/README.md` as a list of pointers. The two
- * guardrails below refuse anything else at the top of the folder, so a repo with a different shape
+ * @setup A `docs/` folder holding exactly `user/` and `agent/`, each with its own index — an index
+ * file under `docs/user/` for people and `docs/agent/README.md` as a list of pointers. The
+ * guardrail below refuses anything else at the top of the folder, so a repo with a different shape
  * either moves its pages or does not bind this pack.
  */
 export interface Doors {
@@ -47,7 +47,7 @@ export const docs = definePack("docs", (repo: Doors = {}) => {
       .description("The two audiences, the admission test, and the discipline that keeps docs true.")
       .text(
         [
-          "Two audiences, two doors, opposite rules. `docs/user/` is for PEOPLE: always HTML, entered through index.html, and multimodal on purpose — images, SVGs and short recordings are encouraged wherever they explain better than sentences. The measure of a user doc is how little work the reader has to do.",
+          "Two audiences, two doors, opposite rules. `docs/user/` is for PEOPLE: HTML or markdown, entered through an index file, and multimodal on purpose — images, SVGs and short recordings are encouraged wherever they explain better than sentences. The measure of a user doc is how little work the reader has to do.",
           "`docs/agent/` is ARCHIVAL CONTEXT, loaded on demand, entered through README.md as an index of pointers. The admission test: could a fresh agent derive this from the code, the config or the guard layer? Then it does not belong — derivable content is replication, and replication goes stale silently while still reading as true. Only expensive syntheses live here: understanding that took hours to establish and would take hours to re-derive. Pointers outward, never copies inward; this folder must never compete with the breadcrumb layer.",
           "The style law, both sides: state CURRENT FACTS in the present tense. No litigation, no rationale essays, no history — the journal owns the past. Where a decision would otherwise look wrong, one Chesterton-fence line pointing at the decision record, never a retelling.",
           "The failure mode is silent staleness, not error: a doc stays literally correct while a whole task's machinery lands unmentioned, and nothing complains. So if the work you just shipped changed a boundary, a component's job or the lifecycle, the doc changes in the SAME commit.",
@@ -88,21 +88,11 @@ export const docs = definePack("docs", (repo: Doors = {}) => {
       // Nothing may sit loose at the top of docs/ — every file belongs to one of the two doors.
       .check(canonicalFiles({ root, allow, folders: ["user", "agent"] }))
       .message(
-        "docs/ holds exactly two doors: `user/` (HTML, for people) and `agent/` (archival context, for agents). A third folder or a loose file at the top is documentation with no declared audience, which is how a docs folder becomes a drawer.",
+        "docs/ holds exactly two doors: `user/` (for people) and `agent/` (archival context, for agents). A third folder or a loose file at the top is documentation with no declared audience, which is how a docs folder becomes a drawer.",
       )
       .test({
-        pass: [{ path: `${root}/user/index.html`, content: "" }],
+        pass: [{ path: `${root}/user/index.md`, content: "" }],
         block: [{ path: `${root}/notes/scratch.md`, content: "" }],
       }),
-
-    noMarkdownInUserDocs: guardrail()
-      .at(write, commit)
-      .on(`${root}/user/**/*.md`, `${root}/user/**/*.mdx`)
-      .description("No .md or .mdx under docs/user — user docs are HTML, and assets of every other kind are welcome.")
-      .check(protectedPath({}))
-      .message(
-        "User docs are HTML — that is what makes them multimodal by default (images, SVGs, video inline) and what stops them turning into paragraphs nobody reads. Markdown belongs in `docs/agent/`. Every other asset type is welcome under `docs/user/`.",
-      )
-      .test({ block: [{ path: `${root}/user/guide.md`, content: "# hi" }] }),
   };
 });

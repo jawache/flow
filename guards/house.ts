@@ -164,7 +164,7 @@ export const house = definePack("house", (repo: Terrain) => ({
         "Layout is by PIPELINE STAGE, not by topic — `language → checks → engine → adapter`, one `domain.ts` per layer, fenced one way. See the layout breadcrumb, which fires on first touch of a layer folder.",
         "THE GUARD HERE IS flow ITSELF. `flow.config.ts` at the root binds the ten packs from `@jawache/flow/packs` — resolved through `node_modules/@jawache/flow`, a link back to this checkout — plus one pack written here, `guards/house.ts`. flow guarding flow is the dogfood: a door that stopped exporting, a rule that stopped loading or a bundle that stopped building refuses this repo's own next commit first. `flow status` answers whether the guard is working; `flow test` runs every bound rule's cases. flow's state is `.flow/` at the repo root, self-ignoring, never committed.",
         "Commands live in the justfile (`just` lists them) — `just build` · `just typecheck` · `just test` · `just link`. TWO suites answer two different questions and both are gates: `just test-rules` (`flow test`) proves the rules THIS repo binds, and `just test-packs` — the machine test — proves the ten the package SHIPS, in a throwaway repo that has never heard of flow. Tests are vitest; `just test-coverage` gates the pure home.",
-        "Docs are two audiences: `docs/user/` is HTML for people (the guidebook, the quick start, the config reference, one page per stock check, and one GENERATED page per shipped pack under `docs/user/packs/` — `just docs-packs` writes those from the packs themselves and the commit gate refuses one that has drifted), `docs/agent/` is archival context pulled on demand. `.work/` is the gitignored journal.",
+        "Docs are two audiences: `docs/user/` is markdown for people (the guidebook, the quick start, the config reference, one page per stock check, and one GENERATED page per shipped pack under `docs/user/packs/` — `just docs-packs` writes those from the packs themselves and the commit gate refuses one that has drifted), `docs/agent/` is archival context pulled on demand. `.work/` is the gitignored journal.",
         "PUBLISHED since 0.1.0 (2026-09-15): a guarded repo installs `npm i -D @jawache/flow` off npm, and `npm link` from this checkout is the dogfood loop for working ON flow and nothing else. `just release` computes a version from the commit headers and pushes and publishes nothing; `just release-check` is what must be green first, and `npm publish` stays a human's to type in a terminal.",
       ].join("\n"),
     ),
@@ -206,7 +206,7 @@ export const house = definePack("house", (repo: Terrain) => ({
     .description("How a pack is written down — the doc-comment slots the pages are built from, and the no-wrapping rule.")
     .text(
       [
-        "You are in a SHIPPED pack — content, written in the grammar, that a repo somewhere binds without ever opening this file. What a stranger reads is not this source: it is the generated page, `docs/user/packs/<pack>.html`, rendered by `just docs-packs` from the loaded pack plus the doc comments below. Regenerate it in the same commit; the gate refuses a page that has drifted.",
+        "You are in a SHIPPED pack — content, written in the grammar, that a repo somewhere binds without ever opening this file. What a stranger reads is not this source: it is the generated page, `docs/user/packs/<pack>.md`, rendered by `just docs-packs` from the loaded pack plus the doc comments below. Regenerate it in the same commit; the gate refuses a page that has drifted.",
         "THREE DOC-COMMENT SLOTS, and they are the only prose on the page that does not come from the pack's own sentences:",
         "· On `definePack` — the pack's LEAD. One paragraph saying what the pack is for, in the words somebody who has never seen this repo needs.",
         "· On each member of the parameter interface — WHAT THE FACT IS, and why the pack cannot know it. A parameter with no doc comment is a page that asks a reader to supply something it never explains.",
@@ -451,7 +451,7 @@ export const house = definePack("house", (repo: Terrain) => ({
       block: [
         {
           staged: ["packs/docs.ts"],
-          world: { exec: { "just docs-packs-check": { code: 1, stdout: "docs/user/packs/docs.html has drifted from its pack" } } },
+          world: { exec: { "just docs-packs-check": { code: 1, stdout: "docs/user/packs/docs.md has drifted from its pack" } } },
         },
       ],
     }),
