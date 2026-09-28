@@ -39,7 +39,7 @@ Fourteen configured checks cover what a guard actually asks. You import one and 
 | [`banCommands`](./checks/ban-commands.md) | command line | banned shell commands, before they run |
 | [`commitReason`](./checks/commit-reason.md) | command line | this commit needs a reason recorded in its message |
 | [`protectedPath`](./checks/protected-path.md) | file path | paths that must not be touched (or are append-only) |
-| [`oneWriter`](./checks/one-writer.md) | the actor | only the named categories may change files; anyone else's write is refused, an observed one reverted |
+| [`oneWriter`](./checks/one-writer.md) | the acting session's categories | only the listed categories may change a file; any other actor's write is refused, and one that already landed is put back |
 | [`siblingExists`](./checks/sibling-exists.md) | file path | a file's required companion exists on disk |
 | [`canonicalFiles`](./checks/canonical-files.md) | file path | only approved names in a folder |
 | [`changeTogether`](./checks/change-together.md) | staged set | files that must move in the same commit |

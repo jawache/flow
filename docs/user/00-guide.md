@@ -2,7 +2,7 @@
 
 docs/user/00 · how to guard a project, by situation · 2026-09-28
 
-An agent working in your codebase makes confident mistakes, and it makes them at predictable moments: it edits a file nobody should touch, runs a command that deletes history, commits a dependency without telling you. flow stops each of these at the moment it happens — a command before it runs, an edit before it lands or, when it arrived through a shell command, the moment it has, and a commit before it closes — instead of leaving them for you to find at review. What a rule refuses never persists. This book assumes you know nothing about the system. It takes you from an unguarded repo to a guarded one, and every example runs as printed.
+An agent working in your codebase makes confident mistakes, and it makes them at predictable moments: it edits a file nobody should touch, runs a command that deletes history, commits a dependency without telling you. flow stops each of these at the moment it happens, instead of leaving them for you to find at review. A command is refused before it runs. An edit made with the Edit tool is refused before it lands. An edit written by a shell command is refused the moment it has landed. A commit is refused before it closes. What a rule refuses never persists. This book assumes you know nothing about the system. It takes you from an unguarded repo to a guarded one, and every example runs as printed.
 
 - [1 · The model in sixty seconds](#1--the-model-in-sixty-seconds)
 - [2 · Guard a repo, from nothing](#2--guard-a-repo-from-nothing)
@@ -44,10 +44,10 @@ A guardrail fires at one or more **moments**. A breadcrumb has its own four:
 | Moment | For | When |
 | --- | --- | --- |
 | `session` | breadcrumb | a chat starts, resumes, or is compacted |
-| `touch` | breadcrumb | a tool call first names a matching file — through the Read tool, or through a shell command that reads it — then again after drift |
-| `write` | guardrail | a file is created or changed. An Edit is judged before it lands, in memory; any other change is judged the moment it has landed, and undone if refused. Either way a refused write never persists (§8) |
+| `touch` | breadcrumb | the first time a tool call names a matching file, either through the Read tool or through a shell command that reads it; then again after drift, which is about 200,000 tokens of session |
+| `write` | guardrail | a file is created or changed. An Edit is checked in memory before it lands. Any other change is checked the moment it has landed, and undone if it is refused. Either way a refused write never persists (§8) |
 | `command` | either | before a shell command runs — a guardrail refuses it, a breadcrumb says what you should know before it runs |
-| `delete` | guardrail | a file is removed — judged before an `rm` runs, or the moment any other removal has landed, and restored if refused |
+| `delete` | guardrail | a file is removed. An `rm` is checked before it runs. Any other removal is checked the moment it has landed, and the file is restored if it is refused |
 | `commit` | guardrail | the git pre-commit gate, over the staged set — this one fires for humans too |
 | `turn-end` | either | when the agent hands back |
 
@@ -186,7 +186,7 @@ noDbReset: guardrail()
   .test({ pass: ["drizzle-kit generate"], block: ["drizzle-kit drop"] }),
 ```
 
-The whole command line is the subject — a command is one subject however many lines it occupies, so a pattern may span a newline. The body a heredoc carries is not part of the line: a script that merely mentions a banned command is not a use of it. Command rules take no `.on(…)`: the patterns *are* the scope.
+The whole command line is the subject — a command is one subject however many lines it occupies, so a pattern may span a newline. The patterns are matched against the command line and nothing else. A heredoc feeds text to a program on standard input, and that text is not part of the line, so a script that merely contains the words of a banned command is not refused. One case is different: when the program reading the heredoc is itself a shell — `bash`, `sh`, `zsh` or `eval` — the body is a list of commands, and the patterns are matched against it too. Command rules take no `.on(…)`: the patterns *are* the scope.
 
 ### …protect files nobody should touch
 
@@ -199,7 +199,15 @@ keepGenerated: guardrail()
   .test({ block: [{ path: "src/generated/api.ts", content: "" }] }),
 ```
 
-The `.on(…)` set *is* the protected set — touching a match is the violation. Name the bare folder too, or an `rm -rf` of the directory slips past the file globs. For an append-only folder (migrations: new files fine, existing ones untouchable), pass `protectedPath({ existingOnly: true })`. A protected-path rule is block-only: everything in its scope must be refused, so there is nothing to pass. A shell edit of a protected file is reverted the moment it lands (§8).
+`protectedPath` is a check that returns refuse for every file it is called with. It does not read the file's contents. The protected files are the paths that match the globs you list in `.on(…)`. Any write, delete or commit of one of those paths is refused. The agent is shown the text you give to `.message(…)`.
+
+List the bare directory path as well as the glob for what is inside it — above, `.on(…)` lists `src/generated` as well as `src/generated/**`. You need both, because `rm -rf src/generated` removes the directory at that exact path, and `src/generated/**` matches only paths inside the directory, never the directory's own path. Leave the bare path out and that delete matches neither pattern, so it goes through.
+
+The `.test` block above lists `block` entries and no `pass` entries. `pass` lists the inputs the rule must let through, and `block` lists the inputs it must refuse. This rule refuses every input it is given, so there is nothing to put in `pass`.
+
+If you want to protect the files a folder already holds while still allowing new ones — a migrations folder, say — pass `protectedPath({ existingOnly: true })`. A file that already exists can then no longer be changed or deleted, and a new file can still be created.
+
+If the agent changes a protected file with the Edit tool, the refusal comes first and nothing is written. If it changes the file with a shell command instead, the change lands, flow checks it, and flow puts the file back to the content it had before — [§8](#8--what-the-guard-sees--every-change-to-the-tree) explains how.
 
 ### …run my test suite / typecheck / any tool as a gate
 
@@ -301,7 +309,7 @@ builderWrites: guardrail()
   }),
 ```
 
-For a worktree shared by several agents. `writers` names the categories that may change files; every other actor's write is refused — before it lands if it came through Edit, reverted if it came through a shell command (§8). The case names its actor beside the file.
+Use this when several agents share one worktree and only some of them should be changing files. `writers` lists the categories allowed to create, change or delete a file — a category is a name for an actor, matched from evidence the harness wrote about the session. Every actor outside that list is refused: through the Edit tool the write is refused before it lands, and through a shell command the file is put back to its previous content after it lands — [§8](#8--what-the-guard-sees--every-change-to-the-tree) explains how. In the test block, each input names its actor beside the file, as `actor: ["builder"]` does above.
 
 ### …steer without blocking
 
@@ -361,11 +369,13 @@ The one exception is the repair itself: while the config is broken, a write to `
 
 ## 8 · What the guard sees — every change to the tree
 
-**A guardrail judges what changed on disk, not which tool changed it.** Before every tool call flow takes a content snapshot of the working tree; after the call it diffs the two. Every file the call added or changed is handed to the write rules with its real content, every file it removed to the delete rules, and every path it touched fires its breadcrumb. It does not matter whether the change came from the Edit tool, a heredoc, `sed -i`, a python script, a `just` recipe, an MCP tool or a subagent: the guard never looks at the command, so there is no second mechanism to reach for.
+This section is explanation rather than instruction: it describes how flow works out that a file changed, and why that is the mechanism it uses.
 
-Two paths, one contract. An Edit or Write is judged **before it lands**: the would-be file is checked in memory, and a refusal means nothing touched disk. Everything else is judged **the moment it has landed**, and a refusal is undone: the offending files go back to their pre-call content, byte for byte, and the agent is told — beside the tool's own result — which rule refused and why. Either way, **a refused write never persists.** A rule author never needs to know which path ran: the check gets a path and content, and its message reads the same.
+**A guardrail is checked against what changed on disk, not against the tool that changed it.** Before each tool call, flow records the content of every file in the working tree. After the call it compares that record with the tree as it now stands, and the differences between the two are the changes the call made. Each file the call created or changed is passed to the write rules, together with the content now on disk. Each file the call removed is passed to the delete rules. Each breadcrumb whose globs match a changed path is shown to the agent. What the agent typed to make the change is never read, so an edit through the Edit tool, a heredoc, `sed -i`, a python script, a `just` recipe, an MCP tool or a subagent all reach the rules by the same route. That leaves one mechanism to understand, and no second one to reach for when a change arrives some new way.
 
-The two refusals wear different banners, so the log says which happened:
+**The two routes differ in timing, not in outcome.** A change made through the Edit or Write tool is checked before it lands: flow builds the file the tool would produce, holds it in memory, and calls the rules on that, so a refusal leaves the disk untouched. A change made any other way is checked once it has landed, because until then its content does not exist anywhere to check. When a rule refuses one of those, flow writes the file back to the content it had before the call, byte for byte, and the agent is told which rule refused and why in the same place it reads the tool's own result. The outcome is therefore the same on both routes: a refused write never persists. Someone writing a rule does not need to know which route ran, because a check is called with a path and the file's content in both cases, and its message reads the same either way.
+
+The first line of the refusal differs between the two routes, so a reader of the log can tell which of them happened:
 
 ```
 flow — blocked before the write landed:          an Edit, judged in memory — disk untouched
@@ -378,15 +388,17 @@ flow — write reverted after it landed:           a shell edit, undone from the
 src/b.ts is back to its previous content. Adjust the change so it passes and write it again — through Edit, which is judged before it lands.
 ```
 
-**What a revert undoes, and what it does not.** By default only the files that failed a rule are put back; the other files the same command wrote are kept, and the message lists them. A repo that prefers “refused means the call never happened” sets `revert: "call"` in the config's settings, and the whole delta of the call is undone. Neither scope reaches side effects: a test run that read the bad content, a commit, a push or a migration the same command performed are not undone, and the message says so.
+**How much of a call a refusal undoes is a choice.** By default flow writes back only the files that failed a rule; the other files the same command wrote are left as the command wrote them, and the refusal message lists them. A repo that would rather have a refusal mean the call never happened can set `revert: "call"` in the settings block of its config, and then every file the call changed is written back, not only the failing ones. Neither setting undoes anything other than file content. If the same command ran the tests over the bad content, made a commit, pushed, or ran a migration, those have already happened and they stay; the refusal message says as much.
 
-**Several agents, one worktree.** Within one session the harness runs writing tool calls one at a time, so a revert only ever touches that call's own files. Across a parent and its subagents, calls do overlap. flow sees the overlap from its own log — a snapshot with no matching diff is a call still in flight — and under overlap it never reverts a whole call, only the offending files, naming the calls that were in flight. A command started in the background returns before its process finishes; the writes it makes afterwards are reported and never reverted, because they belong to no call in the log. To say who may write at all, the [`oneWriter`](./checks/one-writer.md) check names the categories that may change files and refuses every other actor's write — a verifier that “fixes” a typo is reverted, with a message naming the writer.
+**Several agents in one worktree narrow what a refusal undoes.** The harness — the coding-agent program flow plugs into, such as Claude Code — runs one writing tool call at a time within a session, so inside a single session a revert only ever touches the files of the call being refused. A parent agent and its subagents are not ordered against each other that way, and their calls can overlap in time. flow works the overlap out from its own log: a snapshot with no diff recorded after it belongs to a call that has not finished. While such a call is outstanding, flow writes back only the offending files even where `revert: "call"` is set, and the message lists the calls that had not finished. A command started in the background is the other case: the tool call returns before the process does, so the writes the process makes after that point belong to no call in the log, and they are reported but never written back.
 
-**Reads through the shell.** A breadcrumb is guidance, so `touch` fires on the files a shell command reads too — `cat`, `head`, `sed -n`, `grep` on a path — before the command's output comes back. That detection is best-effort: a script that computes its own paths is not seen. The floor is the diff: a file that changes without ever having been touched gets its breadcrumb at the change, late but not lost.
+**Which actors may write at all is a separate question.** Overlap is about when a write happened; the [`oneWriter`](./checks/one-writer.md) check is about who was allowed to make it. It is given the categories that may change files — a category is flow's name for the actor behind a call — and it fails for any actor outside that list. A verifier agent that corrects a typo of its own accord therefore has the file written back, and the message says which actor wrote it.
 
-**What `flow status` and `flow facts` add.** `status` names the session's permission mode and, under Claude Code's auto mode, whether the session is being steered toward shell edits. `facts` counts shell writes and shell reads beside the tool-call edits, with their paths, so the lead and coverage numbers stop under-counting.
+**Reads through the shell.** A breadcrumb is a note shown to the agent, not a refusal, so it is worth showing on a file the agent only reads. That is why the `touch` moment also matches the paths a shell command reads. `cat`, `head`, `sed -n` and `grep` on a path all match the `touch` moment, and the note is shown before the command's output comes back. Reading paths out of a command line is best-effort, so a script that computes its own paths is not detected. What that misses, the diff still catches: a file that changes without any read of it having been detected has its breadcrumb shown at the change. That is later than it would otherwise be, but it is not skipped.
 
-**The edges.** Files outside the repo are not watched. Files under `.git` and `node_modules` are outside the snapshot; everything else is inside it, gitignored or not, unless the config's `snapshotIgnore` says otherwise. A file created and deleted within one command leaves no trace to judge. A command you type yourself with `!` is yours, not the agent's.
+**Two commands report on all of this.** `flow status` prints the permission mode the session is running under and, under Claude Code's auto mode, says whether the session is being steered towards shell edits. `flow facts` counts shell writes and shell reads alongside the edits made through tool calls and lists their paths, which is why its lead and coverage figures no longer under-count what happened.
+
+**The snapshot has edges.** Files outside the repository are not recorded, so changes to them are not seen at all. Files under `.git` and `node_modules` are left out of the snapshot; everything else is in it, whether or not git ignores it, unless `snapshotIgnore` in the config excludes it. A file that a single command creates and then deletes leaves nothing in the diff, so no rule is called on it. A command you type yourself with `!` is your own work rather than the agent's, and it is not put through the guard.
 
 ## 9 · Packs, and sharing across repos
 
@@ -415,10 +427,10 @@ A pack that needs a repo fact to work declares it as a mandatory typed parameter
 | **bind** | `pack(x)` in `flow.config.ts` — turn a pack's entries on |
 | **override** | `override(pack.entry).<key>(…)` — change one thing about a bound entry; each key replaces the pack's whole value |
 | **moment** | when a rule fires: `session · touch · write · command · delete · commit · turn-end` |
-| **observed** | a change the guard sees after the tool call that made it — a shell edit, a script, a recipe — judged by the same rules as an Edit, and undone if refused |
-| **actor** | the categories a session wears, read from host-written evidence; `.for(…)` binds a rule to one, `ctx.actor` lets a check read them |
+| **observed** | a change flow detects after the tool call that made it: a shell edit, a script, a recipe. It is checked by the same rules as an Edit, and undone if refused |
+| **actor** | the categories recorded for a session, read from evidence the host wrote. `.for(…)` binds a rule to one of them. A check reads them from `ctx.actor` |
 | **check** | a function of `ctx` answering `ctx.ok()` or `ctx.fail(detail)` — a stock one, or your own via `defineCheck` |
-| **ctx** | the only door a check has to the world: the event facts (`file · command · staged · actor`) and the effects (`fs · exec · git`) |
+| **ctx** | the one argument a check is called with, and its only access to the world: the event facts (`file · command · staged · actor`) and the effects (`fs · exec · git`) |
 | **category** | a name with its recognizer — `defineCategory` — read from host-written evidence, bound with `.for(…)` |
 | **case** | a canned `ctx` that must pass or must block, carried on the entry as `.test({ pass, block })`; a rule with no block case does not load |
 | **fitting** | what `flow status` checks beyond the rules: the config loads, the gate is armed, the hooks are registered |

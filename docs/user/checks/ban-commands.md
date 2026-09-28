@@ -2,13 +2,13 @@
 
 reads: command line · fires at: command · 2026-09-28
 
-Bans a shell command before it runs. The whole command line is the subject — a command is one subject however many lines it occupies, so a pattern may span a newline (which is exactly how an agent batches a `git commit` with a body). The body a heredoc carries is not part of the line: a script fed on stdin that merely mentions a banned command is not a use of it, and is never matched. The patterns *are* the scope, so a command rule takes no `.on(…)`, and matching nothing in a repo is the rule working, not watching the wrong place.
+Bans a shell command before it runs. The patterns are tried against the whole command line. One command is one subject however many lines it occupies, so a pattern may match across a newline: an agent writing `git commit` with a message body sends one command over several lines. A heredoc is the text after `<<` on the command line, fed to a program on its standard input. That text is not matched, so a script fed to `python3`, or a file written with `cat`, is not refused even when it includes the words of a banned command. The exception is a heredoc fed to a shell (`bash`, `sh`, `zsh`, `eval`), whose text is commands and is matched. A command rule takes no `.on(…)`, because its patterns are its scope. A rule whose patterns match nothing in a repo is not misconfigured.
 
 ## Options
 
 | Key | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `ban` | list of regex | yes | each is tried against the whole command line, heredoc bodies elided; any match blocks |
+| `ban` | list of regex | yes | each pattern is tried against the whole command line. Text a heredoc feeds to a program is left out of that line, unless the program is a shell such as `bash`, `sh`, `zsh` or `eval`, where the text is itself commands. Any pattern that matches refuses the command |
 
 ## Example
 

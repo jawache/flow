@@ -2,13 +2,19 @@
 
 reads: the actor · fires at: write · delete · 2026-09-28
 
-Refuses a change to a file by any actor not wearing one of the named categories. It exists for a worktree shared by several agents — a builder that writes and verifiers that read — where a verifier's “quick fix” is the change nobody asked for. It reads `ctx.actor`, the categories the acting session wears (host-written evidence, never a claim the session made), so an actor outside the list is refused whether it edits through Edit, a heredoc or a script: an Edit is refused before it lands, and a change that has already landed is reverted. The parent chat wears no category unless the config gives it one — name a category it does wear, or it is refused too.
+Refuses a write or a delete by an actor that has none of the categories listed in `writers`. An actor is the session that made the change: the parent chat, or one of the subagents it started. A category is a name for an actor, defined in the config together with the recognizer that decides which sessions have it. The check reads the acting session's category names from `ctx.actor`. Those names come from evidence the harness wrote about the session, never from a claim the session made about itself.
+
+Which tool made the change does not change the answer: a change through the Edit tool, through a heredoc and through a script are all judged by this rule. An Edit is refused before anything is written to disk. A change already written to disk is reverted to the file's previous content.
+
+The check is for a worktree several agents share — one builder that writes files, and verifiers that only read them. There, a verifier that repairs what it noticed has changed a file nobody asked it to change.
+
+The parent chat has no category unless the config defines one for it. List a category the parent chat does have, or the parent chat's own writes and deletes are refused too.
 
 ## Options
 
 | Key | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `writers` | list of category names | yes | the categories that may create, change or delete files; every other actor's write or delete is refused |
+| `writers` | list of category names | yes | the categories allowed to create, change or delete a file. A write or a delete by an actor that has none of them is refused |
 
 ## Example
 
@@ -23,7 +29,7 @@ builderWrites: guardrail()
   }),
 ```
 
-A case names the actor beside the file, as `actor: [...]` — the categories the canned session wears. A category is a name with its recognizer aboard; the [config reference](../02-entry-reference.md#categories) says how one is defined and how `.for(…)` binds a rule to one. This check is the other direction: not “this rule is for that actor”, but “this act is for those actors only”.
+A case adds an `actor` field beside `path` and `content`. `actor: ["builder"]` is the list of category names the canned session has. The [config reference](../02-entry-reference.md#categories) gives the syntax for defining a category, and for binding a rule to one with `.for(…)`. `.for(…)` limits which actor a rule applies to. `oneWriter` limits which actors may change the file, and refuses every other one.
 
 ---
 
