@@ -36,11 +36,11 @@ Note what is *not* here: no declaration of which moments the check supports, no 
 
 | At | The check reads |
 | --- | --- |
-| `write` · `commit` (a file rule) | `ctx.file` = `{ path, content }` — at write, the would-be bytes; at commit, one staged file at a time when the rule named `.on(…)` |
+| `write` · `commit` (a file rule) | `ctx.file` = `{ path, content }` — at write, the would-be bytes of an Edit or the bytes a shell command has just written, and the check need not know which; at commit, one staged file at a time when the rule named `.on(…)` |
 | `command` | `ctx.command` — the line about to run |
 | `commit` (no `.on`) | `ctx.staged` — the whole staged set, asked once |
 | `turn-end` | `ctx.turn` — the edits and runs of the turn |
-| any | `ctx.fs` · `ctx.exec` · `ctx.git` to reach further; `ctx.moment` to branch |
+| any | `ctx.actor` — the categories the acting session wears; `ctx.fs` · `ctx.exec` · `ctx.git` to reach further; `ctx.moment` to branch |
 
 Return `ctx.fail(detail)` with a sentence naming what was seen and what to do — a detector that emits the same line for causes the reader must answer differently teaches them to talk past it. A check that throws is a load-time fault that names the file; it can never load as a rule that silently stopped checking.
 

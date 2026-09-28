@@ -103,7 +103,7 @@ flow is ON — 4 guardrails · 2 breadcrumbs, every one resolved and able to fir
   categories subagent — what the entries below bind to
   session
     🍞 flow.orientation
-        This repo is guarded by flow. Guardrails block risky edits before they land (and again at commit); …
+        This repo is guarded by flow. Guardrails judge every change to the tree — an Edit before it lands, …
   touch
     🍞 flow.editingTheGuardrails  —  on flow.config.ts .claude/settings.json .claude/settings.local.json .claude/agents/** .claude/skills/**
         You are editing the guardrails themselves. If this edit weakens, disables or removes a guardrail or…
@@ -140,7 +140,9 @@ orientation breadcrumb is injected into the session as context, before the agent
 **2 — a banned command is refused.** Ask the agent to force-push the branch. It is stopped
 *before the command runs*, with the rule's own sentence, and there is no way around it.
 
-**3 — the commit gate holds.** Have the agent write a file containing the literal marker
+**3 — a shell edit is judged too.** Have the agent add a `TODO` to a guarded file with a heredoc or `sed -i` instead of the Edit tool. The write lands, is judged by the same rule, and is put back to its previous content, with the refusal beside the command's result: a refused write never persists, whatever wrote it.
+
+**4 — the commit gate holds.** Have the agent write a file containing the literal marker
 `DO`-`NOT`-`COMMIT` (spelled whole), stage it, and commit. Git refuses at the hook, naming the rule
 and the file. Take the marker out and the same commit lands.
 
@@ -238,9 +240,9 @@ Six things to know, and then you can write your own:
 | moment | when | guardrail | breadcrumb |
 | --- | --- | --- | --- |
 | `session` | a chat starts, resumes, or is compacted | — | ✓ |
-| `touch` | a tool call names a file | — | ✓ |
-| `write` | a file is about to be written | ✓ | — |
-| `delete` | a command is about to remove a file | ✓ | — |
+| `touch` | a tool call names a file, or a shell command reads it | — | ✓ |
+| `write` | a file is created or changed — judged before an Edit lands, or the moment a shell edit has; refused means undone | ✓ | — |
+| `delete` | a file is removed — judged before an `rm`, or the moment any other removal has landed; refused means restored | ✓ | — |
 | `command` | a shell command is about to run | ✓ | — |
 | `commit` | git's pre-commit hook, over the staged set | ✓ | — |
 | `turn-end` | the agent is about to hand back | ✓ | — |

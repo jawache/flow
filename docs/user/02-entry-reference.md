@@ -36,6 +36,8 @@ The dials are about the *run* rather than about any one entry, so they are `defi
 
 | Key | Type | Meaning |
 | --- | --- | --- |
+| `revert` | `"file"` or `"call"` | what a refused observed write undoes. `"file"`, the default, puts back only the files a rule refused and keeps the rest of the call's changes; `"call"` undoes the whole delta of the call. Under overlapping calls from several agents `"call"` is ignored and the refusal says so |
+| `snapshotIgnore` | array of globs | paths kept out of the working-tree snapshot, beside `.git` and `node_modules`, which always are. Everything else is inside it, gitignored or not — a rule that guards `.env` needs `.env` seen |
 | `driftTokens` | number | context tokens between re-showings of a `touch` breadcrumb. Absent = the engine's own default. It is one answer for the whole repo, which is why it is not on entries |
 | `grammars` | array | grammars this repo built itself, for `astGrep` rules whose language nobody publishes — each `{ name, libraryPath, extensions, languageSymbol? }`. The path is relative to the repo root or absolute, and it is a build artefact: `flow status` is a red line naming the file until it is built, and the rules on that language refuse rather than passing quietly |
 
@@ -95,13 +97,13 @@ Moments are imported symbols. `deletion` and `turnEnd` are spelled that way beca
 
 | Symbol | Moment | For | Fires |
 | --- | --- | --- | --- |
-| `write` | write | guardrail | before an edit lands — the would-be file is checked in memory |
+| `write` | write | guardrail | a file is created or changed. An Edit or Write is judged before it lands, from the would-be file in memory; any other change — a heredoc, `sed -i`, a script, a recipe, an MCP tool — is judged the moment it has landed and undone if refused. A refused write never persists |
 | `command` | command | guardrail | before a shell command runs |
-| `deletion` | delete | guardrail | before a command that removes a matching file |
+| `deletion` | delete | guardrail | a file is removed — judged before an `rm` runs, or the moment any other removal has landed, and restored if refused |
 | `commit` | commit | guardrail | the git pre-commit gate, over the staged set — for humans too |
 | `turnEnd` | turn-end | either | when the agent hands back |
 | `session` | session | breadcrumb | a chat starts, resumes, or is compacted |
-| `touch` | touch | breadcrumb | a tool first names a matching file, then again after drift |
+| `touch` | touch | breadcrumb | a tool first names a matching file, or a shell command reads it, then again after drift; a file that changes without ever having been touched fires it at the change |
 | `command` | command | either | before a shell command runs. A guardrail refuses it; a breadcrumb rides the same answer as a note, scoped by `.on(…)` to the commands it is about |
 
 `command` is the one moment where the two kinds are scoped differently. A command *guardrail* takes no `.on(…)` — its patterns are its scope, and a second way to narrow it is two halves that can disagree. A command *breadcrumb* has no patterns at all, so `.on(…)` is the only thing that says which commands it is about; without one it would show on every shell call, which is the same as showing on none.
@@ -112,10 +114,11 @@ A check is `(ctx) => ctx.ok() | ctx.fail(detail)`, and `ctx` is its only door to
 
 | Field | Is |
 | --- | --- |
-| `ctx.file` | the touched file — `{ path, content }`, at a file moment (content is the would-be bytes) |
+| `ctx.file` | the touched file — `{ path, content }`, at a file moment. At write the content is the would-be bytes of an Edit, or the bytes a shell command has just written; a check never needs to know which |
 | `ctx.command` | the shell command line, at the command moment |
 | `ctx.staged` | the staged paths, at the commit moment |
 | `ctx.turn` | the turn's actions (edits and runs), at turn-end |
+| `ctx.actor` | the categories the acting session wears — host-written evidence, never a claim; what `oneWriter` reads |
 | `ctx.moment` | which moment this is |
 | `ctx.fs` · `ctx.exec` · `ctx.git` | the effects — read a file, run a command, ask git; the only way a check reaches beyond its facts |
 | `ctx.ok()` · `ctx.fail(detail)` | the verdict — a pass, or a block carrying the detail line |
@@ -127,7 +130,7 @@ A case is a canned `ctx`, and its *shape* chooses which moment's dialect it spea
 | Case shape | Dialect |
 | --- | --- |
 | `"a string"` or `{ command }` | command |
-| `{ path, content }` | write (a file rule) |
+| `{ path, content }` | write (a file rule); add `actor: [...]` to say which categories the canned session wears |
 | `{ staged }` | commit |
 | `{ actions }` | turn-end |
 

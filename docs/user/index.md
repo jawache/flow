@@ -1,6 +1,6 @@
 # flow — user documentation
 
-docs/user · flow's human-facing docs · 2026-09-07
+docs/user · flow's human-facing docs · 2026-09-28
 
 **flow** is the guard: your whole guard is one TypeScript file, and these pages are how to write it. New here? Run the [quick start](./01-quick-start.md) — five minutes, real commands. A rule just blocked you? The [guidebook](./00-guide.md)'s cookbook has the shape of every rule you'll meet. Everything on these pages is executed against the shipped binary, not read off the code.
 
@@ -28,7 +28,7 @@ Ten packs arrive with the install, behind `@jawache/flow/packs`, and a repo bind
 
 ## The stock checks — one page each
 
-Thirteen configured checks cover what a guard actually asks. You import one and hand it to `.check(…)`; each page lists its options and a real example.
+Fourteen configured checks cover what a guard actually asks. You import one and hand it to `.check(…)`; each page lists its options and a real example.
 
 | Check | Reads | Checks |
 | --- | --- | --- |
@@ -39,6 +39,7 @@ Thirteen configured checks cover what a guard actually asks. You import one and 
 | [`banCommands`](./checks/ban-commands.md) | command line | banned shell commands, before they run |
 | [`commitReason`](./checks/commit-reason.md) | command line | this commit needs a reason recorded in its message |
 | [`protectedPath`](./checks/protected-path.md) | file path | paths that must not be touched (or are append-only) |
+| [`oneWriter`](./checks/one-writer.md) | the actor | only the named categories may change files; anyone else's write is refused, an observed one reverted |
 | [`siblingExists`](./checks/sibling-exists.md) | file path | a file's required companion exists on disk |
 | [`canonicalFiles`](./checks/canonical-files.md) | file path | only approved names in a folder |
 | [`changeTogether`](./checks/change-together.md) | staged set | files that must move in the same commit |

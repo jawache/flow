@@ -1,8 +1,8 @@
 # flow — the guidebook
 
-docs/user/00 · how to guard a project, by situation · 2026-09-06
+docs/user/00 · how to guard a project, by situation · 2026-09-28
 
-An agent working in your codebase makes confident mistakes, and it makes them at predictable moments: it edits a file nobody should touch, runs a command that deletes history, commits a dependency without telling you. flow stops each of these at the moment it happens — before the edit lands, before the command runs, before the commit closes — instead of leaving them for you to find at review. This book assumes you know nothing about the system. It takes you from an unguarded repo to a guarded one, and every example runs as printed.
+An agent working in your codebase makes confident mistakes, and it makes them at predictable moments: it edits a file nobody should touch, runs a command that deletes history, commits a dependency without telling you. flow stops each of these at the moment it happens — a command before it runs, an edit before it lands or, when it arrived through a shell command, the moment it has, and a commit before it closes — instead of leaving them for you to find at review. What a rule refuses never persists. This book assumes you know nothing about the system. It takes you from an unguarded repo to a guarded one, and every example runs as printed.
 
 - [1 · The model in sixty seconds](#1--the-model-in-sixty-seconds)
 - [2 · Guard a repo, from nothing](#2--guard-a-repo-from-nothing)
@@ -11,8 +11,9 @@ An agent working in your codebase makes confident mistakes, and it makes them at
 - [5 · Rules bound to WHO, not what](#5--rules-bound-to-who-not-what)
 - [6 · Testing your rules](#6--testing-your-rules)
 - [7 · Fail loud — and the one repair exception](#7--fail-loud--and-the-one-repair-exception)
-- [8 · Packs, and sharing across repos](#8--packs-and-sharing-across-repos)
-- [9 · The vocabulary](#9--the-vocabulary)
+- [8 · What the guard sees — every change to the tree](#8--what-the-guard-sees--every-change-to-the-tree)
+- [9 · Packs, and sharing across repos](#9--packs-and-sharing-across-repos)
+- [10 · The vocabulary](#10--the-vocabulary)
 
 ## 1 · The model in sixty seconds
 
@@ -36,17 +37,17 @@ export default defineConfig([
 
 `pack(x)` binds a pack and all its entries. `override(x.entry)` speaks only what it changes — a different `.on(…)`, a different `.message(…)`, or `.disabled("why")` — and everything it does not say comes from the pack. An override **replaces** the key it names: a narrowed `.on(…)` is the whole list, never a merge, so a re-scope never quietly re-inherits the pack's defaults beside it.
 
-**A pack is just code.** It is an ordinary TypeScript module — one you wrote in `guards/`, or one you installed from npm — of identical shape. Publishing a pack is promotion, not a rewrite (§8).
+**A pack is just code.** It is an ordinary TypeScript module — one you wrote in `guards/`, or one you installed from npm — of identical shape. Publishing a pack is promotion, not a rewrite (§9).
 
 A guardrail fires at one or more **moments**. A breadcrumb has its own four:
 
 | Moment | For | When |
 | --- | --- | --- |
 | `session` | breadcrumb | a chat starts, resumes, or is compacted |
-| `touch` | breadcrumb | a tool call first names a matching file, then again after drift |
-| `write` | guardrail | before an edit lands — the would-be file is checked in memory, nothing touches disk |
+| `touch` | breadcrumb | a tool call first names a matching file — through the Read tool, or through a shell command that reads it — then again after drift |
+| `write` | guardrail | a file is created or changed. An Edit is judged before it lands, in memory; any other change is judged the moment it has landed, and undone if refused. Either way a refused write never persists (§8) |
 | `command` | either | before a shell command runs — a guardrail refuses it, a breadcrumb says what you should know before it runs |
-| `delete` | guardrail | before a command that removes a matching file |
+| `delete` | guardrail | a file is removed — judged before an `rm` runs, or the moment any other removal has landed, and restored if refused |
 | `commit` | guardrail | the git pre-commit gate, over the staged set — this one fires for humans too |
 | `turn-end` | either | when the agent hands back |
 
@@ -185,7 +186,7 @@ noDbReset: guardrail()
   .test({ pass: ["drizzle-kit generate"], block: ["drizzle-kit drop"] }),
 ```
 
-The whole command line is the subject — a command is one subject however many lines it occupies, so a pattern may span a newline. Command rules take no `.on(…)`: the patterns *are* the scope.
+The whole command line is the subject — a command is one subject however many lines it occupies, so a pattern may span a newline. The body a heredoc carries is not part of the line: a script that merely mentions a banned command is not a use of it. Command rules take no `.on(…)`: the patterns *are* the scope.
 
 ### …protect files nobody should touch
 
@@ -198,7 +199,7 @@ keepGenerated: guardrail()
   .test({ block: [{ path: "src/generated/api.ts", content: "" }] }),
 ```
 
-The `.on(…)` set *is* the protected set — touching a match is the violation. Name the bare folder too, or an `rm -rf` of the directory slips past the file globs. For an append-only folder (migrations: new files fine, existing ones untouchable), pass `protectedPath({ existingOnly: true })`. A protected-path rule is block-only: everything in its scope must be refused, so there is nothing to pass.
+The `.on(…)` set *is* the protected set — touching a match is the violation. Name the bare folder too, or an `rm -rf` of the directory slips past the file globs. For an append-only folder (migrations: new files fine, existing ones untouchable), pass `protectedPath({ existingOnly: true })`. A protected-path rule is block-only: everything in its scope must be refused, so there is nothing to pass. A shell edit of a protected file is reverted the moment it lands (§8).
 
 ### …run my test suite / typecheck / any tool as a gate
 
@@ -287,6 +288,21 @@ newDependency: guardrail()
 
 It fires at `command`, not `commit`: git runs the pre-commit gate *before* the message exists, so the only place a message can be read is the typed command. That also bounds what the rule sees — a commit from an editor, or by a human in a terminal, never passes the command moment. It polices agent-typed commits, which is the audience.
 
+### …let only the builder change files
+
+```
+builderWrites: guardrail()
+  .at(write, deletion)
+  .check(oneWriter({ writers: ["builder", "parent"] }))
+  .message("Only the builder changes files in this worktree — hand your finding back instead of fixing it.")
+  .test({
+    pass:  [{ path: "src/x.ts", content: "", actor: ["builder"] }],
+    block: [{ path: "src/x.ts", content: "", actor: ["checker"] }],
+  }),
+```
+
+For a worktree shared by several agents. `writers` names the categories that may change files; every other actor's write is refused — before it lands if it came through Edit, reverted if it came through a shell command (§8). The case names its actor beside the file.
+
 ### …steer without blocking
 
 ```
@@ -343,7 +359,36 @@ flow 0.0.1 — the config will not load, so every guardrail and breadcrumb here 
 
 The one exception is the repair itself: while the config is broken, a write to `flow.config.ts` — or to a pack it imports, whatever you called that folder — still goes through. That surface is read out of the config's own relative import lines, as text, because the module is the thing that will not load. Without the exception, the rule demanding a fix would also forbid it, and anything with a hook in front of it — an agent, the gate — would be locked out of its own repair. Commands stay refused, and so does the commit gate, so nothing written under the exception reaches a commit until the config loads green again.
 
-## 8 · Packs, and sharing across repos
+## 8 · What the guard sees — every change to the tree
+
+**A guardrail judges what changed on disk, not which tool changed it.** Before every tool call flow takes a content snapshot of the working tree; after the call it diffs the two. Every file the call added or changed is handed to the write rules with its real content, every file it removed to the delete rules, and every path it touched fires its breadcrumb. It does not matter whether the change came from the Edit tool, a heredoc, `sed -i`, a python script, a `just` recipe, an MCP tool or a subagent: the guard never looks at the command, so there is no second mechanism to reach for.
+
+Two paths, one contract. An Edit or Write is judged **before it lands**: the would-be file is checked in memory, and a refusal means nothing touched disk. Everything else is judged **the moment it has landed**, and a refusal is undone: the offending files go back to their pre-call content, byte for byte, and the agent is told — beside the tool's own result — which rule refused and why. Either way, **a refused write never persists.** A rule author never needs to know which path ran: the check gets a path and content, and its message reads the same.
+
+The two refusals wear different banners, so the log says which happened:
+
+```
+flow — blocked before the write landed:          an Edit, judged in memory — disk untouched
+flow — write reverted after it landed:           a shell edit, undone from the snapshot
+
+✗ house.noTodo · src/b.ts
+  No TODOs in src/ — do it now, or track it properly.
+    line 3 says TODO
+
+src/b.ts is back to its previous content. Adjust the change so it passes and write it again — through Edit, which is judged before it lands.
+```
+
+**What a revert undoes, and what it does not.** By default only the files that failed a rule are put back; the other files the same command wrote are kept, and the message lists them. A repo that prefers “refused means the call never happened” sets `revert: "call"` in the config's settings, and the whole delta of the call is undone. Neither scope reaches side effects: a test run that read the bad content, a commit, a push or a migration the same command performed are not undone, and the message says so.
+
+**Several agents, one worktree.** Within one session the harness runs writing tool calls one at a time, so a revert only ever touches that call's own files. Across a parent and its subagents, calls do overlap. flow sees the overlap from its own log — a snapshot with no matching diff is a call still in flight — and under overlap it never reverts a whole call, only the offending files, naming the calls that were in flight. A command started in the background returns before its process finishes; the writes it makes afterwards are reported and never reverted, because they belong to no call in the log. To say who may write at all, the [`oneWriter`](./checks/one-writer.md) check names the categories that may change files and refuses every other actor's write — a verifier that “fixes” a typo is reverted, with a message naming the writer.
+
+**Reads through the shell.** A breadcrumb is guidance, so `touch` fires on the files a shell command reads too — `cat`, `head`, `sed -n`, `grep` on a path — before the command's output comes back. That detection is best-effort: a script that computes its own paths is not seen. The floor is the diff: a file that changes without ever having been touched gets its breadcrumb at the change, late but not lost.
+
+**What `flow status` and `flow facts` add.** `status` names the session's permission mode and, under Claude Code's auto mode, whether the session is being steered toward shell edits. `facts` counts shell writes and shell reads beside the tool-call edits, with their paths, so the lead and coverage numbers stop under-counting.
+
+**The edges.** Files outside the repo are not watched. Files under `.git` and `node_modules` are outside the snapshot; everything else is inside it, gitignored or not, unless the config's `snapshotIgnore` says otherwise. A file created and deleted within one command leaves no trace to judge. A command you type yourself with `!` is yours, not the agent's.
+
+## 9 · Packs, and sharing across repos
 
 **A pack is a module, so sharing one is a move, not a rewrite.** Rules start in a repo's `guards/`. When a second repo wants them, the pack file moves to an npm package and both repos `import` it — the entries are unchanged, and the config still binds it with one `pack(…)` line. There is nothing on the machine to resolve against and no library to keep in sync: the pack is the code you already read.
 
@@ -361,7 +406,7 @@ export default defineConfig([
 
 A pack that needs a repo fact to work declares it as a mandatory typed parameter, so binding it without that fact does not compile — a pack cannot silently apply another repo's assumptions. `flow status` prints an override's reason beside the entry, so the divergence is visible rather than buried.
 
-## 9 · The vocabulary
+## 10 · The vocabulary
 
 |  |  |
 | --- | --- |
@@ -370,8 +415,10 @@ A pack that needs a repo fact to work declares it as a mandatory typed parameter
 | **bind** | `pack(x)` in `flow.config.ts` — turn a pack's entries on |
 | **override** | `override(pack.entry).<key>(…)` — change one thing about a bound entry; each key replaces the pack's whole value |
 | **moment** | when a rule fires: `session · touch · write · command · delete · commit · turn-end` |
+| **observed** | a change the guard sees after the tool call that made it — a shell edit, a script, a recipe — judged by the same rules as an Edit, and undone if refused |
+| **actor** | the categories a session wears, read from host-written evidence; `.for(…)` binds a rule to one, `ctx.actor` lets a check read them |
 | **check** | a function of `ctx` answering `ctx.ok()` or `ctx.fail(detail)` — a stock one, or your own via `defineCheck` |
-| **ctx** | the only door a check has to the world: the event facts (`file · command · staged`) and the effects (`fs · exec · git`) |
+| **ctx** | the only door a check has to the world: the event facts (`file · command · staged · actor`) and the effects (`fs · exec · git`) |
 | **category** | a name with its recognizer — `defineCategory` — read from host-written evidence, bound with `.for(…)` |
 | **case** | a canned `ctx` that must pass or must block, carried on the entry as `.test({ pass, block })`; a rule with no block case does not load |
 | **fitting** | what `flow status` checks beyond the rules: the config loads, the gate is armed, the hooks are registered |

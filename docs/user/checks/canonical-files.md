@@ -20,7 +20,7 @@ docsTwoDoors: guardrail()
   .at(write, commit)
   .on("docs/**")
   .check(canonicalFiles({ root: "docs", allow: [], folders: ["user", "agent"] }))
-  .message("docs/ holds exactly two doors: user/ (HTML, for people) and agent/ (archival context).")
+  .message("docs/ holds exactly two doors: `user/` (for people) and `agent/` (archival context, for agents). A third folder or a loose file at the top is documentation with no declared audience, which is how a docs folder becomes a drawer.")
   .test({
     pass:  [{ path: "docs/user/index.html", content: "" }],
     block: [{ path: "docs/notes/scratch.md", content: "" }],
