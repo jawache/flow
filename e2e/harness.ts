@@ -97,6 +97,11 @@ export interface Rig {
   readonly home?: string | undefined;
   /** A directory holding the `flow` shim, prepended to PATH for git's own hook. */
   readonly bin?: string | undefined;
+  /**
+   * `HOME`: the user's home, where the host keeps its transcript store (`~/.claude/projects/…`).
+   * A run that reads conversations reads this one's, never the machine's.
+   */
+  readonly user?: string | undefined;
 }
 
 function env(repo: string, rig: Rig): NodeJS.ProcessEnv {
@@ -105,6 +110,7 @@ function env(repo: string, rig: Rig): NodeJS.ProcessEnv {
     CLAUDE_PROJECT_DIR: repo,
     ...(rig.home === undefined ? {} : { CLAUDE_CONFIG_DIR: rig.home }),
     ...(rig.bin === undefined ? {} : { PATH: `${rig.bin}:${process.env["PATH"] ?? ""}` }),
+    ...(rig.user === undefined ? {} : { HOME: rig.user }),
   };
 }
 

@@ -16,7 +16,7 @@
 // the `Symbol.for` decision (flow/language/domain.ts) being paid off rather than a coincidence.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
@@ -964,6 +964,39 @@ describe("a recorded session, replayed", () => {
     expect(answer.stderr).toContain("the recording never answered a exec of `definitely-not-a-real-binary-xyz --check`");
     rmSync(thin);
   });
+});
+
+describe("flow status — the live session's permission mode, and auto mode's steer", () => {
+  // The join status makes on disk: the marker the PreToolUse rail leaves names the session, its log
+  // names the mode, and the host's store holds the transcript whose auto-mode attachment says the
+  // steer. The attachment is shaped like the ones real interactive auto-mode transcripts carry.
+  const cases = [
+    { name: "strict", attachment: { bashFirst: true, bashFirstSteer: "strict", steerOnly: true }, says: "auto — steered towards shell edits (strict)" },
+    { name: "relaxed", attachment: { bashFirst: true, bashFirstSteer: "relaxed", steerOnly: true }, says: "auto — steered towards shell edits (relaxed)" },
+    { name: "plain", attachment: { bashFirst: false, steerOnly: false }, says: "auto — not steered towards shell edits" },
+  ];
+
+  for (const { name, attachment, says } of cases)
+    it(`reads the steer from the session's own transcript in the host store — ${name}`, () => {
+      const user = mkdtempSync(join(tmpdir(), "flow-user-"));
+      try {
+        const session = `steer-${name}`;
+        // Named for the repo as status resolves it: macOS's temp folder is a symlink, and a spawned
+        // process's working directory is the real path.
+        const store = join(user, ".claude", "projects", realpathSync(repo).replace(/[^a-zA-Z0-9]/g, "-"));
+        mkdirSync(store, { recursive: true });
+        const record = { type: "attachment", attachment: { type: "auto_mode", autoModeConsentFlow: false, bypass: false, ...attachment }, sessionId: session, cwd: repo };
+        writeFileSync(join(store, `${session}.jsonl`), `${JSON.stringify({ type: "user", message: { role: "user", content: "go" } })}\n${JSON.stringify(record)}\n`);
+
+        const call = { ...pre("Bash", { command: "ls" }, session), permission_mode: "auto", cwd: repo };
+        expect(runFlow(repo, ["hook", "pre-tool-use"], { user }, JSON.stringify(call)).code).toBe(0);
+        const lines = runFlow(repo, ["status"], { user }).stdout.split("\n");
+        expect(lines).toContain(`  session    ${session} · main, wearing no category`);
+        expect(lines).toContain(`  mode       ${says}`);
+      } finally {
+        rmSync(user, { recursive: true, force: true });
+      }
+    });
 });
 
 describe("flow facts — the record and the conversations, read back", () => {
