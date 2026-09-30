@@ -428,6 +428,24 @@ describe("the delta rail — every change to the tree, judged the moment it has 
     }
   });
 
+  it("records what went round the tool rows: the files a command read and wrote, the mode, and the host's disagreement", () => {
+    const seq = rows(session).length;
+    const command = `cat src/a.ts >/dev/null && ${heredoc("src/shelled.ts", "export const shelled = 1;")}`;
+    // The host's own list names a file flow's diff never saw, and misses the one it did.
+    const payload = { ...bash(command), permission_mode: "auto", tool_response: { stdout: "", bashEditDiff: { changedFiles: [join(repo, "src/other.ts")] } } };
+    try {
+      const answer = called(payload, () => { expect(shell(command)).toBe(0); });
+      expect(answer.code, answer.stderr).toBe(0);
+      const logged = rows(session).slice(seq);
+      expect(logged.find((row) => row["kind"] === "tool")).toMatchObject({ tool: "Bash", mode: "auto" });
+      expect(logged.filter((row) => row["kind"] === "read")).toMatchObject([{ tool: "Bash", path: "src/a.ts" }]);
+      expect(logged.filter((row) => row["kind"] === "write")).toMatchObject([{ tool: "Bash", path: "src/shelled.ts", change: "created" }]);
+      expect(logged.filter((row) => row["kind"] === "mismatch")).toMatchObject([{ hostOnly: ["src/other.ts"], flowOnly: ["src/shelled.ts"] }]);
+    } finally {
+      rmSync(join(repo, "src/shelled.ts"), { force: true });
+    }
+  });
+
   it("judges a FAILED call's partial write the same way — a command that errors has still written", () => {
     const before = readFileSync(join(repo, "src/a.ts"));
     const command = `${heredoc("src/a.ts", "// TODO: half done")}\nexit 1`;

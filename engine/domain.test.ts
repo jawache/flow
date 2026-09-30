@@ -879,7 +879,7 @@ describe("the log's layout", () => {
 
   it("names its row kinds in one closed vocabulary", () => {
     const kind: RowKind = "run";
-    expect([...ROW_KINDS]).toEqual(["meta", "tool", "breadcrumb", "guardrail", "compaction", "run"]);
+    expect([...ROW_KINDS]).toEqual(["meta", "tool", "breadcrumb", "guardrail", "compaction", "run", "read", "write", "mismatch"]);
     expect(ROW_KINDS).toContain(kind);
   });
 
@@ -1032,6 +1032,28 @@ describe("the record — blocks, lead, gaps", () => {
     expect(area?.lead).toEqual({ median: null, buckets: { "0": 0, "1-5": 0, "6-19": 0, "20+": 0 }, noEdit: 1 });
     expect(area?.byCause["drift"]).toBe(1);
     expect(LEAD_BUCKETS).toEqual(["0", "1-5", "6-19", "20+"]);
+  });
+
+  it("a shell write is an edit at the call it rode on, and a shell read a touch — neither is a call", () => {
+    // A heredoc on call 2 wrote src/a.ts: the note shown on call 1 has a lead of 1, and the tree,
+    // the gap list and the tool count read the write as the Edit it stands in for.
+    const rows: Row[] = [
+      toolRowFor("docs/x.md"),
+      row("breadcrumb", { moment: "touch", id: "rails.notes.area", cause: "first-touch" }),
+      row("tool", { tool: "Bash", command: "cat src/b.ts" }),
+      row("read", { tool: "Bash", path: "src/b.ts" }),
+      row("write", { tool: "Bash", path: "src/a.ts", change: "modified" }),
+      row("write", { tool: "Bash", path: "docs/y.md", change: "created" }),
+      row("write", { tool: "Bash", path: "/tmp/elsewhere", change: "created" }),
+      row("read", { tool: "Bash" }),
+    ];
+    const read = metrics({ sessions: [{ session: "s1", rows }], entries: bound, nowMs });
+    const area = read.breadcrumbs.find((b) => b.id === "rails.notes.area");
+    expect(area?.lead).toMatchObject({ median: 1, noEdit: 0 });
+    expect(read.span.tools).toBe(2);
+    expect(read.heat.touches).toEqual({ "docs/x.md": 1, "src/b.ts": 1, "src/a.ts": 1, "docs/y.md": 1 });
+    expect(read.heat.edits).toEqual({ "src/a.ts": 1, "docs/y.md": 1 });
+    expect(read.gaps).toEqual([{ area: "docs", edits: 1 }]);
   });
 
   it("an edit no entry's globs reach is a GAP, ranked by its folder's edit count", () => {

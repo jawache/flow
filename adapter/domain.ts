@@ -99,6 +99,13 @@ export interface HookPayload {
    * the snapshot taken before the call is filed under and looked up by after it.
    */
   readonly tool_use_id?: string;
+  /**
+   * The permission mode the session runs under (`default` · `acceptEdits` · `plan` · `auto` · …),
+   * as the host states it on every call. Recorded and reported; never a category key.
+   */
+  readonly permission_mode?: string;
+  /** What the tool answered, on the after-call rails. Read for the host's own changed-file list. */
+  readonly tool_response?: unknown;
   readonly [key: string]: unknown;
 }
 
@@ -1270,7 +1277,12 @@ function abandoned(call: CallRecord, log: readonly CallRecord[]): boolean {
  * every call it made.
  */
 function spawns(call: CallRecord): boolean {
-  return call.tool === SPAWN_TOOL || call.tool === "Task";
+  return isSpawn(call.tool);
+}
+
+/** The tools that start a subagent rather than doing work of their own. */
+function isSpawn(tool: string): boolean {
+  return tool === SPAWN_TOOL || tool === "Task";
 }
 
 /**
@@ -1995,17 +2007,84 @@ export function toolRow(payload: HookPayload, root = ""): Row | null {
   const tool = text(payload.tool_name);
   if (!tool) return null;
   const input = payload.tool_input ?? {};
+  // The permission mode rides the row of the call it was stated for: `flow status` reads the last
+  // one back, and `flow facts` counts the calls made under each.
+  const mode = text(payload.permission_mode) === "" ? {} : { mode: text(payload.permission_mode) };
   for (const key of PATH_KEYS) {
     // `edit` is stamped HERE, and that is the seam rather than a convenience. Which of a harness's
     // tools change a file is harness knowledge; the engine reads the record back to answer "how
     // much work happened in this area" and may never import this file to ask. So the answer is
     // decided once, at write time, by the only layer entitled to know it.
-    if (input[key]) return { kind: "tool", tool, path: relativise(text(input[key]), root), edit: EDIT_TOOLS.has(tool) };
+    if (input[key]) return { kind: "tool", tool, path: relativise(text(input[key]), root), edit: EDIT_TOOLS.has(tool), ...mode };
   }
-  if (tool === "Bash" && input["command"]) return { kind: "tool", tool, command: text(input["command"]) };
-  if (!input["pattern"]) return { kind: "tool", tool };
+  if (tool === "Bash" && input["command"]) return { kind: "tool", tool, command: text(input["command"]), ...mode };
+  if (!input["pattern"]) return { kind: "tool", tool, ...mode };
   const scope = input["path"] ? { scope: relativise(text(input["path"]), root) } : {};
-  return { kind: "tool", tool, pattern: text(input["pattern"]), ...scope };
+  return { kind: "tool", tool, pattern: text(input["pattern"]), ...scope, ...mode };
+}
+
+/**
+ * The files a Bash call reads by name, one `read` row each — written beside its tool row, so the
+ * record counts a `cat` of a file as a touch of it the way it counts a Read.
+ *
+ * Files only. A directory a search walks is an area, not a file anybody read, and counted as one it
+ * would name a folder as a node of the tree the rows are drawn into.
+ */
+export function readRows(payload: HookPayload, root: string, home?: string): Row[] {
+  const command = text(payload.tool_input?.["command"]);
+  if (text(payload.tool_name) !== "Bash" || command === "") return [];
+  const cwd = text(payload["cwd"]) || root;
+  return bashReads(command, { cwd, root, home }).reads.map((path) => ({ kind: "read", tool: "Bash", path }));
+}
+
+/** How a path changed across one call. */
+function changeOf(change: Change): "created" | "modified" | "deleted" {
+  return change.before === null ? "created" : change.after === null ? "deleted" : "modified";
+}
+
+/**
+ * The files one call changed that its own tool row does not already say, one `write` row each —
+ * what a heredoc, a `sed -i`, a script or a recipe wrote, and what an Edit's call changed besides
+ * the file it named.
+ *
+ * A SPAWN writes none of its own. The Agent call's diff holds everything its subagent wrote through
+ * calls that are logged under their own rows, and counted again here every edit a builder made would
+ * be in the record twice.
+ */
+export function writeRows(payload: HookPayload, changes: readonly Change[], root: string): Row[] {
+  const tool = text(payload.tool_name);
+  if (isSpawn(tool)) return [];
+  const input = payload.tool_input ?? {};
+  const named = EDIT_TOOLS.has(tool) ? relativise(text(input["file_path"] ?? input["notebook_path"]), root) : null;
+  return changes
+    .filter((change) => change.path !== named)
+    .map((change) => ({ kind: "write", tool, path: change.path, change: changeOf(change) }));
+}
+
+/**
+ * Claude Code's own list of the files a command changed, where the host sent one, set against
+ * flow's diff — a `mismatch` row when they disagree, and nothing when they agree or the host said
+ * nothing.
+ *
+ * A CROSS-CHECK, NEVER AN INPUT. The host's list (`bashEditDiff`, a public beta, on by default only
+ * in some permission modes) decides nothing here: it is recorded so a reader of `flow facts` can see
+ * where the two views of one call differ. A host path outside the repo is not a file flow could
+ * have seen, so it is left out rather than reported; and when the host says its list was cut short
+ * (`moreFiles`), a file only flow saw is not a disagreement anybody can claim.
+ */
+export function mismatchRow(payload: HookPayload, changes: readonly Change[], root: string): Row | null {
+  const response = payload.tool_response;
+  const diff = typeof response === "object" && response !== null ? (response as Record<string, unknown>)["bashEditDiff"] : undefined;
+  if (typeof diff !== "object" || diff === null) return null;
+  const listed = (diff as Record<string, unknown>)["changedFiles"];
+  if (!Array.isArray(listed)) return null;
+  const host = [...new Set(listed.map((path) => relativise(text(path), root)).filter(insideRepo))];
+  const seen = changes.map((change) => change.path);
+  const cut = Number((diff as Record<string, unknown>)["moreFiles"]) > 0;
+  const hostOnly = host.filter((path) => !seen.includes(path));
+  const flowOnly = cut ? [] : seen.filter((path) => !host.includes(path));
+  if (hostOnly.length === 0 && flowOnly.length === 0) return null;
+  return { kind: "mismatch", tool: text(payload.tool_name), hostOnly, flowOnly };
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -2503,6 +2582,10 @@ export interface Narrative {
   readonly stats: {
     readonly edits: number;
     readonly writes: number;
+    /** Files changed round the edit tools — a heredoc, a `sed -i`, a script — from flow's own diff. */
+    readonly shellWrites: number;
+    /** Files a Bash command read by name. */
+    readonly shellReads: number;
     readonly commits: number;
     readonly recipes: Readonly<Record<string, number>>;
     readonly bypasses: Readonly<Record<string, number>>;
@@ -2512,6 +2595,8 @@ export interface Narrative {
   readonly bypassSites: readonly Bypass[];
   readonly loops: readonly EditLoop[];
   readonly retries: readonly Retry[];
+  /** The paths behind the two shell counts, with how often each. */
+  readonly shell: { readonly writes: Readonly<Record<string, number>>; readonly reads: Readonly<Record<string, number>> };
   /** Every in-repo file the session touched, with how often. The facts layer scores coverage. */
   readonly touched: Readonly<Record<string, number>>;
 }
@@ -2530,10 +2615,18 @@ const RETRY = 3;
  *
  * `tools` is INJECTED — the shell reads the justfile — so the same call is reproducible from a
  * fixture, which is the same discipline the guard itself is built on.
+ *
+ * `rows` is the conversation's own stream, when it has one, and it is where a SHELL WRITE comes
+ * from: a transcript says what command ran, never what it changed, and only flow's diff knows that.
+ * A conversation with no stream has no shell writes to count, which is why the count reads zero
+ * there rather than a guess. Shell READS come from the transcript, like every Read does, so they are
+ * counted in every conversation.
  */
-export function narrative(events: readonly TranscriptEvent[], tools: readonly string[] = []): Narrative {
+export function narrative(events: readonly TranscriptEvent[], tools: readonly string[] = [], rows: readonly Row[] = []): Narrative {
   let edits = 0;
   let writes = 0;
+  let shellReads = 0;
+  const shell = { writes: {} as Record<string, number>, reads: {} as Record<string, number> };
   let commits = 0;
   const recipes: Record<string, number> = {};
   const bypasses: Record<string, number> = {};
@@ -2587,7 +2680,11 @@ export function narrative(events: readonly TranscriptEvent[], tools: readonly st
     }
     if (event.name !== "Bash") continue;
     // A file read through the shell is a touch like a Read is; a searched directory is not a file.
-    for (const path of event.reads ?? []) touched[path] = (touched[path] ?? 0) + 1;
+    for (const path of event.reads ?? []) {
+      touched[path] = (touched[path] ?? 0) + 1;
+      shell.reads[path] = (shell.reads[path] ?? 0) + 1;
+      shellReads += 1;
+    }
     const command = text(event.input["command"]);
     const read = classifyBash(command, tools);
     for (const recipe of read.recipes) recipes[recipe] = (recipes[recipe] ?? 0) + 1;
@@ -2603,13 +2700,23 @@ export function narrative(events: readonly TranscriptEvent[], tools: readonly st
   for (const [command, lines] of Object.entries(byCommand))
     if (lines.length >= RETRY) retries.push({ command, count: lines.length, lines });
 
+  let shellWrites = 0;
+  for (const row of rows) {
+    const path = typeof row["path"] === "string" ? row["path"] : "";
+    if (row.kind !== "write" || !insideRepo(path)) continue;
+    shellWrites += 1;
+    shell.writes[path] = (shell.writes[path] ?? 0) + 1;
+    touched[path] = (touched[path] ?? 0) + 1;
+  }
+
   return {
-    stats: { edits, writes, commits, recipes, bypasses },
+    stats: { edits, writes, shellWrites, shellReads, commits, recipes, bypasses },
     prompts,
     corrections,
     bypassSites,
     loops,
     retries,
+    shell,
     touched,
   };
 }
@@ -2636,7 +2743,13 @@ export function mergeNarratives(each: readonly { session: string; read: Narrativ
   };
   let edits = 0;
   let writes = 0;
+  let shellWrites = 0;
+  let shellReads = 0;
   let commits = 0;
+  const shell = { writes: {} as Record<string, number>, reads: {} as Record<string, number> };
+  const add = (into: Record<string, number>, from: Readonly<Record<string, number>>): void => {
+    for (const [key, n] of Object.entries(from)) into[key] = (into[key] ?? 0) + n;
+  };
 
   for (const { session, read } of each) {
     out.prompts.push(...tag(read.prompts, session));
@@ -2646,12 +2759,16 @@ export function mergeNarratives(each: readonly { session: string; read: Narrativ
     out.retries.push(...tag(read.retries, session));
     edits += read.stats.edits;
     writes += read.stats.writes;
+    shellWrites += read.stats.shellWrites;
+    shellReads += read.stats.shellReads;
     commits += read.stats.commits;
-    for (const [key, n] of Object.entries(read.stats.recipes)) recipes[key] = (recipes[key] ?? 0) + n;
-    for (const [key, n] of Object.entries(read.stats.bypasses)) bypasses[key] = (bypasses[key] ?? 0) + n;
-    for (const [key, n] of Object.entries(read.touched)) touched[key] = (touched[key] ?? 0) + n;
+    add(recipes, read.stats.recipes);
+    add(bypasses, read.stats.bypasses);
+    add(touched, read.touched);
+    add(shell.writes, read.shell.writes);
+    add(shell.reads, read.shell.reads);
   }
-  return { stats: { edits, writes, commits, recipes, bypasses }, ...out, touched };
+  return { stats: { edits, writes, shellWrites, shellReads, commits, recipes, bypasses }, ...out, shell, touched };
 }
 
 // ── weaken-after-block ─────────────────────────────────────────────────────
@@ -2934,6 +3051,104 @@ export function uncoveredAreas(touched: Readonly<Record<string, number>>, entrie
     .sort((a, b) => b.touches - a.touches || a.path.localeCompare(b.path));
 }
 
+// ── what the session ran under, and where the host's view of a call differed ──
+
+/**
+ * Whether Claude Code's auto mode is steering the session towards shell edits — `bashFirst` on the
+ * host's auto-mode attachment, which tells the model to read with `cat` and change files with `sed`,
+ * heredocs and scripts rather than Read, Edit and Write. `variant` is the host's own word for how hard
+ * (`strict` · `relaxed`), when it gave one.
+ */
+export interface Steer {
+  readonly shellFirst: boolean;
+  readonly variant: string | null;
+}
+
+/**
+ * The auto-mode steer a conversation is under, from the LAST auto-mode attachment in its transcript
+ * — or null when it has none, or the last one is the host leaving auto mode.
+ *
+ * Read from the END, and only lines that name the attachment are parsed: a transcript is a couple
+ * of megabytes and the answer is one record.
+ */
+export function steerOf(jsonl: string): Steer | null {
+  const raw = jsonl.split("\n");
+  for (let i = raw.length - 1; i >= 0; i--) {
+    const line = raw[i] as string;
+    if (!line.includes('"auto_mode')) continue;
+    const attachment = parseLine(line)?.record["attachment"] as Record<string, unknown> | undefined;
+    const type = attachment?.["type"];
+    if (type === "auto_mode_exit") return null;
+    if (type !== "auto_mode" || attachment === undefined) continue;
+    const variant = attachment["bashFirstSteer"];
+    return { shellFirst: attachment["bashFirst"] === true, variant: typeof variant === "string" && variant !== "" ? variant : null };
+  }
+  return null;
+}
+
+/** The permission mode the last recorded call was made under, or null when no row states one. */
+export function lastMode(rows: readonly Row[]): string | null {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i] as Row;
+    if (row.kind === "tool" && typeof row["mode"] === "string" && row["mode"] !== "") return row["mode"];
+  }
+  return null;
+}
+
+/** The permission modes the read conversations ran under, and how many of them auto mode steered. */
+export interface Modes {
+  /** Recorded calls per permission mode. */
+  readonly calls: Readonly<Record<string, number>>;
+  /** Conversations whose transcript last stood in auto mode. */
+  readonly auto: number;
+  /** Of those, the ones steered towards shell edits, and by which variant. */
+  readonly steered: number;
+  readonly variants: Readonly<Record<string, number>>;
+}
+
+/** Each conversation's rows and steer, added up. */
+export function modesOf(each: readonly { readonly rows: readonly Row[]; readonly steer: Steer | null }[]): Modes {
+  const calls: Record<string, number> = {};
+  const variants: Record<string, number> = {};
+  let auto = 0;
+  let steered = 0;
+  for (const { rows, steer } of each) {
+    for (const row of rows) if (row.kind === "tool" && typeof row["mode"] === "string") calls[row["mode"]] = (calls[row["mode"]] ?? 0) + 1;
+    if (steer === null) continue;
+    auto += 1;
+    if (!steer.shellFirst) continue;
+    steered += 1;
+    if (steer.variant !== null) variants[steer.variant] = (variants[steer.variant] ?? 0) + 1;
+  }
+  return { calls, auto, steered, variants };
+}
+
+/** Where Claude Code's changed-file list and flow's diff disagreed, over the read conversations. */
+export interface Mismatches {
+  readonly calls: number;
+  /** Paths only the host listed, and how often. */
+  readonly hostOnly: Readonly<Record<string, number>>;
+  /** Paths only flow's diff held, and how often. */
+  readonly flowOnly: Readonly<Record<string, number>>;
+}
+
+/** The `mismatch` rows, added up. */
+export function mismatchesIn(rows: readonly Row[]): Mismatches {
+  const hostOnly: Record<string, number> = {};
+  const flowOnly: Record<string, number> = {};
+  let calls = 0;
+  const tally = (into: Record<string, number>, paths: unknown): void => {
+    if (Array.isArray(paths)) for (const path of paths) if (typeof path === "string") into[path] = (into[path] ?? 0) + 1;
+  };
+  for (const row of rows) {
+    if (row.kind !== "mismatch") continue;
+    calls += 1;
+    tally(hostOnly, row["hostOnly"]);
+    tally(flowOnly, row["flowOnly"]);
+  }
+  return { calls, hostOnly, flowOnly };
+}
+
 export interface Facts {
   readonly root: string;
   readonly store: { readonly dir: string; readonly exists: boolean; readonly ignored: readonly string[] };
@@ -2958,12 +3173,23 @@ export interface Facts {
   readonly actors: readonly SpawnRecord[];
   /** A rail refused, and then somebody edited the guard. A pointer, never an accusation. */
   readonly weakened: readonly Weakening[];
+  /** The permission modes the read conversations ran under, and the auto-mode steer. */
+  readonly modes: Modes;
+  /** Where the host's changed-file list disagreed with flow's diff. */
+  readonly mismatches: Mismatches;
   /** How many conversations were marked read, when asked for. Null when not asked. */
   readonly marked: number | null;
 }
 
 /** How many gaps and how many actors a headline lists before it stops being a headline. */
 const HEADLINE = 5;
+
+/** A tally of paths as one line: the most-hit first, a count where it is more than one, then the rest counted. */
+function pathList(tally: Readonly<Record<string, number>>): string {
+  const ranked = Object.entries(tally).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const shown = ranked.slice(0, HEADLINE).map(([path, n]) => (n === 1 ? path : `${path} ${n}×`));
+  return shown.join(" · ") + (ranked.length > HEADLINE ? ` · …and ${ranked.length - HEADLINE} more` : "");
+}
 
 /**
  * The reading, as the lines a person reads. The whole of what `flow facts` prints.
@@ -2998,12 +3224,34 @@ export function formatFacts(facts: Facts): string[] {
   if (headline.quiet.length > 0)
     lines.push(`  quiet     ${headline.quiet.map((q) => `${q.id} (${q.daysSince}d)`).join(" · ")}`);
 
-  const { stats, corrections, loops, retries, bypassSites } = facts.narrative;
+  const { stats, corrections, loops, retries, bypassSites, shell } = facts.narrative;
   lines.push(
-    `  session   ${stats.edits} edits · ${stats.writes} writes · ${stats.commits} commits · ` +
+    `  session   ${stats.edits} edits · ${stats.writes} writes · ${stats.shellWrites} shell writes · ` +
+      `${stats.shellReads} shell reads · ${stats.commits} commits · ` +
       `${corrections.length} corrections · ${loops.length} edit loops · ${retries.length} retries · ` +
       `${bypassSites.length} bypasses`,
   );
+  // THE PATHS BEHIND THE SHELL COUNTS, so a number that went round the edit tools can be followed.
+  if (stats.shellWrites > 0) lines.push(`  shell     wrote ${pathList(shell.writes)}`);
+  if (stats.shellReads > 0) lines.push(`  shell     read ${pathList(shell.reads)}`);
+  const modes = Object.entries(facts.modes.calls).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  if (modes.length > 0 || facts.modes.auto > 0) {
+    const variants = Object.entries(facts.modes.variants).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    lines.push(
+      `  mode      ${modes.length === 0 ? "no call recorded a mode" : modes.map(([mode, n]) => `${mode} ${n} call${n === 1 ? "" : "s"}`).join(" · ")}` +
+        (facts.modes.auto === 0
+          ? ""
+          : ` — ${facts.modes.steered} of ${facts.modes.auto} auto-mode conversation${facts.modes.auto === 1 ? "" : "s"} steered towards shell edits` +
+            (variants.length === 0 ? "" : ` (${variants.map(([variant, n]) => `${variant} ${n}`).join(" · ")})`)),
+    );
+  }
+  const { mismatches } = facts;
+  if (mismatches.calls > 0)
+    lines.push(
+      `  ⚠ Claude Code's changed-file list disagreed with flow's diff on ${mismatches.calls} call${mismatches.calls === 1 ? "" : "s"}` +
+        (Object.keys(mismatches.hostOnly).length === 0 ? "" : ` — only Claude Code listed ${pathList(mismatches.hostOnly)}`) +
+        (Object.keys(mismatches.flowOnly).length === 0 ? "" : ` — only flow's diff held ${pathList(mismatches.flowOnly)}`),
+    );
   // The transcript's own coverage answer, which reaches conversations the record cannot.
   for (const area of facts.uncovered.slice(0, HEADLINE))
     lines.push(`  unwatched ${area.path} — touched ${area.touches}×, no entry reaches it`);
@@ -3571,8 +3819,18 @@ export interface StatusFacts {
    * That is a repo whose guard is not fully in force, which is exactly what a red line is for.
    */
   readonly grammars: readonly { readonly name: string; readonly libraryPath: string; readonly present: boolean }[];
-  /** Who last worked in this worktree, from the marker the write rail leaves. Null when nobody has. */
-  readonly session: { readonly id: string; readonly agent: string | null; readonly wearing: readonly string[] } | null;
+  /**
+   * Who last worked in this worktree, from the marker the write rail leaves. Null when nobody has.
+   * `mode` is the permission mode its last recorded call stated, null when none did; `steer` is auto
+   * mode's steer as its transcript last stated it, asked only under auto mode.
+   */
+  readonly session: {
+    readonly id: string;
+    readonly agent: string | null;
+    readonly wearing: readonly string[];
+    readonly mode?: string | null | undefined;
+    readonly steer?: Steer | null | undefined;
+  } | null;
   /**
    * What git ignores here, one path per entry, a directory with its trailing `/` — plus any literal
    * path a write or delete rule names that git would ignore though it does not exist yet (`.env`).
@@ -3836,6 +4094,8 @@ export function statusLines(s: Status): string[] {
         ? "no live session has marked this worktree yet"
         : `${s.session.id}${s.session.agent === null ? "" : ` · ${s.session.agent}`}, wearing ${s.session.wearing.length === 0 ? "no category" : s.session.wearing.join(" · ")}`),
   ];
+  const mode = s.session?.mode ?? null;
+  if (mode !== null) lines.push(`  mode       ${modeLine(mode, s.session?.steer ?? null)}`);
   if (s.categories.length > 0) lines.push(`  categories ${s.categories.join(" · ")} — what the entries below bind to`);
 
   for (const { moment, entries } of s.moments.moments) {
@@ -3859,3 +4119,15 @@ export function statusLines(s: Status): string[] {
 }
 
 const count = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/**
+ * The permission mode the live session is under, and — under auto mode only — whether the host is
+ * steering it towards shell edits, which is the steer that sends work round Edit and through the
+ * diff instead.
+ */
+function modeLine(mode: string, steer: Steer | null): string {
+  if (mode !== "auto") return mode;
+  if (steer === null) return "auto — no steer towards shell edits found in its transcript";
+  if (!steer.shellFirst) return "auto — not steered towards shell edits";
+  return `auto — steered towards shell edits${steer.variant === null ? "" : ` (${steer.variant})`}`;
+}

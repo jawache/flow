@@ -97,6 +97,9 @@ import {
   toResult,
   tokensFromTranscript,
   toolRow,
+  readRows,
+  writeRows,
+  mismatchRow,
   turnActions,
   whileBroken,
   included,
@@ -779,6 +782,14 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
   if (hook === "pre-tool-use" && !off) {
     const row = toolRow(payload, root);
     if (row) rows.push(row);
+    rows.push(...readRows(payload, root, homedir()));
+  }
+  // What the call did to the tree, beside what it named — and where the host's own list of it
+  // disagrees with flow's diff.
+  if (changes !== undefined && !off) {
+    rows.push(...writeRows(payload, changes, root));
+    const mismatch = mismatchRow(payload, changes, root);
+    if (mismatch !== null) rows.push(mismatch);
   }
 
   // RECORDING is a second, independent stream and it is deliberately not gated on `off`: turning

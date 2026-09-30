@@ -20,24 +20,27 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { VERSION } from "../version.ts";
-import { ensureFlowDir, isOff } from "../engine/state.ts";
+import { ensureFlowDir, isOff, readRows } from "../engine/state.ts";
 import { FLOW_DIR } from "../engine/domain.ts";
 import {
   CONFIG_FILE,
   GATE_PATH,
   HOOKS_DIR,
   initLines,
+  lastMode,
   literalScopes,
   pathLines,
   planInit,
   status,
   statusCode,
   statusLines,
+  steerOf,
   type InitFacts,
   type InitPlan,
   type StatusFacts,
 } from "./domain.ts";
 import { grammarsAt, loadRegime, readText, wearer } from "./claude.ts";
+import { readStore, readTranscript } from "./archive.ts";
 
 /** What a verb answers with. The same three edges a hook answers on, minus the decision object. */
 export interface VerbResult {
@@ -140,12 +143,25 @@ function parsedFile(root: string, path: string): { readonly value: unknown; read
   }
 }
 
-/** Who last worked in this worktree, and what they wear — the marker the write rail leaves. */
+/**
+ * Who last worked in this worktree, what they wear, and the permission mode they run under — the
+ * marker the write rail leaves, and the mode its last call recorded.
+ */
 function liveSession(root: string): StatusFacts["session"] {
   const { session, agent, wearing } = wearer(root);
   // `wearer` answers with the attribution's fallback when the marker is missing, stale or malformed,
   // and that fallback is not a session: reporting it would name a chat that never existed.
-  return agent === null ? null : { id: session, agent, wearing };
+  if (agent === null) return null;
+  const mode = lastMode(readRows(root, session));
+  return { id: session, agent, wearing, mode, steer: mode === "auto" ? steerOf(transcriptOf(root, session, agent)) : null };
+}
+
+/** That agent's own transcript from the host's store, or nothing when the store does not hold it. */
+function transcriptOf(root: string, session: string, agent: string): string {
+  const store = readStore(root);
+  const stem = agent === "main" ? null : `agent-${agent}`;
+  const held = store.transcripts.find((t) => t.ref.session === session && t.ref.agent === stem);
+  return held === undefined ? "" : readTranscript(store.dir, held).jsonl;
 }
 
 // ── init ─────────────────────────────────────────────────────────────────────

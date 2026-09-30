@@ -659,8 +659,16 @@ export const FLOW_GITIGNORE = "# flow's own state — telemetry and session mark
 /** The log schema this build writes, stamped into every session file's first row. */
 export const LOG_VERSION = 1;
 
-/** Every kind a log row may be. Closed — a reader that meets another word has met corruption. */
-export const ROW_KINDS = ["meta", "tool", "breadcrumb", "guardrail", "compaction", "run"] as const;
+/**
+ * Every kind a log row may be. Closed — a reader that meets another word has met corruption.
+ *
+ * `read` and `write` are what went ROUND the tool rows: a file a shell command read by name, and a
+ * file a call changed that the call did not name — a heredoc, a `sed -i`, a script. A `tool` row
+ * says a call happened; these say what it did to the tree, so the coverage and lead numbers count
+ * work done through the shell as well as through Edit. `mismatch` is the host's own list of the
+ * files a command changed disagreeing with flow's diff: a fact to read, never an input to a rule.
+ */
+export const ROW_KINDS = ["meta", "tool", "breadcrumb", "guardrail", "compaction", "run", "read", "write", "mismatch"] as const;
 export type RowKind = (typeof ROW_KINDS)[number];
 
 export function flowDir(root: string): string {
@@ -1230,9 +1238,15 @@ export function metrics({ sessions, entries, nowMs, minSessions = 15, minDays = 
       const ts = field(row, "ts");
       if (ts !== null) stamps.push(ts);
 
-      if (row.kind === "tool") {
-        toolIndex += 1;
-        tools += 1;
+      // WHAT A CALL DID BEYOND WHAT IT NAMED. A file a shell command read is a touch, and a file a
+      // call changed without naming it is an edit, both placed at the call they rode on — they are
+      // not calls of their own, so the tool count and the lead's distance do not move for them.
+      const tool = row.kind === "tool";
+      if (tool || row.kind === "read" || row.kind === "write") {
+        if (tool) {
+          toolIndex += 1;
+          tools += 1;
+        }
         const path = field(row, "path");
         // Everything the lead, the gap list and the tree need — ONE walk over the rows, and one
         // decision about whether anything was watching. A path outside the repo is not a file any
@@ -1240,7 +1254,7 @@ export function metrics({ sessions, entries, nowMs, minSessions = 15, minDays = 
         // breadcrumb could have steered.
         if (path === null || !insideRepo(path)) continue;
         touches[path] = (touches[path] ?? 0) + 1;
-        if (!isEdit(row)) continue;
+        if (tool ? !isEdit(row) : row.kind === "read") continue;
         edited[path] = (edited[path] ?? 0) + 1;
         edits.push({ at: toolIndex, path });
         if (!scoped.some((e) => covers(e, path))) uncovered[path] = (uncovered[path] ?? 0) + 1;

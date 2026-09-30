@@ -48,6 +48,13 @@ import {
   toResult,
   tokensFromTranscript,
   toolRow,
+  modesOf,
+  mismatchesIn,
+  steerOf,
+  lastMode,
+  readRows,
+  writeRows,
+  mismatchRow,
   touchedPath,
   CONFIG_FILE,
   configImports,
@@ -83,6 +90,8 @@ import {
   type AdapterEvent,
   type EventWorld,
   type HookPayload,
+  type Change,
+  type Steer,
   type Shown,
   type TranscriptEvent,
   type Candidate,
@@ -867,6 +876,63 @@ describe("the flight recorder's row", () => {
     });
     expect(toolRow({ session_id: "s" }), "no tool is no row").toBeNull();
   });
+
+  it("carries the permission mode the host stated for the call, on every shape of row", () => {
+    const moded = (tool: string, input: Record<string, unknown>): HookPayload => ({ ...pre(tool, input), permission_mode: "auto" });
+    expect(toolRow(moded("Edit", { file_path: "/repo/a.ts" }), ROOT)).toMatchObject({ mode: "auto" });
+    expect(toolRow(moded("Bash", { command: "ls" }), ROOT)).toMatchObject({ mode: "auto" });
+    expect(toolRow(moded("Grep", { pattern: "x" }), ROOT)).toMatchObject({ mode: "auto" });
+    expect(toolRow(moded("Task", {}), ROOT)).toStrictEqual({ kind: "tool", tool: "Task", mode: "auto" });
+    expect(toolRow(pre("Task", {}), ROOT), "no mode stated is no field").not.toHaveProperty("mode");
+  });
+
+  it("a Bash call's files read by name are read rows — a searched directory is not", () => {
+    const bash = { ...pre("Bash", { command: "cat src/a.ts && rg TODO src && head -3 ../out.txt" }), cwd: ROOT };
+    expect(readRows(bash, ROOT)).toStrictEqual([{ kind: "read", tool: "Bash", path: "src/a.ts" }]);
+    expect(readRows(pre("Read", { file_path: "/repo/src/a.ts" }), ROOT), "a Read is its own tool row").toEqual([]);
+    expect(readRows(pre("Bash", {}), ROOT)).toEqual([]);
+  });
+
+  it("the files a call changed are write rows, except the file an edit tool named and anything a spawn saw", () => {
+    const changes: Change[] = [
+      { path: "src/a.ts", before: "a", after: "b" },
+      { path: "src/new.ts", before: null, after: "n" },
+      { path: "src/old.ts", before: "o", after: null },
+    ];
+    expect(writeRows(pre("Bash", { command: "python3 - <<EOF" }), changes, ROOT)).toStrictEqual([
+      { kind: "write", tool: "Bash", path: "src/a.ts", change: "modified" },
+      { kind: "write", tool: "Bash", path: "src/new.ts", change: "created" },
+      { kind: "write", tool: "Bash", path: "src/old.ts", change: "deleted" },
+    ]);
+    expect(writeRows(pre("Edit", { file_path: "/repo/src/a.ts" }), changes, ROOT).map((r) => r["path"])).toEqual([
+      "src/new.ts",
+      "src/old.ts",
+    ]);
+    expect(writeRows(pre("NotebookEdit", { notebook_path: "/repo/src/new.ts" }), changes, ROOT)).toHaveLength(2);
+    expect(writeRows(pre("Agent", { prompt: "build" }), changes, ROOT), "the subagent's calls log their own").toEqual([]);
+    expect(writeRows(pre("Task", {}), changes, ROOT)).toEqual([]);
+  });
+
+  it("the host's own changed-file list is a mismatch row only where it disagrees with flow's diff", () => {
+    const changes: Change[] = [
+      { path: "src/a.ts", before: "a", after: "b" },
+      { path: "src/b.ts", before: "a", after: "b" },
+    ];
+    const after = (bashEditDiff: unknown): HookPayload => ({ ...pre("Bash", { command: "x" }), tool_response: { stdout: "", bashEditDiff } });
+    expect(mismatchRow(after({ changedFiles: ["/repo/src/a.ts", "/repo/src/b.ts"] }), changes, ROOT), "agreement is silence").toBeNull();
+    expect(mismatchRow(after({ changedFiles: ["/repo/src/a.ts", "/repo/.env", "/elsewhere/x"] }), changes, ROOT)).toStrictEqual({
+      kind: "mismatch",
+      tool: "Bash",
+      hostOnly: [".env"],
+      flowOnly: ["src/b.ts"],
+    });
+    // A list the host cut short cannot prove flow saw something extra.
+    expect(mismatchRow(after({ changedFiles: ["/repo/src/a.ts"], moreFiles: 3 }), changes, ROOT)).toBeNull();
+    expect(mismatchRow(pre("Bash", { command: "x" }), changes, ROOT), "no list, no opinion").toBeNull();
+    expect(mismatchRow({ ...pre("Bash", {}), tool_response: "text" }, changes, ROOT)).toBeNull();
+    expect(mismatchRow(after(null), changes, ROOT)).toBeNull();
+    expect(mismatchRow(after({ files: [] }), changes, ROOT)).toBeNull();
+  });
 });
 
 describe("the environment a check's command sees", () => {
@@ -1164,7 +1230,74 @@ describe("the narrative reading — stats, loops, retries, and what was touched"
     expect(merged.stats.edits).toBe(2);
     expect(merged.touched).toEqual({ "a.ts": 2 });
     expect(merged.corrections).toEqual([{ line: 1, text: "no, undo it", session: "s1" }]);
-    expect(mergeNarratives([]).stats).toEqual({ edits: 0, writes: 0, commits: 0, recipes: {}, bypasses: {} });
+    expect(mergeNarratives([]).stats).toEqual({ edits: 0, writes: 0, shellWrites: 0, shellReads: 0, commits: 0, recipes: {}, bypasses: {} });
+  });
+
+  it("counts shell writes from the conversation's own stream, and shell reads from its transcript", () => {
+    const cat: TranscriptEvent = { line: 1, kind: "use", ts: null, id: "t1", name: "Bash", input: { command: "cat src/a.ts" }, path: "", reads: ["src/a.ts"] };
+    const heredoc = call("Bash", { command: "python3 - <<'EOF'\nopen('src/b.ts','w')\nEOF" }, 2);
+    const rows: Row[] = [
+      { kind: "tool", tool: "Bash", command: "python3 - <<'EOF'" },
+      { kind: "write", tool: "Bash", path: "src/b.ts", change: "modified" },
+      { kind: "write", tool: "Bash", path: "src/b.ts", change: "modified" },
+      { kind: "write", tool: "Bash", path: "/tmp/outside", change: "created" },
+      { kind: "read", tool: "Bash", path: "src/a.ts" },
+    ];
+    const read = narrative([cat, heredoc], [], rows);
+    expect(read.stats).toMatchObject({ edits: 0, writes: 0, shellWrites: 2, shellReads: 1 });
+    expect(read.shell).toEqual({ writes: { "src/b.ts": 2 }, reads: { "src/a.ts": 1 } });
+    expect(read.touched).toEqual({ "src/a.ts": 1, "src/b.ts": 2 });
+    // No stream is no shell writes — the transcript cannot say what a command changed.
+    expect(narrative([cat, heredoc]).stats.shellWrites).toBe(0);
+
+    const merged = mergeNarratives([
+      { session: "s1", read },
+      { session: "s2", read },
+    ]);
+    expect(merged.stats).toMatchObject({ shellWrites: 4, shellReads: 2 });
+    expect(merged.shell).toEqual({ writes: { "src/b.ts": 4 }, reads: { "src/a.ts": 2 } });
+  });
+});
+
+describe("what the session ran under — the permission mode, and auto mode's steer", () => {
+  const attached = (attachment: Record<string, unknown>): string => line({ type: "attachment", attachment });
+
+  it("reads the steer from the LAST auto-mode attachment, and none once auto mode was left", () => {
+    const strict = attached({ type: "auto_mode", bashFirst: true, bashFirstSteer: "strict", steerOnly: true });
+    const plain = attached({ type: "auto_mode", bashFirst: false, steerOnly: false });
+    expect(steerOf([human("hi"), strict].join("\n"))).toEqual({ shellFirst: true, variant: "strict" });
+    expect(steerOf([strict, plain].join("\n"))).toEqual({ shellFirst: false, variant: null });
+    expect(steerOf([strict, attached({ type: "auto_mode_exit", bashFirst: true })].join("\n"))).toBeNull();
+    expect(steerOf([strict, attached({ type: "auto_mode_other" }), "{broken"].join("\n"))).toEqual({ shellFirst: true, variant: "strict" });
+    expect(steerOf(human("never in auto mode"))).toBeNull();
+    expect(steerOf("")).toBeNull();
+  });
+
+  it("the last call that stated a mode is the mode the session is under", () => {
+    expect(lastMode([{ kind: "tool", tool: "Edit", mode: "default" }, { kind: "tool", tool: "Bash", mode: "auto" }, { kind: "tool", tool: "Read" }])).toBe("auto");
+    expect(lastMode([{ kind: "tool", tool: "Read" }, { kind: "run", mode: "x" }])).toBeNull();
+  });
+
+  it("adds up the calls per mode, and how many auto-mode conversations were steered and how", () => {
+    const tool = (mode?: string): Row => ({ kind: "tool", tool: "Bash", ...(mode === undefined ? {} : { mode }) });
+    expect(
+      modesOf([
+        { rows: [tool("auto"), tool("auto"), tool()], steer: { shellFirst: true, variant: "strict" } },
+        { rows: [tool("default")], steer: null },
+        { rows: [], steer: { shellFirst: false, variant: null } },
+        { rows: [], steer: { shellFirst: true, variant: null } },
+      ]),
+    ).toEqual({ calls: { auto: 2, default: 1 }, auto: 3, steered: 2, variants: { strict: 1 } });
+  });
+
+  it("adds up where the host's changed-file list disagreed with flow's diff", () => {
+    expect(
+      mismatchesIn([
+        { kind: "mismatch", tool: "Bash", hostOnly: [".env"], flowOnly: ["src/b.ts"] },
+        { kind: "mismatch", tool: "Bash", hostOnly: [".env", 3], flowOnly: "nonsense" },
+        { kind: "write", path: "x" },
+      ]),
+    ).toEqual({ calls: 2, hostOnly: { ".env": 2 }, flowOnly: { "src/b.ts": 1 } });
   });
 });
 
@@ -1340,6 +1473,8 @@ describe("formatFacts — the whole of what a person sees", () => {
     uncovered: [],
     actors: [],
     weakened: [],
+    modes: modesOf([]),
+    mismatches: mismatchesIn([]),
     marked: null,
     ...over,
   });
@@ -1370,6 +1505,33 @@ describe("formatFacts — the whole of what a person sees", () => {
     expect(text).toContain("gap       docs — 1 edit, nothing watches it");
     expect(text).toContain("dead      core.fiction");
     expect(text).toContain("retire    core.fiction — bound, never once reached");
+  });
+
+  it("counts the shell's writes and reads beside the edits, and lists their paths", () => {
+    const writes: Record<string, number> = { "src/a.ts": 3, "src/b.ts": 1, "c/1": 1, "c/2": 1, "c/3": 1, "c/4": 1 };
+    const narrativeWith = { ...mergeNarratives([]), stats: { ...mergeNarratives([]).stats, shellWrites: 8, shellReads: 1 }, shell: { writes, reads: { "src/c.ts": 1 } } };
+    const text = formatFacts(empty({ narrative: narrativeWith })).join("\n");
+    expect(text).toContain("0 edits · 0 writes · 8 shell writes · 1 shell reads · 0 commits");
+    expect(text).toContain("  shell     wrote src/a.ts 3× · c/1 · c/2 · c/3 · c/4 · …and 1 more");
+    expect(text).toContain("  shell     read src/c.ts");
+    expect(formatFacts(empty()).join("\n"), "nothing through the shell is no path line").not.toContain("  shell ");
+  });
+
+  it("names the permission modes and whether auto mode steered towards shell edits", () => {
+    const one = formatFacts(empty({ modes: { calls: { default: 1, auto: 40 }, auto: 2, steered: 1, variants: { strict: 1 } } })).join("\n");
+    expect(one).toContain("  mode      auto 40 calls · default 1 call — 1 of 2 auto-mode conversations steered towards shell edits (strict 1)");
+    expect(formatFacts(empty({ modes: { calls: { default: 3 }, auto: 0, steered: 0, variants: {} } }))).toContain("  mode      default 3 calls");
+    expect(formatFacts(empty({ modes: { calls: {}, auto: 1, steered: 0, variants: {} } })).join("\n")).toContain(
+      "  mode      no call recorded a mode — 0 of 1 auto-mode conversation steered towards shell edits",
+    );
+    expect(formatFacts(empty()).join("\n")).not.toContain("  mode ");
+  });
+
+  it("flags where Claude Code's own changed-file list disagreed with flow's diff", () => {
+    const text = formatFacts(empty({ mismatches: { calls: 2, hostOnly: { ".env": 2 }, flowOnly: { "src/b.ts": 1 } } })).join("\n");
+    expect(text).toContain("⚠ Claude Code's changed-file list disagreed with flow's diff on 2 calls — only Claude Code listed .env 2× — only flow's diff held src/b.ts");
+    expect(formatFacts(empty({ mismatches: { calls: 1, hostOnly: {}, flowOnly: { x: 1 } } })).join("\n")).toContain("on 1 call — only flow's diff held x");
+    expect(formatFacts(empty()).join("\n")).not.toContain("disagreed");
   });
 
   it("names an entry that used to catch things and stopped", () => {
@@ -1976,6 +2138,18 @@ describe("status — the whole answer", () => {
     const said = statusLines(status(statusFacts({ session: { id: "s1", agent: null, wearing: [] } }))).join("\n");
     expect(said).toContain("s1");
     expect(said).toContain("wearing no category");
+  });
+
+  it("prints the permission mode, and under auto mode whether the session is steered towards shell edits", () => {
+    const under = (mode: string | null, steer: Steer | null = null): string[] =>
+      statusLines(status(statusFacts({ session: { id: "s1", agent: "main", wearing: [], mode, steer } })));
+    expect(under("auto", { shellFirst: true, variant: "strict" })).toContain("  mode       auto — steered towards shell edits (strict)");
+    expect(under("auto", { shellFirst: true, variant: null })).toContain("  mode       auto — steered towards shell edits");
+    expect(under("auto", { shellFirst: false, variant: null })).toContain("  mode       auto — not steered towards shell edits");
+    expect(under("auto")).toContain("  mode       auto — no steer towards shell edits found in its transcript");
+    expect(under("default", { shellFirst: true, variant: "strict" }), "the steer is auto mode's alone").toContain("  mode       default");
+    expect(under(null).join("\n"), "no call has stated a mode yet").not.toContain("  mode ");
+    expect(statusLines(status(statusFacts())).join("\n")).not.toContain("  mode ");
   });
 
   it("lists a disabled entry with the reason somebody wrote", () => {

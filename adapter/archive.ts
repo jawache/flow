@@ -25,7 +25,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { LoadResult } from "../language/domain.ts";
-import { metrics, momentsView, terrain, universe, type Bound } from "../engine/domain.ts";
+import { metrics, momentsView, terrain, universe, type Bound, type Row } from "../engine/domain.ts";
 import { alreadyRead, markRead, readHistory } from "../engine/state.ts";
 import { runCommand } from "./claude.ts";
 import {
@@ -34,6 +34,8 @@ import {
   health,
   joinSpawn,
   mergeNarratives,
+  mismatchesIn,
+  modesOf,
   narrative,
   parseEvents,
   projectFolderName,
@@ -41,6 +43,7 @@ import {
   selectSessions,
   spawnMeta,
   spawnsIn,
+  steerOf,
   transcriptHead,
   uncoveredAreas,
   guardPaths,
@@ -52,6 +55,7 @@ import {
   type Selection,
   type SpawnMeta,
   type SpawnRecord,
+  type Steer,
   type TranscriptRef,
   type Weakening,
 } from "./domain.ts";
@@ -228,13 +232,17 @@ export function facts(root: string, load: LoadResult, opts: FactsOpts = {}): Fac
   const readings: { session: string; read: Narrative }[] = [];
   const weakened: Weakening[] = [];
   const actors: SpawnRecord[] = [];
+  const ran: { rows: readonly Row[]; steer: Steer | null }[] = [];
   let withRecord = 0;
   for (const candidate of selection.analyse) {
     const rows = bySession.get(candidate.id) ?? [];
     if (rows.length > 0) withRecord += 1;
     const jsonl = held.get(candidate.id) ?? "";
     const events = parseEvents(jsonl, root, home);
-    readings.push({ session: candidate.id, read: narrative(events, tools) });
+    // The conversation's own stream is where its shell writes come from: a transcript says what
+    // ran, and only flow's diff knows what that changed.
+    readings.push({ session: candidate.id, read: narrative(events, tools, rows) });
+    ran.push({ rows, steer: steerOf(jsonl) });
     weakened.push(...weakenedAfterBlock(rows, events, guarded));
 
     // THE JOIN, at the one place that has both halves: the parent's own spawn blocks, and the
@@ -275,6 +283,8 @@ export function facts(root: string, load: LoadResult, opts: FactsOpts = {}): Fac
     uncovered: uncoveredAreas(read.touched, bound),
     actors,
     weakened,
+    modes: modesOf(ran),
+    mismatches: mismatchesIn(ran.flatMap((r) => r.rows)),
     marked: opts.mark === true ? markRead(root, selection.analyse.map((c) => c.id)) : null,
   };
 }
