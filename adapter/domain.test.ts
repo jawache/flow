@@ -52,7 +52,7 @@ import {
   mismatchesIn,
   steerOf,
   lastMode,
-  readRows,
+  shellReadRows,
   writeRows,
   mismatchRow,
   touchedPath,
@@ -888,9 +888,9 @@ describe("the flight recorder's row", () => {
 
   it("a Bash call's files read by name are read rows — a searched directory is not", () => {
     const bash = { ...pre("Bash", { command: "cat src/a.ts && rg TODO src && head -3 ../out.txt" }), cwd: ROOT };
-    expect(readRows(bash, ROOT)).toStrictEqual([{ kind: "read", tool: "Bash", path: "src/a.ts" }]);
-    expect(readRows(pre("Read", { file_path: "/repo/src/a.ts" }), ROOT), "a Read is its own tool row").toEqual([]);
-    expect(readRows(pre("Bash", {}), ROOT)).toEqual([]);
+    expect(shellReadRows(bash, ROOT)).toStrictEqual([{ kind: "read", tool: "Bash", path: "src/a.ts" }]);
+    expect(shellReadRows(pre("Read", { file_path: "/repo/src/a.ts" }), ROOT), "a Read is its own tool row").toEqual([]);
+    expect(shellReadRows(pre("Bash", {}), ROOT)).toEqual([]);
   });
 
   it("the files a call changed are write rows, except the file an edit tool named and anything a spawn saw", () => {

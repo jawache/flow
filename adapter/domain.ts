@@ -2030,7 +2030,7 @@ export function toolRow(payload: HookPayload, root = ""): Row | null {
  * Files only. A directory a search walks is an area, not a file anybody read, and counted as one it
  * would name a folder as a node of the tree the rows are drawn into.
  */
-export function readRows(payload: HookPayload, root: string, home?: string): Row[] {
+export function shellReadRows(payload: HookPayload, root: string, home?: string): Row[] {
   const command = text(payload.tool_input?.["command"]);
   if (text(payload.tool_name) !== "Bash" || command === "") return [];
   const cwd = text(payload["cwd"]) || root;

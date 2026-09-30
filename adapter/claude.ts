@@ -97,7 +97,7 @@ import {
   toResult,
   tokensFromTranscript,
   toolRow,
-  readRows,
+  shellReadRows,
   writeRows,
   mismatchRow,
   turnActions,
@@ -782,7 +782,7 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
   if (hook === "pre-tool-use" && !off) {
     const row = toolRow(payload, root);
     if (row) rows.push(row);
-    rows.push(...readRows(payload, root, homedir()));
+    rows.push(...shellReadRows(payload, root, homedir()));
   }
   // What the call did to the tree, beside what it named — and where the host's own list of it
   // disagrees with flow's diff.
