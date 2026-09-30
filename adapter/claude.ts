@@ -80,10 +80,16 @@ import {
   configSurface,
   branchFromHead,
   callKey,
+  callRecord,
+  forgettable,
+  liveBackground,
+  overlapping,
+  startedInBackground,
   deltaFault,
   readFault,
   hermeticEnv,
   isHookEvent,
+  pathLines,
   relativise,
   sessionFactsFrom,
   sidecarPath,
@@ -99,8 +105,11 @@ import {
   snapshotPathspecs,
   type AdapterEvent,
   type Answer,
+  type Background,
+  type CallRecord,
   type Change,
   type Delta,
+  type RevertScope,
   type EventWorld,
   type HookEvent,
   type HookPayload,
@@ -155,14 +164,6 @@ export function readText(root: string, path: string): string | null {
   } catch {
     return null;
   }
-}
-
-/** Lines of output that are paths — git's plainest answer shape, and the only one flow parses. */
-function pathLines(stdout: string): string[] {
-  return stdout
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line !== "");
 }
 
 /**
@@ -458,10 +459,72 @@ export function revertChanges(root: string, tree: string, changes: readonly Chan
   return failed;
 }
 
-/** The call is over: its snapshot is not in flight any more, and its throwaway indexes go. */
-export function forgetSnapshot(root: string, key: string): void {
+/**
+ * THE CALL LOG — every snapshot's record, read back: who made each call, when it started, and when
+ * it finished if it has. A record that cannot be read is left out; it is somebody's write racing
+ * this read, and the next diff reads it whole.
+ */
+export function callLog(root: string): CallRecord[] {
+  const dir = join(root, FLOW_DIR, "snapshots");
+  let names: string[];
+  try {
+    names = readdirSync(dir).filter((name) => name.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  return names.flatMap((name) => {
+    try {
+      const record = callRecord(name.slice(0, -".json".length), JSON.parse(readFileSync(join(dir, name), "utf8")));
+      return record === null ? [] : [record];
+    } catch {
+      return [];
+    }
+  });
+}
+
+/**
+ * The call is over: its record says when it finished, so a diff still to come can tell it
+ * overlapped, and its throwaway indexes go. Records no diff still to come can overlap are dropped.
+ */
+export function finishSnapshot(root: string, key: string, now = Date.now()): void {
   const files = snapshotFiles(root, key);
-  for (const path of [files.meta, files.index, files.after]) rmSync(path, { force: true });
+  for (const path of [files.index, files.after]) rmSync(path, { force: true });
+  const log = callLog(root);
+  const me = log.find((call) => call.key === key);
+  try {
+    if (me === undefined) rmSync(files.meta, { force: true });
+    else writeFileSync(files.meta, JSON.stringify({ session: me.session, agent: me.agent, tool: me.tool, at: me.at, done: now }));
+  } catch {
+    // A record that cannot be marked finished reads as in flight until the day's sweep: it narrows
+    // refusals, which is the safe direction, and never widens one.
+  }
+  const finished = log.map((call) => (call.key === key ? { ...call, done: now } : call));
+  for (const gone of forgettable(finished)) rmSync(snapshotFiles(root, gone).meta, { force: true });
+}
+
+/** Where the marks of background commands still running are kept, for the worktree as a whole. */
+function backgroundFile(root: string): string {
+  return join(root, FLOW_DIR, "background.json");
+}
+
+/** The background commands still worth honouring. Unreadable is none: the next mark rewrites it. */
+function readBackground(root: string, now: number): Background[] {
+  try {
+    return liveBackground(JSON.parse(readFileSync(backgroundFile(root), "utf8")), now);
+  } catch {
+    return [];
+  }
+}
+
+/** Write the marks back — an empty list removes the file. */
+function writeBackground(root: string, marks: readonly Background[]): void {
+  try {
+    if (marks.length === 0) rmSync(backgroundFile(root), { force: true });
+    else writeFileSync(backgroundFile(root), JSON.stringify(marks));
+  } catch {
+    // A mark that cannot be kept leaves the background command's later writes owned by whichever
+    // call sees them — judged, and put back if refused. Loud rather than silent, so it is let go.
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -667,21 +730,43 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
         ? { ok: false, fault: "The host sent no tool_use_id with this call, so its snapshot cannot be found." }
         : observeDelta(root, key, include)
       : null;
+  // THE CALL IS OVER, however it went: its record says it finished, and a command it left running
+  // in the background is marked, so the next change on this worktree is known to belong to no call.
+  const now = Date.now();
+  const finish = (consumed: boolean): void => {
+    if (key === null) return;
+    finishSnapshot(root, key, now);
+    const mine = startedInBackground(payload, now);
+    if (consumed || mine !== null) writeBackground(root, [...(consumed ? [] : readBackground(root, now)), ...(mine === null ? [] : [mine])]);
+  };
   if (delta !== null && !delta.ok) {
-    if (key !== null) forgetSnapshot(root, key);
+    finish(false);
     return deltaFault(delta.fault);
   }
   const changes = delta?.ok === true ? delta.changes : undefined;
+
+  // WHAT A REFUSAL MAY UNDO, asked only of a call that changed something: the repo's setting, the
+  // other actors' calls that overlapped this one, and whether a background command was still
+  // running — in which case the changes belong to no call, and the marks are spent on them.
+  const revert = regime.kind === "loaded" && regime.config.settings.revert === "all" ? "all" : "refused";
+  const scopeOf = (landed: readonly Change[]): RevertScope => {
+    if (landed.length === 0 || key === null) return { revert, overlap: [], unowned: [] };
+    const log = callLog(root);
+    const me = log.find((call) => call.key === key);
+    return { revert, overlap: me === undefined ? [] : overlapping(me, log), unowned: readBackground(root, now) };
+  };
 
   // THE WAY BACK, once the answer is known: the changes a rule refused are written back from the
   // snapshot, and what that came to rides the answer so the refusal can say it. Then the call is
   // over and its snapshot goes.
   const settle = (answer: Answer): Answer => {
     if (delta === null || key === null) return answer;
-    const plan = reversal(delta.changes, answer.refused);
+    const scope = scopeOf(delta.changes);
+    const plan = reversal(delta.changes, answer.refused, scope);
     const failed = plan.revert.length === 0 ? [] : revertChanges(root, delta.before ?? "", plan.revert);
-    forgetSnapshot(root, key);
-    return plan.revert.length === 0 ? answer : { ...answer, undone: { restored: plan.revert, kept: plan.kept, failed } };
+    finish(scope.unowned.length > 0);
+    const landed = answer.refused.some((refusal) => refusal.observed !== undefined);
+    return landed ? { ...answer, undone: { restored: plan.revert, kept: plan.kept, failed, scope } } : answer;
   };
   // THE TREE BEFORE THE CALL, taken only once the call is ALLOWED: a refused call never runs, so its
   // snapshot would be read as a call still in flight.

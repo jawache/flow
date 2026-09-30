@@ -102,6 +102,16 @@ import {
   literalScopes,
   preJudged,
   reversal,
+  callName,
+  callRecord,
+  forgettable,
+  liveBackground,
+  overlapping,
+  pathLines,
+  startedInBackground,
+  BACKGROUND_MS,
+  REFUSED_ONLY,
+  type CallRecord,
   snapshotPathspecs,
   staticPrefix,
   PRE_COMMIT,
@@ -2330,6 +2340,175 @@ describe("an observed refusal — its own banner, and what was put back", () => 
     expect(said.stderr).toContain("flow — could not see what this call changed:");
     expect(said.stderr).toContain("No snapshot was taken before this call.");
     expect(said.stderr).toContain("nothing was put back");
+  });
+});
+
+describe("the call log — which other calls overlapped this one", () => {
+  const call = (key: string, agent: string, at: number, done?: number, tool = "Bash"): CallRecord => ({
+    key,
+    session: "sess-1234abcd",
+    agent,
+    tool,
+    at,
+    ...(done === undefined ? {} : { done }),
+  });
+
+  it("reads a record back, and refuses what is not one", () => {
+    expect(callRecord("k", { session: "s", agent: "a", tool: "Bash", at: 5, tree: "abc" })).toStrictEqual({ key: "k", session: "s", agent: "a", tool: "Bash", at: 5 });
+    expect(callRecord("k", { session: "s", agent: "a", tool: "Bash", at: 5, done: 9 })?.done).toBe(9);
+    expect(callRecord("k", { session: "s" }), "no start time").toBeNull();
+    expect(callRecord("k", null)).toBeNull();
+    expect(callRecord("k", "text")).toBeNull();
+  });
+
+  it("names a call in flight, and one that finished inside this call's window", () => {
+    const me = call("me", "main", 100);
+    const log = [me, call("running", "sub1", 50), call("inside", "sub2", 120, 150), call("before", "sub3", 10, 90)];
+    expect(overlapping(me, log).map((c) => c.key), "one that finished before this began did not overlap it").toStrictEqual(["running", "inside"]);
+  });
+
+  it("never counts the same actor, whose writing calls the host runs one at a time", () => {
+    const me = call("me", "main", 100);
+    expect(overlapping(me, [me, call("sibling", "main", 90)])).toStrictEqual([]);
+    expect(overlapping(me, [me, { ...call("other", "main", 90), session: "another-session" }]).map((c) => c.key)).toStrictEqual(["other"]);
+  });
+
+  it("never counts a spawn: the subagent's writes are its own calls", () => {
+    const me = call("me", "sub1", 100);
+    expect(overlapping(me, [me, call("spawn", "main", 10, undefined, "Agent"), call("old", "main", 10, undefined, "Task")])).toStrictEqual([]);
+  });
+
+  it("does not wait on a snapshot whose call never ran — its agent has since finished a later call", () => {
+    const me = call("me", "main", 100);
+    const denied = call("denied", "sub1", 20);
+    expect(overlapping(me, [me, denied]).map((c) => c.key), "nothing says it was abandoned").toStrictEqual(["denied"]);
+    expect(overlapping(me, [me, denied, call("next", "sub1", 30, 40)])).toStrictEqual([]);
+  });
+
+  it("forgets a finished call once no call still in flight began before it finished", () => {
+    const log = [call("live", "main", 100), call("old", "sub1", 10, 50), call("recent", "sub1", 60, 150)];
+    expect(forgettable(log), "recent finished after live began, so live's diff still needs it").toStrictEqual(["old"]);
+    expect(forgettable([...log, call("earliest", "sub2", 5)]), "a call in flight since before either pins both").toStrictEqual([]);
+    expect(forgettable([call("a", "main", 1, 2), call("b", "sub1", 3, 4)]), "nothing in flight").toStrictEqual(["a", "b"]);
+  });
+
+  it("names a call by its tool, its id and whose it was", () => {
+    expect(callName(call("toolu_9", "main", 1))).toBe("Bash toolu_9 (main agent of session sess-123)");
+    expect(callName({ ...call("toolu_9", "a77", 1), tool: "" })).toBe("a tool toolu_9 (agent a77 of session sess-123)");
+  });
+});
+
+describe("background commands — writes that belong to no call", () => {
+  it("marks a command the host ran in the background, and nothing else", () => {
+    const bg = (tool: string, input: Record<string, unknown>, id: string | null = "toolu_bg"): HookPayload => ({
+      tool_name: tool,
+      tool_input: input,
+      ...(id === null ? {} : { tool_use_id: id }),
+    });
+    expect(startedInBackground(bg("Bash", { command: "npm run build", run_in_background: true }), 7)).toStrictEqual({
+      key: "toolu_bg",
+      command: "npm run build",
+      at: 7,
+    });
+    expect(startedInBackground(bg("Bash", { command: "npm run build" }), 7), "in the foreground").toBeNull();
+    expect(startedInBackground(bg("Agent", { prompt: "x", run_in_background: true }), 7), "a spawn").toBeNull();
+    expect(startedInBackground(bg("Bash", { command: "x", run_in_background: true }, null), 7), "no key").toBeNull();
+    expect(startedInBackground(bg("Mcp", { run_in_background: true }), 7)?.command, "no command: the tool").toBe("Mcp");
+  });
+
+  it("honours a mark for a day, and reads anything else as none", () => {
+    const now = 10 * BACKGROUND_MS;
+    expect(liveBackground([{ key: "k", command: "c", at: now - 5 }, { key: "old", command: "c", at: now - BACKGROUND_MS - 1 }, "x", { key: "n" }], now)).toStrictEqual([
+      { key: "k", command: "c", at: now - 5 },
+    ]);
+    expect(liveBackground({ not: "a list" }, now)).toStrictEqual([]);
+  });
+});
+
+describe("the revert scope — the setting, overlap, and the background", () => {
+  const changes = [
+    { path: "src/a.ts", before: "a\n", after: "TODO\n" },
+    { path: "src/b.ts", before: "b\n", after: "b2\n" },
+    { path: "src/c.ts", before: null, after: "c\n" },
+  ];
+  const noTodo: Block = { do: "block", entry: "house.noTodo", message: "No TODOs.", subject: "src/a.ts", detail: "" };
+  const refusedA = [{ moment: "write" as const, block: noTodo, observed: "src/a.ts" }];
+  const other: CallRecord = { key: "toolu_other", session: "sess-9999aaaa", agent: "a1", tool: "Bash", at: 1 };
+
+  it("puts back every file the call changed when the repo sets revert: all", () => {
+    expect(reversal(changes, refusedA, { ...REFUSED_ONLY, revert: "all" })).toStrictEqual({ revert: changes, kept: [] });
+  });
+
+  it("puts back nothing under revert: all when nothing refused a landed change", () => {
+    expect(reversal(changes, [], { ...REFUSED_ONLY, revert: "all" }).revert).toStrictEqual([]);
+  });
+
+  it("ignores revert: all while another actor's call overlapped this one", () => {
+    expect(reversal(changes, refusedA, { revert: "all", overlap: [other], unowned: [] })).toStrictEqual({
+      revert: [changes[0]],
+      kept: ["src/b.ts", "src/c.ts"],
+    });
+  });
+
+  it("puts back nothing a background command may have written", () => {
+    expect(reversal(changes, refusedA, { revert: "all", overlap: [], unowned: [{ key: "k", command: "npm run dev", at: 1 }] })).toStrictEqual({
+      revert: [],
+      kept: ["src/a.ts", "src/b.ts", "src/c.ts"],
+    });
+  });
+
+  it("says the whole call went back under revert: all", () => {
+    const stderr = toResult("post-tool-use", {
+      refused: refusedA,
+      shown: [],
+      undone: { restored: changes, kept: [], failed: [], scope: { ...REFUSED_ONLY, revert: "all" } },
+    }).stderr;
+    expect(stderr).toContain("src/a.ts and src/b.ts are back to their previous content.");
+    expect(stderr).toContain('revert: "all" is set, so every file this call changed was put back, not only the refused ones.');
+  });
+
+  it("names the calls that overlapped, and says revert: all was not applied", () => {
+    const many = Array.from({ length: 7 }, (_, i) => ({ ...other, key: `toolu_${i}` }));
+    const stderr = toResult("post-tool-use", {
+      refused: refusedA,
+      shown: [],
+      undone: { restored: [changes[0]!], kept: ["src/b.ts"], failed: [], scope: { revert: "all", overlap: many, unowned: [] } },
+    }).stderr;
+    expect(stderr.startsWith("\nflow — write reverted after it landed:\n")).toBe(true);
+    expect(stderr).toContain("Other tool calls overlapped this one: Bash toolu_0 (agent a1 of session sess-999);");
+    expect(stderr).toContain("toolu_4 (agent a1 of session sess-999); and 2 more.");
+    expect(stderr).toContain('only the refused files were put back — revert: "all" is set, and is not applied while calls overlap.');
+    const plain = toResult("post-tool-use", {
+      refused: refusedA,
+      shown: [],
+      undone: { restored: [changes[0]!], kept: [], failed: [], scope: { revert: "refused", overlap: [other], unowned: [] } },
+    }).stderr;
+    expect(plain).toContain("so only the refused files were put back.\n");
+  });
+
+  it("reports a refused change a background command may have made — its own banner, nothing put back", () => {
+    const answer = toResult("post-tool-use", {
+      refused: refusedA,
+      shown: [],
+      undone: { restored: [], kept: ["src/a.ts"], failed: [], scope: { revert: "refused", overlap: [], unowned: [{ key: "k", command: "npm run build", at: 1 }] } },
+    });
+    expect(answer.exitCode).toBe(2);
+    expect(answer.stderr.startsWith("\nflow — write reported after it landed, not reverted:\n\n✗ house.noTodo · src/a.ts")).toBe(true);
+    expect(answer.stderr).toContain("Nothing was put back. A command started in the background (`npm run build`) was still running");
+    expect(answer.stderr).toContain("Check src/a.ts and fix what the rule refuses");
+    const deleted = toResult("post-tool-use", {
+      refused: [{ moment: "delete", block: noTodo, observed: "src/a.ts" }],
+      shown: [],
+      undone: { restored: [], kept: [], failed: [], scope: { revert: "refused", overlap: [], unowned: [{ key: "k", command: "x", at: 1 }] } },
+    });
+    expect(deleted.stderr.startsWith("\nflow — delete reported after it landed, not reverted:")).toBe(true);
+  });
+});
+
+describe("pathLines — git's one-path-per-line answer", () => {
+  it("keeps each path, trimmed, and drops the blank lines", () => {
+    expect(pathLines(" a.ts\n\nsrc/b c.ts \n")).toStrictEqual(["a.ts", "src/b c.ts"]);
+    expect(pathLines(null), "a command that never ran").toStrictEqual([]);
   });
 });
 

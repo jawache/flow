@@ -1214,6 +1214,20 @@ export function included(listed: readonly string[], include: readonly string[]):
   return listed.filter((path) => path !== "" && matchAny(path, include));
 }
 
+/**
+ * Git's answer as paths, one per line — the plainest shape git has, and the only one flow parses.
+ *
+ * ONE reader for it in the adapter: `flow status` asks git what it ignores and the realWorld asks
+ * for the staged set, and both used to split, trim and drop blank lines under two names. `null` is
+ * a command that never ran, and it is no paths.
+ */
+export function pathLines(stdout: string | null): string[] {
+  return (stdout ?? "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+}
+
 /** The key one call's snapshot is filed under — the host's `tool_use_id` — or null when it sent none. */
 export function callKey(payload: HookPayload): string | null {
   const id = text(payload.tool_use_id);
@@ -1239,6 +1253,145 @@ export function preJudged(payload: HookPayload, root: string): { readonly writes
     return { writes: named === "" ? [] : [relativise(named, root)], deletes: [] };
   }
   return { writes: [], deletes: [] };
+}
+
+// ── the call log: which calls overlapped this one ────────────────────────────────────────────────
+//
+// Within one agent the host runs one writing call at a time, so a diff there is that call's own. A
+// parent and its subagents are not ordered against each other, and a second agent's write that
+// lands between this call's snapshot and its diff shows up in this call's diff. flow cannot tell
+// whose a changed file is — git records content, not writers — so what it can do is KNOW that
+// calls overlapped, from its own log of snapshots, and narrow what a refusal undoes when they did.
+
+/**
+ * One tool call as flow's own log holds it: who made it, when its snapshot was taken, and when its
+ * diff was, once it has been. A record with no `done` is a call still in flight.
+ */
+export interface CallRecord {
+  /** The host's `tool_use_id`. */
+  readonly key: string;
+  readonly session: string;
+  readonly agent: string;
+  readonly tool: string;
+  /** When the snapshot before the call was taken, in epoch milliseconds. */
+  readonly at: number;
+  /** When the diff after it was taken. Absent while the call is in flight. */
+  readonly done?: number | undefined;
+}
+
+/** A call record read back off disk, or null when the file is not one. */
+export function callRecord(key: string, raw: unknown): CallRecord | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const held = raw as Record<string, unknown>;
+  if (typeof held["at"] !== "number") return null;
+  return {
+    key,
+    session: text(held["session"]),
+    agent: text(held["agent"]),
+    tool: text(held["tool"]),
+    at: held["at"],
+    ...(typeof held["done"] === "number" ? { done: held["done"] } : {}),
+  };
+}
+
+/** The same actor: one session × agent, whose writing calls the host never runs side by side. */
+function sameActor(a: CallRecord, b: CallRecord): boolean {
+  return a.session === b.session && a.agent === b.agent;
+}
+
+/**
+ * A snapshot whose diff never came, and never will: the host refused the call after flow allowed
+ * it (a permission prompt said no), so it never ran. Read as in flight, it would narrow every
+ * refusal in the worktree for a day. Its actor has moved on — a later call of the same session and
+ * agent has already finished — so it is not waited on. A long read that is genuinely still running
+ * beside its own agent's later calls is misread by this, and costs nothing: it writes nothing.
+ */
+function abandoned(call: CallRecord, log: readonly CallRecord[]): boolean {
+  return call.done === undefined && log.some((other) => sameActor(other, call) && other.done !== undefined && other.at > call.at);
+}
+
+/**
+ * Is this call's diff somebody else's work? A SPAWN — the Agent tool — writes nothing itself: the
+ * subagent it started writes, through calls of its own that are in the log under their own agent.
+ * Counted as a writer, one foreground builder would read as overlapping its own parent's spawn on
+ * every call it made.
+ */
+function spawns(call: CallRecord): boolean {
+  return call.tool === SPAWN_TOOL || call.tool === "Task";
+}
+
+/**
+ * The calls of OTHER actors that overlapped this one in time: started before this diff, and
+ * finished after this snapshot or not finished at all.
+ *
+ * A call that finished inside this one's window counts as well as one still in flight: its write
+ * landed between this snapshot and this diff just the same. Calls of the same session and agent
+ * never count — the host does not run an agent's writing calls side by side.
+ */
+export function overlapping(me: CallRecord, log: readonly CallRecord[]): CallRecord[] {
+  return log.filter(
+    (call) =>
+      call.key !== me.key &&
+      !sameActor(call, me) &&
+      !spawns(call) &&
+      !abandoned(call, log) &&
+      (call.done === undefined || call.done > me.at),
+  );
+}
+
+/**
+ * The finished calls the log can forget: no call still in flight started before one finished, so no
+ * diff still to come can overlap it. Keeping every record for a day would make every diff read a
+ * day of records.
+ */
+export function forgettable(log: readonly CallRecord[]): string[] {
+  const live = log.filter((call) => call.done === undefined && !abandoned(call, log)).map((call) => call.at);
+  const oldest = live.length === 0 ? Number.POSITIVE_INFINITY : Math.min(...live);
+  return log.filter((call) => call.done !== undefined && call.done < oldest).map((call) => call.key);
+}
+
+/** How a call is named in a message: the tool, the host's id, and whose it was. */
+export function callName(call: CallRecord): string {
+  return `${call.tool || "a tool"} ${call.key} (${call.agent === "main" ? "main agent" : `agent ${call.agent}`} of session ${call.session.slice(0, 8)})`;
+}
+
+// ── background commands: writes that belong to no call ─────────────────────────────────────────
+
+/**
+ * A command the host started in the background — its call returned before the process finished,
+ * so whatever the process writes after that belongs to no call in the log.
+ */
+export interface Background {
+  readonly key: string;
+  readonly command: string;
+  readonly at: number;
+}
+
+/** How long a background mark is honoured when no change has come to claim it. */
+export const BACKGROUND_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The background command this call started, or null. A spawn in the background is not one: the
+ * subagent's writes are its own calls, each in the log.
+ */
+export function startedInBackground(payload: HookPayload, at: number): Background | null {
+  const tool = text(payload.tool_name);
+  const input = payload.tool_input ?? {};
+  const key = callKey(payload);
+  if (input["run_in_background"] !== true || key === null || tool === SPAWN_TOOL || tool === "Task") return null;
+  return { key, command: text(input["command"]) || tool, at };
+}
+
+/** The background marks read back off disk, keeping those still worth honouring. */
+export function liveBackground(raw: unknown, now: number): Background[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((held: unknown): Background[] => {
+    if (typeof held !== "object" || held === null) return [];
+    const mark = held as Record<string, unknown>;
+    const at = mark["at"];
+    if (typeof at !== "number" || now - at > BACKGROUND_MS) return [];
+    return [{ key: text(mark["key"]), command: text(mark["command"]), at }];
+  });
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -1285,6 +1438,15 @@ const RAIL_OBSERVED: Readonly<Record<"write" | "delete", string>> = {
   delete: "flow — delete reverted after it landed",
 };
 
+/**
+ * The banner for a landed change a rule refused and flow did NOT put back — a background command
+ * was still running, so the change belongs to no call. Reported, never reverted.
+ */
+const RAIL_REPORTED: Readonly<Record<"write" | "delete", string>> = {
+  write: "flow — write reported after it landed, not reverted",
+  delete: "flow — delete reported after it landed, not reverted",
+};
+
 /** One refusal, with the rail that made it — the banner is the moment's, not the hook's. */
 export interface Refused {
   readonly moment: GuardrailMoment;
@@ -1305,6 +1467,8 @@ export interface Undone {
   /** Paths the call changed that no rule refused — left as the call wrote them. */
   readonly kept: readonly string[];
   readonly failed: readonly { readonly path: string; readonly why: string }[];
+  /** What the refusal was allowed to undo — what the message explains when it was not everything. */
+  readonly scope?: RevertScope | undefined;
 }
 
 /** Which of a call's changes are put back, and which stay as the call left them. */
@@ -1314,18 +1478,41 @@ export interface Reversal {
 }
 
 /**
- * THE REVERT SCOPE: exactly the files a rule refused, and nothing else the call wrote.
+ * What a refusal is allowed to undo, beside the refusals themselves: the repo's `revert` setting,
+ * the other calls that overlapped this one, and the background commands still running.
+ */
+export interface RevertScope {
+  /** The config's `revert` setting: the refused files alone, or every file the call changed. */
+  readonly revert: "refused" | "all";
+  /** Other actors' calls that overlapped this one. Any of them, and `"all"` is not honoured. */
+  readonly overlap: readonly CallRecord[];
+  /** Background commands still running: their writes belong to no call, and nothing goes back. */
+  readonly unowned: readonly Background[];
+}
+
+/** The default scope: the refused files, no overlap, nothing in the background. */
+export const REFUSED_ONLY: RevertScope = { revert: "refused", overlap: [], unowned: [] };
+
+/**
+ * THE REVERT SCOPE: the files a rule refused, or every file the call changed when the repo asked
+ * for that, and never more than the refused files while another actor's call overlapped this one
+ * — a diff taken then can hold that call's writes, and "all" would put back work that was not this
+ * call's to lose.
  *
  * Most writing calls touch one file, and the other files a multi-file command wrote are not wrong
  * because one of them is — they are listed as kept, so the agent knows they stand. A refusal that
  * names no landed path (a fault on a pre-emptive rail) reverts nothing: a revert is only ever of a
- * change flow saw land, never a guess.
+ * change flow saw land, never a guess. A diff that belongs to no call — a background command was
+ * still running — is reported and never put back: nothing says which of it was whose.
  */
-export function reversal(changes: readonly Change[], refusals: readonly Refused[]): Reversal {
+export function reversal(changes: readonly Change[], refusals: readonly Refused[], scope: RevertScope = REFUSED_ONLY): Reversal {
   const refused = new Set(refusals.flatMap((refusal) => (refusal.observed === undefined ? [] : [refusal.observed])));
+  if (scope.unowned.length > 0) return { revert: [], kept: changes.map((change) => change.path) };
+  const whole = scope.revert === "all" && scope.overlap.length === 0 && refused.size > 0;
+  const back = (change: Change): boolean => whole || refused.has(change.path);
   return {
-    revert: changes.filter((change) => refused.has(change.path)),
-    kept: changes.filter((change) => !refused.has(change.path)).map((change) => change.path),
+    revert: changes.filter(back),
+    kept: changes.filter((change) => !back(change)).map((change) => change.path),
   };
 }
 
@@ -1362,8 +1549,38 @@ function observedTail(refusals: readonly Refused[], undone: Undone): string {
     lines.push(`flow could not put ${failure.path} back (${failure.why}) — it still holds what the call wrote.`);
   if (undone.kept.length > 0)
     lines.push(`Kept as the call wrote ${undone.kept.length === 1 ? "it" : "them"}: ${undone.kept.join(", ")}.`);
+  const scope = undone.scope ?? REFUSED_ONLY;
+  if (scope.overlap.length > 0)
+    lines.push(
+      `Other tool calls overlapped this one: ${callsListed(scope.overlap)}. Their writes can show up in this call's diff, so only the refused files were put back` +
+        (scope.revert === "all" ? ` — revert: "all" is set, and is not applied while calls overlap.` : "."),
+    );
+  else if (scope.revert === "all")
+    lines.push(`revert: "all" is set, so every file this call changed was put back, not only the refused ones.`);
   lines.push("Only file content was put back: anything else the call did has already happened.");
   return lines.join("\n");
+}
+
+/** How many overlapping calls a message names before it counts the rest. */
+const CALLS_NAMED = 5;
+
+/** The overlapping calls, named — the first few, then how many more. */
+function callsListed(calls: readonly CallRecord[]): string {
+  const named = calls.slice(0, CALLS_NAMED).map(callName);
+  return calls.length > CALLS_NAMED ? `${named.join("; ")}; and ${calls.length - CALLS_NAMED} more` : named.join("; ");
+}
+
+/**
+ * What a refusal of an UNOWNED diff ends with. A background command was still running, so the
+ * changes belong to no call — reported, with the rules' own words above, and never put back.
+ */
+function unownedTail(refusals: readonly Refused[], background: readonly Background[]): string {
+  const paths = [...new Set(refusals.flatMap((refusal) => (refusal.observed === undefined ? [] : [refusal.observed])))];
+  const commands = background.map((mark) => `\`${mark.command}\``).join(", ");
+  return [
+    `Nothing was put back. A command started in the background (${commands}) was still running when this change was seen, so it belongs to no tool call, and flow does not write back what it cannot attribute.`,
+    `Check ${listed(paths)} and fix what the rule refuses — through Edit, which is judged before it lands.`,
+  ].join("\n");
 }
 
 /** A note with its prose resolved: a `file:` breadcrumb is read by the shell, never here. */
@@ -1519,6 +1736,9 @@ export function refused(refusals: readonly Refused[], undone?: Undone): HookResu
   // landed — and the host shows stderr to the model beside the tool's result. So it carries its own
   // banner and says what was put back rather than asking for a retry of something already done.
   const landed = first.observed !== undefined && (first.moment === "write" || first.moment === "delete");
+  const unowned = undone?.scope?.unowned ?? [];
+  if (landed && unowned.length > 0)
+    return { stdout: "", stderr: `\n${RAIL_REPORTED[first.moment]}:\n\n${body}\n\n${unownedTail(refusals, unowned)}\n`, exitCode: 2 };
   const head = landed ? RAIL_OBSERVED[first.moment] : RAIL[first.moment].head;
   const tail = landed ? observedTail(refusals, undone ?? { restored: [], kept: [], failed: [] }) : RAIL[first.moment].tail;
   return { stdout: "", stderr: `\n${head}:\n\n${body}\n\n${tail}\n`, exitCode: 2 };

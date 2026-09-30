@@ -24,7 +24,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   currentBranch,
-  forgetSnapshot,
+  callLog,
+  finishSnapshot,
   loadRegime,
   observeDelta,
   projectRoot,
@@ -34,6 +35,7 @@ import {
   runCommand,
   takeSnapshot,
 } from "./claude.ts";
+import { overlapping } from "./domain.ts";
 
 let repo: string;
 
@@ -290,12 +292,40 @@ describe("the snapshot — the tree before a call, the tree after it, and the wa
     expect(read("a.ts")).toBe("changed\n");
   });
 
-  it("forgets a call once it is over — no snapshot left to read as in flight", () => {
+  it("marks a call finished once it is over, and forgets it once nothing in flight can overlap it", () => {
     takeSnapshot(repo, "toolu_7", [], who);
     const meta = JSON.parse(readFileSync(join(repo, ".flow", "snapshots", "toolu_7.json"), "utf8")) as Record<string, unknown>;
     expect(meta).toMatchObject({ session: "s1", agent: "main", tool: "Bash" });
     expect(typeof meta["tree"]).toBe("string");
-    forgetSnapshot(repo, "toolu_7");
-    expect(readdirSync(join(repo, ".flow", "snapshots"))).toStrictEqual([]);
+    finishSnapshot(repo, "toolu_7");
+    expect(readdirSync(join(repo, ".flow", "snapshots")), "nothing in flight, so nothing to keep").toStrictEqual([]);
+  });
+
+  it("keeps the log a later diff reads: a call in flight, and one that finished while it ran", () => {
+    takeSnapshot(repo, "toolu_long", [], { session: "s1", agent: "main", tool: "Bash" });
+    takeSnapshot(repo, "toolu_short", [], { session: "s1", agent: "sub1", tool: "Bash" });
+    finishSnapshot(repo, "toolu_short");
+    const log = callLog(repo);
+    expect(log.map((call) => [call.key, call.agent, call.done !== undefined]).sort()).toStrictEqual([
+      ["toolu_long", "main", false],
+      ["toolu_short", "sub1", true],
+    ]);
+    const long = log.find((call) => call.key === "toolu_long");
+    expect(long && overlapping(long, log).map((call) => call.key), "it finished inside the long call's window").toStrictEqual(["toolu_short"]);
+    expect(readdirSync(join(repo, ".flow", "snapshots")).sort(), "the short call's indexes are gone").toStrictEqual([
+      "toolu_long.index",
+      "toolu_long.json",
+      "toolu_short.json",
+    ]);
+    finishSnapshot(repo, "toolu_long");
+    expect(callLog(repo), "nothing in flight any more, so the log empties").toStrictEqual([]);
+  });
+
+  it("leaves a record it cannot read out of the log rather than failing the diff", () => {
+    mkdirSync(join(repo, ".flow", "snapshots"), { recursive: true });
+    writeFileSync(join(repo, ".flow", "snapshots", "half.json"), "{ not json");
+    writeFileSync(join(repo, ".flow", "snapshots", "odd.json"), "[1]");
+    expect(callLog(repo)).toStrictEqual([]);
+    expect(callLog(join(repo, "nowhere"))).toStrictEqual([]);
   });
 });

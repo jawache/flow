@@ -28,6 +28,7 @@ import {
   HOOKS_DIR,
   initLines,
   literalScopes,
+  pathLines,
   planInit,
   status,
   statusCode,
@@ -107,8 +108,6 @@ function hooksPath(root: string): string | null {
  * Not a git repo, or git unable to answer, is an empty list — status has its own lines for those.
  */
 function ignoredPaths(root: string, literals: readonly string[]): string[] {
-  const lines = (stdout: string | null): string[] =>
-    (stdout ?? "").split("\n").map((line) => line.trim()).filter((line) => line !== "");
   const listed = spawnSync("git", ["-C", root, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"], {
     encoding: "utf8",
   });
@@ -116,7 +115,7 @@ function ignoredPaths(root: string, literals: readonly string[]): string[] {
     literals.length === 0
       ? null
       : spawnSync("git", ["-C", root, "check-ignore", "--stdin"], { encoding: "utf8", input: `${literals.join("\n")}\n` });
-  const all = [...(listed.status === 0 ? lines(listed.stdout) : []), ...lines(named?.stdout ?? null)];
+  const all = [...(listed.status === 0 ? pathLines(listed.stdout) : []), ...pathLines(named?.stdout ?? null)];
   return [...new Set(all)].filter((path) => path !== `${FLOW_DIR}/` && !path.startsWith(`${FLOW_DIR}/`));
 }
 
