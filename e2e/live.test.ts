@@ -479,6 +479,151 @@ describe("the delta rail — every change to the tree, judged the moment it has 
   });
 });
 
+describe("several agents in one worktree — overlap, background commands, and one writer", () => {
+  // THE PROOF OF F5, in a worktree of its own: a config that sets revert: "all" and binds the work
+  // pack with its writers named, so the three things this phase adds meet in one place — a revert
+  // narrowed by an overlapping call, a background command's writes reported and kept, and a write
+  // by the wrong actor refused whichever tool made it.
+  let tree: string;
+  let ids = 0;
+  const OVERLAP_CONFIG = (packageRoot: string): string => `
+import { defineConfig, definePack, guardrail, pack, write } from ${JSON.stringify(join(packageRoot, "index.ts"))};
+import { work } from ${JSON.stringify(join(packageRoot, "packs", "index.ts"))};
+
+const demo = definePack("demo", {
+  noTodo: guardrail()
+    .at(write)
+    .on("src/**")
+    .check((ctx) => (ctx.file?.content.includes("TODO") ? ctx.fail("line says TODO") : ctx.ok()))
+    .message("No TODOs in src/ — write the code or write the issue.")
+    .test({ pass: [{ path: "src/a.ts", content: "ok" }], block: [{ path: "src/a.ts", content: "TODO" }] }),
+});
+
+export default defineConfig([pack(demo), pack(work, { writers: ["builder", "parent"] })], { revert: "all" });
+`;
+  const sh = (command: string): number => spawnSync("bash", ["-c", command], { cwd: tree }).status ?? -1;
+  const at = (path: string): string | null => (existsSync(join(tree, path)) ? readFileSync(join(tree, path), "utf8") : null);
+  const send = (event: string, payload: unknown): Ran => runFlow(tree, ["hook", event], {}, JSON.stringify(payload));
+
+  /** A subagent the host spawned as `agentType` — its sidecar is the evidence it is classified by. */
+  function spawned(agent: string, agentType: string): Record<string, unknown> {
+    mkdirSync(join(tree, ".t"), { recursive: true });
+    const transcript = join(tree, ".t", `${agent}.jsonl`);
+    writeFileSync(transcript, `${JSON.stringify({ type: "user", message: { content: "work on it" } })}\n`);
+    writeFileSync(join(tree, ".t", `${agent}.meta.json`), JSON.stringify({ agentType, description: agentType }));
+    return { session_id: "f5", agent_id: agent, transcript_path: transcript };
+  }
+  const PARENT = { session_id: "f5" };
+
+  /** One Bash call's two hook halves, keyed alike — the test decides when each one runs. */
+  function bash(who: Record<string, unknown>, command: string, input: Record<string, unknown> = {}) {
+    const payload = { ...who, tool_name: "Bash", tool_input: { command, ...input }, tool_use_id: `toolu_f5_${++ids}`, cwd: tree };
+    return {
+      key: payload.tool_use_id,
+      before: (): Ran => send("pre-tool-use", payload),
+      after: (): Ran => send("post-tool-use", payload),
+    };
+  }
+
+  beforeAll(() => {
+    tree = newRepo("flow-overlap-");
+    writeFileSync(join(tree, "flow.config.ts"), OVERLAP_CONFIG(PACKAGE));
+    writeFileSync(join(tree, ".gitignore"), ".t/\n");
+    mkdirSync(join(tree, "src"), { recursive: true });
+    writeFileSync(join(tree, "src", "a.ts"), "export const a = 1;\n");
+    writeFileSync(join(tree, "src", "b.ts"), "export const b = 1;\n");
+  });
+  afterAll(() => {
+    rmSync(tree, { recursive: true, force: true });
+  });
+
+  it("puts back every file a refused call changed when the repo sets revert: all", () => {
+    const call = bash(PARENT, "echo '// TODO' >> src/a.ts && echo 'export const d = 1;' > src/d.ts");
+    expect(call.before().code).toBe(0);
+    expect(sh("echo '// TODO' >> src/a.ts && echo 'export const d = 1;' > src/d.ts")).toBe(0);
+    const answer = call.after();
+    expect(answer.code).toBe(2);
+    expect(answer.stderr).toContain("flow — write reverted after it landed:");
+    expect(answer.stderr).toContain('revert: "all" is set, so every file this call changed was put back');
+    expect(at("src/a.ts")).toBe("export const a = 1;\n");
+    expect(at("src/d.ts"), "compliant, and gone again with the rest of the call").toBeNull();
+  });
+
+  it("reverts only its own refused file while another agent's call is in flight — and names that call", () => {
+    const builder = spawned("agent-b1", "builder");
+    const parentCall = bash(PARENT, "python3 fix.py");
+    const builderCall = bash(builder, "python3 build.py");
+    expect(parentCall.before().code).toBe(0);
+    expect(builderCall.before().code).toBe(0);
+    // The two tools run interleaved: the builder writes b.ts, the parent writes a TODO into a.ts and
+    // a compliant e.ts. The parent's diff is taken first, while the builder's call is still open.
+    expect(sh("echo 'export const b = 2;' > src/b.ts")).toBe(0);
+    expect(sh("echo '// TODO' >> src/a.ts && echo 'export const e = 1;' > src/e.ts")).toBe(0);
+
+    const refused = parentCall.after();
+    expect(refused.code).toBe(2);
+    expect(refused.stderr).toContain("✗ demo.noTodo · src/a.ts");
+    expect(refused.stderr).toContain("src/a.ts is back to its previous content.");
+    expect(refused.stderr).toContain(`Other tool calls overlapped this one: Bash ${builderCall.key} (agent agent-b1 of session f5)`);
+    expect(refused.stderr).toContain('revert: "all" is set, and is not applied while calls overlap.');
+    expect(at("src/a.ts"), "the refused file is back").toBe("export const a = 1;\n");
+    expect(at("src/b.ts"), "the other call's file is untouched").toBe("export const b = 2;\n");
+    expect(at("src/e.ts"), "and this call's compliant file stays").toBe("export const e = 1;\n");
+
+    const clean = builderCall.after();
+    expect(clean.code, clean.stderr).toBe(0);
+    expect(at("src/b.ts")).toBe("export const b = 2;\n");
+  });
+
+  it("reports what a background command wrote after its call returned, and puts none of it back", () => {
+    const started = bash(PARENT, "sleep 1 && echo '// TODO from the build' >> src/b.ts", { run_in_background: true });
+    expect(started.before().code).toBe(0);
+    expect(started.after().code, "nothing has changed yet when the call returns").toBe(0);
+    // Later, while some other call is in progress, the process writes.
+    const later = bash(spawned("agent-b1", "builder"), "ls");
+    expect(later.before().code).toBe(0);
+    expect(sh("echo '// TODO from the build' >> src/b.ts")).toBe(0);
+    const reported = later.after();
+    expect(reported.code).toBe(2);
+    expect(reported.stderr).toContain("flow — write reported after it landed, not reverted:");
+    expect(reported.stderr).toContain("✗ demo.noTodo · src/b.ts");
+    expect(reported.stderr).toContain("A command started in the background (`sleep 1 && echo '// TODO from the build' >> src/b.ts`) was still running");
+    expect(at("src/b.ts"), "reported, never written back").toContain("TODO from the build");
+    // The mark is spent: the next change is owned again, and put back when refused.
+    writeFileSync(join(tree, "src", "b.ts"), "export const b = 2;\n");
+    const owned = bash(PARENT, "echo '// TODO' >> src/b.ts");
+    expect(owned.before().code).toBe(0);
+    expect(sh("echo '// TODO' >> src/b.ts")).toBe(0);
+    expect(owned.after().stderr).toContain("flow — write reverted after it landed:");
+    expect(at("src/b.ts")).toBe("export const b = 2;\n");
+  });
+
+  it("refuses and reverts a write by an actor that is not a writer, naming who wrote it", () => {
+    const checker = spawned("agent-v1", "verifier");
+    const call = bash(checker, "echo 'export const fixed = 1;' > src/b.ts");
+    expect(call.before().code).toBe(0);
+    expect(sh("echo 'export const fixed = 1;' > src/b.ts")).toBe(0);
+    const answer = call.after();
+    expect(answer.code).toBe(2);
+    expect(answer.stderr).toContain("flow — write reverted after it landed:");
+    expect(answer.stderr).toContain("✗ work.builderWrites · src/b.ts");
+    expect(answer.stderr).toContain("Only the builder changes files in this worktree — hand your finding back instead of fixing it.");
+    expect(answer.stderr).toContain("src/b.ts was written by an actor wearing checker — only builder or parent may change files here");
+    expect(at("src/b.ts")).toBe("export const b = 2;\n");
+    // The same actor through the Edit tool is refused before anything lands.
+    const edit = send("pre-tool-use", {
+      ...checker,
+      tool_name: "Write",
+      tool_input: { file_path: join(tree, "src/b.ts"), content: "export const b = 3;\n" },
+      tool_use_id: `toolu_f5_${++ids}`,
+    });
+    expect(edit.code).toBe(2);
+    expect(edit.stderr).toContain("flow — blocked before the write landed");
+    expect(edit.stderr).toContain("work.builderWrites");
+    expect(at("src/b.ts")).toBe("export const b = 2;\n");
+  });
+});
+
 describe("the off switch", () => {
   it("silences every rail, and writes no telemetry while it is off", () => {
     writeFileSync(join(repo, ".flow", "off"), "");
