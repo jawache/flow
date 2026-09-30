@@ -65,7 +65,7 @@ import {
 // would remove is event ASSEMBLY — the adapter's job — but quote-aware shell tokenising is a
 // question the checks layer already answers, and the old engine's second answer (a regex split on
 // `&&|\|\||;`) is exactly the near-duplicate this rewrite exists to delete.
-import { missingGrammarText, tokenizeCommand } from "../checks/domain.ts";
+import { closeParen, dquoteEnd, elideHeredocs, GIT_VALUE_OPTS, missingGrammarText, tokenizeCommand } from "../checks/domain.ts";
 // String algebra only — a Bash read is resolved against the directory the shell was in.
 import { posix } from "node:path";
 // The one glob engine. A coverage question asked with a second matcher is a coverage answer about
@@ -651,7 +651,7 @@ function gitReads(args: readonly Arg[], reads: string[]): ArgvReads {
   for (let opt = args[0] ?? null; isOption(opt); opt = args[i] ?? null) {
     const value = args[i + 1];
     if (opt === "-C" && typeof value === "string") base = value;
-    i += ["-C", "-c", "--git-dir", "--work-tree", "--namespace"].includes(opt as string) ? 2 : 1;
+    i += GIT_VALUE_OPTS.has(opt as string) ? 2 : 1;
   }
   const sub = args[i];
   const found = base === undefined ? { reads, searched } : { reads, searched, base };
@@ -676,35 +676,6 @@ type Part =
   | { readonly kind: "unknown" };
 type Word = readonly Part[];
 type Token = { readonly t: "word"; readonly word: Word } | { readonly t: "op"; readonly op: string } | { readonly t: "redir"; readonly op: string };
-
-/** Where a `$(` closes, honouring quotes and nesting. -1 when it never does. */
-function closeParen(s: string, from: number): number {
-  let depth = 1;
-  for (let i = from; i < s.length; i++) {
-    const c = s[i];
-    if (c === "\\") i++;
-    else if (c === "'" || c === '"') {
-      const end = c === "'" ? s.indexOf("'", i + 1) : dquoteEnd(s, i + 1);
-      if (end === -1) return -1;
-      i = end;
-    } else if (c === "(") depth++;
-    else if (c === ")" && --depth === 0) return i;
-  }
-  return -1;
-}
-
-/** Where a double-quoted run closes — a `"` inside a `$(…)` in it does not close it. */
-function dquoteEnd(s: string, from: number): number {
-  for (let i = from; i < s.length; i++) {
-    if (s[i] === "\\") i++;
-    else if (s[i] === "$" && s[i + 1] === "(") {
-      const end = closeParen(s, i + 2);
-      if (end === -1) return -1;
-      i = end;
-    } else if (s[i] === '"') return i;
-  }
-  return -1;
-}
 
 /** `$NAME`, `${NAME}`, `$(…)`, `$((…))`, `$?` at `s[i]` → the part, and where it ends. */
 function dollar(s: string, i: number): { part: Part; end: number } {
@@ -764,12 +735,12 @@ function dquoteParts(s: string, from: number, to: number): Part[] {
 const BREAKS = new Set([";", "&", "|", "(", ")", "<", ">", "\n", " ", "\t", "'", '"', "\\", "$", "`"]);
 
 /**
- * A command line → words, operators and redirects, with every heredoc body consumed unread. Null
- * when a quote never closes: the line cannot be read, so it names nothing.
+ * A command line → words, operators and redirects. Null when a quote never closes: the line cannot
+ * be read, so it names nothing. Heredoc bodies are gone before it runs (`shellProgram` lexes the
+ * line `elideHeredocs` returns), so a `<<`'s delimiter is one more redirect target.
  */
 function lexShell(s: string): Token[] | null {
   const tokens: Token[] = [];
-  const heredocs: { delim: string; tabs: boolean }[] = [];
   let parts: Part[] = [];
   let text = "";
   let inWord = false;
@@ -793,15 +764,6 @@ function lexShell(s: string): Token[] | null {
       endWord();
       tokens.push({ t: "op", op: "\n" });
       i++;
-      // A heredoc's body starts on the line after its `<<`, and runs to its delimiter alone on a line.
-      for (const doc of heredocs.splice(0)) {
-        while (i < s.length) {
-          const nl = s.indexOf("\n", i);
-          const line = s.slice(i, nl === -1 ? s.length : nl);
-          i = nl === -1 ? s.length : nl + 1;
-          if ((doc.tabs ? line.replace(/^\t+/, "") : line) === doc.delim) break;
-        }
-      }
     } else if (c === " " || c === "\t") {
       endWord();
       i++;
@@ -820,16 +782,6 @@ function lexShell(s: string): Token[] | null {
       const op = /^(&>>|&>|<<<|<<-|<<|<>|<&|<|>>|>\||>&|>)/.exec(at)?.[0] ?? c;
       tokens.push({ t: "redir", op });
       i += op.length;
-      if (op === "<<" || op === "<<-") {
-        while (s[i] === " " || s[i] === "\t") i++;
-        const m = /^(['"]?)([^\s'";&|<>()]+)\1/.exec(s.slice(i));
-        if (m !== null) {
-          const delim = m[2] as string;
-          heredocs.push({ delim, tabs: op === "<<-" });
-          tokens.push({ t: "word", word: [{ kind: "text", text: delim }] });
-          i += m[0].length;
-        }
-      }
     } else if (c === ";" || c === "&" || c === "|" || c === "(" || c === ")") {
       endWord();
       const two = s.slice(i, i + 2);
@@ -894,7 +846,7 @@ function plain(word: Word | undefined): string | null {
  * loop whose body runs once per value. Null when the line would not lex.
  */
 function shellProgram(command: string): ShellNode[] | null {
-  const tokens = lexShell(command);
+  const tokens = lexShell(elideHeredocs(command));
   if (tokens === null) return null;
   type Frame = { readonly nodes: ShellNode[]; readonly kind: "top" | "subshell" | "do"; readonly loop: { name: string; values: Word[] } | null };
   const frames: Frame[] = [{ nodes: [], kind: "top", loop: null }];

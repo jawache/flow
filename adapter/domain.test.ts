@@ -356,6 +356,10 @@ describe("bashReads — the files a Bash command reads, before it runs", () => {
     expect(reads("cat <<EOF\ncat inside.ts")).toStrictEqual([]);
     // A `<<` with no delimiter after it is not a heredoc.
     expect(reads("cat a.ts <<")).toStrictEqual(["a.ts"]);
+    // …but a body a SHELL reads is commands, and what they read is read.
+    expect(reads("bash <<'EOF'\ncat inside.ts\nEOF\ncat after.ts")).toStrictEqual(["inside.ts", "after.ts"]);
+    // A heredoc inside a `$(…)` is skipped there too, apostrophes and all.
+    expect(reads("echo \"$(cat <<'EOF'\ndon't cat x.ts\nEOF\n)\"; cat after.ts")).toStrictEqual(["after.ts"]);
   });
 
   it("does not read a quoted operator as a separator, or a quoted word as a command", () => {
@@ -420,6 +424,7 @@ describe("bashReads — the files a Bash command reads, before it runs", () => {
     expect(searched("git diff HEAD~1 main..x HEAD:a.ts src/a.ts")).toStrictEqual(["src/a.ts"]);
     expect(searched("git log --oneline -- src docs")).toStrictEqual(["src", "docs"]);
     expect(searched("git -C lib -c a=b status pkg/x.ts")).toStrictEqual(["lib/pkg/x.ts"]);
+    expect(searched("git --config-env a.b=HOME status pkg/x.ts")).toStrictEqual(["pkg/x.ts"]);
     expect(searched("git commit -m 'src/a.ts'")).toStrictEqual([]);
     expect(searched("git -C lib")).toStrictEqual([]);
   });

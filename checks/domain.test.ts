@@ -34,11 +34,14 @@ import {
   changedSet,
   commitMessage,
   commitReason,
+  closeParen,
   compileDialect,
   layerGlobs,
   depcruise,
   depcruiseCommand,
   depcruiseHits,
+  dquoteEnd,
+  elideHeredocs,
   entryToMatcher,
   execPasses,
   exportedNames,
@@ -616,6 +619,88 @@ describe("heredocBody", () => {
     expect(heredocBody("echo hi")).toBeNull();
     expect(heredocBody("cat <<EOF\nbody")).toBeNull();
     expect(heredocBody("cat <<EOF\nEOF")).toBeNull();
+  });
+});
+
+// What a command ban matches: the line with every heredoc body gone, and nothing else touched.
+describe("elideHeredocs", () => {
+  it("drops a body and its terminator, quoted and unquoted delimiters alike, and keeps every other newline", () => {
+    expect(elideHeredocs("python3 - <<'PY'\nprint('just test')\nPY\njust test")).toBe("python3 - <<'PY'\njust test");
+    expect(elideHeredocs("cat > a.md <<EOF\nnpx vitest run\nEOF\nls")).toBe("cat > a.md <<EOF\nls");
+    expect(elideHeredocs('cat <<"EOF"\nx\nEOF')).toBe('cat <<"EOF"\n');
+    expect(elideHeredocs("cat <<\\EOF\nx\nEOF")).toBe("cat <<\\EOF\n");
+    expect(elideHeredocs("cat <<-EOF\n\tx\n\tEOF\nls")).toBe("cat <<-EOF\nls");
+    expect(elideHeredocs('git commit -m "subject\n\nbody"')).toBe('git commit -m "subject\n\nbody"');
+  });
+
+  it("drops each of several bodies in order, and a body that never closes runs to the end", () => {
+    expect(elideHeredocs("cat <<A <<B\na\nA\nb\nB\nls")).toBe("cat <<A <<B\nls");
+    expect(elideHeredocs("cat <<A; cat <<B\na\nA\nb\nB")).toBe("cat <<A; cat <<B\n");
+    expect(elideHeredocs("cat <<EOF\nnever closed\nls")).toBe("cat <<EOF\n");
+    // The delimiter must stand alone on its line: indented or trailing text is still body.
+    expect(elideHeredocs("cat <<EOF\n EOF\nEOF x\nEOF\nls")).toBe("cat <<EOF\nls");
+  });
+
+  it("keeps a body a shell reads, since it is commands — directly, behind a wrapper, or down a pipe", () => {
+    const keep = ["bash <<'EOF'\ngit push --force\nEOF", "sh -s <<EOF\nx\nEOF", "sudo -E bash <<EOF\nx\nEOF", "X=1 /bin/zsh <<EOF\nx\nEOF", "cat <<EOF | bash\nx\nEOF", "eval <<EOF\nx\nEOF"];
+    for (const command of keep) expect(elideHeredocs(command)).toBe(command);
+    // …and the pipe ends where the pipeline does.
+    expect(elideHeredocs("bash -c x; cat <<EOF\nx\nEOF")).toBe("bash -c x; cat <<EOF\n");
+    expect(elideHeredocs("echo | bash && cat <<EOF\nx\nEOF")).toBe("echo | bash && cat <<EOF\n");
+    // A shell named as an ARGUMENT is not the program reading the body.
+    expect(elideHeredocs("cat bash <<EOF\nx\nEOF")).toBe("cat bash <<EOF\n");
+    expect(elideHeredocs("if true; then cat <<EOF\nx\nEOF\nfi")).toBe("if true; then cat <<EOF\nfi");
+  });
+
+  it("leaves a heredoc inside a quoted argument or a `$(…)` alone — what it prints IS the argument", () => {
+    const inline = `git commit -m "$(cat <<'EOF'\nfix: don't (ever) do it\nEOF\n)"`;
+    expect(elideHeredocs(inline)).toBe(inline);
+    const bare = "echo $(cat <<EOF\nx\nEOF\n)";
+    expect(elideHeredocs(bare)).toBe(bare);
+  });
+
+  it("finds no heredoc in a here-string, a quoted `<<`, a comment, an arithmetic shift or a process substitution", () => {
+    const none = [
+      "grep x <<< 'text'\nls",
+      "echo '<<EOF'\nls",
+      'echo "a <<EOF"\nls',
+      "echo a\\<<EOF\nls",
+      "ls # <<EOF\nls",
+      "echo $((1<<2))\nls",
+      "diff <(sort a) >(cat)\nls",
+      "echo `x <<EOF`\nls",
+      "cat a.ts <<",
+      "cat <<''\nls",
+      "cat a.ts 2>&1 >> log\nls",
+    ];
+    for (const command of none) expect(elideHeredocs(command)).toBe(command);
+  });
+
+  it("returns what it cannot read as written, so a ban still sees all of it", () => {
+    for (const command of ["cat 'unclosed <<EOF\nx\nEOF", "cat <<EOF $(unclosed\nx\nEOF", "diff <(sort a\n<<EOF", "cat `x <<EOF\nx\nEOF", "echo $((1\n"]) {
+      expect(elideHeredocs(command)).toBe(command);
+    }
+    // A body already passed is still dropped: only the rest from the unreadable word is kept.
+    expect(elideHeredocs("cat <<EOF\nx\nEOF\necho 'open")).toBe("cat <<EOF\necho 'open");
+  });
+
+  it("reads a line continuation and a word glued to its quotes as the one word they are", () => {
+    expect(elideHeredocs("b\\\nash <<EOF\nx\nEOF")).toBe("b\\\nash <<EOF\nx\nEOF");
+    expect(elideHeredocs("cat \\\n  <<EOF\nx\nEOF")).toBe("cat \\\n  <<EOF\n");
+    expect(elideHeredocs("'bash' <<EOF\nx\nEOF")).toBe("'bash' <<EOF\nx\nEOF");
+  });
+});
+
+describe("the shared quote scanners", () => {
+  it("closes a double quote past a `$(…)` that holds one, and a `$(…)` past a heredoc that holds a `)`", () => {
+    const s = `"$(printf "%s" x)" rest`;
+    expect(dquoteEnd(s, 1)).toBe(s.indexOf(" rest") - 1);
+    const sub = "$(cat <<'EOF'\n) don't\nEOF\n) after";
+    expect(closeParen(sub, 2)).toBe(sub.indexOf(" after") - 1);
+    expect(closeParen("$(echo $((1<<2)) <<< x)", 2)).toBe(22);
+    expect(closeParen("$(echo $((1", 2)).toBe(-1);
+    expect(closeParen('$(echo "open', 2)).toBe(-1);
+    expect(dquoteEnd('"$(open', 1)).toBe(-1);
   });
 });
 

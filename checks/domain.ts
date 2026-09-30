@@ -588,15 +588,238 @@ export const GIT_VALUE_OPTS: ReadonlySet<string> = new Set([
   "--config-env",
 ]);
 
-function findDquoteEnd(s: string, from: number): number {
+// ── the shell primitives: quotes, `$(…)` and heredocs ─────────────────────────
+//
+// ONE COPY, shared with the adapter's read lexer (`bashReads`), which used to carry its own. Two
+// scanners for "where does this double quote close" answered differently the moment a `"` sat
+// inside a `$(…)`, and the one that was wrong was the one the command rail used.
+
+/** A heredoc's opener: its delimiter, whether `<<-` strips leading tabs, and where the opener ends. */
+interface HeredocOpen {
+  readonly delim: string;
+  readonly tabs: boolean;
+  readonly end: number;
+}
+
+// A delimiter is one word: quoted whole ('EOF', "EOF"), escaped (\EOF) or bare. Sticky, so it is
+// tried exactly where the opener left off.
+const DELIMITER = /(?:'([^'\n]*)'|"([^"\n]*)"|\\?([^\s'";&|<>()`]+))/y;
+
+/**
+ * The heredoc opening at `s[i]` — `<<` or `<<-`, then its delimiter — or null when none does. A
+ * here-string (`<<<`) is not one, and neither is a `<<` with no word after it.
+ */
+function heredocOpen(s: string, i: number): HeredocOpen | null {
+  if (!s.startsWith("<<", i) || s[i + 2] === "<") return null;
+  const tabs = s[i + 2] === "-";
+  let at = i + (tabs ? 3 : 2);
+  while (s[at] === " " || s[at] === "\t") at++;
+  DELIMITER.lastIndex = at;
+  const m = DELIMITER.exec(s);
+  const delim = m?.[1] ?? m?.[2] ?? m?.[3] ?? "";
+  return m === null || delim === "" ? null : { delim, tabs, end: at + m[0].length };
+}
+
+/**
+ * Where a heredoc's body ends: just past its terminator — the delimiter alone on a line, after
+ * leading tabs for `<<-` — or the end of the string when it never comes. `from` is the body's
+ * first character, the one after the newline that ends the opener's line.
+ */
+function heredocEnd(s: string, from: number, doc: HeredocOpen): number {
+  let i = from;
+  while (i < s.length) {
+    const nl = s.indexOf("\n", i);
+    const line = s.slice(i, nl === -1 ? s.length : nl);
+    i = nl === -1 ? s.length : nl + 1;
+    if ((doc.tabs ? line.replace(/^\t+/, "") : line) === doc.delim) break;
+  }
+  return i;
+}
+
+/**
+ * Where a `$(` closes, honouring quotes, nesting and any heredoc inside it — a body is text, so an
+ * apostrophe or a `)` in it closes nothing. -1 when it never closes.
+ */
+export function closeParen(s: string, from: number): number {
+  let depth = 1;
+  const docs: HeredocOpen[] = [];
   for (let i = from; i < s.length; i++) {
-    if (s[i] === "\\") {
+    const c = s[i];
+    if (c === "\\") i++;
+    else if (c === "'" || c === '"') {
+      const end = c === "'" ? s.indexOf("'", i + 1) : dquoteEnd(s, i + 1);
+      if (end === -1) return -1;
+      i = end;
+    } else if (s.startsWith("$((", i)) {
+      const end = s.indexOf("))", i + 3);
+      if (end === -1) return -1;
+      i = end + 1;
+    } else if (s.startsWith("<<<", i)) i += 2;
+    else if (c === "<") {
+      const doc = heredocOpen(s, i);
+      if (doc !== null) {
+        docs.push(doc);
+        i = doc.end - 1;
+      }
+    } else if (c === "\n") {
+      for (const doc of docs.splice(0)) i = heredocEnd(s, i + 1, doc) - 1;
+    } else if (c === "(") depth++;
+    else if (c === ")" && --depth === 0) return i;
+  }
+  return -1;
+}
+
+/** Where a double-quoted run closes — a `"` inside a `$(…)` in it does not close it. -1 when it never does. */
+export function dquoteEnd(s: string, from: number): number {
+  for (let i = from; i < s.length; i++) {
+    if (s[i] === "\\") i++;
+    else if (s[i] === "$" && s[i + 1] === "(") {
+      const end = closeParen(s, i + 2);
+      if (end === -1) return -1;
+      i = end;
+    } else if (s[i] === '"') return i;
+  }
+  return -1;
+}
+
+/**
+ * The programs whose heredoc is itself a list of commands. Their body is kept, because a banned
+ * command in it is one the shell will run. The docs name these four; `dash` and `ksh` are the same
+ * fact under other names.
+ */
+const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh", "eval"]);
+
+/** Words that lead the command they run, or open a construct, so the NEXT word is the program. */
+const LEADERS = new Set(["sudo", "env", "exec", "command", "builtin", "nohup", "nice", "time", "if", "then", "else", "elif", "while", "until", "do", "!", "{"]);
+
+/** Where one word stops at the top level of a line. */
+const WORD_BREAKS = new Set([" ", "\t", "\n", ";", "&", "|", "(", ")", "<", ">"]);
+
+/**
+ * One word at `s[i]`: where it ends, and its text with quotes removed (a substitution reads as a
+ * NUL, since what it prints is not known). Null when a quote or a substitution never closes.
+ */
+function shellWord(s: string, from: number): { end: number; text: string } | null {
+  let text = "";
+  let i = from;
+  while (i < s.length && !WORD_BREAKS.has(s[i] as string)) {
+    const c = s[i] as string;
+    let end: number;
+    if (c === "\\") {
+      // An escaped character is itself; an escaped NEWLINE is a line continuation and is nothing.
+      if (s[i + 1] !== "\n") text += s[i + 1] ?? "";
+      i += 2;
+      continue;
+    } else if (c === "'" || c === '"') {
+      end = c === "'" ? s.indexOf("'", i + 1) : dquoteEnd(s, i + 1);
+      if (end !== -1) text += s.slice(i + 1, end);
+    } else if (s.startsWith("$((", i)) {
+      end = s.indexOf("))", i + 3);
+      end = end === -1 ? -1 : end + 1;
+      text += "\0";
+    } else if (s.startsWith("$(", i)) {
+      end = closeParen(s, i + 2);
+      text += "\0";
+    } else if (c === "`") {
+      end = s.indexOf("`", i + 1);
+      text += "\0";
+    } else {
+      text += c;
       i++;
       continue;
     }
-    if (s[i] === '"') return i;
+    if (end === -1) return null;
+    i = end + 1;
   }
-  return -1;
+  return { end: i, text };
+}
+
+/**
+ * THE COMMAND LINE WITHOUT ITS HEREDOC BODIES — what a command ban matches.
+ *
+ * A heredoc is text fed to a program on its standard input: a python script, a file being written,
+ * a note. The words of a banned command inside it are not a use of that command, and matching
+ * them refused `python3 - <<'PY'` scripts for naming a recipe in a string. Every body is removed,
+ * with its terminator line, whether the delimiter is quoted or not. EVERYTHING ELSE IS LEFT AS
+ * WRITTEN — newlines included, because the patterns that police a commit message span them.
+ *
+ * Two exceptions keep a body, and both are about what the text becomes:
+ *   · a heredoc fed to a SHELL (`bash`, `sh`, `zsh`, `eval`, or a pipeline into one): its body is
+ *     commands, and a banned one in it will run.
+ *   · a heredoc inside a quoted argument or a `$(…)`, as in `git commit -m "$(cat <<'EOF' … )"`:
+ *     what it prints is spliced into the argument, so its text IS part of the command line.
+ *
+ * Best-effort, and it errs toward matching: a line with a quote that never closes is returned from
+ * that point as written, so a ban still sees everything it saw before.
+ */
+export function elideHeredocs(command: string): string {
+  const s = command;
+  let out = "";
+  let copied = 0;
+  let pipeline = { shell: false };
+  let docs: { doc: HeredocOpen; pipeline: { shell: boolean } }[] = [];
+  let atCommand = true;
+  let led = false;
+  let target = false;
+  let i = 0;
+  while (i < s.length) {
+    const c = s[i] as string;
+    if (c === "\n") {
+      i++;
+      for (const { doc, pipeline: into } of docs) {
+        const end = heredocEnd(s, i, doc);
+        if (!into.shell) {
+          out += s.slice(copied, i);
+          copied = end;
+        }
+        i = end;
+      }
+      docs = [];
+      pipeline = { shell: false };
+      atCommand = true;
+      led = false;
+    } else if (c === " " || c === "\t") i++;
+    else if (s.startsWith("\\\n", i)) i += 2;
+    else if (c === "#") {
+      const nl = s.indexOf("\n", i);
+      i = nl === -1 ? s.length : nl;
+    } else if (s.startsWith("<(", i) || s.startsWith(">(", i)) {
+      const end = closeParen(s, i + 2);
+      if (end === -1) break;
+      i = end + 1;
+      atCommand = false;
+    } else if (c === "<" || c === ">" || s.startsWith("&>", i)) {
+      const doc = heredocOpen(s, i);
+      if (doc !== null) {
+        docs.push({ doc, pipeline });
+        i = doc.end;
+      } else {
+        i += (/^(?:&>>|&>|<<<|<<-|<<|<>|<&|>>|>\||>&|<|>)/.exec(s.slice(i))?.[0] ?? c).length;
+        target = true;
+      }
+    } else if (c === ";" || c === "&" || c === "|" || c === "(" || c === ")") {
+      const two = s.slice(i, i + 2);
+      const op = ["&&", "||", "|&", ";;"].includes(two) ? two : c;
+      i += op.length;
+      if (op !== "|" && op !== "|&") pipeline = { shell: false };
+      atCommand = true;
+      led = false;
+    } else {
+      const word = shellWord(s, i);
+      if (word === null) break;
+      i = word.end;
+      if (target) target = false;
+      else if (atCommand) {
+        const name = word.text.slice(word.text.lastIndexOf("/") + 1);
+        if (LEADERS.has(name)) led = true;
+        else if (!/^[A-Za-z_]\w*=/.test(word.text) && !(led && word.text.startsWith("-"))) {
+          if (SHELLS.has(name)) pipeline.shell = true;
+          atCommand = false;
+        }
+      }
+    }
+  }
+  return out + s.slice(copied);
 }
 
 /**
@@ -621,7 +844,7 @@ export function tokenizeCommand(command: string): string[] | null {
   while (i < cmd.length) {
     const c = cmd[i] as string;
     if (c === "'" || c === '"') {
-      const end = c === "'" ? cmd.indexOf("'", i + 1) : findDquoteEnd(cmd, i + 1);
+      const end = c === "'" ? cmd.indexOf("'", i + 1) : dquoteEnd(cmd, i + 1);
       if (end === -1) return null;
       cur += c === '"' ? cmd.slice(i + 1, end).replace(/\\(["\\$`])/g, "$1") : cmd.slice(i + 1, end);
       started = true;
