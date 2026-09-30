@@ -482,8 +482,8 @@ describe("the delta rail — every change to the tree, judged the moment it has 
 describe("several agents in one worktree — overlap, background commands, and one writer", () => {
   // THE PROOF OF F5, in a worktree of its own: a config that sets revert: "all" and binds the work
   // pack with its writers named, so the three things this phase adds meet in one place — a revert
-  // narrowed by an overlapping call, a background command's writes reported and kept, and a write
-  // by the wrong actor refused whichever tool made it.
+  // narrowed by an overlapping call, a background command's later write judged like any other, and
+  // a write by the wrong actor refused whichever tool made it.
   let tree: string;
   let ids = 0;
   const OVERLAP_CONFIG = (packageRoot: string): string => `
@@ -575,27 +575,25 @@ export default defineConfig([pack(demo), pack(work, { writers: ["builder", "pare
     expect(at("src/b.ts")).toBe("export const b = 2;\n");
   });
 
-  it("reports what a background command wrote after its call returned, and puts none of it back", () => {
+  it("gives a background command no special treatment: its later write is judged and put back by the call that sees it", () => {
     const started = bash(PARENT, "sleep 1 && echo '// TODO from the build' >> src/b.ts", { run_in_background: true });
     expect(started.before().code).toBe(0);
-    expect(started.after().code, "nothing has changed yet when the call returns").toBe(0);
-    // Later, while some other call is in progress, the process writes.
-    const later = bash(spawned("agent-b1", "builder"), "ls");
+    expect(existsSync(join(tree, ".flow", "snapshots", `${started.key}.json`)), "snapshotted like any call").toBe(true);
+    expect(started.after().code, "diffed like any call: nothing has changed yet when it returns").toBe(0);
+    // Later, while some other call is in progress, the process writes — and that call's own
+    // compliant write sits in the same diff.
+    const later = bash(spawned("agent-b1", "builder"), "echo 'export const f = 1;' > src/f.ts");
     expect(later.before().code).toBe(0);
     expect(sh("echo '// TODO from the build' >> src/b.ts")).toBe(0);
-    const reported = later.after();
-    expect(reported.code).toBe(2);
-    expect(reported.stderr).toContain("flow — write reported after it landed, not reverted:");
-    expect(reported.stderr).toContain("✗ demo.noTodo · src/b.ts");
-    expect(reported.stderr).toContain("A command started in the background (`sleep 1 && echo '// TODO from the build' >> src/b.ts`) was still running");
-    expect(at("src/b.ts"), "reported, never written back").toContain("TODO from the build");
-    // The mark is spent: the next change is owned again, and put back when refused.
-    writeFileSync(join(tree, "src", "b.ts"), "export const b = 2;\n");
-    const owned = bash(PARENT, "echo '// TODO' >> src/b.ts");
-    expect(owned.before().code).toBe(0);
-    expect(sh("echo '// TODO' >> src/b.ts")).toBe(0);
-    expect(owned.after().stderr).toContain("flow — write reverted after it landed:");
-    expect(at("src/b.ts")).toBe("export const b = 2;\n");
+    expect(sh("echo 'export const f = 1;' > src/f.ts")).toBe(0);
+    const answer = later.after();
+    expect(answer.code).toBe(2);
+    expect(answer.stderr).toContain("flow — write reverted after it landed:");
+    expect(answer.stderr).toContain("✗ demo.noTodo · src/b.ts");
+    expect(answer.stderr).not.toContain("not reverted");
+    expect(at("src/b.ts"), "written back, like any refused write").toBe("export const b = 2;\n");
+    expect(at("src/f.ts"), "revert: all — the rest of the call's diff goes back with it").toBeNull();
+    expect(existsSync(join(tree, ".flow", "background.json")), "no mark is kept for a background command").toBe(false);
   });
 
   it("refuses and reverts a write by an actor that is not a writer, naming who wrote it", () => {

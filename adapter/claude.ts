@@ -82,9 +82,7 @@ import {
   callKey,
   callRecord,
   forgettable,
-  liveBackground,
   overlapping,
-  startedInBackground,
   deltaFault,
   readFault,
   hermeticEnv,
@@ -105,7 +103,6 @@ import {
   snapshotPathspecs,
   type AdapterEvent,
   type Answer,
-  type Background,
   type CallRecord,
   type Change,
   type Delta,
@@ -502,31 +499,6 @@ export function finishSnapshot(root: string, key: string, now = Date.now()): voi
   for (const gone of forgettable(finished)) rmSync(snapshotFiles(root, gone).meta, { force: true });
 }
 
-/** Where the marks of background commands still running are kept, for the worktree as a whole. */
-function backgroundFile(root: string): string {
-  return join(root, FLOW_DIR, "background.json");
-}
-
-/** The background commands still worth honouring. Unreadable is none: the next mark rewrites it. */
-function readBackground(root: string, now: number): Background[] {
-  try {
-    return liveBackground(JSON.parse(readFileSync(backgroundFile(root), "utf8")), now);
-  } catch {
-    return [];
-  }
-}
-
-/** Write the marks back — an empty list removes the file. */
-function writeBackground(root: string, marks: readonly Background[]): void {
-  try {
-    if (marks.length === 0) rmSync(backgroundFile(root), { force: true });
-    else writeFileSync(backgroundFile(root), JSON.stringify(marks));
-  } catch {
-    // A mark that cannot be kept leaves the background command's later writes owned by whichever
-    // call sees them — judged, and put back if refused. Loud rather than silent, so it is let go.
-  }
-}
-
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE CONFIG — which repo this is, and what it has turned on
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -730,30 +702,26 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
         ? { ok: false, fault: "The host sent no tool_use_id with this call, so its snapshot cannot be found." }
         : observeDelta(root, key, include)
       : null;
-  // THE CALL IS OVER, however it went: its record says it finished, and a command it left running
-  // in the background is marked, so the next change on this worktree is known to belong to no call.
+  // THE CALL IS OVER, however it went: its record says it finished, so a diff still to come can
+  // tell this call overlapped it.
   const now = Date.now();
-  const finish = (consumed: boolean): void => {
-    if (key === null) return;
-    finishSnapshot(root, key, now);
-    const mine = startedInBackground(payload, now);
-    if (consumed || mine !== null) writeBackground(root, [...(consumed ? [] : readBackground(root, now)), ...(mine === null ? [] : [mine])]);
+  const finish = (): void => {
+    if (key !== null) finishSnapshot(root, key, now);
   };
   if (delta !== null && !delta.ok) {
-    finish(false);
+    finish();
     return deltaFault(delta.fault);
   }
   const changes = delta?.ok === true ? delta.changes : undefined;
 
-  // WHAT A REFUSAL MAY UNDO, asked only of a call that changed something: the repo's setting, the
-  // other actors' calls that overlapped this one, and whether a background command was still
-  // running — in which case the changes belong to no call, and the marks are spent on them.
+  // WHAT A REFUSAL MAY UNDO, asked only of a call that changed something: the repo's setting, and
+  // the other actors' calls that overlapped this one.
   const revert = regime.kind === "loaded" && regime.config.settings.revert === "all" ? "all" : "refused";
   const scopeOf = (landed: readonly Change[]): RevertScope => {
-    if (landed.length === 0 || key === null) return { revert, overlap: [], unowned: [] };
+    if (landed.length === 0 || key === null) return { revert, overlap: [] };
     const log = callLog(root);
     const me = log.find((call) => call.key === key);
-    return { revert, overlap: me === undefined ? [] : overlapping(me, log), unowned: readBackground(root, now) };
+    return { revert, overlap: me === undefined ? [] : overlapping(me, log) };
   };
 
   // THE WAY BACK, once the answer is known: the changes a rule refused are written back from the
@@ -764,7 +732,7 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
     const scope = scopeOf(delta.changes);
     const plan = reversal(delta.changes, answer.refused, scope);
     const failed = plan.revert.length === 0 ? [] : revertChanges(root, delta.before ?? "", plan.revert);
-    finish(scope.unowned.length > 0);
+    finish();
     const landed = answer.refused.some((refusal) => refusal.observed !== undefined);
     return landed ? { ...answer, undone: { restored: plan.revert, kept: plan.kept, failed, scope } } : answer;
   };

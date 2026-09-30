@@ -1355,45 +1355,6 @@ export function callName(call: CallRecord): string {
   return `${call.tool || "a tool"} ${call.key} (${call.agent === "main" ? "main agent" : `agent ${call.agent}`} of session ${call.session.slice(0, 8)})`;
 }
 
-// ── background commands: writes that belong to no call ─────────────────────────────────────────
-
-/**
- * A command the host started in the background — its call returned before the process finished,
- * so whatever the process writes after that belongs to no call in the log.
- */
-export interface Background {
-  readonly key: string;
-  readonly command: string;
-  readonly at: number;
-}
-
-/** How long a background mark is honoured when no change has come to claim it. */
-export const BACKGROUND_MS = 24 * 60 * 60 * 1000;
-
-/**
- * The background command this call started, or null. A spawn in the background is not one: the
- * subagent's writes are its own calls, each in the log.
- */
-export function startedInBackground(payload: HookPayload, at: number): Background | null {
-  const tool = text(payload.tool_name);
-  const input = payload.tool_input ?? {};
-  const key = callKey(payload);
-  if (input["run_in_background"] !== true || key === null || tool === SPAWN_TOOL || tool === "Task") return null;
-  return { key, command: text(input["command"]) || tool, at };
-}
-
-/** The background marks read back off disk, keeping those still worth honouring. */
-export function liveBackground(raw: unknown, now: number): Background[] {
-  if (!Array.isArray(raw)) return [];
-  return raw.flatMap((held: unknown): Background[] => {
-    if (typeof held !== "object" || held === null) return [];
-    const mark = held as Record<string, unknown>;
-    const at = mark["at"];
-    if (typeof at !== "number" || now - at > BACKGROUND_MS) return [];
-    return [{ key: text(mark["key"]), command: text(mark["command"]), at }];
-  });
-}
-
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // RESULTS — effects become an exit code, a line on stderr, or a decision object
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -1438,15 +1399,6 @@ const RAIL_OBSERVED: Readonly<Record<"write" | "delete", string>> = {
   delete: "flow — delete reverted after it landed",
 };
 
-/**
- * The banner for a landed change a rule refused and flow did NOT put back — a background command
- * was still running, so the change belongs to no call. Reported, never reverted.
- */
-const RAIL_REPORTED: Readonly<Record<"write" | "delete", string>> = {
-  write: "flow — write reported after it landed, not reverted",
-  delete: "flow — delete reported after it landed, not reverted",
-};
-
 /** One refusal, with the rail that made it — the banner is the moment's, not the hook's. */
 export interface Refused {
   readonly moment: GuardrailMoment;
@@ -1479,19 +1431,22 @@ export interface Reversal {
 
 /**
  * What a refusal is allowed to undo, beside the refusals themselves: the repo's `revert` setting,
- * the other calls that overlapped this one, and the background commands still running.
+ * and the other calls that overlapped this one.
+ *
+ * A command started in the background gets nothing here, by ruling: what it writes after its call
+ * returns lands in some later call's diff and is judged and put back there like anything else.
+ * The harness runs no hook when the process ends, so any mark saying "not this call's" would have
+ * to outlive the process by a guess — and a guess that let `sleep 1` buy one unreverted write.
  */
 export interface RevertScope {
   /** The config's `revert` setting: the refused files alone, or every file the call changed. */
   readonly revert: "refused" | "all";
   /** Other actors' calls that overlapped this one. Any of them, and `"all"` is not honoured. */
   readonly overlap: readonly CallRecord[];
-  /** Background commands still running: their writes belong to no call, and nothing goes back. */
-  readonly unowned: readonly Background[];
 }
 
-/** The default scope: the refused files, no overlap, nothing in the background. */
-export const REFUSED_ONLY: RevertScope = { revert: "refused", overlap: [], unowned: [] };
+/** The default scope: the refused files, and no overlap. */
+export const REFUSED_ONLY: RevertScope = { revert: "refused", overlap: [] };
 
 /**
  * THE REVERT SCOPE: the files a rule refused, or every file the call changed when the repo asked
@@ -1502,12 +1457,10 @@ export const REFUSED_ONLY: RevertScope = { revert: "refused", overlap: [], unown
  * Most writing calls touch one file, and the other files a multi-file command wrote are not wrong
  * because one of them is — they are listed as kept, so the agent knows they stand. A refusal that
  * names no landed path (a fault on a pre-emptive rail) reverts nothing: a revert is only ever of a
- * change flow saw land, never a guess. A diff that belongs to no call — a background command was
- * still running — is reported and never put back: nothing says which of it was whose.
+ * change flow saw land, never a guess.
  */
 export function reversal(changes: readonly Change[], refusals: readonly Refused[], scope: RevertScope = REFUSED_ONLY): Reversal {
   const refused = new Set(refusals.flatMap((refusal) => (refusal.observed === undefined ? [] : [refusal.observed])));
-  if (scope.unowned.length > 0) return { revert: [], kept: changes.map((change) => change.path) };
   const whole = scope.revert === "all" && scope.overlap.length === 0 && refused.size > 0;
   const back = (change: Change): boolean => whole || refused.has(change.path);
   return {
@@ -1568,19 +1521,6 @@ const CALLS_NAMED = 5;
 function callsListed(calls: readonly CallRecord[]): string {
   const named = calls.slice(0, CALLS_NAMED).map(callName);
   return calls.length > CALLS_NAMED ? `${named.join("; ")}; and ${calls.length - CALLS_NAMED} more` : named.join("; ");
-}
-
-/**
- * What a refusal of an UNOWNED diff ends with. A background command was still running, so the
- * changes belong to no call — reported, with the rules' own words above, and never put back.
- */
-function unownedTail(refusals: readonly Refused[], background: readonly Background[]): string {
-  const paths = [...new Set(refusals.flatMap((refusal) => (refusal.observed === undefined ? [] : [refusal.observed])))];
-  const commands = background.map((mark) => `\`${mark.command}\``).join(", ");
-  return [
-    `Nothing was put back. A command started in the background (${commands}) was still running when this change was seen, so it belongs to no tool call, and flow does not write back what it cannot attribute.`,
-    `Check ${listed(paths)} and fix what the rule refuses — through Edit, which is judged before it lands.`,
-  ].join("\n");
 }
 
 /** A note with its prose resolved: a `file:` breadcrumb is read by the shell, never here. */
@@ -1736,9 +1676,6 @@ export function refused(refusals: readonly Refused[], undone?: Undone): HookResu
   // landed — and the host shows stderr to the model beside the tool's result. So it carries its own
   // banner and says what was put back rather than asking for a retry of something already done.
   const landed = first.observed !== undefined && (first.moment === "write" || first.moment === "delete");
-  const unowned = undone?.scope?.unowned ?? [];
-  if (landed && unowned.length > 0)
-    return { stdout: "", stderr: `\n${RAIL_REPORTED[first.moment]}:\n\n${body}\n\n${unownedTail(refusals, unowned)}\n`, exitCode: 2 };
   const head = landed ? RAIL_OBSERVED[first.moment] : RAIL[first.moment].head;
   const tail = landed ? observedTail(refusals, undone ?? { restored: [], kept: [], failed: [] }) : RAIL[first.moment].tail;
   return { stdout: "", stderr: `\n${head}:\n\n${body}\n\n${tail}\n`, exitCode: 2 };
