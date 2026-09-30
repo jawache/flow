@@ -10,11 +10,20 @@
 
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { homedir } from "node:os";
+import { functionsExtractor, grammarExtractor, literalExtractor } from "./bash-reads.ts";
 import { baseline, parseCorpus, renderMisses, renderReport, scoreCorpus, type Extractor } from "./domain.ts";
 
 const CORPUS = join(resolve(import.meta.dirname, ".."), "__fixtures__", "bash-corpus", "corpus.json");
 
-const EXTRACTORS: Readonly<Record<string, Extractor>> = { baseline };
+// The corpus was recorded on one machine and its labels spell `~` as that home; the bake-off's three
+// candidates are told the home of whoever runs them, which is the same machine in practice.
+const EXTRACTORS: Readonly<Record<string, Extractor>> = {
+  baseline,
+  literal: literalExtractor(homedir()),
+  grammar: grammarExtractor(homedir()),
+  functions: functionsExtractor(homedir()),
+};
 
 const args = process.argv.slice(2);
 const name = args.find((a) => !a.startsWith("--")) ?? "baseline";
