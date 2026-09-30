@@ -1,4 +1,6 @@
-// flow/tools/domain.ts — the pack page, as a pure function of what a pack says.
+// flow/tools/domain.ts — the pure half of the tools: the pack page, as a pure function of what a
+// pack says, and — in its own section at the foot — the score a Bash path extractor gets against
+// the hand-labelled corpus.
 //
 // ONE PAGE PER PACK, and it is the surface a pack is read on. A pack file is not a document: the
 // sentence spreads a rule's content over `.at()`, `.on()`, `.check()`, `.message()` and
@@ -22,6 +24,10 @@
 // is a second declaration of the same union that nothing keeps in step — the page would go on
 // rendering an arm the grammar had dropped, and would render nothing for one it had gained.
 import type { Case, CaseWorld, Cases, EntrySpec } from "../index.ts";
+
+// String algebra, and the one module a pure home may reach beyond its own: the corpus score
+// resolves every path against the command's cwd before comparing.
+import { posix } from "node:path";
 
 // ── the model a page is rendered from ────────────────────────────────────────
 
@@ -701,3 +707,290 @@ export function renderPacksIndex(docs: readonly PackDoc[]): string {
 // the fault markdown DOES have — an anchor that resolves to nothing, because a markdown anchor is
 // derived from a heading rather than written on one. That is `localLinks` and `headingSlugs` above,
 // swept over the real folder by tools/pages.test.ts.
+
+// ══ THE BASH CORPUS SCORE ═══════════════════════════════════════════════════
+//
+// How well a function names what a Bash command touches, measured. A breadcrumb fires on first
+// contact with an area, and under auto mode most contact is a Bash `cat`, `grep` or `sed -n` whose
+// payload names no path. Any mechanism that claims to recover those paths — a table of literal
+// arguments, a shell grammar, shell functions shadowing the read commands — is an EXTRACTOR:
+// `(command, cwd) → {reads, writes}`. What follows scores one against
+// `__fixtures__/bash-corpus/corpus.json`, 150 real commands labelled by hand, and says per mechanism
+// and per parsing trap how much it found (recall) and how much of what it said was true
+// (precision). The choice between mechanisms is then a table, not an argument. The shell is
+// score-bash.ts: it reads the fixture, picks the extractor and prints.
+//
+// ASYNC ON PURPOSE. An extractor that shadows `cat` with a shell function only learns its paths by
+// running the command, so the scorer awaits whatever it is handed. A plain function works as is.
+
+/** The strata the corpus was drawn from, in the order its README lists them. */
+export const MECHANISMS = [
+  "cat",
+  "head",
+  "tail",
+  "sed -n",
+  "grep",
+  "rg",
+  "find",
+  "ls",
+  "redirect",
+  "heredoc",
+  "sed -i",
+  "python heredoc",
+  "cp/mv",
+  "just",
+  "work",
+] as const;
+
+/** The parsing traps the transcript audit found, each tagged on the entries that carry it. */
+export const TRAPS = ["quoted-operator", "heredoc-body", "cd", "$VAR", "2>&1"] as const;
+
+/** The two halves of a command's effect on the tree. */
+export type Half = "reads" | "writes";
+const HALVES: readonly Half[] = ["reads", "writes"];
+
+/** One hand-labelled command. The README beside the fixture says how each field was decided. */
+export interface CorpusEntry {
+  readonly id: string;
+  readonly mechanism: string;
+  readonly traps: readonly string[];
+  readonly cwd: string;
+  readonly command: string;
+  /** Paths read or searched; relative to `cwd` when under it, absolute otherwise. */
+  readonly reads: readonly string[];
+  /** Paths created, changed, moved or deleted, spelled the same way. */
+  readonly writes: readonly string[];
+  /**
+   * The halves whose list is only what the line lets anyone know — a recipe, an unseen script or a
+   * computed loop touches more. There, a prediction nobody labelled is not charged as wrong.
+   */
+  readonly opaque?: readonly Half[];
+}
+
+/** What an extractor answers for one command. Relative paths are taken against the command's cwd. */
+export interface Targets {
+  readonly reads: readonly string[];
+  readonly writes: readonly string[];
+}
+
+/** The thing being measured. It may throw; a throw scores as an empty answer and is reported. */
+export type Extractor = (command: string, cwd: string) => Targets | Promise<Targets>;
+
+/** One half of one or many commands, counted. */
+export interface Tally {
+  /** Paths the labels hold. */
+  readonly expected: number;
+  /** Paths the extractor named that the labels also hold. */
+  readonly hit: number;
+  /** Predictions counted against precision — every one, except unlabelled ones on an opaque half. */
+  readonly charged: number;
+}
+
+/** One command, scored: the counts and the paths behind them, so a miss can be read and fixed. */
+export interface EntryScore {
+  readonly id: string;
+  readonly mechanism: string;
+  readonly traps: readonly string[];
+  readonly reads: Tally;
+  readonly writes: Tally;
+  readonly missed: Targets;
+  readonly extra: Targets;
+}
+
+/** A line of the report: every entry that shares a mechanism, a trap, or all of them. */
+export interface Row {
+  readonly label: string;
+  readonly entries: number;
+  readonly reads: Tally;
+  readonly writes: Tally;
+}
+
+export interface Report {
+  readonly name: string;
+  readonly total: Row;
+  readonly byMechanism: readonly Row[];
+  readonly byTrap: readonly Row[];
+  readonly entries: readonly EntryScore[];
+  /** Entries where the extractor threw, with what it said. They scored as an empty answer. */
+  readonly errors: readonly { readonly id: string; readonly message: string }[];
+}
+
+// ── reading the fixture ─────────────────────────────────────────────────────
+
+const isStringList = (value: unknown): value is string[] => Array.isArray(value) && value.every((v) => typeof v === "string");
+
+/**
+ * The fixture, checked field by field. Every problem is named with the entry it sits on; an entry
+ * with a problem is left out rather than scored on a guess, so a corrupted label cannot quietly
+ * move a percentage.
+ */
+export function parseCorpus(raw: unknown): { entries: CorpusEntry[]; problems: string[] } {
+  if (!Array.isArray(raw)) return { entries: [], problems: ["the corpus is not a JSON array"] };
+  const entries: CorpusEntry[] = [];
+  const problems: string[] = [];
+  const seen = new Set<string>();
+  raw.forEach((item: unknown, index) => {
+    const e = (typeof item === "object" && item !== null ? item : {}) as Record<string, unknown>;
+    const id = typeof e.id === "string" ? e.id : `#${index}`;
+    const wrong: string[] = [];
+    if (typeof e.id !== "string") wrong.push("no id");
+    else if (seen.has(e.id)) wrong.push("a duplicate id");
+    if (typeof e.mechanism !== "string" || !(MECHANISMS as readonly string[]).includes(e.mechanism)) wrong.push("an unknown mechanism");
+    if (!isStringList(e.traps) || !e.traps.every((t) => (TRAPS as readonly string[]).includes(t))) wrong.push("an unknown trap");
+    if (typeof e.cwd !== "string" || !e.cwd.startsWith("/")) wrong.push("a cwd that is not absolute");
+    if (typeof e.command !== "string" || e.command === "") wrong.push("no command");
+    if (!isStringList(e.reads)) wrong.push("reads that are not a list of paths");
+    if (!isStringList(e.writes)) wrong.push("writes that are not a list of paths");
+    if (e.opaque !== undefined && (!isStringList(e.opaque) || !e.opaque.every((h) => h === "reads" || h === "writes"))) {
+      wrong.push("an opaque that names neither reads nor writes");
+    }
+    if (typeof e.id === "string") seen.add(e.id);
+    if (wrong.length > 0) problems.push(`${id}: ${wrong.join(", ")}`);
+    else entries.push(e as unknown as CorpusEntry);
+  });
+  return { entries, problems };
+}
+
+// ── scoring ─────────────────────────────────────────────────────────────────
+
+/**
+ * A path as the scorer compares it: absolute, against the command's cwd, with no trailing slash
+ * and no `.` or `..` segments. `~` is not expanded — the scorer does not know whose home it is, so
+ * an extractor answers with the path already expanded.
+ */
+export function normalise(cwd: string, path: string): string {
+  return posix.resolve(cwd, path);
+}
+
+function tallyHalf(expected: readonly string[], predicted: readonly string[], opaque: boolean) {
+  const want = new Set(expected);
+  const said = new Set(predicted);
+  const hits = [...said].filter((p) => want.has(p));
+  return {
+    tally: { expected: want.size, hit: hits.length, charged: opaque ? hits.length : said.size },
+    missed: [...want].filter((p) => !said.has(p)),
+    extra: [...said].filter((p) => !want.has(p)),
+  };
+}
+
+/** One entry against one answer. Both sides are normalised against the entry's cwd first. */
+export function scoreEntry(entry: CorpusEntry, got: Targets): EntryScore {
+  const [reads, writes] = HALVES.map((half) =>
+    tallyHalf(
+      entry[half].map((p) => normalise(entry.cwd, p)),
+      got[half].map((p) => normalise(entry.cwd, p)),
+      entry.opaque?.includes(half) ?? false,
+    ),
+  ) as [ReturnType<typeof tallyHalf>, ReturnType<typeof tallyHalf>];
+  return {
+    id: entry.id,
+    mechanism: entry.mechanism,
+    traps: entry.traps,
+    reads: reads.tally,
+    writes: writes.tally,
+    missed: { reads: reads.missed, writes: writes.missed },
+    extra: { reads: reads.extra, writes: writes.extra },
+  };
+}
+
+const ZERO: Tally = { expected: 0, hit: 0, charged: 0 };
+const add = (a: Tally, b: Tally): Tally => ({ expected: a.expected + b.expected, hit: a.hit + b.hit, charged: a.charged + b.charged });
+
+/** Every entry the filter keeps, summed into one row. */
+export function scoreRow(label: string, scores: readonly EntryScore[]): Row {
+  return {
+    label,
+    entries: scores.length,
+    reads: scores.reduce((t, s) => add(t, s.reads), ZERO),
+    writes: scores.reduce((t, s) => add(t, s.writes), ZERO),
+  };
+}
+
+/** Run the extractor over every entry and fold the answers into the report. */
+export async function scoreCorpus(name: string, corpus: readonly CorpusEntry[], extract: Extractor): Promise<Report> {
+  const entries: EntryScore[] = [];
+  const errors: { id: string; message: string }[] = [];
+  for (const entry of corpus) {
+    let got: Targets = { reads: [], writes: [] };
+    try {
+      got = await extract(entry.command, entry.cwd);
+    } catch (error) {
+      errors.push({ id: entry.id, message: error instanceof Error ? error.message : String(error) });
+    }
+    entries.push(scoreEntry(entry, got));
+  }
+  return {
+    name,
+    total: scoreRow("all", entries),
+    byMechanism: MECHANISMS.map((m) => scoreRow(m, entries.filter((e) => e.mechanism === m))).filter((r) => r.entries > 0),
+    byTrap: TRAPS.map((t) => scoreRow(t, entries.filter((e) => e.traps.includes(t)))).filter((r) => r.entries > 0),
+    entries,
+    errors,
+  };
+}
+
+// ── printing ────────────────────────────────────────────────────────────────
+
+/** `hit/of pct` — or a dash when there is nothing to divide by, which is not the same as 0%. */
+export function rate(hit: number, of: number): string {
+  if (of === 0) return "—";
+  return `${hit}/${of} ${Math.round((100 * hit) / of)}%`;
+}
+
+const SCORE_HEAD = ["", "n", "read recall", "read precision", "write recall", "write precision"];
+
+function scoreCells(r: Row): string[] {
+  return [r.label, String(r.entries), rate(r.reads.hit, r.reads.expected), rate(r.reads.hit, r.reads.charged), rate(r.writes.hit, r.writes.expected), rate(r.writes.hit, r.writes.charged)];
+}
+
+function aligned(rows: readonly string[][]): string[] {
+  const width = SCORE_HEAD.map((_, c) => Math.max(...rows.map((r) => (r[c] ?? "").length)));
+  return rows.map((r) => r.map((cell, c) => (c === 0 ? cell.padEnd(width[c] ?? 0) : cell.padStart(width[c] ?? 0))).join("  ").trimEnd());
+}
+
+/** The report as a reader sees it: one table by mechanism, one by trap, the total, any throws. */
+export function renderReport(report: Report): string {
+  const lines = [`Bash corpus — ${report.name}, ${report.total.entries} commands`, ""];
+  lines.push(...aligned([SCORE_HEAD, ...report.byMechanism.map(scoreCells), scoreCells(report.total)]));
+  lines.push("", "by trap");
+  lines.push(...aligned([SCORE_HEAD, ...report.byTrap.map(scoreCells)]));
+  if (report.errors.length > 0) {
+    lines.push("", `the extractor threw on ${report.errors.length}, scored as an empty answer:`);
+    for (const e of report.errors) lines.push(`  ${e.id}  ${e.message}`);
+  }
+  return lines.join("\n") + "\n";
+}
+
+/** Every entry with something missed or something extra, the paths spelled out — the worklist. */
+export function renderMisses(report: Report): string {
+  const lines: string[] = [];
+  for (const e of report.entries) {
+    const parts = HALVES.flatMap((half) => [
+      ...e.missed[half].map((p) => `    missed ${half.slice(0, -1)}  ${p}`),
+      ...e.extra[half].map((p) => `    extra  ${half.slice(0, -1)}  ${p}`),
+    ]);
+    if (parts.length > 0) lines.push(`${e.id} [${e.mechanism}]`, ...parts);
+  }
+  return lines.length === 0 ? "nothing missed, nothing extra\n" : lines.join("\n") + "\n";
+}
+
+// ── the baseline ────────────────────────────────────────────────────────────
+
+/**
+ * THE FLOOR, deliberately naive: split the whole command on whitespace, strip quote marks, and call
+ * the word after `>` or `>>` a write and every other word that looks like a path a read. It knows
+ * no command, no quote, no heredoc and no `cd` — every trap in the corpus is a trap for it — so
+ * whatever a real mechanism scores is read against what knowing nothing already gets.
+ */
+export function baseline(command: string): Targets {
+  const words = command.split(/\s+/).map((w) => w.replace(/^['"]+|['"]+$/g, "")).filter((w) => w !== "");
+  const reads: string[] = [];
+  const writes: string[] = [];
+  words.forEach((word, i) => {
+    const glued = /^>>?(.+)$/.exec(word);
+    if (glued?.[1] !== undefined) writes.push(glued[1]);
+    else if (words[i - 1] === ">" || words[i - 1] === ">>") writes.push(word);
+    else if (!word.startsWith("-") && !word.includes(">") && (word.includes("/") || /\.\w+$/.test(word))) reads.push(word);
+  });
+  return { reads, writes };
+}

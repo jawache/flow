@@ -76,6 +76,10 @@ docs-packs:
 docs-packs-check:
     node tools/pack-pages.ts --check
 
+[doc("Score a Bash path extractor against the hand-labelled corpus in __fixtures__/bash-corpus/ — recall and precision for reads and writes, per mechanism and per parsing trap. `just score-bash` scores the naive baseline; name another extractor from tools/score-bash.ts to score that one, and add --misses to list every path it missed or invented.")]
+score-bash *args:
+    node tools/score-bash.ts {{args}}
+
 [doc("Coverage gate for the pure home — one `domain.ts` per pipeline layer plus glob.ts, judged against the threshold in vitest.config.ts.")]
 test-coverage:
     npx vitest run --coverage
