@@ -242,9 +242,12 @@ export const justfile = definePack("justfile", (repo: Catalogue) => {
             // The first pair of the repo's own map, driven both ways: the recipe passes, the raw
             // command it replaces is refused. A case written against a command no repo named would
             // prove the pattern against itself.
+            //
+            // A HEREDOC BODY IS NOT A USE: a python script that names the command in a string
+            // passes, and the same command on the line after it is still refused.
             .test({
-              pass: [Object.values(recipes)[0] ?? "just test"],
-              block: [Object.keys(recipes)[0] ?? "npx vitest run"],
+              pass: [Object.values(recipes)[0] ?? "just test", `python3 - <<'PY'\nprint("${Object.keys(recipes)[0] ?? "npx vitest run"}")\nPY`],
+              block: [Object.keys(recipes)[0] ?? "npx vitest run", `python3 - <<'PY'\nprint("x")\nPY\n${Object.keys(recipes)[0] ?? "npx vitest run"}`],
             }),
         }),
   };

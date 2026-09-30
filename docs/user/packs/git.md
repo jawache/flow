@@ -97,7 +97,8 @@ Blocks Claude/Anthropic attribution in commits, PRs and issues.
     "git commit[\\s\\S]*(claude\\.com/claude-code|🤖 Generated)",
     "gh (pr|issue)[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(Claude|[Aa]nthropic)",
     "gh (pr|issue)[\\s\\S]*(claude\\.com/claude-code|🤖 Generated)"
-  ]
+  ],
+  "matchHeredocs": true
 }
 ```
 
@@ -117,6 +118,11 @@ Commit / PR / issue body contains Claude or Anthropic attribution. Remove it (th
 
 **blocks**
 
+- running `git commit -F - <<'EOF'
+fix(auth): renew the session
+
+Co-Authored-By: Claude
+EOF`
 - running `git commit -m "fix(auth): renew the session
 
 Co-Authored-By: Claude <noreply@anthropic.com>"`
@@ -225,10 +231,18 @@ Force-push rewrites history that other clones (and every open PR) already have �
 - running `cat > notes.md <<'EOF'
 never run git push --force here
 EOF`
+- running `cat > notes.md <<'EOF'
+git push --force origin main
+EOF`
 
 **blocks**
 
 - running `git push --force origin main`
+- running `git status
+git push --force origin main`
+- running `bash <<'EOF'
+git push --force origin main
+EOF`
 - running `git push -f`
 - running `git push --force-with-lease origin main`
 - running `git status && git push --force origin main`
@@ -303,7 +317,8 @@ A backtick inside a double-quoted argument of a commit or a PR body is live comm
 {
   "ban": [
     "(?:git\\s+commit\\b[^\\n]*?-{1,2}[a-zA-Z]*m|gh\\s+(?:pr|issue)\\b)[^\"`]*(?:\"(?:(?!<<-?')[^\"])*\"[^\"`]*)*\"(?:(?!<<-?')[^\"])*`"
-  ]
+  ],
+  "matchHeredocs": true
 }
 ```
 
@@ -331,6 +346,13 @@ EOF`
 
 - running `git commit -m "fix: run `just test` first"`
 - running `gh pr create --body "see `just gate`"`
+- running `git commit -m "fix: a thing
+
+run `just test` first"`
+- running `git commit -m "$(cat <<EOF
+fix: run `just test` first
+EOF
+)"`
 
 ## `git.node.versionIsSemver` — guardrail
 

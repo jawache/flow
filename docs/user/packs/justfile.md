@@ -227,10 +227,17 @@ This repo has a recipe for that command — use it. The catalogue is the tooling
 **passes**
 
 - running `./ci.sh test`
+- running `python3 - <<'PY'
+print("npx vitest")
+PY`
 
 **blocks**
 
 - running `npx vitest`
+- running `python3 - <<'PY'
+print("x")
+PY
+npx vitest`
 
 ## Where each part of this page comes from
 

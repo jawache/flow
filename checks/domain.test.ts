@@ -164,6 +164,22 @@ describe("banCommands", () => {
     expect(await run(check, "command", 'git commit -m "fix: a thing"')).toBeNull();
     expect(await run(check, "command", `git commit -m "fix: a thing\n\n${trailer}: someone"`)).toContain("banned");
   });
+
+  // A heredoc is text fed to a program. The words of a banned command in a python script are not a
+  // use of it, while the same words on the line, or in a body a shell reads, are.
+  it("matches the line without its heredoc bodies, unless a shell reads the body", async () => {
+    const check = banCommands({ ban: ["just\\s+test"] });
+    expect(await run(check, "command", "python3 - <<'PY'\nprint('just test')\nPY")).toBeNull();
+    expect(await run(check, "command", "cat > a.md <<EOF\njust test\nEOF")).toBeNull();
+    expect(await run(check, "command", "python3 - <<'PY'\nprint('x')\nPY\njust test")).toContain("banned");
+    expect(await run(check, "command", "bash <<'EOF'\njust test\nEOF")).toContain("banned");
+  });
+
+  it("matches the whole command, heredocs included, when the rule sets matchHeredocs", async () => {
+    const check = banCommands({ ban: ["just\\s+test"], matchHeredocs: true });
+    expect(await run(check, "command", "python3 - <<'PY'\nprint('just test')\nPY")).toContain("banned");
+    expect(await run(check, "command", "python3 - <<'PY'\nprint('x')\nPY")).toBeNull();
+  });
 });
 
 // A BUILDER, so its cases are about the expression it returns rather than about one pack's heads.
@@ -624,39 +640,44 @@ describe("heredocBody", () => {
 
 // What a command ban matches: the line with every heredoc body gone, and nothing else touched.
 describe("elideHeredocs", () => {
-  it("drops a body and its terminator, quoted and unquoted delimiters alike, and keeps every other newline", () => {
-    expect(elideHeredocs("python3 - <<'PY'\nprint('just test')\nPY\njust test")).toBe("python3 - <<'PY'\njust test");
-    expect(elideHeredocs("cat > a.md <<EOF\nnpx vitest run\nEOF\nls")).toBe("cat > a.md <<EOF\nls");
-    expect(elideHeredocs('cat <<"EOF"\nx\nEOF')).toBe('cat <<"EOF"\n');
-    expect(elideHeredocs("cat <<\\EOF\nx\nEOF")).toBe("cat <<\\EOF\n");
-    expect(elideHeredocs("cat <<-EOF\n\tx\n\tEOF\nls")).toBe("cat <<-EOF\nls");
+  it("drops a body and keeps its terminator line, quoted and unquoted delimiters alike, and every other newline", () => {
+    expect(elideHeredocs("python3 - <<'PY'\nprint('just test')\nPY\njust test")).toBe("python3 - <<'PY'\nPY\njust test");
+    expect(elideHeredocs("cat > a.md <<EOF\nnpx vitest run\nEOF\nls")).toBe("cat > a.md <<EOF\nEOF\nls");
+    expect(elideHeredocs('cat <<"EOF"\nx\nEOF')).toBe('cat <<"EOF"\nEOF');
+    expect(elideHeredocs("cat <<\\EOF\nx\nEOF")).toBe("cat <<\\EOF\nEOF");
+    expect(elideHeredocs("cat <<-EOF\n\tx\n\tEOF\nls")).toBe("cat <<-EOF\n\tEOF\nls");
     expect(elideHeredocs('git commit -m "subject\n\nbody"')).toBe('git commit -m "subject\n\nbody"');
   });
 
   it("drops each of several bodies in order, and a body that never closes runs to the end", () => {
-    expect(elideHeredocs("cat <<A <<B\na\nA\nb\nB\nls")).toBe("cat <<A <<B\nls");
-    expect(elideHeredocs("cat <<A; cat <<B\na\nA\nb\nB")).toBe("cat <<A; cat <<B\n");
+    expect(elideHeredocs("cat <<A <<B\na\nA\nb\nB\nls")).toBe("cat <<A <<B\nA\nB\nls");
+    expect(elideHeredocs("cat <<A; cat <<B\na\nA\nb\nB")).toBe("cat <<A; cat <<B\nA\nB");
     expect(elideHeredocs("cat <<EOF\nnever closed\nls")).toBe("cat <<EOF\n");
     // The delimiter must stand alone on its line: indented or trailing text is still body.
-    expect(elideHeredocs("cat <<EOF\n EOF\nEOF x\nEOF\nls")).toBe("cat <<EOF\nls");
+    expect(elideHeredocs("cat <<EOF\n EOF\nEOF x\nEOF\nls")).toBe("cat <<EOF\nEOF\nls");
   });
 
   it("keeps a body a shell reads, since it is commands — directly, behind a wrapper, or down a pipe", () => {
     const keep = ["bash <<'EOF'\ngit push --force\nEOF", "sh -s <<EOF\nx\nEOF", "sudo -E bash <<EOF\nx\nEOF", "X=1 /bin/zsh <<EOF\nx\nEOF", "cat <<EOF | bash\nx\nEOF", "eval <<EOF\nx\nEOF"];
     for (const command of keep) expect(elideHeredocs(command)).toBe(command);
     // …and the pipe ends where the pipeline does.
-    expect(elideHeredocs("bash -c x; cat <<EOF\nx\nEOF")).toBe("bash -c x; cat <<EOF\n");
-    expect(elideHeredocs("echo | bash && cat <<EOF\nx\nEOF")).toBe("echo | bash && cat <<EOF\n");
+    expect(elideHeredocs("bash -c x; cat <<EOF\nx\nEOF")).toBe("bash -c x; cat <<EOF\nEOF");
+    expect(elideHeredocs("echo | bash && cat <<EOF\nx\nEOF")).toBe("echo | bash && cat <<EOF\nEOF");
     // A shell named as an ARGUMENT is not the program reading the body.
-    expect(elideHeredocs("cat bash <<EOF\nx\nEOF")).toBe("cat bash <<EOF\n");
-    expect(elideHeredocs("if true; then cat <<EOF\nx\nEOF\nfi")).toBe("if true; then cat <<EOF\nfi");
+    expect(elideHeredocs("cat bash <<EOF\nx\nEOF")).toBe("cat bash <<EOF\nEOF");
+    expect(elideHeredocs("if true; then cat <<EOF\nx\nEOF\nfi")).toBe("if true; then cat <<EOF\nEOF\nfi");
   });
 
-  it("leaves a heredoc inside a quoted argument or a `$(…)` alone — what it prints IS the argument", () => {
-    const inline = `git commit -m "$(cat <<'EOF'\nfix: don't (ever) do it\nEOF\n)"`;
-    expect(elideHeredocs(inline)).toBe(inline);
-    const bare = "echo $(cat <<EOF\nx\nEOF\n)";
-    expect(elideHeredocs(bare)).toBe(bare);
+  it("drops a heredoc wherever it sits — inside a quoted argument, a `$(…)`, a backquote or a `<(…)`", () => {
+    expect(elideHeredocs(`git commit -m "$(cat <<'EOF'\nfix: don't (ever) do it\nEOF\n)"`)).toBe(`git commit -m "$(cat <<'EOF'\nEOF\n)"`);
+    expect(elideHeredocs("echo $(cat <<EOF\nx\nEOF\n) after")).toBe("echo $(cat <<EOF\nEOF\n) after");
+    expect(elideHeredocs('echo "`cat <<EOF\nx\nEOF\n`" `cat <<EOF\ny\nEOF\n`')).toBe('echo "`cat <<EOF\nEOF\n`" `cat <<EOF\nEOF\n`');
+    expect(elideHeredocs("diff <(cat <<EOF\nx\nEOF\n) b")).toBe("diff <(cat <<EOF\nEOF\n) b");
+    // …and a nested one sits between the outer bodies, in order.
+    expect(elideHeredocs('cat <<A "$(cat <<B\nb\nB\n)"\na\nA\nls')).toBe('cat <<A "$(cat <<B\nB\n)"\nA\nls');
+    // A shell reading a nested heredoc still keeps it, and arithmetic in a quote is not a command.
+    const kept = 'echo "$(bash <<EOF\nx\nEOF\n)" "$((1<<2))" "`x`"';
+    expect(elideHeredocs(kept)).toBe(kept);
   });
 
   it("finds no heredoc in a here-string, a quoted `<<`, a comment, an arithmetic shift or a process substitution", () => {
@@ -681,12 +702,12 @@ describe("elideHeredocs", () => {
       expect(elideHeredocs(command)).toBe(command);
     }
     // A body already passed is still dropped: only the rest from the unreadable word is kept.
-    expect(elideHeredocs("cat <<EOF\nx\nEOF\necho 'open")).toBe("cat <<EOF\necho 'open");
+    expect(elideHeredocs("cat <<EOF\nx\nEOF\necho 'open")).toBe("cat <<EOF\nEOF\necho 'open");
   });
 
   it("reads a line continuation and a word glued to its quotes as the one word they are", () => {
     expect(elideHeredocs("b\\\nash <<EOF\nx\nEOF")).toBe("b\\\nash <<EOF\nx\nEOF");
-    expect(elideHeredocs("cat \\\n  <<EOF\nx\nEOF")).toBe("cat \\\n  <<EOF\n");
+    expect(elideHeredocs("cat \\\n  <<EOF\nx\nEOF")).toBe("cat \\\n  <<EOF\nEOF");
     expect(elideHeredocs("'bash' <<EOF\nx\nEOF")).toBe("'bash' <<EOF\nx\nEOF");
   });
 });

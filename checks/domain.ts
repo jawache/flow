@@ -137,11 +137,21 @@ export const textBan = defineCheck(
  * (which is right for a file, where a hit must be able to name its line) every one of those
  * patterns matches nothing, silently: the rule loads, counts, and cannot catch the thing it
  * names.
+ *
+ * WITHOUT ITS HEREDOC BODIES (`elideHeredocs`), by default. A heredoc is text fed to a program,
+ * and a python script or a note that names a banned command is not a use of it: matched whole,
+ * `python3 - <<'PY'` scripts were refused for naming a recipe in a string. Only the bodies go —
+ * the newlines the patterns above span are kept — and a body a shell reads stays, because it is
+ * commands.
+ *
+ * `matchHeredocs: true` matches the whole command instead. A rule about what a command is FED —
+ * the text of a commit message given on stdin, `git commit -F - <<'EOF'` — has to see the body,
+ * and would be blind to that message without it.
  */
 export const banCommands = defineCheck(
-  (opts: { ban: readonly string[] }): Check =>
+  (opts: { ban: readonly string[]; matchHeredocs?: boolean }): Check =>
     (ctx) => {
-      const command = ctx.command ?? "";
+      const command = opts.matchHeredocs === true ? (ctx.command ?? "") : elideHeredocs(ctx.command ?? "");
       const hits = opts.ban.filter((pattern) => new RegExp(pattern).test(command));
       return answer(ctx, hits.map((pattern) => `matches banned /${pattern}/`));
     },
@@ -621,19 +631,21 @@ function heredocOpen(s: string, i: number): HeredocOpen | null {
 }
 
 /**
- * Where a heredoc's body ends: just past its terminator — the delimiter alone on a line, after
- * leading tabs for `<<-` — or the end of the string when it never comes. `from` is the body's
- * first character, the one after the newline that ends the opener's line.
+ * Where a heredoc's body ends — `body`, the start of its terminator line (the delimiter alone on a
+ * line, after leading tabs for `<<-`) — and `end`, just past that line. Both are the end of the
+ * string when the terminator never comes. `from` is the body's first character, the one after the
+ * newline that ends the opener's line.
  */
-function heredocEnd(s: string, from: number, doc: HeredocOpen): number {
+function heredocEnd(s: string, from: number, doc: HeredocOpen): { body: number; end: number } {
   let i = from;
   while (i < s.length) {
+    const start = i;
     const nl = s.indexOf("\n", i);
     const line = s.slice(i, nl === -1 ? s.length : nl);
     i = nl === -1 ? s.length : nl + 1;
-    if ((doc.tabs ? line.replace(/^\t+/, "") : line) === doc.delim) break;
+    if ((doc.tabs ? line.replace(/^\t+/, "") : line) === doc.delim) return { body: start, end: i };
   }
-  return i;
+  return { body: i, end: i };
 }
 
 /**
@@ -662,7 +674,7 @@ export function closeParen(s: string, from: number): number {
         i = doc.end - 1;
       }
     } else if (c === "\n") {
-      for (const doc of docs.splice(0)) i = heredocEnd(s, i + 1, doc) - 1;
+      for (const doc of docs.splice(0)) i = heredocEnd(s, i + 1, doc).end - 1;
     } else if (c === "(") depth++;
     else if (c === ")" && --depth === 0) return i;
   }
@@ -695,11 +707,38 @@ const LEADERS = new Set(["sudo", "env", "exec", "command", "builtin", "nohup", "
 /** Where one word stops at the top level of a line. */
 const WORD_BREAKS = new Set([" ", "\t", "\n", ";", "&", "|", "(", ")", "<", ">"]);
 
+/** A stretch of a command to remove: a heredoc body and its terminator line, `[from, to)`. */
+type Cut = readonly [number, number];
+
+/** The cuts of the command nested at `s[from, to)` — a `$(…)`, a backquote — moved into `s`. */
+function nestedCuts(s: string, from: number, to: number, cuts: Cut[]): void {
+  for (const [a, b] of heredocCuts(s.slice(from, to))) cuts.push([a + from, b + from]);
+}
+
+/** The cuts inside a double-quoted run `s[from, to)`: the commands its `$(…)` and backquotes run. */
+function dquoteCuts(s: string, from: number, to: number, cuts: Cut[]): void {
+  for (let j = from; j < to; j++) {
+    if (s[j] === "\\") j++;
+    else if (s.startsWith("$(", j)) {
+      // dquoteEnd already closed every `$(` in the run, so this one closes too.
+      const end = closeParen(s, j + 2);
+      if (s[j + 2] !== "(") nestedCuts(s, j + 2, end, cuts);
+      j = end;
+    } else if (s[j] === "`") {
+      const end = s.indexOf("`", j + 1);
+      if (end === -1 || end > to) return;
+      nestedCuts(s, j + 1, end, cuts);
+      j = end;
+    }
+  }
+}
+
 /**
  * One word at `s[i]`: where it ends, and its text with quotes removed (a substitution reads as a
- * NUL, since what it prints is not known). Null when a quote or a substitution never closes.
+ * NUL, since what it prints is not known). The heredocs of the commands it runs go into `cuts`.
+ * Null when a quote or a substitution never closes.
  */
-function shellWord(s: string, from: number): { end: number; text: string } | null {
+function shellWord(s: string, from: number, cuts: Cut[]): { end: number; text: string } | null {
   let text = "";
   let i = from;
   while (i < s.length && !WORD_BREAKS.has(s[i] as string)) {
@@ -710,18 +749,26 @@ function shellWord(s: string, from: number): { end: number; text: string } | nul
       if (s[i + 1] !== "\n") text += s[i + 1] ?? "";
       i += 2;
       continue;
-    } else if (c === "'" || c === '"') {
-      end = c === "'" ? s.indexOf("'", i + 1) : dquoteEnd(s, i + 1);
+    } else if (c === "'") {
+      end = s.indexOf("'", i + 1);
       if (end !== -1) text += s.slice(i + 1, end);
+    } else if (c === '"') {
+      end = dquoteEnd(s, i + 1);
+      if (end !== -1) {
+        text += s.slice(i + 1, end);
+        dquoteCuts(s, i + 1, end, cuts);
+      }
     } else if (s.startsWith("$((", i)) {
       end = s.indexOf("))", i + 3);
       end = end === -1 ? -1 : end + 1;
       text += "\0";
     } else if (s.startsWith("$(", i)) {
       end = closeParen(s, i + 2);
+      if (end !== -1) nestedCuts(s, i + 2, end, cuts);
       text += "\0";
     } else if (c === "`") {
       end = s.indexOf("`", i + 1);
+      if (end !== -1) nestedCuts(s, i + 1, end, cuts);
       text += "\0";
     } else {
       text += c;
@@ -735,27 +782,11 @@ function shellWord(s: string, from: number): { end: number; text: string } | nul
 }
 
 /**
- * THE COMMAND LINE WITHOUT ITS HEREDOC BODIES — what a command ban matches.
- *
- * A heredoc is text fed to a program on its standard input: a python script, a file being written,
- * a note. The words of a banned command inside it are not a use of that command, and matching
- * them refused `python3 - <<'PY'` scripts for naming a recipe in a string. Every body is removed,
- * with its terminator line, whether the delimiter is quoted or not. EVERYTHING ELSE IS LEFT AS
- * WRITTEN — newlines included, because the patterns that police a commit message span them.
- *
- * Two exceptions keep a body, and both are about what the text becomes:
- *   · a heredoc fed to a SHELL (`bash`, `sh`, `zsh`, `eval`, or a pipeline into one): its body is
- *     commands, and a banned one in it will run.
- *   · a heredoc inside a quoted argument or a `$(…)`, as in `git commit -m "$(cat <<'EOF' … )"`:
- *     what it prints is spliced into the argument, so its text IS part of the command line.
- *
- * Best-effort, and it errs toward matching: a line with a quote that never closes is returned from
- * that point as written, so a ban still sees everything it saw before.
+ * Where every heredoc body in a command lies, in order — at the top level and inside any `$(…)`,
+ * backquote or process substitution, quoted or not — less the bodies a shell reads.
  */
-export function elideHeredocs(command: string): string {
-  const s = command;
-  let out = "";
-  let copied = 0;
+function heredocCuts(s: string): Cut[] {
+  const cuts: Cut[] = [];
   let pipeline = { shell: false };
   let docs: { doc: HeredocOpen; pipeline: { shell: boolean } }[] = [];
   let atCommand = true;
@@ -767,11 +798,10 @@ export function elideHeredocs(command: string): string {
     if (c === "\n") {
       i++;
       for (const { doc, pipeline: into } of docs) {
-        const end = heredocEnd(s, i, doc);
-        if (!into.shell) {
-          out += s.slice(copied, i);
-          copied = end;
-        }
+        // The body goes and its terminator line stays, so the opener still has an end: a reader
+        // of the elided line (the read lexer, `closeParen`) must not run on to the end looking for it.
+        const { body, end } = heredocEnd(s, i, doc);
+        if (!into.shell) cuts.push([i, body]);
         i = end;
       }
       docs = [];
@@ -786,6 +816,7 @@ export function elideHeredocs(command: string): string {
     } else if (s.startsWith("<(", i) || s.startsWith(">(", i)) {
       const end = closeParen(s, i + 2);
       if (end === -1) break;
+      nestedCuts(s, i + 2, end, cuts);
       i = end + 1;
       atCommand = false;
     } else if (c === "<" || c === ">" || s.startsWith("&>", i)) {
@@ -805,7 +836,7 @@ export function elideHeredocs(command: string): string {
       atCommand = true;
       led = false;
     } else {
-      const word = shellWord(s, i);
+      const word = shellWord(s, i, cuts);
       if (word === null) break;
       i = word.end;
       if (target) target = false;
@@ -819,7 +850,35 @@ export function elideHeredocs(command: string): string {
       }
     }
   }
-  return out + s.slice(copied);
+  return cuts.sort((a, b) => a[0] - b[0]);
+}
+
+/**
+ * THE COMMAND LINE WITHOUT ITS HEREDOC BODIES — what a command ban matches unless the rule sets
+ * `matchHeredocs`.
+ *
+ * A heredoc is text fed to a program on its standard input: a python script, a file being written,
+ * a note. The words of a banned command inside it are not a use of that command, and matching
+ * them refused `python3 - <<'PY'` scripts for naming a recipe in a string. Every body is removed
+ * (its terminator line stays, so the opener still ends), whether the delimiter is quoted or not,
+ * and wherever the heredoc sits —
+ * inside a `$(…)` or a quoted argument too. EVERYTHING ELSE IS LEFT AS WRITTEN — newlines
+ * included, because the patterns that police a commit message span them.
+ *
+ * One exception keeps a body: a heredoc fed to a SHELL (`bash`, `sh`, `zsh`, `eval`, or a pipeline
+ * into one), whose body is commands, and a banned one in it will run.
+ *
+ * Best-effort, and it errs toward matching: from a word whose quote never closes, the line is
+ * returned as written, so a ban still sees everything it saw before.
+ */
+export function elideHeredocs(command: string): string {
+  let out = "";
+  let copied = 0;
+  for (const [from, to] of heredocCuts(command)) {
+    out += command.slice(copied, from);
+    copied = to;
+  }
+  return out + command.slice(copied);
 }
 
 /**

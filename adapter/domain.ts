@@ -737,7 +737,8 @@ const BREAKS = new Set([";", "&", "|", "(", ")", "<", ">", "\n", " ", "\t", "'",
 /**
  * A command line → words, operators and redirects. Null when a quote never closes: the line cannot
  * be read, so it names nothing. Heredoc bodies are gone before it runs (`shellProgram` lexes the
- * line `elideHeredocs` returns), so a `<<`'s delimiter is one more redirect target.
+ * line `elideHeredocs` returns): a `<<`'s delimiter is one more redirect target, and the
+ * terminator line left behind is a word that reads nothing.
  */
 function lexShell(s: string): Token[] | null {
   const tokens: Token[] = [];

@@ -355,6 +355,8 @@ export const git = definePack("git", (repo: Release) => {
           `gh (pr|issue)[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(${VENDOR}|[Aa]nthropic)`,
           `gh (pr|issue)[\\s\\S]*(${SITE}|🤖 Generated)`,
         ],
+        // A message fed on stdin — `git commit -F - <<'EOF'` — is still the commit's message.
+        matchHeredocs: true,
       }),
     )
     .message(
@@ -365,6 +367,8 @@ export const git = definePack("git", (repo: Release) => {
     .test({
       pass: ['git commit -m "fix(auth): renew the session"'],
       block: [
+        // The message given on stdin, through a heredoc: matchHeredocs is what keeps it in view.
+        `git commit -F - <<'EOF'\nfix(auth): renew the session\n\n${TRAILER}: ${VENDOR}\nEOF`,
         `git commit -m "fix(auth): renew the session\n\n${TRAILER}: ${VENDOR} <noreply@anthropic.com>"`,
         `gh pr create --body "${TRAILER}: ${VENDOR}"`,
         // The generated-with line, and the tool's own footer — the site link and the robot emoji
@@ -514,9 +518,14 @@ export const git = definePack("git", (repo: Release) => {
         // ban carries the words in a BODY line, where no command position is — which is the whole
         // difference the anchor reads, and the false positive it was added for.
         "cat > notes.md <<'EOF'\nnever run git push --force here\nEOF",
+        // …and a heredoc body is not the command line at all, even where a body line starts with the verb.
+        "cat > notes.md <<'EOF'\ngit push --force origin main\nEOF",
       ],
       block: [
         "git push --force origin main",
+        // A command line spans newlines, and a body a SHELL reads is commands.
+        "git status\ngit push --force origin main",
+        "bash <<'EOF'\ngit push --force origin main\nEOF",
         "git push -f",
         "git push --force-with-lease origin main",
         // …and a POSITION is not the start of the string: a real force-push chained behind another
@@ -562,11 +571,22 @@ export const git = definePack("git", (repo: Release) => {
   noShellSubstitutionInProse: guardrail()
     .at(command)
     .description("A backtick inside a double-quoted argument of a commit or a PR body is live command substitution, not Markdown.")
-    .check(banCommands({ ban: [substitutionInProse(["git\\s+commit\\b[^\\n]*?-{1,2}[a-zA-Z]*m", "gh\\s+(?:pr|issue)\\b"])] }))
+    // matchHeredocs: an UNQUOTED heredoc in a `$(…)` is live, and its body is the message.
+    .check(banCommands({ ban: [substitutionInProse(["git\\s+commit\\b[^\\n]*?-{1,2}[a-zA-Z]*m", "gh\\s+(?:pr|issue)\\b"])], matchHeredocs: true }))
     .message(SUBSTITUTION_MESSAGE)
     .test({
-      pass: ["git commit -F - <<'EOF'\nfix: a `thing`\nEOF", "git commit -m 'fix: run `just test` first'"],
-      block: ['git commit -m "fix: run `just test` first"', 'gh pr create --body "see `just gate`"'],
+      pass: [
+        "git commit -F - <<'EOF'\nfix: a `thing`\nEOF",
+        "git commit -m 'fix: run `just test` first'",
+      ],
+      block: [
+        'git commit -m "fix: run `just test` first"',
+        'gh pr create --body "see `just gate`"',
+        // The one pattern that must span a newline: the backtick sits in the body of the message.
+        'git commit -m "fix: a thing\n\nrun `just test` first"',
+        // A message written in an unquoted heredoc inside the argument: the backtick still runs.
+        'git commit -m "$(cat <<EOF\nfix: run `just test` first\nEOF\n)"',
+      ],
     }),
 
   node: {

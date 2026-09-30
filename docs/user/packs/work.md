@@ -100,12 +100,17 @@ What you have is an ask. Say it to the parent — what you hit, what your boxes 
 - running `work plan status --json`
 - running `work plan tick F7.B1 --evidence diff:abc123`
 - running `work cost`
+- running `cat > note.md <<'EOF'
+work plan verdict F7 --pass --cite x
+EOF`
 
 **blocks**
 
 - running `work plan verdict F7 --pass --cite x`
 - running `work save`
 - running `work cost record F7`
+- running `work plan status
+work plan amend F7 --add x`
 
 ## `work.checkersDoNotWrite` — guardrail
 
@@ -164,10 +169,15 @@ A box is ticked by the rung that built it. You are supervising: you did not do t
 **passes**
 
 - running `work plan verdict F7 --pass --cite x`
+- running `cat > note.md <<'EOF'
+work plan tick F7.B1 --evidence diff:abc
+EOF`
 
 **blocks**
 
 - running `work plan tick F7.B1 --evidence diff:abc`
+- running `work plan status
+work plan tick F7.B1 --evidence diff:abc`
 
 ## `work.noAgentInboxItems` — guardrail
 
@@ -204,11 +214,16 @@ What you have is a finding. Say it in the chat — headline, why it matters, wha
 
 - running `work inbox list`
 - running `echo "the human runs work inbox new themselves" >> note.md`
+- running `cat > note.md <<'EOF'
+work inbox new --summary x
+EOF`
 
 **blocks**
 
 - running `work inbox new --summary "a thing"`
 - running `echo hi && work inbox new --summary x`
+- running `echo hi
+work inbox new --summary x`
 
 ## `work.noShellSubstitutionInProse` — guardrail
 
@@ -225,7 +240,8 @@ A backtick inside a double-quoted argument of a work verb that records prose is 
 {
   "ban": [
     "(?:work\\s+(?:plan|task|recap|record|spec|complete)\\b)[^\"`]*(?:\"(?:(?!<<-?')[^\"])*\"[^\"`]*)*\"(?:(?!<<-?')[^\"])*`"
-  ]
+  ],
+  "matchHeredocs": true
 }
 ```
 
@@ -250,6 +266,13 @@ ALREADY single-quoted and still blocked? Then your PROSE carries an unbalanced d
 **blocks**
 
 - running `work plan decision "chose the `chain` builder" --chose x --reverse y`
+- running `work plan decision "chose the builder
+
+because `chain` reads better" --chose x --reverse y`
+- running `work plan decision "$(cat <<EOF
+chose the `chain` builder
+EOF
+)" --chose x --reverse y`
 
 ## `work.builderWrites` — guardrail
 
