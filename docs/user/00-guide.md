@@ -186,7 +186,7 @@ noDbReset: guardrail()
   .test({ pass: ["drizzle-kit generate"], block: ["drizzle-kit drop"] }),
 ```
 
-The whole command line is the subject — a command is one subject however many lines it occupies, so a pattern may span a newline. The patterns are matched against the command line and nothing else. A heredoc feeds text to a program on standard input, and that text is not part of the line, so a script that merely contains the words of a banned command is not refused. One case is different: when the program reading the heredoc is itself a shell — `bash`, `sh`, `zsh` or `eval` — the body is a list of commands, and the patterns are matched against it too. Command rules take no `.on(…)`: the patterns *are* the scope.
+The whole command line is the subject — a command is one subject however many lines it occupies, so a pattern may span a newline. The patterns are matched against the command line and nothing else. A heredoc feeds text to a program on standard input, and that text is not part of the line, so a script that merely contains the words of a banned command is not refused. One case is different: when the program reading the heredoc is itself a shell — `bash`, `sh`, `zsh` or `eval` — the body is a list of commands, and the patterns are matched against it too. A rule that has to see what a command is fed, such as one about the text of a commit message, sets `matchHeredocs: true`. Command rules take no `.on(…)`: the patterns *are* the scope.
 
 ### …protect files nobody should touch
 
