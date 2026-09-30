@@ -220,6 +220,7 @@ const ok = { ok: true } as const;
 /** A ctx with nothing but the verdict verbs — enough to drive a check that reads only facts. */
 const ctx = (over: Partial<Ctx> = {}): Ctx => ({
     moment: "commit",
+    actor: [],
     exec: () => Promise.resolve({ stdout: "", stderr: "", code: 0 }),
     fs: { read: () => Promise.resolve(""), exists: () => Promise.resolve(false) },
     git: { diff: () => Promise.resolve(""), stagedFiles: () => Promise.resolve([]) },

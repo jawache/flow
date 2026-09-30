@@ -109,7 +109,9 @@ const SHIPPED: readonly Shipped[] = [
   // name none or the no-base path the F2 ruling created is driven nowhere. The two gate recipes are
   // the shared ones.
   { pack: "typescript", params: { typecheck: EXAMPLE.typescript.typecheck, lint: EXAMPLE.typescript.lint }, cases: 7, guardrails: 3 },
-  { pack: "work", params: undefined, cases: 16, guardrails: 5 },
+  // `writers` named, so the one-writer entry — which exists only when a repo names its writers —
+  // is bound and driven here too.
+  { pack: "work", params: EXAMPLE.work, cases: 18, guardrails: 6 },
 ];
 /** The stranger's own pack — the eleventh binding, and the only turn-end rule in the config. */
 const HOUSE: Shipped = { pack: "house", params: undefined, cases: 2, guardrails: 1, from: "../rules/house.ts" };
@@ -267,6 +269,7 @@ const ENTRIES: readonly string[] = [
   "typescript.commitRunsTsc",
   "typescript.strictTypesNoInvalidStates",
   "typescript.tsconfigStrict",
+  "work.builderWrites",
   "work.checkersDoNotWrite",
   "work.noAgentInboxItems",
   "work.noShellSubstitutionInProse",
@@ -386,7 +389,7 @@ describe("the machine test", () => {
     expect(scaffolded.code, scaffolded.stdout + scaffolded.stderr).toBe(0);
     for (const created of ["flow.config.ts", ".githooks/pre-commit", "node_modules/@jawache/flow", "core.hooksPath"])
       expect(scaffolded.stdout).toContain(created);
-    step("scaffold", "flow packs — the machine test, in a repo that has never heard of flow", "", "  scaffold   flow init armed the gate, the link and the four registrations");
+    step("scaffold", "flow packs — the machine test, in a repo that has never heard of flow", "", "  scaffold   flow init armed the gate, the link and the five registrations");
   });
 
   it("binds every pack the package ships, and exactly these entries", () => {

@@ -18,9 +18,11 @@ import {
   defineCategory,
   definePack,
   guardrail,
+  oneWriter,
   spawnedAs,
   substitutionInProse,
   SUBSTITUTION_MESSAGE,
+  deletion,
   write,
 } from "../index.ts";
 
@@ -69,6 +71,22 @@ export const checker = defineCategory(
   }),
 );
 
+/** The rungs that may be named as writers — a checker is the rung that never writes. */
+export type Writer = "builder" | "parent";
+
+/** What a repo may say about how it runs the lifecycle. Every field is optional. */
+export interface Rungs {
+  /**
+   * The rungs allowed to change files in a worktree, turning on ONE WRITER: a write or a delete by
+   * any other actor is refused — an Edit before it lands, anything else put back after.
+   *
+   * OPTIONAL, and with no list there is no entry at all. One writer is for a worktree several
+   * agents share with one builder in it; in a repo where a helper agent of any other kind is
+   * expected to write, it would refuse that helper's every change, so it is off until a repo asks.
+   */
+  readonly writers?: readonly Writer[];
+}
+
 /**
  * The WORK LIFECYCLE's rungs: who is acting, and what each rung may do.
  *
@@ -90,9 +108,10 @@ export const checker = defineCategory(
  * so in a repo that does not run the lifecycle they are five rules that can never fire.
  * @adopt Bind it only in a repo whose tasks are actually run through the lifecycle. The three rung
  * rules are scoped to categories this pack defines, so they judge nobody until a session is
- * classified as a builder or a checker — a human at a keyboard is neither.
+ * classified as a builder or a checker — a human at a keyboard is neither. Name `writers` to let
+ * only those rungs change files in the worktree.
  */
-export const work = definePack("work", {
+export const work = definePack("work", (repo: Rungs = {}) => ({
   // ── THE LADDER, mechanised ──
   //
   // Three rules, one per rung, and each is a sentence the lifecycle skill's mode files already
@@ -183,4 +202,26 @@ export const work = definePack("work", {
       pass: ["work plan decision 'chose the `chain` builder' --chose x --reverse y", "work plan status --json"],
       block: ['work plan decision "chose the `chain` builder" --chose x --reverse y'],
     }),
-});
+  // ── ONE WRITER, when the repo names its writers ──
+  //
+  // The rung rules above say what each rung may not do. This says who may write at all, and it
+  // reads the actor rather than the tool, so a heredoc, a script and an Edit are the same change:
+  // an Edit is refused before it lands, anything else is put back after it has.
+  ...(repo.writers === undefined
+    ? {}
+    : {
+        builderWrites: guardrail()
+          .at(write, deletion)
+          .description("Only the named rungs change files in this worktree — a checker or a stray helper hands its finding back.")
+          .check(oneWriter({ writers: repo.writers }))
+          .message(
+            repo.writers.includes("builder")
+              ? "Only the builder changes files in this worktree — hand your finding back instead of fixing it."
+              : "Only the parent chat changes files in this worktree — hand your finding back instead of fixing it.",
+          )
+          .test({
+            pass: [{ path: "src/x.ts", content: "", actor: repo.writers.slice(0, 1) }],
+            block: [{ path: "src/x.ts", content: "", actor: ["checker"] }],
+          }),
+      }),
+}));

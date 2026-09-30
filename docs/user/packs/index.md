@@ -17,7 +17,7 @@ The ten packs `@jawache/flow/packs` ships. Each is a list of rules about a repo.
 | [`secrets`](./secrets.md) | 3 · 1 | `publicPrefixes` `localFiles` `envFiles` `extraSecretShapes` `dx` `encrypt` | Env files committed encrypted, decrypted through one seam, and the local-only files kept out of git. |
 | [`tdd`](./tdd.md) | 6 · 1 | `run` `tests` | Test-first artefacts exist; tests test behaviour, not implementation; the suite gates the commit. |
 | [`typescript`](./typescript.md) | 4 · 1 | `typecheck` `lint` `tsconfigBase` `eslintBase` `strictOptions` | TypeScript discipline as shared configuration: strict stays on, the checker is never silenced. |
-| [`work`](./work.md) | 5 · 0 | — | The WORK LIFECYCLE's rungs: who is acting, and what each rung may do. |
+| [`work`](./work.md) | 6 · 0 | `writers` | The WORK LIFECYCLE's rungs: who is acting, and what each rung may do. |
 
 Generated from `packs/*.ts` by `just docs-packs`. Edit the packs, not these pages. The commit gate refuses a page that has drifted.
 

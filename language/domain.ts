@@ -305,6 +305,12 @@ export interface Ctx {
   readonly staged?: readonly string[] | undefined;
   /** turn-end: what the actor did this turn, in order. */
   readonly turn?: readonly TurnAction[] | undefined;
+  /**
+   * Every moment: the category names that match the session making this change — the categories
+   * some bound entry names, whose recognizer said yes to the host-written evidence about it. Empty
+   * when it matches none, which is not "every category".
+   */
+  readonly actor: readonly string[];
 
   // ── THE DOOR TO THE WORLD — capabilities, injected. The only way out. ──
   exec(cmd: string): Promise<ExecResult>;
@@ -366,6 +372,7 @@ export function makeCtx(moment: Moment, facts: Partial<Ctx>, world: World): Ctx 
   return {
     moment,
     ...facts,
+    actor: facts.actor ?? [],
     exec: (cmd: string) => world.exec(cmd),
     fs: world.fs,
     git: world.git,
@@ -481,10 +488,10 @@ export interface CaseWorld {
 export type Case =
   /** A command rail, shorthand — by far the commonest case, and it should read as one line. */
   | string
-  | { readonly command: string; readonly world?: CaseWorld }
-  | { readonly path: string; readonly content: string; readonly world?: CaseWorld }
-  | { readonly staged: readonly string[]; readonly world?: CaseWorld }
-  | { readonly actions: readonly TurnAction[]; readonly world?: CaseWorld };
+  | { readonly command: string; readonly world?: CaseWorld; readonly actor?: readonly string[] }
+  | { readonly path: string; readonly content: string; readonly world?: CaseWorld; readonly actor?: readonly string[] }
+  | { readonly staged: readonly string[]; readonly world?: CaseWorld; readonly actor?: readonly string[] }
+  | { readonly actions: readonly TurnAction[]; readonly world?: CaseWorld; readonly actor?: readonly string[] };
 
 /** The cases an entry carries: what must pass it, and what must be blocked by it. */
 export interface Cases {
@@ -1038,6 +1045,13 @@ export interface Settings {
    * file is never seen unless a glob here brings it back. `.env` is the usual one.
    */
   readonly snapshotInclude?: readonly string[];
+  /**
+   * What is put back when a rule refuses a write that has already landed: `"refused"` (the default)
+   * writes back only the files a rule refused, `"all"` every file that call changed. While another
+   * agent's call overlaps it, only the refused files are put back whatever this says — that call's
+   * writes can be in the same diff.
+   */
+  readonly revert?: "refused" | "all";
 }
 
 /**

@@ -2,7 +2,7 @@
 
 # The `work` pack
 
-5 guardrails · 0 breadcrumbs · fires at: command · write · takes no parameters
+6 guardrails · 0 breadcrumbs · fires at: command · write · delete · takes 1 parameter
 
 The WORK LIFECYCLE's rungs: who is acting, and what each rung may do.
 
@@ -24,13 +24,19 @@ Generated from `packs/work.ts` by `just docs-packs`. Edit the pack, not this pag
 
 ## Binding it
 
-The pack takes no parameters. Example config:
+The pack takes 1 parameter. These are facts the pack cannot know about your repo:
+
+| Parameter | Type | What it is |
+| --- | --- | --- |
+| `writers` | `readonly Writer[]` | The rungs allowed to change files in a worktree, turning on ONE WRITER: a write or a delete by any other actor is refused — an Edit before it lands, anything else put back after.<br><br>OPTIONAL, and with no list there is no entry at all. One writer is for a worktree several agents share with one builder in it; in a repo where a helper agent of any other kind is expected to write, it would refuse that helper's every change, so it is off until a repo asks. |
+
+Example config. The values are examples, and every glob and command on this page was rendered with them:
 
 ```
 import { defineConfig, pack } from "@jawache/flow";
 import { work } from "@jawache/flow/packs";
 
-export default defineConfig([pack(work)]);
+export default defineConfig([pack(work, { writers: ["builder", "parent"] })]);
 ```
 
 To turn one entry off, say so in the config: `override(work.planIsTheParents).disabled("why")`. It is a committed change, so a reviewer sees it.
@@ -44,7 +50,8 @@ so in a repo that does not run the lifecycle they are five rules that can never 
 
 Bind it only in a repo whose tasks are actually run through the lifecycle. The three rung
 rules are scoped to categories this pack defines, so they judge nobody until a session is
-classified as a builder or a checker — a human at a keyboard is neither.
+classified as a builder or a checker — a human at a keyboard is neither. Name `writers` to let
+only those rungs change files in the worktree.
 
 ## Entries
 
@@ -53,6 +60,7 @@ classified as a builder or a checker — a human at a keyboard is neither.
 - [`work.ticksAreTheChilds`](#workticksarethechilds--guardrail) · guardrail · The parent records verdicts; a box is ticked by the child that built it, with its evidence.
 - [`work.noAgentInboxItems`](#worknoagentinboxitems--guardrail) · guardrail · The inbox is the human's speccing queue — an agent raises a finding in chat, never files one.
 - [`work.noShellSubstitutionInProse`](#worknoshellsubstitutioninprose--guardrail) · guardrail · A backtick inside a double-quoted argument of a work verb that records prose is live command substitution, not Markdown.
+- [`work.builderWrites`](#workbuilderwrites--guardrail) · guardrail · Only the named rungs change files in this worktree — a checker or a stray helper hands its finding back.
 
 ## `work.planIsTheParents` — guardrail
 
@@ -242,6 +250,44 @@ ALREADY single-quoted and still blocked? Then your PROSE carries an unbalanced d
 **blocks**
 
 - running `work plan decision "chose the `chain` builder" --chose x --reverse y`
+
+## `work.builderWrites` — guardrail
+
+Only the named rungs change files in this worktree — a checker or a stray helper hands its finding back.
+
+- **Refuses at** a file is written or edited · a file is deleted
+- **Watches** not scoped by path
+- **Categories** every session
+- **Check** [`oneWriter`](../checks/one-writer.md)
+
+<details><summary>settings</summary>
+
+```
+{
+  "writers": [
+    "builder",
+    "parent"
+  ]
+}
+```
+
+</details>
+
+### What the agent reads when refused
+
+```
+Only the builder changes files in this worktree — hand your finding back instead of fixing it.
+```
+
+### Proved by
+
+**passes**
+
+- writing `src/x.ts` as `builder`
+
+**blocks**
+
+- writing `src/x.ts` as `checker`
 
 ## Where each part of this page comes from
 

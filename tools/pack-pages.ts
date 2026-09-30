@@ -66,7 +66,7 @@ const SHIPPED: readonly Shipped[] = [
   { name: "secrets", binding: pack(secrets, EXAMPLE.secrets), params: EXAMPLE.secrets },
   { name: "tdd", binding: pack(tdd, EXAMPLE.tdd), params: EXAMPLE.tdd },
   { name: "typescript", binding: pack(typescript, EXAMPLE.typescript), params: EXAMPLE.typescript },
-  { name: "work", binding: pack(work), params: undefined },
+  { name: "work", binding: pack(work, EXAMPLE.work), params: EXAMPLE.work },
 ];
 
 /** One pack, read both ways and joined into the model the page is rendered from. */

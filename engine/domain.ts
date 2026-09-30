@@ -464,7 +464,7 @@ export async function guard({ load, event, world, faults = [], off = false }: Gu
     let hits = 0;
     for (const subject of await subjectsOf(entry, event, world)) {
       evaluated += 1;
-      const answer = await ask(check, makeCtx(event.moment, subject.facts, world));
+      const answer = await ask(check, makeCtx(event.moment, { ...subject.facts, actor: event.wearing }, world));
       if (answer.ok) continue;
       hits += 1;
       effects.push({

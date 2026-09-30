@@ -134,6 +134,12 @@ describe("a case as one line", () => {
     expect(caseLine({ actions: [edit, { did: "run", command: "just test" }] })).toBe("a turn with 2 recorded actions");
   });
 
+  it("says who the canned session was, when the case names it", () => {
+    expect(caseLine({ path: "src/x.ts", content: "", actor: ["builder"] })).toBe("writing `src/x.ts` as `builder`");
+    expect(caseLine({ command: "ls", actor: ["checker", "parent"] })).toBe("running `ls` as `checker` + `parent`");
+    expect(caseLine({ path: "src/x.ts", content: "", actor: [] })).toBe("writing `src/x.ts` by an actor with no category");
+  });
+
   it("shortens a file body rather than pasting a whole fixture into a list item", () => {
     const long: Case = { path: "a.ts", content: `${"x".repeat(200)}\n\n  y` };
     const said = caseLine(long);

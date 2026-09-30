@@ -170,6 +170,7 @@ export const EXAMPLE = {
   secrets: { dx: "./ci.sh dx", encrypt: "./ci.sh seal" },
   tdd: { run: "./ci.sh test" },
   typescript: { typecheck: "./ci.sh types", lint: "./ci.sh lint", tsconfigBase: "./tsconfig.base.json", eslintBase: "./eslint.config.base.js" },
+  work: { writers: ["builder", "parent"] },
 } as const;
 
 /** A JavaScript identifier, which is what decides whether an object key needs quoting. */
@@ -211,10 +212,23 @@ export function bindLine(name: string, params: unknown): string {
  */
 export function caseLine(fact: Case): string {
   if (typeof fact === "string") return `running \`${fact}\``;
+  return `${eventLine(fact)}${fact.actor === undefined ? "" : ` ${actorLine(fact.actor)}`}`;
+}
+
+/** The event half of a case's line — what it did, before who did it. */
+function eventLine(fact: Exclude<Case, string>): string {
   if ("command" in fact) return `running \`${fact.command}\``;
   if ("path" in fact) return `writing \`${fact.path}\`${fact.content === "" ? "" : ` — \`${oneLine(fact.content)}\``}`;
   if ("staged" in fact) return `committing ${fact.staged.map((f) => `\`${f}\``).join(", ")}`;
   return `a turn with ${fact.actions.length} recorded action${fact.actions.length === 1 ? "" : "s"}`;
+}
+
+/**
+ * Who a case's canned session was. Two cases writing the same file sit in opposite columns when
+ * only the actor differs, and a page that dropped it would show nothing between them.
+ */
+function actorLine(actor: readonly string[]): string {
+  return actor.length === 0 ? "by an actor with no category" : `as ${actor.map((name) => `\`${name}\``).join(" + ")}`;
 }
 
 /**

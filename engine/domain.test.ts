@@ -18,9 +18,13 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   defineCategory,
   defineConfig,
+  definePack,
+  guardrail,
   loadConfig,
+  oneWriter,
   pack,
   override,
+  write,
   type LoadResult,
   type Refusal,
   type SessionFacts,
@@ -384,6 +388,31 @@ describe("what an entry is run against", () => {
       hits: 0,
       silenced: 0,
     });
+  });
+
+  it("hands every check the categories of the session acting, as ctx.actor", async () => {
+    const seen: (readonly string[])[] = [];
+    const spy = definePack("spy", {
+      actor: guardrail()
+        .at(write)
+        .check((ctx) => {
+          seen.push(ctx.actor);
+          return ctx.ok();
+        })
+        .message("x")
+        .test({ pass: [{ path: "a", content: "" }] }),
+      builderWrites: guardrail()
+        .at(write)
+        .check(oneWriter({ writers: ["builder"] }))
+        .message("Only the builder writes.")
+        .test({ block: [{ path: "a", content: "", actor: ["checker"] }] }),
+    });
+    const load = loadConfig(defineConfig([pack(spy)]));
+    expect(blockedIds(await guard({ load, event: wrote("a.ts", "x", ["builder"]), world: world() }))).toEqual([]);
+    const refused = await guard({ load, event: wrote("a.ts", "x", ["checker"]), world: world() });
+    expect(blockedIds(refused)).toEqual(["spy.builderWrites"]);
+    expect(blocks(refused)[0]?.detail).toContain("an actor wearing checker");
+    expect(seen).toEqual([["builder"], ["checker"]]);
   });
 
   it("hands a command rail the line about to run, and consults no path scope", async () => {

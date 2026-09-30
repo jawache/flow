@@ -40,6 +40,7 @@ describe("the public surface", () => {
       "guardrail",
       "jsonInvariant",
       "loadConfig",
+      "oneWriter",
       "override",
       "pack",
       "protectedPath",

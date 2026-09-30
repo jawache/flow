@@ -58,9 +58,9 @@ export { defineCategory, type Category, type Classifier, type SessionFacts } fro
 // ── the stock checks, and the command reader they are written against ────────
 //
 // THE LIBRARY IS PART OF THE PROMISE. A pack is just code, and the code it is made of is these:
-// thirteen configured checks that cover what a guard actually asks — a banned shape in a file, a
+// fourteen configured checks that cover what a guard actually asks — a banned shape in a file, a
 // banned command, a protected path, a JSON invariant, an import fence, a gate that runs a tool.
-// A pack that could not reach them would have to re-implement each one, and thirteen private
+// A pack that could not reach them would have to re-implement each one, and fourteen private
 // re-implementations is the string registry this package exists to delete, wearing a new coat.
 //
 // They come through THIS door and never `@jawache/flow/checks`, for the same reason the grammar
@@ -74,6 +74,7 @@ export {
   depcruise,
   execPasses,
   jsonInvariant,
+  oneWriter,
   protectedPath,
   ranSinceEdit,
   siblingExists,

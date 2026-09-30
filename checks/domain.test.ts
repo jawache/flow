@@ -55,6 +55,7 @@ import {
   lonelyChanges,
   NATIVE_LANGUAGES,
   patternHits,
+  oneWriter,
   protectedPath,
   quoteArg,
   ranSinceEdit,
@@ -213,6 +214,32 @@ describe("substitutionInProse", () => {
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // PATHS
 // ════════════════════════════════════════════════════════════════════════════════════════════════
+
+describe("oneWriter", () => {
+  const check = oneWriter({ writers: ["builder", "parent"] });
+
+  it("lets a listed category write, and refuses every other actor — naming who wrote", async () => {
+    expect(await run(check, "write", { path: "src/x.ts", content: "", actor: ["builder"] })).toBeNull();
+    expect(await run(check, "write", { path: "src/x.ts", content: "", actor: ["checker", "parent"] }), "wearing any listed one is enough").toBeNull();
+    expect(await run(check, "write", { path: "src/x.ts", content: "", actor: ["checker"] })).toBe(
+      "src/x.ts was written by an actor wearing checker — only builder or parent may change files here",
+    );
+  });
+
+  it("refuses an actor with no category at all, and says so", async () => {
+    expect(await run(check, "delete", file("src/x.ts", "old"))).toBe(
+      "src/x.ts was deleted by an actor with no category — only builder or parent may change files here",
+    );
+    expect(await run(check, "write", { command: "x", actor: [] })).toContain("a file was written");
+  });
+
+  it("refuses to load with no writers — that is a frozen worktree, not a rule", () => {
+    expect(faultsOf(oneWriter({ writers: [] }))).toStrictEqual([
+      "lists no `writers`, so it would refuse every change by every actor. Name the categories allowed to write.",
+    ]);
+    expect(faultsOf(check)).toStrictEqual([]);
+  });
+});
 
 describe("protectedPath", () => {
   it("treats the entry's scope AS the prohibition — anything it is handed is a violation", async () => {
@@ -1332,14 +1359,17 @@ describe("readCase — the one ladder over the case union", () => {
     const world: CaseWorld = { fs: { "a.ts": "x" } };
     expect(readCase({ path: "a.ts", content: "x", world })).toEqual({
       dialect: "write",
-      facts: { file: { path: "a.ts", content: "x" } },
+      facts: { file: { path: "a.ts", content: "x" }, actor: [] },
       world,
     });
     expect(readCase({ command: "ls" }).world).toEqual({});
-    expect(readCase({ staged: ["a.ts"] }).facts).toEqual({ staged: ["a.ts"] });
+    expect(readCase({ staged: ["a.ts"] }).facts).toEqual({ staged: ["a.ts"], actor: [] });
     expect(readCase({ actions: [{ did: "edit", path: "a.ts" }] }).facts).toEqual({
       turn: [{ did: "edit", path: "a.ts" }],
+      actor: [],
     });
+    expect(readCase({ path: "a.ts", content: "", actor: ["builder"] }).facts.actor, "the canned session's categories").toEqual(["builder"]);
+    expect(readCase({ command: "ls", actor: ["checker"] }).facts).toEqual({ command: "ls", actor: ["checker"] });
   });
 
   it("every dialect is one a guardrail moment can actually be handed", async () => {

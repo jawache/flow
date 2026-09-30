@@ -223,6 +223,36 @@ export const protectedPath = defineCheck(
     },
 );
 
+// ── ACTORS — who made the change, never what it says ─────────────────────────────────────────────
+
+/**
+ * Only the listed categories may change a file: a write or a delete by any other actor is refused.
+ *
+ * It reads `ctx.actor` — the categories the acting session wears, recognised from what the host
+ * wrote about it, never from a claim it made — and nothing about the file. A session wearing none
+ * of `writers` is refused whatever it wrote, and one wearing none at all is refused too: "no
+ * category" is not "every category".
+ *
+ * `.for(…)` on an entry says which actors a RULE applies to; this says which actors may WRITE. Both
+ * read the same categories, and they answer different questions — a rule for a checker says what a
+ * checker may not do, this says that everybody but a builder may not write.
+ *
+ * An empty `writers` is refused at load: it would refuse every change by everyone, which is a
+ * frozen worktree, not a rule about who writes it.
+ */
+export const oneWriter = defineCheck(
+  (opts: { writers: readonly string[] }): Check =>
+    withFaults(
+      (ctx) => {
+        if (ctx.actor.some((category) => opts.writers.includes(category))) return ctx.ok();
+        const who = ctx.actor.length === 0 ? "an actor with no category" : `an actor wearing ${ctx.actor.join(", ")}`;
+        const what = ctx.moment === "delete" ? "deleted" : "written";
+        return ctx.fail(`${ctx.file?.path ?? "a file"} was ${what} by ${who} — only ${opts.writers.join(" or ")} may change files here`);
+      },
+      opts.writers.length === 0 ? ["lists no `writers`, so it would refuse every change by every actor. Name the categories allowed to write."] : [],
+    ),
+);
+
 /**
  * A file must have a required companion on disk — every `src/domain/**` needs its `.test.ts`.
  *
@@ -1789,10 +1819,13 @@ export function readCase(c: Case): {
 } {
   if (typeof c === "string") return { dialect: "command", facts: { command: c }, world: {} };
   const world = c.world ?? {};
-  if ("command" in c) return { dialect: "command", facts: { command: c.command }, world };
-  if ("path" in c) return { dialect: "write", facts: { file: { path: c.path, content: c.content } }, world };
-  if ("staged" in c) return { dialect: "commit", facts: { staged: c.staged }, world };
-  return { dialect: "turn-end", facts: { turn: c.actions }, world };
+  // The canned session's categories, the same field on every shape: a live rail hands every check
+  // the categories of the session acting, so a case that names none is a session wearing none.
+  const actor = { actor: c.actor ?? [] };
+  if ("command" in c) return { dialect: "command", facts: { command: c.command, ...actor }, world };
+  if ("path" in c) return { dialect: "write", facts: { file: { path: c.path, content: c.content }, ...actor }, world };
+  if ("staged" in c) return { dialect: "commit", facts: { staged: c.staged, ...actor }, world };
+  return { dialect: "turn-end", facts: { turn: c.actions, ...actor }, world };
 }
 
 /** Which moment's dialect a case speaks. */
