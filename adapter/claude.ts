@@ -27,6 +27,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -386,7 +387,7 @@ function identityOf(session: Session, payload: HookPayload, categories: readonly
 
 /** The world a payload is read against — disk, and the turn, asked only if the moment needs them. */
 function eventWorld(root: string, session: Session): EventWorld {
-  return { root, read: (path: string) => readText(root, path), turn: session.turn };
+  return { root, read: (path: string) => readText(root, path), turn: session.turn, home: homedir() };
 }
 
 /** A note's prose: inline, or the repo file it named. The shell resolves it; a pure home cannot. */
@@ -540,6 +541,11 @@ async function judge(args: {
       continue;
     }
 
+    // A REFUSED ANSWER CARRIES NO NOTES — `toResult` drops them for the refusal — so a note is not
+    // judged here either, or it would be marked shown and stay silent until drift. A blocked `cat`
+    // whose file is next read by the retried command then briefs on the retry, which is the call
+    // that runs.
+    if (blocked.length > 0) continue;
     steps?.push({
       rail: "brief",
       moment: event.moment,

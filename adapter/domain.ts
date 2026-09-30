@@ -66,6 +66,8 @@ import {
 // question the checks layer already answers, and the old engine's second answer (a regex split on
 // `&&|\|\||;`) is exactly the near-duplicate this rewrite exists to delete.
 import { missingGrammarText, tokenizeCommand } from "../checks/domain.ts";
+// String algebra only — a Bash read is resolved against the directory the shell was in.
+import { posix } from "node:path";
 // The one glob engine. A coverage question asked with a second matcher is a coverage answer about
 // files the guard never judged — see flow/glob.ts on why there is exactly one.
 import { matchAny } from "../glob.ts";
@@ -217,7 +219,9 @@ const HOST_EVENT: Record<HookEvent, string> = {
  *     perfectly. Reporting an entry that goes dark is `flow status`'s job (F6).
  *   · command BRIEFING is delivered, on the same PreToolUse answer the command guardrails use: when
  *     nothing blocks, the hook's `additionalContext` carries the note, and when something does, the
- *     refusal wins — which is the right order, since a blocked command is not about to run.
+ *     refusal wins — which is the right order, since a blocked command is not about to run. The
+ *     files a Bash command reads ride that same answer as touches (`bashReads`), so an area's note
+ *     arrives before the output does.
  *
  * It is two lists rather than one because "turn-end" is a word in both vocabularies and the answer
  * differs between them — a single flat list could only lie about one of them.
@@ -285,6 +289,8 @@ export interface EventWorld {
   readonly read: (path: string) => string | null;
   /** What the actor did this turn. Only `stop` asks, so only `stop` pays for it. */
   readonly turn?: (() => readonly TurnAction[]) | undefined;
+  /** The home directory, for a Bash read through `~`. Absent, such a path is simply not named. */
+  readonly home?: string | undefined;
 }
 
 /** An absolute path inside the repo → the repo-relative spelling every glob is written against. */
@@ -398,11 +404,644 @@ export function deleteTargets(command: string): string[] {
   return out;
 }
 
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// BASH READS — the files a shell command reads, for the touch breadcrumb
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+//
+// Under auto mode most contact with an area is a `cat`, a `grep` or a `sed -n` whose payload names
+// no path, so a touch breadcrumb keyed on `file_path` never saw it. This names those paths from the
+// command line, BEFORE it runs, so the note rides the PreToolUse answer and arrives ahead of the
+// output.
+//
+// CHOSEN BY MEASUREMENT (flow F3, `evidence/f3-b1-bakeoff.log`). Three mechanisms were scored on
+// 150 real commands labelled by hand (`__fixtures__/bash-corpus/`): this lexer found 86% of the
+// labelled reads, tree-sitter-bash 89% and shell functions shadowing the read commands 81%, all at
+// 99-100% precision. The grammar's margin was two `for` loops, which the lexer now reads too; the
+// grammar would have cost a 16 MB native dependency loaded on every Bash call. The functions only
+// learn a path while the command RUNS, after this answer has gone.
+//
+// BEST-EFFORT AND FAILING OPEN, on purpose. A breadcrumb is guidance, not a refusal: a word the
+// lexer cannot settle — a `$(…)`, an unknown variable, an unclosed quote — is left out rather than
+// guessed at, and a whole line it cannot lex names nothing. What it misses the working-tree delta
+// catches later: a file changed before any read of it was seen gets its note at the change.
+
+/** Which arguments of one read command are files. */
+interface ReadSpec {
+  /** Options that consume the next argument. */
+  readonly valued?: readonly string[];
+  /** Options whose value is itself a file read (`grep -f patterns`, `awk -f prog.awk`). */
+  readonly fileOpts?: readonly string[];
+  /** Positional operands that are not files — a pattern, a script, a filter — … */
+  readonly skip?: number;
+  /** … unless one of these options supplied it instead. */
+  readonly supplied?: readonly string[];
+  /** What is searched when no operand is: the working directory, or only when recursive. */
+  readonly dflt?: "." | "recursive";
+  /** `find`: the first operand of the expression ends the list of paths. */
+  readonly stop?: boolean;
+  /** `cp`: the last operand is the destination. */
+  readonly lastIsDest?: boolean;
+  /**
+   * A SEARCH: its operands may be directories it lists or walks, so they touch an area but are not
+   * a file read. `grep` is one only when recursive.
+   */
+  readonly searches?: boolean;
+}
+
+const GREP_SPEC: ReadSpec = {
+  valued: ["-e", "-f", "-A", "-B", "-C", "-m", "-d", "-D", "--regexp", "--file", "--include", "--exclude", "--exclude-dir", "--max-count", "--context", "--after-context", "--before-context", "--color", "--colour", "--label"],
+  fileOpts: ["-f", "--file"],
+  skip: 1,
+  supplied: ["-e", "-f", "--regexp", "--file"],
+  dflt: "recursive",
+};
+
+/**
+ * THE READ COMMANDS, and which of their arguments are files. One table, because which argument of
+ * `grep` is the pattern is a fact about `grep`, not about how the line was parsed.
+ */
+const READERS: Readonly<Record<string, ReadSpec>> = {
+  cat: {},
+  less: {},
+  more: {},
+  tac: {},
+  wc: {},
+  cmp: {},
+  file: {},
+  md5sum: {},
+  sha256sum: {},
+  bat: { valued: ["-l", "-r", "--language", "--line-range", "--style", "--theme"] },
+  nl: { valued: ["-b", "-w", "-s", "-v", "-i"] },
+  head: { valued: ["-n", "-c"] },
+  tail: { valued: ["-n", "-c", "-b", "-s"] },
+  sed: { valued: ["-e", "-f", "-l", "--expression", "--file"], fileOpts: ["-f", "--file"], skip: 1, supplied: ["-e", "-f", "--expression", "--file"] },
+  awk: { valued: ["-F", "-v", "-f"], fileOpts: ["-f"], skip: 1, supplied: ["-f"] },
+  jq: { valued: ["-f", "--from-file", "--indent", "--arg", "--argjson", "--slurpfile", "--rawfile"], fileOpts: ["-f", "--from-file"], skip: 1, supplied: ["-f", "--from-file"] },
+  grep: GREP_SPEC,
+  egrep: GREP_SPEC,
+  fgrep: GREP_SPEC,
+  rg: {
+    valued: ["-e", "-f", "-g", "-t", "-T", "-A", "-B", "-C", "-m", "-M", "-d", "-j", "-r", "-E", "--regexp", "--file", "--glob", "--iglob", "--type", "--type-not", "--type-add", "--max-count", "--max-columns", "--max-depth", "--threads", "--replace", "--encoding", "--sort", "--sortr", "--context", "--after-context", "--before-context", "--ignore-file", "--pre", "--max-filesize", "--colors", "--color"],
+    fileOpts: ["-f", "--file", "--ignore-file"],
+    skip: 1,
+    supplied: ["-e", "-f", "--regexp", "--file", "--files", "--type-list"],
+    dflt: ".",
+    searches: true,
+  },
+  find: { stop: true, dflt: ".", searches: true },
+  ls: { valued: ["-I", "--ignore", "--hide", "-w", "--width"], dflt: ".", searches: true },
+  du: { valued: ["-d", "-B", "--max-depth"], dflt: ".", searches: true },
+  tree: { valued: ["-L", "-I", "-P"], dflt: ".", searches: true },
+  diff: { valued: ["-U", "-C", "-x", "-X", "-I", "-L", "--label", "--exclude"] },
+  cut: { valued: ["-d", "-f", "-c", "-b"] },
+  sort: { valued: ["-k", "-t", "-o", "-S", "-T"] },
+  uniq: { valued: ["-f", "-s"] },
+  column: { valued: ["-s", "-c"] },
+  xxd: { valued: ["-l", "-s", "-c", "-g"] },
+  od: { valued: ["-N", "-j", "-t", "-A"] },
+  hexdump: { valued: ["-n", "-s", "-e"] },
+  strings: { valued: ["-n"] },
+  md5: { valued: ["-s"] },
+  shasum: { valued: ["-a"] },
+  cp: { valued: ["-t", "-S"], lastIsDest: true },
+};
+
+/** The `git` subcommands whose pathspecs are a reader looking at a path. */
+const GIT_LOOKS = new Set(["diff", "log", "show", "status", "add", "blame", "ls-files", "grep"]);
+
+/** Commands that run the command after them, with the options that consume a value. */
+const WRAPPERS: Readonly<Record<string, { readonly valued: readonly string[]; readonly positional?: number }>> = {
+  timeout: { valued: ["-s", "-k", "--signal", "--kill-after"], positional: 1 },
+  nohup: { valued: [] },
+  time: { valued: [] },
+  nice: { valued: ["-n"] },
+  sudo: { valued: ["-u", "-g", "-C"] },
+  env: { valued: ["-u", "-C"] },
+  stdbuf: { valued: ["-i", "-o", "-e"] },
+  command: { valued: [] },
+  builtin: { valued: [] },
+  exec: { valued: [] },
+  xargs: { valued: ["-a", "--arg-file", "-n", "-I", "-L", "-P", "-d", "-E", "-s"] },
+};
+
+/** An argument after expansion, or null when it could not be known without running the line. */
+type Arg = string | null;
+
+/** An option word: a dash and something after it. `-` alone is stdin, and an unknown is not one. */
+const isOption = (arg: Arg): boolean => arg !== null && arg.startsWith("-") && arg !== "-";
+
+/** What one simple command reads, as written: files, the paths a search walks, and `git -C`'s dir. */
+interface ArgvReads {
+  readonly reads: string[];
+  readonly searched: string[];
+  readonly base?: string;
+}
+
+/**
+ * The paths one simple command reads, as written, and the directory they are relative to when the
+ * command moves it (`git -C`). An unknown argument is skipped, never guessed at.
+ */
+function argvReads(argv: readonly Arg[]): ArgvReads {
+  const reads: string[] = [];
+  const searched: string[] = [];
+  let words = argv;
+  let name = words[0] === undefined || words[0] === null ? "" : posix.basename(words[0]);
+  let wrap = WRAPPERS[name];
+  // Wrappers first — `timeout 60 rg …`, `env X=1 cat f`, `xargs -a list grep …` — peeled until
+  // the command they run is at the front.
+  while (wrap !== undefined) {
+    if (name === "command" && (words[1] === "-v" || words[1] === "-V")) return { reads, searched };
+    let i = 1;
+    for (;;) {
+      const word = words[i] ?? null;
+      if (isOption(word)) {
+        if (name === "xargs" && (word === "-a" || word === "--arg-file") && typeof words[i + 1] === "string") reads.push(words[i + 1] as string);
+        i += wrap.valued.includes(word as string) ? 2 : 1;
+      } else if (name === "env" && /^[A-Za-z_]\w*=/.test(word ?? "")) i += 1;
+      else break;
+    }
+    words = words.slice(i + (wrap.positional ?? 0));
+    name = words[0] === undefined || words[0] === null ? "" : posix.basename(words[0]);
+    wrap = WRAPPERS[name];
+  }
+  const args = words.slice(1);
+  if (name === "git") return gitReads(args, reads);
+  if (name === "ffmpeg") {
+    args.forEach((arg, i) => {
+      const next = args[i + 1];
+      if (arg === "-i" && typeof next === "string") reads.push(next);
+    });
+    return { reads, searched };
+  }
+  const spec = READERS[name];
+  if (spec === undefined) return { reads, searched };
+
+  const operands: Arg[] = [];
+  let supplied = false;
+  let recursive = false;
+  let ended = false;
+  for (let i = 0; i < args.length; i++) {
+    const word = args[i] as Arg;
+    if (spec.stop === true && word !== null && (word.startsWith("-") || word === "(" || word === "!")) break;
+    if (ended || !isOption(word)) {
+      operands.push(word);
+      continue;
+    }
+    const arg = word as string;
+    if (arg === "--") {
+      ended = true;
+      continue;
+    }
+    const eq = arg.startsWith("--") ? arg.indexOf("=") : -1;
+    const flag = eq === -1 ? arg : arg.slice(0, eq);
+    if (spec.supplied?.includes(flag) === true) supplied = true;
+    if (/^-[a-zA-Z]*[rR]/.test(arg) || arg === "--recursive") recursive = true;
+    // BSD `sed -i ''` and `sed -i .bak`: the in-place suffix is an argument of its own.
+    if (name === "sed" && arg === "-i" && (args[i + 1] === "" || /^\.\w+$/.test(args[i + 1] ?? ""))) i++;
+    else if (eq !== -1) {
+      if (spec.fileOpts?.includes(flag) === true) reads.push(arg.slice(eq + 1));
+    } else if (spec.valued?.includes(flag) === true) {
+      const value = args[i + 1];
+      if (spec.fileOpts?.includes(flag) === true && typeof value === "string") reads.push(value);
+      i++;
+    }
+  }
+  let files = operands.slice(supplied ? 0 : (spec.skip ?? 0));
+  if (spec.lastIsDest === true) files = files.slice(0, -1);
+  // `grep -r` walks what it is given; `cp -r` still reads its sources.
+  const walks = spec.dflt === "recursive" && recursive;
+  const into = spec.searches === true || walks ? searched : reads;
+  for (const file of files) if (file !== null && file !== "-" && file !== "") into.push(file);
+  if (files.length === 0 && (spec.dflt === "." || walks)) into.push(".");
+  return { reads, searched };
+}
+
+/**
+ * `git [-C dir] <look> … [-- paths]` → the pathspecs, and the directory `-C` moved it to. A
+ * pathspec may name a directory, so it is a search.
+ */
+function gitReads(args: readonly Arg[], reads: string[]): ArgvReads {
+  const searched: string[] = [];
+  let base: string | undefined;
+  let i = 0;
+  for (let opt = args[0] ?? null; isOption(opt); opt = args[i] ?? null) {
+    const value = args[i + 1];
+    if (opt === "-C" && typeof value === "string") base = value;
+    i += ["-C", "-c", "--git-dir", "--work-tree", "--namespace"].includes(opt as string) ? 2 : 1;
+  }
+  const sub = args[i];
+  const found = base === undefined ? { reads, searched } : { reads, searched, base };
+  if (typeof sub !== "string" || !GIT_LOOKS.has(sub)) return found;
+  const rest = args.slice(i + 1);
+  const dash = rest.indexOf("--");
+  // Before a `--`, only what LOOKS like a path: a revision (`HEAD~2`, `main..x`, `HEAD:file`) does not.
+  const pathish = (arg: Arg): arg is string =>
+    arg !== null && !isOption(arg) && !arg.includes("..") && !arg.includes(":") && (arg.includes("/") || /\.\w+$/.test(arg));
+  searched.push(...(dash === -1 ? rest.filter(pathish) : rest.slice(dash + 1).filter((arg): arg is string => arg !== null && arg !== "")));
+  return found;
+}
+
+// ── the lexer ───────────────────────────────────────────────────────────────
+
+/** One piece of a word: text, `~`, a variable, a nested command, or something unknowable. */
+type Part =
+  | { readonly kind: "text"; readonly text: string }
+  | { readonly kind: "tilde" }
+  | { readonly kind: "var"; readonly name: string }
+  | { readonly kind: "subst"; readonly command: string }
+  | { readonly kind: "unknown" };
+type Word = readonly Part[];
+type Token = { readonly t: "word"; readonly word: Word } | { readonly t: "op"; readonly op: string } | { readonly t: "redir"; readonly op: string };
+
+/** Where a `$(` closes, honouring quotes and nesting. -1 when it never does. */
+function closeParen(s: string, from: number): number {
+  let depth = 1;
+  for (let i = from; i < s.length; i++) {
+    const c = s[i];
+    if (c === "\\") i++;
+    else if (c === "'" || c === '"') {
+      const end = c === "'" ? s.indexOf("'", i + 1) : dquoteEnd(s, i + 1);
+      if (end === -1) return -1;
+      i = end;
+    } else if (c === "(") depth++;
+    else if (c === ")" && --depth === 0) return i;
+  }
+  return -1;
+}
+
+/** Where a double-quoted run closes — a `"` inside a `$(…)` in it does not close it. */
+function dquoteEnd(s: string, from: number): number {
+  for (let i = from; i < s.length; i++) {
+    if (s[i] === "\\") i++;
+    else if (s[i] === "$" && s[i + 1] === "(") {
+      const end = closeParen(s, i + 2);
+      if (end === -1) return -1;
+      i = end;
+    } else if (s[i] === '"') return i;
+  }
+  return -1;
+}
+
+/** `$NAME`, `${NAME}`, `$(…)`, `$((…))`, `$?` at `s[i]` → the part, and where it ends. */
+function dollar(s: string, i: number): { part: Part; end: number } {
+  const next = s[i + 1] ?? "";
+  if (s.startsWith("((", i + 1)) {
+    const end = s.indexOf("))", i + 3);
+    return { part: { kind: "unknown" }, end: end === -1 ? s.length : end + 2 };
+  }
+  if (next === "(") {
+    const end = closeParen(s, i + 2);
+    return end === -1 ? { part: { kind: "unknown" }, end: s.length } : { part: { kind: "subst", command: s.slice(i + 2, end) }, end: end + 1 };
+  }
+  if (next === "{") {
+    const end = s.indexOf("}", i + 2);
+    const inner = end === -1 ? "" : s.slice(i + 2, end);
+    return { part: /^[A-Za-z_]\w*$/.test(inner) ? { kind: "var", name: inner } : { kind: "unknown" }, end: end === -1 ? s.length : end + 1 };
+  }
+  const name = /^[A-Za-z_]\w*/.exec(s.slice(i + 1))?.[0];
+  if (name !== undefined) return { part: { kind: "var", name }, end: i + 1 + name.length };
+  if (/[0-9@*#?$!-]/.test(next)) return { part: { kind: "unknown" }, end: i + 2 };
+  return { part: { kind: "text", text: "$" }, end: i + 1 };
+}
+
+/** A backquoted command at `s[i]` → the part, and where it ends. */
+function backquote(s: string, i: number, limit: number): { part: Part; end: number } {
+  const close = s.indexOf("`", i + 1);
+  return close === -1 || close > limit ? { part: { kind: "unknown" }, end: limit } : { part: { kind: "subst", command: s.slice(i + 1, close) }, end: close + 1 };
+}
+
+/** The inside of a double-quoted run → its parts. */
+function dquoteParts(s: string, from: number, to: number): Part[] {
+  const parts: Part[] = [];
+  let text = "";
+  const flush = (): void => {
+    if (text !== "") parts.push({ kind: "text", text });
+    text = "";
+  };
+  for (let j = from; j < to; ) {
+    const c = s[j] as string;
+    if (c === "\\" && /["\\$`]/.test(s[j + 1] ?? "")) {
+      text += s[j + 1] as string;
+      j += 2;
+    } else if (c === "$" || c === "`") {
+      flush();
+      const got = c === "$" ? dollar(s, j) : backquote(s, j, to);
+      parts.push(got.part);
+      j = got.end;
+    } else {
+      text += c;
+      j++;
+    }
+  }
+  flush();
+  return parts;
+}
+
+const BREAKS = new Set([";", "&", "|", "(", ")", "<", ">", "\n", " ", "\t", "'", '"', "\\", "$", "`"]);
+
+/**
+ * A command line → words, operators and redirects, with every heredoc body consumed unread. Null
+ * when a quote never closes: the line cannot be read, so it names nothing.
+ */
+function lexShell(s: string): Token[] | null {
+  const tokens: Token[] = [];
+  const heredocs: { delim: string; tabs: boolean }[] = [];
+  let parts: Part[] = [];
+  let text = "";
+  let inWord = false;
+  const endWord = (): void => {
+    if (text !== "") parts.push({ kind: "text", text });
+    if (inWord) tokens.push({ t: "word", word: parts });
+    parts = [];
+    text = "";
+    inWord = false;
+  };
+  let i = 0;
+  while (i < s.length) {
+    const c = s[i] as string;
+    const at = s.slice(i);
+    if (at.startsWith("\\\n")) {
+      i += 2;
+    } else if (!inWord && c === "#") {
+      const nl = s.indexOf("\n", i);
+      i = nl === -1 ? s.length : nl;
+    } else if (c === "\n") {
+      endWord();
+      tokens.push({ t: "op", op: "\n" });
+      i++;
+      // A heredoc's body starts on the line after its `<<`, and runs to its delimiter alone on a line.
+      for (const doc of heredocs.splice(0)) {
+        while (i < s.length) {
+          const nl = s.indexOf("\n", i);
+          const line = s.slice(i, nl === -1 ? s.length : nl);
+          i = nl === -1 ? s.length : nl + 1;
+          if ((doc.tabs ? line.replace(/^\t+/, "") : line) === doc.delim) break;
+        }
+      }
+    } else if (c === " " || c === "\t") {
+      endWord();
+      i++;
+    } else if (at.startsWith("<(") || at.startsWith(">(")) {
+      endWord();
+      const end = closeParen(s, i + 2);
+      tokens.push({ t: "word", word: [end === -1 ? { kind: "unknown" } : { kind: "subst", command: s.slice(i + 2, end) }] });
+      i = end === -1 ? s.length : end + 1;
+    } else if (c === "<" || c === ">" || at.startsWith("&>")) {
+      // A redirect. An fd glued in front of it (`2>`) is part of the operator, not a word.
+      if (inWord && parts.length === 0 && /^\d+$/.test(text)) {
+        text = "";
+        inWord = false;
+      }
+      endWord();
+      const op = /^(&>>|&>|<<<|<<-|<<|<>|<&|<|>>|>\||>&|>)/.exec(at)?.[0] ?? c;
+      tokens.push({ t: "redir", op });
+      i += op.length;
+      if (op === "<<" || op === "<<-") {
+        while (s[i] === " " || s[i] === "\t") i++;
+        const m = /^(['"]?)([^\s'";&|<>()]+)\1/.exec(s.slice(i));
+        if (m !== null) {
+          const delim = m[2] as string;
+          heredocs.push({ delim, tabs: op === "<<-" });
+          tokens.push({ t: "word", word: [{ kind: "text", text: delim }] });
+          i += m[0].length;
+        }
+      }
+    } else if (c === ";" || c === "&" || c === "|" || c === "(" || c === ")") {
+      endWord();
+      const two = s.slice(i, i + 2);
+      const op = ["&&", "||", "|&", ";;"].includes(two) ? two : c;
+      tokens.push({ t: "op", op });
+      i += op.length;
+    } else {
+      inWord = true;
+      if (c === "'" || at.startsWith("$'")) {
+        const open = c === "'" ? i : i + 1;
+        const end = s.indexOf("'", open + 1);
+        if (end === -1) return null;
+        text += s.slice(open + 1, end);
+        i = end + 1;
+      } else if (c === '"') {
+        const end = dquoteEnd(s, i + 1);
+        if (end === -1) return null;
+        if (text !== "") parts.push({ kind: "text", text });
+        text = "";
+        parts.push(...dquoteParts(s, i + 1, end));
+        i = end + 1;
+      } else if (c === "\\") {
+        text += s[i + 1] ?? "";
+        i += 2;
+      } else if (c === "$" || c === "`") {
+        if (text !== "") parts.push({ kind: "text", text });
+        text = "";
+        const got = c === "$" ? dollar(s, i) : backquote(s, i, s.length);
+        parts.push(got.part);
+        i = got.end;
+      } else if (c === "~" && text === "" && parts.length === 0) {
+        parts.push({ kind: "tilde" });
+        i++;
+      } else {
+        while (i < s.length && !BREAKS.has(s[i] as string)) text += s[i++] as string;
+      }
+    }
+  }
+  endWord();
+  return tokens;
+}
+
+// ── the program ─────────────────────────────────────────────────────────────
+
+/** A command line reduced to what decides a read. */
+type ShellNode =
+  | { readonly kind: "cmd"; readonly words: readonly Word[]; readonly inputs: readonly Word[] }
+  | { readonly kind: "subshell"; readonly body: readonly ShellNode[] }
+  | { readonly kind: "for"; readonly name: string; readonly values: readonly Word[]; readonly body: readonly ShellNode[] };
+
+/** Words that open or close a construct; stripped from the front of the command they lead. */
+const SHELL_KEYWORDS = new Set(["if", "then", "else", "elif", "fi", "while", "until", "{", "}", "!", "esac", "do", "done"]);
+
+/** A word that is plain text and nothing else, or null. */
+function plain(word: Word | undefined): string | null {
+  const [only] = word ?? [];
+  return word?.length === 1 && only?.kind === "text" ? only.text : null;
+}
+
+/**
+ * Tokens → a program: one node per simple command, `( … )` as a subshell and `for … do … done` as a
+ * loop whose body runs once per value. Null when the line would not lex.
+ */
+function shellProgram(command: string): ShellNode[] | null {
+  const tokens = lexShell(command);
+  if (tokens === null) return null;
+  type Frame = { readonly nodes: ShellNode[]; readonly kind: "top" | "subshell" | "do"; readonly loop: { name: string; values: Word[] } | null };
+  const frames: Frame[] = [{ nodes: [], kind: "top", loop: null }];
+  const top = (): Frame => frames[frames.length - 1] as Frame;
+  let loop: { name: string; values: Word[] } | null = null;
+  let words: Word[] = [];
+  let inputs: Word[] = [];
+  let redirect: string | null = null;
+  const close = (): void => {
+    const frame = frames.pop() as Frame;
+    if (frame.kind === "subshell") top().nodes.push({ kind: "subshell", body: frame.nodes });
+    else if (frame.loop !== null) top().nodes.push({ kind: "for", ...frame.loop, body: frame.nodes });
+    else top().nodes.push(...frame.nodes);
+  };
+  const flush = (): void => {
+    let lead = words;
+    for (let head = plain(lead[0]); head !== null && SHELL_KEYWORDS.has(head); head = plain(lead[0])) {
+      if (head === "do") {
+        frames.push({ nodes: [], kind: "do", loop });
+        loop = null;
+      } else if (head === "done" && top().kind === "do") close();
+      lead = lead.slice(1);
+    }
+    if (plain(lead[0]) === "for") {
+      const at = lead.findIndex((word) => plain(word) === "in");
+      loop = { name: plain(lead[1]) ?? "", values: at === -1 ? [] : lead.slice(at + 1) };
+    } else if (plain(lead[0]) !== "case" && (lead.length > 0 || inputs.length > 0)) top().nodes.push({ kind: "cmd", words: lead, inputs });
+    words = [];
+    inputs = [];
+  };
+  for (const token of tokens) {
+    if (token.t === "redir") redirect = token.op;
+    else if (token.t === "word") {
+      if (redirect === null) words.push(token.word);
+      else if (redirect === "<" || redirect === "<>") inputs.push(token.word);
+      redirect = null;
+    } else {
+      redirect = null;
+      const opens = token.op === "(" && words.length === 0;
+      flush();
+      if (opens) frames.push({ nodes: [], kind: "subshell", loop: null });
+      else if (token.op === ")" && frames.some((frame) => frame.kind === "subshell")) {
+        while (top().kind !== "subshell") close();
+        close();
+      }
+    }
+  }
+  flush();
+  while (frames.length > 1) close();
+  return top().nodes;
+}
+
+// ── the walk ────────────────────────────────────────────────────────────────
+
+interface ShellScope {
+  cwd: string | null;
+  old: string | null;
+  readonly vars: Map<string, string>;
+}
+
+/** Where a Bash call ran, and the two directories its paths are judged against. */
+export interface BashWhere {
+  /** The shell's working directory when the call started. */
+  readonly cwd: string;
+  /** The repo root. Paths outside it are not an area of this repo and are dropped. */
+  readonly root: string;
+  /** What `~` and `$HOME` mean; absent, a path through them is not known. */
+  readonly home?: string | undefined;
+}
+
+/** What a Bash command reads in the repo, repo-relative, in order, each once. */
+export interface BashReads {
+  /** Files it reads by name — `cat`, `head`, `sed -n`, `grep` on a file, a `<` redirect. */
+  readonly reads: readonly string[];
+  /**
+   * Paths a search walks or lists — `rg`, `find`, `ls`, `grep -r`, a `git` pathspec — which may be
+   * directories. They touch an area; they are not a file the session read.
+   */
+  readonly searched: readonly string[];
+}
+
+/**
+ * The repo paths a Bash command reads or searches — the `READERS` table, a `<` redirect, a `git`
+ * pathspec — followed through `cd`, `VAR=`, `for` loops and `$(…)`. The repo root itself is not an
+ * area and is left out. Best-effort, failing open: see the section head.
+ */
+export function bashReads(command: string, where: BashWhere): BashReads {
+  const reads: string[] = [];
+  const searched: string[] = [];
+  const at = (path: string, base: string | null): string | null =>
+    path.startsWith("/") ? posix.resolve(path) : base === null ? null : posix.resolve(base, path);
+  const add = (list: string[], path: string | null): void => {
+    const rel = path !== null && path.startsWith(`${where.root}/`) ? path.slice(where.root.length + 1) : null;
+    if (rel !== null && !list.includes(rel)) list.push(rel);
+  };
+  const expand = (word: Word, scope: ShellScope): string | null => {
+    let value: string | null = "";
+    for (const part of word) {
+      let piece: string | null | undefined = null;
+      if (part.kind === "text") piece = part.text;
+      else if (part.kind === "tilde" || (part.kind === "var" && part.name === "HOME")) piece = where.home;
+      else if (part.kind === "var") piece = scope.vars.get(part.name);
+      else if (part.kind === "subst") nested(part.command, scope);
+      value = value === null || piece === null || piece === undefined ? null : value + piece;
+    }
+    return value;
+  };
+  const nested = (inner: string, scope: ShellScope): void => {
+    walk(shellProgram(inner) ?? [], { cwd: scope.cwd, old: scope.old, vars: new Map(scope.vars) });
+  };
+  const assign = (word: Word, scope: ShellScope): boolean => {
+    const [head, ...rest] = word;
+    const m = head?.kind === "text" ? /^([A-Za-z_]\w*)=/.exec(head.text) : null;
+    if (m === null || head?.kind !== "text") return false;
+    const value = expand([{ kind: "text", text: head.text.slice(m[0].length) }, ...rest], scope);
+    if (value === null) scope.vars.delete(m[1] as string);
+    else scope.vars.set(m[1] as string, value);
+    return true;
+  };
+  const run = (node: Extract<ShellNode, { kind: "cmd" }>, scope: ShellScope): void => {
+    for (const input of node.inputs) {
+      const path = expand(input, scope);
+      add(reads, path === null ? null : at(path, scope.cwd));
+    }
+    // A line of only `X=…` sets them; in front of a command they are that command's own env.
+    const first = node.words.findIndex((word) => !/^[A-Za-z_]\w*=/.test(plain(word.slice(0, 1)) ?? ""));
+    if (first === -1) {
+      for (const word of node.words) assign(word, scope);
+      return;
+    }
+    const words = node.words.slice(first);
+    const argv = words.map((word) => expand(word, scope));
+    const name = argv[0];
+    if (name === "export" || name === "local" || name === "declare" || name === "readonly") {
+      for (const word of words.slice(1)) assign(word, scope);
+    } else if (name === "cd" || name === "pushd") {
+      const target = argv.slice(1).find((arg) => !isOption(arg));
+      const next = target === undefined ? (where.home ?? null) : target === null ? null : target === "-" ? scope.old : at(target, scope.cwd);
+      scope.old = scope.cwd;
+      scope.cwd = next;
+    } else {
+      const found = argvReads(argv);
+      const from = found.base === undefined ? scope.cwd : at(found.base, scope.cwd);
+      for (const path of found.reads) add(reads, at(path, from));
+      for (const path of found.searched) add(searched, at(path, from));
+    }
+  };
+  const walk = (nodes: readonly ShellNode[], scope: ShellScope): void => {
+    for (const node of nodes) {
+      if (node.kind === "subshell") walk(node.body, { cwd: scope.cwd, old: scope.old, vars: new Map(scope.vars) });
+      else if (node.kind === "cmd") run(node, scope);
+      else {
+        const values = node.values.map((word) => expand(word, scope));
+        for (const value of values.length > 0 ? values : [null]) {
+          if (value === null) scope.vars.delete(node.name);
+          else scope.vars.set(node.name, value);
+          walk(node.body, scope);
+        }
+      }
+    }
+  };
+  walk(shellProgram(command) ?? [], { cwd: where.cwd, old: null, vars: new Map() });
+  return { reads, searched };
+}
+
 /**
  * A payload → every event it carries. ZERO OR MORE, and the plural is not hedging.
  *
- * One Bash call is genuinely two moments — the command about to run, and each file an `rm` in it
- * would remove — and the old engine ran two evaluations off that one hook for exactly this reason.
+ * One Bash call is genuinely several moments — the command about to run, each file an `rm` in it
+ * would remove, and each file it reads — and the old engine ran two evaluations off that one hook
+ * for exactly this reason.
  * A signature returning one event would push the second rail back into the shell, where it could
  * not be tested as a decision.
  *
@@ -426,10 +1065,10 @@ export function toEvent(hook: HookEvent, payload: HookPayload, world: EventWorld
         // `additionalContext` channel this hook already carries — so a repo can attach a warning to
         // a command (`npm install …` corrupting a running dev server's cache) without inventing a
         // rule that refuses it.
-        const events: AdapterEvent[] = [
-          { rail: "guard", moment: "command", command },
-          { rail: "brief", moment: "command", command },
-        ];
+        //
+        // Every guard event comes before every brief event: a refusal carries no notes, and the
+        // shell stops judging notes once something has refused, so they are not marked shown.
+        const events: AdapterEvent[] = [{ rail: "guard", moment: "command", command }];
         for (const target of deleteTargets(command)) {
           // The file is still there at PreToolUse, so a content rule can ask what is about to be
           // lost ("this matched X — did you move the code first?"). One that is already gone yields
@@ -439,6 +1078,13 @@ export function toEvent(hook: HookEvent, payload: HookPayload, world: EventWorld
           const content = world.read(path);
           if (content !== null) events.push({ rail: "guard", moment: "delete", file: { path, content } });
         }
+        events.push({ rail: "brief", moment: "command", command });
+        // THE FILES IT READS, as touches on this same answer — so an area's note arrives with the
+        // command briefing, before the output does, rather than never (a Bash payload names no
+        // path for the post-tool-use rail to steer on). The host's `cwd` is where the shell stands.
+        const cwd = text(payload["cwd"]) || world.root;
+        const { reads, searched } = bashReads(command, { cwd, root: world.root, home: world.home });
+        for (const path of new Set([...reads, ...searched])) events.push({ rail: "brief", moment: "touch", path });
         return events;
       }
       const file = wouldBeFile(tool, input, world);
@@ -1284,6 +1930,8 @@ export type TranscriptEvent =
       readonly input: Record<string, unknown>;
       /** The file the call names, repo-relative. Empty when it names none. */
       readonly path: string;
+      /** The repo files a Bash call reads by name (`bashReads`), when it reads any. */
+      readonly reads?: readonly string[];
     };
 
 /**
@@ -1295,7 +1943,7 @@ export type TranscriptEvent =
  * doing the same over the same files, so "what is an assistant line" had two answers free to
  * drift. It reads through `transcriptLines` now, and owns only the pairing.
  */
-export function parseEvents(jsonl: string, root = ""): TranscriptEvent[] {
+export function parseEvents(jsonl: string, root = "", home?: string): TranscriptEvent[] {
   const out: TranscriptEvent[] = [];
   for (const line of transcriptLines(jsonl)) {
     const content = (line.record["message"] as { content?: unknown } | undefined)?.content;
@@ -1326,14 +1974,21 @@ export function parseEvents(jsonl: string, root = ""): TranscriptEvent[] {
       const block = raw as { type?: string; id?: string; name?: string; input?: Record<string, unknown> } | null;
       if (!block || block.type !== "tool_use") continue;
       const input = block.input ?? {};
+      const name = text(block.name);
+      // A Bash call's reads need a repo to be relative to; with no root there is none to count in.
+      const reads =
+        name === "Bash" && root !== ""
+          ? bashReads(text(input["command"]), { cwd: text(line.record["cwd"]) || root, root, home }).reads
+          : [];
       out.push({
         line: line.line,
         kind: "use",
         ts: line.ts,
         id: text(block.id),
-        name: text(block.name),
+        name,
         input,
         path: relativise(text(input["file_path"] ?? input["notebook_path"]), root),
+        ...(reads.length === 0 ? {} : { reads }),
       });
     }
   }
@@ -1569,6 +2224,8 @@ export function narrative(events: readonly TranscriptEvent[], tools: readonly st
       continue;
     }
     if (event.name !== "Bash") continue;
+    // A file read through the shell is a touch like a Read is; a searched directory is not a file.
+    for (const path of event.reads ?? []) touched[path] = (touched[path] ?? 0) + 1;
     const command = text(event.input["command"]);
     const read = classifyBash(command, tools);
     for (const recipe of read.recipes) recipes[recipe] = (recipes[recipe] ?? 0) + 1;

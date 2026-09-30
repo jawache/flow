@@ -15,6 +15,8 @@
 // binary, over stdin.
 
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { join, posix } from "node:path";
 import type { TurnAction } from "../index.ts";
 import { metrics, momentsView, type Block, type Bound, type Row } from "../engine/domain.ts";
 import { missingGrammarText } from "../checks/domain.ts";
@@ -26,6 +28,7 @@ import {
   GIT_HOOK_ENV,
   HOOK_EVENTS,
   applyEdit,
+  bashReads,
   branchFromHead,
   briefBlock,
   briefHead,
@@ -252,6 +255,211 @@ describe("a Bash line's delete targets", () => {
   });
 });
 
+// ── Bash reads — what a shell command reads, for the touch breadcrumb ───────────
+
+describe("bashReads — the files a Bash command reads, before it runs", () => {
+  const HOME = "/home/me";
+  const at = (command: string, cwd = ROOT, home: string | undefined = HOME): { reads: readonly string[]; searched: readonly string[] } =>
+    bashReads(command, { cwd, root: ROOT, home });
+  const reads = (command: string, cwd = ROOT): readonly string[] => at(command, cwd).reads;
+  const searched = (command: string, cwd = ROOT): readonly string[] => at(command, cwd).searched;
+
+  it("names the files the read commands open, and skips their pattern, script or filter", () => {
+    expect(reads("cat src/a.ts src/b.ts")).toStrictEqual(["src/a.ts", "src/b.ts"]);
+    expect(reads("head -n 30 src/a.ts; tail -5 src/b.ts")).toStrictEqual(["src/a.ts", "src/b.ts"]);
+    expect(reads("sed -n '1,40p' src/a.ts")).toStrictEqual(["src/a.ts"]);
+    expect(reads('grep -n "x|y" src/a.ts | head')).toStrictEqual(["src/a.ts"]);
+    expect(reads("awk -F, '{print $1}' data.csv")).toStrictEqual(["data.csv"]);
+    expect(reads("jq '.name' package.json")).toStrictEqual(["package.json"]);
+    expect(reads("wc -l a.ts && diff -U 3 a.ts b.ts")).toStrictEqual(["a.ts", "b.ts"]);
+  });
+
+  it("reads the pattern from an option when one supplies it, and a file an option names", () => {
+    expect(reads("grep -e pat src/a.ts")).toStrictEqual(["src/a.ts"]);
+    expect(reads("grep -f pats.txt src/a.ts")).toStrictEqual(["pats.txt", "src/a.ts"]);
+    expect(reads("grep --file=pats.txt src/a.ts")).toStrictEqual(["pats.txt", "src/a.ts"]);
+    expect(reads("grep --include=*.ts -n x src/a.ts")).toStrictEqual(["src/a.ts"]);
+    expect(reads("awk -f prog.awk data.csv")).toStrictEqual(["prog.awk", "data.csv"]);
+    expect(reads("sed -f edit.sed src/a.ts")).toStrictEqual(["edit.sed", "src/a.ts"]);
+  });
+
+  it("tells BSD sed's in-place suffix from its script", () => {
+    expect(reads("sed -i '' 's/a/b/' src/a.ts")).toStrictEqual(["src/a.ts"]);
+    expect(reads("sed -i .bak 's/a/b/' src/a.ts")).toStrictEqual(["src/a.ts"]);
+    expect(reads("sed -i 's/a/b/' src/a.ts")).toStrictEqual(["src/a.ts"]);
+  });
+
+  it("keeps a search apart from a read — its operands may be directories", () => {
+    expect(at("rg -n TODO src docs")).toStrictEqual({ reads: [], searched: ["src", "docs"] });
+    expect(at("grep -rn TODO src")).toStrictEqual({ reads: [], searched: ["src"] });
+    expect(at("find src -name '*.ts' -o ( -name x ) ! -path y")).toStrictEqual({ reads: [], searched: ["src"] });
+    expect(at("ls -la docs && du -sh lib && tree -L 2 pkg")).toStrictEqual({ reads: [], searched: ["docs", "lib", "pkg"] });
+  });
+
+  it("searches the working directory when a search names nothing, and a plain grep reads stdin", () => {
+    expect(searched("rg TODO", "/repo/src")).toStrictEqual(["src"]);
+    expect(searched("grep -r TODO", "/repo/src")).toStrictEqual(["src"]);
+    expect(searched("ls", "/repo/src")).toStrictEqual(["src"]);
+    expect(at("grep TODO")).toStrictEqual({ reads: [], searched: [] });
+    // The repo root is not an area: a bare search there touches nothing in particular.
+    expect(searched("find . -name x")).toStrictEqual([]);
+  });
+
+  it("stops find's paths at its expression", () => {
+    expect(searched("find src lib ( -name x )")).toStrictEqual(["src", "lib"]);
+    expect(searched("find src ! -name x")).toStrictEqual(["src"]);
+  });
+
+  it("drops stdin, empty arguments, an option after `--` is a file, and cp's destination is not read", () => {
+    expect(reads("cat - a.ts ''")).toStrictEqual(["a.ts"]);
+    expect(reads("cat -- -weird.ts")).toStrictEqual(["-weird.ts"]);
+    expect(reads("cp -r a.ts b.ts dest/")).toStrictEqual(["a.ts", "b.ts"]);
+  });
+
+  it("reads a `<` redirect, and never the target of a write, a heredoc's delimiter or a here-string", () => {
+    expect(reads("sort < names.txt > out.txt 2>/dev/null")).toStrictEqual(["names.txt"]);
+    expect(reads("wc -l <> both.txt")).toStrictEqual(["both.txt"]);
+    expect(reads("cat src/a.ts &> log.txt; cat src/b.ts &>> log.txt; cat c.ts 2>&1")).toStrictEqual(["src/a.ts", "src/b.ts", "c.ts"]);
+    expect(reads("grep x <<< 'some text'")).toStrictEqual([]);
+    expect(reads("while read l; do echo $l; done < list.txt")).toStrictEqual(["list.txt"]);
+  });
+
+  it("does not read a heredoc's body as commands, quoted or dash delimiters alike", () => {
+    expect(reads("cat > out.ts <<'EOF'\ncat secret.ts\nEOF\ncat after.ts")).toStrictEqual(["after.ts"]);
+    expect(reads("python3 - <<PY\nopen('x.ts')\n'unbalanced\nPY\nhead a.ts")).toStrictEqual(["a.ts"]);
+    expect(reads("cat <<-EOF\n\tcat inside.ts\n\tEOF\ncat after.ts")).toStrictEqual(["after.ts"]);
+    // A body that never closes runs to the end of the line, and names nothing.
+    expect(reads("cat <<EOF\ncat inside.ts")).toStrictEqual([]);
+    // A `<<` with no delimiter after it is not a heredoc.
+    expect(reads("cat a.ts <<")).toStrictEqual(["a.ts"]);
+  });
+
+  it("does not read a quoted operator as a separator, or a quoted word as a command", () => {
+    expect(reads('grep -n "a; cat b.ts" c.ts')).toStrictEqual(["c.ts"]);
+    expect(reads("echo 'cat x.ts' && cat \"y z.ts\"")).toStrictEqual(["y z.ts"]);
+    expect(reads("cat $'ansi.ts' a\\ b.ts")).toStrictEqual(["ansi.ts", "a b.ts"]);
+    expect(reads('cat "say \\"hi\\".ts"')).toStrictEqual(['say "hi".ts']);
+  });
+
+  it("follows `cd`, back with `cd -` and home with a bare `cd`, and a subshell's `cd` stays in it", () => {
+    expect(reads("cd src && cat a.ts; cd - ; cat b.ts")).toStrictEqual(["src/a.ts", "b.ts"]);
+    expect(reads("cd /repo/lib; cat a.ts")).toStrictEqual(["lib/a.ts"]);
+    expect(reads("(cd src; cat a.ts); cat b.ts")).toStrictEqual(["src/a.ts", "b.ts"]);
+    expect(reads("cd -P src && cat a.ts")).toStrictEqual(["src/a.ts"]);
+    expect(reads("pushd src && cat a.ts")).toStrictEqual(["src/a.ts"]);
+    expect(at("cd; cat a.ts", ROOT, "/repo/home").reads).toStrictEqual(["home/a.ts"]);
+    // Where a `cd` goes cannot be known, what is relative to it cannot either.
+    expect(reads("cd $(pick); cat a.ts; cat /repo/b.ts")).toStrictEqual(["b.ts"]);
+    expect(at("cd; cat a.ts", ROOT, undefined).reads).toStrictEqual([]);
+    expect(reads("cd -; cat a.ts")).toStrictEqual([]);
+  });
+
+  it("resolves a variable the line assigns, `~` and `$HOME`, and leaves out one it cannot know", () => {
+    expect(reads("F=src/a.ts; cat $F \"${F}\"")).toStrictEqual(["src/a.ts"]);
+    expect(reads("export D=src; cat $D/a.ts")).toStrictEqual(["src/a.ts"]);
+    expect(reads("export -n; local X; cat a.ts")).toStrictEqual(["a.ts"]);
+    expect(reads("X=1 cat a.ts")).toStrictEqual(["a.ts"]);
+    expect(reads("cat $UNSET/a.ts ${X:-y}.ts $1.ts $((1+2)).ts")).toStrictEqual([]);
+    expect(reads("F=a.ts; F=$(pick); cat $F")).toStrictEqual([]);
+    expect(at("cat ~/a.ts $HOME/b.ts", ROOT, "/repo/home").reads).toStrictEqual(["home/a.ts", "home/b.ts"]);
+    expect(reads("cat ~/a.ts")).toStrictEqual([]);
+    expect(reads("cat cost$ a.ts")).toStrictEqual(["cost$", "a.ts"]);
+  });
+
+  it("runs a for loop's body once per value", () => {
+    expect(reads("for f in a.ts b.ts; do head -c 3 $f; done")).toStrictEqual(["a.ts", "b.ts"]);
+    expect(reads("for f in a.ts $(ls); do\n  cat $f\ndone")).toStrictEqual(["a.ts"]);
+    expect(reads("for f; do cat $f; done; cat z.ts")).toStrictEqual(["z.ts"]);
+    // Unclosed, the loop still ends with the line.
+    expect(reads("for f in a.ts; do cat $f")).toStrictEqual(["a.ts"]);
+  });
+
+  it("reads what a `$(…)`, a backquote or a `<(…)` runs, without guessing at what it prints", () => {
+    expect(at("head -c 400 sessions/$(ls sessions | head -1)")).toStrictEqual({ reads: [], searched: ["sessions"] });
+    expect(reads("echo `cat a.ts` \"$(cat b.ts)\" \"`cat c.ts`\"")).toStrictEqual(["a.ts", "b.ts", "c.ts"]);
+    expect(reads("diff <(sort a.txt) >(cat) <(sort b.txt)")).toStrictEqual(["a.txt", "b.txt"]);
+    expect(reads('echo "$(printf "%s" "x")"; cat a.ts')).toStrictEqual(["a.ts"]);
+    expect(reads("echo $(echo (nested) 'q)' \\)); cat a.ts")).toStrictEqual(["a.ts"]);
+  });
+
+  it("peels the wrappers off the command they run", () => {
+    expect(searched("timeout -s KILL 60 rg x src")).toStrictEqual(["src"]);
+    expect(reads("env -u X A=1 cat a.ts")).toStrictEqual(["a.ts"]);
+    expect(reads("nice -n 5 nohup time cat a.ts")).toStrictEqual(["a.ts"]);
+    expect(reads("xargs -a list.txt -n 1 grep -l x")).toStrictEqual(["list.txt"]);
+    expect(reads("command -v cat a.ts")).toStrictEqual([]);
+    expect(reads("command cat a.ts")).toStrictEqual(["a.ts"]);
+    expect(reads("timeout 5")).toStrictEqual([]);
+  });
+
+  it("reads a git pathspec, never a revision, and follows `git -C`", () => {
+    expect(searched("git diff HEAD~1 main..x HEAD:a.ts src/a.ts")).toStrictEqual(["src/a.ts"]);
+    expect(searched("git log --oneline -- src docs")).toStrictEqual(["src", "docs"]);
+    expect(searched("git -C lib -c a=b status pkg/x.ts")).toStrictEqual(["lib/pkg/x.ts"]);
+    expect(searched("git commit -m 'src/a.ts'")).toStrictEqual([]);
+    expect(searched("git -C lib")).toStrictEqual([]);
+  });
+
+  it("reads ffmpeg's inputs", () => {
+    expect(reads("ffmpeg -i in.mp4 -y out.mp4")).toStrictEqual(["in.mp4"]);
+  });
+
+  it("names nothing it cannot settle: an unknown command, an unknown word where a command goes, a line that will not lex", () => {
+    expect(at("npx vitest run src/a.ts")).toStrictEqual({ reads: [], searched: [] });
+    expect(reads("$CAT a.ts")).toStrictEqual([]);
+    expect(reads("cat 'unclosed a.ts")).toStrictEqual([]);
+    expect(reads('cat "unclosed a.ts')).toStrictEqual([]);
+    expect(reads("cat $'unclosed")).toStrictEqual([]);
+    expect(reads('cat "$(unclosed"')).toStrictEqual([]);
+    expect(reads("cat $(unclosed a.ts")).toStrictEqual([]);
+    expect(reads("cat `unclosed a.ts")).toStrictEqual([]);
+    expect(reads("cat ${unclosed a.ts")).toStrictEqual([]);
+    expect(reads("cat $((1+2 a.ts")).toStrictEqual([]);
+    expect(reads("diff <(sort a.txt b.txt")).toStrictEqual([]);
+    expect(reads('cat "a `b.ts"')).toStrictEqual([]);
+  });
+
+  it("finds at least what it found when it won the bake-off, on the hand-labelled corpus", () => {
+    // The yardstick the mechanism was chosen by (__fixtures__/bash-corpus/, scored by
+    // `just score-bash`; the bake-off is evidence/f3-b1-bakeoff.log in the task's journal). The
+    // scorer lives in tools/, which the import fence keeps apart from this layer, so the one number
+    // that matters is counted here: labelled reads found, over labelled reads. A root of "" makes
+    // every absolute path "inside", so paths outside any repo are scored too. The labels spell `~`
+    // as the home of the machine they were recorded on, so that home is handed in, not this one's.
+    const corpus = JSON.parse(readFileSync(join(import.meta.dirname, "..", "__fixtures__", "bash-corpus", "corpus.json"), "utf8")) as {
+      command: string;
+      cwd: string;
+      reads: string[];
+    }[];
+    let found = 0;
+    let labelled = 0;
+    for (const entry of corpus) {
+      const got = bashReads(entry.command, { cwd: entry.cwd, root: "", home: "/Users/jawache" });
+      const named = new Set([...got.reads, ...got.searched].map((p) => `/${p}`));
+      const want = new Set(entry.reads.map((p) => posix.resolve(entry.cwd, p)));
+      labelled += want.size;
+      found += [...want].filter((p) => named.has(p)).length;
+    }
+    expect(labelled).toBe(272);
+    expect(found).toBeGreaterThanOrEqual(241);
+  });
+
+  it("leaves out what lies outside the repo, and the repo root itself", () => {
+    expect(reads("cat /etc/hosts /repo/src/a.ts ../elsewhere.ts")).toStrictEqual(["src/a.ts"]);
+    expect(reads("cat src/a.ts src/./a.ts")).toStrictEqual(["src/a.ts"]);
+  });
+
+  it("reads through shell structure: continuations, comments, keywords, functions and case", () => {
+    expect(reads("cat \\\n  a.ts # cat b.ts\ncat c.ts")).toStrictEqual(["a.ts", "c.ts"]);
+    expect(reads("if [ -f a.ts ]; then cat a.ts; else cat b.ts; fi")).toStrictEqual(["a.ts", "b.ts"]);
+    expect(reads("{ cat a.ts; } 2>&1 | head; ! cat b.ts")).toStrictEqual(["a.ts", "b.ts"]);
+    expect(reads("f() { cat a.ts; }; f")).toStrictEqual(["a.ts"]);
+    expect(reads("case $x in a) cat a.ts;; esac; cat b.ts")).toStrictEqual(["a.ts", "b.ts"]);
+    expect(reads("done; cat a.ts) ; (cat b.ts")).toStrictEqual(["a.ts", "b.ts"]);
+    expect(reads("cat a.ts & cat b.ts || cat c.ts |& cat")).toStrictEqual(["a.ts", "b.ts", "c.ts"]);
+  });
+});
+
 describe("toEvent — one payload, every moment it carries", () => {
   it("turns a session start into the session moment", () => {
     expect(toEvent("session-start", { source: "startup" }, world())).toStrictEqual([
@@ -274,10 +482,30 @@ describe("toEvent — one payload, every moment it carries", () => {
     // lost.
     const w = world({ "secret/a.ts": "the content" });
     const events = toEvent("pre-tool-use", pre("Bash", { command: "rm secret/a.ts" }), w);
+    // Every guard event comes first: a refusal carries no notes, so none is judged after one.
     expect(events).toStrictEqual([
       { rail: "guard", moment: "command", command: "rm secret/a.ts" },
-      { rail: "brief", moment: "command", command: "rm secret/a.ts" },
       { rail: "guard", moment: "delete", file: { path: "secret/a.ts", content: "the content" } },
+      { rail: "brief", moment: "command", command: "rm secret/a.ts" },
+    ]);
+  });
+
+  it("turns each file a Bash call reads or searches into a touch on the same answer, from where the shell stands", () => {
+    // The note has to arrive BEFORE the output: a Bash payload names no path, so the post-tool-use
+    // rail has nothing to steer on, and a touch there would be after the agent read the file.
+    const command = "cat a.ts && rg x lib ~/n.md";
+    const events = toEvent("pre-tool-use", { ...pre("Bash", { command }), cwd: "/repo/src" }, { ...world(), home: "/repo/home" });
+    expect(events).toStrictEqual([
+      { rail: "guard", moment: "command", command },
+      { rail: "brief", moment: "command", command },
+      { rail: "brief", moment: "touch", path: "src/a.ts" },
+      { rail: "brief", moment: "touch", path: "src/lib" },
+      { rail: "brief", moment: "touch", path: "home/n.md" },
+    ]);
+    // No `cwd` on the payload: the shell is taken to stand at the repo root. A path read AND
+    // searched is one touch, not two.
+    expect(toEvent("pre-tool-use", pre("Bash", { command: "cat a.ts; ls a.ts" }), world()).slice(2)).toStrictEqual([
+      { rail: "brief", moment: "touch", path: "a.ts" },
     ]);
   });
 
@@ -761,6 +989,22 @@ describe("the narrative — the pairing, and the pointers it produces", () => {
     ]);
   });
 
+  it("carries the repo files a Bash call reads, from the directory the record says it ran in", () => {
+    const file = store(
+      { ...spokeBack([used("Bash", { command: "cat a.ts; rg x lib; cat /etc/hosts" })]), cwd: "/repo/src" },
+      spokeBack([used("Bash", { command: "cat a.ts" }, "t2")]),
+      spokeBack([used("Bash", { command: "cat ~/a.ts" }, "t3")]),
+    );
+    const uses = parseEvents(file, "/repo", "/repo/home");
+    // Only files read by name: a searched directory is not a file, and outside the repo is not an area.
+    expect(uses[0]).toMatchObject({ name: "Bash", reads: ["src/a.ts"] });
+    // No `cwd` on the record: the call is taken to have run at the root.
+    expect(uses[1]).toMatchObject({ reads: ["a.ts"] });
+    expect(uses[2]).toMatchObject({ reads: ["home/a.ts"] });
+    // With no repo to be relative to there is nothing to count in.
+    expect(parseEvents(file)[0]).not.toHaveProperty("reads");
+  });
+
   it("a result carrying an object rather than text is still readable", () => {
     const file = store({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t", content: { n: 1 } }] } });
     expect(parseEvents(file)[0]).toMatchObject({ kind: "result", content: '{"n":1}', failed: false });
@@ -839,6 +1083,12 @@ describe("the narrative reading — stats, loops, retries, and what was touched"
     expect(read.prompts.map((p) => p.line)).toEqual([1, 2]);
     expect(read.corrections.map((p) => p.text)).toEqual(["no, revert that"]);
     expect(read.touched).toEqual({ "src/a.ts": 2, "src/b.ts": 1 });
+  });
+
+  it("counts a file read through the shell as touched, like a Read", () => {
+    const cat: TranscriptEvent = { line: 1, kind: "use", ts: null, id: "t1", name: "Bash", input: { command: "cat src/a.ts src/c.ts" }, path: "", reads: ["src/a.ts", "src/c.ts"] };
+    const read = narrative([cat, call("Read", { file_path: "src/a.ts" }, 2)], []);
+    expect(read.touched).toEqual({ "src/a.ts": 2, "src/c.ts": 1 });
   });
 
   it("a file edited five times in a row is a LOOP; four is just work", () => {

@@ -339,6 +339,36 @@ describe("the commit gate", () => {
   });
 });
 
+// After the commit gate on purpose: these sessions write the marker the gate reads.
+describe("a shell read, briefed", () => {
+  it("briefs the area a `cat` reads BEFORE it runs, on the PreToolUse answer, and stays quiet on the second", () => {
+    // Under auto mode most contact with an area is a shell read whose payload names no path. The
+    // note rides the same answer the command guardrails use, so it arrives ahead of the output.
+    // The shell stands in src/, so the relative path is resolved from there.
+    const cat = { ...pre("Bash", { command: "cd .. && cat src/a.ts | head -5" }, "live-5"), cwd: join(repo, "src") };
+    const first = hook("pre-tool-use", cat);
+    expect(first.code).toBe(0);
+    expect(first.stderr).toBe("");
+    const decision = JSON.parse(first.stdout) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } };
+    expect(decision.hookSpecificOutput.hookEventName).toBe("PreToolUse");
+    expect(decision.hookSpecificOutput.additionalContext).toBe(
+      "# breadcrumb: demo.area (first-touch)\nsrc/ is the product — its tests sit beside it.",
+    );
+    const again = hook("pre-tool-use", { ...pre("Bash", { command: "cat src/a.ts" }, "live-5"), cwd: repo });
+    expect(again.code).toBe(0);
+    expect(again.stdout, "shown once, until the session drifts past the threshold").toBe("");
+  });
+
+  it("does not spend a note on a refused command — the retry that runs is briefed", () => {
+    const refused = hook("pre-tool-use", { ...pre("Bash", { command: "cat src/a.ts && git push --force" }, "live-6"), cwd: repo });
+    expect(refused.code).toBe(2);
+    expect(refused.stdout).toBe("");
+    const retried = hook("pre-tool-use", { ...pre("Bash", { command: "cat src/a.ts && git push" }, "live-6"), cwd: repo });
+    expect(retried.code).toBe(0);
+    expect(retried.stdout).toContain("# breadcrumb: demo.area (first-touch)");
+  });
+});
+
 describe("the off switch", () => {
   it("silences every rail, and writes no telemetry while it is off", () => {
     writeFileSync(join(repo, ".flow", "off"), "");
@@ -568,6 +598,8 @@ describe("a recorded session, replayed", () => {
     // 7 and 8 — two rails refuse, which is what the replay has to land again.
     expect(hook("pre-tool-use", inSession({ tool_name: "Write", tool_input: { file_path: join(repo, "src/z.ts"), content: "// TODO\n" } })).code).toBe(2);
     expect(hook("pre-tool-use", inSession({ tool_name: "Bash", tool_input: { command: "git push --force" } })).code).toBe(2);
+    // …and a Bash call that runs, so the recording holds both of its rails.
+    expect(hook("pre-tool-use", inSession({ tool_name: "Bash", tool_input: { command: "echo done" } })).code).toBe(0);
 
     // 9 — the commit gate, whose check SHELLS OUT. Its answer is recorded, which is the part no
     // amount of re-running could reproduce later: the working tree has moved on since.
@@ -591,10 +623,13 @@ describe("a recorded session, replayed", () => {
       "brief session",
       "brief touch",
       "guard write",
+      // The refused push records its guard and nothing else: a refusal carries no notes, so none
+      // is judged — or marked shown — behind it.
       "guard command",
-      // A Bash call is two rails, and the recording says so: the command guardrails judge the line
-      // and a command NOTE may ride the same answer. Both are canonical events, so a replay of this
-      // file re-runs both.
+      // A Bash call that runs is two rails, and the recording says so: the command guardrails judge
+      // the line and a command NOTE may ride the same answer. Both are canonical events, so a
+      // replay of this file re-runs both.
+      "guard command",
       "brief command",
       "guard commit",
     ]);

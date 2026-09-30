@@ -233,7 +233,7 @@ export function facts(root: string, load: LoadResult, opts: FactsOpts = {}): Fac
     const rows = bySession.get(candidate.id) ?? [];
     if (rows.length > 0) withRecord += 1;
     const jsonl = held.get(candidate.id) ?? "";
-    const events = parseEvents(jsonl, root);
+    const events = parseEvents(jsonl, root, home);
     readings.push({ session: candidate.id, read: narrative(events, tools) });
     weakened.push(...weakenedAfterBlock(rows, events, guarded));
 
