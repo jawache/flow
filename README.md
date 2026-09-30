@@ -70,7 +70,7 @@ flow init — created:
   + .githooks/pre-commit
   + .flow/ — flow's own state, self-ignoring, never committed
   + node_modules/@jawache/flow → …/flow (a link to the flow that is running — nothing here resolved @jawache/flow)
-  + ~/.claude/settings.json — SessionStart · PreToolUse · PostToolUse · Stop
+  + ~/.claude/settings.json — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop
   + git config core.hooksPath .githooks
   next: `flow status` — what is bound, and what is not wired yet.
 ```
@@ -83,7 +83,7 @@ Six things, and each one is checkable:
 | `.githooks/pre-commit` | the commit gate. Never written over one you already have |
 | `.flow/` | flow's own state and logs. It ignores itself, so your `.gitignore` is untouched |
 | `node_modules/@jawache/flow` | a link to the flow that is running, because this folder resolves no `@jawache/flow` of its own. `npm i -D @jawache/flow` and this row disappears |
-| the host's `settings.json` | four hook registrations, so a coding agent in any repo asks flow first |
+| the host's `settings.json` | five hook registrations, so a coding agent in any repo asks flow first |
 | `core.hooksPath` | what makes git run the gate. It is per-clone, so every fresh checkout runs `flow init` |
 
 `flow init --empty` gives you the same wiring with no opinions, for a repo that knows what it wants.
@@ -121,7 +121,7 @@ flow is ON — 4 guardrails · 2 breadcrumbs, every one resolved and able to fir
   ✓ config: /tmp/flow-demo/flow.config.ts
   ✓ commit-gate: .githooks/pre-commit runs `flow commit` over the staged set
   ✓ hooks-path: core.hooksPath = .githooks
-  ✓ hooks: ~/.claude/settings.json — SessionStart · PreToolUse · PostToolUse · Stop
+  ✓ hooks: ~/.claude/settings.json — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop
 green — every rule loads, every fitting is in place.
 ```
 

@@ -29,7 +29,7 @@ flow init — created:
   + .githooks/pre-commit
   + .flow/ — flow's own state, self-ignoring, never committed
   + node_modules/@jawache/flow → …/flow (a link to the flow that is running — nothing here resolved @jawache/flow)
-  + ~/.claude/settings.json — SessionStart · PreToolUse · PostToolUse · Stop
+  + ~/.claude/settings.json — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop
   + git config core.hooksPath .githooks
   next: `flow status` — what is bound, and what is not wired yet.
 ```
@@ -68,7 +68,7 @@ flow is ON — 4 guardrails · 2 breadcrumbs, every one resolved and able to fir
   ✓ config: …/my-repo/flow.config.ts
   ✓ commit-gate: .githooks/pre-commit runs `flow commit` over the staged set
   ✓ hooks-path: core.hooksPath = .githooks
-  ✓ hooks: ~/.claude/settings.json — SessionStart · PreToolUse · PostToolUse · Stop
+  ✓ hooks: ~/.claude/settings.json — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop
 green — every rule loads, every fitting is in place.
 ```
 

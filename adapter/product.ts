@@ -13,7 +13,7 @@
 // own documented override — honoured here rather than hard-coding a home, because it is also the
 // seam that lets this file be driven over a throwaway directory instead of somebody's real setup.
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { chmodSync, existsSync, lstatSync, mkdirSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -27,6 +27,7 @@ import {
   GATE_PATH,
   HOOKS_DIR,
   initLines,
+  literalScopes,
   planInit,
   status,
   statusCode,
@@ -97,11 +98,34 @@ function hooksPath(root: string): string | null {
 }
 
 /**
+ * What git ignores in this repo — the edge of the snapshot, which is git's view of the tree.
+ *
+ * Two questions, both answered one path per line: the ignored paths that exist (a whole ignored
+ * directory is one line, with its trailing `/`, so `node_modules/` costs one line and not a walk),
+ * and which of the paths the rules name outright git WOULD ignore, which catches a `.env` that has
+ * not been written yet. flow's own `.flow/` is left out: it ignores itself, and no rule is about it.
+ * Not a git repo, or git unable to answer, is an empty list — status has its own lines for those.
+ */
+function ignoredPaths(root: string, literals: readonly string[]): string[] {
+  const lines = (stdout: string | null): string[] =>
+    (stdout ?? "").split("\n").map((line) => line.trim()).filter((line) => line !== "");
+  const listed = spawnSync("git", ["-C", root, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"], {
+    encoding: "utf8",
+  });
+  const named =
+    literals.length === 0
+      ? null
+      : spawnSync("git", ["-C", root, "check-ignore", "--stdin"], { encoding: "utf8", input: `${literals.join("\n")}\n` });
+  const all = [...(listed.status === 0 ? lines(listed.stdout) : []), ...lines(named?.stdout ?? null)];
+  return [...new Set(all)].filter((path) => path !== `${FLOW_DIR}/` && !path.startsWith(`${FLOW_DIR}/`));
+}
+
+/**
  * Whatever JSON is in that file, and WHY there is none when there is none.
  *
  * The two silences are different and both callers need them apart: ABSENT is a file init may
  * create, UNREADABLE is a file init must not touch. Returning one null for both is how a settings
- * file holding a stray comma or a `//` comment gets replaced by four registrations and nothing
+ * file holding a stray comma or a `//` comment gets replaced by five registrations and nothing
  * else — every other key in it belonging to somebody, and no safe merge into bytes nobody parsed.
  *
  * `root` is what a repo-relative path is read against; the host's settings file is absolute and
@@ -259,6 +283,8 @@ export async function runStatus(cwd: string, args: readonly string[]): Promise<V
           }))
         : [],
     session: liveSession(root),
+    ignored: ignoredPaths(root, literalScopes(regime.kind === "loaded" ? regime.load : null)),
+    snapshotInclude: regime.kind === "loaded" ? (regime.config.settings.snapshotInclude ?? []) : [],
   };
 
   // ONE CODE FOR A CONFIG THAT WILL NOT LOAD, however it broke — `statusCode` says why. The branch

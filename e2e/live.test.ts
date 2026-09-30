@@ -16,9 +16,10 @@
 // the `Symbol.for` decision (flow/language/domain.ts) being paid off rather than a coincidence.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
 import {
   PACKAGE,
   buildBundles,
@@ -158,6 +159,26 @@ function copyGuard(into: string): void {
 /** This suite's session, on the harness's payload — every row below is keyed by that id. */
 const inThisSession = (tool: string, input: Record<string, unknown>): Record<string, unknown> => pre(tool, input, "live-1");
 
+let calls = 0;
+
+/**
+ * One tool call as the host brackets it: PreToolUse, the tool, then PostToolUse — both carrying the
+ * same `tool_use_id`, which is how the after-call rail finds the snapshot the first one took. The
+ * after-call answer is what comes back.
+ */
+function called(payload: Record<string, unknown>, tool: () => void = () => undefined, event = "post-tool-use"): Ran {
+  const keyed = { ...payload, tool_use_id: `toolu_live_${++calls}` };
+  const before = hook("pre-tool-use", keyed);
+  expect(before.code, `the call was refused before it ran: ${before.stderr}`).toBe(0);
+  tool();
+  return hook(event, keyed);
+}
+
+/** Run a command in the temp repo the way the Bash tool would — the tool, between the two hooks. */
+function shell(command: string): number {
+  return spawnSync("bash", ["-c", command], { cwd: repo }).status ?? -1;
+}
+
 describe("the write rail", () => {
   it("blocks the write before it lands, with the message on stderr and exit 2", () => {
     const answer = hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "src/b.ts"), content: "// TODO: later\n" }));
@@ -222,21 +243,6 @@ describe("the session and turn rails", () => {
     expect(hook("session-start", { session_id: "live-2", source: "startup" }).stdout).toBe("");
   });
 
-  it("briefs the area on first touch, and stays quiet on the next one", () => {
-    const first = hook("post-tool-use", { session_id: "live-4", tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } });
-    expect(first.code).toBe(0);
-    const decision = JSON.parse(first.stdout) as { hookSpecificOutput: { additionalContext: string } };
-    expect(decision.hookSpecificOutput.additionalContext).toBe(
-      "# breadcrumb: demo.area (first-touch)\nsrc/ is the product — its tests sit beside it.",
-    );
-    const again = hook("post-tool-use", { session_id: "live-4", tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } });
-    expect(again.stdout, "shown once, until the session drifts past the threshold").toBe("");
-    expect(
-      rows("live-4").filter((row) => row["kind"] === "run").length,
-      "a touch where nothing showed is not a run row — the tool row already said the call happened",
-    ).toBe(1);
-  });
-
   it("passes a turn that has nothing to answer for", () => {
     const answer = hook("stop", { session_id: "live-2", hook_event_name: "Stop" });
     expect(answer.code).toBe(0);
@@ -250,7 +256,7 @@ describe("the session and turn rails", () => {
 
 describe("what a broken or empty call does", () => {
   it("passes an empty payload safely, on every rail", () => {
-    for (const event of ["session-start", "pre-tool-use", "post-tool-use", "stop", "notification"]) {
+    for (const event of ["session-start", "pre-tool-use", "post-tool-use", "post-tool-use-failure", "stop", "notification"]) {
       const answer = run(["hook", event], "");
       expect(answer.code, `${event} on an empty payload`).toBe(0);
       expect(answer.stderr, `${event} said something about nothing`).toBe("");
@@ -366,6 +372,103 @@ describe("a shell read, briefed", () => {
     const retried = hook("pre-tool-use", { ...pre("Bash", { command: "cat src/a.ts && git push" }, "live-6"), cwd: repo });
     expect(retried.code).toBe(0);
     expect(retried.stdout).toContain("# breadcrumb: demo.area (first-touch)");
+  });
+});
+
+// After the commit gate as well, for the same reason: every call here writes the marker.
+describe("the delta rail — every change to the tree, judged the moment it has landed", () => {
+  // THE PROOF OF F4. A shell edit names no file for a PreToolUse rail to judge: the heredoc below is
+  // a command line with no path in it that any rule could see. The change reaches the write rule
+  // only through the diff between the tree before the call and the tree after it.
+  const session = "live-delta";
+  const heredoc = (path: string, line: string): string =>
+    `python3 - <<'EOF'\nfrom pathlib import Path\np = Path(${JSON.stringify(path)})\np.write_text((p.read_text() if p.exists() else "") + ${JSON.stringify(line)} + "\\n")\nEOF`;
+  const bash = (command: string): Record<string, unknown> => ({ ...pre("Bash", { command }, session), cwd: repo });
+
+  it("puts a heredoc's TODO back, byte for byte, and says so under the reverted-write banner", () => {
+    const before = readFileSync(join(repo, "src/a.ts"));
+    let landed = Buffer.alloc(0);
+    const answer = called(bash(heredoc("src/a.ts", "// TODO: later")), () => {
+      expect(shell(heredoc("src/a.ts", "// TODO: later"))).toBe(0);
+      landed = readFileSync(join(repo, "src/a.ts"));
+    });
+    expect(landed.toString(), "the write really landed — nothing stopped it before it ran").toContain("TODO");
+    expect(answer.code, "exit 2 on the after-call rail: the host shows stderr to the model").toBe(2);
+    expect(answer.stdout).toBe("");
+    expect(answer.stderr).toContain("flow — write reverted after it landed:");
+    expect(answer.stderr).toContain("✗ demo.noTodo · src/a.ts");
+    expect(answer.stderr).toContain("No TODOs in src/");
+    expect(answer.stderr).toContain("src/a.ts is back to its previous content.");
+    expect(readFileSync(join(repo, "src/a.ts")), "byte-identical to before the call").toStrictEqual(before);
+    expect(rows(session).some((row) => row["kind"] === "guardrail" && row["out"] === "deny"), "and it is on the record").toBe(true);
+  });
+
+  it("keeps a compliant heredoc's write, and shows the area's breadcrumb at the change", () => {
+    const answer = called(bash(heredoc("src/fresh.ts", "export const fresh = 1;")), () => {
+      expect(shell(heredoc("src/fresh.ts", "export const fresh = 1;"))).toBe(0);
+    });
+    try {
+      expect(answer.code).toBe(0);
+      expect(answer.stderr).toBe("");
+      expect(readFileSync(join(repo, "src/fresh.ts"), "utf8")).toBe("export const fresh = 1;\n");
+      const decision = JSON.parse(answer.stdout) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } };
+      expect(decision.hookSpecificOutput.hookEventName).toBe("PostToolUse");
+      expect(decision.hookSpecificOutput.additionalContext).toBe(
+        "# breadcrumb: demo.area (first-touch)\nsrc/ is the product — its tests sit beside it.",
+      );
+    } finally {
+      rmSync(join(repo, "src/fresh.ts"), { force: true });
+    }
+  });
+
+  it("judges a FAILED call's partial write the same way — a command that errors has still written", () => {
+    const before = readFileSync(join(repo, "src/a.ts"));
+    const command = `${heredoc("src/a.ts", "// TODO: half done")}\nexit 1`;
+    const answer = called(bash(command), () => { expect(shell(command)).toBe(1); }, "post-tool-use-failure");
+    expect(answer.code).toBe(2);
+    expect(answer.stderr).toContain("flow — write reverted after it landed:");
+    expect(readFileSync(join(repo, "src/a.ts"))).toStrictEqual(before);
+  });
+
+  it("briefs the area on first touch, and stays quiet on the next one", () => {
+    const first = called({ session_id: "live-4", tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } });
+    expect(first.code).toBe(0);
+    const decision = JSON.parse(first.stdout) as { hookSpecificOutput: { additionalContext: string } };
+    expect(decision.hookSpecificOutput.additionalContext).toBe(
+      "# breadcrumb: demo.area (first-touch)\nsrc/ is the product — its tests sit beside it.",
+    );
+    const again = called({ session_id: "live-4", tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } });
+    expect(again.stdout, "shown once, until the session drifts past the threshold").toBe("");
+    expect(
+      rows("live-4").filter((row) => row["kind"] === "run").length,
+      "a touch where nothing showed is not a run row — the tool row already said the call happened",
+    ).toBe(1);
+  });
+
+  it("still refuses an Edit before it lands — the pre-emptive rail is unchanged", () => {
+    const answer = hook("pre-tool-use", {
+      ...pre("Edit", { file_path: join(repo, "src/a.ts"), old_string: "1", new_string: "1 // TODO" }, session),
+      tool_use_id: "toolu_live_edit",
+    });
+    expect(answer.code).toBe(2);
+    expect(answer.stderr).toContain("flow — blocked before the write landed");
+    expect(readFileSync(join(repo, "src/a.ts"), "utf8")).toBe("export const a = 1;\n");
+    expect(existsSync(join(repo, ".flow", "snapshots", "toolu_live_edit.json")), "a refused call never runs, so it takes no snapshot").toBe(false);
+  });
+
+  it("reports a call it has no snapshot for, rather than calling it clean", () => {
+    const answer = hook("post-tool-use", { ...bash("touch src/x.ts"), tool_use_id: "toolu_never_seen" });
+    expect(answer.code).toBe(2);
+    expect(answer.stderr).toContain("flow — could not see what this call changed");
+    expect(answer.stderr).toContain("No snapshot was taken before this call");
+  });
+
+  it("leaves no snapshot behind once a call is over", () => {
+    called(bash("true"), () => { expect(shell("true")).toBe(0); });
+    const left = existsSync(join(repo, ".flow", "snapshots"))
+      ? readdirSync(join(repo, ".flow", "snapshots")).filter((name) => name.startsWith("toolu_live_") && !name.startsWith("toolu_live_edit"))
+      : [];
+    expect(left).toStrictEqual([]);
   });
 });
 
@@ -573,16 +676,16 @@ describe("a recorded session, replayed", () => {
     expect(greeting.stdout).toContain("This repo is guarded by flow.");
 
     // 2 — first touch of the area. The area note shows.
-    const first = hook("post-tool-use", inSession({ tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } }));
+    const first = called(inSession({ tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } }));
     expect(first.stdout).toContain("src/ is the product");
 
     // 3 — the same area again, with the context barely moved. It stays quiet.
-    const quiet = hook("post-tool-use", inSession({ tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } }));
+    const quiet = called(inSession({ tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } }));
     expect(quiet.stdout).toBe("");
 
     // 4 — the session has drifted past the threshold. The note is earned again.
     drifted(400_000);
-    const again = hook("post-tool-use", inSession({ tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } }));
+    const again = called(inSession({ tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } }));
     expect(again.stdout).toContain("src/ is the product");
 
     // 5 — a compaction. Every AREA mark is cleared; the SESSION mark is deliberately kept, so the
@@ -592,7 +695,7 @@ describe("a recorded session, replayed", () => {
     expect(compacted.stdout, "the session note keeps its mark across a compaction").toBe("");
 
     // 6 — first touch again, because after a compaction it genuinely is one.
-    const relearned = hook("post-tool-use", inSession({ tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } }));
+    const relearned = called(inSession({ tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } }));
     expect(relearned.stdout).toContain("src/ is the product");
 
     // 7 and 8 — two rails refuse, which is what the replay has to land again.

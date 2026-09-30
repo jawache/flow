@@ -19,10 +19,21 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { currentBranch, loadRegime, projectRoot, readText, realWorld, runCommand } from "./claude.ts";
+import {
+  currentBranch,
+  forgetSnapshot,
+  loadRegime,
+  observeDelta,
+  projectRoot,
+  readText,
+  realWorld,
+  revertChanges,
+  runCommand,
+  takeSnapshot,
+} from "./claude.ts";
 
 let repo: string;
 
@@ -166,5 +177,125 @@ describe("which repo, and what it has turned on", () => {
     const regime = await loadRegime(repo);
     expect(regime.kind).toBe("loaded");
     if (regime.kind === "loaded") expect(regime.load.ok).toBe(true);
+  });
+});
+
+describe("the snapshot — the tree before a call, the tree after it, and the way back", () => {
+  const who = { session: "s1", agent: "main", tool: "Bash" };
+  const read = (path: string): string | null => readText(repo, path);
+  const indexBytes = (): Buffer => readFileSync(join(repo, ".git", "index"));
+
+  beforeEach(() => {
+    writeFileSync(join(repo, ".gitignore"), ".env\nsecret.key\nbuild/\n");
+    writeFileSync(join(repo, "a.ts"), "export const a = 1;\n");
+    writeFileSync(join(repo, "gone.ts"), "export const gone = 1;\n");
+    writeFileSync(join(repo, "untracked.ts"), "not yet added\n");
+    writeFileSync(join(repo, ".env"), "TOKEN=old\n");
+    writeFileSync(join(repo, "secret.key"), "old key\n");
+    git("add", ".gitignore", "a.ts", "gone.ts");
+    git("commit", "-qm", "first");
+    writeFileSync(join(repo, "a.ts"), "export const a = 2; // staged\n");
+    git("add", "a.ts");
+  });
+
+  it("sees a changed, a created and a deleted file, with the content either side", () => {
+    takeSnapshot(repo, "toolu_1", [], who);
+    writeFileSync(join(repo, "a.ts"), "export const a = 3; // TODO\n");
+    writeFileSync(join(repo, "new.ts"), "fresh\n");
+    unlinkSync(join(repo, "gone.ts"));
+    const delta = observeDelta(repo, "toolu_1", []);
+    expect(delta.ok).toBe(true);
+    if (!delta.ok) return;
+    expect(delta.changes).toStrictEqual([
+      { path: "a.ts", before: "export const a = 2; // staged\n", after: "export const a = 3; // TODO\n" },
+      { path: "gone.ts", before: "export const gone = 1;\n", after: null },
+      { path: "new.ts", before: null, after: "fresh\n" },
+    ]);
+  });
+
+  it("puts every kind of change back byte for byte, and never writes the user's index", () => {
+    const staged = indexBytes();
+    takeSnapshot(repo, "toolu_2", [], who);
+    expect(indexBytes(), "the snapshot is built in a throwaway index").toStrictEqual(staged);
+    writeFileSync(join(repo, "a.ts"), "export const a = 3; // TODO\n");
+    writeFileSync(join(repo, "untracked.ts"), "changed while untracked\n");
+    writeFileSync(join(repo, "new.ts"), "fresh\n");
+    unlinkSync(join(repo, "gone.ts"));
+    const delta = observeDelta(repo, "toolu_2", []);
+    if (!delta.ok) throw new Error(delta.fault);
+    expect(revertChanges(repo, delta.before ?? "", delta.changes)).toStrictEqual([]);
+    expect(read("a.ts"), "back to the staged content the tree held, not HEAD's").toBe("export const a = 2; // staged\n");
+    expect(read("untracked.ts")).toBe("not yet added\n");
+    expect(read("gone.ts")).toBe("export const gone = 1;\n");
+    expect(existsSync(join(repo, "new.ts")), "a file the call created is removed").toBe(false);
+    expect(indexBytes(), "the staging area is exactly as the user left it").toStrictEqual(staged);
+    const after = observeDelta(repo, "toolu_2", []);
+    expect(after.ok && after.changes, "the tree is the snapshot again").toStrictEqual([]);
+  });
+
+  it("records an ignored file snapshotInclude lists, and leaves out one it does not", () => {
+    takeSnapshot(repo, "toolu_3", [".env"], who);
+    writeFileSync(join(repo, ".env"), "TOKEN=leaked\n");
+    writeFileSync(join(repo, "secret.key"), "new key\n");
+    mkdirSync(join(repo, "build"));
+    writeFileSync(join(repo, "build", "out.js"), "built\n");
+    const delta = observeDelta(repo, "toolu_3", [".env"]);
+    if (!delta.ok) throw new Error(delta.fault);
+    expect(delta.changes, "git ignores secret.key and build/, and nothing listed them").toStrictEqual([
+      { path: ".env", before: "TOKEN=old\n", after: "TOKEN=leaked\n" },
+    ]);
+    expect(revertChanges(repo, delta.before ?? "", delta.changes)).toStrictEqual([]);
+    expect(read(".env")).toBe("TOKEN=old\n");
+    expect(read("secret.key"), "outside the snapshot, so outside the revert").toBe("new key\n");
+  });
+
+  it("sees an included ignored file the call creates, and one it deletes", () => {
+    takeSnapshot(repo, "toolu_4", [".env", "config/*.local.json"], who);
+    unlinkSync(join(repo, ".env"));
+    mkdirSync(join(repo, "config"));
+    writeFileSync(join(repo, ".gitignore"), ".env\nsecret.key\nbuild/\nconfig/\n");
+    writeFileSync(join(repo, "config", "app.local.json"), "{}\n");
+    const delta = observeDelta(repo, "toolu_4", [".env", "config/*.local.json"]);
+    if (!delta.ok) throw new Error(delta.fault);
+    expect(delta.changes.map((c) => [c.path, c.before === null, c.after === null])).toStrictEqual([
+      [".env", false, true],
+      [".gitignore", false, false],
+      ["config/app.local.json", true, false],
+    ]);
+  });
+
+  it("reports a snapshot that could not be taken, and one that was never taken — never an empty delta", () => {
+    const bare = mkdtempSync(join(tmpdir(), "flow-nogit-"));
+    try {
+      takeSnapshot(bare, "toolu_5", [], who);
+      const unseen = observeDelta(bare, "toolu_5", []);
+      expect(unseen.ok).toBe(false);
+      if (!unseen.ok) expect(unseen.fault).toContain("could not be taken");
+      expect(unseen.ok || unseen.fault).toContain("not a git checkout");
+    } finally {
+      rmSync(bare, { recursive: true, force: true });
+    }
+    const never = observeDelta(repo, "toolu_never", []);
+    expect(never.ok).toBe(false);
+    if (!never.ok) expect(never.fault).toContain("No snapshot was taken before this call");
+  });
+
+  it("says which file it could not put back, rather than claiming it did", () => {
+    takeSnapshot(repo, "toolu_6", [], who);
+    writeFileSync(join(repo, "a.ts"), "changed\n");
+    const delta = observeDelta(repo, "toolu_6", []);
+    if (!delta.ok) throw new Error(delta.fault);
+    const failed = revertChanges(repo, "0000000000000000000000000000000000000000", delta.changes);
+    expect(failed.map((f) => f.path)).toStrictEqual(["a.ts"]);
+    expect(read("a.ts")).toBe("changed\n");
+  });
+
+  it("forgets a call once it is over — no snapshot left to read as in flight", () => {
+    takeSnapshot(repo, "toolu_7", [], who);
+    const meta = JSON.parse(readFileSync(join(repo, ".flow", "snapshots", "toolu_7.json"), "utf8")) as Record<string, unknown>;
+    expect(meta).toMatchObject({ session: "s1", agent: "main", tool: "Bash" });
+    expect(typeof meta["tree"]).toBe("string");
+    forgetSnapshot(repo, "toolu_7");
+    expect(readdirSync(join(repo, ".flow", "snapshots"))).toStrictEqual([]);
   });
 });

@@ -86,9 +86,10 @@ describe("flow init — a repo that has never heard of flow", () => {
     expect(git(repo, ["config", "--get", "core.hooksPath"]).stdout.trim()).toBe(".githooks");
   });
 
-  it("registers the four events flow answers, and not Notification", () => {
+  it("registers the five events flow answers, and not Notification", () => {
     const hooks = settings()["hooks"] as Record<string, unknown>;
-    expect(Object.keys(hooks).sort()).toEqual(["PostToolUse", "PreToolUse", "SessionStart", "Stop"]);
+    expect(Object.keys(hooks).sort()).toEqual(["PostToolUse", "PostToolUseFailure", "PreToolUse", "SessionStart", "Stop"]);
+    expect(JSON.stringify(hooks["PostToolUse"]), "every tool can change the tree").toContain('"matcher":"*"');
     expect(JSON.stringify(hooks)).toContain("flow hook stop");
     expect(Object.keys(hooks)).not.toContain("Notification");
   });
@@ -195,6 +196,37 @@ describe("flow init, run again", () => {
     expect(again.code).toBe(0);
     expect(again.stdout).toContain("already set up");
     expect(JSON.stringify(settings()), "the host's file is untouched, byte for byte").toBe(before);
+  });
+
+  it("goes red on the registration an older flow wrote, and widens it in place when init runs again", () => {
+    const older = settingsHome();
+    try {
+      const current = settings() as { hooks: Record<string, unknown> };
+      const { PostToolUseFailure: _dropped, ...rest } = current.hooks;
+      writeFileSync(
+        join(older, "settings.json"),
+        JSON.stringify({
+          hooks: {
+            ...rest,
+            PostToolUse: [{ matcher: "Read|Glob|Grep|Edit|Write|Bash", hooks: [{ type: "command", command: "flow hook post-tool-use" }] }],
+          },
+        }),
+      );
+      const red = flow(repo, ["status"], older);
+      expect(red.code).toBe(1);
+      expect(red.stdout).toContain("does not call flow for PostToolUseFailure");
+      expect(red.stdout).toContain("calls flow for PostToolUse on some tools only");
+      expect(red.stdout).toContain("Re-run `flow init` to widen it.");
+
+      const again = flow(repo, ["init"], older);
+      expect(again.code).toBe(0);
+      expect(again.stdout).toContain("PostToolUse (widened to every tool) · PostToolUseFailure");
+      const hooks = (JSON.parse(readFileSync(join(older, "settings.json"), "utf8")) as { hooks: Record<string, unknown[]> }).hooks;
+      expect(hooks["PostToolUse"], "one entry, widened — never a second one beside it").toHaveLength(1);
+      expect(flow(repo, ["status"], older).code).toBe(0);
+    } finally {
+      rmSync(older, { recursive: true, force: true });
+    }
   });
 
   it("replaces a dangling @jawache/flow link, which is one way nothing resolves", () => {

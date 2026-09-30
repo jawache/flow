@@ -61,7 +61,7 @@ cd my-repo
 flow init            # writes flow.config.ts, .githooks/pre-commit, .flow/, and the hook registrations
 ```
 
-`flow init` writes a demo `flow.config.ts` you can read in one screen, arms the commit gate, and registers the four session hooks so a coding agent in this repo asks flow first. It never writes over a config or a hook you already have, and re-running it adds only what is missing. `flow init --empty` gives you the same wiring with an empty config, for a repo that knows what it wants. Then:
+`flow init` writes a demo `flow.config.ts` you can read in one screen, arms the commit gate, and registers the five session hooks so a coding agent in this repo asks flow first. It never writes over a config or a hook you already have, and re-running it adds only what is missing. `flow init --empty` gives you the same wiring with an empty config, for a repo that knows what it wants. Then:
 
 ```
 flow status          # is the guard working here? what is bound, and what is not wired yet

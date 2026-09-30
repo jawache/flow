@@ -93,7 +93,16 @@ import {
   HOOK_REGISTRATIONS,
   ourHookCommand,
   registeredEvents,
+  staleRegistrations,
   withRegistrations,
+  callKey,
+  deltaFault,
+  included,
+  literalScopes,
+  preJudged,
+  reversal,
+  snapshotPathspecs,
+  staticPrefix,
   PRE_COMMIT,
   HOOKS_DIR,
   GATE_PATH,
@@ -151,9 +160,16 @@ function only(events: readonly AdapterEvent[]): AdapterEvent {
 // WHAT THIS ADAPTER ANSWERS TO
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-describe("the five events, and the moments honestly delivered", () => {
-  it("answers to five events, named by the event and never by the job", () => {
-    expect([...HOOK_EVENTS]).toStrictEqual(["session-start", "pre-tool-use", "post-tool-use", "stop", "notification"]);
+describe("the six events, and the moments honestly delivered", () => {
+  it("answers to six events, named by the event and never by the job", () => {
+    expect([...HOOK_EVENTS]).toStrictEqual([
+      "session-start",
+      "pre-tool-use",
+      "post-tool-use",
+      "post-tool-use-failure",
+      "stop",
+      "notification",
+    ]);
     expect(isHookEvent("pre-tool-use")).toBe(true);
     expect(isHookEvent("PreToolUse"), "the host's name is not flow's verb").toBe(false);
   });
@@ -1436,8 +1452,8 @@ describe("which modules flow strips and evaluates itself", () => {
 });
 
 describe("the hook registrations flow writes", () => {
-  it("names exactly the events it answers — four, and Notification is not one", () => {
-    expect(HOOK_REGISTRATIONS.map((r) => r.event)).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "Stop"]);
+  it("names exactly the events it answers — five, and Notification is not one", () => {
+    expect(HOOK_REGISTRATIONS.map((r) => r.event)).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
     expect(HOOK_REGISTRATIONS.map((r) => r.event)).not.toContain("Notification");
   });
 
@@ -1463,10 +1479,10 @@ describe("the hook registrations flow writes", () => {
   it("adds every event to a settings file that has none, leaving the rest of it alone", () => {
     const before = { permissions: { allow: ["Bash(git:*)"] } };
     const { settings, added } = withRegistrations(before);
-    expect(added).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "Stop"]);
+    expect(added).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
     const after = settings as { permissions: unknown; hooks: Record<string, unknown[]> };
     expect(after.permissions, "untouched, byte for byte").toEqual(before.permissions);
-    expect(registeredEvents(settings)).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "Stop"]);
+    expect(registeredEvents(settings)).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
     expect(after.hooks["Stop"]).toEqual([{ hooks: [{ type: "command", command: "flow hook stop" }] }]);
     expect(after.hooks["PreToolUse"]?.[0]).toMatchObject({ matcher: "*" });
   });
@@ -1485,6 +1501,35 @@ describe("the hook registrations flow writes", () => {
     const stop = (settings as { hooks: Record<string, unknown[]> }).hooks["Stop"];
     expect(JSON.stringify(stop), "theirs survives — we add, we never rewrite").toContain("their-tool --report");
     expect(JSON.stringify(stop)).toContain("flow hook stop");
+  });
+
+  it("asks for every tool after the call, succeeded or failed — any tool can change the tree", () => {
+    const matcher = (event: string): string | undefined => HOOK_REGISTRATIONS.find((r) => r.event === event)?.matcher;
+    expect(matcher("PostToolUse")).toBe("*");
+    expect(matcher("PostToolUseFailure")).toBe("*");
+    expect(HOOK_REGISTRATIONS.find((r) => r.event === "PostToolUseFailure")?.command).toBe("flow hook post-tool-use-failure");
+  });
+
+  it("widens its OWN narrow registration in place, and says so — a second entry would fire twice", () => {
+    const older = {
+      hooks: {
+        ...(withRegistrations({}).settings as { hooks: Record<string, unknown> }).hooks,
+        PostToolUse: [
+          { matcher: "Read|Glob|Grep|Edit|Write|Bash", hooks: [{ type: "command", command: "flow hook post-tool-use" }] },
+          { matcher: "Bash", hooks: [{ type: "command", command: "their-tool --after" }] },
+        ],
+      },
+    };
+    expect(staleRegistrations(older)).toEqual(["PostToolUse"]);
+    const { settings, added } = withRegistrations(older);
+    expect(added).toEqual(["PostToolUse (widened to every tool)"]);
+    const post = (settings as { hooks: Record<string, unknown[]> }).hooks["PostToolUse"];
+    expect(post).toEqual([
+      { matcher: "*", hooks: [{ type: "command", command: "flow hook post-tool-use" }] },
+      { matcher: "Bash", hooks: [{ type: "command", command: "their-tool --after" }] },
+    ]);
+    expect(staleRegistrations(settings), "and a second run finds nothing to widen").toEqual([]);
+    expect(withRegistrations(settings).added).toEqual([]);
   });
 
   it("reads nothing out of a settings file that is not an object", () => {
@@ -1564,7 +1609,7 @@ describe("planInit — a repo that has never heard of flow", () => {
     expect(plan.flowDir).toBe(true);
     expect(plan.link).toBe("/checkout/flow");
     expect(plan.hooksPath).toBe(true);
-    expect(plan.registered).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "Stop"]);
+    expect(plan.registered).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
   });
 
   it("reports every write, and nothing it did not do", () => {
@@ -1769,7 +1814,7 @@ describe("planInit — the flags and the edges", () => {
 
   // The near-miss the crossing found, one branch from happening: a real settings.json holding
   // JSONC comments parsed to null, which reads identically to "there is no settings file" — and
-  // the next line builds a NEW object holding four registrations and nothing else.
+  // the next line builds a NEW object holding five registrations and nothing else.
   it("registers NOTHING into a settings file it could not parse, and never writes over it", () => {
     const plan = planInit({ ...bare, settings: null, settingsUnreadable: true });
     expect(plan.settings, "no write is planned against bytes nobody parsed").toBeNull();
@@ -1783,7 +1828,7 @@ describe("planInit — the flags and the edges", () => {
   it("still creates a settings file that is simply ABSENT — the other silence", () => {
     const plan = planInit({ ...bare, settings: null, settingsUnreadable: false });
     expect(plan.settings?.path).toBe("/home/.claude/settings.json");
-    expect(plan.registered.length, "all four events flow answers").toBe(4);
+    expect(plan.registered.length, "all five events flow registers").toBe(5);
   });
 });
 
@@ -1804,6 +1849,8 @@ const statusFacts = (over: Partial<StatusFacts> = {}): StatusFacts => ({
   settings: withRegistrations({}).settings,
   grammars: [],
   session: null,
+  ignored: [],
+  snapshotInclude: [],
   ...over,
 });
 
@@ -2018,5 +2065,255 @@ describe("status — the red lines, each carrying its fix", () => {
       const s = status(statusFacts(shape));
       expect(statusLines(s).at(-1)?.startsWith("green"), JSON.stringify(shape)).toBe(s.green);
     }
+  });
+});
+
+describe("status — the snapshot's edges and a registration an older flow wrote", () => {
+  const red = (over: Partial<StatusFacts>): string => statusLines(status(statusFacts(over))).join("\n");
+  const guardsAt = (on: readonly string[], at: readonly string[] = ["write"]) =>
+    loaded("house.env", { kind: "guardrail", at, on, message: "no" });
+
+  it("names a rule whose scope reaches an ignored path the snapshot leaves out, and the setting", () => {
+    const facts = { load: { ok: true as const, entries: [guardsAt([".env"])] }, ignored: [".env", "node_modules/"] };
+    const said = red(facts);
+    expect(said).toContain("✗ snapshot: house.env guards .env, which git ignores");
+    expect(said).toContain("snapshotInclude");
+    expect(status(statusFacts(facts)).green).toBe(false);
+    expect(status(statusFacts({ ...facts, snapshotInclude: [".env*"] })).green, "listed, so the snapshot holds it").toBe(true);
+  });
+
+  it("reaches an ignored directory a glob names, and not one a wildcard only happens to cover", () => {
+    const gaps = (on: readonly string[], ignored: readonly string[], include: readonly string[] = []): string[] =>
+      status(statusFacts({ load: { ok: true, entries: [guardsAt(on)] }, ignored, snapshotInclude: include }))
+        .fittings.filter((f) => f.id === "snapshot")
+        .map((f) => f.detail.split(",")[0] ?? "");
+    expect(gaps(["dist/**"], ["dist/"])).toEqual(["house.env guards dist/"]);
+    expect(gaps(["src/**"], ["src/gen/"])).toEqual(["house.env guards src/gen/"]);
+    expect(gaps(["src/*.ts"], ["src/gen/"]), "one segment deep never reaches below it").toEqual([]);
+    expect(gaps(["**/*.ts"], ["node_modules/"]), "no rule was written about node_modules").toEqual([]);
+    expect(gaps(["**/*.log"], ["debug.log"]), "an ignored FILE the glob matches is reached").toEqual(["house.env guards debug.log"]);
+    expect(gaps(["src/**"], ["src/gen/"], ["src/gen/**"]), "brought back by snapshotInclude").toEqual([]);
+    expect(gaps(["dist/**"], ["dist/"], ["dist/**"])).toEqual([]);
+    expect(gaps(["dist/app.js"], ["dist/"])).toEqual(["house.env guards dist/app.js"]);
+  });
+
+  it("asks only about live write and delete guardrails — a note, a command rule or a disabled one has no stake", () => {
+    const quiet = (spec: Record<string, unknown>): boolean =>
+      status(statusFacts({ load: { ok: true, entries: [loaded("house.x", spec)] }, ignored: [".env"] })).green;
+    expect(quiet({ kind: "breadcrumb", at: ["touch"], on: [".env"], text: "x" })).toBe(true);
+    expect(quiet({ kind: "guardrail", at: ["commit"], on: [".env"], message: "x" })).toBe(true);
+    expect(quiet({ kind: "guardrail", at: ["delete"], on: [".env"], message: "x" })).toBe(false);
+    expect(quiet({ kind: "guardrail", at: ["write"], on: [".env"], ignore: [".env"], message: "x" })).toBe(true);
+    expect(quiet({ kind: "guardrail", at: ["write"], on: [".env"], message: "x", disabled: "off for now" })).toBe(true);
+  });
+
+  it("lists the paths rules name outright, which status asks git about by name", () => {
+    const load = { ok: true as const, entries: [guardsAt([".env", "src/**", "config/app.json"]), guardsAt([".env"], ["delete"])] };
+    expect(literalScopes(load)).toEqual([".env", "config/app.json"]);
+    expect(literalScopes(null)).toEqual([]);
+  });
+
+  it("goes red on an older flow's narrow PostToolUse, and says re-running init widens it", () => {
+    const settings = withRegistrations({}).settings as { hooks: Record<string, unknown> };
+    const older = {
+      hooks: {
+        ...settings.hooks,
+        PostToolUse: [{ matcher: "Read|Glob|Grep|Edit|Write|Bash", hooks: [{ type: "command", command: "flow hook post-tool-use" }] }],
+      },
+    };
+    const said = red({ settings: older });
+    expect(said).toContain("calls flow for PostToolUse on some tools only");
+    expect(said).toContain("Re-run `flow init` to widen it.");
+    const missing = { hooks: { ...older.hooks, PostToolUseFailure: undefined } };
+    const both = red({ settings: missing });
+    expect(both).toContain("does not call flow for PostToolUseFailure");
+    expect(both).toContain("on some tools only");
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE DELTA — what a call changed, judged, and what is put back
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+describe("the delta becomes the write and delete rails, and touch is the floor", () => {
+  const changes = [
+    { path: "src/a.ts", before: "a\n", after: "a // TODO\n" },
+    { path: "src/new.ts", before: null, after: "new\n" },
+    { path: "src/old.ts", before: "old\n", after: null },
+  ];
+  const withChanges = (over: readonly { path: string; before: string | null; after: string | null }[]): EventWorld => ({
+    ...world(),
+    changes: over,
+  });
+
+  it("judges every changed file on what is now on disk, and every removed one on what it held", () => {
+    const events = toEvent("post-tool-use", pre("Bash", { command: "python3 fix.py" }), withChanges(changes));
+    expect(events).toStrictEqual([
+      { rail: "guard", moment: "write", file: { path: "src/a.ts", content: "a // TODO\n" }, observed: true },
+      { rail: "guard", moment: "write", file: { path: "src/new.ts", content: "new\n" }, observed: true },
+      { rail: "guard", moment: "delete", file: { path: "src/old.ts", content: "old\n" }, observed: true },
+      { rail: "brief", moment: "touch", path: "src/a.ts" },
+      { rail: "brief", moment: "touch", path: "src/new.ts" },
+      { rail: "brief", moment: "touch", path: "src/old.ts" },
+    ]);
+  });
+
+  it("judges a failed call's partial writes exactly as a finished call's", () => {
+    const payload = pre("Bash", { command: "python3 fix.py" });
+    expect(toEvent("post-tool-use-failure", payload, withChanges(changes))).toStrictEqual(
+      toEvent("post-tool-use", payload, withChanges(changes)),
+    );
+  });
+
+  it("does not judge twice what PreToolUse already judged — the Edit's file, the rm's target", () => {
+    const edit = toEvent("post-tool-use", pre("Edit", { file_path: "/repo/src/a.ts" }), withChanges(changes.slice(0, 1)));
+    expect(edit).toStrictEqual([{ rail: "brief", moment: "touch", path: "src/a.ts" }]);
+    const rm = toEvent("post-tool-use", pre("Bash", { command: "rm src/old.ts" }), withChanges(changes.slice(2)));
+    expect(rm).toStrictEqual([{ rail: "brief", moment: "touch", path: "src/old.ts" }]);
+    expect(preJudged(pre("Write", { file_path: "/repo/x.ts" }), ROOT)).toEqual(["x.ts"]);
+    expect(preJudged(pre("MultiEdit", {}), ROOT)).toEqual([]);
+    expect(preJudged(pre("Read", { file_path: "/repo/x.ts" }), ROOT), "a read judged nothing").toEqual([]);
+  });
+
+  it("touches the path the tool named once, however many rails it is on", () => {
+    const events = toEvent("post-tool-use", pre("Read", { file_path: "/repo/src/a.ts" }), withChanges(changes.slice(0, 1)));
+    expect(events.filter((e) => e.rail === "brief")).toStrictEqual([{ rail: "brief", moment: "touch", path: "src/a.ts" }]);
+  });
+
+  it("reads the host's key for one call, and nothing when it sent none", () => {
+    expect(callKey({ tool_use_id: "toolu_1" })).toBe("toolu_1");
+    expect(callKey({})).toBeNull();
+    expect(callKey({ tool_use_id: {} as never })).toBeNull();
+  });
+});
+
+describe("reversal — exactly the refused files go back", () => {
+  const changes = [
+    { path: "src/a.ts", before: "a\n", after: "TODO\n" },
+    { path: "src/b.ts", before: "b\n", after: "b2\n" },
+  ];
+  const block = (subject: string): Block => ({ do: "block", entry: "house.noTodo", message: "No TODOs.", subject, detail: "" });
+
+  it("reverts the refused path, and lists the rest as kept", () => {
+    expect(reversal(changes, [{ moment: "write", block: block("src/a.ts"), observed: "src/a.ts" }])).toStrictEqual({
+      revert: [changes[0]],
+      kept: ["src/b.ts"],
+    });
+  });
+
+  it("reverts nothing on a refusal that names no landed change — a revert is never a guess", () => {
+    expect(reversal(changes, [{ moment: "command", block: block("x") }])).toStrictEqual({ revert: [], kept: ["src/a.ts", "src/b.ts"] });
+  });
+
+  it("honours the repair exception: a broken config's own repair lands and stays", () => {
+    const repair = [
+      { path: "flow.config.ts", before: "old", after: "fixed" },
+      { path: "src/a.ts", before: "a", after: "b" },
+    ];
+    const events = toEvent("post-tool-use", pre("Bash", { command: "python3 fix.py" }), { ...world(), changes: repair });
+    const answer = whileBroken(events, configSurface(""), "the config will not load");
+    expect(answer.refused.map((r) => r.observed), "only the path off the surface is refused").toEqual(["src/a.ts"]);
+    expect(reversal(repair, answer.refused)).toStrictEqual({ revert: [repair[1]], kept: ["flow.config.ts"] });
+  });
+});
+
+describe("an observed refusal — its own banner, and what was put back", () => {
+  const noTodo: Block = { do: "block", entry: "house.noTodo", message: "No TODOs in src/ — do it now, or track it properly.", subject: "src/b.ts", detail: "line 3 says TODO" };
+  const b = { path: "src/b.ts", before: "b\n", after: "TODO\n" };
+
+  it("prints the guide's example: the reverted banner, the entry, and the two-sentence tail", () => {
+    const answer = toResult("post-tool-use", {
+      refused: [{ moment: "write", block: noTodo, observed: "src/b.ts" }],
+      shown: [],
+      undone: { restored: [b], kept: [], failed: [] },
+    });
+    expect(answer.exitCode).toBe(2);
+    expect(answer.stdout).toBe("");
+    expect(answer.stderr).toBe(
+      "\nflow — write reverted after it landed:\n\n" +
+        "✗ house.noTodo · src/b.ts\n  No TODOs in src/ — do it now, or track it properly.\n    line 3 says TODO\n\n" +
+        "src/b.ts is back to its previous content. Adjust the change so it passes and write it again — through Edit, which is judged before it lands.\n" +
+        "Only file content was put back: anything else the call did has already happened.\n",
+    );
+  });
+
+  it("says which files stayed, which were removed again, and which were restored", () => {
+    const stderr = toResult("post-tool-use", {
+      refused: [
+        { moment: "write", block: noTodo, observed: "src/b.ts" },
+        { moment: "write", block: noTodo, observed: "src/c.ts" },
+        { moment: "write", block: noTodo, observed: "src/n.ts" },
+      ],
+      shown: [],
+      undone: {
+        restored: [b, { path: "src/c.ts", before: "c", after: "x" }, { path: "src/n.ts", before: null, after: "x" }],
+        kept: ["README.md"],
+        failed: [],
+      },
+    }).stderr;
+    expect(stderr).toContain("src/b.ts and src/c.ts are back to their previous content.");
+    expect(stderr).toContain("src/n.ts is gone again — the call created it.");
+    expect(stderr).toContain("Kept as the call wrote it: README.md.");
+  });
+
+  it("restores a removed file under the delete banner, with the delete rail's instruction", () => {
+    const stderr = toResult("post-tool-use", {
+      refused: [{ moment: "delete", block: { ...noTodo, entry: "house.keep" }, observed: "a.ts" }, { moment: "delete", block: noTodo, observed: "b.ts" }],
+      shown: [],
+      undone: {
+        restored: [
+          { path: "a.ts", before: "a", after: null },
+          { path: "b.ts", before: "b", after: null },
+        ],
+        kept: ["x.ts", "y.ts"],
+        failed: [],
+      },
+    }).stderr;
+    expect(stderr.startsWith("\nflow — delete reverted after it landed:\n")).toBe(true);
+    expect(stderr).toContain("a.ts and b.ts are restored. Keep the file, or change the rule that protects it.");
+    expect(stderr).toContain("Kept as the call wrote them: x.ts, y.ts.");
+  });
+
+  it("never claims a revert that failed — it says the file still holds what the call wrote", () => {
+    const stderr = toResult("post-tool-use", {
+      refused: [{ moment: "write", block: noTodo, observed: "src/b.ts" }],
+      shown: [],
+      undone: { restored: [b], kept: [], failed: [{ path: "src/b.ts", why: "permission denied" }] },
+    }).stderr;
+    expect(stderr).not.toContain("is back to its previous content");
+    expect(stderr).toContain("flow could not put src/b.ts back (permission denied) — it still holds what the call wrote.");
+  });
+
+  it("keeps the pre-emptive banner for a refusal that did not land", () => {
+    expect(toResult("pre-tool-use", { refused: [{ moment: "write", block: noTodo }], shown: [] }).stderr).toContain(
+      "flow — blocked before the write landed",
+    );
+  });
+
+  it("reports a call it could not see — loud, exit 2, nothing judged and nothing put back", () => {
+    const said = deltaFault("No snapshot was taken before this call.");
+    expect(said.exitCode).toBe(2);
+    expect(said.stderr).toContain("flow — could not see what this call changed:");
+    expect(said.stderr).toContain("No snapshot was taken before this call.");
+    expect(said.stderr).toContain("nothing was put back");
+  });
+});
+
+describe("snapshotInclude — where git looks, and what it keeps", () => {
+  it("cuts a glob to its literal head, whole segments only", () => {
+    expect(staticPrefix("src/gen/**")).toBe("src/gen/");
+    expect(staticPrefix("src/*.ts")).toBe("src/");
+    expect(staticPrefix(".env")).toBe(".env");
+    expect(staticPrefix("**/.env")).toBe("");
+    expect(staticPrefix("config/{a,b}.json")).toBe("config/");
+  });
+
+  it("walks only the heads, or everywhere once one glob has none", () => {
+    expect(snapshotPathspecs([".env", "config/*.local.json", "config/x/**"])).toEqual([".env", "config/", "config/x/"]);
+    expect(snapshotPathspecs([".env", "**/.env.local"])).toEqual(["."]);
+  });
+
+  it("keeps the listed paths a glob matches, through the one glob engine", () => {
+    expect(included(["config/a.local.json", "config/cache.bin", ""], ["config/*.local.json"])).toEqual(["config/a.local.json"]);
   });
 });

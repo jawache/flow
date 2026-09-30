@@ -1032,6 +1032,12 @@ export interface Settings {
    * it two ways.
    */
   readonly grammars?: readonly Grammar[];
+  /**
+   * Globs for the IGNORED paths the snapshot records as well. The snapshot is git's view of the
+   * tree — tracked files, and untracked ones git does not ignore — so a shell write to an ignored
+   * file is never seen unless a glob here brings it back. `.env` is the usual one.
+   */
+  readonly snapshotInclude?: readonly string[];
 }
 
 /**

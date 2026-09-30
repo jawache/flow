@@ -94,11 +94,16 @@ export interface HookPayload {
   readonly tool_input?: Record<string, unknown>;
   /** SessionStart's reason: `startup` · `resume` · `clear` · `compact` — the compaction announcement. */
   readonly source?: string;
+  /**
+   * The host's id for one tool call, the same on its PreToolUse and its PostToolUse. It is the key
+   * the snapshot taken before the call is filed under and looked up by after it.
+   */
+  readonly tool_use_id?: string;
   readonly [key: string]: unknown;
 }
 
 /**
- * The five events flow registers for, named by the EVENT and never by the job.
+ * The events flow answers, named by the EVENT and never by the job.
  *
  * Carried from the old engine unchanged, and the naming rule with it: call a hook
  * `flow hook plan-drift` and the day a second concern wants the same host event you register a
@@ -190,7 +195,14 @@ export function configSurface(configText: string | null): readonly string[] {
 // wrapper carried no fact of its own. Its two call sites read better without it — the local is
 // already called `surface`, and `matchAny(path, surface)` says the same sentence in one hop.
 
-export const HOOK_EVENTS = ["session-start", "pre-tool-use", "post-tool-use", "stop", "notification"] as const;
+export const HOOK_EVENTS = [
+  "session-start",
+  "pre-tool-use",
+  "post-tool-use",
+  "post-tool-use-failure",
+  "stop",
+  "notification",
+] as const;
 export type HookEvent = (typeof HOOK_EVENTS)[number];
 
 export function isHookEvent(word: string): word is HookEvent {
@@ -202,6 +214,7 @@ const HOST_EVENT: Record<HookEvent, string> = {
   "session-start": "SessionStart",
   "pre-tool-use": "PreToolUse",
   "post-tool-use": "PostToolUse",
+  "post-tool-use-failure": "PostToolUseFailure",
   stop: "Stop",
   notification: "Notification",
 };
@@ -267,6 +280,12 @@ export type AdapterEvent =
       readonly command?: string | undefined;
       readonly staged?: readonly string[] | undefined;
       readonly turn?: readonly TurnAction[] | undefined;
+      /**
+       * The change has already LANDED: the file came out of the delta after the call, not out of a
+       * tool's input before it. A refusal of an observed write is undone from the snapshot, and it
+       * is refused under its own banner.
+       */
+      readonly observed?: boolean | undefined;
     }
   | {
       readonly rail: "brief";
@@ -291,6 +310,11 @@ export interface EventWorld {
   readonly turn?: (() => readonly TurnAction[]) | undefined;
   /** The home directory, for a Bash read through `~`. Absent, such a path is simply not named. */
   readonly home?: string | undefined;
+  /**
+   * What the call changed in the tree, from the snapshot taken before it. Only the after-call
+   * rails carry it; absent, the call changed nothing flow could see.
+   */
+  readonly changes?: readonly Change[] | undefined;
 }
 
 /** An absolute path inside the repo → the repo-relative spelling every glob is written against. */
@@ -1091,13 +1115,36 @@ export function toEvent(hook: HookEvent, payload: HookPayload, world: EventWorld
       return file === null ? [] : [{ rail: "guard", moment: "write", file }];
     }
 
-    case "post-tool-use": {
-      const path = touchedPath(payload, world.root);
-      // A pathless call is SILENCE, not a pathless touch event: the engine narrows a breadcrumb by
-      // `on` only when the event names a path, so a touch carrying none would show every area note
-      // at once. The note arrives on the next file the session touches instead. flow's breadcrumb
-      // grammar has no command matcher, by design.
-      return path === null ? [] : [{ rail: "brief", moment: "touch", path }];
+    case "post-tool-use":
+    case "post-tool-use-failure": {
+      // A FAILED CALL IS JUDGED LIKE ONE THAT SUCCEEDED: a command that errors half way through has
+      // still written whatever it wrote before it failed, and that write is as real as any other.
+      const changes = world.changes ?? [];
+      const judged = preJudged(payload, world.root);
+      const events: AdapterEvent[] = [];
+      // THE DELTA, as the write and delete rails. Every guard event comes before every brief event,
+      // as on the Bash arm above: a refusal carries no notes, and the shell stops judging notes once
+      // something has refused. A path the PreToolUse rail already judged — the file an Edit named,
+      // the target of an `rm` — is not judged twice: it passed there on the same content, or the
+      // call would never have run.
+      for (const change of changes) {
+        if (judged.includes(change.path)) continue;
+        if (change.after !== null)
+          events.push({ rail: "guard", moment: "write", file: { path: change.path, content: change.after }, observed: true });
+        else if (change.before !== null)
+          events.push({ rail: "guard", moment: "delete", file: { path: change.path, content: change.before }, observed: true });
+      }
+      // TOUCH IS THE FLOOR. The path the tool named, then every path the call changed: a file whose
+      // read nothing detected still has its area note shown at the change — later than a read would
+      // have shown it, but not skipped. The engine's marks keep each note to once per session.
+      //
+      // A pathless call with no changes is SILENCE, not a pathless touch event: the engine narrows a
+      // breadcrumb by `on` only when the event names a path, so a touch carrying none would show
+      // every area note at once.
+      const named = touchedPath(payload, world.root);
+      const touched = new Set([...(named === null ? [] : [named]), ...changes.map((change) => change.path)]);
+      for (const path of touched) events.push({ rail: "brief", moment: "touch", path });
+      return events;
     }
 
     case "stop":
@@ -1119,6 +1166,74 @@ export function touchedPath(payload: HookPayload, root: string): string | null {
   const input = payload.tool_input ?? {};
   const named = input["file_path"] ?? input["notebook_path"] ?? input["path"] ?? input["glob"];
   return named ? relativise(text(named), root) : null;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE DELTA — what a call changed in the tree, judged the same way however it was changed
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+//
+// Before every tool call the shell records the working tree; after it, the shell compares. What
+// comes back is a plain list of paths with their content either side, and everything that DECIDES
+// about it is here: which rails it becomes (toEvent), which files are put back (`reversal`), and
+// what the model is told (`toResult`). What the agent typed to make the change is never read, so a
+// heredoc, `sed -i`, a script, a recipe and an MCP tool all reach the rules by the one route.
+
+/**
+ * One path a call changed. `before` is null for a file the call created, `after` for one it
+ * removed; a path with both is a file it changed.
+ */
+export interface Change {
+  readonly path: string;
+  readonly before: string | null;
+  readonly after: string | null;
+}
+
+/**
+ * What the shell could see of one call — the changes, or why it could not see them.
+ *
+ * A FAULT IS NOT AN EMPTY DELTA, and the difference is the guard's whole doctrine: "I looked and
+ * nothing changed" and "I could not look" must never be spelled the same way, or a snapshot that
+ * failed would let every write through as clean.
+ */
+export type Delta = { readonly ok: true; readonly changes: readonly Change[] } | { readonly ok: false; readonly fault: string };
+
+/**
+ * Where git should look for the ignored paths `snapshotInclude` names: each glob's literal head,
+ * so git walks `config/` for `config/*.local.json` and not the whole repo. A glob with no literal
+ * head (`**` + `/.env`) has to be looked for everywhere.
+ */
+export function snapshotPathspecs(include: readonly string[]): string[] {
+  const heads = include.map(staticPrefix);
+  return heads.includes("") ? ["."] : [...new Set(heads)];
+}
+
+/** Of the ignored paths git listed under those heads, the ones a `snapshotInclude` glob matches. */
+export function included(listed: readonly string[], include: readonly string[]): string[] {
+  return listed.filter((path) => path !== "" && matchAny(path, include));
+}
+
+/** The key one call's snapshot is filed under — the host's `tool_use_id` — or null when it sent none. */
+export function callKey(payload: HookPayload): string | null {
+  const id = text(payload.tool_use_id);
+  return id === "" ? null : id;
+}
+
+/**
+ * The paths the PreToolUse rail already judged for this call, repo-relative.
+ *
+ * An Edit, a Write or a MultiEdit was judged on the file it would produce, and an `rm` on the file
+ * it was about to remove. Both were allowed there or the call would not have run, and judging them
+ * again after it would log every such write twice for one decision.
+ */
+export function preJudged(payload: HookPayload, root: string): string[] {
+  const tool = text(payload.tool_name);
+  const input = payload.tool_input ?? {};
+  if (tool === "Bash") return deleteTargets(text(input["command"])).map((target) => relativise(target, root));
+  if (tool === "Write" || tool === "Edit" || tool === "MultiEdit") {
+    const named = text(input["file_path"]);
+    return named === "" ? [] : [relativise(named, root)];
+  }
+  return [];
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -1153,10 +1268,97 @@ const RAIL: Record<GuardrailMoment, { readonly head: string; readonly tail: stri
   "turn-end": { head: "flow — turn held open", tail: "Do the above, then end your turn." },
 };
 
+/**
+ * The banner a refusal carries when the change had ALREADY LANDED and has been put back.
+ *
+ * The moment stays `write` or `delete` — a rule is written once and fires on both routes — so what
+ * tells the two routes apart is whether the refusal was pre-emptive or observed, and a reader of the
+ * log can see which happened from the first line alone.
+ */
+const RAIL_OBSERVED: Readonly<Record<"write" | "delete", string>> = {
+  write: "flow — write reverted after it landed",
+  delete: "flow — delete reverted after it landed",
+};
+
 /** One refusal, with the rail that made it — the banner is the moment's, not the hook's. */
 export interface Refused {
   readonly moment: GuardrailMoment;
   readonly block: Block;
+  /** The path of a change that had already landed when this refused it — the one to put back. */
+  readonly observed?: string | undefined;
+}
+
+/**
+ * What putting refused changes back came to — written by the shell, which did the writing.
+ *
+ * `failed` is the loud half: a file flow could not write back still holds what the call wrote, and
+ * the message must say so rather than claim a revert that did not happen.
+ */
+export interface Undone {
+  /** The changes written back to what they were before the call. */
+  readonly restored: readonly Change[];
+  /** Paths the call changed that no rule refused — left as the call wrote them. */
+  readonly kept: readonly string[];
+  readonly failed: readonly { readonly path: string; readonly why: string }[];
+}
+
+/** Which of a call's changes are put back, and which stay as the call left them. */
+export interface Reversal {
+  readonly revert: readonly Change[];
+  readonly kept: readonly string[];
+}
+
+/**
+ * THE REVERT SCOPE: exactly the files a rule refused, and nothing else the call wrote.
+ *
+ * Most writing calls touch one file, and the other files a multi-file command wrote are not wrong
+ * because one of them is — they are listed as kept, so the agent knows they stand. A refusal that
+ * names no landed path (a fault on a pre-emptive rail) reverts nothing: a revert is only ever of a
+ * change flow saw land, never a guess.
+ */
+export function reversal(changes: readonly Change[], refusals: readonly Refused[]): Reversal {
+  const refused = new Set(refusals.flatMap((refusal) => (refusal.observed === undefined ? [] : [refusal.observed])));
+  return {
+    revert: changes.filter((change) => refused.has(change.path)),
+    kept: changes.filter((change) => !refused.has(change.path)).map((change) => change.path),
+  };
+}
+
+/** `a`, `a and b`, `a, b and c` — a list of paths as a sentence reads them. */
+function listed(paths: readonly string[]): string {
+  return paths.length <= 1 ? (paths[0] ?? "") : `${paths.slice(0, -1).join(", ")} and ${paths.at(-1) ?? ""}`;
+}
+
+/**
+ * What an observed refusal ends with: what was put back, what to do now, what stayed, and what a
+ * revert cannot reach.
+ *
+ * The first line is the guide's own sentence pair (docs/user/00-guide.md §8) for the common case of
+ * one file changed and refused. Everything after it is conditional except the last line: a revert
+ * writes file content back and nothing else, so a test run, a commit or a push the same command made
+ * has already happened, and the agent is told so every time.
+ */
+function observedTail(refusals: readonly Refused[], undone: Undone): string {
+  const failed = new Set(undone.failed.map((failure) => failure.path));
+  const back = undone.restored.filter((change) => !failed.has(change.path));
+  const changed = back.filter((change) => change.before !== null && change.after !== null).map((change) => change.path);
+  const created = back.filter((change) => change.before === null).map((change) => change.path);
+  const deleted = back.filter((change) => change.after === null).map((change) => change.path);
+  const said = [
+    changed.length === 0 ? "" : `${listed(changed)} ${changed.length === 1 ? "is back to its" : "are back to their"} previous content.`,
+    created.length === 0 ? "" : `${listed(created)} ${created.length === 1 ? "is" : "are"} gone again — the call created ${created.length === 1 ? "it" : "them"}.`,
+    deleted.length === 0 ? "" : `${listed(deleted)} ${deleted.length === 1 ? "is" : "are"} restored.`,
+    refusals.some((refusal) => refusal.moment === "write")
+      ? "Adjust the change so it passes and write it again — through Edit, which is judged before it lands."
+      : "Keep the file, or change the rule that protects it.",
+  ].filter((sentence) => sentence !== "");
+  const lines = [said.join(" ")];
+  for (const failure of undone.failed)
+    lines.push(`flow could not put ${failure.path} back (${failure.why}) — it still holds what the call wrote.`);
+  if (undone.kept.length > 0)
+    lines.push(`Kept as the call wrote ${undone.kept.length === 1 ? "it" : "them"}: ${undone.kept.join(", ")}.`);
+  lines.push("Only file content was put back: anything else the call did has already happened.");
+  return lines.join("\n");
 }
 
 /** A note with its prose resolved: a `file:` breadcrumb is read by the shell, never here. */
@@ -1170,6 +1372,8 @@ export interface Shown {
 export interface Answer {
   readonly refused: readonly Refused[];
   readonly shown: readonly Shown[];
+  /** What was put back, when a refusal was of changes that had already landed. */
+  readonly undone?: Undone | undefined;
 }
 
 /**
@@ -1234,7 +1438,11 @@ export function whileBroken(events: readonly AdapterEvent[], surface: readonly s
   return {
     refused: rails
       .filter((event) => event.moment !== "turn-end" && !repairs(event, surface))
-      .map((event) => ({ moment: event.moment, block: fault(message) })),
+      .map((event) => ({
+        moment: event.moment,
+        block: fault(message),
+        ...(event.observed === true && event.file !== undefined ? { observed: event.file.path } : {}),
+      })),
     shown: events.filter((event) => event.rail === "brief").map(() => ({ entry: null, cause: "fault", body: message })),
     told: rails.some((event) => event.moment === "turn-end") ? message : null,
   };
@@ -1283,7 +1491,7 @@ export function briefBlock(shown: readonly Shown[]): string {
  * Injection stays the decision object, because there is no other channel for it.
  */
 export function toResult(hook: HookEvent, answer: Answer): HookResult {
-  const refusal = refused(answer.refused);
+  const refusal = refused(answer.refused, answer.undone);
   if (refusal !== null) return refusal;
   const prose = briefBlock(answer.shown);
   if (prose === "") return ALLOW;
@@ -1298,12 +1506,35 @@ export function toResult(hook: HookEvent, answer: Answer): HookResult {
  * naming an event that never happened. The banner comes off the MOMENT, which every rail has,
  * rather than off the event, which only the harness ones do.
  */
-export function refused(refusals: readonly Refused[]): HookResult | null {
+export function refused(refusals: readonly Refused[], undone?: Undone): HookResult | null {
   const first = refusals[0];
   if (first === undefined) return null;
-  const rail = RAIL[first.moment];
   const body = refusals.map((refusal) => formatBlock(refusal.block)).join("\n\n");
-  return { stdout: "", stderr: `\n${rail.head}:\n\n${body}\n\n${rail.tail}\n`, exitCode: 2 };
+  // AN OBSERVED REFUSAL arrives on the after-call rail, where exit 2 cannot block — the change has
+  // landed — and the host shows stderr to the model beside the tool's result. So it carries its own
+  // banner and says what was put back rather than asking for a retry of something already done.
+  const landed = first.observed !== undefined && (first.moment === "write" || first.moment === "delete");
+  const head = landed ? RAIL_OBSERVED[first.moment] : RAIL[first.moment].head;
+  const tail = landed ? observedTail(refusals, undone ?? { restored: [], kept: [], failed: [] }) : RAIL[first.moment].tail;
+  return { stdout: "", stderr: `\n${head}:\n\n${body}\n\n${tail}\n`, exitCode: 2 };
+}
+
+/**
+ * What the after-call rail says when it could not see what the call changed.
+ *
+ * FAIL LOUD, NEVER FAIL CLEAN. A snapshot that could not be taken, or a diff that could not be
+ * read, is not an empty delta: the call is not waved through as having changed nothing, and nothing
+ * is put back on a guess. Exit 2 on this rail cannot block — the call has run — so it is a report,
+ * and it goes where the model reads the tool's result.
+ */
+export function deltaFault(fault: string): HookResult {
+  return {
+    stdout: "",
+    stderr:
+      `\nflow — could not see what this call changed:\n\n${fault}\n\n` +
+      "Nothing it wrote was judged and nothing was put back. Check what the call changed before you go on.\n",
+    exitCode: 2,
+  };
 }
 
 /** Hand the agent some context and allow — the one shape every steering rail emits. */
@@ -2746,7 +2977,7 @@ export interface Registration {
 /**
  * WHAT `flow init` WRITES, verbatim — and it follows DELIVERS, not HOOK_EVENTS.
  *
- * flow answers five events and registers four. `Notification` is the difference and it is deliberate
+ * flow answers six events and registers five. `Notification` is the difference and it is deliberate
  * (ruled at F4): flow has no notification moment, so a registration there would spawn a process on
  * every banner to answer nothing — cost with no function, and a line contradicting the honest moment
  * list this file publishes. The day a notification moment earns its way into the grammar, the
@@ -2758,9 +2989,11 @@ export interface Registration {
  *
  * The matchers are the host's, each the widest set its command can act on. PreToolUse takes `*`
  * because the flight recorder's whole claim is that the log holds every call, including the ones no
- * rule watches — they are the denominator of every coverage question. PostToolUse keeps a narrower
- * list because a `touch` breadcrumb can only steer on a path, so a tool naming none would cost a
- * process to inject nothing.
+ * rule watches — they are the denominator of every coverage question — and because every call is
+ * snapshotted before it runs. PostToolUse and PostToolUseFailure take `*` for the other half of
+ * that: any tool can change the tree (an MCP tool, a recipe, a subagent's shell), and the after-call
+ * diff is how that change reaches the write and delete rules. A failed call is registered too,
+ * because a command that errors half way has still written what it wrote.
  *
  * DERIVED, not re-typed: the host's name for an event and the word this binary answers to are both
  * read off `HOST_EVENT`, the one place that mapping is stated. Written out by hand, this list would
@@ -2770,7 +3003,8 @@ export interface Registration {
 const REGISTERED: readonly { readonly hook: HookEvent; readonly matcher?: string }[] = [
   { hook: "session-start", matcher: "startup|resume|clear|compact" },
   { hook: "pre-tool-use", matcher: "*" },
-  { hook: "post-tool-use", matcher: "Read|Glob|Grep|Edit|Write|Bash" },
+  { hook: "post-tool-use", matcher: "*" },
+  { hook: "post-tool-use-failure", matcher: "*" },
   { hook: "stop" },
 ];
 
@@ -2803,21 +3037,38 @@ function hookArrays(settings: unknown): Record<string, unknown[]> {
   return out;
 }
 
+/** Is this one entry of a hook array a registration of ours? */
+function isOurs(entry: unknown): boolean {
+  const inner = (entry as { hooks?: unknown } | null)?.hooks;
+  if (!Array.isArray(inner)) return false;
+  return inner.some((held) => {
+    const command = (held as { command?: unknown } | null)?.command;
+    return typeof command === "string" && ourHookCommand(command);
+  });
+}
+
 /** The events this settings file already calls flow for. What makes init idempotent and status honest. */
 export function registeredEvents(settings: unknown): string[] {
   const out: string[] = [];
-  for (const [event, entries] of Object.entries(hookArrays(settings))) {
-    const ours = entries.some((entry) => {
-      const inner = (entry as { hooks?: unknown } | null)?.hooks;
-      if (!Array.isArray(inner)) return false;
-      return inner.some((held) => {
-        const command = (held as { command?: unknown } | null)?.command;
-        return typeof command === "string" && ourHookCommand(command);
-      });
-    });
-    if (ours) out.push(event);
-  }
+  for (const [event, entries] of Object.entries(hookArrays(settings))) if (entries.some(isOurs)) out.push(event);
   return out;
+}
+
+/**
+ * The events flow IS registered for, but with a matcher narrower than this build asks for.
+ *
+ * An older flow registered PostToolUse for six tools, because an after-call hook could only show a
+ * breadcrumb then. Now it is where every change a tool makes is judged, so a registration on six
+ * tools leaves a shell edit through any other tool unjudged — and it LOOKS registered. It is its own
+ * red line for that reason, rather than disappearing inside "registered".
+ */
+export function staleRegistrations(settings: unknown): string[] {
+  const arrays = hookArrays(settings);
+  return HOOK_REGISTRATIONS.filter((registration) =>
+    (arrays[registration.event] ?? []).some(
+      (entry) => isOurs(entry) && (entry as { matcher?: unknown }).matcher !== registration.matcher,
+    ),
+  ).map((registration) => registration.event);
 }
 
 /**
@@ -2832,10 +3083,18 @@ export function withRegistrations(settings: unknown): { settings: unknown; added
   const base = (settings && typeof settings === "object" ? settings : {}) as Record<string, unknown>;
   const already = new Set(registeredEvents(settings));
   const wanted = HOOK_REGISTRATIONS.filter((r) => !already.has(r.event));
-  if (wanted.length === 0) return { settings: base, added: [] };
+  const stale = new Set(staleRegistrations(settings));
+  if (wanted.length === 0 && stale.size === 0) return { settings: base, added: [] };
 
   const arrays = hookArrays(settings);
   const hooks: Record<string, unknown> = { ...(base["hooks"] as Record<string, unknown> | undefined) };
+  // A STALE REGISTRATION IS OURS, and widening it is the one rewrite this function makes: the entry
+  // is flow's own, so its matcher is flow's to set. Adding a second, wider entry beside it instead
+  // would fire flow twice for every tool the old matcher named.
+  for (const registration of HOOK_REGISTRATIONS.filter((r) => stale.has(r.event)))
+    hooks[registration.event] = (arrays[registration.event] ?? []).map((entry) =>
+      isOurs(entry) ? { ...(entry as Record<string, unknown>), matcher: registration.matcher } : entry,
+    );
   for (const registration of wanted) {
     hooks[registration.event] = [
       ...(arrays[registration.event] ?? []),
@@ -2845,7 +3104,12 @@ export function withRegistrations(settings: unknown): { settings: unknown; added
       },
     ];
   }
-  return { settings: { ...base, hooks }, added: wanted.map((r) => r.event) };
+  return {
+    settings: { ...base, hooks },
+    added: HOOK_REGISTRATIONS.filter((r) => stale.has(r.event) || !already.has(r.event)).map((r) =>
+      stale.has(r.event) ? `${r.event} (widened to every tool)` : r.event,
+    ),
+  };
 }
 
 // ── the git gate ─────────────────────────────────────────────────────────────
@@ -3075,7 +3339,7 @@ export interface InitPlan {
 export function planInit(facts: InitFacts): InitPlan {
   // A file we could not read is a file we may not write. `withRegistrations` builds a NEW object
   // from whatever it is handed, so handing it the null an unparseable file produces would emit a
-  // settings file holding flow's four registrations and NOTHING ELSE — permissions, model, theme,
+  // settings file holding flow's five registrations and NOTHING ELSE — permissions, model, theme,
   // every other tool's hooks, gone. There is no safe merge into bytes nobody parsed, so init
   // registers nothing and says which file to fix.
   const registration = facts.settingsUnreadable ? { settings: facts.settings, added: [] } : withRegistrations(facts.settings);
@@ -3178,6 +3442,89 @@ export interface StatusFacts {
   readonly grammars: readonly { readonly name: string; readonly libraryPath: string; readonly present: boolean }[];
   /** Who last worked in this worktree, from the marker the write rail leaves. Null when nobody has. */
   readonly session: { readonly id: string; readonly agent: string | null; readonly wearing: readonly string[] } | null;
+  /**
+   * What git ignores here, one path per entry, a directory with its trailing `/` — plus any literal
+   * path a write or delete rule names that git would ignore though it does not exist yet (`.env`).
+   */
+  readonly ignored: readonly string[];
+  /** The config's `snapshotInclude` globs: the ignored paths the snapshot records anyway. */
+  readonly snapshotInclude: readonly string[];
+}
+
+/**
+ * The literal head of a glob, cut back to a whole segment: `src/gen/**` → `src/gen/`, `.env` →
+ * `.env`, `**` + `/*.ts` → nothing. A glob with no wildcard is all head.
+ */
+export function staticPrefix(glob: string): string {
+  const at = glob.search(/[*?{]/);
+  return at === -1 ? glob : glob.slice(0, glob.lastIndexOf("/", at) + 1);
+}
+
+/** Does this glob reach everything below `dir/` — a literal head at or above it, then `**`? */
+function reachesBelow(glob: string, dir: string): boolean {
+  const head = staticPrefix(glob);
+  return head !== "" && head !== glob && dir.startsWith(head) && glob.slice(head.length).startsWith("**");
+}
+
+/** The write and delete guardrails still live — the rules the snapshot's view decides the reach of. */
+function treeRules(entries: readonly Bound[]): Bound[] {
+  return entries.filter(
+    (entry) =>
+      entry.kind === "guardrail" && entry.disabled === null && entry.at.some((moment) => moment === "write" || moment === "delete"),
+  );
+}
+
+/**
+ * The paths those rules name OUTRIGHT — a glob with no wildcard, such as `.env`. A file that does
+ * not exist yet is in no listing of ignored files, so status asks git about these by name.
+ */
+export function literalScopes(load: LoadResult | null): string[] {
+  const rules = treeRules(universe(load?.ok === true ? load.entries : []));
+  return [...new Set(rules.flatMap((entry) => (entry.on ?? []).filter((glob) => staticPrefix(glob) === glob)))];
+}
+
+/**
+ * THE SNAPSHOT'S BLIND SPOTS, as red lines: a write or delete rule whose scope reaches a path git
+ * ignores, where `snapshotInclude` does not bring it back.
+ *
+ * The snapshot is git's view, so a shell write to an ignored file is never in the diff and never
+ * judged — and a rule guarding `.env` would load green and watch nothing. So the gap is said where a
+ * person looks, naming the rule and the setting.
+ *
+ * WHAT "REACHES" MEANS, and why it is not "the glob could match something in there". An ignored
+ * FILE is reached when the rule's globs match it. An ignored DIRECTORY is reached when a glob names
+ * it — its literal head lies inside the directory (`dist/**` over an ignored `dist/`), or sits above
+ * it and continues with `**` (`src/**` over an ignored `src/gen/`). A glob that is all wildcard,
+ * `**` + `/*.ts`, does not reach `node_modules/` by this measure, though strictly it matches files in
+ * there: every repo with such a rule would be red over a folder no rule was written about.
+ */
+export function snapshotGaps(entries: readonly Bound[], ignored: readonly string[], include: readonly string[]): Fitting[] {
+  const covered = (path: string): boolean => matchAny(path, include) || include.some((glob) => reachesBelow(glob, path));
+  const out: Fitting[] = [];
+  for (const entry of treeRules(entries)) {
+    const on = entry.on ?? [];
+    const reached = new Set<string>();
+    for (const path of ignored) {
+      if (!path.endsWith("/")) {
+        if (matchAny(path, on) && !matchAny(path, entry.ignore ?? []) && !covered(path)) reached.add(path);
+        continue;
+      }
+      for (const glob of on) {
+        const head = staticPrefix(glob);
+        const at = head.startsWith(path) && head !== "" ? (head === glob ? glob : head) : reachesBelow(glob, path) ? path : null;
+        if (at !== null && !covered(at)) reached.add(at);
+      }
+    }
+    for (const path of reached)
+      out.push({
+        id: "snapshot",
+        ok: false,
+        detail:
+          `${entry.id} guards ${path}, which git ignores, so a change a shell command makes there is never seen or judged. ` +
+          `List it in snapshotInclude in ${CONFIG_FILE}, or narrow the rule.`,
+      });
+  }
+  return out;
 }
 
 /** The whole answer. */
@@ -3200,6 +3547,7 @@ export interface Status {
 function fittingsOf(facts: StatusFacts): Fitting[] {
   const registered = registeredEvents(facts.settings);
   const missing = HOOK_REGISTRATIONS.filter((r) => !registered.includes(r.event)).map((r) => r.event);
+  const stale = staleRegistrations(facts.settings);
   const armed = armsFlow(facts.gateText);
   return [
     {
@@ -3244,12 +3592,22 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
         ]),
     {
       id: "hooks",
-      ok: missing.length === 0,
+      ok: missing.length === 0 && stale.length === 0,
       detail:
-        missing.length === 0
+        missing.length === 0 && stale.length === 0
           ? `${facts.settingsPath} — ${registered.join(" · ")}`
-          : `${facts.settingsPath} does not call flow for ${missing.join(" · ")} — re-run \`flow init\`. No live rail fires until it does.`,
+          : [
+              missing.length === 0
+                ? ""
+                : `${facts.settingsPath} does not call flow for ${missing.join(" · ")} — re-run \`flow init\`. No live rail fires until it does.`,
+              stale.length === 0
+                ? ""
+                : `${facts.settingsPath} calls flow for ${stale.join(" · ")} on some tools only — an older flow registered ${stale.length === 1 ? "it" : "them"} that way, and a change another tool makes is not judged after it lands. Re-run \`flow init\` to widen ${stale.length === 1 ? "it" : "them"}.`,
+            ]
+              .filter((line) => line !== "")
+              .join("\n"),
     },
+    ...snapshotGaps(universe(facts.load?.ok === true ? facts.load.entries : []), facts.ignored, facts.snapshotInclude),
   ];
 }
 
