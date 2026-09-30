@@ -1124,14 +1124,16 @@ export function toEvent(hook: HookEvent, payload: HookPayload, world: EventWorld
       const events: AdapterEvent[] = [];
       // THE DELTA, as the write and delete rails. Every guard event comes before every brief event,
       // as on the Bash arm above: a refusal carries no notes, and the shell stops judging notes once
-      // something has refused. A path the PreToolUse rail already judged — the file an Edit named,
-      // the target of an `rm` — is not judged twice: it passed there on the same content, or the
-      // call would never have run.
+      // something has refused. A change the PreToolUse rail already judged is not judged twice — it
+      // passed there on the same content, or the call would never have run — but only AS WHAT it was
+      // judged: an Edit's file that now holds content was judged as that write, and an `rm` target
+      // that is now GONE was judged as that delete. An `rm` target the call wrote again
+      // (`rm x && cat > x`) was never judged as a write, so it is judged as one here.
       for (const change of changes) {
-        if (judged.includes(change.path)) continue;
-        if (change.after !== null)
-          events.push({ rail: "guard", moment: "write", file: { path: change.path, content: change.after }, observed: true });
-        else if (change.before !== null)
+        if (change.after !== null) {
+          if (!judged.writes.includes(change.path))
+            events.push({ rail: "guard", moment: "write", file: { path: change.path, content: change.after }, observed: true });
+        } else if (change.before !== null && !judged.deletes.includes(change.path))
           events.push({ rail: "guard", moment: "delete", file: { path: change.path, content: change.before }, observed: true });
       }
       // TOUCH IS THE FLOOR. The path the tool named, then every path the call changed: a file whose
@@ -1219,21 +1221,24 @@ export function callKey(payload: HookPayload): string | null {
 }
 
 /**
- * The paths the PreToolUse rail already judged for this call, repo-relative.
+ * The paths the PreToolUse rail already judged for this call, repo-relative, BY RAIL.
  *
- * An Edit, a Write or a MultiEdit was judged on the file it would produce, and an `rm` on the file
- * it was about to remove. Both were allowed there or the call would not have run, and judging them
- * again after it would log every such write twice for one decision.
+ * An Edit, a Write or a MultiEdit was judged as a write, on the file it would produce; an `rm` or
+ * an `mv` source was judged as a delete, on the file it was about to remove. Both were allowed there
+ * or the call would not have run, and judging them again after it would log every such decision
+ * twice. The rail matters: a path judged only as a delete says nothing about content written to it
+ * afterwards in the same call.
  */
-export function preJudged(payload: HookPayload, root: string): string[] {
+export function preJudged(payload: HookPayload, root: string): { readonly writes: string[]; readonly deletes: string[] } {
   const tool = text(payload.tool_name);
   const input = payload.tool_input ?? {};
-  if (tool === "Bash") return deleteTargets(text(input["command"])).map((target) => relativise(target, root));
+  if (tool === "Bash")
+    return { writes: [], deletes: deleteTargets(text(input["command"])).map((target) => relativise(target, root)) };
   if (tool === "Write" || tool === "Edit" || tool === "MultiEdit") {
     const named = text(input["file_path"]);
-    return named === "" ? [] : [relativise(named, root)];
+    return { writes: named === "" ? [] : [relativise(named, root)], deletes: [] };
   }
-  return [];
+  return { writes: [], deletes: [] };
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -1556,6 +1561,22 @@ export function faultText(hook: HookEvent, why: "unreadable" | "unparseable", de
   const what =
     why === "unreadable" ? `could not READ its payload from stdin (${detail})` : `could not PARSE its payload (${detail})`;
   return `[flow hook ${hook}] the guard ${what}.`;
+}
+
+/**
+ * The answer a rail gives when it could not read its payload — and which rails must be LOUD.
+ *
+ * The three rails that judge a tool call answer exit 2: PreToolUse, where it refuses the call it
+ * could not see, and the two after-call rails, where every change the call made is judged — there
+ * exit 2 blocks nothing (the call has run) and puts the sentence in front of the model beside the
+ * result, so a call whose changes went unjudged is never passed as clean. The rest only add a
+ * breadcrumb or end a turn, and say it on stderr with exit 0.
+ */
+export function readFault(hook: HookEvent, why: "unreadable" | "unparseable", detail: string): HookResult {
+  const text = faultText(hook, why, detail);
+  return hook === "pre-tool-use" || hook === "post-tool-use" || hook === "post-tool-use-failure"
+    ? { stdout: "", stderr: `\n${text}\n`, exitCode: 2 }
+    : { stdout: "", stderr: `${text}\n`, exitCode: 0 };
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════

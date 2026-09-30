@@ -263,12 +263,19 @@ describe("what a broken or empty call does", () => {
     }
   });
 
-  it("blocks the guarding rail when it cannot read its payload, and warns on the rest", () => {
+  it("is loud on every rail that judges a call when it cannot read its payload, and warns on the rest", () => {
     // "I could not SEE what I was guarding" must never be spelled like "I looked and it was fine".
     const guarded = run(["hook", "pre-tool-use"], "not json at all");
     expect(guarded.code).toBe(2);
     expect(guarded.stderr).toContain("could not PARSE its payload");
-    const annotating = run(["hook", "post-tool-use"], "not json at all");
+    // The after-call rails judge every change the call made, so a payload they cannot read is a call
+    // nobody judged. Exit 2 there blocks nothing — the call has run — and reaches the model.
+    for (const event of ["post-tool-use", "post-tool-use-failure"]) {
+      const judging = run(["hook", event], "not json at all");
+      expect(judging.code, `${event} must not pass an unread call as clean`).toBe(2);
+      expect(judging.stderr).toContain(`[flow hook ${event}] the guard could not PARSE its payload`);
+    }
+    const annotating = run(["hook", "session-start"], "not json at all");
     expect(annotating.code, "breaking a session over a breadcrumb is the cure killing the patient").toBe(0);
     expect(annotating.stderr).toContain("could not PARSE its payload");
   });

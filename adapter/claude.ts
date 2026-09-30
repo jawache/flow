@@ -81,7 +81,7 @@ import {
   branchFromHead,
   callKey,
   deltaFault,
-  faultText,
+  readFault,
   hermeticEnv,
   isHookEvent,
   relativise,
@@ -982,10 +982,11 @@ export function readPayload(): PayloadRead {
  *
  * `pre-tool-use` is the rail that GUARDS, so it fails CLOSED — a payload it cannot read is a tool
  * call it cannot judge, and "I could not look" must never be spelled the same way as "I looked and
- * it was fine". The others cannot refuse a call — the after-call rails run once it has — and
- * breaking a session over a hook that only adds a breadcrumb would be the cure killing the patient,
- * so they SPEAK on stderr and allow, because silence is precisely what let the old swallow go
- * unnoticed.
+ * it was fine". The after-call rails JUDGE too — every change a call made reaches the rules there —
+ * so a payload they cannot read is a call whose changes nobody judged, and they report it with exit
+ * 2, which on those rails reaches the model beside the result and blocks nothing. The rest only add
+ * a breadcrumb, and breaking a session over one would be the cure killing the patient, so they SPEAK
+ * on stderr and allow. `readFault` next door is where that split is decided.
  *
  * Everything is wrapped: a hook that throws is a hook that wedges a session, and an unknown event
  * is silence rather than a usage message in front of the model.
@@ -995,10 +996,7 @@ export async function hookEntry(event: string, cwd: string): Promise<HookResult>
     if (!isHookEvent(event)) return ALLOW;
     const read = readPayload();
     if (!read.ok) {
-      const text = faultText(event, read.why, read.detail);
-      return event === "pre-tool-use"
-        ? { stdout: "", stderr: `\n${text}\n`, exitCode: 2 }
-        : { stdout: "", stderr: `${text}\n`, exitCode: 0 };
+      return readFault(event, read.why, read.detail);
     }
     return await runHook(event, read.payload, projectRoot(cwd));
   } catch (error) {

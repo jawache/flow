@@ -37,6 +37,7 @@ import {
   deleteTargets,
   delivers,
   faultText,
+  readFault,
   hermeticEnv,
   isHookEvent,
   isInjected,
@@ -669,6 +670,19 @@ describe("toResult — one refusal spelling, one injection spelling", () => {
       "[flow hook pre-tool-use] the guard could not READ its payload from stdin (EBADF).",
     );
     expect(faultText("stop", "unparseable", "12 bytes on stdin, and not JSON")).toContain("could not PARSE");
+  });
+
+  it("is LOUD on every rail that judges a tool call, and speaks without holding on the rest", () => {
+    for (const hook of ["pre-tool-use", "post-tool-use", "post-tool-use-failure"] as const) {
+      const answer = readFault(hook, "unparseable", "not JSON");
+      expect(answer.exitCode, hook).toBe(2);
+      expect(answer.stderr).toContain(`[flow hook ${hook}] the guard could not PARSE its payload`);
+    }
+    for (const hook of ["session-start", "stop", "notification"] as const) {
+      const answer = readFault(hook, "unreadable", "EBADF");
+      expect(answer.exitCode, hook).toBe(0);
+      expect(answer.stderr).toContain("could not READ");
+    }
   });
 });
 
@@ -2170,9 +2184,29 @@ describe("the delta becomes the write and delete rails, and touch is the floor",
     expect(edit).toStrictEqual([{ rail: "brief", moment: "touch", path: "src/a.ts" }]);
     const rm = toEvent("post-tool-use", pre("Bash", { command: "rm src/old.ts" }), withChanges(changes.slice(2)));
     expect(rm).toStrictEqual([{ rail: "brief", moment: "touch", path: "src/old.ts" }]);
-    expect(preJudged(pre("Write", { file_path: "/repo/x.ts" }), ROOT)).toEqual(["x.ts"]);
-    expect(preJudged(pre("MultiEdit", {}), ROOT)).toEqual([]);
-    expect(preJudged(pre("Read", { file_path: "/repo/x.ts" }), ROOT), "a read judged nothing").toEqual([]);
+    expect(preJudged(pre("Write", { file_path: "/repo/x.ts" }), ROOT)).toEqual({ writes: ["x.ts"], deletes: [] });
+    expect(preJudged(pre("Bash", { command: "rm /repo/x.ts" }), ROOT)).toEqual({ writes: [], deletes: ["x.ts"] });
+    expect(preJudged(pre("MultiEdit", {}), ROOT)).toEqual({ writes: [], deletes: [] });
+    expect(preJudged(pre("Read", { file_path: "/repo/x.ts" }), ROOT), "a read judged nothing").toEqual({ writes: [], deletes: [] });
+  });
+
+  it("judges as a WRITE an rm target the call wrote again — PreToolUse only judged it as a delete", () => {
+    const rewritten = [{ path: "src/a.ts", before: "a\n", after: "a // TODO\n" }];
+    const command = "rm src/a.ts && cat > src/a.ts <<EOF\na // TODO\nEOF";
+    expect(toEvent("post-tool-use", pre("Bash", { command }), withChanges(rewritten))).toStrictEqual([
+      { rail: "guard", moment: "write", file: { path: "src/a.ts", content: "a // TODO\n" }, observed: true },
+      { rail: "brief", moment: "touch", path: "src/a.ts" },
+    ]);
+    // An mv's source that something else then fills is the same hole, and closed the same way.
+    const moved = [
+      { path: "src/a.ts", before: "a\n", after: "TODO\n" },
+      { path: "src/b.ts", before: null, after: "a\n" },
+    ];
+    const events = toEvent("post-tool-use", pre("Bash", { command: "mv src/a.ts src/b.ts && echo TODO > src/a.ts" }), withChanges(moved));
+    expect(events.flatMap((e) => (e.rail === "guard" ? [[e.moment, e.file?.path]] : []))).toStrictEqual([
+      ["write", "src/a.ts"],
+      ["write", "src/b.ts"],
+    ]);
   });
 
   it("touches the path the tool named once, however many rails it is on", () => {
