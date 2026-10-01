@@ -1161,6 +1161,8 @@ describe("the justfile — a bypass is DERIVED from the repo's own recipes", () 
     expect(classifyBash("git commit -m x", tools).commits).toBe(true);
     // Authoring a file whose body mentions a tool is not running that tool.
     expect(classifyBash("cat <<'EOF' > x\neslint .\nEOF", tools)).toEqual({ recipes: [], bypasses: [], commits: false });
+    // A here-string is not a heredoc: the line is still read.
+    expect(classifyBash("grep -c x <<< foo && npx vitest run", tools).bypasses).toEqual(["vitest"]);
   });
 });
 

@@ -65,7 +65,7 @@ import {
 // would remove is event ASSEMBLY — the adapter's job — but quote-aware shell tokenising is a
 // question the checks layer already answers, and the old engine's second answer (a regex split on
 // `&&|\|\||;`) is exactly the near-duplicate this rewrite exists to delete.
-import { closeParen, dquoteEnd, elideHeredocs, GIT_VALUE_OPTS, missingGrammarText, tokenizeCommand } from "../checks/domain.ts";
+import { closeParen, dquoteEnd, elideHeredocs, firstHeredoc, GIT_VALUE_OPTS, missingGrammarText, tokenizeCommand } from "../checks/domain.ts";
 // String algebra only — a Bash read is resolved against the directory the shell was in.
 import { posix } from "node:path";
 // The one glob engine. A coverage question asked with a second matcher is a coverage answer about
@@ -2534,7 +2534,7 @@ export function classifyBash(command: unknown, tools: readonly string[]): BashCl
   const line = strip(command);
   // A heredoc is authoring, not running — the body is a file being written, and every word in it
   // would otherwise read as a command.
-  if (/<<-?\s*['"]?\w/.test(line)) return { recipes: [], bypasses: [], commits: false };
+  if (firstHeredoc(line) !== null) return { recipes: [], bypasses: [], commits: false };
   const recipes: string[] = [];
   for (const match of line.matchAll(/(?:^|\n|;|\||&&|\()\s*just\s+([a-z][\w-]*)/g)) recipes.push(match[1] as string);
   const bypasses: string[] = [];
@@ -3587,7 +3587,7 @@ const DEMO_CONFIG = String.raw`// flow.config.ts — this repo's whole guard, an
 //   flow status   what is bound, at which moments, and what is not wired yet
 //   flow test     every rule's own cases, run
 
-import { command, commit, defineCategory, defineConfig, definePack, guardrail, pack } from "@jawache/flow";
+import { banCommands, command, commit, defineCategory, defineConfig, definePack, guardrail, pack } from "@jawache/flow";
 import { flow } from "@jawache/flow/packs";
 
 // A category is a name and the HOST-WRITTEN evidence that recognises it — never a claim a session
@@ -3602,11 +3602,7 @@ const MARKER = ["DO", "NOT", "COMMIT"].join("-");
 export const demo = definePack("demo", {
   noForcePush: guardrail()
     .at(command)
-    .check((ctx) =>
-      /git\s+push\b[^\n]*(--force|(^|\s)-f(\s|$))/.test(ctx.command ?? "")
-        ? ctx.fail("rewrites history other clones already have")
-        : ctx.ok(),
-    )
+    .check(banCommands({ ban: ["git\\s+push\\b[^\\n]*(--force|(^|\\s)-f(\\s|$))"] }))
     .message("Force-pushing rewrites history everyone else has. Push a correcting commit, or ask first.")
     .test({ pass: ["git push origin main"], block: ["git push --force origin main"] }),
 

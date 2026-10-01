@@ -105,7 +105,7 @@ flow — command blocked before it ran:
 
 ✗ demo.noForcePush · git push --force origin main
   Force-pushing rewrites history everyone else has. Push a correcting commit, or ask first.
-    rewrites history other clones already have
+    matches banned /git\s+push\b[^\n]*(--force|(^|\s)-f(\s|$))/
 
 Adjust the command, then retry.
 ```

@@ -84,7 +84,7 @@ Open the `flow.config.ts` that `flow init` wrote. It is ordinary code, and it is
 //   flow status   what is bound, at which moments, and what is not wired yet
 //   flow test     every rule's own cases, run
 
-import { command, commit, defineCategory, defineConfig, definePack, guardrail, pack } from "@jawache/flow";
+import { banCommands, command, commit, defineCategory, defineConfig, definePack, guardrail, pack } from "@jawache/flow";
 import { flow } from "@jawache/flow/packs";
 
 // A category is a name and the HOST-WRITTEN evidence that recognises it — never a claim a session
@@ -99,11 +99,7 @@ const MARKER = ["DO", "NOT", "COMMIT"].join("-");
 export const demo = definePack("demo", {
   noForcePush: guardrail()
     .at(command)
-    .check((ctx) =>
-      /git\s+push\b[^\n]*(--force|(^|\s)-f(\s|$))/.test(ctx.command ?? "")
-        ? ctx.fail("rewrites history other clones already have")
-        : ctx.ok(),
-    )
+    .check(banCommands({ ban: ["git\\s+push\\b[^\\n]*(--force|(^|\\s)-f(\\s|$))"] }))
     .message("Force-pushing rewrites history everyone else has. Push a correcting commit, or ask first.")
     .test({ pass: ["git push origin main"], block: ["git push --force origin main"] }),
 

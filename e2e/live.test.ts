@@ -984,13 +984,15 @@ describe("flow status — the live session's permission mode, and auto mode's st
         // Named for the repo as status resolves it: macOS's temp folder is a symlink, and a spawned
         // process's working directory is the real path.
         const store = join(user, ".claude", "projects", realpathSync(repo).replace(/[^a-zA-Z0-9]/g, "-"));
+        // The host's folder named twice over, so the store agrees with it whatever this machine sets.
+        const rig = { user, home: join(user, ".claude") };
         mkdirSync(store, { recursive: true });
         const record = { type: "attachment", attachment: { type: "auto_mode", autoModeConsentFlow: false, bypass: false, ...attachment }, sessionId: session, cwd: repo };
         writeFileSync(join(store, `${session}.jsonl`), `${JSON.stringify({ type: "user", message: { role: "user", content: "go" } })}\n${JSON.stringify(record)}\n`);
 
         const call = { ...pre("Bash", { command: "ls" }, session), permission_mode: "auto", cwd: repo };
-        expect(runFlow(repo, ["hook", "pre-tool-use"], { user }, JSON.stringify(call)).code).toBe(0);
-        const lines = runFlow(repo, ["status"], { user }).stdout.split("\n");
+        expect(runFlow(repo, ["hook", "pre-tool-use"], rig, JSON.stringify(call)).code).toBe(0);
+        const lines = runFlow(repo, ["status"], rig).stdout.split("\n");
         expect(lines).toContain(`  session    ${session} · main, wearing no category`);
         expect(lines).toContain(`  mode       ${says}`);
       } finally {

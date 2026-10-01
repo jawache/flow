@@ -24,8 +24,8 @@
 // returning a non-zero code — is handed back as a value too.
 //
 // THE THREE ENVIRONMENT SEAMS, all of them the product's own rather than the suite's:
-//   CLAUDE_CONFIG_DIR   where the host keeps settings.json. Pointing it at a temp directory is
-//                       what lets `flow init`'s registration half run for real.
+//   CLAUDE_CONFIG_DIR   where the host keeps settings.json and its transcript store. Pointing it at
+//                       a temp directory is what lets `flow init`'s registration half run for real.
 //   CLAUDE_PROJECT_DIR  which repo a hook payload is about. Always set here, to the repo being
 //                       driven, because that is what a harness does and a rail that had to guess
 //                       would be guessing in the suite too.
@@ -93,13 +93,13 @@ export interface Ran {
 
 /** Where a run's world is — every field optional, because each suite needs a different half. */
 export interface Rig {
-  /** `CLAUDE_CONFIG_DIR`: the host settings file this run reads and writes. */
+  /** `CLAUDE_CONFIG_DIR`: the host's folder — the settings file this run reads and writes, and its transcript store. */
   readonly home?: string | undefined;
   /** A directory holding the `flow` shim, prepended to PATH for git's own hook. */
   readonly bin?: string | undefined;
   /**
-   * `HOME`: the user's home, where the host keeps its transcript store (`~/.claude/projects/…`).
-   * A run that reads conversations reads this one's, never the machine's.
+   * `HOME`: the user's home, where the host keeps its transcript store (`~/.claude/projects/…`)
+   * when `home` does not move it. A run that reads conversations reads this one's, never the machine's.
    */
   readonly user?: string | undefined;
 }

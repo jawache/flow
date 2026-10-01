@@ -12,10 +12,10 @@
 //   NOTHING THROWS              a missing store, an unreadable transcript and a repo git cannot
 //                               answer for are all facts to report, never errors to raise.
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { defineConfig, loadConfig, pack, type LoadResult } from "../index.ts";
 import { rails } from "../__fixtures__/engine-pack.ts";
 import { alreadyRead, appendRows, markRead } from "../engine/state.ts";
@@ -91,6 +91,24 @@ describe("the store, walked", () => {
     const store = readStore(repo, home);
     expect(store).toMatchObject({ exists: false, transcripts: [], ignored: [] });
     expect(store.dir).toContain(projectFolderName(repo));
+  });
+
+  it("lives under CLAUDE_CONFIG_DIR when the host is pointed there, as the host keeps it", () => {
+    vi.stubEnv("CLAUDE_CONFIG_DIR", home);
+    try {
+      expect(projectDir(repo)).toBe(join(home, "projects", projectFolderName(repo)));
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("lives under ~/.claude when nothing moves it", () => {
+    vi.stubEnv("CLAUDE_CONFIG_DIR", undefined);
+    try {
+      expect(projectDir(repo)).toBe(join(homedir(), ".claude", "projects", projectFolderName(repo)));
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 

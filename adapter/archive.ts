@@ -69,9 +69,17 @@ function textOf(path: string): string | null {
   }
 }
 
-/** Where this harness keeps a working directory's conversations. */
-export function projectDir(cwd: string, home: string = homedir()): string {
-  return join(home, ".claude", "projects", projectFolderName(cwd));
+/**
+ * Where this harness keeps a working directory's conversations.
+ *
+ * Under the host's own folder, and `CLAUDE_CONFIG_DIR` moves that folder — the host honours it for
+ * the store as it does for settings.json, so a store read from `~/.claude` regardless would be
+ * somebody else's. A `home` passed in is taken as the user's home and wins: that is a test naming
+ * its own world.
+ */
+export function projectDir(cwd: string, home?: string): string {
+  const root = home === undefined ? process.env["CLAUDE_CONFIG_DIR"] || join(homedir(), ".claude") : join(home, ".claude");
+  return join(root, "projects", projectFolderName(cwd));
 }
 
 /**
@@ -119,7 +127,7 @@ export interface Store {
 }
 
 /** What the harness has recorded for this working directory. A missing folder is a fact, not an error. */
-export function readStore(cwd: string, home: string = homedir()): Store {
+export function readStore(cwd: string, home?: string): Store {
   const dir = projectDir(cwd, home);
   if (!existsSync(dir)) return { dir, exists: false, transcripts: [], ignored: [] };
   const { transcripts, ignored } = classifyStore(listing(dir));
@@ -181,7 +189,7 @@ function trackedPaths(root: string): string[] {
 export function facts(root: string, load: LoadResult, opts: FactsOpts = {}): Facts {
   const home = opts.home ?? homedir();
   const nowMs = opts.nowMs ?? Date.now();
-  const store = readStore(root, home);
+  const store = readStore(root, opts.home);
 
   // ONE PASS PER FILE, and one read per file. A transcript is a couple of megabytes, there is one
   // per conversation this repo has ever had, and the three opening facts below used to cost three

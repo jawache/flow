@@ -50,7 +50,6 @@ import {
   gitInvocations,
   givesReason,
   globToRe,
-  heredocBody,
   judgeCanonical,
   jsonInvariant,
   jsonViolations,
@@ -624,17 +623,17 @@ describe("commitMessage", () => {
   });
 });
 
-describe("heredocBody", () => {
+describe("commitMessage on stdin — the first heredoc's body", () => {
   it("reads the first heredoc, quoted or bare", () => {
-    expect(heredocBody("cat <<EOF\nbody\nEOF")).toBe("body");
-    expect(heredocBody(`cat <<'EOF'\nbody\nEOF`)).toBe("body");
-    expect(heredocBody('cat <<-"EOF"\nbody\nEOF')).toBe("body");
+    expect(commitMessage("git commit -F - <<EOF\nbody\nEOF")).toBe("body");
+    expect(commitMessage(`git commit -F - <<'EOF'\nbody\nEOF`)).toBe("body");
+    expect(commitMessage('git commit -F - <<-"EOF"\nbody\nEOF')).toBe("body");
   });
 
   it("null when there is none, when it is unterminated, and when the body is empty", () => {
-    expect(heredocBody("echo hi")).toBeNull();
-    expect(heredocBody("cat <<EOF\nbody")).toBeNull();
-    expect(heredocBody("cat <<EOF\nEOF")).toBeNull();
+    expect(commitMessage("git commit -F -")).toBeNull();
+    expect(commitMessage("git commit -F - <<EOF\nbody")).toBeNull();
+    expect(commitMessage("git commit -F - <<EOF\nEOF")).toBeNull();
   });
 });
 

@@ -605,7 +605,7 @@ export const GIT_VALUE_OPTS: ReadonlySet<string> = new Set([
 // inside a `$(…)`, and the one that was wrong was the one the command rail used.
 
 /** A heredoc's opener: its delimiter, whether `<<-` strips leading tabs, and where the opener ends. */
-interface HeredocOpen {
+export interface HeredocOpen {
   readonly delim: string;
   readonly tabs: boolean;
   readonly end: number;
@@ -628,6 +628,21 @@ function heredocOpen(s: string, i: number): HeredocOpen | null {
   const m = DELIMITER.exec(s);
   const delim = m?.[1] ?? m?.[2] ?? m?.[3] ?? "";
   return m === null || delim === "" ? null : { delim, tabs, end: at + m[0].length };
+}
+
+/**
+ * The first heredoc opener anywhere in a line, quoted context or not — the one definition of "this
+ * line carries a heredoc". A here-string (`<<<`) is stepped over whole, so its tail is not read as
+ * one.
+ */
+export function firstHeredoc(s: string): HeredocOpen | null {
+  for (let i = s.indexOf("<<"); i !== -1; ) {
+    const doc = heredocOpen(s, i);
+    if (doc !== null) return doc;
+    while (s[i] === "<") i++;
+    i = s.indexOf("<<", i);
+  }
+  return null;
 }
 
 /**
@@ -991,30 +1006,6 @@ export function gitInvocations(command: string): GitInvocation[] | null {
 }
 
 /**
- * The body of the first heredoc in the raw command, or null.
- *
- * `git commit -F -` reads its message on stdin, and a QUOTED heredoc is the safe way to write one
- * containing backticks — a form this codebase's own rules push commits toward. The argument scan
- * cannot see it: there is no `-m` token, so a message written that way goes unjudged, and every
- * rule that reads a commit message is inert on it.
- *
- * Deliberately last-resort and deliberately dumb — it runs only when no inline message was found,
- * and reads the FIRST heredoc, because a commit command carrying two is not a shape anyone writes
- * and guessing between them would be worse than the gap.
- */
-export function heredocBody(command: string): string | null {
-  const open = /<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/.exec(command);
-  if (!open) return null;
-  const delimiter = open[2];
-  const rest = command.slice(open.index + open[0].length);
-  const lines = rest.split("\n").slice(1); // the rest of the opening line is not body
-  const end = lines.findIndex((l) => l.trim() === delimiter);
-  if (end === -1) return null; // unterminated — not ours to guess at
-  const body = lines.slice(0, end).join("\n").trim();
-  return body === "" ? null : body;
-}
-
-/**
  * The message a `git commit` in this command line carries, or null when there is no judgeable
  * commit in it at all. Null is the "not our business" answer and every caller passes on it.
  *
@@ -1073,7 +1064,16 @@ export function commitMessage(command: string): string | null {
   const readsStdin = commit.args.some(
     (a, i) => ((a === "-F" || a === "--file") && commit.args[i + 1] === "-") || a === "-F-" || a === "--file=-",
   );
-  return readsStdin ? heredocBody(command) : null;
+  if (!readsStdin) return null;
+  // The message is then the FIRST heredoc's body — a QUOTED heredoc is the safe way to write one
+  // containing backticks. Deliberately dumb: a commit command carrying two is not a shape anyone
+  // writes, and guessing between them would be worse than the gap. Trimmed; empty is no message.
+  const doc = firstHeredoc(command);
+  const from = doc === null ? -1 : command.indexOf("\n", doc.end) + 1; // the rest of the opener's line is not body
+  if (doc === null || from === 0) return null;
+  const { body, end } = heredocEnd(command, from, doc);
+  if (body === end) return null; // unterminated — not ours to guess at
+  return command.slice(from, body).trim() || null;
 }
 
 /** One shell argument, single-quoted so nothing in it can be expanded or re-parsed. */
