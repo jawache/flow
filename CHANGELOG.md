@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.2.0](https://github.com/jawache/flow/compare/v0.1.2...v0.2.0) (2026-10-01)
+
+### ⚠ BREAKING CHANGES
+
+* **checks:** a repo's own banCommands rule no longer matches text
+  inside a heredoc. Set matchHeredocs: true to keep the old behaviour.
+* **packs:** the `docs` pack no longer ships `docs.noMarkdownInUserDocs`.
+  A repo that bound `docs` to keep markdown out of its user docs loses that
+  refusal; a repo that overrode the entry must drop the override, which names an
+  entry the pack no longer has and therefore refuses to load. `docs.docsShape`
+  still holds the two doors, and its message no longer calls `user/` HTML.
+* **adapter:** writes made by a background command after its call
+  returns are now reverted when a rule refuses them, instead of reported.
+
+### Features
+
+* **adapter:** a file a Bash command reads briefs its area before the command runs ([2525dfd](https://github.com/jawache/flow/commit/2525dfd1c5afc4fe5b7af18ad885dc4152500660))
+* **adapter:** a refusal under overlap puts back only the refused files, and a background command's writes are reported ([6c8529a](https://github.com/jawache/flow/commit/6c8529a3a4629c2637b1ebfd488588cfe7022b34))
+* **adapter:** every tool call is snapshotted, diffed and judged, and a refused write is put back ([c963ac2](https://github.com/jawache/flow/commit/c963ac2118fcf227bd05ababbe19f4d459ea4f54))
+* **adapter:** the log records what went round the tool rows, and facts and status report it ([7d27831](https://github.com/jawache/flow/commit/7d278318c1ca0f9df4fe9c448c53ea4f2ebb7490))
+* **checks:** a repo can let only named rungs write, through the oneWriter check and ctx.actor ([62b5fb2](https://github.com/jawache/flow/commit/62b5fb2a4107b21014ec3ac39087cd963830ba1e))
+* **checks:** command bans leave heredoc text out, unless a rule sets matchHeredocs ([caebd04](https://github.com/jawache/flow/commit/caebd04579b9e35cffb09bd61a1bd764b784ad52))
+* **checks:** one function elides a command's heredoc bodies, and the read lexer shares its shell primitives ([352739a](https://github.com/jawache/flow/commit/352739af96c15d89de5d798891c241187431ba85))
+* **packs:** user docs may be markdown; docs/user converted from HTML ([fcb3e7f](https://github.com/jawache/flow/commit/fcb3e7f8de9414b56e9bf6d681ffb0c04f7693a2))
+* **tools:** score any Bash path extractor against the corpus, per mechanism and trap ([e95facc](https://github.com/jawache/flow/commit/e95facc4eea2efab6fd5653a6026b96f10724f38))
+* **tools:** three Bash read extractors, scored side by side on the corpus ([f4c49b7](https://github.com/jawache/flow/commit/f4c49b791615c566847ffb24bb854fc6f6fc0945))
+
+### Bug Fixes
+
+* **adapter:** a background command gets no special treatment, and its later writes are judged like any other ([6de448b](https://github.com/jawache/flow/commit/6de448b9df3486da60e38f6a2f9ce5dbc572bfa1))
+* **adapter:** an rm target written again is judged as a write, and an unread after-call payload is loud ([0de5f1b](https://github.com/jawache/flow/commit/0de5f1b843a094fc43da8204e829a255c8ff53bb))
+* **build:** tsconfig includes by glob, so a worktree named repo.branch still typechecks ([177f3e1](https://github.com/jawache/flow/commit/177f3e18da645cd33aff5369c37f67625f54a618))
+* **checks:** a heredoc is the commit message only when the commit reads stdin ([d909238](https://github.com/jawache/flow/commit/d90923860f163fc1f2ca50a53926b564a6aa0fac))
 ## [0.1.2](https://github.com/jawache/flow/compare/v0.1.1...v0.1.2) (2026-09-16)
 
 ### Features
