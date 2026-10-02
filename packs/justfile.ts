@@ -136,7 +136,7 @@ export const justfile = definePack("justfile", (repo: Catalogue) => {
       [
         "The justfile is this repo's tool catalogue — the single source of truth for the tooling you can confidently reach for. Run `just` FIRST to see what you can do here; do not discover commands from package.json or memory.",
         `A recipe means: reach for this repeatedly, with confidence. Recipes stay thin — the code behind one lives in \`${tools}/\`; one-off operational scripts live there too and never become recipes.`,
-        "A one-off command or chain is fine to run directly. Anything you'll run more than once becomes a script; anything a human should also run becomes a recipe (with a [doc(\"…\")]).",
+        "A one-off command or chain is fine to run directly. Anything you'll run more than once becomes a script. A script earns a recipe (with a [doc(\"…\")]) only when it is run REGULARLY, across tasks; who runs it is not the test. A one-off or per-release step (a seed, a backfill, a data fix) runs as a script by hand and gets no recipe.",
         "If a service offers a CLI, prefer it over an MCP — a command is recorded, guardable and reproducible.",
       ].join("\n"),
     ),
@@ -153,8 +153,8 @@ export const justfile = definePack("justfile", (repo: Catalogue) => {
     .text(
       [
         `You are writing into \`${tools}/\` — the implementation layer, not the catalogue. Decide which of two things this file is:`,
-        `Repeatable — part of the catalogue? Then it also needs a thin justfile recipe pointing at it, with a [doc("…")] — a tool that exists only in \`${tools}/\` is undiscoverable.`,
-        "A one-off (a migration, a backfill, a workflow step)? Then it gets NO recipe — one-shots promoted into the catalogue are how `just --list` becomes noise and stops being trustworthy.",
+        `Run REGULARLY, across tasks — part of the catalogue? Then it also needs a thin justfile recipe pointing at it, with a [doc("…")] — a tool that exists only in \`${tools}/\` is undiscoverable.`,
+        "A one-off (a migration, a backfill, a seed, a release's data step, a workflow step)? Then it gets NO recipe, even if a human runs it and even if it runs once per environment — one-shots promoted into the catalogue are how `just --list` becomes noise and stops being trustworthy.",
       ].join("\n"),
     ),
 
