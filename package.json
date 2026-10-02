@@ -1,6 +1,6 @@
 {
   "name": "@jawache/flow",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Guardrails and breadcrumbs as code — packs you import, a config that typechecks, one adapter per harness.",
   "license": "MIT",
   "repository": {

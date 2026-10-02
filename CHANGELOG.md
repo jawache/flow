@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.2.1](https://github.com/jawache/flow/compare/v0.2.0...v0.2.1) (2026-10-02)
+
+### Bug Fixes
+
+* **packs:** a recipe is earned by regular use, not by a human running it ([14caca8](https://github.com/jawache/flow/commit/14caca84a1d7b8d20057a907c5ecc2ec1b407710))
 ## [0.2.0](https://github.com/jawache/flow/compare/v0.1.2...v0.2.0) (2026-10-01)
 
 ### ⚠ BREAKING CHANGES
