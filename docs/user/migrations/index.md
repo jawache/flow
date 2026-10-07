@@ -31,7 +31,7 @@ steps that index lists. Stop and report if a Verify step fails.
 
 | Version | Released | Upgrades from | Changes needed |
 | --- | --- | --- | --- |
-| [0.2.2](./0.2.2.md) | unreleased | 0.2.1 | Edit `.githooks/pre-commit`, and any other command that runs `flow commit` |
+| [0.2.2](./0.2.2.md) | 2026-10-07 | 0.2.1 | Edit `.githooks/pre-commit`, and any other command that runs `flow commit` |
 | [0.2.1](./0.2.1.md) | 2026-10-02 | 0.2.0 | None |
 | [0.2.0](./0.2.0.md) | 2026-10-01 | 0.1.2 | Re-run `flow init`. Remove `override(docs.noMarkdownInUserDocs)`. Check `banCommands` rules about heredoc text |
 | [0.1.2](./0.1.2.md) | 2026-09-16 | 0.1.1 | Only for a repo with its own `depcruise` rule whose layers are written as regexes |
