@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.2.3](https://github.com/jawache/flow/compare/v0.2.2...v0.2.3) (2026-10-07)
+
+### Bug Fixes
+
+* **git:** the attribution rule reads a commit made with git -C or git -c ([51b450b](https://github.com/jawache/flow/commit/51b450b11aac4b544ce15a3b5513f3a0c2ad7ac3))
 ## [0.2.2](https://github.com/jawache/flow/compare/v0.2.1...v0.2.2) (2026-10-07)
 
 ### Features
