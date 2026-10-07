@@ -260,45 +260,55 @@ describe("flow init, run again", () => {
   });
 });
 
-// ── the README's two transcripts ─────────────────────────────────────────────
+// ── the README's example ─────────────────────────────────────────────────────
 //
-// A quickstart is a promise about what you will see, and a hand-copied one starts drifting the first
-// time a sentence is reworded — silently, because nothing reads it. These two blocks are pinned to
-// the binary instead: the README is the expected value and the real run is the actual.
+// A front page is a promise about what you will see, and a hand-copied one starts drifting the first
+// time a sentence is reworded — silently, because nothing reads it. The README's example rule is
+// pinned to the config `flow init` writes, and the refusal under it to the binary: the README is
+// the expected value and the real run is the actual.
 //
 // THE THREE SUBSTITUTIONS are all paths and are named here: the repo, the host's config directory
-// and this checkout are different on every machine, so the README quotes a settled spelling of each
+// and this checkout are different on every machine, so a page quotes a settled spelling of each
 // and this puts it back before comparing. Nothing else is touched — every word is the binary's.
 //
 // "This checkout" is TWO paths, and the second is the suite's own doing: the package under test is
 // built into a throwaway root so a test run never rewrites the live guard, so the link `flow init`
-// reports points there rather than at the checkout. A reader following the README has one of them
-// and it is spelled the same way.
+// reports points there rather than at the checkout. A reader following a page has one of them and
+// it is spelled the same way.
 
-const DEMO_REPO = "/tmp/flow-demo";
+const REPO = "…/my-repo";
 const CHECKOUT = "…/flow";
 
-/** The fenced block in the README that opens with this line. */
-function quoted(opening: string): string {
-  const text = readFileSync(join(PACKAGE, "README.md"), "utf8");
-  const block = text.split("```").find((part) => part.trimStart().startsWith(opening));
-  expect(block, `the README has no fenced block starting "${opening}"`).toBeDefined();
-  return (block as string).trim();
+/** The fenced block in a page that opens with this line, whatever language its fence names. */
+function fenced(file: string, opening: string): string {
+  const found = readFileSync(file, "utf8")
+    .split(/^```[^\n]*$/m)
+    .filter((_part, at) => at % 2 === 1)
+    .find((body) => body.trimStart().startsWith(opening));
+  expect(found, `${file} has no fenced block starting "${opening}"`).toBeDefined();
+  return (found as string).trim();
 }
+
+/** The fenced block in the README that opens with this line. */
+const quoted = (opening: string): string => fenced(join(PACKAGE, "README.md"), opening);
+
+/** Code with its indentation taken off every line — a block quoted at the margin, compared. */
+const unindented = (code: string): string =>
+  code
+    .split("\n")
+    .map((line) => line.trim())
+    .join("\n");
 
 /**
  * One machine's output, in the spelling a page quotes.
  *
- * THE REPO'S PLACEHOLDER IS AN ARGUMENT because it is the only substitution the two pages disagree
- * about: the README walks a reader through `/tmp/flow-demo` and the quick start through their own
- * `…/my-repo`. The checkout and the host's config directory are spelled the same on both, so they
- * are not arguments — a second copy of this function differing in one string is how the quick
- * start's transcripts drifted for a release in the first place.
+ * ONE spelling of each path for every page — a second copy of this function differing in one string
+ * is how the quick start's transcripts drifted for a release in the first place.
  */
-function asQuoted(output: string, repo: string, settingsHome: string, repoAs: string = DEMO_REPO): string {
+function asQuoted(output: string, repo: string, settingsHome: string): string {
   return output
-    .replaceAll(realpathSync(repo), repoAs)
-    .replaceAll(repo, repoAs)
+    .replaceAll(realpathSync(repo), REPO)
+    .replaceAll(repo, REPO)
     .replaceAll(realpathSync(builtPackage()), CHECKOUT)
     .replaceAll(builtPackage(), CHECKOUT)
     .replaceAll(PACKAGE.replace(/\/$/, ""), CHECKOUT)
@@ -306,16 +316,19 @@ function asQuoted(output: string, repo: string, settingsHome: string, repoAs: st
     .trim();
 }
 
-describe("the README's quickstart", () => {
-  it("quotes what `flow init` and `flow status` really print, word for word", () => {
-    // A HOST THAT HAS NEVER HEARD OF FLOW, as well as a repo: the registrations are written once per
-    // machine, so re-using this file's shared home would drop the settings line the README shows and
-    // make the quickstart's first run unreproducible for the reader having it.
+describe("the README's example", () => {
+  it("quotes a rule from the config `flow init` writes, and the refusal it really prints", () => {
     const shown = newRepo();
     const firstTime = mkdtempSync(join(tmpdir(), "flow-readme-"));
     try {
-      expect(asQuoted(flow(shown, ["init"], firstTime).stdout, shown, firstTime)).toBe(quoted("flow init — created:"));
-      expect(asQuoted(flow(shown, ["status"], firstTime).stdout, shown, firstTime)).toBe(quoted("flow is ON —"));
+      expect(flow(shown, ["init"], firstTime).code).toBe(0);
+      const written = unindented(readFileSync(join(shown, "flow.config.ts"), "utf8"));
+      expect(written, "the rule is the demo's own, word for word").toContain(unindented(quoted("noForcePush: guardrail()")));
+
+      const forced = JSON.stringify(pre("Bash", { command: "git push --force origin main" }));
+      const ran = runFlow(shown, ["hook", "pre-tool-use"], { home: firstTime, bin }, forced);
+      expect(ran.code).toBe(2);
+      expect(asQuoted(ran.stderr, shown, firstTime)).toBe(quoted("flow — command blocked before it ran:"));
     } finally {
       for (const dir of [shown, firstTime]) rmSync(dir, { recursive: true, force: true });
     }
@@ -436,35 +449,23 @@ describe("flow init --empty", () => {
 //
 // THE PRINCIPLE, ruled with the human on 2026-09-09: a GENERATED page is captured from the code
 // (that is `just docs-packs` and its drift gate); a HAND-WRITTEN page is pinned by a test that
-// fails when it and the binary disagree. The README's two transcripts had that already, and were
-// the only pages that had not drifted — the quick start claimed a scaffold that stopped existing
-// at the split, and the exit-code table published a 1/2 split the binary never made.
+// fails when it and the binary disagree. The README's transcripts had that already, and were the
+// only pages that had not drifted — the quick start claimed a scaffold that stopped existing at the
+// split, and the exit-code table published a 1/2 split the binary never made.
 //
 // The three substitutions above are this file's, and the quick start quotes the same spellings.
 
 /** The fenced block on a docs page that opens with this line, as text. */
-function paged(page: string, opening: string): string {
-  const markdown = readFileSync(join(PACKAGE, "docs", "user", page), "utf8");
-  const found = markdown
-    .split(/^```[^\n]*$/m)
-    .filter((_part, at) => at % 2 === 1)
-    .find((body) => body.trimStart().startsWith(opening));
-  expect(found, `${page} has no block starting "${opening}"`).toBeDefined();
-  return (found as string).trim();
-}
+const paged = (page: string, opening: string): string => fenced(join(PACKAGE, "docs", "user", page), opening);
 
 describe("the quick start's transcripts", () => {
-  // The page walks a reader through their OWN repo, so that is the one placeholder it spells
-  // differently from the README. Everything else is `asQuoted`'s, unchanged.
-  const MY_REPO = "…/my-repo";
-
   it("are what `flow init`, `flow status`, `flow test` and both refusals really print", () => {
     const mine = newRepo();
     const firstTime = mkdtempSync(join(tmpdir(), "flow-quickstart-"));
     const page = (opening: string): string => paged("01-quick-start.md", opening);
     const said = (args: readonly string[], stdin = ""): string => {
       const ran = runFlow(mine, args, { home: firstTime, bin }, stdin);
-      return asQuoted(ran.stdout || ran.stderr, mine, firstTime, MY_REPO);
+      return asQuoted(ran.stdout || ran.stderr, mine, firstTime);
     };
     try {
       expect(said(["init"]), "§2").toBe(page("flow init — created:"));
@@ -487,10 +488,10 @@ describe("the quick start's transcripts", () => {
   });
 });
 
-describe("the README's exit-code table", () => {
-  /** The table's rows, as `{ "0": "yes — …" }` — the codes it publishes and what it says they mean. */
+describe("the command reference's exit-code table", () => {
+  /** The table's rows, as `{ "0": "passed — …" }` — the codes it publishes and what it says they mean. */
   function published(): Record<string, string> {
-    const text = readFileSync(join(PACKAGE, "README.md"), "utf8");
+    const text = readFileSync(join(PACKAGE, "docs", "user", "04-cli-reference.md"), "utf8");
     const table = text.slice(text.indexOf("## Exit codes"));
     const rows = [...table.matchAll(/^\| `(\d)` \| (.+?) \|$/gm)];
     expect(rows.length, "the exit-code table has three rows").toBe(3);

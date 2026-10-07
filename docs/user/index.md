@@ -22,6 +22,10 @@ Every verb of the sentence grammar — `guardrail`, `breadcrumb`, `pack`, `overr
 
 Writing a check no stock one expresses — the `defineCheck` contract — and packing rules for a second repo.
 
+### [04 · Command reference](./04-cli-reference.md)
+
+Every `flow` command, what `flow init` writes, the two switch files, and the exit codes.
+
 ### [Upgrading flow](./migrations/index.md)
 
 One migration guide per release: what a repo that uses flow must change to upgrade to that version, as steps an agent can follow.
@@ -53,4 +57,4 @@ Fourteen configured checks cover what a guard actually asks. You import one and 
 
 ---
 
-The repo's own README is the shorter tour; `packs/` holds the ten packs `@jawache/flow/packs` ships.
+The repo's README says what flow is and why you would use it; `packs/` holds the ten packs `@jawache/flow/packs` ships.
