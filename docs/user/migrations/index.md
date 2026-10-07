@@ -15,13 +15,16 @@ Apply the pages one at a time, oldest first. For each page:
 
 Find the version a repo has now with `npm ls @jawache/flow`, or `flow --version` for a global install.
 
+From 0.2.2, these pages are in the npm package. After `npm i -D @jawache/flow@<target>`, they are at `node_modules/@jawache/flow/docs/user/migrations/`, and that folder has every guide up to `<target>`. They are also on GitHub, at <https://github.com/jawache/flow/tree/main/docs/user/migrations>.
+
 To give the upgrade to an agent working in that repo, use this instruction, with the two versions filled in:
 
-```
+```text
 Upgrade @jawache/flow in this repo from <current> to <target>. Read the migration guides
-index at <path to this folder>/index.md, then apply every guide after <current> up to and
-including <target>, one at a time, oldest first, following the steps that index lists.
-Stop and report if a Verify step fails.
+index at node_modules/@jawache/flow/docs/user/migrations/index.md (or
+https://github.com/jawache/flow/tree/main/docs/user/migrations), then apply every guide
+after <current> up to and including <target>, one at a time, oldest first, following the
+steps that index lists. Stop and report if a Verify step fails.
 ```
 
 ## The guides

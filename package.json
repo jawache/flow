@@ -32,7 +32,8 @@
     "dist/flow.mjs",
     "dist/index.mjs",
     "dist/packs.mjs",
-    "dist/types/"
+    "dist/types/",
+    "docs/user/migrations/"
   ],
   "engines": {
     "node": ">=24"
