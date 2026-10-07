@@ -49,6 +49,7 @@ import {
   sanitise,
   categoriesIn,
   fault,
+  judgedDeletions,
   guard,
   recorder,
   runRows,
@@ -88,7 +89,11 @@ import {
   hermeticEnv,
   isHookEvent,
   pathLines,
-  relativise,
+  stagedChanges,
+  treeChanges,
+  commitScope,
+  type CommitScope,
+  type StagedChanges,
   sessionFactsFrom,
   sidecarPath,
   refused,
@@ -138,13 +143,13 @@ const MAX_OUTPUT = 16 * 1024 * 1024;
  * installed refuses the commit instead of passing it. bash answers 127 itself; the only case left
  * is bash being unspawnable, which is the same fact one level up and is answered the same way.
  */
-export function runCommand(command: string, root: string): ExecResult {
+export function runCommand(command: string, root: string, env = hermeticEnv(process.env)): ExecResult {
   const result = spawnSync("bash", ["-lc", command], {
     cwd: root,
     encoding: "utf8",
     maxBuffer: MAX_OUTPUT,
     // Git's hook variables would aim any nested `git` at the in-progress commit. See GIT_HOOK_ENV.
-    env: hermeticEnv(process.env),
+    env,
   });
   if (result.error) return { stdout: "", stderr: `flow could not run a command: ${result.error.message}`, code: 127 };
   // `status` is null when a signal killed the process. That is a failure, and 1 says so — the one
@@ -946,6 +951,38 @@ function marksWithout(briefed: Marks, before: Marks, unshown: readonly string[])
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 /**
+ * A git question about the commit in progress, asked WITH git's hook variables — the one place flow
+ * keeps them. Inside a pre-commit hook `GIT_INDEX_FILE` names the index being committed, and
+ * `git commit -a` or `git commit <path>` stage into a temporary one, so without it git describes the
+ * wrong index: an empty one, for both. A check's own commands stay hermetic (`runCommand`).
+ */
+function askGit(command: string, root: string): ExecResult {
+  return runCommand(command, root, process.env);
+}
+
+/**
+ * What the commit changes, asked of git ONCE, whoever called the gate — the files it will hold,
+ * which of them are new, and which it removes.
+ *
+ * A git that cannot answer is a refusal, never an empty commit: a gate that read "nothing staged"
+ * off a failed command would pass everything.
+ */
+function readChanges(
+  root: string,
+  scope: CommitScope,
+): { readonly ok: true; readonly staged: StagedChanges } | { readonly ok: false; readonly why: string } {
+  const ask = scope === "staged" ? "git diff --cached --name-status --no-renames -z" : "git ls-files --cached --others --exclude-standard -z";
+  const listed = askGit(ask, root);
+  if (listed.code !== 0)
+    return { ok: false, why: `flow could not ask git what this commit changes (\`${ask}\` exited ${listed.code}): ${listed.stderr.trim()}` };
+  if (scope === "staged") return { ok: true, staged: stagedChanges(listed.stdout) };
+  // The whole tree: every file git can see that is on disk, measured against the last commit.
+  const present = [...new Set(listed.stdout.split("\0"))].filter((path) => path !== "" && existsSync(inRepo(root, path)));
+  const tree = askGit("git ls-tree -r --name-only -z HEAD", root);
+  return { ok: true, staged: treeChanges(present, tree, () => askGit("git rev-parse -q --verify HEAD", root).code === 0) };
+}
+
+/**
  * Every `at(commit)` guardrail over the staged set — the half of the promise the PreToolUse rail
  * cannot make.
  *
@@ -959,7 +996,7 @@ function marksWithout(briefed: Marks, before: Marks, unshown: readonly string[])
  * sidecar outside a session, so the STORED verdict is the only truthful answer, and a fresh commit
  * on a stale or absent marker wears nothing rather than wearing a guess.
  */
-export async function runCommit(root: string, files: readonly string[]): Promise<HookResult> {
+export async function runCommit(root: string, scope: CommitScope): Promise<HookResult> {
   const regime = await loadRegime(root);
   if (regime.kind === "none") return ALLOW;
   if (isOff(root)) return ALLOW;
@@ -969,23 +1006,44 @@ export async function runCommit(root: string, files: readonly string[]): Promise
   // commit until the config loads green, so this rail stays fully shut however the config broke —
   // the import fault here, and a load refusal through `guard()`'s own `!load.ok` branch below.
   if (regime.kind === "broken") return refused([{ moment: "commit", block: fault(regime.message) }]) ?? ALLOW;
-  if (files.length === 0) return ALLOW;
+  const changes = readChanges(root, scope);
+  if (!changes.ok) return refused([{ moment: "commit", block: fault(changes.why) }]) ?? ALLOW;
+  const { files, added, deleted } = changes.staged;
+  const { load } = regime;
+  // Nothing to judge is a pass only for a config that loaded: one that did not refuses every commit,
+  // empty or not, through `guard()`'s own `!load.ok` branch.
+  if (load.ok && files.length === 0 && deleted.length === 0) return ALLOW;
 
   const { branch, session, wearing } = wearer(root);
-  const { load } = regime;
   // The gate is where the expensive checks live — a suite, a type-check, a whole dependency
   // cruise — so it is also where a recording is worth the most: replaying a refused commit is the
   // one thing you cannot do by re-running it, because the working tree has moved on since.
   const tape = isRecording(root) ? recorder(realWorld(root)) : null;
+  // A deleted file is no longer on disk, so what it held is read from the last commit — and only
+  // for a deletion some rule will judge.
+  const gone = judgedDeletions(load.ok ? load.entries : [], deleted).map((path) => ({
+    path,
+    content: askGit(`git show ${quoteArg(`HEAD:${path}`)}`, root).stdout,
+  }));
   const outcome = await guard({
     load,
-    event: { moment: "commit", staged: files, wearing },
+    event: { moment: "commit", staged: files, added, deleted: gone, wearing },
     world: tape?.world ?? realWorld(root),
     off: false,
   });
   if (tape !== null)
-    appendSteps(root, session, [{ rail: "guard", moment: "commit", staged: files, wearing, world: tape.taken() }]);
-  appendRows({ root, session, branch }, runRows("commit", outcome, files.length));
+    appendSteps(root, session, [
+      {
+        rail: "guard",
+        moment: "commit",
+        staged: files,
+        ...(added === undefined ? {} : { added }),
+        ...(gone.length === 0 ? {} : { deleted: gone }),
+        wearing,
+        world: tape.taken(),
+      },
+    ]);
+  appendRows({ root, session, branch }, runRows("commit", outcome, files.length + gone.length));
 
   const blocks: Refused[] = outcome.effects
     .filter((effect): effect is Block => effect.do === "block")
@@ -1070,11 +1128,20 @@ export async function hookEntry(event: string, cwd: string): Promise<HookResult>
   }
 }
 
-/** The git gate, end to end. Paths arrive repo-relative from git; a stray absolute one is folded. */
-export async function commitEntry(files: readonly string[], cwd: string): Promise<HookResult> {
-  const root = resolve(cwd);
-  return runCommit(
-    root,
-    files.map((file) => relativise(file, root)),
-  );
+/**
+ * The git gate, end to end — `flow hook commit`, or `flow hook commit --all` for the whole tree.
+ *
+ * It takes no file list: git is asked. `flow commit <files…>`, the name an older hook still calls,
+ * arrives here with `legacy` set and its list is dropped, because git's answer is the only list — a
+ * second source of the staged set is two answers that can disagree.
+ */
+export async function commitEntry(args: readonly string[], cwd: string, legacy = false): Promise<HookResult> {
+  const scope = commitScope(args, legacy);
+  if (scope === null)
+    return {
+      stdout: "",
+      stderr: `flow hook commit takes no files — it asks git what the commit changes. Pass --all to judge the whole tree instead. Got: ${args.join(" ")}\n`,
+      exitCode: 2,
+    };
+  return runCommit(resolve(cwd), scope);
 }

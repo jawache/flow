@@ -297,8 +297,16 @@ export type TurnAction =
 export interface Ctx {
   // ── WHAT HAPPENED — the event's facts. Plain data, already in memory. ──
   readonly moment: Moment;
-  /** write/touch: the would-be file. */
-  readonly file?: { readonly path: string; readonly content: string } | undefined;
+  /**
+   * write/touch: the would-be file.
+   *
+   * `existed` says whether a file was at `path` before this change, and it is set only where the
+   * tree can no longer say so. A shell command's change is judged AFTER it has landed, when
+   * `ctx.fs.exists(path)` answers yes to every file it created; at commit every staged file is on
+   * disk, and "before" is the last commit. Absent, ask `ctx.fs`: at write the tree is still the
+   * one from before the change.
+   */
+  readonly file?: { readonly path: string; readonly content: string; readonly existed?: boolean | undefined } | undefined;
   /** command: the line about to run. */
   readonly command?: string | undefined;
   /** commit: the staged paths. */
@@ -489,8 +497,26 @@ export type Case =
   /** A command rail, shorthand — by far the commonest case, and it should read as one line. */
   | string
   | { readonly command: string; readonly world?: CaseWorld; readonly actor?: readonly string[] }
-  | { readonly path: string; readonly content: string; readonly world?: CaseWorld; readonly actor?: readonly string[] }
-  | { readonly staged: readonly string[]; readonly world?: CaseWorld; readonly actor?: readonly string[] }
+  | {
+      readonly path: string;
+      readonly content: string;
+      /** The change landed before it was judged, as a shell command's does: `ctx.file.existed`. */
+      readonly existed?: boolean;
+      readonly world?: CaseWorld;
+      readonly actor?: readonly string[];
+    }
+  | {
+      readonly staged: readonly string[];
+      /** The staged paths the last commit does not have. Each file's `ctx.file.existed` says so. */
+      readonly added?: readonly string[];
+      /**
+       * Staged deletions, by path, each with its content as the last commit has it. An entry that
+       * fires at `delete` as well as `commit` is asked about each one, as a delete.
+       */
+      readonly deleted?: Readonly<Record<string, string>>;
+      readonly world?: CaseWorld;
+      readonly actor?: readonly string[];
+    }
   | { readonly actions: readonly TurnAction[]; readonly world?: CaseWorld; readonly actor?: readonly string[] };
 
 /** The cases an entry carries: what must pass it, and what must be blocked by it. */

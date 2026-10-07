@@ -212,11 +212,21 @@ export function identify(
 export interface GuardEvent {
   readonly moment: GuardrailMoment;
   /** write/delete: the would-be file, in memory, before disk. */
-  readonly file?: { readonly path: string; readonly content: string } | undefined;
+  readonly file?: Ctx["file"];
   /** command: the line about to run. */
   readonly command?: string | undefined;
   /** commit: the staged paths. */
   readonly staged?: readonly string[] | undefined;
+  /**
+   * commit: the staged paths the last commit does not have, which become each file's `existed`.
+   * Absent when the shell could not ask git, and then `existed` is left unset.
+   */
+  readonly added?: readonly string[] | undefined;
+  /**
+   * commit: the staged deletions an entry will judge (`judgedDeletions`), each with its content as
+   * the last commit has it. A rename is a deletion of its old path plus an add of its new one.
+   */
+  readonly deleted?: readonly { readonly path: string; readonly content: string }[] | undefined;
   /** turn-end: what the actor did this turn, in order. */
   readonly turn?: readonly TurnAction[] | undefined;
   /** Every category this session × agent wears. Empty means it wears none, not "all of them". */
@@ -283,11 +293,31 @@ export function watching(entries: readonly Bound[]): Bound[] {
   return entries.filter((entry) => entry.disabled === null && (entry.on?.length ?? 0) > 0);
 }
 
+/**
+ * Does this entry judge a staged deletion of this path at the commit gate? Only one that fires at
+ * both `commit` and `delete` and names paths — see `subjectsOf` for why `commit` alone is not enough.
+ */
+function judgesDeletion(entry: LoadedEntry, path: string): boolean {
+  const { spec } = entry;
+  return spec.kind === "guardrail" && !!spec.on && fires(spec, "commit") && fires(spec, "delete") && inScope(spec, path);
+}
+
+/**
+ * The staged deletions some entry will judge — the ones whose content is worth reading from the
+ * last commit. A commit that removes a vendored folder is thousands of deletions, and none of them
+ * costs a read unless a rule is about it.
+ */
+export function judgedDeletions(entries: readonly LoadedEntry[], deleted: readonly string[]): string[] {
+  return deleted.filter((path) => entries.some((entry) => judgesDeletion(entry, path)));
+}
+
 /** One thing an entry is run against: what the log row names, and the facts its ctx carries. */
 interface Subject {
   /** A path, a command, or null when the event is not about any one thing. */
   readonly name: string | null;
   readonly facts: Partial<Ctx>;
+  /** The moment the check is asked at, when it is not the event's: a staged deletion is a delete. */
+  readonly moment?: GuardrailMoment;
 }
 
 /**
@@ -299,8 +329,13 @@ interface Subject {
  * same split the old engine made with a per-script `kind`, now read off the entry rather than off
  * a registry — which is what lets a repo's own check take either shape with no declaration at all.
  *
- * A staged path that is not there (a deletion, staged) yields no subject: there is no would-be
- * file to hand a content check, and inventing an empty one would let it pass on a fiction.
+ * A staged path that is not there yields no subject: there is no would-be file to hand a content
+ * check, and inventing an empty one would let it pass on a fiction.
+ *
+ * A staged DELETION is asked only of an entry that fires at `delete` as well as `commit`, and it is
+ * asked as the delete it is — the same ctx the live delete rail builds, with the file as the last
+ * commit has it. An entry bound at `commit` alone judges what the commit will contain, and a deleted
+ * file is not in it: a content check would block the removal of the very text it bans.
  */
 async function subjectsOf(entry: LoadedEntry, event: GuardEvent, world: World): Promise<Subject[]> {
   const { spec } = entry;
@@ -311,7 +346,12 @@ async function subjectsOf(entry: LoadedEntry, event: GuardEvent, world: World): 
     for (const path of staged) {
       if (!inScope(spec, path)) continue;
       if (!(await world.fs.exists(path))) continue;
-      out.push({ name: path, facts: { file: { path, content: await world.fs.read(path) }, staged } });
+      const existed = event.added === undefined ? {} : { existed: !event.added.includes(path) };
+      out.push({ name: path, facts: { file: { path, content: await world.fs.read(path), ...existed }, staged } });
+    }
+    for (const gone of event.deleted ?? []) {
+      if (!judgesDeletion(entry, gone.path)) continue;
+      out.push({ name: gone.path, facts: { file: { ...gone, existed: true }, staged }, moment: "delete" });
     }
     return out;
   }
@@ -464,7 +504,7 @@ export async function guard({ load, event, world, faults = [], off = false }: Gu
     let hits = 0;
     for (const subject of await subjectsOf(entry, event, world)) {
       evaluated += 1;
-      const answer = await ask(check, makeCtx(event.moment, { ...subject.facts, actor: event.wearing }, world));
+      const answer = await ask(check, makeCtx(subject.moment ?? event.moment, { ...subject.facts, actor: event.wearing }, world));
       if (answer.ok) continue;
       hits += 1;
       effects.push({
@@ -1640,9 +1680,11 @@ export type RecordedStep =
   | {
       readonly rail: "guard";
       readonly moment: GuardrailMoment;
-      readonly file?: { readonly path: string; readonly content: string } | undefined;
+      readonly file?: Ctx["file"];
       readonly command?: string | undefined;
       readonly staged?: readonly string[] | undefined;
+      readonly added?: readonly string[] | undefined;
+      readonly deleted?: GuardEvent["deleted"];
       readonly turn?: readonly TurnAction[] | undefined;
       readonly wearing: readonly string[];
       readonly world?: CaseWorld | undefined;
@@ -1761,6 +1803,8 @@ export async function replay({ load, recording, settings, marks = {} }: ReplayAr
           file: step.file,
           command: step.command,
           staged: step.staged,
+          added: step.added,
+          deleted: step.deleted,
           turn: step.turn,
           wearing: step.wearing,
         },

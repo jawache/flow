@@ -8,7 +8,7 @@ Refuses a hand-edit of a protected path. The `.on(…)` set *is* the protected s
 
 | Key | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `existingOnly` | boolean | no | append-only: a NEW file here is fine, but an existing one may not be edited or deleted |
+| `existingOnly` | boolean | no | append-only: a NEW file here is fine, but an existing one may not be edited or deleted. At write, a new file is one that was not on disk before the change. At commit, a new file is one the last commit does not have, and a file the commit deletes is refused when the rule is bound at both `deletion` and `commit`. A rename is refused by its old path |
 
 ## Example
 

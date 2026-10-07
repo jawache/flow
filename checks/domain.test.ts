@@ -274,6 +274,15 @@ describe("protectedPath", () => {
     expect(edit).toContain("adding a new one is fine");
   });
 
+  it("existingOnly believes the event over the tree when a shell command's write has already landed", async () => {
+    const check = protectedPath({ existingOnly: true });
+    // The tree holds the file either way — the command already wrote it. Only the event knows.
+    const created = { path: "m/003.sql", content: "new", existed: false, world: { fs: { "m/003.sql": "new" } } };
+    expect(await run(check, "write", created)).toBeNull();
+    const edited = { path: "m/001.sql", content: "x", existed: true, world: { fs: { "m/001.sql": "x" } } };
+    expect(await run(check, "write", edited)).toContain("append-only");
+  });
+
   it("a delete of a protected path is refused even though there is no would-be file to ask about", async () => {
     const check = protectedPath({ existingOnly: true });
     expect(await run(check, "delete", { path: "m/001.sql", content: "" })).toContain("append-only");
@@ -1617,6 +1626,24 @@ describe("runCase", () => {
     it("is asked once per staged file in scope, holding that file", async () => {
       const result = await runCase(scoped, banned, { staged: ["a.ts"], world: { fs: { "a.ts": "SECRET" } } }, "block", 0);
       expect(result.ok).toBe(true);
+    });
+
+    it("tells each file whether the last commit had it when the case lists `added`, and leaves it unset when not", async () => {
+      const check = protectedPath({ existingOnly: true });
+      const appendOnly = entry({ at: ["commit"], on: ["m/**"], check });
+      const world = { fs: { "m/1.sql": "old", "m/2.sql": "new" } };
+      expect((await runCase(appendOnly, check, { staged: ["m/2.sql"], added: ["m/2.sql"], world }, "pass", 0)).ok).toBe(true);
+      expect((await runCase(appendOnly, check, { staged: ["m/1.sql"], added: ["m/2.sql"], world }, "block", 0)).ok).toBe(true);
+      expect((await runCase(appendOnly, check, { staged: ["m/2.sql"], world }, "block", 0)).ok, "the disk decides").toBe(true);
+    });
+
+    it("asks a case's `deleted` files of an entry bound at delete as well as commit, as deletes", async () => {
+      const check = protectedPath({ existingOnly: true });
+      const gone = { staged: [], deleted: { "m/1.sql": "-- old" } };
+      const both = entry({ at: ["write", "delete", "commit"], on: ["m/**"], check });
+      expect((await runCase(both, check, gone, "block", 0)).ok).toBe(true);
+      const commitOnly = entry({ at: ["commit"], on: ["m/**"], check });
+      expect((await runCase(commitOnly, check, gone, "pass", 0)).ok, "commit alone judges what the commit holds").toBe(true);
     });
 
     it("honours the entry's own ignore list, so an out-of-scope file is never a subject", async () => {

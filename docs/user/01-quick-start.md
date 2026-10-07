@@ -66,7 +66,7 @@ flow is ON — 4 guardrails · 2 breadcrumbs, every one resolved and able to fir
     ✗ demo.chatCommits  —  for subagent
         A subagent does not commit — hand the change back to the chat that spawned it.
   ✓ config: …/my-repo/flow.config.ts
-  ✓ commit-gate: .githooks/pre-commit runs `flow commit` over the staged set
+  ✓ commit-gate: .githooks/pre-commit runs `flow hook commit` over the staged changes
   ✓ hooks-path: core.hooksPath = .githooks
   ✓ hooks: ~/.claude/settings.json — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop
 green — every rule loads, every fitting is in place.
@@ -76,12 +76,12 @@ Green means guarded: every rule loads, and every fitting it needs is in place. A
 
 ## 4 · Watch the commit gate hold
 
-The demo config refuses any commit that stages a file carrying the literal marker `DO`-`NOT`-`COMMIT` (spelled whole). Make one and ask the gate directly — `flow commit` is what git's pre-commit hook runs:
+The demo config refuses any commit that stages a file carrying the literal marker `DO`-`NOT`-`COMMIT` (spelled whole). Make one, stage it, and run the gate directly. `flow hook commit` is what git's pre-commit hook runs, and it checks whatever is staged:
 
 ```
 printf 'DO-NOT-COMMIT here\n' > bad.txt
 git add bad.txt
-flow commit bad.txt
+flow hook commit
 ```
 
 ```

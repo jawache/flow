@@ -119,7 +119,7 @@ flow is ON — 4 guardrails · 2 breadcrumbs, every one resolved and able to fir
     ✗ demo.chatCommits  —  for subagent
         A subagent does not commit — hand the change back to the chat that spawned it.
   ✓ config: /tmp/flow-demo/flow.config.ts
-  ✓ commit-gate: .githooks/pre-commit runs `flow commit` over the staged set
+  ✓ commit-gate: .githooks/pre-commit runs `flow hook commit` over the staged changes
   ✓ hooks-path: core.hooksPath = .githooks
   ✓ hooks: ~/.claude/settings.json — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop
 green — every rule loads, every fitting is in place.
@@ -248,7 +248,7 @@ Six things to know, and then you can write your own:
 | `write` | a file is created or changed. A write from the Edit tool is checked before the file changes; a write from a shell command is checked the moment it has changed. A refused write is undone | ✓ | — |
 | `delete` | a file is removed. An `rm` is checked before it runs; any other removal is checked the moment the file is gone. A refused delete puts the file back | ✓ | — |
 | `command` | a shell command is about to run | ✓ | — |
-| `commit` | git's pre-commit hook, over the staged set | ✓ | — |
+| `commit` | git's pre-commit hook, over the staged changes | ✓ | — |
 | `turn-end` | the agent is about to hand back | ✓ | — |
 
 A guardrail blocks; a breadcrumb is a note and has no rail to block with. The commit moment is not
@@ -264,7 +264,7 @@ delivered by any harness — git's own hook is — which is why every harness ge
 | `flow facts [--json]` | what the record and the conversations say about this repo |
 | `flow replay <file>` | a recorded session, back through the engine — no repo, no harness |
 | `flow hook <event>` | what the harness's registrations call. Not for you |
-| `flow commit <files…>` | what git's pre-commit hook calls. Not for you |
+| `flow hook commit [--all]` | what git's pre-commit hook calls, over the staged changes. `--all` checks every file instead |
 
 Two switches, both files, both one command:
 

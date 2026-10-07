@@ -36,7 +36,9 @@ import {
   isBreadcrumbMoment,
   isGuardrailMoment,
   type BreadcrumbMoment,
+  type Ctx,
   type EntrySpec,
+  type ExecResult,
   type GuardrailMoment,
   type LoadResult,
   type Moment,
@@ -232,8 +234,8 @@ const HOST_EVENT: Record<HookEvent, string> = {
  *
  * Two facts are stated here rather than discovered by somebody whose rule never fires:
  *
- *   · `commit` is delivered, but not by the harness — git's pre-commit hook calls `flow commit`,
- *     which is why every harness gets the gates for free and why it is in this list at all.
+ *   · `commit` is delivered, but not by the harness — git's pre-commit hook calls `flow hook
+ *     commit`, which is why every harness gets the gates for free and why it is in this list at all.
  *   · turn-end BRIEFING is not delivered. Stop's decision object carries no context channel, so a
  *     `breadcrumb().at(turnEnd)` has nowhere to be shown; the guardrail rail at that moment works
  *     perfectly. Reporting an entry that goes dark is `flow status`'s job (F6).
@@ -283,7 +285,7 @@ export type AdapterEvent =
   | {
       readonly rail: "guard";
       readonly moment: GuardrailMoment;
-      readonly file?: { readonly path: string; readonly content: string } | undefined;
+      readonly file?: Ctx["file"];
       readonly command?: string | undefined;
       readonly staged?: readonly string[] | undefined;
       readonly turn?: readonly TurnAction[] | undefined;
@@ -1089,10 +1091,18 @@ export function toEvent(hook: HookEvent, payload: HookPayload, world: EventWorld
       // judged: an Edit's file that now holds content was judged as that write, and an `rm` target
       // that is now GONE was judged as that delete. An `rm` target the call wrote again
       // (`rm x && cat > x`) was never judged as a write, so it is judged as one here.
+      //
+      // A write carries whether the file was there BEFORE the call. The tree it is judged against is
+      // the one from after, which holds every file the call created, so `ctx.fs` cannot say.
       for (const change of changes) {
         if (change.after !== null) {
           if (!judged.writes.includes(change.path))
-            events.push({ rail: "guard", moment: "write", file: { path: change.path, content: change.after }, observed: true });
+            events.push({
+              rail: "guard",
+              moment: "write",
+              file: { path: change.path, content: change.after, existed: change.before !== null },
+              observed: true,
+            });
         } else if (change.before !== null && !judged.deletes.includes(change.path))
           events.push({ rail: "guard", moment: "delete", file: { path: change.path, content: change.before }, observed: true });
       }
@@ -1186,6 +1196,69 @@ export function pathLines(stdout: string | null): string[] {
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line !== "");
+}
+
+/**
+ * What a commit changes, in the shape the commit gate judges: the files it will hold, which of
+ * those the last commit does not have, and the files it removes. A rename is a removal of the old
+ * path plus an add of the new one, so it needs no shape of its own.
+ */
+export interface StagedChanges {
+  /** Every path the commit will hold that it changes — the subjects of a file rule. */
+  readonly files: readonly string[];
+  /** The `files` the last commit does not have. Undefined when git could not say. */
+  readonly added: readonly string[] | undefined;
+  /** The paths the last commit has and this one will not. */
+  readonly deleted: readonly string[];
+}
+
+/** NUL-separated paths, as git prints them under `-z` — no quoting, so a path is a path. */
+function nulPaths(stdout: string): string[] {
+  return stdout.split("\0").filter((path) => path !== "");
+}
+
+/**
+ * The staged changes, read from `git diff --cached --name-status --no-renames -z`.
+ *
+ * ONE question to git, and every staged change comes back with what it is: `A` added, `D` deleted,
+ * anything else changed in place. `--no-renames` splits a rename into the delete and the add it is.
+ */
+export function stagedChanges(nameStatus: string): StagedChanges {
+  const fields = nameStatus.split("\0");
+  const files: string[] = [];
+  const added: string[] = [];
+  const deleted: string[] = [];
+  for (let i = 0; i + 1 < fields.length; i += 2) {
+    const status = fields[i] ?? "";
+    const path = fields[i + 1] ?? "";
+    if (path === "") continue;
+    if (status.startsWith("D")) deleted.push(path);
+    else {
+      files.push(path);
+      if (status.startsWith("A")) added.push(path);
+    }
+  }
+  return { files, added, deleted };
+}
+
+/**
+ * The whole tree as one commit — `flow hook commit --all` — against the last commit's own list.
+ *
+ * `present` is every file git can see that is on disk; `tree` is `git ls-tree -r --name-only -z
+ * HEAD`. It fails in two ways that answer differently. Before the first commit there is no HEAD, so
+ * every file is new and nothing is removed. Any other failure is unknown: `added` stays undefined,
+ * so a check asks the disk and refuses rather than allows.
+ */
+export function treeChanges(present: readonly string[], tree: ExecResult, hasHead: () => boolean): StagedChanges {
+  if (tree.code !== 0) return { files: [...present], added: hasHead() ? undefined : [...present], deleted: [] };
+  const committed = nulPaths(tree.stdout);
+  const inTree = new Set(committed);
+  const here = new Set(present);
+  return {
+    files: [...present],
+    added: present.filter((path) => !inTree.has(path)),
+    deleted: committed.filter((path) => !here.has(path)),
+  };
 }
 
 /** The key one call's snapshot is filed under — the host's `tool_use_id` — or null when it sent none. */
@@ -3514,31 +3587,63 @@ export const SET_HOOKS_PATH = `git config core.hooksPath ${HOOKS_DIR}`;
  * found unarmed. The same instruction, at the two moments a person can meet it — and two spellings
  * of an instruction are two instructions the day one of them is edited.
  */
-export const ADD_THE_GATE_LINE = "add `flow commit $(git diff --cached --name-only)` to it";
+export const ADD_THE_GATE_LINE = "add `flow hook commit` to it";
+
+/**
+ * How to bring a gate written for the old verb up to date, in the ONE wording both readers use.
+ *
+ * The old hook still runs the gate, which is why it is not simply broken: it hands flow a list that
+ * leaves out deletions, and exits before calling flow at all when a commit only deletes files.
+ */
+export const UPDATE_THE_GATE_LINE =
+  "replace its `flow commit …` line with `exec flow hook commit` — the old line never shows flow a deleted file, and skips a commit that only deletes files";
 
 /**
  * The pre-commit hook, verbatim.
  *
- * `flow commit <files…>` rather than a sixth hook, because the commit moment is not delivered by any
- * harness — git's own hook is what fires it, which is why every harness gets the gates for free. The
- * staged set is computed here rather than inside flow: it is git's own question, and this file is
- * already a git hook.
+ * `flow hook commit` — git's hook under the same verb as the harness's hooks. It passes nothing:
+ * flow asks git what the commit adds, changes and deletes, so there is one source of the staged set
+ * whoever calls the gate, and nothing in this file to filter it or to skip flow when it is empty.
  */
 export const PRE_COMMIT = `#!/bin/sh
 # The flow commit gate. Written by \`flow init\`; \`${SET_HOOKS_PATH}\` arms it.
 #
-# Every at(commit) guardrail runs over the staged set and a block exits non-zero, which is how git
-# refuses the commit. This is the half of the promise the PreToolUse rail cannot make: it fires for
-# a human's commit, a merge and CI, with no session in the room.
-staged=$(git diff --cached --name-only --diff-filter=ACMR)
-[ -z "$staged" ] && exit 0
-# shellcheck disable=SC2086
-exec flow commit $staged
+# Every at(commit) guardrail runs over the staged changes and a block exits non-zero, which is how
+# git refuses the commit. This is the half of the promise the PreToolUse rail cannot make: it fires
+# for a human's commit, a merge and CI, with no session in the room. flow asks git itself what the
+# commit adds, changes and deletes.
+exec flow hook commit
 `;
 
-/** Does this pre-commit hook call flow? Asked by `init` before writing, and by `status` after. */
+/** A hook's commands, without its comments — a comment that names the gate does not run it. */
+function hookCommands(text: string): string {
+  return text
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("#"))
+    .join("\n");
+}
+
+/** Does this pre-commit hook call flow's gate? Asked by `init` before writing, and by `status` after. */
 export function armsFlow(text: string | null): boolean {
-  return text !== null && /(^|[\s"'/\\])flow\b[^\n]*\bcommit\b/m.test(text);
+  return text !== null && /(^|[\s"'/\\])flow\s+hook\s+commit\b/m.test(hookCommands(text));
+}
+
+/** Does it call the gate's OLD verb, `flow commit` — a gate that runs, and misses deletions? */
+export function armsOldFlow(text: string | null): boolean {
+  return text !== null && /(^|[\s"'/\\])flow\s+commit\b/m.test(hookCommands(text));
+}
+
+/** What the gate judges: the staged changes, or the whole tree as if all of it were staged. */
+export type CommitScope = "staged" | "all";
+
+/**
+ * `flow hook commit [--all]`, read. Null is a refusal: a file list here would be a second source of
+ * the staged set. `legacy` is the old `flow commit <files…>`, whose list an older hook still passes,
+ * and it is dropped rather than refused so that hook keeps running the gate.
+ */
+export function commitScope(args: readonly string[], legacy: boolean): CommitScope | null {
+  if (legacy || args.length === 0) return "staged";
+  return args.length === 1 && args[0] === "--all" ? "all" : null;
 }
 
 // ── the scaffold ─────────────────────────────────────────────────────────────
@@ -3698,6 +3803,8 @@ export interface InitPlan {
   readonly gate: Write | null;
   /** A pre-commit hook that is somebody else's. Never overwritten — reported, with the line to add. */
   readonly gateKept: boolean;
+  /** …and it is flow's own, from before `flow hook commit` — reported with the line to replace. */
+  readonly gateOld: boolean;
   readonly notGit: boolean;
   readonly flowDir: boolean;
   /** The package to link into `node_modules/@jawache/flow`, or null when flow already resolves. */
@@ -3724,6 +3831,7 @@ export function planInit(facts: InitFacts): InitPlan {
     // own suite must not lose it to a re-run — which is also what makes init safe to run again.
     gate: !facts.isGit || facts.gateText !== null ? null : { path: GATE_PATH, body: PRE_COMMIT, mode: 0o755 },
     gateKept: facts.isGit && facts.gateText !== null && !armsFlow(facts.gateText),
+    gateOld: facts.isGit && !armsFlow(facts.gateText) && armsOldFlow(facts.gateText),
     notGit: !facts.isGit,
     flowDir: !facts.hasFlowDir,
     link: facts.resolves ? null : facts.packageRoot,
@@ -3763,7 +3871,9 @@ export function initLines(plan: InitPlan, failures: readonly string[]): string[]
 
   if (plan.notGit) lines.push("  · not a git repo, so no commit gate was armed. Run `git init`, then `flow init` again.");
   if (plan.gateKept)
-    lines.push(`  · kept the ${GATE_PATH} already here — flow never overwrites one, so ${ADD_THE_GATE_LINE} yourself.`);
+    lines.push(
+      `  · kept the ${GATE_PATH} already here — flow never overwrites one, so ${plan.gateOld ? UPDATE_THE_GATE_LINE : ADD_THE_GATE_LINE} yourself.`,
+    );
   if (plan.settingsUnreadable !== null)
     lines.push(
       `  ✗ ${plan.settingsUnreadable} is not valid JSON, so nothing was registered and NOTHING was written to it — ` +
@@ -3934,6 +4044,7 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
   const missing = HOOK_REGISTRATIONS.filter((r) => !registered.includes(r.event)).map((r) => r.event);
   const stale = staleRegistrations(facts.settings);
   const armed = armsFlow(facts.gateText);
+  const old = !armed && armsOldFlow(facts.gateText);
   return [
     {
       id: "config",
@@ -3946,10 +4057,12 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
       id: "commit-gate",
       ok: armed,
       detail: armed
-        ? `${GATE_PATH} runs \`flow commit\` over the staged set`
-        : facts.gateText === null
-          ? `no ${GATE_PATH} — \`flow init\` arms it. Until then nothing runs at the commit.`
-          : `${GATE_PATH} is here but does not call flow — ${ADD_THE_GATE_LINE}.`,
+        ? `${GATE_PATH} runs \`flow hook commit\` over the staged changes`
+        : old
+          ? `${GATE_PATH} calls the old \`flow commit\` — ${UPDATE_THE_GATE_LINE}.`
+          : facts.gateText === null
+            ? `no ${GATE_PATH} — \`flow init\` arms it. Until then nothing runs at the commit.`
+            : `${GATE_PATH} is here but does not call flow — ${ADD_THE_GATE_LINE}.`,
     },
     {
       id: "hooks-path",

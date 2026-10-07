@@ -221,10 +221,11 @@ export const protectedPath = defineCheck(
     async (ctx) => {
       const { path } = touched(ctx);
       if (opts.existingOnly === true) {
-        // "Already there" is asked of the tree, not of git: at write time the file either exists
-        // or is being created, and that is exactly the distinction append-only wants. A delete has
-        // no would-be file to ask about, and the entry's scope is what protects it.
-        if (ctx.moment !== "delete" && !(await ctx.fs.exists(path))) return ctx.ok();
+        // "Already there" means before THIS change. Before an Edit the tree still answers that.
+        // After a shell command, and at commit, the tree holds the file either way, so the event
+        // says instead: from the snapshot taken before the command, or from the last commit. A
+        // delete has no would-be file to ask about, and the entry's scope is what protects it.
+        if (ctx.moment !== "delete" && !(ctx.file?.existed ?? (await ctx.fs.exists(path)))) return ctx.ok();
         return ctx.fail(
           `'${path}' is append-only — an existing file here is history and may not be edited or deleted (adding a new one is fine)`,
         );
@@ -2098,6 +2099,10 @@ export function readCase(c: Case): {
   readonly dialect: CaseDialect;
   readonly facts: Partial<Ctx>;
   readonly world: CaseWorld;
+  /** commit: the staged paths the last commit does not have, when the case says. */
+  readonly added?: readonly string[] | undefined;
+  /** commit: the staged deletions, by path, with their content as the last commit has it. */
+  readonly deleted?: Readonly<Record<string, string>> | undefined;
 } {
   if (typeof c === "string") return { dialect: "command", facts: { command: c }, world: {} };
   const world = c.world ?? {};
@@ -2105,8 +2110,11 @@ export function readCase(c: Case): {
   // the categories of the session acting, so a case that names none is a session wearing none.
   const actor = { actor: c.actor ?? [] };
   if ("command" in c) return { dialect: "command", facts: { command: c.command, ...actor }, world };
-  if ("path" in c) return { dialect: "write", facts: { file: { path: c.path, content: c.content }, ...actor }, world };
-  if ("staged" in c) return { dialect: "commit", facts: { staged: c.staged, ...actor }, world };
+  if ("path" in c) {
+    const existed = c.existed === undefined ? {} : { existed: c.existed };
+    return { dialect: "write", facts: { file: { path: c.path, content: c.content, ...existed }, ...actor }, world };
+  }
+  if ("staged" in c) return { dialect: "commit", facts: { staged: c.staged, ...actor }, world, added: c.added, deleted: c.deleted };
   return { dialect: "turn-end", facts: { turn: c.actions, ...actor }, world };
 }
 
@@ -2130,9 +2138,12 @@ export function cannedCtx(moment: Moment, c: Case, unanswered: Unanswered[]): Ct
 }
 
 /** A case read once: the world it recorded, assembled, and the event facts it carries. */
-function cannedParts(c: Case, unanswered: Unanswered[]): { readonly world: World; readonly facts: Partial<Ctx> } {
-  const { world, facts } = readCase(c);
-  return { world: cannedWorld(world, facts.staged, unanswered), facts };
+function cannedParts(
+  c: Case,
+  unanswered: Unanswered[],
+): Omit<ReturnType<typeof readCase>, "dialect" | "world"> & { readonly world: World } {
+  const { world, facts, added, deleted } = readCase(c);
+  return { world: cannedWorld(world, facts.staged, unanswered), facts, added, deleted };
 }
 
 /**
@@ -2143,9 +2154,9 @@ function cannedParts(c: Case, unanswered: Unanswered[]): { readonly world: World
  * four answers the live gate would.
  */
 export async function caseCtxs(entry: LoadedEntry, moment: Moment, c: Case, unanswered: Unanswered[]): Promise<Ctx[]> {
-  const { world, facts } = cannedParts(c, unanswered);
-  const subjects = moment === "commit" ? await commitSubjects(entry, facts, world) : [facts];
-  return subjects.map((subject) => makeCtx(moment, subject, world));
+  const { world, facts, added, deleted } = cannedParts(c, unanswered);
+  const subjects = moment === "commit" ? await commitSubjects(entry, facts, world, added, deleted) : [facts];
+  return subjects.map((subject) => makeCtx(subject.moment ?? moment, subject, world));
 }
 
 /**
@@ -2161,15 +2172,34 @@ export async function caseCtxs(entry: LoadedEntry, moment: Moment, c: Case, unan
  * A staged path the recorded world holds no content for yields no subject, exactly as a staged
  * deletion does live. `runCase` reports the unanswered read either way, so a case that forgot the
  * content is a failure naming what to add rather than a silent pass.
+ *
+ * A case that lists `added` says which files the last commit does not have, as the live gate does,
+ * and each file's `existed` follows from it. A case that lists none leaves `existed` unset.
+ *
+ * A case's `deleted` files are asked of an entry that fires at `delete` as well as `commit`, each as
+ * a delete — the same rule the live gate follows, for the same reason.
  */
-async function commitSubjects(entry: LoadedEntry, facts: Partial<Ctx>, world: World): Promise<Partial<Ctx>[]> {
+async function commitSubjects(
+  entry: LoadedEntry,
+  facts: Partial<Ctx>,
+  world: World,
+  added: readonly string[] | undefined,
+  deleted: Readonly<Record<string, string>> | undefined,
+): Promise<Partial<Ctx>[]> {
   const staged = facts.staged ?? [];
-  if (!entry.spec.on) return [facts];
+  const { spec } = entry;
+  if (!spec.on) return [facts];
   const out: Partial<Ctx>[] = [];
   for (const path of staged) {
-    if (!inScope(entry.spec, path)) continue;
+    if (!inScope(spec, path)) continue;
     if (!(await world.fs.exists(path))) continue;
-    out.push({ file: { path, content: await world.fs.read(path) }, staged });
+    const existed = added === undefined ? {} : { existed: !added.includes(path) };
+    out.push({ file: { path, content: await world.fs.read(path), ...existed }, staged });
+  }
+  const atDelete = ((spec.at ?? []) as readonly string[]).includes("delete");
+  for (const [path, content] of Object.entries(deleted ?? {})) {
+    if (!atDelete || !inScope(spec, path)) continue;
+    out.push({ moment: "delete", file: { path, content, existed: true }, staged });
   }
   return out;
 }

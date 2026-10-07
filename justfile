@@ -90,11 +90,9 @@ test-commit:
     just typecheck
     just test
 
-[doc("Run the full commit gate over every file git can see, tracked or not — the same guardrails .githooks/pre-commit runs on the staged set.")]
+[doc("Run the full commit gate over every file git can see, tracked or not, as if all of it were staged — the same guardrails .githooks/pre-commit runs on the staged changes, plus every file the last commit has that is now gone.")]
 gate:
-    # --others too: `git ls-files` alone is tracked-only, so this would otherwise miss exactly the
-    # untracked files the pre-commit hook blocks on.
-    flow commit $(git ls-files --cached --others --exclude-standard)
+    flow hook commit --all
 
 [doc("IS THE GUARD WORKING HERE — every rule loadable and able to fire, by MOMENT, plus every fitting (the config, the commit gate, core.hooksPath, the host's hook registrations). Green means guarded; every red line carries its fix, and the exit code is non-zero until they are all gone.")]
 guard-status:

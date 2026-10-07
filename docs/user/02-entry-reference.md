@@ -100,7 +100,7 @@ Moments are imported symbols. `deletion` and `turnEnd` are spelled that way beca
 | `write` | write | guardrail | a file is created or changed. When the Edit or Write tool makes the change, the rule runs before the change reaches the disk, on the would-be content of the file held in memory. When anything else makes the change — a heredoc, `sed -i`, a script, a recipe, an MCP tool — the rule runs the moment the change has reached the disk, and a refusal writes the previous content back. A refused write never stays on disk |
 | `command` | command | guardrail | before a shell command runs |
 | `deletion` | delete | guardrail | a file is removed. When an `rm` command would remove it, the rule runs before that command runs. When anything else removes it, the rule runs the moment the file is gone, and a refusal writes the file back |
-| `commit` | commit | guardrail | the git pre-commit gate, over the staged set — for humans too |
+| `commit` | commit | guardrail | the git pre-commit gate, over the staged changes — for humans too. A rule bound at both `deletion` and `commit` also runs on each file the commit deletes, as a delete |
 | `turnEnd` | turn-end | either | when the agent hands back |
 | `session` | session | breadcrumb | a chat starts, resumes, or is compacted |
 | `touch` | touch | breadcrumb | a tool call first names a matching file, or a shell command reads one. The note is shown again after drift: once the session has spent the `driftTokens` budget of tokens since the last showing, about 200,000 by default. If a matching file is changed before any tool call has named it and before any command has read it, the note is shown at that change instead |
@@ -114,7 +114,7 @@ A check is `(ctx) => ctx.ok() | ctx.fail(detail)`, and `ctx` is its only door to
 
 | Field | Is |
 | --- | --- |
-| `ctx.file` | the file this moment is about — `{ path, content }` — at a file moment. At write, `content` is the would-be bytes when the Edit tool made the change, and the bytes now on disk when a shell command made it. A check reads `content` the same way in both cases |
+| `ctx.file` | the file this moment is about — `{ path, content, existed }` — at a file moment. At write, `content` is the would-be bytes when the Edit tool made the change, and the bytes now on disk when a shell command made it. A check reads `content` the same way in both cases. `existed` is set in two cases. When a shell command made the change, it is `true` if a file was at `path` before the command ran, and `false` if the command created it. The check runs after the command, so `ctx.fs.exists(path)` returns `true` for a file the command created. At commit, `existed` is `true` if the last commit has the file, and `false` if it does not. Read `existed` when it is set. When it is not set, use `ctx.fs.exists(path)`: at write, it returns whether the file was there before the change. At commit, a rule bound at both `deletion` and `commit` is also called with each file the commit deletes: `ctx.moment` is `delete`, `content` is the file as the last commit has it, and `existed` is `true` |
 | `ctx.command` | the shell command line, at the command moment |
 | `ctx.staged` | the staged paths, at the commit moment |
 | `ctx.turn` | the turn's actions (edits and runs), at turn-end |
@@ -130,8 +130,8 @@ A case is a canned `ctx`, and its *shape* chooses which moment's dialect it spea
 | Case shape | Dialect |
 | --- | --- |
 | `"a string"` or `{ command }` | command |
-| `{ path, content }` | write (a file rule). Add `actor: [...]` to the case to give the canned session its category names |
-| `{ staged }` | commit |
+| `{ path, content }` | write (a file rule). Add `actor: [...]` to the case to give the canned session its category names. Add `existed: true` or `existed: false` to test a change a shell command made: it sets `ctx.file.existed` |
+| `{ staged }` | commit. Add `added: [...]` to list the staged paths the last commit does not have: it sets each file's `ctx.file.existed`. Add `deleted: { path: content }` to list the files the commit deletes, each with its content as the last commit has it: a rule bound at both `deletion` and `commit` is called with each one, as a delete |
 | `{ actions }` | turn-end |
 
 Any case may carry a `world` — `{ fs, exec, git }` answers — for a rule that reaches past its facts:

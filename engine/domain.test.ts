@@ -16,6 +16,8 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
+  commit,
+  deletion,
   defineCategory,
   defineConfig,
   definePack,
@@ -24,6 +26,7 @@ import {
   oneWriter,
   pack,
   override,
+  protectedPath,
   write,
   type LoadResult,
   type Refusal,
@@ -79,6 +82,7 @@ import {
   formatBlock,
   formatBlocks,
   guard,
+  judgedDeletions,
   identify,
   inScope,
   logFile,
@@ -454,6 +458,68 @@ describe("what an entry is run against", () => {
       silenced: 0,
     });
     expect(blocks(outcome).find((b) => b.entry === "rails.stagedFiles")?.subject).toBe("src/a.ts");
+  });
+
+  it("tells each staged file whether the last commit had it, and leaves the disk to decide when git could not say", async () => {
+    const appendOnly = loadConfig(
+      defineConfig([
+        pack(
+          definePack("log", {
+            appendOnly: guardrail()
+              .at(commit)
+              .on("m/**")
+              .check(protectedPath({ existingOnly: true }))
+              .message("history")
+              .test({ block: [{ staged: ["m/1.sql"], added: [], world: { fs: { "m/1.sql": "" } } }] }),
+          }),
+        ),
+      ]),
+    );
+    // Both files are on disk, as every staged file is. Only `added` says which one is new.
+    const fs = { "m/1.sql": "old", "m/2.sql": "new" };
+    const told = await guard({
+      load: appendOnly,
+      event: { moment: "commit", staged: ["m/1.sql", "m/2.sql"], added: ["m/2.sql"], wearing: [] },
+      world: world({ fs }),
+    });
+    expect(blocks(told).map((b) => b.subject)).toEqual(["m/1.sql"]);
+    const untold = await guard({ load: appendOnly, event: { moment: "commit", staged: ["m/2.sql"], wearing: [] }, world: world({ fs }) });
+    expect(blocks(untold).map((b) => b.subject), "refused rather than allowed on a guess").toEqual(["m/2.sql"]);
+  });
+
+  it("asks a staged deletion only of an entry bound at delete as well as commit — and asks it AS a delete", async () => {
+    const both = loadConfig(
+      defineConfig([
+        pack(
+          definePack("log", {
+            appendOnly: guardrail()
+              .at(write, deletion, commit)
+              .on("m/**")
+              .check((ctx) => ctx.fail(`${ctx.moment} of ${ctx.file?.path ?? ""}, which held: ${ctx.file?.content ?? ""}`))
+              .message("history")
+              .test({ block: [{ path: "m/1.sql", content: "" }] }),
+            // A content rule: about what the commit will HOLD. A deleted file is not in it, so its
+            // old TODO must not block the commit that removes it.
+            noTodo: guardrail()
+              .at(commit)
+              .on("**")
+              .check((ctx) => (ctx.file?.content.includes("TODO") === true ? ctx.fail("TODO") : ctx.ok()))
+              .message("no TODO")
+              .test({ block: [{ staged: ["a.ts"], world: { fs: { "a.ts": "TODO" } } }] }),
+          }),
+        ),
+      ]),
+    );
+    const outcome = await guard({
+      load: both,
+      event: { moment: "commit", staged: [], deleted: [{ path: "m/1.sql", content: "-- TODO: old" }], wearing: [] },
+      world: world(),
+    });
+    expect(blocks(outcome).map((b) => [b.entry, b.subject, b.detail])).toEqual([
+      ["log.appendOnly", "m/1.sql", "delete of m/1.sql, which held: -- TODO: old"],
+    ]);
+    // Only what such an entry covers is worth reading out of the last commit.
+    expect(judgedDeletions(both.ok ? both.entries : [], ["m/1.sql", "src/a.ts"])).toEqual(["m/1.sql"]);
   });
 
   it("skips a staged path that is not there — a deletion has no would-be file to judge", async () => {

@@ -27,11 +27,13 @@ import {
   fixturePack,
   newRepo,
   pre,
+  shimBin,
   BREAKS,
   flow as runFlow,
   git as runGit,
   type Ran,
 } from "./harness.ts";
+import { PRE_COMMIT, SET_HOOKS_PATH } from "../adapter/domain.ts";
 
 let repo: string;
 
@@ -48,9 +50,9 @@ let repo: string;
  */
 const HOUSE = (packageRoot: string): string => fixturePack("repo-pack", join(packageRoot, "index.ts"));
 
-/** What the temp repo's own guard says. Five entries, one per rail this suite drives. */
+/** What the temp repo's own guard says. A few entries, at least one per rail this suite drives. */
 const CONFIG = (packageRoot: string): string => `
-import { breadcrumb, command, commit, definePack, defineConfig, guardrail, pack, session, touch, write } from ${JSON.stringify(
+import { breadcrumb, command, commit, definePack, defineConfig, deletion, guardrail, pack, protectedPath, session, touch, write } from ${JSON.stringify(
   join(packageRoot, "index.ts"),
 )};
 import { builder, house } from "./guards/house.ts";
@@ -62,6 +64,23 @@ const demo = definePack("demo", {
     .check((ctx) => (ctx.file?.content.includes("TODO") ? ctx.fail("line says TODO") : ctx.ok()))
     .message("No TODOs in src/ — write the code or write the issue.")
     .test({ pass: [{ path: "src/a.ts", content: "ok" }], block: [{ path: "src/a.ts", content: "TODO" }] }),
+
+  appendOnly: guardrail()
+    .at(write, deletion, commit)
+    .on("migrations/**")
+    .check(protectedPath({ existingOnly: true }))
+    .message("A migration already written is history — add a new one instead.")
+    .test({
+      pass: [
+        { path: "migrations/002.sql", content: "new" },
+        { staged: ["migrations/002.sql"], added: ["migrations/002.sql"], world: { fs: { "migrations/002.sql": "new" } } },
+      ],
+      block: [
+        { path: "migrations/001.sql", content: "edited", world: { fs: { "migrations/001.sql": "old" } } },
+        { staged: ["migrations/001.sql"], added: [], world: { fs: { "migrations/001.sql": "edited" } } },
+        { staged: [], deleted: { "migrations/001.sql": "old" } },
+      ],
+    }),
 
   noForce: guardrail()
     .at(command)
@@ -136,6 +155,8 @@ beforeAll(() => {
   writeFileSync(join(repo, "flow.config.ts"), CONFIG(PACKAGE));
   mkdirSync(join(repo, "src"), { recursive: true });
   writeFileSync(join(repo, "src", "a.ts"), "export const a = 1;\n");
+  mkdirSync(join(repo, "migrations"), { recursive: true });
+  writeFileSync(join(repo, "migrations", "001.sql"), "create table a ();\n");
 });
 
 afterAll(() => {
@@ -287,11 +308,25 @@ describe("what a broken or empty call does", () => {
   });
 });
 
+/**
+ * The gate over EXACTLY these paths: stage them, run `flow hook commit`, unstage them.
+ *
+ * The gate asks git what is staged, so what one test stages is what the next one's gate judges
+ * unless it is put back. This repo has no commit, so unstaging is `rm --cached` rather than a reset.
+ */
+function gate(...paths: string[]): Ran {
+  runGit(repo, ["add", "--", ...paths]);
+  try {
+    return run(["hook", "commit"], "");
+  } finally {
+    runGit(repo, ["rm", "-q", "--cached", "--", ...paths]);
+  }
+}
+
 describe("the commit gate", () => {
   it("blocks a staged file the gate refuses, naming it", () => {
     writeFileSync(join(repo, "src", "leak.ts"), "// DO-NOT-COMMIT\n");
-    runGit(repo, ["add", "src/leak.ts"]);
-    const answer = run(["commit", "src/leak.ts"], "");
+    const answer = gate("src/leak.ts");
     expect(answer.code).toBe(2);
     expect(answer.stderr).toContain("flow — commit blocked");
     expect(answer.stderr).toContain("demo.noSecrets · src/leak.ts");
@@ -299,9 +334,114 @@ describe("the commit gate", () => {
   });
 
   it("passes a clean staged set, and says nothing", () => {
-    const answer = run(["commit", "src/a.ts"], "");
+    const answer = gate("src/a.ts");
     expect(answer.code).toBe(0);
     expect(answer.stdout + answer.stderr).toBe("");
+  });
+
+  describe("over a repo with history, under an append-only rule bound at write, deletion and commit", () => {
+    // A repo of its own, because these need a real commit for the last commit to hold a migration.
+    let other: string;
+    const migration = (name: string): string => join(other, "migrations", name);
+    const gateHere = (args: readonly string[] = ["hook", "commit"]): Ran => runFlow(other, args);
+    /** Put the repo back to its one commit: nothing staged, every migration as committed. */
+    const reset = (): void => {
+      runGit(other, ["reset", "-q", "--hard"]);
+      runGit(other, ["clean", "-q", "-f", "--", "migrations"]);
+    };
+
+    beforeAll(() => {
+      other = newRepo("flow-append-");
+      copyGuard(other);
+      mkdirSync(join(other, "migrations"));
+      writeFileSync(migration("001.sql"), "create table a ();\n");
+      writeFileSync(migration("002.sql"), "create table b ();\n");
+      runGit(other, ["add", "migrations"]);
+      const first = gateHere();
+      expect(first.code, `before the first commit every file is new: ${first.stderr}`).toBe(0);
+      runGit(other, ["commit", "-q", "-m", "one"]);
+    });
+    afterAll(() => {
+      rmSync(other, { recursive: true, force: true });
+    });
+
+    it("passes a file the last commit does not have, and blocks an edit of one it does", () => {
+      writeFileSync(migration("001.sql"), "drop table a;\n");
+      writeFileSync(migration("003.sql"), "create table c ();\n");
+      runGit(other, ["add", "migrations"]);
+      try {
+        const answer = gateHere();
+        expect(answer.code).toBe(2);
+        expect(answer.stderr).toContain("✗ demo.appendOnly · migrations/001.sql");
+        expect(answer.stderr, "003.sql is not in the last commit, so it is new").not.toContain("migrations/003.sql");
+      } finally {
+        reset();
+      }
+    });
+
+    it("blocks a commit that only deletes a file — it reaches the gate, and the gate judges the deletion", () => {
+      runGit(other, ["rm", "-q", "migrations/002.sql"]);
+      try {
+        const answer = gateHere();
+        expect(answer.code).toBe(2);
+        expect(answer.stderr).toContain("✗ demo.appendOnly · migrations/002.sql");
+        expect(answer.stderr).toContain("is append-only");
+      } finally {
+        reset();
+      }
+    });
+
+    it("blocks a rename by its old path — to git it is that deletion plus a new file", () => {
+      runGit(other, ["mv", "migrations/001.sql", "migrations/001_renamed.sql"]);
+      try {
+        const answer = gateHere();
+        expect(answer.code).toBe(2);
+        expect(answer.stderr).toContain("✗ demo.appendOnly · migrations/001.sql");
+        expect(answer.stderr, "the new path is new, and passes").not.toContain("001_renamed.sql");
+        const old = gateHere(["commit", "migrations/001_renamed.sql"]);
+        expect(old.code, "the old verb an older hook calls asks git too, whatever list it passes").toBe(2);
+        expect(old.stderr).toContain("✗ demo.appendOnly · migrations/001.sql");
+      } finally {
+        reset();
+      }
+    });
+
+    it("refuses a file list, which would be a second source of the staged set", () => {
+      const answer = gateHere(["hook", "commit", "migrations/001.sql"]);
+      expect(answer.code).toBe(2);
+      expect(answer.stderr).toContain("takes no files");
+    });
+
+    it("judges the commit git is making through the REAL hook — a delete-only commit, and `git commit -a`", () => {
+      // `git commit -a` stages into a temporary index that only the hook's own GIT_INDEX_FILE names.
+      // A gate that asked git without it would see nothing staged, and pass everything.
+      const bin = shimBin();
+      try {
+        mkdirSync(join(other, ".githooks"), { recursive: true });
+        writeFileSync(join(other, ".githooks", "pre-commit"), PRE_COMMIT, { mode: 0o755 });
+        runGit(other, SET_HOOKS_PATH.split(" ").slice(1));
+        const viaGit = (args: readonly string[]): Ran => runGit(other, args, { bin });
+
+        runGit(other, ["rm", "-q", "migrations/002.sql"]);
+        const deleted = viaGit(["commit", "-m", "drop 002"]);
+        expect(deleted.code, "git refuses when the gate exits non-zero").not.toBe(0);
+        expect(deleted.stderr).toContain("demo.appendOnly · migrations/002.sql");
+        reset();
+
+        writeFileSync(migration("001.sql"), "drop table a;\n");
+        const all = viaGit(["commit", "-a", "-m", "edit 001"]);
+        expect(all.code).not.toBe(0);
+        expect(all.stderr).toContain("demo.appendOnly · migrations/001.sql");
+        reset();
+
+        writeFileSync(migration("004.sql"), "create table d ();\n");
+        runGit(other, ["add", "migrations/004.sql"]);
+        const added = viaGit(["commit", "-m", "add 004"]);
+        expect(added.code, added.stderr).toBe(0);
+      } finally {
+        rmSync(bin, { recursive: true, force: true });
+      }
+    });
   });
 
   it("blocks when a gate's own tool is not installed — a missing binary is 127, never a pass", () => {
@@ -310,13 +450,11 @@ describe("the commit gate", () => {
     // repo whose tool was missing would have had a silently weaker gate.
     mkdirSync(join(repo, "tool"), { recursive: true });
     writeFileSync(join(repo, "tool", "x.ts"), "export const x = 1;\n");
-    runGit(repo, ["add", "tool/x.ts"]);
-    const answer = run(["commit", "tool/x.ts"], "");
+    const answer = gate("tool/x.ts");
     expect(answer.code).toBe(2);
     expect(answer.stderr).toContain("demo.suitePasses");
     expect(answer.stderr).toContain("definitely-not-a-real-binary-xyz");
     expect(answer.stderr.toLowerCase()).toContain("command not found");
-    runGit(repo, ["rm", "-q", "--cached", "tool/x.ts"]);
   });
 
   it("wears the categories of the session x agent the marker names, so .for(…) fires at commit too", () => {
@@ -324,7 +462,7 @@ describe("the commit gate", () => {
     // actor-scoped commit rule can only fire if the marker says WHICH agent was working — the field
     // whose absence used to silence such a rule while it read as armed.
     writeFileSync(join(repo, "plan.yaml"), "phases: []\n");
-    expect(run(["commit", "plan.yaml"], "").code, "nobody has been classified yet").toBe(0);
+    expect(gate("plan.yaml").code, "nobody has been classified yet").toBe(0);
 
     mkdirSync(join(repo, ".t"), { recursive: true });
     const transcript = join(repo, ".t", "agent-b1.jsonl");
@@ -339,7 +477,7 @@ describe("the commit gate", () => {
     });
     expect(asBuilder.code, "the write itself is fine — this is only how the session gets classified").toBe(0);
 
-    const blocked = run(["commit", "plan.yaml"], "");
+    const blocked = gate("plan.yaml");
     expect(blocked.code).toBe(2);
     expect(blocked.stderr).toContain("demo.buildersOnly");
     expect(blocked.stderr).toContain("the plan's shape is the parent's");
@@ -408,6 +546,26 @@ describe("the delta rail — every change to the tree, judged the moment it has 
     expect(answer.stderr).toContain("src/a.ts is back to its previous content.");
     expect(readFileSync(join(repo, "src/a.ts")), "byte-identical to before the call").toStrictEqual(before);
     expect(rows(session).some((row) => row["kind"] === "guardrail" && row["out"] === "deny"), "and it is on the record").toBe(true);
+  });
+
+  it("keeps a NEW file a command adds to an append-only folder, and puts back the one it edited", () => {
+    // Judged after the command, the tree holds the new file too — only the snapshot knows it is new.
+    const added = called(bash(heredoc("migrations/002.sql", "create table b ();")), () => {
+      expect(shell(heredoc("migrations/002.sql", "create table b ();"))).toBe(0);
+    });
+    try {
+      expect(added.code, added.stderr).toBe(0);
+      expect(readFileSync(join(repo, "migrations/002.sql"), "utf8")).toBe("create table b ();\n");
+    } finally {
+      rmSync(join(repo, "migrations/002.sql"), { force: true });
+    }
+    const before = readFileSync(join(repo, "migrations/001.sql"));
+    const edited = called(bash(heredoc("migrations/001.sql", "drop table a;")), () => {
+      expect(shell(heredoc("migrations/001.sql", "drop table a;"))).toBe(0);
+    });
+    expect(edited.code).toBe(2);
+    expect(edited.stderr).toContain("✗ demo.appendOnly · migrations/001.sql");
+    expect(readFileSync(join(repo, "migrations/001.sql"))).toStrictEqual(before);
   });
 
   it("keeps a compliant heredoc's write, and shows the area's breadcrumb at the change", () => {
@@ -645,7 +803,7 @@ describe("the off switch", () => {
     writeFileSync(join(repo, ".flow", "off"), "");
     const before = rows("live-1").length;
     expect(hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "src/c.ts"), content: "TODO" })).code).toBe(0);
-    expect(run(["commit", "src/leak.ts"], "").code).toBe(0);
+    expect(gate("src/leak.ts").code).toBe(0);
     expect(rows("live-1").length, "a half-off guard that still logged would make the A/B dishonest").toBe(before);
     rmSync(join(repo, ".flow", "off"));
   });
@@ -699,8 +857,8 @@ describe("a config that will not load", () => {
         const command = hook("pre-tool-use", inThisSession("Bash", { command: "git push --force" }));
         expect(command.code, "a command names a string, never a target — the rail stays shut").toBe(2);
 
-        const gate = runFlow(repo, ["commit", "flow.config.ts"]);
-        expect(gate.code, "nothing written under the exception lands unguarded").toBe(2);
+        const gated = runFlow(repo, ["hook", "commit"]);
+        expect(gated.code, "nothing written under the exception lands unguarded").toBe(2);
       }, how);
     });
 
@@ -750,9 +908,9 @@ describe("a config that will not load", () => {
 
     it("keeps the COMMIT gate closed, so nothing written under the exception lands unguarded", () => {
       withBrokenConfig(() => {
-        const gate = runFlow(repo, ["commit", "flow.config.ts"]);
-        expect(gate.code, "a commit while the guard cannot run is a commit nothing checked").toBe(2);
-        expect(gate.stderr).toContain("could not be loaded");
+        const gated = runFlow(repo, ["hook", "commit"]);
+        expect(gated.code, "a commit while the guard cannot run is a commit nothing checked").toBe(2);
+        expect(gated.stderr).toContain("could not be loaded");
       });
     });
 
@@ -874,7 +1032,7 @@ describe("a recorded session, replayed", () => {
 
     // 9 — the commit gate, whose check SHELLS OUT. Its answer is recorded, which is the part no
     // amount of re-running could reproduce later: the working tree has moved on since.
-    expect(run(["commit", "tool/x.ts"], "").code).toBe(2);
+    expect(gate("tool/x.ts").code).toBe(2);
   });
 
   it("records the canonical event stream, harness-blind — no payload, no hook, no path", () => {
@@ -1015,7 +1173,7 @@ describe("flow facts — the record and the conversations, read back", () => {
     expect(read.metrics.headline.blocks).toBeGreaterThan(0);
     expect(read.metrics.span.tools).toBeGreaterThan(0);
     expect(read.metrics.guardrails.find((g) => g.id === "demo.noTodo")?.hits).toBeGreaterThan(0);
-    expect(read.moments.totals).toMatchObject({ guardrails: 6, breadcrumbs: 2 });
+    expect(read.moments.totals).toMatchObject({ guardrails: 7, breadcrumbs: 2 });
     expect(read.terrain.some((n) => n.path === "src")).toBe(true);
   });
 

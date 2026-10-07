@@ -39,6 +39,7 @@ Note what is *not* here: no declaration of which moments the check supports, no 
 | `write` · `commit` (a file rule) | `ctx.file` = `{ path, content }`. At write, `content` is the would-be bytes when the Edit tool made the change, and the bytes now on disk when a shell command made it. Read `content` the same way in both cases. At commit, the check is called once per staged file, when the rule lists globs with `.on(…)` |
 | `command` | `ctx.command` — the line about to run |
 | `commit` (no `.on`) | `ctx.staged` — the whole staged set, asked once |
+| `commit`, for a deleted file | only when the rule is bound at both `deletion` and `commit`, and lists globs with `.on(…)`. `ctx.moment` is `delete`, and `ctx.file` = `{ path, content, existed: true }`, where `content` is the file as the last commit has it — the same `ctx` the rule is called with when a file is deleted during a session |
 | `turn-end` | `ctx.turn` — the edits and runs of the turn |
 | any | `ctx.actor` — the category names that match the session making the change. `ctx.fs` · `ctx.exec` · `ctx.git` — read a file, run a command, query git. `ctx.moment` — which moment this is, to branch on |
 

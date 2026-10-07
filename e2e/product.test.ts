@@ -81,7 +81,7 @@ describe("flow init — a repo that has never heard of flow", () => {
   it("leaves a config, a gate, a state directory and a resolvable @jawache/flow", () => {
     expect(existsSync(join(repo, "flow.config.ts"))).toBe(true);
     expect(existsSync(join(repo, ".flow"))).toBe(true);
-    expect(readFileSync(join(repo, ".githooks", "pre-commit"), "utf8")).toContain("flow commit");
+    expect(readFileSync(join(repo, ".githooks", "pre-commit"), "utf8")).toContain("flow hook commit");
     expect(lstatSync(join(repo, "node_modules", "@jawache", "flow")).isSymbolicLink()).toBe(true);
     expect(git(repo, ["config", "--get", "core.hooksPath"]).stdout.trim()).toBe(".githooks");
   });
@@ -253,7 +253,7 @@ describe("flow init, run again", () => {
       const said = flow(theirs, ["init"]);
       expect(readFileSync(join(theirs, ".githooks", "pre-commit"), "utf8")).toBe("#!/bin/sh\nnpm test\n");
       expect(said.stdout).toContain("kept");
-      expect(said.stdout).toContain("flow commit");
+      expect(said.stdout).toContain("flow hook commit");
     } finally {
       rmSync(theirs, { recursive: true, force: true });
     }
@@ -473,7 +473,7 @@ describe("the quick start's transcripts", () => {
       // §4 — the gate's refusal, driven the way the page drives it.
       writeFileSync(join(mine, "bad.txt"), "DO-NOT-COMMIT here\n");
       runGit(mine, ["add", "bad.txt"]);
-      expect(said(["commit", "bad.txt"]), "§4").toBe(page("flow — commit blocked:"));
+      expect(said(["hook", "commit"]), "§4").toBe(page("flow — commit blocked:"));
 
       // §5 — a banned command, on the rail the host sends it on.
       const forced = JSON.stringify(pre("Bash", { command: "git push --force origin main" }));
@@ -536,7 +536,7 @@ describe("the README's exit-code table", () => {
       // ── 2 · something refused: a rule blocked …
       writeFileSync(join(repo, "bad.txt"), "DO-NOT-COMMIT here\n");
       runGit(repo, ["add", "bad.txt"]);
-      expect(code(["commit", "bad.txt"]), "a rule blocked at the gate").toBe(2);
+      expect(code(["hook", "commit"]), "a rule blocked at the gate").toBe(2);
       const forced = JSON.stringify(pre("Bash", { command: "git push --force origin main" }));
       expect(code(["hook", "pre-tool-use"], forced), "a rule blocked at a hook").toBe(2);
       runGit(repo, ["reset", "bad.txt"]);
@@ -546,8 +546,8 @@ describe("the README's exit-code table", () => {
       // grammar refusal and 2 for an import fault, which is one fact wearing two codes.
       for (const [how, breaker] of Object.entries(BREAKS)) {
         writeFileSync(config, breaker(good));
-        for (const verb of [["status"], ["test"], ["commit", "flow.config.ts"]])
-          expect(code(verb), `${verb[0] as string}, ${how}`).toBe(2);
+        for (const verb of [["status"], ["test"], ["hook", "commit"]])
+          expect(code(verb), `${verb.join(" ")}, ${how}`).toBe(2);
       }
       writeFileSync(config, good);
 

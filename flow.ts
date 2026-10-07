@@ -9,7 +9,7 @@
 //
 //   THE LIVE HALF, invoked by something else rather than by a person:
 //     flow hook <event>    what the harness's registrations call, payload on stdin
-//     flow commit <files…> what git's pre-commit hook calls, with the staged set
+//     flow hook commit     what git's pre-commit hook calls; it asks git what the commit changes
 //
 //   THE ASKING HALF, which a person types:
 //     flow test [config]   every bound entry's cases, driven
@@ -296,10 +296,15 @@ if (argv.includes("--version") || argv.includes("-v")) {
     process.stderr.write(`${error instanceof FlowConfigError ? error.message : (error as Error).message}\n`);
     process.exitCode = 2;
   }
+} else if (verb === "hook" && rest[0] === "commit") {
+  // Git's hook, not the harness's: it carries no payload on stdin, so it never reaches the reader.
+  perform(await commitEntry(rest.slice(1), process.cwd()));
 } else if (verb === "hook") {
   perform(await hookEntry(rest[0] ?? "", process.cwd()));
 } else if (verb === "commit") {
-  perform(await commitEntry(rest, process.cwd()));
+  // The name an older pre-commit hook calls. Kept so those commits still run the gate;
+  // `flow status` tells the repo to update the hook, and the file list it passes is ignored.
+  perform(await commitEntry(rest, process.cwd(), true));
 } else if (verb === "init" || verb === "status") {
   // The product surface. Both answer with the same three edges every other verb does, which is why
   // neither of them writes to a stream or picks an exit code of its own.
@@ -324,7 +329,7 @@ if (argv.includes("--version") || argv.includes("-v")) {
       "  flow status [--json]   what is bound here, at which moments — and what is not wired yet",
       "  flow test [config]     run every bound entry's cases (default: flow.config.ts)",
       `  flow hook <event>      a harness hook, payload on stdin — ${HOOK_EVENTS.join(" · ")}`,
-      "  flow commit <files…>   the git pre-commit gate, over the staged set",
+      "  flow hook commit       the git pre-commit gate, over the staged changes — --all for the whole tree",
       "  flow replay <file>     a recorded session, back through the engine — --against <log> diffs it",
       "  flow facts             what the record and the conversations say about this repo — --json for all of it",
       "",

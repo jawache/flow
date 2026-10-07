@@ -48,10 +48,10 @@ A guardrail fires at one or more **moments**. A breadcrumb has its own four:
 | `write` | guardrail | a file is created or changed. An Edit is checked in memory before it lands. Any other change is checked the moment it has landed, and undone if it is refused. Either way a refused write never persists (§8) |
 | `command` | either | before a shell command runs — a guardrail refuses it, a breadcrumb says what you should know before it runs |
 | `delete` | guardrail | a file is removed. An `rm` is checked before it runs. Any other removal is checked the moment it has landed, and the file is restored if it is refused |
-| `commit` | guardrail | the git pre-commit gate, over the staged set — this one fires for humans too |
+| `commit` | guardrail | the git pre-commit gate, over the staged changes. It runs for commits people make too. A rule bound at both `deletion` and `commit` also runs on each file the commit deletes |
 | `turn-end` | either | when the agent hands back |
 
-The commit moment is delivered by git's own pre-commit hook, not by any harness — which is why every harness gets the gate for free. In code, moments are imported symbols (`session · touch · write · command · deletion · commit · turnEnd`); `deletion` and `turnEnd` are spelled that way because `delete` is a reserved word, but the moment is still “delete”.
+The commit moment is delivered by git's own pre-commit hook, not by any harness — which is why every harness gets the gate for free. The hook runs `flow hook commit`, and flow asks git for the staged changes: the files the commit adds, changes and deletes. To git, a rename is a deletion of the old path plus an add of the new one. In code, moments are imported symbols (`session · touch · write · command · deletion · commit · turnEnd`); `deletion` and `turnEnd` are spelled that way because `delete` is a reserved word, but the moment is still “delete”.
 
 ## 2 · Guard a repo, from nothing
 
@@ -142,7 +142,7 @@ Five things to take from it, and then you can write your own:
 
 - **A sentence says everything, and defaults nothing.** `.at(…)` when it fires · `.on(…)`/`.ignore(…)` which files · `.for(…)` which actor · `.check(…)` the question · `.message(…)` what the blocked person reads · `.test({ pass, block })` what proves it. Say a verb twice and the compiler stops you; miss a `.message(…)` and it will not load.
 - **A check is a function of `ctx`**, and it reaches the world only through it — `ctx.command`, `ctx.staged`, `ctx.file`, `ctx.fs`, `ctx.exec`, `ctx.git` — answering with `ctx.ok()` or `ctx.fail(detail)`. That one rule is what lets the same check run live, run in a test case, and replay from a recording with no repo at all.
-- **Scope is the sentence.** `noMarkedFiles` names no `.on(…)`, so it is about *the commit* — asked once, handed the whole staged set. Name paths with `.on(…)` and the gate asks the rule once per staged file in scope instead, handing over each file.
+- **Scope is the sentence.** `noMarkedFiles` names no `.on(…)`, so it is about *the commit* — asked once, handed the whole staged set. Name paths with `.on(…)` and the gate asks the rule once per staged file in scope instead, handing over each file. A file the commit deletes goes only to a rule bound at both `deletion` and `commit`: a rule bound at `commit` alone checks the files the commit will contain, and a deleted file is not one of them.
 - **A category reads host-written evidence.** `subagent` recognises itself from a sidecar the harness wrote, never from anything the session claimed — because a permission that rests on a claim rests on a lie (§5).
 - **Every rule carries its own cases.** `.test({ pass, block })` is not decoration: a rule with no block case does not load (§6).
 
@@ -201,7 +201,7 @@ List the bare directory path as well as the glob for what is inside it — above
 
 The `.test` block above lists `block` entries and no `pass` entries. `pass` lists the inputs the rule must let through, and `block` lists the inputs it must refuse. This rule refuses every input it is given, so there is nothing to put in `pass`.
 
-If you want to protect the files a folder already holds while still allowing new ones — a migrations folder, say — pass `protectedPath({ existingOnly: true })`. A file that already exists can then no longer be changed or deleted, and a new file can still be created.
+If you want to protect the files a folder already holds while still allowing new ones — a migrations folder, say — pass `protectedPath({ existingOnly: true })`. A file that already exists can then no longer be changed or deleted, and a new file can still be created. At commit, a new file is one the last commit does not have. Bind the rule at `write`, `deletion` and `commit`, as above, so that a commit which deletes or renames an existing file is refused too: the rename is refused by its old path.
 
 If the agent changes a protected file with the Edit tool, the refusal comes first and nothing is written. If it changes the file with a shell command instead, the change lands, flow checks it, and flow puts the file back to the content it had before — [§8](#8--what-the-guard-sees--every-change-to-the-tree) explains how.
 

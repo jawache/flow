@@ -116,6 +116,11 @@ import {
   forgettable,
   overlapping,
   pathLines,
+  stagedChanges,
+  treeChanges,
+  commitScope,
+  armsOldFlow,
+  UPDATE_THE_GATE_LINE,
   REFUSED_ONLY,
   type CallRecord,
   snapshotPathspecs,
@@ -1729,10 +1734,14 @@ describe("the hook registrations flow writes", () => {
   });
 });
 
+const OLD_GATE = '#!/bin/sh\nstaged=$(git diff --cached --name-only --diff-filter=ACMR)\n[ -z "$staged" ] && exit 0\nexec flow commit $staged\n';
+
 describe("the git gate flow arms", () => {
-  it("calls the binary's own commit verb over the staged set", () => {
-    expect(PRE_COMMIT).toContain("flow commit");
+  it("calls `flow hook commit` and passes nothing — no list, no filter, no early exit", () => {
+    expect(PRE_COMMIT).toContain("\nexec flow hook commit\n");
     expect(PRE_COMMIT.startsWith("#!")).toBe(true);
+    expect(PRE_COMMIT, "flow asks git; the hook does not").not.toContain("git diff");
+    expect(PRE_COMMIT).not.toContain("exit 0");
   });
 
   it("names one hooks directory, and one gate inside it", () => {
@@ -1741,10 +1750,24 @@ describe("the git gate flow arms", () => {
     expect(PRE_COMMIT, "the hook's own comment tells you what arms it").toContain(SET_HOOKS_PATH);
   });
 
-  it("recognises a gate that runs flow, and one that runs something else", () => {
+  it("recognises a gate that runs flow, one that runs the OLD verb, and one that runs something else", () => {
     expect(armsFlow(PRE_COMMIT)).toBe(true);
+    expect(armsFlow(OLD_GATE), "flow's own gate from before `flow hook commit`").toBe(false);
+    expect(armsOldFlow(OLD_GATE)).toBe(true);
+    expect(armsOldFlow(PRE_COMMIT), "the current gate is not the old one, whatever its comment says").toBe(false);
+    expect(armsFlow("#!/bin/sh\n# flow hook commit runs here one day\nnpm test\n"), "a comment runs nothing").toBe(false);
     expect(armsFlow('#!/bin/sh\nwork guard commit "$@"\n'), "the old engine's gate").toBe(false);
+    expect(armsOldFlow('#!/bin/sh\nwork guard commit "$@"\n')).toBe(false);
     expect(armsFlow(null)).toBe(false);
+    expect(armsOldFlow(null)).toBe(false);
+  });
+
+  it("reads `flow hook commit [--all]`, refuses a file list, and drops the old verb's list", () => {
+    expect(commitScope([], false)).toBe("staged");
+    expect(commitScope(["--all"], false)).toBe("all");
+    expect(commitScope(["src/a.ts"], false), "a second source of the staged set").toBeNull();
+    expect(commitScope(["--all", "src/a.ts"], false)).toBeNull();
+    expect(commitScope(["src/a.ts", "src/b.ts"], true), "an older hook's `flow commit $staged`").toBe("staged");
   });
 });
 
@@ -1846,6 +1869,16 @@ describe("planInit — a repo that already has a pre-commit hook", () => {
     const said = initLines(theirs, []).join("\n");
     expect(said).toContain("kept");
     expect(said, "the same instruction status gives, in the same words").toContain(ADD_THE_GATE_LINE);
+  });
+
+  it("never overwrites flow's OLD gate either, and says which line to replace", () => {
+    const old = planInit({ ...bare, gateText: OLD_GATE });
+    expect(old.gate).toBeNull();
+    expect(old.gateOld).toBe(true);
+    const said = initLines(old, []).join("\n");
+    expect(said, "the same instruction status gives, in the same words").toContain(UPDATE_THE_GATE_LINE);
+    expect(said).not.toContain(ADD_THE_GATE_LINE);
+    expect(planInit({ ...bare, gateText: PRE_COMMIT }).gateKept, "today's gate is simply kept").toBe(false);
   });
 });
 
@@ -2227,6 +2260,9 @@ describe("status — the red lines, each carrying its fix", () => {
     const theirs = red({ gateText: "#!/bin/sh\nnpm test\n" });
     expect(theirs).toContain("does not call flow");
     expect(theirs, "the same instruction init gives, in the same words").toContain(ADD_THE_GATE_LINE);
+    const old = red({ gateText: OLD_GATE });
+    expect(old, "an old gate still runs, and misses every deletion").toContain("calls the old `flow commit`");
+    expect(old, "the same instruction init gives, in the same words").toContain(UPDATE_THE_GATE_LINE);
   });
 
   it("a hooksPath git was never told about — the one a fresh clone always needs", () => {
@@ -2337,6 +2373,46 @@ describe("status — the snapshot's edges and a registration an older flow wrote
 // THE DELTA — what a call changed, judged, and what is put back
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
+describe("stagedChanges — one question to git, and every staged change comes back with what it is", () => {
+  it("splits git's -z answer into what the commit holds, what is new, and what it removes", () => {
+    // `--no-renames` already split the rename: its old path is a D, its new one an A.
+    const z = ["A", "m/2.sql", "M", "src/a.ts", "D", "m/1.sql", "A", "m/1b.sql", "D", "a path with spaces.sql", "T", "bin/x", ""].join("\0");
+    expect(stagedChanges(z)).toEqual({
+      files: ["m/2.sql", "src/a.ts", "m/1b.sql", "bin/x"],
+      added: ["m/2.sql", "m/1b.sql"],
+      deleted: ["m/1.sql", "a path with spaces.sql"],
+    });
+  });
+
+  it("reads nothing staged as an empty commit", () => {
+    expect(stagedChanges("")).toEqual({ files: [], added: [], deleted: [] });
+  });
+});
+
+describe("treeChanges — the whole tree as one commit, against the last commit's own list", () => {
+  const ran = (stdout: string, code = 0) => ({ stdout, stderr: "", code });
+  const unasked = (): boolean => {
+    throw new Error("HEAD was asked about although the tree answered");
+  };
+
+  it("marks what the last commit lacks as new, and what it has that is gone as removed", () => {
+    const tree = ran(["m/1.sql", "m/gone.sql", "src/a.ts", ""].join("\0"));
+    expect(treeChanges(["m/1.sql", "m/2.sql", "src/a.ts"], tree, unasked)).toEqual({
+      files: ["m/1.sql", "m/2.sql", "src/a.ts"],
+      added: ["m/2.sql"],
+      deleted: ["m/gone.sql"],
+    });
+  });
+
+  it("treats every file as new before the first commit, when there is no HEAD to list", () => {
+    expect(treeChanges(["m/1.sql"], ran("", 128), () => false)).toEqual({ files: ["m/1.sql"], added: ["m/1.sql"], deleted: [] });
+  });
+
+  it("says nothing is known when git failed for any other reason, so a check refuses rather than allows", () => {
+    expect(treeChanges(["m/1.sql"], ran("", 127), () => true)).toEqual({ files: ["m/1.sql"], added: undefined, deleted: [] });
+  });
+});
+
 describe("the delta becomes the write and delete rails, and touch is the floor", () => {
   const changes = [
     { path: "src/a.ts", before: "a\n", after: "a // TODO\n" },
@@ -2351,8 +2427,8 @@ describe("the delta becomes the write and delete rails, and touch is the floor",
   it("judges every changed file on what is now on disk, and every removed one on what it held", () => {
     const events = toEvent("post-tool-use", pre("Bash", { command: "python3 fix.py" }), withChanges(changes));
     expect(events).toStrictEqual([
-      { rail: "guard", moment: "write", file: { path: "src/a.ts", content: "a // TODO\n" }, observed: true },
-      { rail: "guard", moment: "write", file: { path: "src/new.ts", content: "new\n" }, observed: true },
+      { rail: "guard", moment: "write", file: { path: "src/a.ts", content: "a // TODO\n", existed: true }, observed: true },
+      { rail: "guard", moment: "write", file: { path: "src/new.ts", content: "new\n", existed: false }, observed: true },
       { rail: "guard", moment: "delete", file: { path: "src/old.ts", content: "old\n" }, observed: true },
       { rail: "brief", moment: "touch", path: "src/a.ts" },
       { rail: "brief", moment: "touch", path: "src/new.ts" },
@@ -2382,7 +2458,7 @@ describe("the delta becomes the write and delete rails, and touch is the floor",
     const rewritten = [{ path: "src/a.ts", before: "a\n", after: "a // TODO\n" }];
     const command = "rm src/a.ts && cat > src/a.ts <<EOF\na // TODO\nEOF";
     expect(toEvent("post-tool-use", pre("Bash", { command }), withChanges(rewritten))).toStrictEqual([
-      { rail: "guard", moment: "write", file: { path: "src/a.ts", content: "a // TODO\n" }, observed: true },
+      { rail: "guard", moment: "write", file: { path: "src/a.ts", content: "a // TODO\n", existed: true }, observed: true },
       { rail: "brief", moment: "touch", path: "src/a.ts" },
     ]);
     // An mv's source that something else then fills is the same hole, and closed the same way.
