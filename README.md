@@ -55,6 +55,9 @@ running and says so on the line. Install it as a dependency instead and that ste
 To work *on* flow rather than with it: clone it, `just install`, `just link` — the binary then runs
 from your checkout, undone with `npm unlink -g @jawache/flow`.
 
+Upgrading a repo that already uses flow? Each release has a migration guide in
+[docs/user/migrations](./docs/user/migrations/index.md): what to change, and how to check it worked.
+
 ## Five minutes, from nothing
 
 ```sh

@@ -22,6 +22,10 @@ Every verb of the sentence grammar — `guardrail`, `breadcrumb`, `pack`, `overr
 
 Writing a check no stock one expresses — the `defineCheck` contract — and packing rules for a second repo.
 
+### [Upgrading flow](./migrations/index.md)
+
+One migration guide per release: what a repo that uses flow must change to upgrade to that version, as steps an agent can follow.
+
 ## The shipped packs — one page each
 
 Ten packs arrive with the install, behind `@jawache/flow/packs`, and a repo binds the ones it wants a line at a time. Each page is generated from the pack itself: every entry, when it fires and over what, the exact words an agent reads, the check's settings as written, and both sides of every case. Start at [the packs](./packs/index.md).
