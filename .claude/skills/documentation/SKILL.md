@@ -1,6 +1,6 @@
 ---
 name: documentation
-description: Use whenever writing or rewriting documentation for people — anything under docs/user, a README, a guide, a reference page, a tutorial, a how-to, an explanation, a check or pack page. Triggers on "write the docs", "rewrite this page", "document this", "update the guide", or any edit to a page a human reads. The Diátaxis method, quadrant by quadrant, plus the plain-language rules every quadrant obeys.
+description: Use whenever writing or rewriting documentation for people — anything under docs/user, a README, a guide, a reference page, a tutorial, a how-to, an explanation, a check or pack page, or a release's migration guide under docs/user/migrations. Triggers on "write the docs", "rewrite this page", "document this", "update the guide", "write the migration guide", before `just release`, or any edit to a page a human reads. The Diátaxis method, quadrant by quadrant, plus the plain-language rules every quadrant obeys.
 ---
 
 # Writing documentation — the Diátaxis method
@@ -74,6 +74,60 @@ A discursive treatment of a subject that permits reflection. Its title takes an 
 
 Make connections. Provide context. Admit opinion and perspective. Consider alternatives and
 counter-examples. Keep it bounded: no instructions, no reference tables.
+
+## Migration guides
+
+A how-to guide with a fixed shape: `docs/user/migrations/<version>.md` says what a repo that
+uses flow must change to upgrade to `<version>` from the release before it. Its reader is
+usually an agent in that other repo, pointed at the page and told to migrate. Every step
+must be one it can detect, apply and check without reading flow's source.
+
+`just release` refuses until the page for the version it would cut exists (`just release-dry`
+prints that version), and the house pack refuses a commit whose `package.json` version has no
+page. Add the page to the table in `docs/user/migrations/index.md`.
+
+To find what changed, read `git log --format='%h %s%n%b' v<previous>..HEAD`, the `BREAKING
+CHANGE` footers, and `git diff v<previous> HEAD -- index.ts packs/index.ts flow.ts` plus
+`HOOK_REGISTRATIONS` and `PRE_COMMIT` in `adapter/domain.ts`. Those cover the grammar and
+pack exports, the CLI, the session hook registrations and the pre-commit hook. A change
+belongs on the page when it changes something in the other repo: a config that no longer
+loads, an import, an entry id an `override` lists, a parameter, `.claude/settings.json`,
+`.githooks/pre-commit`, or a rule that now blocks or passes differently.
+
+The page, in this order:
+
+```
+# Upgrade to <version>
+
+From <previous> · <release date, or "unreleased"> · [all guides](./index.md)
+
+<One paragraph: what this release changes for a repo that uses flow, and whether it needs any
+change. "No changes needed" is a valid answer, and is stated here.>
+
+## 1 · Install <version>
+<The install commands, for a dev dependency and for a global install.>
+
+## 2 · Required changes
+### 2.1 · <What to change, imperative>
+**Applies if:** <a command or grep the reader runs, and the output that means yes>
+**Change:** <the exact before → after>
+**Why:** <one sentence>
+
+## 3 · What now blocks or passes differently
+<Each behaviour change with no config change: what is refused or allowed now that was not,
+and what to do if a commit or a tool call is now refused.>
+
+## 4 · Optional
+<New features worth adopting: one line each, with the snippet.>
+
+## 5 · Verify
+<`flow status` green, `flow test` all green, and the gate over the whole tree, using the
+command spelling this version has.>
+```
+
+A section with nothing in it says "None." rather than disappearing, so a reader knows it was
+checked. A version range is applied one guide at a time, oldest first; say so only in the
+index.
 
 ## In every quadrant
 

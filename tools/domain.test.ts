@@ -8,6 +8,8 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  migrationGuide,
+  nextVersion,
   bindingSnippet,
   bindLine,
   caseLine,
@@ -706,5 +708,17 @@ describe("the Bash corpus score", () => {
       expect(baseline(`grep -n "a > b" "src/x.ts"`)).toStrictEqual({ reads: ["src/x.ts"], writes: ["b"] });
       expect(baseline(`git commit -m "fix README.md"`).reads).toStrictEqual(["README.md"]);
     });
+  });
+});
+
+describe("the release's migration guide — one page per version, named by the version it upgrades to", () => {
+  it("lives under docs/user/migrations, named by the version", () => {
+    expect(migrationGuide("0.2.2")).toBe("docs/user/migrations/0.2.2.md");
+  });
+
+  it("reads the version a dry run would cut off the tool's own report, and nothing when it names none", () => {
+    const dry = "✔ bumping version in package.json from 0.2.1 to 0.2.2\n✔ bumping version in package-lock.json from 0.2.1 to 0.2.2\n";
+    expect(nextVersion(dry)).toBe("0.2.2");
+    expect(nextVersion("✔ outputting changes to CHANGELOG.md\n")).toBeNull();
   });
 });

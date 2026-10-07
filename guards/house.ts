@@ -128,6 +128,17 @@ export function breadcrumbsWithoutWhy(text: string): { name: string; line: numbe
   return bare;
 }
 
+/** The `version` a package.json names, or null when it names none or does not parse. */
+function packageVersion(text: string): string | null {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    const version = typeof parsed === "object" && parsed !== null ? (parsed as { version?: unknown }).version : undefined;
+    return typeof version === "string" ? version : null;
+  } catch {
+    return null;
+  }
+}
+
 /** What this repo calls pure. The import fence's `pure` layer is exactly this list. */
 export interface Terrain {
   /**
@@ -454,6 +465,29 @@ export const house = definePack("house", (repo: Terrain) => ({
           world: { exec: { "just docs-packs-check": { code: 1, stdout: "docs/user/packs/docs.md has drifted from its pack" } } },
         },
       ],
+    }),
+
+  // A release a guarded repo cannot follow is a release that strands it: the upgrade it has to make
+  // lives only in commit bodies nobody there reads. The guide is the page an agent is pointed at.
+  releaseHasMigrationGuide: guardrail()
+    .at(commit)
+    .on("package.json")
+    .description("Every version package.json names has its migration guide at docs/user/migrations/<version>.md.")
+    .check(async (ctx) => {
+      const version = packageVersion(ctx.file?.content ?? "");
+      // No readable version is another rule's question; this one is only about the guide.
+      if (version === null) return ctx.ok();
+      const guide = `docs/user/migrations/${version}.md`;
+      return (await ctx.fs.exists(guide)) ? ctx.ok() : ctx.fail(`package.json is at ${version}, and ${guide} does not exist`);
+    })
+    .message(
+      "This version has no migration guide. Write docs/user/migrations/<version>.md — what a repo that uses flow must change to upgrade to it, as numbered steps an agent can follow, in the format .claude/skills/documentation/SKILL.md gives — link it from docs/user/migrations/index.md, and stage it with this commit. `just release` asks the same before it writes anything.",
+    )
+    .test({
+      pass: [
+        { staged: ["package.json"], world: { fs: { "package.json": '{ "version": "0.2.2" }', "docs/user/migrations/0.2.2.md": "# Upgrade to 0.2.2" } } },
+      ],
+      block: [{ staged: ["package.json"], world: { fs: { "package.json": '{ "version": "0.2.2" }' } } }],
     }),
 
   breadcrumbSaysWhy: guardrail()

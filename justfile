@@ -107,8 +107,11 @@ link:
     @echo 'flow now runs from this checkout. Undo with: npm unlink -g @jawache/flow'
     @echo 'Next, in any repo you want guarded — this one included:  flow init'
 
-[doc("Cut a release, locally: compute the next version from the conventional commits since the last tag, write CHANGELOG.md, stamp package.json and the lockfile, and make ONE `chore(release): x.y.z` commit tagged `vx.y.z`. Nothing is pushed and nothing is published. Preview it with `just release-dry` first.")]
+[doc("Cut a release, locally: compute the next version from the conventional commits since the last tag, write CHANGELOG.md, stamp package.json and the lockfile, and make ONE `chore(release): x.y.z` commit tagged `vx.y.z`. Refused until docs/user/migrations/<version>.md exists. Nothing is pushed and nothing is published. Preview it with `just release-dry` first.")]
 release:
+    # The version being cut needs its migration guide — the page a repo that uses flow follows to
+    # upgrade. Asked first, for the same no-rollback reason as the gate below.
+    node tools/release-guide.ts
     # The gate runs FIRST, before a byte is written. commit-and-tag-version has no rollback: its
     # own `git commit` fires .githooks/pre-commit, and a gate failure there aborts the release with
     # the version already stamped and CHANGELOG.md already written, but nothing committed and no

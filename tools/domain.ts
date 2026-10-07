@@ -1008,3 +1008,21 @@ export function baseline(command: string): Targets {
   });
   return { reads, writes };
 }
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE RELEASE'S MIGRATION GUIDE — the page a guarded repo's agent follows to upgrade
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+//
+// ONE PAGE PER RELEASE, named by the version it upgrades TO, and a release is refused without it:
+// `just release` asks before it writes a byte (release-guide.ts), and the house pack asks again of
+// any commit that stages package.json. A guide written later is written from memory.
+
+/** Where the guide for upgrading to `version` lives. */
+export function migrationGuide(version: string): string {
+  return `docs/user/migrations/${version}.md`;
+}
+
+/** The version `commit-and-tag-version --dry-run` would cut, read off its own report — or null. */
+export function nextVersion(dryRun: string): string | null {
+  return /bumping version in package\.json from \S+ to (\S+)/.exec(dryRun)?.[1] ?? null;
+}
