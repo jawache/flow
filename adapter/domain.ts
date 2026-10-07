@@ -3594,9 +3594,9 @@ export const ADD_THE_GATE_LINE = "add `flow hook commit` to it";
  *
  * The old hook still runs the gate, which is why it is not simply broken: it hands flow a list that
  * leaves out deletions, and exits before calling flow at all when a commit only deletes files.
+ * `status` says that much; this is the instruction alone, so it ends `init`'s sentence cleanly.
  */
-export const UPDATE_THE_GATE_LINE =
-  "replace its `flow commit …` line with `exec flow hook commit` — the old line never shows flow a deleted file, and skips a commit that only deletes files";
+export const UPDATE_THE_GATE_LINE = "replace its `flow commit …` line with `exec flow hook commit`";
 
 /**
  * The pre-commit hook, verbatim.
@@ -4059,7 +4059,7 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
       detail: armed
         ? `${GATE_PATH} runs \`flow hook commit\` over the staged changes`
         : old
-          ? `${GATE_PATH} calls the old \`flow commit\` — ${UPDATE_THE_GATE_LINE}.`
+          ? `${GATE_PATH} calls the old \`flow commit\`, which leaves every deleted file unchecked — ${UPDATE_THE_GATE_LINE}.`
           : facts.gateText === null
             ? `no ${GATE_PATH} — \`flow init\` arms it. Until then nothing runs at the commit.`
             : `${GATE_PATH} is here but does not call flow — ${ADD_THE_GATE_LINE}.`,
