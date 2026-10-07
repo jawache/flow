@@ -92,9 +92,9 @@ Blocks Claude/Anthropic attribution in commits, PRs and issues.
 ```
 {
   "ban": [
-    "git commit[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(Claude|[Aa]nthropic)",
-    "git commit[\\s\\S]*[Gg]enerated with[\\s\\S]*Claude",
-    "git commit[\\s\\S]*(claude\\.com/claude-code|🤖 Generated)",
+    "git(?:\\s+-[Cc]\\s+(?:\"[^\"]*\"|'[^']*'|\\S+)|\\s+--[\\w-]+(?:=\\S+)?)*\\s+commit[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(Claude|[Aa]nthropic)",
+    "git(?:\\s+-[Cc]\\s+(?:\"[^\"]*\"|'[^']*'|\\S+)|\\s+--[\\w-]+(?:=\\S+)?)*\\s+commit[\\s\\S]*[Gg]enerated with[\\s\\S]*Claude",
+    "git(?:\\s+-[Cc]\\s+(?:\"[^\"]*\"|'[^']*'|\\S+)|\\s+--[\\w-]+(?:=\\S+)?)*\\s+commit[\\s\\S]*(claude\\.com/claude-code|🤖 Generated)",
     "gh (pr|issue)[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(Claude|[Aa]nthropic)",
     "gh (pr|issue)[\\s\\S]*(claude\\.com/claude-code|🤖 Generated)"
   ],
@@ -103,6 +103,12 @@ Blocks Claude/Anthropic attribution in commits, PRs and issues.
 ```
 
 </details>
+
+### Why it exists
+
+Claude Code tells every agent to end a commit or a pull request with a line crediting Claude,
+and an agent follows the harness's instruction over the repo's. Without this, the credit lands
+in history, where removing it means rewriting commits that may already be shared.
 
 ### What the agent reads when refused
 
@@ -115,9 +121,16 @@ Commit / PR / issue body contains Claude or Anthropic attribution. Remove it (th
 **passes**
 
 - running `git commit -m "fix(auth): renew the session"`
+- running `git -C /repo/worktree commit -m "fix(auth): renew the session"`
 
 **blocks**
 
+- running `git -C /repo/worktree commit -m "fix(auth): renew the session
+
+Co-Authored-By: Claude Opus <noreply@anthropic.com>"`
+- running `git -c commit.gpgsign=false commit -m "fix(auth): renew the session
+
+Co-Authored-By: Claude"`
 - running `git commit -F - <<'EOF'
 fix(auth): renew the session
 

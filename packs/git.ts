@@ -278,6 +278,11 @@ const SITE = ["cl", "aude", "\\.com/", "cl", "aude", "-code"].join("");
 const LINK = ["cl", "aude", ".com/", "cl", "aude", "-code"].join("");
 const ROBOT = "\u{1F916}";
 
+// `git commit` as a regex source, with any of git's own options between the two words: `-C <dir>`,
+// `-c key=value`, `--git-dir=…`. A builder in a worktree commits as `git -C <worktree> commit`,
+// and a pattern that wanted the two words side by side let every one of those commits through.
+const GIT_COMMIT = String.raw`git(?:\s+-[Cc]\s+(?:"[^"]*"|'[^']*'|\S+)|\s+--[\w-]+(?:=\S+)?)*\s+commit`;
+
 /** What this pack cannot know: which recipe cuts a release, and which file carries the version. */
 export interface Release {
   /**
@@ -343,15 +348,20 @@ export const git = definePack("git", (repo: Release) => {
       ].join("\n"),
     ),
 
+  /**
+   * Claude Code tells every agent to end a commit or a pull request with a line crediting Claude,
+   * and an agent follows the harness's instruction over the repo's. Without this, the credit lands
+   * in history, where removing it means rewriting commits that may already be shared.
+   */
   noAiAttributionInCommits: guardrail()
     .at(command)
     .description("Blocks Claude/Anthropic attribution in commits, PRs and issues.")
     .check(
       banCommands({
         ban: [
-          `git commit[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(${VENDOR}|[Aa]nthropic)`,
-          `git commit[\\s\\S]*[Gg]enerated with[\\s\\S]*${VENDOR}`,
-          `git commit[\\s\\S]*(${SITE}|🤖 Generated)`,
+          `${GIT_COMMIT}[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(${VENDOR}|[Aa]nthropic)`,
+          `${GIT_COMMIT}[\\s\\S]*[Gg]enerated with[\\s\\S]*${VENDOR}`,
+          `${GIT_COMMIT}[\\s\\S]*(${SITE}|🤖 Generated)`,
           `gh (pr|issue)[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(${VENDOR}|[Aa]nthropic)`,
           `gh (pr|issue)[\\s\\S]*(${SITE}|🤖 Generated)`,
         ],
@@ -365,8 +375,11 @@ export const git = definePack("git", (repo: Release) => {
     // EVERY LITERAL ASSEMBLED, the cases included: written whole, a case would carry the shape its
     // own rule bans, and this file's next commit would be refused by it.
     .test({
-      pass: ['git commit -m "fix(auth): renew the session"'],
+      pass: ['git commit -m "fix(auth): renew the session"', 'git -C /repo/worktree commit -m "fix(auth): renew the session"'],
       block: [
+        // git's own options before `commit`: a builder in a worktree, and a one-off config value.
+        `git -C /repo/worktree commit -m "fix(auth): renew the session\n\n${TRAILER}: ${VENDOR} Opus <noreply@anthropic.com>"`,
+        `git -c commit.gpgsign=false commit -m "fix(auth): renew the session\n\n${TRAILER}: ${VENDOR}"`,
         // The message given on stdin, through a heredoc: matchHeredocs is what keeps it in view.
         `git commit -F - <<'EOF'\nfix(auth): renew the session\n\n${TRAILER}: ${VENDOR}\nEOF`,
         `git commit -m "fix(auth): renew the session\n\n${TRAILER}: ${VENDOR} <noreply@anthropic.com>"`,
