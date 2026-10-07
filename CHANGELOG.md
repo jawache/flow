@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.2.2](https://github.com/jawache/flow/compare/v0.2.1...v0.2.2) (2026-10-07)
+
+### Features
+
+* **commit:** flow hook commit asks git for the staged changes, and checks deletions at commit ([f91b3a7](https://github.com/jawache/flow/commit/f91b3a7f95e6e28e54638f4e8c66386cdc16cdf5)), closes [#6](https://github.com/jawache/flow/issues/6)
+* **package:** the npm package ships its migration guides ([c3af8b1](https://github.com/jawache/flow/commit/c3af8b1abeb9de802695c1dc870c9c0e2740ff25))
+
+### Bug Fixes
+
+* **adapter:** flow init and flow status give the old-hook fix as one clean sentence ([908a31c](https://github.com/jawache/flow/commit/908a31c675a0473714fa51061ee9490236dba4f7))
 ## [0.2.1](https://github.com/jawache/flow/compare/v0.2.0...v0.2.1) (2026-10-02)
 
 ### Bug Fixes
