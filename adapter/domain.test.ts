@@ -2519,7 +2519,7 @@ describe("an observed refusal — its own banner, and what was put back", () => 
   const noTodo: Block = { do: "block", entry: "house.noTodo", message: "No TODOs in src/ — do it now, or track it properly.", subject: "src/b.ts", detail: "line 3 says TODO" };
   const b = { path: "src/b.ts", before: "b\n", after: "TODO\n" };
 
-  it("prints the guide's example: the reverted banner, the entry, and the two-sentence tail", () => {
+  it("prints the example on docs/user/explanation/what-the-guard-sees.md: the reverted banner, the entry, and the two-sentence tail", () => {
     const answer = toResult("post-tool-use", {
       refused: [{ moment: "write", block: noTodo, observed: "src/b.ts" }],
       shown: [],
