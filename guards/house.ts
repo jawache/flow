@@ -253,6 +253,13 @@ export const house = definePack("house", (repo: Terrain) => ({
           // Spelled as a PATH glob, not as a bare name: the dialect reads a bare name as an npm
           // package and anchors it, which cannot work for a SCOPED package.
           "astgrep-lib": ["**/node_modules/@ast-grep/napi/**"],
+          // THE OTHER PARSER, and it sits in the allowlist for the same reason: `unbash` reads a
+          // shell line as bash, with no dependencies and no I/O, and the parse behind
+          // `ctx.commands` lives in the pure home. Spelled twice: depcruise cannot resolve the
+          // package through its `exports` and reports the edge as the bare name, which `unbash*`
+          // matches the way `path*` matches a builtin; the bare `unbash` is the path under
+          // node_modules, for the day it resolves.
+          "unbash-lib": ["unbash*", "unbash"],
           // THE PACKAGE ROOT — index.ts, flow.ts, glob.ts, errors.ts, version.ts and the three
           // test files beside them. A layer for ONE reason: without it these files belong to no
           // layer at all, so every `from:` rule below skips them and an import of `e2e/` from
@@ -289,10 +296,10 @@ export const house = definePack("house", (repo: Terrain) => ({
           e2e: ["e2e/**"],
         },
         only: {
-          // The pure home reaches pure code, `node:path` and one parser, and nothing else. No
+          // The pure home reaches pure code, `node:path` and two parsers, and nothing else. No
           // disk, no process, no clock — that is what makes a `.test()` case and a replay drive
           // the same code, and it is this package's one load-bearing invariant.
-          pure: ["pure", "node-path", "astgrep-lib"],
+          pure: ["pure", "node-path", "astgrep-lib", "unbash-lib"],
         },
         except: ["type-only"],
         forbid: [
@@ -363,11 +370,28 @@ export const house = definePack("house", (repo: Terrain) => ({
       }),
     )
     .message(
-      "Import crosses a fence the wrong way (see the named check). The pipeline runs ONE WAY — language → checks → engine → adapter; packs/ sits outside it, reaching index.ts only, with nothing reaching back; guards/ and tools/ are consumers of the two public doors and nothing in the package may import either; e2e/ is test-only and nothing may import it, the package root included; and a pure `domain.ts` reaches pure code and node:path, nothing else.",
+      "Import crosses a fence the wrong way (see the named check). The pipeline runs ONE WAY — language → checks → engine → adapter; packs/ sits outside it, reaching index.ts only, with nothing reaching back; guards/ and tools/ are consumers of the two public doors and nothing in the package may import either; e2e/ is test-only and nothing may import it, the package root included; and a pure `domain.ts` reaches pure code, node:path and the two parsers (@ast-grep/napi, unbash), nothing else.",
     )
     .test({
-      pass: [{ staged: ["engine/domain.ts"], world: { exec: { depcruise: { stdout: '{"summary":{"violations":[]}}' } } } }],
+      pass: [
+        { staged: ["engine/domain.ts"], world: { exec: { depcruise: { stdout: '{"summary":{"violations":[]}}' } } } },
+        // The allowlist carries the parser: answered only when the fence's own config names it,
+        // so a pure home that lost `unbash` is a case asking for an answer it was never given.
+        { staged: ["language/domain.ts"], world: { exec: { "^unbash[^/]*$": { stdout: '{"summary":{"violations":[]}}' } } } },
+      ],
       block: [
+        // …and it carries nothing else: a pure file reaching any other package still blocks.
+        {
+          staged: ["language/domain.ts"],
+          world: {
+            exec: {
+              depcruise: {
+                code: 1,
+                stdout: '{"summary":{"violations":[{"rule":{"name":"pure-only"},"from":"language/domain.ts","to":"left-pad"}]}}',
+              },
+            },
+          },
+        },
         {
           staged: ["engine/domain.ts"],
           world: {
