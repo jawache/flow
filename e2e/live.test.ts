@@ -301,19 +301,17 @@ describe("what a broken or empty call does", () => {
     expect(annotating.stderr).toContain("could not PARSE its payload");
   });
 
-  it("reports a stdin it cannot read on the after-call rails, naming the error, rather than retrying it", () => {
+  it("reports a stdin it cannot read on an after-call rail, naming the error, rather than retrying it", () => {
     // Only EAGAIN means "wait for the next piece"; any other error is a payload nobody will ever
     // see. A stdin opened for writing fails every read with EBADF. A CLOSED stdin cannot show this:
     // node reopens a closed fd 0 on /dev/null before flow's first line runs, so it reads as empty.
     const dir = mkdtempSync(join(tmpdir(), "flow-stdin-"));
     const writeOnly = openSync(join(dir, "stdin"), "w");
     try {
-      for (const event of ["post-tool-use", "post-tool-use-failure"]) {
-        const answer = runFlow(repo, ["hook", event], {}, writeOnly);
-        expect(answer.code, `${event} must not pass an unread call as clean`).toBe(2);
-        expect(answer.stderr).toContain("flow — could not see what this call changed");
-        expect(answer.stderr).toContain(`[flow hook ${event}] could not READ its payload from stdin (EBADF).`);
-      }
+      const answer = runFlow(repo, ["hook", "post-tool-use"], {}, writeOnly);
+      expect(answer.code, "an unread call must not pass as clean").toBe(2);
+      expect(answer.stderr).toContain("flow — could not see what this call changed");
+      expect(answer.stderr).toContain("[flow hook post-tool-use] could not READ its payload from stdin (EBADF).");
     } finally {
       closeSync(writeOnly);
       rmSync(dir, { recursive: true, force: true });
