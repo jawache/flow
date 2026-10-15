@@ -74,13 +74,13 @@ A guardrail is a rule that refuses a write, a command or a commit. Every verb is
 | Verb | Value | Meaning |
 | --- | --- | --- |
 | `.at(…moments)` | moments | **Mandatory.** When it runs. See [moments](./moments.md) |
-| `.on(…globs)` | globs | The files it watches. With no `.on(…)`, a file rule watches every path. `.on()` with no globs loads and matches no path. A command rule takes none |
-| `.ignore(…globs)` | globs | Carve-outs from `.on(…)` |
+| `.on(…globs)` | globs | The files it watches. With no `.on(…)`, a file rule watches every path. `.on()` with no globs is refused. A command rule takes none |
+| `.ignore(…globs)` | globs | Carve-outs from `.on(…)`. `.ignore()` with no globs is refused |
 | `.for(…categories)` | categories | Binds the rule to actors. It runs only for a session that has at least one of the categories. With no `.for(…)`, it runs for every session |
 | `.check(fn)` | a check | **Mandatory.** A function of `ctx`, or a stock check such as `textBan({…})` |
 | `.message(str)` | string | **Mandatory.** What the blocked person reads |
 | `.description(str)` | string | What the entry is for, for the reader |
-| `.test({ pass, block })` | cases | **Mandatory.** What must pass and what must block. A guardrail with no case at all, pass or block, does not load |
+| `.test({ pass, block })` | cases | **Mandatory.** What must pass and what must block. A guardrail with no block case does not load |
 | `.disabled(why)` | string | Turns the entry off, on the record. The reason prints in `flow status` |
 
 ## A breadcrumb
@@ -90,16 +90,16 @@ A breadcrumb is a note shown to the agent. It has no rail to block with, so it h
 | Verb | Value | Meaning |
 | --- | --- | --- |
 | `.at(…moments)` | `session · touch · command · turn-end` | **Mandatory.** When the note shows. A `turn-end` breadcrumb loads, but the Claude Code adapter never shows it, and `flow status` marks it as one that never shows |
-| `.on(…globs)` | globs | What the note is about: the files whose touch shows it, or, at `command`, the command lines it is about (`"npm install*"`) |
-| `.ignore(…globs)` | globs | Carve-outs from `.on(…)` |
+| `.on(…globs)` | globs | What the note is about: the files whose touch shows it, or, at `command`, the command lines it is about (`"npm install*"`). `.on()` with no globs is refused |
+| `.ignore(…globs)` | globs | Carve-outs from `.on(…)`. `.ignore()` with no globs is refused |
 | `.for(…categories)` | categories | Binds the note to actors. Only a session that has at least one of the categories is shown it |
-| `.text(str)` / `.file(path)` | prose | The note itself. One of the two is mandatory. When both are given, the note loads and `.text(…)` is shown |
+| `.text(str)` / `.file(path)` | prose | The note itself. Exactly one of the two is mandatory. A breadcrumb with both is refused. On an override, either one replaces the pack's prose, whichever of the two the pack used |
 | `.description(str)` | string | What the entry is for, for the reader |
 | `.disabled(why)` | string | Turns the entry off, on the record. The reason prints in `flow status` |
 
 ## Cases
 
-A case is a canned `ctx`. Its shape picks which moment's dialect it speaks, and that must be a moment the entry runs at. A guardrail with no case at all, pass or block, does not load.
+A case is a canned `ctx`. Its shape picks which moment's dialect it speaks, and that must be a moment the entry runs at. A guardrail with no block case does not load, whatever pass cases it has.
 
 | Case shape | Dialect |
 | --- | --- |
@@ -160,8 +160,9 @@ Why a category reads evidence the host wrote is on [rules bound to who](../expla
 Each refusal is a closed code that includes the entry it names. The loader checks every one at load. Most are also compile errors in your editor. These are caught only at load:
 
 - **`duplicate-id`** and **`bad-check-options`**, always.
-- **`no-cases`**, when `.test({})` is written with no cases in it.
+- **`no-block-cases`**, when `.test(…)` is written with no block case in it.
 - **`dead-scope`**, when `.on(…)` comes before `.at(…)`.
+- **`empty-scope`**, when `.on(…)` or `.ignore(…)` spreads a list that turns out empty, such as `.on(...files)`.
 - **`unknown-entry`**, when the override names an entry of a pack the config does not bind.
 
 | Code | Cause |
@@ -173,13 +174,15 @@ Each refusal is a closed code that includes the entry it names. The loader check
 | `unknown-moment` | A moment the entry's kind has no rail for: a breadcrumb at `write`, `delete` or `commit`, or a guardrail at `session` or `touch` |
 | `missing-mandatory` | A guardrail without `.at`, `.check` or `.message`, or a breadcrumb without `.at` or without `.text`/`.file`. A disabled entry is exempt |
 | `undeclared-category` | `.for(…)` a category nothing declared |
-| `no-cases` | A guardrail with no case at all, pass or block |
+| `no-block-cases` | A guardrail with no block case. Pass cases alone do not count |
 | `duplicate-id` | Two entries have the same id, `<pack>.<entry>`: one pack bound twice, or two packs with the same name |
 | `bad-check-options` | A check was configured with options it cannot work with, and said so. For example, a depcruise layer written as a regex where the dialect takes globs. The check's own sentence is the refusal |
+| `empty-scope` | An `.on()` or `.ignore()` with no globs, on an entry or an override |
+| `double-prose` | A breadcrumb with both `.text(…)` and `.file(…)` |
 | `dead-scope` | An `.on(…)` or `.ignore(…)` on an entry whose moments carry no path or command to narrow, such as a guardrail only at `command` or `turn-end`, or a breadcrumb only at `session` or `turn-end` |
 
 > [!IMPORTANT]
-> If the file does not load at all, every write, delete, command and commit is refused until it is fixed. A turn-end is reported and not refused. A write or delete of `flow.config.ts` or of a pack it imports still goes through, so the config can be repaired. See [fail loud](../explanation/fail-loud.md).
+> If the file does not load at all, every guardrail and breadcrumb is off until it is fixed. Every write, delete and command goes through, and the agent is given the load error with each one. Every commit is refused. See [fail loud](../explanation/fail-loud.md).
 
 ---
 

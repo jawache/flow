@@ -16,7 +16,7 @@ The packs `@jawache/flow/packs` ships. Each is a list of rules about a repo. Bin
 | [`git`](./git.md) | 8 · 1 | `versionFile` `types` `release` | Conventional commit headers, computed versions, and nothing destroys uncommitted work. |
 | [`justfile`](./justfile.md) | 3 · 2 | `exempt` `tools` `recipes` | The justfile is the repo's TOOL CATALOGUE. |
 | [`node`](./node.md) | 2 · 1 | — | package.json discipline: reach for a maintained package, say why, pin it, move the lockfile with it. |
-| [`secrets`](./secrets.md) | 3 · 1 | `publicPrefixes` `localFiles` `envFiles` `extraSecretShapes` `dx` `encrypt` | Env files committed encrypted, decrypted through one seam, and the local-only files kept out of git. |
+| [`secrets`](./secrets.md) | 3 · 1 | `publicPrefixes` `localFiles` `envFiles` `extraSecretShapes` `dx` `encrypt` `custody` | Env files committed encrypted, decrypted through one seam, and the local-only files kept out of git. |
 | [`tdd`](./tdd.md) | 6 · 1 | `run` `tests` | Test-first artefacts exist; tests test behaviour, not implementation; the suite gates the commit. |
 | [`typescript`](./typescript.md) | 4 · 1 | `typecheck` `lint` `tsconfigBase` `eslintBase` `strictOptions` | TypeScript discipline as shared configuration: strict stays on, the checker is never silenced. |
 | [`work`](./work.md) | 6 · 0 | `writers` | The WORK LIFECYCLE's rungs: who is acting, and what each rung may do. |

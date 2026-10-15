@@ -31,6 +31,8 @@ This guide shows you how to change one entry of a pack your repo binds, or turn 
 
    An override also accepts `.at(…)`, `.for(…)`, `.ignore(…)` and `.description(…)`, and on a breadcrumb `.text(…)` and `.file(…)`. It never accepts `.check(…)` or `.test(…)`.
 
+   On a breadcrumb, `.text(…)` or `.file(…)` replaces the pack's prose, whichever of the two the pack used.
+
 4. **List the whole value.** An override replaces the key it names. A narrowed `.on(…)` is the whole list of globs, never a merge with the pack's list, so the pack's own globs are not added back beside it.
 5. **Run `flow status`.** An entry turned off with `.disabled("why")` is marked `○`, with `off: <reason>` under it. An entry with a new `.on(…)` shows its new globs.
 

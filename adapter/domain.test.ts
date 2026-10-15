@@ -36,7 +36,6 @@ import {
   decision,
   deleteTargets,
   delivers,
-  faultText,
   readFault,
   hermeticEnv,
   isHookEvent,
@@ -58,10 +57,9 @@ import {
   touchedPath,
   CONFIG_FILE,
   configImports,
-  configSurface,
-  repairs,
   statusCode,
   whileBroken,
+  FLOW_OFF,
   guardPaths,
   HOST_SURFACE,
   formatFacts,
@@ -691,26 +689,37 @@ describe("toResult — one refusal spelling, one injection spelling", () => {
     });
   });
 
-  it("says which of the three things happened to a payload it could not read", () => {
-    // "There was nothing to guard" and "I could not SEE what I was guarding" were one answer in the
-    // old engine — an empty object — so a rail that could not read its payload allowed, silently.
-    expect(faultText("pre-tool-use", "unreadable", "EBADF")).toBe(
-      "[flow hook pre-tool-use] the guard could not READ its payload from stdin (EBADF).",
-    );
-    expect(faultText("stop", "unparseable", "12 bytes on stdin, and not JSON")).toContain("could not PARSE");
-  });
-
   it("is LOUD on every rail that judges a tool call, and speaks without holding on the rest", () => {
-    for (const hook of ["pre-tool-use", "post-tool-use", "post-tool-use-failure"] as const) {
-      const answer = readFault(hook, "unparseable", "not JSON");
-      expect(answer.exitCode, hook).toBe(2);
-      expect(answer.stderr).toContain(`[flow hook ${hook}] the guard could not PARSE its payload`);
-    }
-    for (const hook of ["session-start", "stop", "notification"] as const) {
-      const answer = readFault(hook, "unreadable", "EBADF");
-      expect(answer.exitCode, hook).toBe(0);
-      expect(answer.stderr).toContain("could not READ");
-    }
+    // The after-call rails say it the way every unseen call is said — the call ran and nothing it
+    // changed was checked — never as a guard refusing a call that has already landed (#12).
+    expect(readFault("pre-tool-use", "unparseable", "not JSON")).toStrictEqual({
+      stdout: "",
+      stderr: "\n[flow hook pre-tool-use] could not PARSE its payload (not JSON).\n",
+      exitCode: 2,
+    });
+    expect(readFault("post-tool-use", "unparseable", "not JSON")).toStrictEqual({
+      stdout: "",
+      stderr:
+        "\nflow — could not see what this call changed:\n\n" +
+        "[flow hook post-tool-use] could not PARSE its payload (not JSON).\n\n" +
+        "The call ran, and nothing it changed was checked or put back. Check what the call changed before you go on.\n",
+      exitCode: 2,
+    });
+    expect(readFault("post-tool-use-failure", "unreadable", "EBADF")).toStrictEqual({
+      stdout: "",
+      stderr:
+        "\nflow — could not see what this call changed:\n\n" +
+        "[flow hook post-tool-use-failure] could not READ its payload from stdin (EBADF).\n\n" +
+        "The call ran, and nothing it changed was checked or put back. Check what the call changed before you go on.\n",
+      exitCode: 2,
+    });
+    expect(readFault("session-start", "unreadable", "EBADF")).toStrictEqual({
+      stdout: "",
+      stderr: "[flow hook session-start] could not READ its payload from stdin (EBADF).\n",
+      exitCode: 0,
+    });
+    expect(readFault("stop", "unreadable", "EBADF").exitCode).toBe(0);
+    expect(readFault("notification", "unreadable", "EBADF").exitCode).toBe(0);
   });
 });
 
@@ -1307,13 +1316,10 @@ describe("what the session ran under — the permission mode, and auto mode's st
 });
 
 describe("weakened after a block — the one failure a guard cannot catch itself", () => {
-  it("watches the host's registrations, and takes the repo's half whole from the surface", () => {
-    // Two halves, and only one of them is this test's. That the repo half FOLLOWS the config's own
-    // imports is `configSurface`'s claim and is proved where it is made, further down this file;
-    // `guardPaths` does nothing but concatenate, so re-proving the derivation here would be a
-    // second place for the same fact to be right and a first place for it to disagree.
+  it("watches the config and the host's registrations", () => {
+    // That the repo half FOLLOWS the config's own imports is proved in "the guard's own files",
+    // further down this file.
     const paths = guardPaths(`import { house } from "./rules/house.ts";`);
-    expect(paths).toStrictEqual([...configSurface(`import { house } from "./rules/house.ts";`), ...HOST_SURFACE]);
 
     // The config's name is spelled ONCE — a second copy here would leave a renamed config's old
     // name watched and its new one not.
@@ -1880,7 +1886,7 @@ describe("planInit — a repo that already has a pre-commit hook", () => {
   });
 });
 
-describe("the config surface — what a write may target while the guard is broken", () => {
+describe("the guard's own files — the repo's half read out of the config's text, and the host's", () => {
   // The config as this repo writes it, and as a broken one still reads: the imports survive
   // whatever went wrong two hundred lines below them.
   const CONFIG = [
@@ -1891,35 +1897,38 @@ describe("the config surface — what a write may target while the guard is brok
     `export default defineConfig([pack(git), pack(house)]);`,
   ].join("\n");
 
-  it("is the config and the packs it imports, and nothing else", () => {
-    const surface = configSurface(CONFIG);
-    expect(matchAny(CONFIG_FILE, surface)).toBe(true);
-    expect(matchAny("guards/house.ts", surface)).toBe(true);
-    expect(matchAny("guards/git.ts", surface), "the folder comes with the file").toBe(true);
-    expect(matchAny("guards/nested/deep.ts", surface)).toBe(true);
-    expect(matchAny("src/a.ts", surface)).toBe(false);
-    expect(matchAny("cli/work.ts", surface)).toBe(false);
+  it("is the config, the packs it imports and the host's half, and nothing else", () => {
+    // MEMBERSHIP, never order: the one caller asks whether a path is in the list, so an order
+    // pinned here would break on a reshuffle that changes nothing a user sees.
+    const paths = guardPaths(CONFIG);
+    expect(paths, "the host's half is there, whole").toEqual(expect.arrayContaining([...HOST_SURFACE]));
+    expect(matchAny(CONFIG_FILE, paths)).toBe(true);
+    expect(matchAny("guards/house.ts", paths)).toBe(true);
+    expect(matchAny("guards/git.ts", paths), "the folder comes with the file").toBe(true);
+    expect(matchAny("guards/nested/deep.ts", paths)).toBe(true);
+    expect(matchAny("src/a.ts", paths)).toBe(false);
+    expect(matchAny("cli/work.ts", paths)).toBe(false);
     // Not a suffix match: a file that merely ENDS with the config's name is somebody else's.
-    expect(matchAny("vendor/flow.config.ts", surface)).toBe(false);
-    expect(matchAny("src/guards/thing.ts", surface), "the folder is where the import said").toBe(false);
+    expect(matchAny("vendor/flow.config.ts", paths)).toBe(false);
+    expect(matchAny("src/guards/thing.ts", paths), "the folder is where the import said").toBe(false);
   });
 
   it("follows whatever the repo called the folder, and reaches nothing when the config names nothing", () => {
-    // The whole point of reading the text: `guards/` was one repo's name for it, and every other
-    // repo got a repair exception over a folder it does not have.
-    const theirs = configSurface(`import { house } from "./.guard/house.ts";`);
+    // The whole point of reading the text: `guards/` is one repo's name for it, and the engine
+    // knows no folder name of its own.
+    const theirs = guardPaths(`import { house } from "./.guard/house.ts";`);
     expect(matchAny(".guard/house.ts", theirs)).toBe(true);
     expect(matchAny(".guard/helpers/text.ts", theirs)).toBe(true);
     expect(matchAny("guards/house.ts", theirs)).toBe(false);
-    // A config with every rule written inline imports no pack, so the surface is the config alone.
-    const inline = configSurface(`import { defineConfig } from "@jawache/flow";`);
-    expect([...inline]).toStrictEqual([CONFIG_FILE]);
-    expect([...configSurface(null)]).toStrictEqual([CONFIG_FILE]);
+    // A config with every rule written inline imports no pack, so the repo's half is the config alone.
+    const inline = guardPaths(`import { defineConfig } from "@jawache/flow";`);
+    expect(new Set(inline)).toStrictEqual(new Set([CONFIG_FILE, ...HOST_SURFACE]));
+    expect(new Set(guardPaths(null))).toStrictEqual(new Set([CONFIG_FILE, ...HOST_SURFACE]));
   });
 
   it("reads the TEXT, not the module — which is the only reader a broken config has", () => {
-    // Package specifiers are somebody else's source and never repairable here; `../` climbs out
-    // of the root, where a repo-relative surface cannot follow.
+    // Package specifiers are somebody else's source, never this repo's guard; `../` climbs out
+    // of the root, where repo-relative paths cannot follow.
     expect(configImports(CONFIG)).toStrictEqual(["guards/house.ts"]);
     expect(configImports(`import x from "../outside/y.ts";`)).toStrictEqual([]);
     expect(configImports(`const m = await import("./late/pack.ts");`)).toStrictEqual(["late/pack.ts"]);
@@ -1930,59 +1939,63 @@ describe("the config surface — what a write may target while the guard is brok
     ]);
     // A `from '…'` phrase inside a QUOTED MESSAGE is harvested too, and that is the accepted
     // behaviour rather than a miss: separating a real import from a sentence that quotes one takes
-    // a parser, and the file being asked about is the one that will not parse. Pinned here because
-    // it only ever WIDENS the repair surface, and only while the config is already refusing every
-    // other write — so the cost is one extra repairable path at a moment when nothing can commit.
+    // a parser, and the file being asked about may be one that will not parse. Pinned here because
+    // it only ever WIDENS the guard's paths, so the cost is one extra path reported as a guard file.
     expect(configImports(`.message("write it as: import { x } from './guards/x.ts'")`)).toStrictEqual(["guards/x.ts"]);
   });
 });
 
 describe("what every rail answers while the config will not load", () => {
-  const SURFACE = ["flow.config.ts", "guards/house.ts", "guards/**"];
   const FAULT = "flow: the config will not load — 1 refusal.";
-  const write = (path: string): AdapterEvent => ({ rail: "guard", moment: "write", file: { path, content: "x" } });
+  const TOLD = `${FAULT}\n\n${FLOW_OFF}`;
 
-  describe("repairs — the exception is exactly as wide as the repair", () => {
-    it("is the config and the packs it imports, at a write or a delete", () => {
-      expect(repairs(write("flow.config.ts"), SURFACE)).toBe(true);
-      expect(repairs(write("guards/house.ts"), SURFACE)).toBe(true);
-      expect(repairs(write("guards/nested/helper.ts"), SURFACE), "the folder comes with the file").toBe(true);
-      expect(repairs({ rail: "guard", moment: "delete", file: { path: "flow.config.ts", content: "" } }, SURFACE)).toBe(true);
+  describe("whileBroken — every call goes through, and the agent is told why", () => {
+    it("refuses no write, edit, delete or command, and hands each one the load error", () => {
+      const files = world({ "src/a.ts": "a", "flow.config.ts": "old" });
+      for (const payload of [
+        pre("Write", { file_path: "/repo/src/b.ts", content: "fine" }),
+        pre("Edit", { file_path: "/repo/src/a.ts", old_string: "a", new_string: "b" }),
+        pre("Bash", { command: "rm src/a.ts" }),
+        pre("Bash", { command: "npm ci" }),
+        pre("Bash", { command: "git reset --hard" }),
+      ]) {
+        const answer = whileBroken(toEvent("pre-tool-use", payload, files), FAULT);
+        expect(answer.refused, `${JSON.stringify(payload.tool_input)} is let through`).toStrictEqual([]);
+        expect(answer.shown).toStrictEqual([{ entry: null, cause: "fault", body: TOLD }]);
+        expect(answer.told).toBeNull();
+        const result = toResult("pre-tool-use", answer);
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout, "the load error reaches the agent as context").toContain(FAULT);
+      }
     });
 
-    it("is nothing else — not another file, not a command, not a rail without a target", () => {
-      expect(repairs(write("src/a.ts"), SURFACE)).toBe(false);
-      // A command names a STRING, never a target: `sed -i` on the config reads exactly like
-      // `rm -rf` before either runs, so the command rail stays fully shut in the broken state.
-      expect(repairs({ rail: "guard", moment: "command", command: "sed -i s/x/y/ flow.config.ts" }, SURFACE)).toBe(false);
-      expect(repairs({ rail: "guard", moment: "commit", staged: ["flow.config.ts"] }, SURFACE)).toBe(false);
-      expect(repairs({ rail: "brief", moment: "touch", path: "flow.config.ts" }, SURFACE)).toBe(false);
-    });
-  });
-
-  describe("whileBroken — one answer, whichever way it broke", () => {
-    it("refuses every gated moment but the repair, and hands the fault to a breadcrumb rail", () => {
-      const answer = whileBroken(
-        [write("src/a.ts"), write("flow.config.ts"), { rail: "brief", moment: "session" }],
-        SURFACE,
-        FAULT,
-      );
-      expect(answer.refused.map((r) => r.moment), "the repair is not among them").toStrictEqual(["write"]);
-      expect(answer.refused[0]?.block.message).toBe(FAULT);
-      expect(answer.refused[0]?.block.entry, "the guard itself refused, not a rule").toBeNull();
-      expect(answer.shown.map((s) => s.body), "a breadcrumb rail has no rail to refuse with").toStrictEqual([FAULT]);
-      expect(answer.told).toBeNull();
+    it("tells the agent once per answer, however many events the payload carried", () => {
+      // One Bash call is a command, each file an `rm` removes, and each file it reads — four
+      // events here, and the agent needs the sentence once.
+      const events = toEvent("pre-tool-use", pre("Bash", { command: "rm src/a.ts && cat src/b.ts" }), world({ "src/a.ts": "a", "src/b.ts": "b" }));
+      expect(events.length).toBeGreaterThan(2);
+      expect(whileBroken(events, FAULT).shown).toHaveLength(1);
     });
 
-    it("tells turn-end rather than holding it, which is the only rail that changes", () => {
-      const answer = whileBroken([{ rail: "guard", moment: "turn-end", turn: [] }], SURFACE, FAULT);
+    it("greets a session with the load error in place of the breadcrumbs", () => {
+      expect(whileBroken([{ rail: "brief", moment: "session" }], FAULT).shown.map((note) => note.body)).toStrictEqual([TOLD]);
+    });
+
+    it("says nothing after the call, because the agent was told when it asked", () => {
+      const changes = [{ path: "src/a.ts", before: "a", after: "b" }];
+      const events = toEvent("post-tool-use", pre("Bash", { command: "python3 fix.py" }), { ...world(), changes });
+      expect(events.some((event) => event.rail === "guard" && event.observed === true), "the change was seen").toBe(true);
+      expect(whileBroken(events, FAULT)).toStrictEqual({ refused: [], shown: [], told: null });
+    });
+
+    it("tells turn-end rather than holding it", () => {
+      const answer = whileBroken([{ rail: "guard", moment: "turn-end", turn: [] }], FAULT);
       expect(answer.refused, "a held turn cannot hand back to the human who would fix it").toStrictEqual([]);
-      expect(answer.told, "and it is not silent either").toBe(FAULT);
+      expect(answer.told, "and it is not silent either").toBe(TOLD);
     });
 
     it("says nothing at all when the payload carried no rail", () => {
-      const answer = whileBroken([], SURFACE, FAULT);
-      expect(answer).toStrictEqual({ refused: [], shown: [], told: null });
+      expect(whileBroken([], FAULT)).toStrictEqual({ refused: [], shown: [], told: null });
     });
   });
 
@@ -2244,12 +2257,12 @@ describe("status — the red lines, each carrying its fix", () => {
   it("a config that will not load — every refusal, and every rail off until it is fixed", () => {
     const s = status(
       statusFacts({
-        load: { ok: false, refusals: [{ code: "no-cases", entry: "demo.x", detail: "`demo.x` carries no cases." }] },
+        load: { ok: false, refusals: [{ code: "no-block-cases", entry: "demo.x", detail: "`demo.x` has no block case." }] },
       }),
     );
     expect(s.green).toBe(false);
     const said = statusLines(s).join("\n");
-    expect(said).toContain("carries no cases");
+    expect(said).toContain("has no block case");
     expect(said, "no moment table under a headline saying nothing is armed").not.toContain("commit  ");
   });
 
@@ -2295,7 +2308,7 @@ describe("status — the red lines, each carrying its fix", () => {
       { hasConfig: false, load: null },
       { settings: {} },
       { load: { ok: true, entries: [loaded("demo.late", noteAtTurnEnd)] } },
-      { load: { ok: false, refusals: [{ code: "no-cases", entry: "demo.x", detail: "no cases" }] } },
+      { load: { ok: false, refusals: [{ code: "no-block-cases", entry: "demo.x", detail: "no block case" }] } },
     ];
     for (const shape of shapes) {
       const s = status(statusFacts(shape));
@@ -2500,17 +2513,6 @@ describe("reversal — exactly the refused files go back", () => {
   it("reverts nothing on a refusal that names no landed change — a revert is never a guess", () => {
     expect(reversal(changes, [{ moment: "command", block: block("x") }])).toStrictEqual({ revert: [], kept: ["src/a.ts", "src/b.ts"] });
   });
-
-  it("honours the repair exception: a broken config's own repair lands and stays", () => {
-    const repair = [
-      { path: "flow.config.ts", before: "old", after: "fixed" },
-      { path: "src/a.ts", before: "a", after: "b" },
-    ];
-    const events = toEvent("post-tool-use", pre("Bash", { command: "python3 fix.py" }), { ...world(), changes: repair });
-    const answer = whileBroken(events, configSurface(""), "the config will not load");
-    expect(answer.refused.map((r) => r.observed), "only the path off the surface is refused").toEqual(["src/a.ts"]);
-    expect(reversal(repair, answer.refused)).toStrictEqual({ revert: [repair[1]], kept: ["flow.config.ts"] });
-  });
 });
 
 describe("an observed refusal — its own banner, and what was put back", () => {
@@ -2586,12 +2588,13 @@ describe("an observed refusal — its own banner, and what was put back", () => 
     );
   });
 
-  it("reports a call it could not see — loud, exit 2, nothing judged and nothing put back", () => {
+  it("reports a call it could not see — loud, exit 2, the call ran and nothing it changed was checked", () => {
     const said = deltaFault("No snapshot was taken before this call.");
     expect(said.exitCode).toBe(2);
-    expect(said.stderr).toContain("flow — could not see what this call changed:");
-    expect(said.stderr).toContain("No snapshot was taken before this call.");
-    expect(said.stderr).toContain("nothing was put back");
+    expect(said.stderr).toBe(
+      "\nflow — could not see what this call changed:\n\nNo snapshot was taken before this call.\n\n" +
+        "The call ran, and nothing it changed was checked or put back. Check what the call changed before you go on.\n",
+    );
   });
 });
 

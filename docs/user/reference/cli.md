@@ -68,7 +68,7 @@ Every hook and the commit gate run `flow` by name. `flow` must be on the `PATH` 
 A hook has two codes: 0 lets the action go ahead, and 2 refuses it and shows standard error to the agent.
 
 - **A blocked action** exits 2, from every hook and from the commit gate.
-- **A config that does not load** exits 2 from `pre-tool-use`, `post-tool-use`, `post-tool-use-failure` and the commit gate. The `session-start` and `stop` hooks exit 0: `session-start` passes the fault to the agent as a note, and `stop` writes it to standard error and lets the turn end.
+- **A config that does not load** exits 2 from the commit gate only. Every hook exits 0: `pre-tool-use` and `session-start` pass the load error to the agent as a note, and `stop` writes it to standard error and lets the turn end.
 
 These commands exit 1:
 
