@@ -310,6 +310,26 @@ describe("the snapshot — the tree before a call, the tree after it, and the wa
     expect(call("toolu_13", "git merge -q --ff-only mine"), "forward to a commit a branch had").toMatchObject({ ok: true, changes: [] });
   });
 
+  it("leaves out what a pull brings in: a remote branch reaches the commit it lands on", () => {
+    git("stash", "-q");
+    const upstream = mkdtempSync(join(tmpdir(), "flow-upstream-"));
+    try {
+      spawnSync("git", ["clone", "-q", repo, upstream]);
+      writeFileSync(join(upstream, "a.ts"), "export const a = 'theirs'; // TODO\n");
+      writeFileSync(join(upstream, "pulled.ts"), "// TODO: from upstream\n");
+      spawnSync("bash", ["-c", "git add a.ts pulled.ts && git -c user.name=u -c user.email=u@e commit -qm upstream && git rm -q gone.ts && git -c user.name=u -c user.email=u@e commit -qm gone"], {
+        cwd: upstream,
+      });
+      git("remote", "add", "origin", upstream);
+      takeSnapshot(repo, "toolu_14", [], who);
+      expect(spawnSync("git", ["pull", "-q", "--ff-only", "origin", "main"], { cwd: repo }).status).toBe(0);
+      expect(read("pulled.ts"), "the pull landed").toBe("// TODO: from upstream\n");
+      expect(observeDelta(repo, "toolu_14", [])).toMatchObject({ ok: true, changes: [] });
+    } finally {
+      rmSync(upstream, { recursive: true, force: true });
+    }
+  });
+
   it("refuses and puts back the removal of an uncommitted .env snapshotInclude lists, made by a route other than rm", async () => {
     // No commit holds .env, so its removal is the call's to answer for, whatever HEAD does.
     const door = new URL("../index.ts", import.meta.url).pathname;

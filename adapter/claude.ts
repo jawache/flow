@@ -308,23 +308,28 @@ function headCommit(root: string): string | null {
   return head.ok ? head.stdout.toString("utf8").trim() : null;
 }
 
-/** The commits every ref and every worktree's HEAD point at — none when git cannot say. */
-function tips(root: string): string[] {
-  const listed = runGit(root, ["rev-list", "--all", "--no-walk"]);
+/**
+ * The commits the refs point at — every ref and every worktree's HEAD for `--all`, the
+ * remote-tracking branches for `--remotes`. None when git cannot say.
+ */
+function tips(root: string, refs: "--all" | "--remotes"): string[] {
+  const listed = runGit(root, ["rev-list", refs, "--no-walk"]);
   return listed.ok ? listed.stdout.toString("utf8").split("\n").filter((line) => line !== "") : [];
 }
 
 /**
- * HEAD after the call when it is a commit the repo already had before it: one `known`, the tips
- * recorded before the call, reaches. A switch, a checkout, a reset or a fast-forward lands on such a
- * commit. null when there is no HEAD, or when the call made it — a commit, a rebase, a merge that is
- * not a fast-forward — since a commit the call made holds the call's own edits, and no gate it might
- * have skipped (`--no-verify`, a removed hook) can be taken on trust.
+ * HEAD after the call when it is a commit the repo already had: one that `known`, the tips recorded
+ * before the call, reaches, or that a remote-tracking branch reaches after it. A switch, a checkout,
+ * a reset, a fast-forward or a pull lands on such a commit. null when there is no HEAD, or when the
+ * call made it — a commit, a rebase, a merge that is not a fast-forward — since a commit the call
+ * made holds the call's own edits, and no gate it might have skipped (`--no-verify`, a removed
+ * hook) can be taken on trust.
  */
 function existingHead(root: string, known: readonly string[]): string | null {
   const head = headCommit(root);
   if (head === null || known.includes(head)) return head;
-  const beyond = runGit(root, ["rev-list", "-n1", "--stdin"], { input: `${[head, ...known.map((tip) => `^${tip}`)].join("\n")}\n` });
+  const reach = [...known, ...tips(root, "--remotes")];
+  const beyond = runGit(root, ["rev-list", "-n1", "--stdin"], { input: `${[head, ...reach.map((tip) => `^${tip}`)].join("\n")}\n` });
   return beyond.ok && beyond.stdout.toString("utf8").trim() === "" ? head : null;
 }
 
@@ -398,7 +403,7 @@ export function takeSnapshot(
   // HEAD before the call, beside the tree: a file the call removed is git's only if HEAD held it.
   // And every tip the repo has, so the after-call rail can tell a commit it lands on from one it made.
   const head = "tree" in taken ? headCommit(root) : null;
-  const known = "tree" in taken ? tips(root) : [];
+  const known = "tree" in taken ? tips(root, "--all") : [];
   try {
     writeFileSync(files.meta, JSON.stringify({ ...who, at: Date.now(), ...taken, ...(head === null ? {} : { head }), known }));
   } catch {
