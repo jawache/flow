@@ -433,6 +433,11 @@ describe("exportedNames", () => {
     expect(names).toContain("Baz");
     expect(names).not.toContain("nope");
   });
+
+  it("lists them in the order the file declares them, whatever their kind", async () => {
+    const names = await exportedNames("export const A = 1;\nexport function b(){}\nexport class C {}\nexport const d = 2;\n");
+    expect(names).toEqual(["A", "b", "C", "d"]);
+  });
 });
 
 describe("symbolsInSibling", () => {

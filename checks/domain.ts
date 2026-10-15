@@ -489,7 +489,7 @@ export function unreferenced(names: readonly string[], siblingText: string): str
 }
 
 /**
- * The names a TypeScript source exports — functions, classes and consts.
+ * The names a TypeScript source exports — functions, classes and consts, in source order.
  *
  * A real parser rather than a regex, because `export const x = …` inside a string or a comment is
  * exactly the false positive that teaches people to ignore a rule. Parsing is not reaching the
@@ -500,14 +500,15 @@ export function unreferenced(names: readonly string[], siblingText: string): str
 export async function exportedNames(content: string): Promise<string[]> {
   const { parse, Lang } = await import("@ast-grep/napi");
   const root = parse(Lang.Tsx, content).root();
-  const out = new Set<string>();
+  const found: { readonly at: number; readonly name: string }[] = [];
   for (const p of ["export function $N($$$) { $$$ }", "export class $N { $$$ }", "export const $N = $V"]) {
     for (const m of root.findAll(p)) {
       const n = m.getMatch("N");
-      if (n) out.add(n.text());
+      if (n) found.push({ at: n.range().start.index, name: n.text() });
     }
   }
-  return [...out];
+  // In the order the file declares them, so a refusal lists them as a reader scrolls the file.
+  return [...new Set(found.sort((a, b) => a.at - b.at).map((f) => f.name))];
 }
 
 /**
