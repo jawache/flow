@@ -145,11 +145,10 @@ const PIECE_PAUSE_MS = 300;
  * One payload on a hook's stdin, written the way a host writes one far larger than a pipe's buffer:
  * in pieces, with a pause between them, so the hook can empty the pipe before the next piece lands.
  * `hook` cannot show that: spawnSync hands the whole input over before the child reads a byte.
- * `node` is the flags placed before the binary, such as an `--import` that leaves stdin in another state.
  */
-export async function hookInPieces(repo: string, event: string, payload: unknown, node: readonly string[] = []): Promise<Ran> {
+export async function hookInPieces(repo: string, event: string, payload: unknown, nodeFlags: readonly string[] = []): Promise<Ran> {
   const text = JSON.stringify(payload);
-  const child = spawn("node", [...node, binary(), "hook", event], { cwd: repo, env: env(repo, {}) });
+  const child = spawn("node", [...nodeFlags, binary(), "hook", event], { cwd: repo, env: env(repo, {}) });
   let stdout = "";
   let stderr = "";
   child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString()));

@@ -332,8 +332,8 @@ describe("a payload the host writes in pieces (#12)", () => {
   it.each<[string, readonly string[]]>([
     ["blocking", []],
     ["already non-blocking before flow starts", ["--import", "data:text/javascript,process.stdin"]],
-  ])("is read whole when stdin is %s, however long the host pauses between writes", async (_stdin, node) => {
-    const answer = await hookInPieces(repo, "post-tool-use", image(), node);
+  ])("is read whole when stdin is %s, however long the host pauses between writes", async (_stdin, nodeFlags) => {
+    const answer = await hookInPieces(repo, "post-tool-use", image(), nodeFlags);
     expect(answer.code, answer.stderr).toBe(0);
   });
 });
