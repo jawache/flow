@@ -692,7 +692,7 @@ describe("toResult — one refusal spelling, one injection spelling", () => {
     // "There was nothing to guard" and "I could not SEE what I was guarding" were one answer in the
     // old engine — an empty object — so a rail that could not read its payload allowed, silently.
     expect(faultText("pre-tool-use", "unreadable", "EBADF")).toBe(
-      "[flow hook pre-tool-use] the guard could not READ its payload from stdin (EBADF).",
+      "[flow hook pre-tool-use] could not READ its payload from stdin (EBADF).",
     );
     expect(faultText("stop", "unparseable", "12 bytes on stdin, and not JSON")).toContain("could not PARSE");
   });
@@ -702,14 +702,14 @@ describe("toResult — one refusal spelling, one injection spelling", () => {
     // changed was checked — never as a guard refusing a call that has already landed (#12).
     expect(readFault("pre-tool-use", "unparseable", "not JSON")).toStrictEqual({
       stdout: "",
-      stderr: "\n[flow hook pre-tool-use] the guard could not PARSE its payload (not JSON).\n",
+      stderr: "\n[flow hook pre-tool-use] could not PARSE its payload (not JSON).\n",
       exitCode: 2,
     });
     expect(readFault("post-tool-use", "unparseable", "not JSON")).toStrictEqual({
       stdout: "",
       stderr:
         "\nflow — could not see what this call changed:\n\n" +
-        "[flow hook post-tool-use] could not read its payload (not JSON).\n\n" +
+        "[flow hook post-tool-use] could not PARSE its payload (not JSON).\n\n" +
         "The call ran, and nothing it changed was checked or put back. Check what the call changed before you go on.\n",
       exitCode: 2,
     });
@@ -717,7 +717,7 @@ describe("toResult — one refusal spelling, one injection spelling", () => {
       stdout: "",
       stderr:
         "\nflow — could not see what this call changed:\n\n" +
-        "[flow hook post-tool-use-failure] could not read its payload (EBADF).\n\n" +
+        "[flow hook post-tool-use-failure] could not READ its payload from stdin (EBADF).\n\n" +
         "The call ran, and nothing it changed was checked or put back. Check what the call changed before you go on.\n",
       exitCode: 2,
     });
