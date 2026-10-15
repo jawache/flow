@@ -3689,6 +3689,12 @@ export const UPDATE_THE_GATE_LINE = "replace its `flow commit …` line with `ex
  * flow asks git what the commit adds, changes and deletes, so there is one source of the staged set
  * whoever calls the gate, and nothing in this file to filter it or to skip flow when it is empty.
  */
+/**
+ * The gate's line that puts the repo's own flow first: git runs the hook from the repo's root, so
+ * `$PWD` is the repo. Written by `init`, looked for by `status`, and named in its fix.
+ */
+export const GATE_LOCAL_LINE = `PATH="$PWD/${LOCAL_BIN}:$PATH"`;
+
 export const PRE_COMMIT = `#!/bin/sh
 # The flow commit gate. Written by \`flow init\`; \`${SET_HOOKS_PATH}\` arms it.
 #
@@ -3699,7 +3705,7 @@ export const PRE_COMMIT = `#!/bin/sh
 #
 # git runs this from the repo's root, so the repo's own flow, a dev dependency's, runs before any
 # on the PATH.
-PATH="$PWD/${LOCAL_BIN}:$PATH"
+${GATE_LOCAL_LINE}
 exec flow hook commit
 `;
 
@@ -4209,13 +4215,19 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
 type Reach = "local" | "path";
 
 /**
- * The gate, as written: a command line naming node_modules/.bin puts the repo's copy first, and one
- * without it — the gate an older `flow init` wrote, which it never rewrites — finds only the PATH. A
- * gate that does not call flow at all is judged as `flow init` writes one; its own fitting is red.
+ * The gate, as written: one with `GATE_LOCAL_LINE` puts the repo's copy first, and one without it —
+ * the gate an older `flow init` wrote, which it never rewrites — finds only the PATH. The LINE, not
+ * the text `node_modules/.bin`: a gate that runs another tool from there still finds flow on the
+ * PATH alone. A gate that does not call flow at all is judged as `flow init` writes one; its own
+ * fitting is red.
  */
 function gateReach(text: string | null): Reach {
   if (text === null || (!armsFlow(text) && !armsOldFlow(text))) return "local";
-  return hookCommands(text).includes(LOCAL_BIN) ? "local" : "path";
+  return hookCommands(text)
+    .split("\n")
+    .some((line) => line.trim() === GATE_LOCAL_LINE)
+    ? "local"
+    : "path";
 }
 
 /**
@@ -4288,7 +4300,7 @@ function binaryFitting(facts: Pick<StatusFacts, "binary" | "gateText" | "setting
       ? [{ who: "the hooks", looks: "look", fails: "every hook fails with `flow: not found`", fix: "re-run `flow init`, which rewrites flow's registrations to look there first" }]
       : []),
     ...(byGate === null
-      ? [{ who: "the gate", looks: "looks", fails: "git refuses every commit", fix: `add \`PATH="$PWD/${LOCAL_BIN}:$PATH"\` to ${GATE_PATH} above the line that runs flow` }]
+      ? [{ who: "the gate", looks: "looks", fails: "git refuses every commit", fix: `add \`${GATE_LOCAL_LINE}\` to ${GATE_PATH} above the line that runs flow` }]
       : []),
   ];
   const looks = stranded.length === 1 ? stranded[0]?.looks : "look";

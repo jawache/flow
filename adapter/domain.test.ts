@@ -128,6 +128,7 @@ import {
   snapshotPathspecs,
   staticPrefix,
   PRE_COMMIT,
+  GATE_LOCAL_LINE,
   HOOKS_DIR,
   LOCAL_BIN,
   GATE_PATH,
@@ -2281,6 +2282,20 @@ describe("the binary fitting — can the hooks and the gate find flow", () => {
     );
     expect(green).toBe(false);
     expect(binary(true, false, { gateText: OLD_GATE }).fitting?.detail, "the old verb's gate too").toContain("the gate looks for flow on the PATH alone");
+  });
+
+  // THE LINE, NOT THE TEXT: a gate that runs another tool from node_modules/.bin, with no PATH
+  // line, still finds flow on the PATH alone — and git fails every commit with `flow: not found`.
+  it("judges a gate that names node_modules/.bin only for another tool by the PATH alone", () => {
+    const lintFirst = "#!/bin/sh\nnode_modules/.bin/lint-staged && flow hook commit\n";
+    expect(armsFlow(lintFirst)).toBe(true);
+    const { fitting, green } = binary(true, false, { gateText: lintFirst });
+    expect(fitting?.ok).toBe(false);
+    expect(fitting?.detail).toContain("the gate looks for flow on the PATH alone");
+    expect(fitting?.detail).toContain(`add \`${GATE_LOCAL_LINE}\` to .githooks/pre-commit`);
+    expect(green).toBe(false);
+    expect(binary(true, false, { gateText: `#!/bin/sh\n  ${GATE_LOCAL_LINE}\nnode_modules/.bin/lint-staged && flow hook commit\n` }).fitting?.ok,
+      "the line itself, indented, puts the repo's copy first").toBe(true);
   });
 
   it("judges registrations in the old shape by the PATH alone, and names `flow init` as the fix", () => {
