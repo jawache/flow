@@ -523,7 +523,7 @@ export const symbolsInSibling = defineCheck(
       if (!(await ctx.fs.exists(sibling))) return ctx.fail(`sibling test not found: ${sibling}`);
       const text = await ctx.fs.read(sibling);
       const missing = unreferenced(await exportedNames(content), text);
-      return missing.length === 0 ? ctx.ok() : ctx.fail(`not referenced in ${sibling}: ${missing.join(", ")}`);
+      return answer(ctx, missing.length === 0 ? [] : [`not referenced in ${sibling}: ${missing.join(", ")}`]);
     },
 );
 
