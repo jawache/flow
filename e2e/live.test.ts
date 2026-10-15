@@ -464,14 +464,19 @@ describe("the commit gate", () => {
     writeFileSync(join(repo, "plan.yaml"), "phases: []\n");
     expect(gate("plan.yaml").code, "nobody has been classified yet").toBe(0);
 
-    mkdirSync(join(repo, ".t"), { recursive: true });
-    const transcript = join(repo, ".t", "agent-b1.jsonl");
-    writeFileSync(transcript, JSON.stringify({ type: "user", message: { content: "Follow `/work build`" } }) + "\n");
-    writeFileSync(join(repo, ".t", "agent-b1.meta.json"), JSON.stringify({ agentType: "builder", description: "F4" }));
+    // The message Claude Code sends for a subagent's call: its id and type, and the parent's path.
+    mkdirSync(join(repo, ".t", "live-b", "subagents"), { recursive: true });
+    const parent = join(repo, ".t", "live-b.jsonl");
+    writeFileSync(parent, JSON.stringify({ type: "user", message: { content: "run it" } }) + "\n");
+    writeFileSync(
+      join(repo, ".t", "live-b", "subagents", "agent-b1.jsonl"),
+      JSON.stringify({ type: "user", message: { content: "Follow `/work build`" } }) + "\n",
+    );
     const asBuilder = hook("pre-tool-use", {
       session_id: "live-b",
-      agent_id: "agent-b1",
-      transcript_path: transcript,
+      agent_id: "b1",
+      agent_type: "builder",
+      transcript_path: parent,
       tool_name: "Write",
       tool_input: { file_path: join(repo, "src/ok.ts"), content: "export const ok = 1;\n" },
     });
@@ -681,13 +686,17 @@ export default defineConfig([pack(demo), pack(work, { writers: ["builder", "pare
   const at = (path: string): string | null => (existsSync(join(tree, path)) ? readFileSync(join(tree, path), "utf8") : null);
   const send = (event: string, payload: unknown): Ran => runFlow(tree, ["hook", event], {}, JSON.stringify(payload));
 
-  /** A subagent the host spawned as `agentType` — its sidecar is the evidence it is classified by. */
-  function spawned(agent: string, agentType: string): Record<string, unknown> {
-    mkdirSync(join(tree, ".t"), { recursive: true });
-    const transcript = join(tree, ".t", `${agent}.jsonl`);
-    writeFileSync(transcript, `${JSON.stringify({ type: "user", message: { content: "work on it" } })}\n`);
-    writeFileSync(join(tree, ".t", `${agent}.meta.json`), JSON.stringify({ agentType, description: agentType }));
-    return { session_id: "f5", agent_id: agent, transcript_path: transcript };
+  /**
+   * A subagent the host spawned as `agentType`, in the message Claude Code really sends for its
+   * calls: its `agent_id` and `agent_type`, and the PARENT's `transcript_path`. Its own transcript
+   * sits under the parent's, at `<parent>/subagents/agent-<id>.jsonl`.
+   */
+  function spawned(agent: string, agentType: string, brief = "work on it"): Record<string, unknown> {
+    mkdirSync(join(tree, ".t", "f5", "subagents"), { recursive: true });
+    const parent = join(tree, ".t", "f5.jsonl");
+    writeFileSync(parent, `${JSON.stringify({ type: "user", message: { content: "run it" } })}\n`);
+    writeFileSync(join(tree, ".t", "f5", "subagents", `agent-${agent}.jsonl`), `${JSON.stringify({ type: "user", message: { content: brief } })}\n`);
+    return { session_id: "f5", agent_id: agent, agent_type: agentType, transcript_path: parent };
   }
   const PARENT = { session_id: "f5" };
 
@@ -726,7 +735,7 @@ export default defineConfig([pack(demo), pack(work, { writers: ["builder", "pare
   });
 
   it("reverts only its own refused file while another agent's call is in flight — and names that call", () => {
-    const builder = spawned("agent-b1", "builder");
+    const builder = spawned("b1", "builder");
     const parentCall = bash(PARENT, "python3 fix.py");
     const builderCall = bash(builder, "python3 build.py");
     expect(parentCall.before().code).toBe(0);
@@ -740,7 +749,7 @@ export default defineConfig([pack(demo), pack(work, { writers: ["builder", "pare
     expect(refused.code).toBe(2);
     expect(refused.stderr).toContain("✗ demo.noTodo · src/a.ts");
     expect(refused.stderr).toContain("src/a.ts is back to its previous content.");
-    expect(refused.stderr).toContain(`Other tool calls overlapped this one: Bash ${builderCall.key} (agent agent-b1 of session f5)`);
+    expect(refused.stderr).toContain(`Other tool calls overlapped this one: Bash ${builderCall.key} (agent b1 of session f5)`);
     expect(refused.stderr).toContain('revert: "all" is set, and is not applied while calls overlap.');
     expect(at("src/a.ts"), "the refused file is back").toBe("export const a = 1;\n");
     expect(at("src/b.ts"), "the other call's file is untouched").toBe("export const b = 2;\n");
@@ -758,7 +767,7 @@ export default defineConfig([pack(demo), pack(work, { writers: ["builder", "pare
     expect(started.after().code, "diffed like any call: nothing has changed yet when it returns").toBe(0);
     // Later, while some other call is in progress, the process writes — and that call's own
     // compliant write sits in the same diff.
-    const later = bash(spawned("agent-b1", "builder"), "echo 'export const f = 1;' > src/f.ts");
+    const later = bash(spawned("b1", "builder"), "echo 'export const f = 1;' > src/f.ts");
     expect(later.before().code).toBe(0);
     expect(sh("echo '// TODO from the build' >> src/b.ts")).toBe(0);
     expect(sh("echo 'export const f = 1;' > src/f.ts")).toBe(0);
@@ -772,8 +781,38 @@ export default defineConfig([pack(demo), pack(work, { writers: ["builder", "pare
     expect(existsSync(join(tree, ".flow", "background.json")), "no mark is kept for a background command").toBe(false);
   });
 
+  it("classifies a subagent from the message Claude Code really sends — the parent's transcript_path (#7)", () => {
+    // The triage reproduction. Before the fix, flow looked for the subagent's record beside the
+    // parent's transcript, found none, and refused this write as one by "an actor with no category".
+    const checker = spawned("v7", "verifier", "check it");
+    const call = bash(checker, "echo 'export const fixed = 7;' > src/b.ts");
+    expect(call.before().code).toBe(0);
+    expect(sh("echo 'export const fixed = 7;' > src/b.ts")).toBe(0);
+    const answer = call.after();
+    expect(answer.stderr).toContain("src/b.ts was written by an actor wearing checker");
+    expect(answer.code).toBe(2);
+  });
+
+  it("lets a real builder write, and recognises a generic spawn by the brief in its own transcript", () => {
+    const named = bash(spawned("b7", "builder"), "echo 'export const g = 7;' > src/g.ts");
+    expect(named.before().code).toBe(0);
+    expect(sh("echo 'export const g = 7;' > src/g.ts")).toBe(0);
+    const allowed = named.after();
+    expect(allowed.code, allowed.stderr).toBe(0);
+    expect(at("src/g.ts")).toBe("export const g = 7;\n");
+
+    // A `general-purpose` spawn carries no type information: the brief decides, and it is read from
+    // the subagent's transcript, not the parent's ("run it").
+    const generic = bash(spawned("g7", "general-purpose", "Follow `/work build` for F1"), "echo 'export const h = 7;' > src/h.ts");
+    expect(generic.before().code).toBe(0);
+    expect(sh("echo 'export const h = 7;' > src/h.ts")).toBe(0);
+    const recovered = generic.after();
+    expect(recovered.code, recovered.stderr).toBe(0);
+    expect(at("src/h.ts")).toBe("export const h = 7;\n");
+  });
+
   it("refuses and reverts a write by an actor that is not a writer, naming who wrote it", () => {
-    const checker = spawned("agent-v1", "verifier");
+    const checker = spawned("v1", "verifier");
     const call = bash(checker, "echo 'export const fixed = 1;' > src/b.ts");
     expect(call.before().code).toBe(0);
     expect(sh("echo 'export const fixed = 1;' > src/b.ts")).toBe(0);

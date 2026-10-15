@@ -18,7 +18,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join, posix } from "node:path";
 import type { TurnAction } from "../index.ts";
-import { metrics, momentsView, type Block, type Bound, type Row } from "../engine/domain.ts";
+import { metrics, momentsView, spawnedAs, type Block, type Bound, type Row } from "../engine/domain.ts";
 import { missingGrammarText } from "../checks/domain.ts";
 import { matchAny } from "../glob.ts";
 import {
@@ -42,8 +42,8 @@ import {
   isHookEvent,
   isInjected,
   relativise,
+  ownTranscriptPath,
   sessionFactsFrom,
-  sidecarPath,
   toEvent,
   toResult,
   tokensFromTranscript,
@@ -804,32 +804,37 @@ describe("the transcript's dialect", () => {
 });
 
 describe("who the session is, from what the host wrote", () => {
-  const sidecar = JSON.stringify({ agentType: "builder", description: "build F4", spawnDepth: 1 });
+  // The message Claude Code sends for a subagent's call: its id and type, and the PARENT's path.
+  const parent = "/c/projects/p/s1.jsonl";
+  const subagent = { session_id: "s1", agent_id: "a6009b5", agent_type: "builder", transcript_path: parent };
 
-  it("takes the agent type from the sidecar and the brief from the transcript", () => {
-    const facts = sessionFactsFrom({
-      payload: { session_id: "s", agent_id: "agent-1" },
-      transcript: human("Follow `/work build`"),
-      sidecar,
-    });
-    expect(facts).toStrictEqual({
-      head: "Follow `/work build`",
-      subagent: true,
-      agentType: "builder",
-      description: "build F4",
-    });
+  it("takes the agent type from the hook message and the brief from the subagent's own transcript", () => {
+    const facts = sessionFactsFrom({ payload: subagent, transcript: human("Follow `/work build`") });
+    expect(facts).toStrictEqual({ head: "Follow `/work build`", subagent: true, agentType: "builder" });
   });
 
-  it("reads the parent by ABSENCE — no sidecar, no agent id, no type", () => {
-    const facts = sessionFactsFrom({ payload: { session_id: "s" }, transcript: human("hello"), sidecar: null });
-    expect(facts).toStrictEqual({ head: "hello", subagent: false });
+  it("finds a subagent's own transcript under the parent's, by its agent id", () => {
+    expect(ownTranscriptPath(subagent)).toBe("/c/projects/p/s1/subagents/agent-a6009b5.jsonl");
+    expect(ownTranscriptPath({ session_id: "s1", transcript_path: parent }), "the parent reads its own").toBe(parent);
+    expect(ownTranscriptPath({ session_id: "s1", agent_id: "a1" }), "no path sent, none to read").toBeNull();
+    expect(ownTranscriptPath({ ...subagent, transcript_path: "/c/projects/p/s1" }), "not a transcript").toBeNull();
+    expect(ownTranscriptPath({ ...subagent, agent_id: "../../etc/x" }), "an id that leaves the folder").toBeNull();
   });
 
-  it("keeps a spawn a spawn when its sidecar will not parse — spawned, but as what we cannot say", () => {
-    const facts = sessionFactsFrom({ payload: { session_id: "s", agent_id: "a" }, transcript: null, sidecar: "{oops" });
-    expect(facts.subagent).toBe(true);
+  it("keeps a subagent a subagent when its message carries no type — spawned, but as what we cannot say", () => {
+    const facts = sessionFactsFrom({ payload: { session_id: "s1", agent_id: "a1", transcript_path: parent }, transcript: null });
+    expect(facts.subagent, "the agent id alone makes it a subagent, with no file read").toBe(true);
     expect(facts.agentType, "a category keyed on a type declines; the parent must not claim it").toBeUndefined();
     expect(facts.head).toBe("");
+    expect(spawnedAs({ types: ["builder"] })(facts)).toBe(false);
+    expect(spawnedAs({ parent: true })(facts)).toBe(false);
+  });
+
+  it("reads the parent by ABSENCE — no agent id, no type — even when a top-level --agent session sends a type", () => {
+    const plain = sessionFactsFrom({ payload: { session_id: "s" }, transcript: human("hello") });
+    expect(plain).toStrictEqual({ head: "hello", subagent: false });
+    const named = sessionFactsFrom({ payload: { session_id: "s", agent_type: "leader" }, transcript: human("hello") });
+    expect(named, "agent_type without agent_id is the top-level session's own").toStrictEqual(plain);
   });
 
   it("reads the branch out of HEAD's own text, ref or detached", () => {
@@ -838,13 +843,6 @@ describe("who the session is, from what the host wrote", () => {
     expect(branchFromHead("ref: refs/heads/workflow/flow\n")).toBe("workflow/flow");
     expect(branchFromHead("9f2c1a4b8e7d6c5b4a39\n"), "detached — the short sha").toBe("9f2c1a4b8e7d");
     expect(branchFromHead("  \n")).toBeNull();
-  });
-
-  it("finds the sidecar beside the transcript it belongs to", () => {
-    expect(sidecarPath("/c/projects/p/s1/subagents/agent-a7.jsonl")).toBe(
-      "/c/projects/p/s1/subagents/agent-a7.meta.json",
-    );
-    expect(sidecarPath("/c/projects/p/s1"), "not a transcript path at all").toBeNull();
   });
 });
 
