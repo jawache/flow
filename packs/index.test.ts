@@ -125,6 +125,51 @@ describe("the packs surface", () => {
     }
   });
 
+  // THE KEY'S CUSTODY, proved in the sentences it changes. `custody` decides what the agent is told
+  // about the decryption key and whether the default encrypt command passes `--no-native` — all
+  // prose, so no case can see it. Bound bare it is the OS secret store; `"file"` is `.env.keys`.
+  // The seam is the same in both: `dotenvx run` reads `.env.keys` first, so it never needs the switch.
+  it("tells the agent where the decryption key is, and seals with --no-native only for .env.keys", () => {
+    const said = (seam?: { custody: "native" | "file" }): ((id: string) => string) =>
+      sentence(loaded(loadConfig(defineConfig([seam === undefined ? pack(packs.secrets) : pack(packs.secrets, seam)]))));
+
+    const native = said();
+    expect(native("secrets.orientation")).toContain(
+      "The decryption key is in this machine's OS secret store, where dotenvx put it; no file in this repo holds it.",
+    );
+    expect(native("secrets.orientation")).toContain(
+      "If a decrypt looks suspiciously quiet, the key is missing from this machine's OS secret store; stop before you commit anything.",
+    );
+    expect(native("secrets.orientation")).not.toContain("check `.env.keys` exists");
+    expect(native("secrets.envEncrypted")).toContain("Seal it with `dotenvx encrypt -ek 'PUBLIC_*'`");
+    expect(native("secrets.noSecretsInCommits")).toContain("`dotenvx encrypt -ek 'PUBLIC_*'`");
+    expect(said({ custody: "native" })("secrets.orientation")).toBe(native("secrets.orientation"));
+
+    const file = said({ custody: "file" });
+    expect(file("secrets.orientation")).toContain(
+      "`.env.keys` holds the decryption key: `dotenvx encrypt --no-native -ek 'PUBLIC_*'` writes it, and it is copied by hand to every machine that runs the code; it is never in git.",
+    );
+    expect(file("secrets.orientation")).toContain(
+      "If a decrypt looks suspiciously quiet, check `.env.keys` exists before you commit anything.",
+    );
+    expect(file("secrets.orientation")).not.toContain("OS secret store");
+    expect(file("secrets.envEncrypted")).toContain("Seal it with `dotenvx encrypt --no-native -ek 'PUBLIC_*'`");
+    expect(file("secrets.noSecretsInCommits")).toContain("`dotenvx encrypt --no-native -ek 'PUBLIC_*'`");
+
+    for (const orientation of [native("secrets.orientation"), file("secrets.orientation")]) {
+      expect(orientation).toContain("One seam: `dotenvx run -f .env.<env> -- <cmd>`");
+    }
+  });
+
+  // A repo's own encrypt recipe is named as given under `"file"` — the switch is that recipe's to pass.
+  it("names the repo's own encrypt recipe as what writes .env.keys", () => {
+    const said = sentence(
+      loaded(loadConfig(defineConfig([pack(packs.secrets, { encrypt: "just env-encrypt", custody: "file" })]))),
+    );
+    expect(said("secrets.orientation")).toContain("`.env.keys` holds the decryption key: `just env-encrypt` writes it");
+    expect(said("secrets.envEncrypted")).toContain("Seal it with `just env-encrypt`");
+  });
+
   // THE GUARD PACK'S SCOPE, which is a parameter for the same reason the recipes are: one repo's
   // folder name was written into both of its path-scoped entries, so every other repo bound a nudge
   // that never fires and a delete refusal that protects nothing — while `flow status` counted both
