@@ -33,7 +33,7 @@ import {
   git as runGit,
   type Ran,
 } from "./harness.ts";
-import { PRE_COMMIT, SET_HOOKS_PATH } from "../adapter/domain.ts";
+import { FLOW_OFF, PRE_COMMIT, SET_HOOKS_PATH } from "../adapter/domain.ts";
 
 let repo: string;
 
@@ -809,11 +809,9 @@ describe("the off switch", () => {
 
 describe("a config that will not load", () => {
   /** Break the config one of the `BREAKS` ways, drive the rails, and put the good config back. */
-  const withBrokenConfig = (how: string, drive: () => void): void => {
+  const withBrokenConfig = (breaker: (good: string) => string, drive: () => void): void => {
     const good = readFileSync(join(repo, "flow.config.ts"), "utf8");
-    const breaker = BREAKS[how];
-    expect(breaker, `no break called "${how}"`).toBeDefined();
-    writeFileSync(join(repo, "flow.config.ts"), (breaker as (good: string) => string)(good));
+    writeFileSync(join(repo, "flow.config.ts"), breaker(good));
     try {
       drive();
     } finally {
@@ -837,14 +835,14 @@ describe("a config that will not load", () => {
     expect(answer.code, `${what} is let through: ${answer.stderr}`).toBe(0);
     expect(answer.stderr, `${what} is not refused`).toBe("");
     expect(context(answer), `${what} carries the load error`).toMatch(LOAD_ERROR);
-    expect(context(answer), `${what} says flow is off`).toContain("flow is OFF until flow.config.ts loads");
+    expect(context(answer), `${what} says flow is off`).toContain(FLOW_OFF);
   };
 
   // EVERY WAY OF BREAKING IT, not just the one the shell happened to catch as a thrown error. Each
   // call below is one a working rule in this config refuses, so "let through" is the broken state
   // and not a rule that happened to pass.
-  it.each(Object.keys(BREAKS))("lets a write, an edit, a delete and a command through, each with the load error — %s", (how) => {
-    withBrokenConfig(how, () => {
+  it.each(Object.entries(BREAKS))("lets a write, an edit, a delete and a command through, each with the load error — %s", (_how, breaker) => {
+    withBrokenConfig(breaker, () => {
       throughAndTold(hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "src/g.ts"), content: "// TODO" })), "a write");
       throughAndTold(
         hook("pre-tool-use", inThisSession("Edit", { file_path: join(repo, "src/a.ts"), old_string: "export const a = 1;", new_string: "// TODO" })),
@@ -856,10 +854,10 @@ describe("a config that will not load", () => {
     });
   });
 
-  it.each(Object.keys(BREAKS))("puts back nothing a command wrote — %s", (how) => {
+  it.each(Object.entries(BREAKS))("puts back nothing a command wrote — %s", (_how, breaker) => {
     const before = readFileSync(join(repo, "src/a.ts"), "utf8");
     try {
-      withBrokenConfig(how, () => {
+      withBrokenConfig(breaker, () => {
         // A TODO into src/ is what a working config puts back, byte for byte, on the after-call rail.
         const payload = { ...inThisSession("Bash", { command: "echo '// TODO' >> src/a.ts" }), cwd: repo };
         const after = called(payload, () => {
@@ -874,8 +872,8 @@ describe("a config that will not load", () => {
     }
   });
 
-  it.each(Object.keys(BREAKS))("still refuses the commit, with the load error — %s", (how) => {
-    withBrokenConfig(how, () => {
+  it.each(Object.entries(BREAKS))("still refuses the commit, with the load error — %s", (_how, breaker) => {
+    withBrokenConfig(breaker, () => {
       const gated = runFlow(repo, ["hook", "commit"]);
       expect(gated.code, "a commit while the guard cannot run is a commit nothing checked").toBe(2);
       expect(gated.stderr).toMatch(LOAD_ERROR);
@@ -884,16 +882,17 @@ describe("a config that will not load", () => {
 
   // THE TURN ENDS. Holding it prevents nothing — the commit gate stays shut — while it does stop the
   // agent handing back to the one person who can fix the config.
-  it.each(Object.keys(BREAKS))("reports the fault at Stop and lets the turn end — %s", (how) => {
-    withBrokenConfig(how, () => {
+  it.each(Object.entries(BREAKS))("reports the fault at Stop and lets the turn end — %s", (_how, breaker) => {
+    withBrokenConfig(breaker, () => {
       const stop = hook("stop", { session_id: "live-stop", hook_event_name: "Stop" });
       expect(stop.code, "a held turn cannot hand back to the human who would fix it").toBe(0);
       expect(stop.stderr, "and it is not silent — the turn ends knowing why").toMatch(LOAD_ERROR);
+      expect(stop.stderr, "the sentence turn-end is told with, not just any stderr").toContain(FLOW_OFF);
     });
   });
 
-  it.each(Object.keys(BREAKS))("greets the session with the load error — %s", (how) => {
-    withBrokenConfig(how, () => {
+  it.each(Object.entries(BREAKS))("greets the session with the load error — %s", (_how, breaker) => {
+    withBrokenConfig(breaker, () => {
       const greeting = hook("session-start", { session_id: "live-3", source: "startup" });
       expect(greeting.code, "refusing the opening greeting would wedge the session before anyone read why").toBe(0);
       expect(context(greeting)).toMatch(LOAD_ERROR);
