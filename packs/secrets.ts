@@ -148,10 +148,10 @@ export interface Seam {
  *
  * These recipes leave the key's place to dotenvx. Run with no terminal attached, as an agent runs
  * them, it writes a new key to the OS secret store; in a terminal it asks. A repo bound with
- * `custody: "file"` adds
- * `--no-native` to the `dotenvx encrypt` line, so dotenvx writes the key to `.env.keys`. The switch
- * matters only the first time a file is sealed, when its key is created. `dotenvx run` needs no
- * switch in either case: it reads `.env.keys` before it looks in the OS secret store.
+ * `custody: "file"` adds `--no-native` to the `dotenvx encrypt` line, so dotenvx writes the key to
+ * `.env.keys`. The switch matters only the first time a file is sealed, when its key is created.
+ * `dotenvx run` needs no switch in either case: it reads `.env.keys` before it looks in the OS
+ * secret store.
  * @adopt A repo with no `.env*` at all binds this for `noSecretsInCommits` alone, which is worth
  * having in a repo that has never held a secret, and turns `envEncrypted` off BY NAME in its
  * config with the reason on the record — an entry sitting dead is not the same as one opted out of.
