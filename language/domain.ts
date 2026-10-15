@@ -327,6 +327,11 @@ export interface Ctx {
   readonly file?: { readonly path: string; readonly content: string; readonly existed?: boolean | undefined } | undefined;
   /** command: the line about to run. */
   readonly command?: string | undefined;
+  /**
+   * command: that line parsed as bash — one entry per simple command, nested ones included, in
+   * the order they appear. `null` when the line does not parse: read it as "cannot tell".
+   */
+  readonly commands?: readonly ShellCommand[] | null | undefined;
   /** commit: the staged paths. */
   readonly staged?: readonly string[] | undefined;
   /** turn-end: what the actor did this turn, in order. */
@@ -761,9 +766,13 @@ export function parseCommandLine(line: string): ShellCommand[] | null {
  * would be called with `ctx` as its receiver and break any world that closes over itself.
  */
 export function makeCtx(moment: Moment, facts: Partial<Ctx>, world: World): Ctx {
+  // `ctx.commands` is filled wherever `ctx.command` is, BY CONSTRUCTION: all three callers come
+  // through here. A caller that already parsed the line hands the parse in, and it is not redone.
+  const parsed = facts.command === undefined || facts.commands !== undefined ? {} : { commands: parseCommandLine(facts.command) };
   return {
     moment,
     ...facts,
+    ...parsed,
     actor: facts.actor ?? [],
     exec: (cmd: string) => world.exec(cmd),
     fs: world.fs,

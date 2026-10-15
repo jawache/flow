@@ -301,6 +301,18 @@ describe("makeCtx — the ONE assembler", () => {
     const built = makeCtx("command", { command: "ls" }, new Adapter());
     expect((await built.exec("ls")).stdout).toBe("live:ls");
   });
+
+  it("fills ctx.commands wherever ctx.command is, so no caller can forget the parse", () => {
+    const built = makeCtx("command", { command: "git push origin main; ls -f" }, spy().world);
+    expect(built.commands?.map((c) => c.text)).toEqual(["git push origin main", "ls -f"]);
+    expect(makeCtx("command", { command: 'echo "oops' }, spy().world).commands).toBeNull();
+    expect(makeCtx("write", { file: { path: "a.ts", content: "x" } }, spy().world).commands).toBeUndefined();
+  });
+
+  it("keeps a parse its caller already made, rather than parsing the line again", () => {
+    const parsed = parseCommandLine("ls") ?? [];
+    expect(makeCtx("command", { command: "ls", commands: parsed }, spy().world).commands).toBe(parsed);
+  });
 });
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════

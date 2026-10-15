@@ -141,6 +141,26 @@ describe("textBan", () => {
   });
 });
 
+describe("a command case's ctx", () => {
+  // The example on docs/user/reference/ctx.md § ctx.commands, driven through the door `flow test`
+  // drives every case through: a command case carries the parse exactly as the live rail does.
+  const noBareGh: Check = (ctx) => {
+    const bare = (ctx.commands ?? []).find((c) => c.program === "gh");
+    return bare === undefined ? ctx.ok() : ctx.fail(`\`${bare.text}\` runs gh directly — run it as \`work gh …\``);
+  };
+
+  it("carries the line parsed as ctx.commands", async () => {
+    expect(await run(noBareGh, "command", "work gh pr list")).toBeNull();
+    expect(await run(noBareGh, "command", "echo 'gh pr list'")).toBeNull();
+    expect(await run(noBareGh, "command", "ls && sudo gh pr list")).toBe("`gh pr list` runs gh directly — run it as `work gh …`");
+    expect(await run(noBareGh, "command", { command: "gh pr list", actor: ["builder"] })).toContain("runs gh directly");
+  });
+
+  it("carries null for a line that does not parse", () => {
+    expect(cannedCtx("command", 'gh pr create --body "oops', []).commands).toBeNull();
+  });
+});
+
 describe("banCommands", () => {
   it("passes a safe command and blocks a banned one", async () => {
     const check = banCommands({ ban: ["git\\s+checkout\\s+--", "git\\s+reset\\s+--hard"] });

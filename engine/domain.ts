@@ -32,6 +32,7 @@ import {
   inScope,
   isCategory,
   makeCtx,
+  parseCommandLine,
   refusalText,
   verdict,
   type Scope,
@@ -485,6 +486,8 @@ export async function guard({ load, event, world, faults = [], off = false }: Gu
 
   const effects: Effect[] = [];
   const tallies: Tally[] = [];
+  // The line is parsed ONCE per event, however many entries fire on it, and every ctx carries it.
+  const parsed = event.command === undefined ? {} : { commands: parseCommandLine(event.command) };
   for (const entry of load.entries) {
     if (entry.spec.kind !== "guardrail" || !fires(entry.spec, event.moment)) continue;
     if (!bindsTo(entry, event.wearing)) {
@@ -504,7 +507,7 @@ export async function guard({ load, event, world, faults = [], off = false }: Gu
     let hits = 0;
     for (const subject of await subjectsOf(entry, event, world)) {
       evaluated += 1;
-      const answer = await ask(check, makeCtx(subject.moment ?? event.moment, { ...subject.facts, actor: event.wearing }, world));
+      const answer = await ask(check, makeCtx(subject.moment ?? event.moment, { ...subject.facts, ...(subject.facts.command === undefined ? {} : parsed), actor: event.wearing }, world));
       if (answer.ok) continue;
       hits += 1;
       effects.push({
