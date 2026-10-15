@@ -279,43 +279,50 @@ describe("banCommands", () => {
   });
 });
 
-// A BUILDER, so its cases are about the expression it returns rather than about one pack's heads.
 // Both real bindings (`git`'s commit and gh verbs, `work`'s lifecycle verbs) carry their own
-// `.test({ pass, block })` cases; what those cannot show is the tail in isolation — that an
-// argument already CLOSED before the prose does not open the scan, and that a quoted heredoc is
-// genuinely safe while an unquoted one is not. Each of those was a bug in a hand-rolled copy.
+// `.test({ pass, block })` cases, among them the issue's #10 and #11; these are the check itself,
+// on a head of its own, one shell rule per case.
 describe("substitutionInProse", () => {
-  const caught = (command: string): boolean => new RegExp(substitutionInProse(["say"])).test(command);
+  const check = substitutionInProse({ heads: ["say\\b"] });
+  const caught = async (command: string): Promise<string | null> => run(check, "command", command);
 
-  it("catches a backtick inside an open double-quoted argument", () => {
-    expect(caught('say "run `just test` first"')).toBe(true);
+  it("refuses a backtick the shell runs in the command's argument, and names the head and what it runs", async () => {
+    expect(await caught('say "run `just test` first"')).toBe("`say` would run `just test` and record its output in place of the backticks");
+    expect(await caught("say run`date`")).toContain("`date`");
   });
 
-  it("leaves a single-quoted argument alone — backticks are literal there", () => {
-    expect(caught("say 'run `just test` first'")).toBe(false);
+  it("leaves a single-quoted argument and an escaped backtick alone — both are literal", async () => {
+    expect(await caught("say 'run `just test` first'")).toBeNull();
+    expect(await caught(String.raw`say "run \`just test\` first"`)).toBeNull();
   });
 
-  it("walks past arguments that are already CLOSED before deciding a quote is open", () => {
-    // `--flag "value"` is a complete pair, so the backtick after it sits outside any double quote
-    // and nothing would splice. A tail that counted quotes rather than pairing them blocks this.
-    expect(caught('say --flag "value" and then `date`')).toBe(false);
-    expect(caught('say --flag "value" --text "run `date`"')).toBe(true);
+  it("judges each command alone, so a backtick in another command on the line is not this one's", async () => {
+    expect(await caught("say hi; echo `date`")).toBeNull();
+    expect(await caught("echo `date` && say hi")).toBeNull();
+    expect(await caught('echo "say `date`"')).toBeNull();
   });
 
-  it("treats a QUOTED heredoc as the sanctioned way to carry backticks, and an unquoted one as live", () => {
-    expect(caught("say -F - <<'EOF'\nrun `just test`\nEOF")).toBe(false);
-    expect(caught('say -F - <<EOF\nrun "`just test`"\nEOF')).toBe(true);
+  it("treats a QUOTED heredoc as the sanctioned way to carry backticks, and an unquoted one as live", async () => {
+    expect(await caught("say -F - <<'EOF'\nrun `just test`\nEOF")).toBeNull();
+    expect(await caught("say -F - <<EOF\nrun `just test`\nEOF")).toContain("`just test`");
   });
 
-  it("spans the newline, which is why banCommands matches a command whole", () => {
-    expect(caught('say "subject\n\nbody with `date` in it"')).toBe(true);
+  it("reads through a $( … ), whose heredoc is live when unquoted and safe when quoted", async () => {
+    expect(await caught('say "$(cat <<EOF\nrun `just test` first\nEOF\n)"')).toContain("`just test`");
+    expect(await caught("say \"$(cat <<'EOF'\nrun `just test` first\nEOF\n)\"")).toBeNull();
+    expect(await caught('say "$(echo "$(echo `date`)")"'), "at any depth").toContain("`date`");
+    expect(await caught('say "$(date)"'), "a $( … ) alone is not a backtick").toBeNull();
   });
 
-  it("takes several heads, so two packs share one tail without either copying it", () => {
-    const both = new RegExp(substitutionInProse(["git\\s+commit\\b", "work\\s+plan\\b"]));
-    expect(both.test('git commit -m "a `date`"')).toBe(true);
-    expect(both.test('work plan decision "a `date`"')).toBe(true);
-    expect(both.test('gh pr create --body "a `date`"')).toBe(false);
+  it("passes a line it cannot parse: cannot tell", async () => {
+    expect(await caught('say "run `just test`')).toBeNull();
+  });
+
+  it("takes several heads, so two packs share one check without either copying it", async () => {
+    const both = substitutionInProse({ heads: ["git\\s+commit\\b", "work\\s+plan\\b"] });
+    expect(await run(both, "command", 'git commit -m "a `date`"')).not.toBeNull();
+    expect(await run(both, "command", 'work plan decision "a `date`"')).not.toBeNull();
+    expect(await run(both, "command", 'gh pr create --body "a `date`"')).toBeNull();
   });
 
   it("says the mechanism, the absence of an undo and the fix — the sentence both packs print", () => {

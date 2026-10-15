@@ -204,20 +204,20 @@ export const work = definePack("work", (repo: Rungs = {}) => ({
     }),
 
   // The lifecycle's half of the prose-substitution rule; `git`'s half covers `git commit` and the
-  // two `gh` verbs, and both are built from the one tail in core, beside `banCommands`. The verbs
-  // named here write
+  // `gh` verbs, and both bind the one core check, beside `banCommands`. The verbs named here write
   // to an APPEND-ONLY journal, which is the half of the rule with no undo of any kind.
   noShellSubstitutionInProse: guardrail()
     .at(command)
     .description("A backtick inside a double-quoted argument of a work verb that records prose is live command substitution, not Markdown.")
-    // matchHeredocs: an UNQUOTED heredoc in a `$(…)` is live, and its body is the prose.
-    // wholeLine: this pattern reads quotes as written, which a command's text no longer has.
-    .check(banCommands({ ban: [substitutionInProse(["work\\s+(?:plan|task|recap|record|spec|complete)\\b"])], matchHeredocs: true, wholeLine: true }))
+    .check(substitutionInProse({ heads: ["work\\s+(?:plan|task|recap|record|spec|complete)\\b"] }))
     .message(SUBSTITUTION_MESSAGE)
     .test({
       pass: [
         "work plan decision 'chose the `chain` builder' --chose x --reverse y",
         "work plan status --json",
+        // An escaped backtick is literal, and a backtick in the next command is not this one's.
+        String.raw`work plan decision "chose the \`chain\` builder" --chose x --reverse y`,
+        "work plan status --json; echo `date`",
       ],
       block: [
         'work plan decision "chose the `chain` builder" --chose x --reverse y',

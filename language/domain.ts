@@ -371,7 +371,7 @@ export type Check = (ctx: Ctx) => Verdict | Promise<Verdict>;
  * The two verdict constructors — INTERNAL to flow, and deliberately not part of its public surface.
  *
  * A check has exactly one way to answer and it is `ctx.ok()` / `ctx.fail(detail)`. That is the
- * spelling the fourteen core checks are written in, the spelling a repo's own check is written in,
+ * spelling the fifteen core checks are written in, the spelling a repo's own check is written in,
  * and the only one flow/index.ts exports. These exist because something has to BUILD the ctx that
  * carries them — the canned one a `.test()` case runs through, and the live one the adapter makes
  * — and that is flow's own job, not a config author's. Exporting both would put two spellings of

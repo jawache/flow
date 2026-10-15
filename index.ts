@@ -61,9 +61,9 @@ export { defineCategory, type Category, type Classifier, type SessionFacts } fro
 // ── the stock checks, and the command reader they are written against ────────
 //
 // THE LIBRARY IS PART OF THE PROMISE. A pack is just code, and the code it is made of is these:
-// fourteen configured checks that cover what a guard actually asks — a banned shape in a file, a
+// fifteen configured checks that cover what a guard actually asks — a banned shape in a file, a
 // banned command, a protected path, a JSON invariant, an import fence, a gate that runs a tool.
-// A pack that could not reach them would have to re-implement each one, and fourteen private
+// A pack that could not reach them would have to re-implement each one, and fifteen private
 // re-implementations is the string registry this package exists to delete, wearing a new coat.
 //
 // They come through THIS door and never `@jawache/flow/checks`, for the same reason the grammar
@@ -93,15 +93,15 @@ export {
   type RequireEdge,
 } from "./checks/domain.ts";
 
-// The one shared PATTERN, and the sentence that goes with it — the pair `banCommands` above is
-// most often configured with, and the only piece of a rule's content this door carries.
+// The one shared CHECK of a rule's content, and the sentence that goes with it — a backtick the
+// shell would run inside a command that records prose.
 //
 // It is here because TWO PACKS say it: `git` polices `git commit` and the `gh` verbs, `work`
-// polices the lifecycle verbs that write to an append-only journal, and the tail of the expression
-// — an open double quote reaching a backtick, without crossing a quoted heredoc — is identical.
-// Anything two packs share is a core check by the rule F5 settled; the alternative was a shared
-// module beside the packs, which is what this was, and it had grown four unrelated sections around
-// this pair before anyone noticed it had become a bag.
+// polices the lifecycle verbs that write to an append-only journal, and the judgement — a backtick
+// substitution in the command's parse — is identical. Anything two packs share is a core check by
+// the rule F5 settled; the alternative was a shared module beside the packs, which is what this
+// was, and it had grown four unrelated sections around this pair before anyone noticed it had
+// become a bag.
 export { substitutionInProse, SUBSTITUTION_MESSAGE } from "./checks/domain.ts";
 
 // The four readings of a command line a bespoke check needs, and the reason they are public: a

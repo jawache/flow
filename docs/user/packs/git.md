@@ -352,17 +352,16 @@ A backtick inside a double-quoted argument of a commit or a PR body is live comm
 - **Refuses at** a shell command is about to run
 - **Watches** not scoped by path
 - **Categories** every session
-- **Check** [`banCommands`](../checks/ban-commands.md)
+- **Check** [`substitutionInProse`](../checks/substitution-in-prose.md)
 
 <details><summary>settings</summary>
 
 ```
 {
-  "ban": [
-    "(?:git\\s+commit\\b[^\\n]*?-{1,2}[a-zA-Z]*m|gh\\s+(?:pr|issue)\\b)[^\"`]*(?:\"(?:(?!<<-?')[^\"])*\"[^\"`]*)*\"(?:(?!<<-?')[^\"])*`"
-  ],
-  "matchHeredocs": true,
-  "wholeLine": true
+  "heads": [
+    "(?:\\S*/)?git(?:\\s+-[Cc]\\s+\\S+|\\s+--[\\w-]+(?:=\\S+)?)*\\s+commit\\b",
+    "(?:\\S*/)?(?:work\\s+)?gh\\s+(?:pr|issue)\\b"
+  ]
 }
 ```
 
@@ -371,10 +370,9 @@ A backtick inside a double-quoted argument of a commit or a PR body is live comm
 ### What the agent reads when refused
 
 ```
-You are recording prose through a shell command, and a backtick inside a DOUBLE-quoted argument is not Markdown — the shell RUNS it and splices its output into your text before the command ever sees it.
+You are recording prose through a shell command, and a backtick in a double-quoted argument or an unquoted heredoc is not Markdown — the shell RUNS it and splices its output into your text before the command ever sees it.
 On an append-only record there is no undo: no amend, no redact. And once the binary has argv the splice has already happened, so this is the only moment it can be caught.
-Fix: SINGLE-quote the argument (backticks are literal there), or feed the prose on stdin with a QUOTED heredoc — `git commit -F -` plus `<<'EOF'`, which this rule treats as safe.
-ALREADY single-quoted and still blocked? Then your PROSE carries an unbalanced double quote before the backtick, and the matcher cannot tell that quote from a real open argument. Nothing would splice — this one is the rule's cost, not your mistake. Balance the quote, drop it, or use the heredoc; do not go back to double quotes to make it pass.
+Fix: SINGLE-quote the argument (backticks are literal there), escape each backtick as \` inside the double quotes, or feed the prose on stdin with a QUOTED heredoc — `git commit -F -` plus `<<'EOF'`, which this rule treats as safe.
 ```
 
 ### Proved by
@@ -385,11 +383,30 @@ ALREADY single-quoted and still blocked? Then your PROSE carries an unbalanced d
 fix: a `thing`
 EOF`
 - running `git commit -m 'fix: run `just test` first'`
+- running `git commit -m "$(cat <<'EOF'
+fix: run `just test` first
+EOF
+)"`
+- running `gh pr create --body-file - <<'EOF'
+Run "`just test`" before merging.
+EOF`
+- running `gh issue view 35 --json body --jq .body > body.md
+python3 - <<'EOF'
+new = f"""- **Docs** `work` starts the daemon"""
+EOF`
+- running `gh issue view 1 > old.md
+cat > new.md <<'EOF'
+say "run `just test`"
+EOF`
+- running `gh issue comment 1 --body "run \`just test\` first"`
+- running `gh issue view 10 --json body --jq .body | grep -n "x\\\\\`"`
 
 **blocks**
 
 - running `git commit -m "fix: run `just test` first"`
 - running `gh pr create --body "see `just gate`"`
+- running `gh issue comment 1 --body "run `just test` first"`
+- running `work gh issue comment 1 --body "run `just test` first"`
 - running `git commit -m "fix: a thing
 
 run `just test` first"`
@@ -397,6 +414,9 @@ run `just test` first"`
 fix: run `just test` first
 EOF
 )"`
+- running `git commit -F - <<EOF
+fix: run `just test` first
+EOF`
 
 ## `git.node.versionIsSemver` — guardrail
 
