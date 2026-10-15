@@ -16,9 +16,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync, lstatSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import {
   PACKAGE,
+  binary,
   buildBundles,
   builtPackage,
   cleanBundles,
@@ -189,6 +191,49 @@ describe("flow status", () => {
     }
   });
 
+  // A DEV DEPENDENCY ALONE, end to end: flow is in the repo's node_modules/.bin and the PATH holds
+  // git and nothing else. The gate and the registrations `flow init` writes look there first, so
+  // status names that copy, git's own hook runs it, and a registered command answers through a shell.
+  it("names node_modules/.bin on the green binary line, and the gate and a hook run that copy, with no flow on the PATH", () => {
+    const local = newRepo();
+    try {
+      expect(flow(local, ["init"]).code).toBe(0);
+      const localBin = join(local, "node_modules", ".bin");
+      mkdirSync(localBin, { recursive: true });
+      writeFileSync(join(localBin, "flow"), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(binary())} "$@"\n`, {
+        mode: 0o755,
+      });
+      // git, and the system's own folders for the shell flow runs git through — no flow in any.
+      const path = [runGit(local, ["--exec-path"]).stdout.trim(), "/usr/bin", "/bin"];
+      for (const dir of path) expect(existsSync(join(dir, "flow")), `${dir} has no flow`).toBe(false);
+      const world = { home, path: path.join(":") };
+
+      const said = runFlow(local, ["status"], world);
+      expect(said.stdout).toContain("✓ binary: the hooks and the gate run the flow in node_modules/.bin");
+      expect(said.code, said.stdout).toBe(0);
+
+      const MARKER = ["DO", "NOT", "COMMIT"].join("-");
+      writeFileSync(join(local, "secret.txt"), `${MARKER} — an api key would go here\n`);
+      runGit(local, ["add", "secret.txt"], world);
+      const refused = runGit(local, ["commit", "-m", "test: a marked file"], world);
+      expect(refused.code, "git refuses when the gate exits non-zero").not.toBe(0);
+      expect(refused.stderr, "flow refused it, not `flow: not found`").toContain("demo.noMarkedFiles");
+
+      const registered = (settings()["hooks"] as Record<string, { hooks: { command: string }[] }[]>)["PreToolUse"]?.[0]?.hooks[0]?.command;
+      expect(registered).toBe('PATH="$CLAUDE_PROJECT_DIR/node_modules/.bin:$PATH" flow hook pre-tool-use');
+      const answered = spawnSync("/bin/sh", ["-c", registered ?? ""], {
+        cwd: local,
+        encoding: "utf8",
+        env: { ...process.env, CLAUDE_PROJECT_DIR: local, CLAUDE_CONFIG_DIR: home, PATH: world.path },
+        input: JSON.stringify(pre("Bash", { command: "git push --force origin main" }, "dev-dep-1")),
+      });
+      expect(answered.status, answered.stderr).toBe(2);
+      expect(answered.stderr).toContain("demo.noForcePush");
+    } finally {
+      rmSync(local, { recursive: true, force: true });
+    }
+  });
+
   it("refuses, loudly, over a config that will not even import — UAT step 5", () => {
     const broken = newRepo();
     try {
@@ -238,9 +283,13 @@ describe("flow init, run again", () => {
 
       const again = flow(repo, ["init"], older);
       expect(again.code).toBe(0);
-      expect(again.stdout).toContain("PostToolUse (widened to every tool) · PostToolUseFailure");
+      // The older flow wrote the bare command too, so the one entry is widened and rewritten at once.
+      expect(again.stdout).toContain(
+        "PostToolUse (widened to every tool, now runs the flow in node_modules/.bin first) · PostToolUseFailure",
+      );
       const hooks = (JSON.parse(readFileSync(join(older, "settings.json"), "utf8")) as { hooks: Record<string, unknown[]> }).hooks;
       expect(hooks["PostToolUse"], "one entry, widened — never a second one beside it").toHaveLength(1);
+      expect(JSON.stringify(hooks["PostToolUse"])).toContain(JSON.stringify('PATH="$CLAUDE_PROJECT_DIR/node_modules/.bin:$PATH" flow hook post-tool-use'));
       expect(flow(repo, ["status"], older).code).toBe(0);
     } finally {
       rmSync(older, { recursive: true, force: true });
