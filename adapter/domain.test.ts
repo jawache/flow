@@ -2036,6 +2036,18 @@ describe("planInit — a repo that already has a pre-commit hook", () => {
     expect(said).not.toContain(ADD_THE_GATE_LINE);
     expect(planInit({ ...bare, gateText: PRE_COMMIT }).gateKept, "today's gate is simply kept").toBe(false);
   });
+
+  // THE SAME GAP AS A HOOK THAT NEVER RAN FLOW: the old verb's line, replaced by the run line alone,
+  // still finds flow on the PATH alone. Followed to the letter, the advice runs the repo's own first.
+  it("names both of the gate's lines for the old verb too, and a gate that follows it finds the repo's own flow", () => {
+    expect(UPDATE_THE_GATE_LINE).toContain(GATE_LOCAL_LINE);
+    expect(UPDATE_THE_GATE_LINE).toContain(GATE_RUN_LINE);
+    const followed = OLD_GATE.replace(/^exec flow commit .*$/m, `${GATE_LOCAL_LINE}\n${GATE_RUN_LINE}`);
+    expect(armsFlow(followed)).toBe(true);
+    expect(armsOldFlow(followed)).toBe(false);
+    const fitting = status(statusFacts({ gateText: followed, binary: { modules: true, path: false } })).fittings.find((f) => f.id === "binary");
+    expect(fitting?.ok, fitting?.detail).toBe(true);
+  });
 });
 
 describe("the guard's own files — the repo's half read out of the config's text, and the host's", () => {

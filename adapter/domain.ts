@@ -3753,7 +3753,7 @@ export const ADD_THE_GATE_LINE = `add \`${GATE_LOCAL_LINE}\` and then \`${GATE_R
  * leaves out deletions, and exits before calling flow at all when a commit only deletes files.
  * `status` says that much; this is the instruction alone, so it ends `init`'s sentence cleanly.
  */
-export const UPDATE_THE_GATE_LINE = "replace its `flow commit …` line with `exec flow hook commit`";
+export const UPDATE_THE_GATE_LINE = `replace its \`flow commit …\` line with \`${GATE_LOCAL_LINE}\` and then \`${GATE_RUN_LINE}\``;
 
 /**
  * The pre-commit hook, verbatim.
