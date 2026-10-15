@@ -251,7 +251,10 @@ describe("the snapshot — the tree before a call, the tree after it, and the wa
     expect(read("secret.key"), "outside the snapshot, so outside the revert").toBe("new key\n");
   });
 
-  it("sees an included ignored file the call creates, and one it deletes", () => {
+  it("sees an included ignored file the call creates, and one HEAD holds that it deletes", () => {
+    // Committed, so its removal is not git's: HEAD still holds it after the call.
+    git("add", "-f", ".env");
+    git("commit", "-qm", "env", "--", ".env");
     takeSnapshot(repo, "toolu_4", [".env", "config/*.local.json"], who);
     unlinkSync(join(repo, ".env"));
     mkdirSync(join(repo, "config"));
@@ -264,6 +267,49 @@ describe("the snapshot — the tree before a call, the tree after it, and the wa
       [".gitignore", false, false],
       ["config/app.local.json", true, false],
     ]);
+  });
+
+  it("leaves out each file that matches HEAD after the call, whichever way it got there, and sees every other change", () => {
+    // `old` holds a file main does not, and its own copy of a.ts.
+    git("stash", "-q");
+    git("switch", "-qc", "old");
+    writeFileSync(join(repo, "legacy.ts"), "// from before the rule\n");
+    writeFileSync(join(repo, "a.ts"), "export const a = 'old';\n");
+    git("add", "legacy.ts", "a.ts");
+    git("commit", "-qm", "old");
+    git("switch", "-q", "main");
+    takeSnapshot(repo, "toolu_8", [], who);
+    spawnSync("bash", ["-c", "git switch -q old && echo '// mine' >> a.ts && echo scratch > notes.md"], { cwd: repo });
+    const there = observeDelta(repo, "toolu_8", []);
+    if (!there.ok) throw new Error(there.fault);
+    expect(there.changes, "legacy.ts is old's own copy; a.ts and notes.md are the call's").toStrictEqual([
+      { path: "a.ts", before: "export const a = 1;\n", after: "export const a = 'old';\n// mine\n" },
+      { path: "notes.md", before: null, after: "scratch\n" },
+    ]);
+    takeSnapshot(repo, "toolu_9", [], who);
+    spawnSync("bash", ["-c", "git checkout -q -- a.ts && rm notes.md && git switch -q main"], { cwd: repo });
+    const back = observeDelta(repo, "toolu_9", []);
+    expect(back.ok && back.changes, "every file is main's again, and notes.md is in neither commit").toStrictEqual([]);
+  });
+
+  it("judges every change in a repo with no commit yet — there is no HEAD to match", () => {
+    const fresh = mkdtempSync(join(tmpdir(), "flow-unborn-"));
+    try {
+      spawnSync("git", ["init", "-q"], { cwd: fresh });
+      writeFileSync(join(fresh, "a.ts"), "one\n");
+      takeSnapshot(fresh, "toolu_10", [], who);
+      writeFileSync(join(fresh, "a.ts"), "two\n");
+      unlinkSync(join(fresh, "a.ts"));
+      writeFileSync(join(fresh, "b.ts"), "new\n");
+      const delta = observeDelta(fresh, "toolu_10", []);
+      if (!delta.ok) throw new Error(delta.fault);
+      expect(delta.changes).toStrictEqual([
+        { path: "a.ts", before: "one\n", after: null },
+        { path: "b.ts", before: null, after: "new\n" },
+      ]);
+    } finally {
+      rmSync(fresh, { recursive: true, force: true });
+    }
   });
 
   it("reports a snapshot that could not be taken, and one that was never taken — never an empty delta", () => {

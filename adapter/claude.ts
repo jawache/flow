@@ -108,6 +108,8 @@ import {
   turnActions,
   whileBroken,
   included,
+  authored,
+  nulPaths,
   snapshotPathspecs,
   type AdapterEvent,
   type Answer,
@@ -409,7 +411,8 @@ function blobs(root: string, specs: readonly string[]): (string | null)[] | null
 
 /**
  * WHAT THE CALL CHANGED: the tree now against the tree its snapshot recorded, path by path, with
- * the content either side. The before-snapshot is kept — a revert reads from it — until `forget`.
+ * the content either side, less each path that now matches HEAD (see `authored`). The
+ * before-snapshot is kept — a revert reads from it — until `forget`.
  */
 export function observeDelta(root: string, key: string, include: readonly string[]): Delta & { readonly before?: string } {
   const files = snapshotFiles(root, key);
@@ -427,9 +430,19 @@ export function observeDelta(root: string, key: string, include: readonly string
   if (now.tree === before) return { ok: true, changes: [], before };
   // One path per entry, NUL-separated — git's plainest answer, never a status format. Submodules
   // are another repository's business and are left out.
-  const diff = runGit(root, ["diff-tree", "-r", "-z", "--name-only", "--no-renames", "--ignore-submodules=all", before, now.tree]);
-  if (!diff.ok) return { ok: false, fault: `git could not compare the trees: ${diff.stderr}.` };
-  const paths = diff.stdout.toString("utf8").split("\0").filter((path) => path !== "");
+  const differing = (from: string): { ok: true; paths: string[] } | { ok: false; why: string } => {
+    const ran = runGit(root, ["diff-tree", "-r", "-z", "--name-only", "--no-renames", "--ignore-submodules=all", from, now.tree]);
+    return ran.ok ? { ok: true, paths: nulPaths(ran.stdout.toString("utf8")) } : { ok: false, why: ran.stderr };
+  };
+  const changed = differing(before);
+  if (!changed.ok) return { ok: false, fault: `git could not compare the trees: ${changed.why}.` };
+  // WHAT GIT PUT THERE leaves the diff here, before anything reads it: HEAD after the call, against
+  // the tree after it, is one more tree comparison (`authored` decides). No HEAD yet is no commit
+  // anything could match, and a HEAD git cannot read leaves every change judged — the safe way.
+  const head = runGit(root, ["rev-parse", "--verify", "--quiet", "HEAD^{tree}"]);
+  const fromHead = head.ok ? differing(head.stdout.toString("utf8").trim()) : null;
+  if (fromHead !== null && !fromHead.ok) return { ok: false, fault: `git could not compare the tree with HEAD: ${fromHead.why}.` };
+  const paths = authored(changed.paths, fromHead === null ? null : fromHead.paths);
   if (paths.some((path) => path.includes("\n")))
     return { ok: false, fault: "A changed path has a newline in its name, which flow cannot ask git about safely." };
   const content = blobs(root, paths.flatMap((path) => [`${before}:${path}`, `${now.tree}:${path}`]));

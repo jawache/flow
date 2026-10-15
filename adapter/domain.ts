@@ -1185,6 +1185,24 @@ export function included(listed: readonly string[], include: readonly string[]):
 }
 
 /**
+ * Of the paths a call changed, the ones the AGENT changed: each path that still differs from HEAD
+ * after the call. A file identical to its copy in HEAD, or removed where HEAD holds none, is git's —
+ * a checkout, a reset, a merge or a commit put it there, and the commit gate judged that content
+ * when it was committed. So it leaves the diff before anything reads it: no rule, no write-back, no
+ * breadcrumb, no shell-write row. CONTENT, never the command line: git run by a recipe is caught
+ * the same way, and the `sed` in `git switch x && sed -i … f` is still judged.
+ *
+ * `differsFromHead` is every path where HEAD's tree and the tree after the call disagree, or null
+ * when there is no HEAD to compare with (a repo with no commit yet), and then every change is the
+ * agent's.
+ */
+export function authored(changed: readonly string[], differsFromHead: readonly string[] | null): string[] {
+  if (differsFromHead === null) return [...changed];
+  const differs = new Set(differsFromHead);
+  return changed.filter((path) => differs.has(path));
+}
+
+/**
  * Git's answer as paths, one per line — the plainest shape git has, and the only one flow parses.
  *
  * ONE reader for it in the adapter: `flow status` asks git what it ignores and the realWorld asks
@@ -1213,7 +1231,7 @@ export interface StagedChanges {
 }
 
 /** NUL-separated paths, as git prints them under `-z` — no quoting, so a path is a path. */
-function nulPaths(stdout: string): string[] {
+export function nulPaths(stdout: string): string[] {
   return stdout.split("\0").filter((path) => path !== "");
 }
 

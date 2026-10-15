@@ -108,6 +108,8 @@ import {
   callKey,
   deltaFault,
   included,
+  authored,
+  nulPaths,
   literalScopes,
   preJudged,
   reversal,
@@ -2730,5 +2732,18 @@ describe("snapshotInclude — where git looks, and what it keeps", () => {
 
   it("keeps the listed paths a glob matches, through the one glob engine", () => {
     expect(included(["config/a.local.json", "config/cache.bin", ""], ["config/*.local.json"])).toEqual(["config/a.local.json"]);
+  });
+
+  it("leaves out of the diff each changed path that matches HEAD after the call, and keeps every other", () => {
+    const changed = ["src/legacy.ts", "src/a.ts", "migrations/002.sql"];
+    // src/a.ts still differs from HEAD (the agent's edit); the other two now agree with HEAD.
+    expect(authored(changed, ["src/a.ts", "notes.md"])).toEqual(["src/a.ts"]);
+    expect(authored(changed, []), "a call that leaves the tree equal to HEAD authored nothing").toEqual([]);
+    expect(authored(changed, null), "no HEAD to compare with: every change is the agent's").toEqual(changed);
+  });
+
+  it("reads git's -z answer as paths, with no quoting and no empty tail", () => {
+    expect(nulPaths("src/a b.ts\0src/\"q\".ts\0")).toEqual(["src/a b.ts", 'src/"q".ts']);
+    expect(nulPaths("")).toEqual([]);
   });
 });
