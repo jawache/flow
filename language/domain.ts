@@ -1355,6 +1355,8 @@ export const REFUSAL_CODES = [
   "duplicate-id",
   "dead-scope",
   "bad-check-options",
+  "empty-scope",
+  "double-prose",
 ] as const;
 
 export type RefusalCode = (typeof REFUSAL_CODES)[number];
@@ -1558,6 +1560,19 @@ function judge(draft: Draft): Refusal[] {
       "undeclared-category",
       `\`${id}\` is scoped with \`.for(…)\` to something \`defineCategory\` never made. A category is a value with its recognizer aboard — import the one you mean.`,
     );
+
+  // A SCOPE WITH NO GLOBS. `.on()` matches no path and `.ignore()` carves out nothing, so either
+  // one is a sentence that reads as a decision and decides nothing. Before the disabled exemption
+  // on purpose: an empty scope is a mistake in what was written, not something the entry proves.
+  const empty = (["on", "ignore"] as const).filter((key) => spec[key]?.length === 0);
+  if (empty.length > 0) {
+    const verbs = empty.map((key) => `\`.${key}()\``).join(" and ");
+    const fromOverride = empty.some((key) => draft.source[key] === "override");
+    say(
+      "empty-scope",
+      `\`${id}\` says ${verbs} with no globs${fromOverride ? ", from an override" : ""}, which narrows nothing. Give it at least one glob, or ${fromOverride ? "drop it from the override so the pack's own scope applies" : "drop it: an entry with no `.on(…)` is about every path"}.`,
+    );
+  }
 
   // A disabled entry is listed with its reason and never runs, so it is asked to prove nothing.
   // That is not a hole: what it says is already inert, and demanding a message and cases from an

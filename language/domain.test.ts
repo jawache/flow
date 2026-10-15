@@ -1083,6 +1083,42 @@ describe("the load refuses", () => {
     expect(shape(refusalsOf([rawPack("late", { x: late })]))).toEqual([["dead-scope", "late.x"]]);
   });
 
+  it("an empty `.on()` or `.ignore()` as empty-scope, on a guardrail and on a breadcrumb", () => {
+    const rail = rawPack("rail", {
+      x: { spec: { kind: "guardrail", at: [write], on: [], check: passes, message: "m", test: cases } },
+    });
+    expect(shape(refusalsOf([rail]))).toEqual([["empty-scope", "rail.x"]]);
+
+    const note = rawPack("note", {
+      x: { spec: { kind: "breadcrumb", at: [touch], on: ["docs/**"], ignore: [], text: "hi" } },
+    });
+    expect(shape(refusalsOf([note]))).toEqual([["empty-scope", "note.x"]]);
+  });
+
+  it("an empty scope once per entry, naming the entry and both verbs", () => {
+    const bare = rawPack("bare", { x: { spec: { kind: "breadcrumb", at: [touch], on: [], ignore: [], text: "hi" } } });
+    const refusals = refusalsOf([bare]);
+    expect(shape(refusals)).toEqual([["empty-scope", "bare.x"]]);
+    expect(refusals[0]?.detail).toContain("bare.x");
+    expect(refusals[0]?.detail).toContain("`.on()` and `.ignore()`");
+  });
+
+  it("an empty scope an override leaves, saying the override said it", () => {
+    // Cast past the chain's types, as a config built outside an editor would be: the load is the
+    // backstop that catches it there.
+    const asCast = override(house.noTodo) as unknown as { on: () => ConfigSentence; ignore: () => ConfigSentence };
+    const onRefusals = refusalsOf([pack(house), asCast.on()]);
+    expect(shape(onRefusals)).toEqual([["empty-scope", "house.noTodo"]]);
+    expect(onRefusals[0]?.detail).toContain("from an override");
+
+    expect(shape(refusalsOf([pack(house), asCast.ignore()]))).toEqual([["empty-scope", "house.noTodo"]]);
+  });
+
+  it("an empty scope on a disabled entry too — what was written is wrong, whatever the entry proves", () => {
+    const off = rawPack("off", { x: { spec: { kind: "guardrail", at: [write], on: [], disabled: { reason: "not yet" } } } });
+    expect(shape(refusalsOf([off]))).toEqual([["empty-scope", "off.x"]]);
+  });
+
   it("but never asks a disabled entry to prove itself", () => {
     const off = rawPack("off", { x: { spec: { kind: "guardrail", at: [commit], disabled: { reason: "not yet" } } } });
     expect(shape(refusalsOf([off]))).toEqual([]);
@@ -1136,6 +1172,8 @@ describe("REFUSAL_CODES", () => {
       "duplicate-id",
       "dead-scope",
       "bad-check-options",
+      "empty-scope",
+      "double-prose",
     ]);
   });
 });
