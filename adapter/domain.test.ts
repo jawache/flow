@@ -58,7 +58,6 @@ import {
   touchedPath,
   CONFIG_FILE,
   configImports,
-  configSurface,
   statusCode,
   whileBroken,
   FLOW_OFF,
@@ -1309,13 +1308,10 @@ describe("what the session ran under — the permission mode, and auto mode's st
 });
 
 describe("weakened after a block — the one failure a guard cannot catch itself", () => {
-  it("watches the host's registrations, and takes the repo's half whole from the surface", () => {
-    // Two halves, and only one of them is this test's. That the repo half FOLLOWS the config's own
-    // imports is `configSurface`'s claim and is proved where it is made, further down this file;
-    // `guardPaths` does nothing but concatenate, so re-proving the derivation here would be a
-    // second place for the same fact to be right and a first place for it to disagree.
+  it("watches the config and the host's registrations", () => {
+    // That the repo half FOLLOWS the config's own imports is proved in "the guard's own files",
+    // further down this file.
     const paths = guardPaths(`import { house } from "./rules/house.ts";`);
-    expect(paths).toStrictEqual([...configSurface(`import { house } from "./rules/house.ts";`), ...HOST_SURFACE]);
 
     // The config's name is spelled ONCE — a second copy here would leave a renamed config's old
     // name watched and its new one not.
@@ -1882,7 +1878,7 @@ describe("planInit — a repo that already has a pre-commit hook", () => {
   });
 });
 
-describe("the config surface — the repo's own half of the guard, read out of the config's text", () => {
+describe("the guard's own files — the repo's half read out of the config's text, then the host's", () => {
   // The config as this repo writes it, and as a broken one still reads: the imports survive
   // whatever went wrong two hundred lines below them.
   const CONFIG = [
@@ -1893,35 +1889,36 @@ describe("the config surface — the repo's own half of the guard, read out of t
     `export default defineConfig([pack(git), pack(house)]);`,
   ].join("\n");
 
-  it("is the config and the packs it imports, and nothing else", () => {
-    const surface = configSurface(CONFIG);
-    expect(matchAny(CONFIG_FILE, surface)).toBe(true);
-    expect(matchAny("guards/house.ts", surface)).toBe(true);
-    expect(matchAny("guards/git.ts", surface), "the folder comes with the file").toBe(true);
-    expect(matchAny("guards/nested/deep.ts", surface)).toBe(true);
-    expect(matchAny("src/a.ts", surface)).toBe(false);
-    expect(matchAny("cli/work.ts", surface)).toBe(false);
+  it("is the config and the packs it imports, then the host's half, and nothing else", () => {
+    const paths = guardPaths(CONFIG);
+    expect(paths.slice(-HOST_SURFACE.length), "the host's half comes last, whole").toStrictEqual([...HOST_SURFACE]);
+    expect(matchAny(CONFIG_FILE, paths)).toBe(true);
+    expect(matchAny("guards/house.ts", paths)).toBe(true);
+    expect(matchAny("guards/git.ts", paths), "the folder comes with the file").toBe(true);
+    expect(matchAny("guards/nested/deep.ts", paths)).toBe(true);
+    expect(matchAny("src/a.ts", paths)).toBe(false);
+    expect(matchAny("cli/work.ts", paths)).toBe(false);
     // Not a suffix match: a file that merely ENDS with the config's name is somebody else's.
-    expect(matchAny("vendor/flow.config.ts", surface)).toBe(false);
-    expect(matchAny("src/guards/thing.ts", surface), "the folder is where the import said").toBe(false);
+    expect(matchAny("vendor/flow.config.ts", paths)).toBe(false);
+    expect(matchAny("src/guards/thing.ts", paths), "the folder is where the import said").toBe(false);
   });
 
   it("follows whatever the repo called the folder, and reaches nothing when the config names nothing", () => {
     // The whole point of reading the text: `guards/` is one repo's name for it, and the engine
     // knows no folder name of its own.
-    const theirs = configSurface(`import { house } from "./.guard/house.ts";`);
+    const theirs = guardPaths(`import { house } from "./.guard/house.ts";`);
     expect(matchAny(".guard/house.ts", theirs)).toBe(true);
     expect(matchAny(".guard/helpers/text.ts", theirs)).toBe(true);
     expect(matchAny("guards/house.ts", theirs)).toBe(false);
-    // A config with every rule written inline imports no pack, so the surface is the config alone.
-    const inline = configSurface(`import { defineConfig } from "@jawache/flow";`);
-    expect([...inline]).toStrictEqual([CONFIG_FILE]);
-    expect([...configSurface(null)]).toStrictEqual([CONFIG_FILE]);
+    // A config with every rule written inline imports no pack, so the repo's half is the config alone.
+    const inline = guardPaths(`import { defineConfig } from "@jawache/flow";`);
+    expect([...inline]).toStrictEqual([CONFIG_FILE, ...HOST_SURFACE]);
+    expect([...guardPaths(null)]).toStrictEqual([CONFIG_FILE, ...HOST_SURFACE]);
   });
 
   it("reads the TEXT, not the module — which is the only reader a broken config has", () => {
     // Package specifiers are somebody else's source, never this repo's guard; `../` climbs out
-    // of the root, where a repo-relative surface cannot follow.
+    // of the root, where repo-relative paths cannot follow.
     expect(configImports(CONFIG)).toStrictEqual(["guards/house.ts"]);
     expect(configImports(`import x from "../outside/y.ts";`)).toStrictEqual([]);
     expect(configImports(`const m = await import("./late/pack.ts");`)).toStrictEqual(["late/pack.ts"]);
@@ -1933,7 +1930,7 @@ describe("the config surface — the repo's own half of the guard, read out of t
     // A `from '…'` phrase inside a QUOTED MESSAGE is harvested too, and that is the accepted
     // behaviour rather than a miss: separating a real import from a sentence that quotes one takes
     // a parser, and the file being asked about may be one that will not parse. Pinned here because
-    // it only ever WIDENS the surface, so the cost is one extra path reported as a guard file.
+    // it only ever WIDENS the guard's paths, so the cost is one extra path reported as a guard file.
     expect(configImports(`.message("write it as: import { x } from './guards/x.ts'")`)).toStrictEqual(["guards/x.ts"]);
   });
 });

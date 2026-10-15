@@ -139,15 +139,15 @@ export const CONFIG_FILE = "flow.config.ts";
  *
  * Only `./…` and `../…` count. A bare specifier is a package — `@jawache/flow`, or a pack somebody
  * published — and a package is not this repo's source. A `..` segment climbs out of the root, so
- * those are dropped too: the config sits at the repo root and the surface is repo-relative or it is
- * nothing. A leading dot in a FOLDER name is ordinary and is kept — `./.guard/house.ts` is a pack
+ * those are dropped too: the config sits at the repo root and `guardPaths` is repo-relative or it
+ * is nothing. A leading dot in a FOLDER name is ordinary and is kept — `./.guard/house.ts` is a pack
  * like any other.
  *
  * A `from '…'` phrase inside a QUOTED STRING is harvested as well — a rule whose `.message(…)`
- * spells an import line puts that path on the surface though no import named it. ACCEPTED, not
+ * spells an import line puts that path among the guard's files though no import named it. ACCEPTED, not
  * overlooked: telling a real import from a sentence quoting one takes a parser, and a parser is
  * the one thing a file that will not parse cannot give. The cost is bounded and one-directional —
- * the surface only ever WIDENS, so the worst it does is report one extra path as a guard file.
+ * the list only ever WIDENS, so the worst it does is report one extra path as a guard file.
  */
 export function configImports(configText: string): readonly string[] {
   const out: string[] = [];
@@ -158,31 +158,6 @@ export function configImports(configText: string): readonly string[] {
     if (!out.includes(path)) out.push(path);
   }
   return out;
-}
-
-/**
- * THE CONFIG SURFACE — the repo's own half of the guard: the config and the packs it imports.
- *
- * It feeds `guardPaths`, which the weaken-after-block report reads: "a rail refused, and then
- * somebody edited the guard". It is READ OUT OF THE CONFIG'S TEXT rather than resolved, so it
- * answers the same whether or not the config loads, and it follows whatever a repo called its pack
- * folder — no folder name is spelled into the engine.
- *
- * The FOLDER of each imported pack comes with the file, which is the one deliberate widening. A
- * pack imports its own helpers, and those the config never names. The import graph cannot be
- * walked from text, so the folder is the honest approximation.
- *
- * It grants nothing. While the config will not load, every write, delete and command goes
- * through (docs/user/explanation/fail-loud.md), so there is no exception for a surface to bound.
- */
-export function configSurface(configText: string | null): readonly string[] {
-  const surface: string[] = [CONFIG_FILE];
-  for (const file of configImports(configText ?? "")) {
-    if (!surface.includes(file)) surface.push(file);
-    const dir = file.includes("/") ? `${file.slice(0, file.lastIndexOf("/"))}/**` : null;
-    if (dir !== null && !surface.includes(dir)) surface.push(dir);
-  }
-  return surface;
 }
 
 export const HOOK_EVENTS = [
@@ -2823,8 +2798,7 @@ export function mergeNarratives(each: readonly { session: string; read: Narrativ
  * The HOST's half of the guard: where the hooks that invoke any of it are registered.
  *
  * Fixed, because these are the harness's own file names and not a repo's choice — unlike the
- * repo's half, which is `configSurface` reading the config's imports. The old list spelled the two
- * halves as one constant, with one repo's pack folder standing in for every repo's.
+ * repo's half, which `guardPaths` reads out of the config's imports.
  *
  * THE GUARD PACK KEEPS ITS OWN, WIDER LIST, and the difference is deliberate — this is the one
  * place that says so, because two lists that look like copies are read as drift until somebody
@@ -2845,9 +2819,26 @@ export function mergeNarratives(each: readonly { session: string; read: Narrativ
  */
 export const HOST_SURFACE: readonly string[] = [".claude/settings.json", ".claude/settings.local.json", ".claude/agents/**"];
 
-/** Every file that decides what the guard does here — the config and its packs, plus the host's. */
+/**
+ * Every file that decides what the guard does here: the config and the packs it imports, then the
+ * host's half. `weakenedAfterBlock` reads it — "a rail refused, and then somebody edited the guard".
+ *
+ * The repo's half is READ OUT OF THE CONFIG'S TEXT (`configImports`) rather than resolved, so it
+ * answers the same whether or not the config loads, and it follows whatever a repo called its pack
+ * folder — no folder name is spelled into the engine.
+ *
+ * The FOLDER of each imported pack comes with the file, which is the one deliberate widening. A
+ * pack imports its own helpers, and those the config never names. The import graph cannot be
+ * walked from text, so the folder is the honest approximation.
+ */
 export function guardPaths(configText: string | null): readonly string[] {
-  return [...configSurface(configText), ...HOST_SURFACE];
+  const paths: string[] = [CONFIG_FILE];
+  for (const file of configImports(configText ?? "")) {
+    if (!paths.includes(file)) paths.push(file);
+    const dir = file.includes("/") ? `${file.slice(0, file.lastIndexOf("/"))}/**` : null;
+    if (dir !== null && !paths.includes(dir)) paths.push(dir);
+  }
+  return [...paths, ...HOST_SURFACE];
 }
 
 /** Is this one of the files that decides what the guard does? */
