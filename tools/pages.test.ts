@@ -33,6 +33,11 @@ function pages(dir: string): string[] {
 
 const all = pages(DOCS);
 
+// THE README IS THE FRONT DOOR to the same pages, and its links name their files and their headings
+// just as a page's do — so it is walked for links beside them. It is not a page under docs/user/,
+// so it is held to no front matter.
+const README = join(PACKAGE, "README.md");
+
 describe("docs/user — every page, as a reader would follow it", () => {
   it("has pages at all, so a folder that moved fails loudly rather than passing empty", () => {
     expect(all.length).toBeGreaterThan(20);
@@ -59,7 +64,7 @@ describe("docs/user — every page, as a reader would follow it", () => {
     expect(dated).toStrictEqual([]);
   });
 
-  it.each(all.map((file) => [relative(PACKAGE, file), file] as const))("%s — every link resolves", (_name, file) => {
+  it.each([README, ...all].map((file) => [relative(PACKAGE, file), file] as const))("%s — every link resolves", (_name, file) => {
     // ONE ASSERTION CARRYING BOTH HALVES, so a page with two broken links reports two: a
     // per-link assertion would stop at the first and hide whatever came after it.
     const faults = localLinks(readFileSync(file, "utf8")).flatMap((link) => {
