@@ -61,8 +61,8 @@ import {
 // THE SETTLED ORDER, and it is not negotiable by taste. It was measured over 335 real subagent
 // transcripts, and each rung exists because the rung below it lies:
 //
-//   1. THE HOST'S OWN AGENT TYPE. The sidecar a harness writes beside every subagent transcript —
-//      present 335/335 — is host-written and unforgeable. When it names a specific type, that IS
+//   1. THE HOST'S OWN AGENT TYPE. The agent type a harness puts in the hook message for every call
+//      a subagent makes is host-written and unforgeable. When it names a specific type, that IS
 //      the answer and nothing else is consulted.
 //
 //   2. THE BRIEF, FOR GENERIC SPAWNS ONLY. A harness has buckets that carry no type information
@@ -73,8 +73,8 @@ import {
 //      a builder.
 //
 //   3. THE PARENT, BY ABSENCE. There is no positive evidence of being the top-level session, only
-//      the absence of a sidecar. It is STRUCTURAL and never derived from what the session is
-//      doing: one parent transcript legitimately spans several rungs (`/work start` and
+//      the absence of having been spawned. It is STRUCTURAL and never derived from what the
+//      session is doing: one parent transcript legitimately spans several rungs (`/work start` and
 //      `/work complete` in one file), so anything read out of its prose would flap mid-session.
 //
 // flow ships NO category names. What a "builder" is belongs to the platform that spawns one; this
@@ -90,7 +90,7 @@ import {
  */
 export interface SpawnRecipe {
   /**
-   * Sidecar agent types that ARE this category, decisively. Brief text is never consulted for a
+   * Host-sent agent types that ARE this category, decisively. Brief text is never consulted for a
    * session whose type is named here — nor for one whose type is named anywhere but `generic`.
    */
   readonly types?: readonly string[];
@@ -102,7 +102,7 @@ export interface SpawnRecipe {
   /** Substrings that recover this category from a generic spawn's brief. */
   readonly brief?: readonly string[];
   /**
-   * True for the top-level session only — no sidecar, no agent type. Structural, and exclusive: a
+   * True for the top-level session only — not spawned, no agent type. Structural, and exclusive: a
    * recipe is either about spawns or about the parent, never both.
    */
   readonly parent?: boolean;
@@ -168,7 +168,7 @@ export function categoriesIn(entries: readonly LoadedEntry[]): Category[] {
  * accident — a transcript since compacted, a brief scrolled away — and a rule that fired for the
  * first half of a session and not the second is worse than either outcome alone. The unit is
  * session × agent because that is what the evidence is about: each subagent has its own transcript
- * and its own sidecar.
+ * and its own agent id.
  */
 export function identify(
   stored: readonly string[] | undefined,

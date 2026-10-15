@@ -20,11 +20,14 @@ This matters when several agents share one worktree. A builder agent should chan
 
 ## Why the evidence is host-written
 
-The function that recognises a category reads **host-written evidence**: a sidecar file the harness wrote, or the brief a spawned agent was given. It never reads a claim the session made about itself.
+The function that recognises a category reads **host-written evidence**. It never reads a claim the session made about itself. The evidence is one of two things:
+
+- **The agent type.** Claude Code includes `agent_type` in the hook message for every tool call a subagent makes. The session cannot change that message.
+- **The brief.** The first message a spawned agent was given, read from that subagent's own transcript.
 
 The reason is that a permission resting on a claim rests on nothing. A session that could say "I am the builder" and be believed could write any file the builder may write.
 
-The evidence is not out of reach of every command. The sidecar sits beside the session's transcript, outside the repo, and flow remembers each session's identity under `.flow/`, which git ignores. Both are ordinary files. What keeps them out of a rule's way is that neither is in the snapshot flow judges a change against, and nothing the session says in its own messages is read.
+The evidence is not out of reach of every command. A subagent's transcript sits outside the repo, and flow remembers each session's identity under `.flow/`, which git ignores. Both are ordinary files. What keeps them out of a rule's way is that neither is in the snapshot flow judges a change against, and nothing the session says in its own messages is read.
 
 ## Recognising a category
 
