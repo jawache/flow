@@ -70,7 +70,7 @@ A file that matches HEAD after the call is left out of the diff. HEAD is the com
 A `git switch`, `checkout`, `reset`, `merge` or `rebase` writes files out of a commit. That content is already committed, and committed content is judged at the commit gate. Judging it again against today's rules refuses files that are right for that commit, and writing them back leaves the tree different from HEAD. So flow compares each changed file with its copy in HEAD after the call:
 
 - **A file identical to its copy in HEAD** is left out. It is not judged, not written back, and shows no breadcrumb, and `flow facts` does not count it as a shell write.
-- **A file the call removed that HEAD does not hold** is left out the same way.
+- **A file the call removed that HEAD held before the call and does not hold after it** is left out the same way. A file no commit holds, such as an untracked file or `.env`, is still judged when it is removed.
 - **Every other change** is judged as above. An edit to a committed file differs from its copy in HEAD, so it is judged.
 
 The test reads content, not the command line. So git run by a `just` recipe or a script is covered, and in `git switch dev && sed -i … file` the `sed` edit is still judged.
