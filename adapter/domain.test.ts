@@ -102,6 +102,8 @@ import {
   loadsAsStrippedModule,
   HOOK_REGISTRATIONS,
   hookCommand,
+  bareHook,
+  bareRegistrations,
   ourHookCommand,
   registeredEvents,
   staleRegistrations,
@@ -1710,7 +1712,7 @@ describe("the hook registrations flow writes", () => {
       hooks: {
         ...(withRegistrations({}).settings as { hooks: Record<string, unknown> }).hooks,
         PostToolUse: [
-          { matcher: "Read|Glob|Grep|Edit|Write|Bash", hooks: [{ type: "command", command: "flow hook post-tool-use" }] },
+          { matcher: "Read|Glob|Grep|Edit|Write|Bash", hooks: [{ type: "command", command: hookCommand("post-tool-use") }] },
           { matcher: "Bash", hooks: [{ type: "command", command: "their-tool --after" }] },
         ],
       },
@@ -1720,11 +1722,96 @@ describe("the hook registrations flow writes", () => {
     expect(added).toEqual(["PostToolUse (widened to every tool)"]);
     const post = (settings as { hooks: Record<string, unknown[]> }).hooks["PostToolUse"];
     expect(post).toEqual([
-      { matcher: "*", hooks: [{ type: "command", command: "flow hook post-tool-use" }] },
+      { matcher: "*", hooks: [{ type: "command", command: hookCommand("post-tool-use") }] },
       { matcher: "Bash", hooks: [{ type: "command", command: "their-tool --after" }] },
     ]);
     expect(staleRegistrations(settings), "and a second run finds nothing to widen").toEqual([]);
     expect(withRegistrations(settings).added).toEqual([]);
+  });
+
+  it("reads the old shape, the bare `flow hook <event>`, and nothing else as old", () => {
+    expect(bareHook("flow hook stop")).toBe("stop");
+    expect(bareHook("  flow hook pre-tool-use ")).toBe("pre-tool-use");
+    expect(bareHook(hookCommand("stop")), "today's command").toBeNull();
+    expect(bareHook("/usr/local/bin/flow hook stop"), "a path names the copy it runs").toBeNull();
+    expect(bareHook("node /x/flow/dist/flow.mjs hook stop")).toBeNull();
+    expect(bareHook("flow hook nonsense"), "a word we do not answer to").toBeNull();
+    expect(bareHook("work hook stop")).toBeNull();
+  });
+
+  // THE MACHINE-WIDE FILE AN OLDER INIT WROTE: five registrations in the old shape. They are flow's,
+  // so status counts them, and init rewrites them where they stand — a new entry beside each would
+  // run flow twice for every event.
+  it("counts the old shape as flow's, and rewrites it in place to the new command", () => {
+    const older = {
+      model: "opus",
+      hooks: Object.fromEntries(
+        Object.entries((withRegistrations({}).settings as { hooks: Record<string, unknown[]> }).hooks).map(([event, entries]) => [
+          event,
+          [
+            ...entries.map((entry) => ({
+              ...(entry as Record<string, unknown>),
+              hooks: [{ type: "command", command: (JSON.stringify(entry).match(/flow hook [a-z-]+/) ?? [""])[0] }],
+            })),
+            { hooks: [{ type: "command", command: "their-tool --report" }] },
+          ],
+        ]),
+      ),
+    };
+    const five = ["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"];
+    expect(registeredEvents(older), "both shapes are flow's").toEqual(five);
+    expect(bareRegistrations(older)).toEqual(five);
+    expect(status(statusFacts({ settings: older })).fittings.find((f) => f.id === "hooks")?.ok).toBe(true);
+
+    const { settings, added } = withRegistrations(older);
+    expect(added).toEqual(five.map((event) => `${event} (now runs the flow in node_modules/.bin first)`));
+    const hooks = (settings as { model: string; hooks: Record<string, { matcher?: string; hooks: { command: string }[] }[]> }).hooks;
+    const flows = Object.values(hooks).flatMap((entries) => entries.flatMap((entry) => entry.hooks.map((h) => h.command)).filter(ourHookCommand));
+    expect(flows, "exactly five of flow's, each the new command").toEqual(HOOK_REGISTRATIONS.map((r) => r.command));
+    expect(hooks["PreToolUse"]?.[0]?.matcher, "the matcher stays").toBe("*");
+    expect(JSON.stringify(hooks["Stop"]), "theirs is untouched").toContain("their-tool --report");
+    expect((settings as { model: string }).model).toBe("opus");
+    expect(withRegistrations(settings).added, "and a second run finds nothing to do").toEqual([]);
+  });
+
+  it("rewrites only flow's command inside an entry it shares, and widens an old narrow one in the same pass", () => {
+    const older = {
+      hooks: {
+        ...(withRegistrations({}).settings as { hooks: Record<string, unknown> }).hooks,
+        PostToolUse: [
+          {
+            matcher: "Read|Glob|Grep|Edit|Write|Bash",
+            hooks: [
+              { type: "command", command: "flow hook post-tool-use" },
+              { type: "command", command: "their-tool --after" },
+            ],
+          },
+        ],
+      },
+    };
+    const { settings, added } = withRegistrations(older);
+    expect(added).toEqual(["PostToolUse (widened to every tool, now runs the flow in node_modules/.bin first)"]);
+    expect((settings as { hooks: Record<string, unknown[]> }).hooks["PostToolUse"]).toEqual([
+      {
+        matcher: "*",
+        hooks: [
+          { type: "command", command: hookCommand("post-tool-use") },
+          { type: "command", command: "their-tool --after" },
+        ],
+      },
+    ]);
+  });
+
+  it("leaves a registration with a path to the binary as it is — it names the copy it runs", () => {
+    const pinned = {
+      hooks: Object.fromEntries(
+        HOOK_REGISTRATIONS.map((r) => [
+          r.event,
+          [{ ...(r.matcher === undefined ? {} : { matcher: r.matcher }), hooks: [{ type: "command", command: r.command.replace(/^.* flow /, "node /x/dist/flow.mjs ") }] }],
+        ]),
+      ),
+    };
+    expect(withRegistrations(pinned).added).toEqual([]);
   });
 
   it("reads nothing out of a settings file that is not an object", () => {

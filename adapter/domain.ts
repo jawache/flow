@@ -3523,11 +3523,16 @@ function hookArrays(settings: unknown): Record<string, unknown[]> {
 
 /** Is this one entry of a hook array a registration of ours? */
 function isOurs(entry: unknown): boolean {
+  return commandsOf(entry).some((command) => ourHookCommand(command));
+}
+
+/** The commands of one entry of a hook array. Loose, like everything read out of the file. */
+function commandsOf(entry: unknown): string[] {
   const inner = (entry as { hooks?: unknown } | null)?.hooks;
-  if (!Array.isArray(inner)) return false;
-  return inner.some((held) => {
+  if (!Array.isArray(inner)) return [];
+  return inner.flatMap((held) => {
     const command = (held as { command?: unknown } | null)?.command;
-    return typeof command === "string" && ourHookCommand(command);
+    return typeof command === "string" ? [command] : [];
   });
 }
 
@@ -3556,29 +3561,61 @@ export function staleRegistrations(settings: unknown): string[] {
 }
 
 /**
- * A settings file with flow's registrations in it — a NEW object, and only ever added to.
+ * flow's own registration in the OLD shape, the bare `flow hook <event>`: the word it answers to, or
+ * null when the command is anything else. It finds flow on the PATH alone, so a repo with flow only
+ * as a dev dependency answers none of its hooks. A command with a path to the binary is not this
+ * shape: it names the copy it runs, and that is somebody's choice.
+ */
+export function bareHook(command: string): HookEvent | null {
+  const word = /^flow\s+hook\s+([a-z-]+)$/.exec(command.trim())?.[1];
+  return word !== undefined && isHookEvent(word) ? word : null;
+}
+
+/** The events this settings file calls flow for in the old shape — see `bareHook`. */
+export function bareRegistrations(settings: unknown): string[] {
+  return Object.entries(hookArrays(settings))
+    .filter(([, entries]) => entries.some((entry) => commandsOf(entry).some((command) => bareHook(command) !== null)))
+    .map(([event]) => event);
+}
+
+/**
+ * A settings file with flow's registrations in it — a NEW object, added to, and with flow's own
+ * entries brought up to date.
  *
- * It is somebody's file and holds far more than us, so nothing is rewritten and nothing is removed:
- * a registration on our event that belongs to another tool keeps its place and flow stands beside
- * it. Adding what is already there is skipped, which is the whole of what makes `flow init`
- * idempotent — a second run has nothing to say.
+ * It is somebody's file and holds far more than us, so nothing of anyone else's is rewritten and
+ * nothing is removed: a registration on our event that belongs to another tool keeps its place and
+ * flow stands beside it. Adding what is already there is skipped, which is the whole of what makes
+ * `flow init` idempotent — a second run has nothing to say.
  */
 export function withRegistrations(settings: unknown): { settings: unknown; added: string[] } {
   const base = (settings && typeof settings === "object" ? settings : {}) as Record<string, unknown>;
   const already = new Set(registeredEvents(settings));
   const wanted = HOOK_REGISTRATIONS.filter((r) => !already.has(r.event));
   const stale = new Set(staleRegistrations(settings));
-  if (wanted.length === 0 && stale.size === 0) return { settings: base, added: [] };
+  const bare = new Set(bareRegistrations(settings));
+  if (wanted.length === 0 && stale.size === 0 && bare.size === 0) return { settings: base, added: [] };
 
   const arrays = hookArrays(settings);
   const hooks: Record<string, unknown> = { ...(base["hooks"] as Record<string, unknown> | undefined) };
-  // A STALE REGISTRATION IS OURS, and widening it is the one rewrite this function makes: the entry
-  // is flow's own, so its matcher is flow's to set. Adding a second, wider entry beside it instead
-  // would fire flow twice for every tool the old matcher named.
-  for (const registration of HOOK_REGISTRATIONS.filter((r) => stale.has(r.event)))
-    hooks[registration.event] = (arrays[registration.event] ?? []).map((entry) =>
-      isOurs(entry) ? { ...(entry as Record<string, unknown>), matcher: registration.matcher } : entry,
-    );
+  const matcherOf = new Map(HOOK_REGISTRATIONS.map((r) => [r.event, r.matcher]));
+  // FLOW'S OWN ENTRIES ARE FLOW'S TO REWRITE, in place, and these are the only two rewrites this
+  // function makes. A stale matcher is widened, and an old-shape command becomes one that looks in
+  // the repo's node_modules/.bin first. Adding a second entry beside either instead would fire flow
+  // twice for every event the old one already answers.
+  for (const event of new Set([...stale, ...bare]))
+    hooks[event] = (arrays[event] ?? []).map((entry) => {
+      if (!isOurs(entry)) return entry;
+      const held = entry as Record<string, unknown> & { hooks: unknown[] };
+      return {
+        ...held,
+        ...(stale.has(event) ? { matcher: matcherOf.get(event) } : {}),
+        hooks: held.hooks.map((inner) => {
+          const command = (inner as { command?: unknown } | null)?.command;
+          const word = typeof command === "string" ? bareHook(command) : null;
+          return word === null ? inner : { ...(inner as Record<string, unknown>), command: hookCommand(word) };
+        }),
+      };
+    });
   for (const registration of wanted) {
     hooks[registration.event] = [
       ...(arrays[registration.event] ?? []),
@@ -3588,11 +3625,16 @@ export function withRegistrations(settings: unknown): { settings: unknown; added
       },
     ];
   }
+  const why = (event: string): string =>
+    [stale.has(event) ? "widened to every tool" : "", bare.has(event) ? `now runs the flow in ${LOCAL_BIN} first` : ""]
+      .filter((said) => said !== "")
+      .join(", ");
+  const order = [...HOOK_REGISTRATIONS.map((r) => r.event), ...bare];
   return {
     settings: { ...base, hooks },
-    added: HOOK_REGISTRATIONS.filter((r) => stale.has(r.event) || !already.has(r.event)).map((r) =>
-      stale.has(r.event) ? `${r.event} (widened to every tool)` : r.event,
-    ),
+    added: [...new Set(order)]
+      .filter((event) => stale.has(event) || bare.has(event) || wanted.some((r) => r.event === event))
+      .map((event) => (why(event) === "" ? event : `${event} (${why(event)})`)),
   };
 }
 
