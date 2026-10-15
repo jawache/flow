@@ -295,7 +295,9 @@ describe("what a broken or empty call does", () => {
     for (const event of ["post-tool-use", "post-tool-use-failure"]) {
       const judging = run(["hook", event], "not json at all");
       expect(judging.code, `${event} must not pass an unread call as clean`).toBe(2);
-      expect(judging.stderr).toContain(`[flow hook ${event}] the guard could not PARSE its payload`);
+      expect(judging.stderr).toContain(
+        `[flow hook ${event}] the tool call ran, but flow could not read what it changed, so nothing it changed was checked (15 bytes on stdin, and not JSON).`,
+      );
     }
     const annotating = run(["hook", "session-start"], "not json at all");
     expect(annotating.code, "breaking a session over a breadcrumb is the cure killing the patient").toBe(0);

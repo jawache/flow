@@ -698,11 +698,31 @@ describe("toResult — one refusal spelling, one injection spelling", () => {
     expect(faultText("stop", "unparseable", "12 bytes on stdin, and not JSON")).toContain("could not PARSE");
   });
 
+  it("says on an after-call rail that the call ran and nothing it changed was checked, with the cause", () => {
+    // Exit 2 there blocks nothing, and the host still labels it a "blocking error" — so the words, not
+    // the label, have to say the call landed unchecked rather than that the guard refused it (#12).
+    expect(faultText("post-tool-use", "unreadable", "EAGAIN")).toBe(
+      "[flow hook post-tool-use] the tool call ran, but flow could not read what it changed, so nothing it changed was checked (EAGAIN). " +
+        "Check what the call changed before you go on.",
+    );
+    const unparsed = faultText("post-tool-use-failure", "unparseable", "12 bytes on stdin, and not JSON");
+    expect(unparsed).toContain("the tool call ran, but flow could not read what it changed");
+    expect(unparsed).toContain("(12 bytes on stdin, and not JSON)");
+    expect(unparsed).not.toContain("the guard");
+  });
+
   it("is LOUD on every rail that judges a tool call, and speaks without holding on the rest", () => {
     for (const hook of ["pre-tool-use", "post-tool-use", "post-tool-use-failure"] as const) {
       const answer = readFault(hook, "unparseable", "not JSON");
       expect(answer.exitCode, hook).toBe(2);
-      expect(answer.stderr).toContain(`[flow hook ${hook}] the guard could not PARSE its payload`);
+    }
+    expect(readFault("pre-tool-use", "unparseable", "not JSON").stderr).toContain(
+      "[flow hook pre-tool-use] the guard could not PARSE its payload (not JSON).",
+    );
+    for (const hook of ["post-tool-use", "post-tool-use-failure"] as const) {
+      expect(readFault(hook, "unparseable", "not JSON").stderr).toContain(
+        `[flow hook ${hook}] the tool call ran, but flow could not read what it changed, so nothing it changed was checked (not JSON).`,
+      );
     }
     for (const hook of ["session-start", "stop", "notification"] as const) {
       const answer = readFault(hook, "unreadable", "EBADF");
