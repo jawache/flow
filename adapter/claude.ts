@@ -29,8 +29,9 @@
 //   direction.
 
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
+import { isatty } from "node:tty";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -87,6 +88,7 @@ import {
   forgettable,
   overlapping,
   deltaFault,
+  AFTER_CALL,
   readFault,
   hermeticEnv,
   isHookEvent,
@@ -700,7 +702,7 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
 
   const key = callKey(payload);
   const tool = typeof payload.tool_name === "string" ? payload.tool_name : "";
-  const afterCall = (hook === "post-tool-use" || hook === "post-tool-use-failure") && !off && tool !== "";
+  const afterCall = AFTER_CALL.has(hook) && !off && tool !== "";
   // THE CALL IS OVER, however it went: its record says it finished, so a diff still to come can
   // tell this call overlapped it.
   const now = Date.now();
@@ -1066,6 +1068,38 @@ export type PayloadRead =
   | { readonly ok: true; readonly payload: HookPayload }
   | { readonly ok: false; readonly why: "unreadable" | "unparseable"; readonly detail: string };
 
+/** What `readStdin` sleeps on between tries: nothing ever wakes it, so each wait runs its full timeout. */
+const NAP = new Int32Array(new SharedArrayBuffer(4));
+
+/** How long one EAGAIN waits before the next try: the host's next write is usually milliseconds away. */
+const STDIN_NAP_MS = 5;
+
+/**
+ * Every byte on fd 0, to the end of the stream.
+ *
+ * `readFileSync(0)` gives up the first time a NON-BLOCKING stdin is empty, with EAGAIN, and empty
+ * there means "the host has not written the next piece yet", not "there is no more". A payload far
+ * larger than a pipe's buffer arrives in pieces, so it is exactly the payload that read loses (#12).
+ * This one waits for the next piece instead, and the thread SLEEPS between tries rather than
+ * spinning. Every other error is thrown, for `readPayload` to report.
+ */
+function readStdin(): string {
+  const pieces: Buffer[] = [];
+  const piece = Buffer.alloc(64 * 1024);
+  for (;;) {
+    let got: number;
+    try {
+      got = readSync(0, piece, 0, piece.length, null);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EAGAIN") throw error;
+      Atomics.wait(NAP, 0, 0, STDIN_NAP_MS);
+      continue;
+    }
+    if (got === 0) return Buffer.concat(pieces).toString("utf8");
+    pieces.push(Buffer.from(piece.subarray(0, got)));
+  }
+}
+
 /**
  * Read the payload, and REPORT which of three things happened.
  *
@@ -1080,10 +1114,13 @@ export type PayloadRead =
  */
 export function readPayload(): PayloadRead {
   // HAND-RUN: a person typing `flow hook stop` has no payload and must not block on stdin forever.
-  if (process.stdin.isTTY) return { ok: true, payload: {} };
+  // Asked of fd 0 itself, never of `process.stdin`: merely reading that property opens a stream on
+  // fd 0 and the stream makes it NON-BLOCKING (#12). `isatty(0)` leaves fd 0 blocking, so on an
+  // ordinary pipe the read below never meets EAGAIN and its wait loop is not needed.
+  if (isatty(0)) return { ok: true, payload: {} };
   let raw: string;
   try {
-    raw = readFileSync(0, "utf8");
+    raw = readStdin();
   } catch (error) {
     // The errno is the actionable half, and only the errno: a raw error string can carry a
     // stack-shaped prefix, and this text goes in front of the model.

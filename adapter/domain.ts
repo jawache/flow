@@ -1692,7 +1692,7 @@ export function deltaFault(fault: string): HookResult {
     stdout: "",
     stderr:
       `\nflow — could not see what this call changed:\n\n${fault}\n\n` +
-      "Nothing it wrote was judged and nothing was put back. Check what the call changed before you go on.\n",
+      "The call ran, and nothing it changed was checked or put back. Check what the call changed before you go on.\n",
     exitCode: 2,
   };
 }
@@ -1702,34 +1702,37 @@ export function decision(hook: HookEvent, additionalContext: string): string {
   return JSON.stringify({ hookSpecificOutput: { hookEventName: HOST_EVENT[hook], additionalContext } });
 }
 
-/**
- * What the guard says when it could not read its own payload.
- *
- * The three outcomes of a read are not one outcome. "There was nothing to guard" is safe and common
- * — a hand-run, an empty stdin — and silence is the right answer to it. "I could not SEE what I was
- * guarding" is the old engine's invisible swallow: both were folded into `{}`, so a PreToolUse rail
- * holding an unreadable payload found no tool call, allowed, and told nobody. The sentence is the
- * same on every rail; what differs is whether the rail blocks with it, and that is the caller's
- * decision because it is a fact about what the event is FOR.
- */
-export function faultText(hook: HookEvent, why: "unreadable" | "unparseable", detail: string): string {
-  const what =
-    why === "unreadable" ? `could not READ its payload from stdin (${detail})` : `could not PARSE its payload (${detail})`;
-  return `[flow hook ${hook}] the guard ${what}.`;
-}
+/** The rails that run once a tool call has landed: their exit 2 reports, it cannot block. */
+export const AFTER_CALL: ReadonlySet<HookEvent> = new Set(["post-tool-use", "post-tool-use-failure"]);
 
 /**
  * The answer a rail gives when it could not read its payload — and which rails must be LOUD.
  *
+ * The three outcomes of a read are not one outcome. "There was nothing to guard" is safe and common
+ * — a hand-run, an empty stdin — and silence is the right answer to it. "I could not SEE what I was
+ * guarding" is the old engine's invisible swallow: both were folded into `{}`, so a PreToolUse rail
+ * holding an unreadable payload found no tool call, allowed, and told nobody. So every rail says one
+ * fault line, and it keeps READ apart from PARSE: a payload that never arrived and one that arrived
+ * and was not JSON are different faults. The line names the hook and the cause, never "the guard",
+ * because on an after-call rail the call has already run and must not read as refused (#12).
+ *
  * The three rails that judge a tool call answer exit 2: PreToolUse, where it refuses the call it
  * could not see, and the two after-call rails, where every change the call made is judged — there
- * exit 2 blocks nothing (the call has run) and puts the sentence in front of the model beside the
+ * exit 2 blocks nothing (the call has run) and puts the line in front of the model beside the
  * result, so a call whose changes went unjudged is never passed as clean. The rest only add a
  * breadcrumb or end a turn, and say it on stderr with exit 0.
+ *
+ * PreToolUse and the annotating rails print the line bare; an after-call rail wraps it in
+ * `deltaFault`, the one message for "flow could not see what this call changed", because the host
+ * labels its exit 2 a "blocking error" and the bare line read as a refusal of a call that had
+ * already landed (#12).
  */
 export function readFault(hook: HookEvent, why: "unreadable" | "unparseable", detail: string): HookResult {
-  const text = faultText(hook, why, detail);
-  return hook === "pre-tool-use" || hook === "post-tool-use" || hook === "post-tool-use-failure"
+  const what =
+    why === "unreadable" ? `could not READ its payload from stdin (${detail})` : `could not PARSE its payload (${detail})`;
+  const text = `[flow hook ${hook}] ${what}.`;
+  if (AFTER_CALL.has(hook)) return deltaFault(text);
+  return hook === "pre-tool-use"
     ? { stdout: "", stderr: `\n${text}\n`, exitCode: 2 }
     : { stdout: "", stderr: `${text}\n`, exitCode: 0 };
 }

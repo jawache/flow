@@ -16,7 +16,7 @@
 // the `Symbol.for` decision (flow/language/domain.ts) being paid off rather than a coincidence.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { closeSync, mkdtempSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
@@ -25,6 +25,7 @@ import {
   buildBundles,
   cleanBundles,
   fixturePack,
+  hookInPieces,
   newRepo,
   pre,
   shimBin,
@@ -292,17 +293,65 @@ describe("what a broken or empty call does", () => {
     for (const event of ["post-tool-use", "post-tool-use-failure"]) {
       const judging = run(["hook", event], "not json at all");
       expect(judging.code, `${event} must not pass an unread call as clean`).toBe(2);
-      expect(judging.stderr).toContain(`[flow hook ${event}] the guard could not PARSE its payload`);
+      expect(judging.stderr).toContain("flow — could not see what this call changed");
+      expect(judging.stderr).toContain(`[flow hook ${event}] could not PARSE its payload (15 bytes on stdin, and not JSON).`);
     }
     const annotating = run(["hook", "session-start"], "not json at all");
     expect(annotating.code, "breaking a session over a breadcrumb is the cure killing the patient").toBe(0);
     expect(annotating.stderr).toContain("could not PARSE its payload");
   });
 
+  it("reports a stdin it cannot read on an after-call rail, naming the error, rather than retrying it", () => {
+    // Only EAGAIN means "wait for the next piece"; any other error is a payload nobody will ever
+    // see. A stdin opened for writing fails every read with EBADF. A CLOSED stdin cannot show this:
+    // node reopens a closed fd 0 on /dev/null before flow's first line runs, so it reads as empty.
+    const dir = mkdtempSync(join(tmpdir(), "flow-stdin-"));
+    const writeOnly = openSync(join(dir, "stdin"), "w");
+    try {
+      const answer = runFlow(repo, ["hook", "post-tool-use"], {}, writeOnly);
+      expect(answer.code, "an unread call must not pass as clean").toBe(2);
+      expect(answer.stderr).toContain("flow — could not see what this call changed");
+      expect(answer.stderr).toContain("[flow hook post-tool-use] could not READ its payload from stdin (EBADF).");
+    } finally {
+      closeSync(writeOnly);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("is silent about an event it was never asked for", () => {
     const answer = run(["hook", "user-prompt-submit"], "{}");
     expect(answer.code).toBe(0);
     expect(answer.stdout + answer.stderr).toBe("");
+  });
+});
+
+describe("a payload the host writes in pieces (#12)", () => {
+  // A Read of an image hands post-tool-use a payload far larger than a pipe's buffer, so the host
+  // writes it in pieces, and the hook can empty the pipe before the next piece lands. The
+  // `tool_use_id` comes after the image, so the after-call rail finds its snapshot only if the
+  // second piece was read too.
+  const image = (): Record<string, unknown> => {
+    const id = `toolu_live_${++calls}`;
+    const before = hook("pre-tool-use", { ...inThisSession("Read", { file_path: "shot.png" }), tool_use_id: id });
+    expect(before.code, before.stderr).toBe(0);
+    return {
+      ...inThisSession("Read", { file_path: "shot.png" }),
+      hook_event_name: "PostToolUse",
+      tool_response: { type: "image", file: { base64: "A".repeat(400_000) } },
+      tool_use_id: id,
+    };
+  };
+
+  // The preload opens `process.stdin` before flow's first line runs, and that stream sets fd 0
+  // non-blocking, as a host may leave it. The read then meets EAGAIN between the pieces, and has to
+  // wait the pause out rather than give up. With the wait loop in place, no test here fails if the
+  // hand-run check goes back to `process.stdin.isTTY`: `isatty(0)` is now a cheap fast path.
+  it.each<[string, readonly string[]]>([
+    ["blocking", []],
+    ["already non-blocking before flow starts", ["--import", "data:text/javascript,process.stdin"]],
+  ])("is read whole when stdin is %s, however long the host pauses between writes", async (_stdin, nodeFlags) => {
+    const answer = await hookInPieces(repo, "post-tool-use", image(), nodeFlags);
+    expect(answer.code, answer.stderr).toBe(0);
   });
 });
 

@@ -36,7 +36,6 @@ import {
   decision,
   deleteTargets,
   delivers,
-  faultText,
   readFault,
   hermeticEnv,
   isHookEvent,
@@ -688,26 +687,37 @@ describe("toResult — one refusal spelling, one injection spelling", () => {
     });
   });
 
-  it("says which of the three things happened to a payload it could not read", () => {
-    // "There was nothing to guard" and "I could not SEE what I was guarding" were one answer in the
-    // old engine — an empty object — so a rail that could not read its payload allowed, silently.
-    expect(faultText("pre-tool-use", "unreadable", "EBADF")).toBe(
-      "[flow hook pre-tool-use] the guard could not READ its payload from stdin (EBADF).",
-    );
-    expect(faultText("stop", "unparseable", "12 bytes on stdin, and not JSON")).toContain("could not PARSE");
-  });
-
   it("is LOUD on every rail that judges a tool call, and speaks without holding on the rest", () => {
-    for (const hook of ["pre-tool-use", "post-tool-use", "post-tool-use-failure"] as const) {
-      const answer = readFault(hook, "unparseable", "not JSON");
-      expect(answer.exitCode, hook).toBe(2);
-      expect(answer.stderr).toContain(`[flow hook ${hook}] the guard could not PARSE its payload`);
-    }
-    for (const hook of ["session-start", "stop", "notification"] as const) {
-      const answer = readFault(hook, "unreadable", "EBADF");
-      expect(answer.exitCode, hook).toBe(0);
-      expect(answer.stderr).toContain("could not READ");
-    }
+    // The after-call rails say it the way every unseen call is said — the call ran and nothing it
+    // changed was checked — never as a guard refusing a call that has already landed (#12).
+    expect(readFault("pre-tool-use", "unparseable", "not JSON")).toStrictEqual({
+      stdout: "",
+      stderr: "\n[flow hook pre-tool-use] could not PARSE its payload (not JSON).\n",
+      exitCode: 2,
+    });
+    expect(readFault("post-tool-use", "unparseable", "not JSON")).toStrictEqual({
+      stdout: "",
+      stderr:
+        "\nflow — could not see what this call changed:\n\n" +
+        "[flow hook post-tool-use] could not PARSE its payload (not JSON).\n\n" +
+        "The call ran, and nothing it changed was checked or put back. Check what the call changed before you go on.\n",
+      exitCode: 2,
+    });
+    expect(readFault("post-tool-use-failure", "unreadable", "EBADF")).toStrictEqual({
+      stdout: "",
+      stderr:
+        "\nflow — could not see what this call changed:\n\n" +
+        "[flow hook post-tool-use-failure] could not READ its payload from stdin (EBADF).\n\n" +
+        "The call ran, and nothing it changed was checked or put back. Check what the call changed before you go on.\n",
+      exitCode: 2,
+    });
+    expect(readFault("session-start", "unreadable", "EBADF")).toStrictEqual({
+      stdout: "",
+      stderr: "[flow hook session-start] could not READ its payload from stdin (EBADF).\n",
+      exitCode: 0,
+    });
+    expect(readFault("stop", "unreadable", "EBADF").exitCode).toBe(0);
+    expect(readFault("notification", "unreadable", "EBADF").exitCode).toBe(0);
   });
 });
 
@@ -2576,12 +2586,13 @@ describe("an observed refusal — its own banner, and what was put back", () => 
     );
   });
 
-  it("reports a call it could not see — loud, exit 2, nothing judged and nothing put back", () => {
+  it("reports a call it could not see — loud, exit 2, the call ran and nothing it changed was checked", () => {
     const said = deltaFault("No snapshot was taken before this call.");
     expect(said.exitCode).toBe(2);
-    expect(said.stderr).toContain("flow — could not see what this call changed:");
-    expect(said.stderr).toContain("No snapshot was taken before this call.");
-    expect(said.stderr).toContain("nothing was put back");
+    expect(said.stderr).toBe(
+      "\nflow — could not see what this call changed:\n\nNo snapshot was taken before this call.\n\n" +
+        "The call ran, and nothing it changed was checked or put back. Check what the call changed before you go on.\n",
+    );
   });
 });
 
