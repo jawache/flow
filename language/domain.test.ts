@@ -47,6 +47,7 @@ import {
   override,
   pack,
   parseCommandLine,
+  elideHeredocBodies,
   type ShellCommand,
   BRIEF_SCOPE_MOMENTS,
   withFaults,
@@ -397,6 +398,31 @@ describe("parseCommandLine — the 45 hand-labelled commands from triage's bake-
       if (label.spliced !== undefined) expect(parsed?.filter((c) => c.nested).map((c) => c.program)).toEqual(label.spliced);
     });
   }
+});
+
+// What a `banCommands` rule with `wholeLine` matches: the line as written, every heredoc body cut
+// out by where the parse found it, never by scanning for the delimiter again.
+describe("elideHeredocBodies", () => {
+  it("cuts every body and keeps the opener, the terminator and everything else as written", () => {
+    expect(elideHeredocBodies("python3 - <<'PY'\nprint('x; y')\nPY\nnpx vitest run")).toBe("python3 - <<'PY'\nPY\nnpx vitest run");
+    expect(elideHeredocBodies("cat <<-EOF\n\tx; y\n\tEOF\nls")).toBe("cat <<-EOF\n\tEOF\nls");
+    expect(elideHeredocBodies("cat <<A <<B\na\nA\nb\nB\nls")).toBe("cat <<A <<B\nA\nB\nls");
+    expect(elideHeredocBodies('git commit -m "subject\n\nbody"')).toBe('git commit -m "subject\n\nbody"');
+  });
+
+  it("cuts a body inside a substitution, and one inside an unquoted body once", () => {
+    expect(elideHeredocBodies('git commit -m "$(cat <<EOF\nfix: a\nEOF\n)"')).toBe('git commit -m "$(cat <<EOF\nEOF\n)"');
+    expect(elideHeredocBodies("cat <<A\n$(cat <<B\nb\nB\n)\nA")).toBe("cat <<A\nA");
+  });
+
+  it("leaves a heredoc inside a string a shell is given, which is part of that string", () => {
+    const line = "bash -c 'cat <<E\nx\nE'";
+    expect(elideHeredocBodies(line)).toBe(line);
+  });
+
+  it("is null for a line that does not parse", () => {
+    expect(elideHeredocBodies('echo "oops')).toBeNull();
+  });
 });
 
 describe("parseCommandLine — the six fields", () => {

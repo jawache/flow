@@ -519,8 +519,39 @@ function substitutionText(text: string): ShellSubstitution {
  * order they appear — or `null` when the line, or any script nested inside it, does not parse.
  */
 export function parseCommandLine(line: string): ShellCommand[] | null {
-  // An object, not a `let`: the walk below sets it from inside closures, which narrowing cannot see.
+  return walkLine(line)?.commands ?? null;
+}
+
+/**
+ * The line as written, less the body of every heredoc in it — the subject a `banCommands` rule
+ * with `wholeLine` matches. The opener and the terminator line stay, and so does everything else,
+ * newlines included. A body inside a string the parse reads again (`bash -c`, `eval`, a heredoc
+ * fed to a shell) is part of that string, and stays with it. `null` when the line does not parse.
+ */
+export function elideHeredocBodies(line: string): string | null {
+  const walked = walkLine(line);
+  if (walked === null) return null;
+  let out = "";
+  let copied = 0;
+  for (const [from, to] of [...walked.bodies].sort((a, b) => a[0] - b[0])) {
+    if (from < copied) continue; // inside a body already cut: a heredoc in an unquoted heredoc's `$( … )`
+    out += line.slice(copied, from);
+    copied = to;
+  }
+  return out + line.slice(copied);
+}
+
+/**
+ * THE walk: the line's simple commands, and where each heredoc body sits in it — one parse, read
+ * by `parseCommandLine` and `elideHeredocBodies` alike.
+ */
+function walkLine(line: string): { readonly commands: ShellCommand[]; readonly bodies: readonly (readonly [number, number])[] } | null {
+  // Objects, not `let`s: the walk below sets them from inside closures, which narrowing cannot see.
   const fault = { found: false };
+  // How deep the walk is in text the parse read on its own — a `bash -c` string, an `eval`, a
+  // heredoc fed to a shell, an escaped-backtick script — whose positions are not the line's.
+  const foreign = { depth: 0 };
+  const bodies: (readonly [number, number])[] = [];
 
   // A script the walk enters: the line itself, a substitution's body, a `bash -c` string.
   const script = (s: ParsedScript | undefined, nested: boolean, out: ShellCommand[]): void => {
@@ -528,10 +559,15 @@ export function parseCommandLine(line: string): ShellCommand[] | null {
       fault.found = true;
       return;
     }
+    const own = s.source !== undefined;
+    if (own) foreign.depth += 1;
     for (const statement of s.commands) node(statement, nested, out);
+    if (own) foreign.depth -= 1;
   };
   const source = (text: string, out: ShellCommand[]): void => {
+    foreign.depth += 1;
     script(parseBash(text), true, out);
+    foreign.depth -= 1;
   };
 
   // A word's parts: every substitution in it is recorded for the command it belongs to (`subs`,
@@ -644,6 +680,7 @@ export function parseCommandLine(line: string): ShellCommand[] | null {
     }
     const quoted = r.delimiter?.quoted === true;
     heredocs?.push({ body: r.body.text, quoted });
+    if (foreign.depth === 0) bodies.push([r.body.pos, r.body.end]);
     if (!quoted) for (const part of r.body.parts ?? []) wordPart(part, subs, out);
   };
 
@@ -754,7 +791,7 @@ export function parseCommandLine(line: string): ShellCommand[] | null {
 
   const out: ShellCommand[] = [];
   script(parseBash(line), false, out);
-  return fault.found ? null : out;
+  return fault.found ? null : { commands: out, bodies };
 }
 
 /**
