@@ -839,6 +839,68 @@ export default defineConfig([pack(demo), pack(work, { writers: ["builder", "pare
   });
 });
 
+describe("a subagent's drift and turn, read from its own transcript — never its parent's", () => {
+  // The hook message for a subagent's call carries the PARENT's transcript_path (#7). Its brief is
+  // pinned above; these pin the other two things read from the same file. The two transcripts are
+  // made to disagree, so a call judged on the parent's would answer the other way.
+  const SESSION = "own-7";
+  const AGENT = "s7";
+  let parent: string;
+  let own: string;
+
+  const usage = (tokens: number): string =>
+    JSON.stringify({ type: "assistant", message: { usage: { input_tokens: 10, cache_read_input_tokens: tokens } } });
+  const prompt = (content: string): string => JSON.stringify({ type: "user", message: { content } });
+  const used = (tool: string, input: Record<string, unknown>): string =>
+    JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: tool, input }] } });
+  /** Four edits and nothing run — what the repo's turn-end rule refuses. */
+  const edits = (): string[] => ["a", "b", "c", "d"].map((name) => used("Write", { file_path: join(repo, "src", `${name}.ts`), content: "" }));
+  const lines = (...each: string[]): string => `${each.join("\n")}\n`;
+
+  /** The subagent's message, as the host sends it: its id and type, and the parent's transcript. */
+  const asSubagent = (payload: Record<string, unknown>): Record<string, unknown> => ({
+    session_id: SESSION,
+    agent_id: AGENT,
+    agent_type: "general-purpose",
+    transcript_path: parent,
+    ...payload,
+  });
+  const read = (): Ran => called(asSubagent({ tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } }));
+
+  beforeAll(() => {
+    mkdirSync(join(repo, ".t", SESSION, "subagents"), { recursive: true });
+    parent = join(repo, ".t", `${SESSION}.jsonl`);
+    own = join(repo, ".t", SESSION, "subagents", `agent-${AGENT}.jsonl`);
+  });
+
+  it("measures drift on the subagent's own context, so a note comes back when IT has moved on", () => {
+    writeFileSync(parent, lines(prompt("go"), usage(400_000)));
+    writeFileSync(own, lines(prompt("look at src"), usage(1_000)));
+    expect(read().stdout, "first touch").toContain("src/ is the product");
+
+    writeFileSync(parent, lines(prompt("go"), usage(900_000)));
+    expect(read().stdout, "the parent has drifted, the subagent has not").toBe("");
+
+    writeFileSync(own, lines(prompt("look at src"), usage(400_000)));
+    expect(read().stdout, "the subagent has drifted past the threshold").toContain("src/ is the product");
+  });
+
+  it("judges the turn the subagent took, not the one its parent took", () => {
+    const stop = (): Ran => hook("stop", asSubagent({ hook_event_name: "Stop" }));
+
+    writeFileSync(parent, lines(prompt("go"), ...edits()));
+    writeFileSync(own, lines(prompt("look at src"), used("Bash", { command: "npm test" }), ...edits().slice(0, 1)));
+    const ran = stop();
+    expect(ran.code, `the subagent ran something this turn: ${ran.stderr}`).toBe(0);
+
+    writeFileSync(parent, lines(prompt("go"), used("Bash", { command: "npm test" })));
+    writeFileSync(own, lines(prompt("look at src"), ...edits()));
+    const untested = stop();
+    expect(untested.code).toBe(2);
+    expect(untested.stderr).toContain("You edited all turn and ran nothing.");
+  });
+});
+
 describe("the off switch", () => {
   it("silences every rail, and writes no telemetry while it is off", () => {
     writeFileSync(join(repo, ".flow", "off"), "");
