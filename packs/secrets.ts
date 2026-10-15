@@ -164,7 +164,24 @@ export const secrets = definePack("secrets", (repo: Seam = {}) => {
   // SEALING, spelled as the repo spells it or as dotenvx does. The default excludes the very
   // prefixes this pack waves through below, so the command a refusal hands over is the one that
   // leaves exactly those plaintext — a bare `dotenvx encrypt` would seal them and break the build.
-  const encrypt = repo.encrypt ?? `dotenvx encrypt ${publicPrefixes.map((prefix) => `-ek '${prefix}*'`).join(" ")}`;
+  // `--no-native` only for `.env.keys` custody: it is what makes dotenvx write the key to the
+  // file instead of the OS secret store. `dotenvx run` reads `.env.keys` first, so the seam needs
+  // no switch in either custody.
+  const custody = repo.custody ?? "native";
+  const encrypt =
+    repo.encrypt ??
+    `dotenvx encrypt ${custody === "file" ? "--no-native " : ""}${publicPrefixes.map((prefix) => `-ek '${prefix}*'`).join(" ")}`;
+  // WHERE THE KEY IS, in the two sentences that name it: the custody sentence after the tiers, and
+  // where to look when a decrypt comes back empty. `.env.keys` stays in the local tier either way —
+  // `dotenvx native down` writes it under the OS store too, and it is still never read.
+  const keyPlace =
+    custody === "file"
+      ? `\`.env.keys\` holds the decryption key: \`${encrypt}\` writes it, and it is copied by hand to every machine that runs the code; it is never in git.`
+      : "The decryption key is in this machine's OS secret store, where dotenvx put it; no file in this repo holds it.";
+  const quietDecrypt =
+    custody === "file"
+      ? "If a decrypt looks suspiciously quiet, check `.env.keys` exists before you commit anything."
+      : "If a decrypt looks suspiciously quiet, the key is missing from this machine's OS secret store; stop before you commit anything.";
   // THE SEAM, AS A WHOLE INVOCATION, because the two spellings put the environment in different
   // places: a wrapper takes it as an argument (`just dx dev npm run build`), and dotenvx itself
   // takes the env FILE and a `--`. Written as one string here rather than as a template with a
@@ -188,8 +205,9 @@ export const secrets = definePack("secrets", (repo: Seam = {}) => {
       [
         `Env files in this repo are COMMITTED and ENCRYPTED (dotenvx): every value is an \`encrypted:…\` blob except ${publicPrefixes.map((prefix) => `${prefix}*`).join(" / ")} config, which bundlers inline at build. Reading and editing them is expected work for you, not a violation — your training says avoid env files, and for plaintext env files it is right; for these it is wrong.`,
         "Three tiers, and every value lives in exactly one. Committed and encrypted: `.env`, `.env.production`, `.env.staging`. Local ephemera, never committed and never encrypted: `.env.keys` (the decryption key — the ONE file you never read), `.env.*.local`. Runtime platform secrets: set per environment in the host platform's own secret store — a runtime secret added anywhere else does not reach the running service.",
+        keyPlace,
         `One seam: \`${seam}\` decrypts and injects. EVERYTHING env-dependent goes through it — the dev server, a migration, a one-off script. Never \`source .env\`, never a hand-rolled dotenv import.`,
-        "The trap worth knowing: `dotenvx decrypt` with no key present succeeds and writes EMPTY values over your file. If a decrypt looks suspiciously quiet, check `.env.keys` exists before you commit anything.",
+        `The trap worth knowing: \`dotenvx decrypt\` with no key present succeeds and writes EMPTY values over your file. ${quietDecrypt}`,
       ].join("\n"),
     ),
 

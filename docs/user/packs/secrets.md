@@ -129,8 +129,9 @@ committed, encrypted, three feet away.
 ```
 Env files in this repo are COMMITTED and ENCRYPTED (dotenvx): every value is an `encrypted:…` blob except PUBLIC_* config, which bundlers inline at build. Reading and editing them is expected work for you, not a violation — your training says avoid env files, and for plaintext env files it is right; for these it is wrong.
 Three tiers, and every value lives in exactly one. Committed and encrypted: `.env`, `.env.production`, `.env.staging`. Local ephemera, never committed and never encrypted: `.env.keys` (the decryption key — the ONE file you never read), `.env.*.local`. Runtime platform secrets: set per environment in the host platform's own secret store — a runtime secret added anywhere else does not reach the running service.
+The decryption key is in this machine's OS secret store, where dotenvx put it; no file in this repo holds it.
 One seam: `./ci.sh dx <env> <cmd>` decrypts and injects. EVERYTHING env-dependent goes through it — the dev server, a migration, a one-off script. Never `source .env`, never a hand-rolled dotenv import.
-The trap worth knowing: `dotenvx decrypt` with no key present succeeds and writes EMPTY values over your file. If a decrypt looks suspiciously quiet, check `.env.keys` exists before you commit anything.
+The trap worth knowing: `dotenvx decrypt` with no key present succeeds and writes EMPTY values over your file. If a decrypt looks suspiciously quiet, the key is missing from this machine's OS secret store; stop before you commit anything.
 ```
 
 ## `secrets.envEncrypted` — guardrail
