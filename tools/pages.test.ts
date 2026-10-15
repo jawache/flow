@@ -16,7 +16,7 @@
 import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
-import { checksCalled, checksDefined, codeImports, exportedNames, fencedCode, frontMatterFields, headingSlugs, kebab, localLinks } from "./domain.ts";
+import { checksCalled, exampleFaults, exportedNames, fencedCode, flowImports, frontMatterFields, headingSlugs, kebab, localLinks, type Api } from "./domain.ts";
 import * as root from "../index.ts";
 import * as packs from "../packs/index.ts";
 
@@ -97,14 +97,17 @@ const doors = new Map(
   ),
 );
 
-/** A stock check: exported from the root door, with its own page under docs/user/checks/. */
-const isStockCheck = (name: string): boolean => doors.get("@jawache/flow")?.has(name) === true && existsSync(join(DOCS, "checks", `${kebab(name)}.md`));
+/** The stock checks: exported from the root door, each with its own page under docs/user/checks/. */
+const api: Api = {
+  doors,
+  stockChecks: new Set([...(doors.get("@jawache/flow") ?? [])].filter((name) => existsSync(join(DOCS, "checks", `${kebab(name)}.md`)))),
+};
 
 // A MIGRATION GUIDE IS LEFT OUT on purpose: its "before" half shows the API as it was, so the names
 // it imports are the ones that no longer exist.
-const examples = all.filter((file) => !file.startsWith(join(DOCS, "migrations")));
-const code = new Map(examples.map((file) => [file, fencedCode(readFileSync(file, "utf8"))]));
-const flowImports = (file: string) => codeImports(code.get(file) ?? "").filter((found) => found.from === "@jawache/flow" || found.from.startsWith("@jawache/flow/"));
+const examples = all
+  .filter((file) => !file.startsWith(join(DOCS, "migrations")))
+  .map((file) => [relative(PACKAGE, file), fencedCode(readFileSync(file, "utf8"))] as const);
 
 describe("docs/user — every example, against the API it teaches", () => {
   it("reads every export of both doors, so a name missed by the reader cannot pass for one the door dropped", () => {
@@ -114,22 +117,12 @@ describe("docs/user — every example, against the API it teaches", () => {
   });
 
   it("finds the examples at all, so a fence the reader stopped seeing fails rather than passes empty", () => {
-    expect(examples.flatMap(flowImports).length).toBeGreaterThan(30);
-    expect(examples.flatMap((file) => checksCalled(code.get(file) ?? "")).length).toBeGreaterThan(20);
+    expect(examples.flatMap(([, code]) => flowImports(code)).length).toBeGreaterThan(30);
+    expect(examples.flatMap(([, code]) => checksCalled(code)).length).toBeGreaterThan(20);
   });
 
-  it.each(examples.map((file) => [relative(PACKAGE, file), file] as const))("%s — every name it imports is exported, and every check it asks for exists", (_name, file) => {
-    const defined = new Set(checksDefined(code.get(file) ?? ""));
-    const faults = [
-      ...flowImports(file).flatMap(({ from, names }) => {
-        const exported = doors.get(from);
-        if (exported === undefined) return [`${from} — no such door`];
-        return names.filter((name) => !exported.has(name)).map((name) => `${name} — ${from} does not export it`);
-      }),
-      ...checksCalled(code.get(file) ?? "")
-        .filter((name) => !isStockCheck(name) && !defined.has(name))
-        .map((name) => `.check(${name}(…)) — neither a stock check nor a defineCheck on this page`),
-    ];
-    expect(faults, `${relative(PACKAGE, file)}\n  ${faults.join("\n  ")}`).toStrictEqual([]);
+  it.each(examples)("%s — every name it imports is exported, and every check it asks for exists", (name, code) => {
+    const faults = exampleFaults(code, api);
+    expect(faults, `${name}\n  ${faults.join("\n  ")}`).toStrictEqual([]);
   });
 });

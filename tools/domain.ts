@@ -420,7 +420,7 @@ export function fencedCode(markdown: string): string {
 }
 
 /** One `import { … } from "…"` in a page's code: the module, and each name as that module exports it. */
-export interface CodeImport {
+interface CodeImport {
   readonly from: string;
   readonly names: readonly string[];
 }
@@ -461,6 +461,36 @@ export function checksCalled(code: string): string[] {
 /** Every check some code defines for itself: `const name = defineCheck(…)`. */
 export function checksDefined(code: string): string[] {
   return [...code.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*defineCheck\s*\(/g)].map((found) => found[1] ?? "");
+}
+
+/** Every named import in some code from `@jawache/flow` or one of its subpath doors. */
+export function flowImports(code: string): CodeImport[] {
+  return codeImports(code).filter((found) => found.from === "@jawache/flow" || found.from.startsWith("@jawache/flow/"));
+}
+
+/** What a page's examples are held to: every door with the names it exports, and the stock checks by name. */
+export interface Api {
+  readonly doors: ReadonlyMap<string, ReadonlySet<string>>;
+  readonly stockChecks: ReadonlySet<string>;
+}
+
+/**
+ * EVERY WAY A PAGE'S EXAMPLES HAVE FALLEN BEHIND THE API, one line per fault: an import from a
+ * door that does not exist, a name the door does not export, and a `.check(name(…))` that is
+ * neither a stock check nor one the same code defines with `defineCheck`.
+ */
+export function exampleFaults(code: string, api: Api): string[] {
+  const defined = new Set(checksDefined(code));
+  return [
+    ...flowImports(code).flatMap(({ from, names }) => {
+      const exported = api.doors.get(from);
+      if (exported === undefined) return [`${from} — no such door`];
+      return names.filter((name) => !exported.has(name)).map((name) => `${name} — ${from} does not export it`);
+    }),
+    ...checksCalled(code)
+      .filter((name) => !api.stockChecks.has(name) && !defined.has(name))
+      .map((name) => `.check(${name}(…)) — neither a stock check nor a defineCheck on this page`),
+  ];
 }
 
 /** One link a page makes: where it points, and the heading it expects to find there. */

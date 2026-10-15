@@ -21,9 +21,11 @@ import {
   codeImports,
   DOC_BLOCKS,
   EXAMPLE,
+  exampleFaults,
   exportedNames,
   fenceFault,
   fencedCode,
+  flowImports,
   firstSentence,
   frontMatter,
   frontMatterFields,
@@ -605,8 +607,8 @@ describe("what a reader will make of a markdown page", () => {
     });
 
     it("reads a door file's exports, types included, and no name a comment mentions", () => {
-      const door = '// export { gone } from "./x.ts";\nexport {\n  a, // the first\n  type B,\n} from "./a.ts";\n/* export { alsoGone } */\nexport { c } from "./c.ts";';
-      expect(exportedNames(door)).toStrictEqual(["a", "B", "c"]);
+      const door = '// export { gone } from "./x.ts";\nexport {\n  a, // the first\n  type B,\n} from "./a.ts";\n/* export { alsoGone } */\nexport { c } from "./c.ts";\nexport type { D } from "./d.ts";';
+      expect(exportedNames(door)).toStrictEqual(["a", "B", "c", "D"]);
     });
 
     it("names the check each `.check(…)` asks for, and none for a check written inline", () => {
@@ -616,6 +618,34 @@ describe("what a reader will make of a markdown page", () => {
 
     it("names every check the code defines for itself", () => {
       expect(checksDefined("const mine = defineCheck((_o) => (ctx) => ctx.ok());\nexport const other = defineCheck(() => (ctx) => ctx.ok());\nconst notOne = guardrail();")).toStrictEqual(["mine", "other"]);
+    });
+
+    it("keeps only the imports from @jawache/flow and its subpath doors", () => {
+      expect(flowImports('import { a } from "@jawache/flow";\nimport { b } from "@jawache/flow/packs";\nimport { c } from "@jawache/flowers";\nimport { d } from "node:fs";')).toStrictEqual([
+        { from: "@jawache/flow", names: ["a"] },
+        { from: "@jawache/flow/packs", names: ["b"] },
+      ]);
+    });
+  });
+
+  describe("exampleFaults — a page's examples against the API they teach", () => {
+    const api = { doors: new Map([["@jawache/flow", new Set(["textBan", "defineCheck", "guardrail"])]]), stockChecks: new Set(["textBan"]) };
+
+    it("passes a stock check, and a check the same code defines", () => {
+      const code = 'import { defineCheck, guardrail, textBan } from "@jawache/flow";\nconst mine = defineCheck(() => (ctx) => ctx.ok());\nguardrail().check(textBan({})).check(mine({}));';
+      expect(exampleFaults(code, api)).toStrictEqual([]);
+    });
+
+    it("names an import from a door that does not exist", () => {
+      expect(exampleFaults('import { x } from "@jawache/flow/checks";', api)).toStrictEqual(["@jawache/flow/checks — no such door"]);
+    });
+
+    it("names each import the door does not export", () => {
+      expect(exampleFaults('import { textBan, textBanned } from "@jawache/flow";', api)).toStrictEqual(["textBanned — @jawache/flow does not export it"]);
+    });
+
+    it("names a check that is neither stock nor defined on the page", () => {
+      expect(exampleFaults("guardrail().check(gone({}));", api)).toStrictEqual([".check(gone(…)) — neither a stock check nor a defineCheck on this page"]);
     });
   });
 });
