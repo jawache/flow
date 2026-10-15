@@ -16,11 +16,42 @@ Before each tool call, flow records the content of every file in the working tre
 
 Which rules a change is passed to depends on the change on disk, not on the command that made it. So a heredoc, `sed -i`, a Python script, a `just` recipe, an MCP tool and a subagent all reach the rules by the same route. That leaves one mechanism to understand, and no second one to reach for when a change arrives some new way.
 
-flow reads a tool call's input in three cases, each to act earlier than the diff can:
+flow reads a tool call's input in two cases, each to act earlier than the diff can:
 
 - **The Edit and Write tools:** flow builds the file the tool would produce from the tool's input, and judges it before it is written.
-- **An `rm` command:** flow reads the files it names from the command line, and judges each delete before the command runs.
-- **A shell command's reads:** flow reads the paths it reads from the command line, to show their breadcrumbs.
+- **A shell command:** flow parses the command line as bash before it runs. The command rules judge the parse, the files an `rm` removes are judged as deletes, and the files the command reads have their breadcrumbs shown. [The parse](#the-parse-what-a-command-is) explains how.
+
+## The parse: what a command is
+
+The snapshot records what a command changed. The parse reads what a command is, before it runs. They are flow's two mechanisms, and every guardrail on a shell command uses one or both.
+
+flow reads shell as code, never as text. A regex over the raw line cannot tell one command from the next, or a command from the same words inside a quoted argument. So nothing in flow decides what a command does by matching the raw line.
+
+flow parses each command line once, with [unbash](https://github.com/webpro-nl/unbash), a bash parser. The parse is a list of simple commands, each one program and its arguments as the program receives them:
+
+- **Separate commands stay separate.** `git push origin main; ls -f` is two commands, and the `-f` is an argument of `ls`.
+- **A quoted argument is one argument.** In `gh issue create --body "ran npx vitest run"`, the words `npx vitest run` are text passed to `gh`.
+- **Nested commands are in the list.** A command inside `$( … )`, backticks or `<( … )` is a command of its own. So is each command in a string given to `bash -c`, `sh -c` or `eval`.
+- **A heredoc belongs to its command.** Each heredoc is attached to the command it feeds, with whether its delimiter is quoted. In the body of a quoted heredoc, such as `<<'EOF'`, the shell runs nothing.
+- **The program is the one that runs.** A variable assignment such as `FOO=1`, and a wrapper such as `sudo`, `env` or `timeout 5`, is stepped past. `sudo rm -rf build` has the program `rm`.
+
+Every rule that judges a shell command before it runs reads this one parse:
+
+- **The command rules.** [`banCommands`](../checks/ban-commands.md) matches each command in the parse, and a check of your own reads it as [`ctx.commands`](../reference/ctx.md#ctxcommands).
+- **The git safety rail.** It reads which `git` commands the line runs, and which repo each one is aimed at.
+- **Deletes.** The files that `rm`, `git rm` and `mv` remove are read from their commands' arguments, and judged before the command runs.
+- **Reads.** The files that `cat`, `head`, `sed -n`, `grep` and the other readers name are read from their commands' arguments, to show their breadcrumbs.
+- **Recipes.** A command whose program the repo has a recipe for is counted as going round the recipe.
+
+The parse holds only what is written on the line. It does not include what `python3 script.py` or a `just` recipe writes, or the value a variable holds when the command runs. That is why the snapshot, not the parse, is the record of what a command changed. A line flow cannot parse, such as one with an unclosed quote, has no parse. `ctx.commands` is then `null`, and `banCommands` matches the line whole, as written.
+
+## The order within a shell command
+
+1. The agent sends a shell command.
+2. flow parses the command line.
+3. The command rules run on the parse. A refusal stops the command here, before anything has run.
+4. flow records the snapshot, and the command runs.
+5. flow compares the tree with the snapshot. The write and delete rules run on what changed, and a refused change is written back.
 
 ## Two routes, one outcome
 
@@ -81,7 +112,7 @@ Overlap is about when a write happened. The [`oneWriter`](../checks/one-writer.m
 
 A breadcrumb is a note shown to the agent, not a refusal, so it is worth showing on a file the agent only reads. That is why the `touch` moment also matches the paths a shell command reads. `cat`, `head`, `sed -n` and `grep` on a path all match the `touch` moment, and the note is shown before the command's output comes back.
 
-Reading paths out of a command line is best-effort, so a script that computes its own paths is not detected. The diff still catches what that misses: a file that changes without any detected read has its breadcrumb shown at the change. That is later than it would otherwise be, but it is not skipped.
+The paths come from [the parse](#the-parse-what-a-command-is), so a path named inside a quoted argument or a heredoc body is not a read. A script that computes its own paths is not detected. The diff still catches what that misses: a file that changes without any detected read has its breadcrumb shown at the change. That is later than it would otherwise be, but it is not skipped.
 
 ## Two commands report on all of this
 
