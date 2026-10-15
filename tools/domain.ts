@@ -380,25 +380,87 @@ export function headingSlugs(markdown: string): string[] {
 }
 
 /**
+ * WHICH LINES OF A PAGE SIT IN A FENCED BLOCK, the fences themselves included. A fence closes on a
+ * line holding nothing but a run of backticks at least as long as the one that opened it, so a
+ * block that shows a fence of its own survives intact.
+ */
+function inFence(lines: readonly string[]): boolean[] {
+  let open = "";
+  return lines.map((line) => {
+    const fence = /^ {0,3}(`{3,})/.exec(line);
+    if (open === "") {
+      if (fence === null) return false;
+      open = fence[1] ?? "";
+      return true;
+    }
+    if (fence !== null && (fence[1] ?? "").length >= open.length && line.trim() === fence[1]) open = "";
+    return true;
+  });
+}
+
+/**
  * A PAGE WITH ITS FENCED BLOCKS BLANKED. Inside a fence a `#` is a shell comment and a `[x](y)` is
  * a line of someone's config — neither is a heading or a link, and a sweep that read them as such
  * would go red over a page that is perfectly correct.
  */
 function withoutFences(markdown: string): string {
-  let open = "";
-  return markdown
-    .split("\n")
-    .map((line) => {
-      const fence = /^ {0,3}(`{3,})/.exec(line);
-      if (open === "") {
-        if (fence === null) return line;
-        open = fence[1] ?? "";
-        return "";
-      }
-      if (fence !== null && (fence[1] ?? "").length >= open.length && line.trim() === fence[1]) open = "";
-      return "";
-    })
-    .join("\n");
+  const lines = markdown.split("\n");
+  const fenced = inFence(lines);
+  return lines.map((line, at) => (fenced[at] === true ? "" : line)).join("\n");
+}
+
+/**
+ * EVERY LINE OF CODE A PAGE SHOWS, its fenced blocks run together with the fences dropped — the
+ * other half of `withoutFences`, read by the sweep that holds a page's examples to the real API.
+ */
+export function fencedCode(markdown: string): string {
+  const lines = markdown.split("\n");
+  const fenced = inFence(lines);
+  return lines.filter((line, at) => fenced[at] === true && !/^ {0,3}`{3,}/.test(line)).join("\n");
+}
+
+/** One `import { … } from "…"` in a page's code: the module, and each name as that module exports it. */
+export interface CodeImport {
+  readonly from: string;
+  readonly names: readonly string[];
+}
+
+/** The names in a `{ … }` list, as the module exports them: a `type` marker and an `as` alias dropped. */
+function specifierNames(list: string): string[] {
+  return list
+    .split(",")
+    .map((held) => (held.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0] ?? "").trim())
+    .filter((name) => name !== "");
+}
+
+/** Every named import in some code, one line or spread over several. */
+export function codeImports(code: string): CodeImport[] {
+  return [...code.matchAll(/\bimport\s+(?:type\s+)?\{([^}]*)\}\s*from\s*["']([^"']+)["']/g)].map((found) => ({
+    from: found[2] ?? "",
+    names: specifierNames(found[1] ?? ""),
+  }));
+}
+
+/**
+ * EVERY NAME A DOOR FILE EXPORTS, types included — read off its `export { … }` lists, because a
+ * type is a promise of the door too and leaves nothing behind at runtime to read it back by.
+ */
+export function exportedNames(source: string): string[] {
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  return [...code.matchAll(/\bexport\s+(?:type\s+)?\{([^}]*)\}/g)].flatMap((found) => specifierNames(found[1] ?? ""));
+}
+
+/**
+ * The check each `.check(name(…))` in some code asks for, by the name it is called by. A check
+ * written inline — `.check(async (ctx) => …)` — names nothing, so it is not in the list.
+ */
+export function checksCalled(code: string): string[] {
+  return [...code.matchAll(/\.check\(\s*([A-Za-z_$][\w$]*)\s*\(/g)].map((found) => found[1] ?? "").filter((name) => name !== "async" && name !== "function");
+}
+
+/** Every check some code defines for itself: `const name = defineCheck(…)`. */
+export function checksDefined(code: string): string[] {
+  return [...code.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*defineCheck\s*\(/g)].map((found) => found[1] ?? "");
 }
 
 /** One link a page makes: where it points, and the heading it expects to find there. */

@@ -16,7 +16,9 @@
 import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
-import { frontMatterFields, headingSlugs, localLinks } from "./domain.ts";
+import { checksCalled, checksDefined, codeImports, exportedNames, fencedCode, frontMatterFields, headingSlugs, kebab, localLinks } from "./domain.ts";
+import * as root from "../index.ts";
+import * as packs from "../packs/index.ts";
 
 const PACKAGE = resolve(import.meta.dirname, "..");
 const DOCS = join(PACKAGE, "docs", "user");
@@ -75,6 +77,59 @@ describe("docs/user — every page, as a reader would follow it", () => {
         ? []
         : [`${link.path}#${link.anchor} — the file is there, no heading makes that anchor`];
     });
+    expect(faults, `${relative(PACKAGE, file)}\n  ${faults.join("\n  ")}`).toStrictEqual([]);
+  });
+});
+
+// THE EXAMPLES, HELD TO THE REAL API. A how-to teaches by its config snippet, and a snippet that
+// names a check or an export that was since renamed goes on teaching the old name with nothing
+// failing — the page reads as correct to everyone but the reader who copies it. This is the cheap
+// half of proving them: every name a page imports from a door is one that door exports, and every
+// `.check(name(…))` asks for a stock check or one the same page defines.
+
+/** Each door `@jawache/flow` opens, and every name it exports — read off the source its types come from. */
+const doors = new Map(
+  Object.entries((JSON.parse(readFileSync(join(PACKAGE, "package.json"), "utf8")) as { exports: Record<string, { types: string }> }).exports).map(
+    ([door, target]) => {
+      const source = join(PACKAGE, target.types.replace(/^\.\/dist\/types\//, "").replace(/\.d\.ts$/, ".ts"));
+      return [door === "." ? "@jawache/flow" : `@jawache/flow/${door.replace(/^\.\//, "")}`, new Set(exportedNames(readFileSync(source, "utf8")))] as const;
+    },
+  ),
+);
+
+/** A stock check: exported from the root door, with its own page under docs/user/checks/. */
+const isStockCheck = (name: string): boolean => doors.get("@jawache/flow")?.has(name) === true && existsSync(join(DOCS, "checks", `${kebab(name)}.md`));
+
+// A MIGRATION GUIDE IS LEFT OUT on purpose: its "before" half shows the API as it was, so the names
+// it imports are the ones that no longer exist.
+const examples = all.filter((file) => !file.startsWith(join(DOCS, "migrations")));
+const code = new Map(examples.map((file) => [file, fencedCode(readFileSync(file, "utf8"))]));
+const flowImports = (file: string) => codeImports(code.get(file) ?? "").filter((found) => found.from === "@jawache/flow" || found.from.startsWith("@jawache/flow/"));
+
+describe("docs/user — every example, against the API it teaches", () => {
+  it("reads every export of both doors, so a name missed by the reader cannot pass for one the door dropped", () => {
+    expect([...doors.keys()].sort()).toStrictEqual(["@jawache/flow", "@jawache/flow/packs"]);
+    expect(Object.keys(root).filter((name) => doors.get("@jawache/flow")?.has(name) !== true)).toStrictEqual([]);
+    expect(Object.keys(packs).filter((name) => doors.get("@jawache/flow/packs")?.has(name) !== true)).toStrictEqual([]);
+  });
+
+  it("finds the examples at all, so a fence the reader stopped seeing fails rather than passes empty", () => {
+    expect(examples.flatMap(flowImports).length).toBeGreaterThan(30);
+    expect(examples.flatMap((file) => checksCalled(code.get(file) ?? "")).length).toBeGreaterThan(20);
+  });
+
+  it.each(examples.map((file) => [relative(PACKAGE, file), file] as const))("%s — every name it imports is exported, and every check it asks for exists", (_name, file) => {
+    const defined = new Set(checksDefined(code.get(file) ?? ""));
+    const faults = [
+      ...flowImports(file).flatMap(({ from, names }) => {
+        const exported = doors.get(from);
+        if (exported === undefined) return [`${from} — no such door`];
+        return names.filter((name) => !exported.has(name)).map((name) => `${name} — ${from} does not export it`);
+      }),
+      ...checksCalled(code.get(file) ?? "")
+        .filter((name) => !isStockCheck(name) && !defined.has(name))
+        .map((name) => `.check(${name}(…)) — neither a stock check nor a defineCheck on this page`),
+    ];
     expect(faults, `${relative(PACKAGE, file)}\n  ${faults.join("\n  ")}`).toStrictEqual([]);
   });
 });

@@ -16,9 +16,14 @@ import {
   caseLines,
   caseWorld,
   checkName,
+  checksCalled,
+  checksDefined,
+  codeImports,
   DOC_BLOCKS,
   EXAMPLE,
+  exportedNames,
   fenceFault,
+  fencedCode,
   firstSentence,
   frontMatter,
   frontMatterFields,
@@ -582,6 +587,35 @@ describe("what a reader will make of a markdown page", () => {
     // prose the sweep then judges.
     it("closes a fence only on one at least as long as the one that opened it", () => {
       expect(localLinks("````\n```\n[a](./gone.md)\n```\n````\n")).toStrictEqual([]);
+    });
+  });
+
+  describe("reading a page's examples — the code its fences hold", () => {
+    it("keeps every fenced line, indented under a list item or not, and drops the prose and the fences", () => {
+      expect(fencedCode("prose\n\n```ts\nconst a = 1;\n```\n\n1. Step\n\n   ```ts\n   const b = 2;\n   ```\n")).toBe("const a = 1;\n   const b = 2;");
+    });
+
+    it("reads each named import as the module exports it, over one line or several", () => {
+      const code = 'import { a, type B, c as d } from "@jawache/flow";\nimport {\n  e,\n  f,\n} from \'@jawache/flow/packs\';\nimport type { G } from "x";';
+      expect(codeImports(code)).toStrictEqual([
+        { from: "@jawache/flow", names: ["a", "B", "c"] },
+        { from: "@jawache/flow/packs", names: ["e", "f"] },
+        { from: "x", names: ["G"] },
+      ]);
+    });
+
+    it("reads a door file's exports, types included, and no name a comment mentions", () => {
+      const door = '// export { gone } from "./x.ts";\nexport {\n  a, // the first\n  type B,\n} from "./a.ts";\n/* export { alsoGone } */\nexport { c } from "./c.ts";';
+      expect(exportedNames(door)).toStrictEqual(["a", "B", "c"]);
+    });
+
+    it("names the check each `.check(…)` asks for, and none for a check written inline", () => {
+      const code = ".check(textBan({ ban: [] }))\n.check( mine({}) )\n.check(async (ctx) => ctx.ok())\n.check(function (ctx) { return ctx.ok(); })";
+      expect(checksCalled(code)).toStrictEqual(["textBan", "mine"]);
+    });
+
+    it("names every check the code defines for itself", () => {
+      expect(checksDefined("const mine = defineCheck((_o) => (ctx) => ctx.ok());\nexport const other = defineCheck(() => (ctx) => ctx.ok());\nconst notOne = guardrail();")).toStrictEqual(["mine", "other"]);
     });
   });
 });
