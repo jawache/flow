@@ -119,13 +119,20 @@ export { substitutionInProse, SUBSTITUTION_MESSAGE } from "./checks/domain.ts";
 // judged against this repo's index once vetoed another repo's commit over files it could not see.
 // `commitReason` carries the fix; the packs that shell out live outside this package, so the fix
 // has to come through the door with them or each one re-derives it and one of them gets it wrong.
+//
+// `shellCommands` is the door to the parse for a check that may be loaded by an older engine,
+// which hands no `ctx.commands`: it parses the line itself then. `gitCommand` reads one parsed
+// command as git — its own options, its subcommand, its arguments.
 export {
   commitMessage,
+  gitCommand,
   gitDirPrefix,
   gitInvocations,
   givesReason,
   quoteArg,
+  shellCommands,
   tokenizeCommand,
+  type GitCommand,
   type GitInvocation,
 } from "./checks/domain.ts";
 

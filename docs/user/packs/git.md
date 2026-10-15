@@ -189,6 +189,11 @@ This git command would discard uncommitted edits with no undo. Use `git stash` i
   - given `git status --porcelain` exits 0 and says `?? other.ts`
 - running `git reset --soft HEAD~1`
 - running `git clean -n`
+- running `cat > notes.md <<'EOF'
+git checkout -- a.ts
+git clean -fd
+EOF`
+- running `echo "never run git reset --hard here"`
 
 **blocks**
 
@@ -210,6 +215,8 @@ This git command would discard uncommitted edits with no undo. Use `git stash` i
   - given `git status --porcelain` exits 0 and says `M a.ts`
 - running `git status
 git checkout -- a.ts`
+  - given `git status --porcelain` exits 0 and says `M a.ts`
+- running `bash -c 'git checkout -- a.ts'`
   - given `git status --porcelain` exits 0 and says `M a.ts`
 - running `git -C ../other checkout -- src/x.ts`
   - given `git -C '../other' status --porcelain` exits 0 and says `M src/x.ts`
@@ -317,6 +324,12 @@ The type is one of: feat · fix · docs · style · refactor · perf · test · 
 - running `git commit -m "fix(auth): renew session on token refresh"`
 - running `git status`
 - running `git commit -m "feat(cli)!: the config grammar is closed"`
+- running `python3 - <<'EOF'
+print(1)
+EOF
+git commit -F - <<'EOF'
+fix: a thing
+EOF`
 
 **blocks**
 
@@ -325,6 +338,12 @@ The type is one of: feat · fix · docs · style · refactor · perf · test · 
 - running `git commit -m 'tidied things up
 
 feat: the thing I actually did'`
+- running `cat > a.md <<'EOF'
+fix: a thing
+EOF
+git commit -F - <<'EOF'
+tidied things up
+EOF`
 
 ## `git.noShellSubstitutionInProse` — guardrail
 

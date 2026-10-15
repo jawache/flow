@@ -6,7 +6,7 @@
 // the property `.test()` cases and recorded replay both stand on.
 //
 // ONE FILE, so that what these checks SHARE is visible: `patternHits` is the one matcher,
-// `changedSet` the one changed-file read, `gitInvocations` the one tokeniser. A fifteenth check
+// `changedSet` the one changed-file read, `shellCommands` the one door to the parse. A fifteenth check
 // says what it reuses, or it is a sixth copy of something already here.
 //
 // The options are ordinary typed arguments and nothing more: one spelling per key, a list where a
@@ -24,7 +24,7 @@
 //   PATHS         protectedPath · siblingExists · canonicalFiles
 //   CONTENT       jsonInvariant · symbolsInSibling
 //   THE COMMIT    changeTogether
-//   COMMANDS      the git tokeniser · commitReason
+//   COMMANDS      the parse read as git · commitReason
 //   THE TURN      ranSinceEdit
 //   TOOLS         execPasses · depcruise · astGrep, each orchestrating, never reimplementing
 //   CASES         the canned ctx a `.test()` case becomes, and the runner that walks them
@@ -40,6 +40,7 @@ import type {
   GuardrailMoment,
   LoadedEntry,
   Moment,
+  ShellCommand,
   TurnAction,
   Unanswered,
   Verdict,
@@ -171,8 +172,7 @@ function banSubjects(
   commands: Ctx["commands"],
   opts: { readonly matchHeredocs?: boolean; readonly wholeLine?: boolean },
 ): { readonly texts: readonly string[]; readonly anchored: boolean } {
-  // `undefined` only off the command moment, or from a ctx built by hand: read the line here then.
-  const parsed = commands === undefined ? parseCommandLine(line) : commands;
+  const parsed = shellCommands({ command: line, commands });
   if (parsed === null) return { texts: [line], anchored: false };
   if (opts.wholeLine === true) {
     return { texts: [opts.matchHeredocs === true ? line : (elideHeredocBodies(line) ?? line)], anchored: false };
@@ -1034,6 +1034,53 @@ export function gitInvocations(command: string): GitInvocation[] | null {
   return out;
 }
 
+/** What a command reader is handed: the line, and its parse when the engine made one. */
+type CommandFacts = Pick<Ctx, "command" | "commands">;
+
+/**
+ * The command line parsed as bash: `ctx.commands`, or the line parsed here when the ctx carries no
+ * parse at all — which is what an engine older than the parse hands these checks. Null when the
+ * line does not parse, and every reader takes null as "cannot tell".
+ */
+export function shellCommands(facts: CommandFacts): readonly ShellCommand[] | null {
+  return facts.commands === undefined ? parseCommandLine(facts.command ?? "") : facts.commands;
+}
+
+/** One `git` command in the parse, split where git's own options stop and its subcommand starts. */
+export interface GitCommand {
+  /** git's OWN options, before the subcommand — where `-C` counts and only there. */
+  readonly globals: readonly string[];
+  /** The subcommand word (`commit`, `status`), or null when the command carries none. */
+  readonly subcommand: string | null;
+  /** Everything after the subcommand — its own flags and arguments. */
+  readonly args: readonly string[];
+  /** The parsed command it was read from: its heredocs are what `git commit -F -` reads. */
+  readonly command: ShellCommand;
+}
+
+/**
+ * One parsed command read as git, or null when its program is not git. The parse has already
+ * found the program, so a `git` inside a quoted message, a heredoc body or another command's
+ * arguments is never one, and a `git` inside `$( … )` or a `bash -c` string is.
+ */
+export function gitCommand(command: ShellCommand): GitCommand | null {
+  if (command.program.slice(command.program.lastIndexOf("/") + 1) !== "git") return null;
+  const { args } = command;
+  let k = 0;
+  while (k < args.length) {
+    const a = args[k] as string;
+    if (GIT_VALUE_OPTS.has(a)) k += 2;
+    else if (a.startsWith("-")) k += 1;
+    else break; // the subcommand
+  }
+  return { globals: args.slice(0, k), subcommand: args[k] ?? null, args: args.slice(k + 1), command };
+}
+
+/** Every git command the line runs, in the order the parse lists them; none when it does not parse. */
+function gitCommands(facts: CommandFacts): GitCommand[] {
+  return (shellCommands(facts) ?? []).flatMap((c) => gitCommand(c) ?? []);
+}
+
 /**
  * The message a `git commit` in this command line carries, or null when there is no judgeable
  * commit in it at all. Null is the "not our business" answer and every caller passes on it.
@@ -1051,7 +1098,10 @@ export function gitInvocations(command: string): GitInvocation[] | null {
  *
  *   git commit -m MSG · -mMSG · --message MSG · --message=MSG      judged
  *   git commit -m SUBJECT -m BODY   (repeated, any mix of forms)   judged, joined as git joins them
- *   git commit -F - <<'EOF' … EOF   (the commit reads stdin)        judged, via the heredoc body
+ *   git commit -F - <<'EOF' … EOF   (the commit reads stdin)        judged, via ITS heredoc's body
+ *   python3 - <<'PY' … PY; git commit -F - <<'EOF' … EOF            judged, via the commit's own
+ *                                                                  heredoc — the first one is the
+ *                                                                  python's script
  *   python3 - <<'PY' … PY; git commit -F msg.txt                    NOT judged — the heredoc is
  *                                                                  another command's script, and
  *                                                                  the message is on disk
@@ -1065,10 +1115,9 @@ export function gitInvocations(command: string): GitInvocation[] | null {
  * The boundary is on the record: this rail polices AGENT-typed commits, which are its audience. A
  * human committing from an editor is not its subject and never was.
  */
-export function commitMessage(command: string): string | null {
-  const invocations = gitInvocations(command);
-  if (!invocations) return null; // unparseable → cannot tell → do not judge
-  const commit = invocations.find((inv) => inv.subcommand === "commit");
+export function commitMessage(facts: CommandFacts): string | null {
+  // A line that does not parse has no git commands, so it is not judged: cannot tell.
+  const commit = gitCommands(facts).find((g) => g.subcommand === "commit");
   if (!commit) return null;
   const parts: string[] = [];
   for (let i = 0; i < commit.args.length; i++) {
@@ -1094,15 +1143,11 @@ export function commitMessage(command: string): string | null {
     (a, i) => ((a === "-F" || a === "--file") && commit.args[i + 1] === "-") || a === "-F-" || a === "--file=-",
   );
   if (!readsStdin) return null;
-  // The message is then the FIRST heredoc's body — a QUOTED heredoc is the safe way to write one
-  // containing backticks. Deliberately dumb: a commit command carrying two is not a shape anyone
-  // writes, and guessing between them would be worse than the gap. Trimmed; empty is no message.
-  const doc = firstHeredoc(command);
-  const from = doc === null ? -1 : command.indexOf("\n", doc.end) + 1; // the rest of the opener's line is not body
-  if (doc === null || from === 0) return null;
-  const { body, end } = heredocEnd(command, from, doc);
-  if (body === end) return null; // unterminated — not ours to guess at
-  return command.slice(from, body).trim() || null;
+  // The message is then the body of the heredoc the commit ITSELF is fed — a QUOTED heredoc is the
+  // safe way to write one containing backticks. Fed several, its stdin is the last: each `<<`
+  // replaces the one before. Trimmed; empty is no message.
+  const { heredocs } = commit.command;
+  return heredocs[heredocs.length - 1]?.body.trim() || null;
 }
 
 /** One shell argument, single-quoted so nothing in it can be expanded or re-parsed. */
@@ -1135,23 +1180,25 @@ export function quoteArg(value: string): string {
  * options exactly as a shell chains directory changes: `cd /a && git -C b status` runs in `/a/b`,
  * and `-C '/a' -C 'b'` says precisely that. Nothing has to decide which of the two wins.
  *
- * ONLY A LEADING `cd`, and only when an operator follows its path. A `cd` in the middle of a chain
- * can be preceded by another that already moved, and a command line that walks two trees is beyond
- * what one answer can honestly describe — the same reason the FIRST git invocation decides below.
+ * ONLY A LEADING `cd`, and only when a command follows it. A `cd` in the middle of a chain can be
+ * preceded by another that already moved, and a command line that walks two trees is beyond what
+ * one answer can honestly describe — the same reason the FIRST git command decides below. Both are
+ * read from the parse, so a `cd` or a `git` inside a quoted argument or a heredoc body is neither.
  *
  * A path the SHELL would have expanded — `~`, a variable — is quoted here and so reaches git
  * literally, which makes the read fail rather than lie. Every caller treats a failed read as "not
  * a repo, git owns that error" and passes: a false negative, which is this pack's stated trade.
  */
-export function gitDirPrefix(command: string): string {
+export function gitDirPrefix(facts: CommandFacts): string {
   const out: string[] = [];
-  const tokens = tokenizeCommand(command);
-  const path = tokens?.[1];
-  // `cd <path> &&` or `cd <path>;` at the head of the line. A bare `cd`, a `cd -`, or a `cd` whose
-  // path is not followed by an operator is not a move this can name, so none of them is guessed at.
-  if (tokens?.[0] === "cd" && path !== undefined && !path.startsWith("-") && !OPERATORS.has(path) && OPERATORS.has(tokens[2] ?? ""))
+  const commands = shellCommands(facts) ?? [];
+  const [head] = commands;
+  const path = head?.args[0];
+  // `cd <path> && …` or `cd <path>; …` at the head of the line. A bare `cd`, a `cd -`, or a `cd`
+  // nothing follows is not a move this can name, so none of them is guessed at.
+  if (head?.program === "cd" && !head.nested && head.args.length === 1 && path !== undefined && !path.startsWith("-") && commands.slice(1).some((c) => !c.nested))
     out.push("-C", quoteArg(path));
-  const first = gitInvocations(command)?.[0];
+  const first = gitCommands(facts)[0];
   if (!first) return out.join(" ");
   for (let i = 0; i < first.globals.length - 1; i++) {
     if (first.globals[i] === "-C") out.push("-C", quoteArg(first.globals[i + 1] as string));
@@ -1366,10 +1413,10 @@ export const commitReason = defineCheck(
     async (ctx) => {
       // The message first, and no git call unless there is one: a command that is not a judgeable
       // commit is the overwhelming majority of everything typed at this rail.
-      const message = commitMessage(ctx.command ?? "");
+      const message = commitMessage(ctx);
       if (message == null) return ctx.ok();
 
-      const git = `git ${gitDirPrefix(ctx.command ?? "")}`.trimEnd();
+      const git = `git ${gitDirPrefix(ctx)}`.trimEnd();
 
       let state: WorkingState = { changed: [], added: [] };
       if (opts.whenChanged || opts.whenAdded) {

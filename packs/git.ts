@@ -18,16 +18,18 @@ import {
   defineCheck,
   definePack,
   escapeRe,
+  gitCommand,
   gitDirPrefix,
-  gitInvocations,
   guardrail,
   jsonInvariant,
   quoteArg,
   session,
+  shellCommands,
   substitutionInProse,
   SUBSTITUTION_MESSAGE,
   write,
   type Check,
+  type GitCommand,
 } from "../index.ts";
 
 // ── git: the commands that destroy work, and the commits that owe a sentence ──
@@ -60,7 +62,7 @@ function restoreWorktreePaths(args: readonly string[]): string[] {
 }
 
 /**
- * The working-tree paths a command line would discard OUTRIGHT, or [] when it is safe to run.
+ * The working-tree paths a line's git commands would discard OUTRIGHT, or [] when it is safe to run.
  *
  * Deliberately narrow — false negatives beat blocking real work. Every path here is one the
  * command line itself declares: the `--` pathspec form of checkout, the restore forms that touch
@@ -70,11 +72,9 @@ function restoreWorktreePaths(args: readonly string[]): string[] {
  * whether `<thing>` is a path or a branch is a fact about the repo, not about the string, and this
  * function is pure. `checkoutBarePaths` below names the candidates and the check asks git.
  */
-export function discardPaths(command: string): string[] {
-  const invocations = gitInvocations(command);
-  if (!invocations) return [];
+export function discardPaths(gits: readonly GitCommand[]): string[] {
   const paths: string[] = [];
-  for (const { subcommand, args } of invocations) {
+  for (const { subcommand, args } of gits) {
     if (subcommand === "checkout") {
       const dd = args.indexOf("--");
       if (dd !== -1) paths.push(...args.slice(dd + 1));
@@ -114,11 +114,9 @@ const CHECKOUT_TAKES_VALUE = new Set(["-b", "-B", "--orphan", "--pathspec-from-f
  * An invocation carrying `--` is skipped: `discardPaths` already has it, and everything before the
  * `--` there is a tree-ish by definition.
  */
-export function checkoutBarePaths(command: string): string[] {
-  const invocations = gitInvocations(command);
-  if (!invocations) return [];
+export function checkoutBarePaths(gits: readonly GitCommand[]): string[] {
   const out: string[] = [];
-  for (const { subcommand, args } of invocations) {
+  for (const { subcommand, args } of gits) {
     if (subcommand !== "checkout" || args.includes("--")) continue;
     for (let i = 0; i < args.length; i++) {
       const arg = args[i] as string;
@@ -147,18 +145,20 @@ export function dirtyIn(porcelain: string, includeUntracked: boolean): string[] 
 const noGitDiscard = defineCheck(
   (_opts: Record<string, never>): Check =>
     async (ctx) => {
-      const command = ctx.command ?? "";
-      const cleaning = /(^|[;&|\n]\s*)git\s+clean\b/.test(command);
+      // The git commands the line runs, from the parse: a `git clean` named in a commit message
+      // or written into a heredoc is not one, and a line that does not parse has none.
+      const gits = (shellCommands(ctx) ?? []).flatMap((c) => gitCommand(c) ?? []);
+      const cleaning = gits.some((g) => g.subcommand === "clean");
       // THE COMMAND'S OWN `-C`, copied onto every read, exactly as `commitReason` copies it: a
       // `git -C ~/other-repo checkout -- x` is about THAT repo's tree, and a status read here would
       // answer about files the command was never aimed at — clean ones, so the loss goes through.
-      const git = `git ${gitDirPrefix(command)}`.trimEnd();
-      const targets = discardPaths(command);
+      const git = `git ${gitDirPrefix(ctx)}`.trimEnd();
+      const targets = discardPaths(gits);
       // ASK GIT WHICH OF THEM IS A PATH. A bare `git checkout <thing>` discards the tree when
       // `<thing>` names a path and switches branch when it names a ref, and only the repo knows
       // which — so the candidates go to `ls-files`, whose answer IS the tracked set they match.
       // A branch matches nothing and falls out here; that is what keeps branch switching passing.
-      const candidates = checkoutBarePaths(command);
+      const candidates = checkoutBarePaths(gits);
       if (candidates.length > 0) {
         const tracked = await ctx.exec(`${git} ls-files -- ${candidates.map(quoteArg).join(" ")}`);
         if (tracked.code === 0) targets.push(...tracked.stdout.split("\n").filter((line) => line !== ""));
@@ -192,7 +192,7 @@ export function isConventional(header: string, types: readonly string[]): boolea
 const conventionalCommit = defineCheck(
   (opts: { types: readonly string[] }): Check =>
     (ctx) => {
-      const message = commitMessage(ctx.command ?? "");
+      const message = commitMessage(ctx);
       if (message === null) return ctx.ok(); // nothing judgeable — an editor commit passes
       return isConventional(message, opts.types)
         ? ctx.ok()
@@ -243,14 +243,14 @@ export function changesVersion(diff: string): boolean {
 const noHandEditedVersion = defineCheck(
   (opts: { versionFile: string; recipe: string }): Check =>
     async (ctx) => {
-      const message = commitMessage(ctx.command ?? "");
+      const message = commitMessage(ctx);
       if (message === null) return ctx.ok();
       if (isReleaseCommit(message)) return ctx.ok(); // the one shape that may write it
       // `git diff HEAD` — staged AND unstaged, because `git commit -a` sweeps the second lot in.
       // Prefixed with the command's own `-C`, the way `commitReason` is: a commit aimed at another
       // repo has to be judged against that repo's diff, or this vetoes it over a version field it
       // cannot see.
-      const git = `git ${gitDirPrefix(ctx.command ?? "")}`.trimEnd();
+      const git = `git ${gitDirPrefix(ctx)}`.trimEnd();
       const diff = await ctx.exec(`${git} diff HEAD -- ${quoteArg(opts.versionFile)}`);
       if (diff.code !== 0) return ctx.ok();
       if (!changesVersion(diff.stdout)) return ctx.ok();
@@ -446,6 +446,10 @@ export const git = definePack("git", (repo: Release) => {
         // would have deleted.
         "git reset --soft HEAD~1",
         "git clean -n",
+        // A discard written INTO a file or named in an argument is text, not a git command: the
+        // parse finds no git there, so nothing is asked of the repo.
+        "cat > notes.md <<'EOF'\ngit checkout -- a.ts\ngit clean -fd\nEOF",
+        'echo "never run git reset --hard here"',
       ],
       block: [
         {
@@ -500,6 +504,11 @@ export const git = definePack("git", (repo: Release) => {
         // forgotten.
         {
           command: "git status\ngit checkout -- a.ts",
+          world: { exec: { "git status --porcelain": { stdout: " M a.ts" } } },
+        },
+        // A git the line runs inside a string given to a shell is a git command all the same.
+        {
+          command: "bash -c 'git checkout -- a.ts'",
           world: { exec: { "git status --porcelain": { stdout: " M a.ts" } } },
         },
         // AIMED AT ANOTHER REPO, and judged there. The recorded world answers only the `-C` form,
@@ -574,6 +583,9 @@ export const git = definePack("git", (repo: Release) => {
         // The BANG, which is what drives the SemVer major — a scope and a `!` together, since that
         // is the shape a breaking change is actually typed in.
         'git commit -m "feat(cli)!: the config grammar is closed"',
+        // THE COMMIT'S OWN HEREDOC is its message, not the first heredoc on the line, which here is
+        // a python script (#9).
+        "python3 - <<'EOF'\nprint(1)\nEOF\ngit commit -F - <<'EOF'\nfix: a thing\nEOF",
       ],
       block: [
         'git commit -m "fixed the auth thing"',
@@ -584,6 +596,8 @@ export const git = definePack("git", (repo: Release) => {
         // that looks exactly like a header. A check that searched the whole message would pass this
         // and every other well-meaning commit whose subject was never written.
         "git commit -m 'tidied things up\n\nfeat: the thing I actually did'",
+        // …and the other way round: a header-shaped script ahead of the commit lends it nothing.
+        "cat > a.md <<'EOF'\nfix: a thing\nEOF\ngit commit -F - <<'EOF'\ntidied things up\nEOF",
       ],
     }),
 

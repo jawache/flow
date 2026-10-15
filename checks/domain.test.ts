@@ -18,7 +18,7 @@ import {
   type Unanswered,
 } from "../language/domain.ts";
 import { existsSync } from "node:fs";
-import { faultsOf } from "../language/domain.ts";
+import { faultsOf, parseCommandLine } from "../language/domain.ts";
 import { globToRegExp, notAGlob } from "../glob.ts";
 import {
   addedNames,
@@ -46,6 +46,7 @@ import {
   execPasses,
   exportedNames,
   failureExcerpt,
+  gitCommand,
   gitDirPrefix,
   gitInvocations,
   givesReason,
@@ -67,6 +68,7 @@ import {
   useGrammars,
   runCase,
   runCases,
+  shellCommands,
   siblingExists,
   skipForChanged,
   substitutionInProse,
@@ -81,6 +83,7 @@ import {
   type ChangeGroup,
   type Dialect,
   type ForbidEdge,
+  type GitCommand,
   type GitInvocation,
   type JsonAssert,
   type Matcher,
@@ -665,33 +668,43 @@ describe("gitInvocations", () => {
   });
 });
 
+/** The two command readers, handed a line the way a ctx built by hand hands one: no parse yet. */
+const prefixOf = (command: string): string => gitDirPrefix({ command });
+const messageOf = (command: string): string | null => commitMessage({ command });
+
 describe("gitDirPrefix and quoteArg", () => {
   it("copies -C through verbatim, so the shell resolves it exactly as git would", () => {
-    expect(gitDirPrefix("git -C ../other commit -m x")).toBe("-C '../other'");
-    expect(gitDirPrefix("git commit -m x")).toBe("");
-    expect(gitDirPrefix("ls -la")).toBe("");
+    expect(prefixOf("git -C ../other commit -m x")).toBe("-C '../other'");
+    expect(prefixOf("git commit -m x")).toBe("");
+    expect(prefixOf("ls -la")).toBe("");
   });
 
   // THE OTHER WAY OUT OF THIS REPO, and the one a person actually types. Until F3 only git's own
   // option was read, so `cd other && git checkout x` was judged against the SESSION's tree — where
   // the path does not exist, so there was nothing to lose and the discard went through.
   it("reads a leading `cd <path> &&` as the working tree the command is about", () => {
-    expect(gitDirPrefix("cd ../other && git checkout -- x")).toBe("-C '../other'");
-    expect(gitDirPrefix("cd ../other; git checkout -- x")).toBe("-C '../other'");
+    expect(prefixOf("cd ../other && git checkout -- x")).toBe("-C '../other'");
+    expect(prefixOf("cd ../other; git checkout -- x")).toBe("-C '../other'");
   });
 
   it("chains both, in the order the shell applies them — git chains -C exactly as a shell chains cd", () => {
     // `cd /a && git -C b status` runs in /a/b, and this says precisely that.
-    expect(gitDirPrefix("cd /a && git -C b status")).toBe("-C '/a' -C 'b'");
+    expect(prefixOf("cd /a && git -C b status")).toBe("-C '/a' -C 'b'");
   });
 
   it("guesses at no `cd` it cannot name", () => {
-    expect(gitDirPrefix("cd && git status"), "a bare cd goes home, and home is not knowable here").toBe("");
-    expect(gitDirPrefix("cd - && git status"), "the previous directory is not a path").toBe("");
-    expect(gitDirPrefix("cd /a"), "no operator after the path, so nothing was chained to it").toBe("");
+    expect(prefixOf("cd && git status"), "a bare cd goes home, and home is not knowable here").toBe("");
+    expect(prefixOf("cd - && git status"), "the previous directory is not a path").toBe("");
+    expect(prefixOf("cd /a"), "no operator after the path, so nothing was chained to it").toBe("");
     // Only a LEADING cd: one in the middle of a chain may follow another that already moved, and a
     // line that walks two trees is beyond what one answer can honestly describe.
-    expect(gitDirPrefix("git status && cd /a && git checkout -- x")).toBe("");
+    expect(prefixOf("git status && cd /a && git checkout -- x")).toBe("");
+    expect(prefixOf("x=$(cd /a && pwd); git status"), "a cd inside a substitution moves nothing").toBe("");
+  });
+
+  it("reads git and cd from the parse, so a -C in another command's argument is not one", () => {
+    expect(prefixOf('echo "git -C /elsewhere status" && git status')).toBe("");
+    expect(prefixOf("cd '/a b' && git status")).toBe("-C '/a b'");
   });
 
   it("single-quotes an argument so nothing in it can be re-parsed", () => {
@@ -704,54 +717,104 @@ describe("gitDirPrefix and quoteArg", () => {
 
 describe("commitMessage", () => {
   it("reads every -m form", () => {
-    expect(commitMessage('git commit -m "feat: x"')).toBe("feat: x");
-    expect(commitMessage("git commit -mfeat")).toBe("feat");
-    expect(commitMessage('git commit --message "feat: x"')).toBe("feat: x");
-    expect(commitMessage('git commit --message="feat: x"')).toBe("feat: x");
+    expect(messageOf('git commit -m "feat: x"')).toBe("feat: x");
+    expect(messageOf("git commit -mfeat")).toBe("feat");
+    expect(messageOf('git commit --message "feat: x"')).toBe("feat: x");
+    expect(messageOf('git commit --message="feat: x"')).toBe("feat: x");
   });
 
   it("joins repeated -m as git joins them, with a blank line between", () => {
-    expect(commitMessage("git commit -m subject -m body")).toBe("subject\n\nbody");
+    expect(messageOf("git commit -m subject -m body")).toBe("subject\n\nbody");
   });
 
   it("steps over the value, so a message that looks like a flag is not read twice", () => {
-    expect(commitMessage("git commit -m -m")).toBe("-m");
+    expect(messageOf("git commit -m -m")).toBe("-m");
   });
 
   it("a trailing -m with nothing after it stops rather than inventing a message", () => {
-    expect(commitMessage("git commit -m")).toBeNull();
+    expect(messageOf("git commit -m")).toBeNull();
   });
 
   it("falls back to a heredoc body, which is how a message with backticks is written", () => {
     const command = "git commit -F - <<'EOF'\nfeat: x\n\nnew-dep: zod — checked ajv\nEOF";
-    expect(commitMessage(command)).toBe("feat: x\n\nnew-dep: zod — checked ajv");
+    expect(messageOf(command)).toBe("feat: x\n\nnew-dep: zod — checked ajv");
   });
 
   it("reads a heredoc only when the commit itself says -F -, so another command's script is never the message", () => {
     const script = "cd /x && python3 - <<'PY'\np='a.ts'\nopen(p,'w').write('x')\nPY\ngit add -A && git commit -F /tmp/msg.txt";
-    expect(commitMessage(script)).toBeNull();
-    expect(commitMessage("git commit --file=- <<'EOF'\nfeat: x\nEOF")).toBe("feat: x");
+    expect(messageOf(script)).toBeNull();
+    expect(messageOf("git commit --file=- <<'EOF'\nfeat: x\nEOF")).toBe("feat: x");
   });
 
   it("is not our business when there is no judgeable commit", () => {
-    expect(commitMessage("git status")).toBeNull();
-    expect(commitMessage("git commit")).toBeNull();
-    expect(commitMessage("git commit -F message.txt")).toBeNull();
-    expect(commitMessage(`git commit -m "unclosed`)).toBeNull();
+    expect(messageOf("git status")).toBeNull();
+    expect(messageOf("git commit")).toBeNull();
+    expect(messageOf("git commit -F message.txt")).toBeNull();
+    expect(messageOf(`git commit -m "unclosed`)).toBeNull();
   });
 });
 
-describe("commitMessage on stdin — the first heredoc's body", () => {
-  it("reads the first heredoc, quoted or bare", () => {
-    expect(commitMessage("git commit -F - <<EOF\nbody\nEOF")).toBe("body");
-    expect(commitMessage(`git commit -F - <<'EOF'\nbody\nEOF`)).toBe("body");
-    expect(commitMessage('git commit -F - <<-"EOF"\nbody\nEOF')).toBe("body");
+describe("commitMessage on stdin — the body of the commit's own heredoc", () => {
+  it("reads the heredoc, quoted or bare", () => {
+    expect(messageOf("git commit -F - <<EOF\nbody\nEOF")).toBe("body");
+    expect(messageOf(`git commit -F - <<'EOF'\nbody\nEOF`)).toBe("body");
+    expect(messageOf('git commit -F - <<-"EOF"\nbody\nEOF')).toBe("body");
   });
 
-  it("null when there is none, when it is unterminated, and when the body is empty", () => {
-    expect(commitMessage("git commit -F -")).toBeNull();
-    expect(commitMessage("git commit -F - <<EOF\nbody")).toBeNull();
-    expect(commitMessage("git commit -F - <<EOF\nEOF")).toBeNull();
+  // #9: the first heredoc on the line is the python's script, and the message is the commit's.
+  it("reads the heredoc attached to `git commit -F -`, not the first one on the line", () => {
+    expect(messageOf("python3 - <<'EOF'\nprint(1)\nEOF\ngit commit -F - <<'EOF'\nfix: a thing\nEOF")).toBe("fix: a thing");
+  });
+
+  it("reads the last heredoc a commit is fed, since each `<<` replaces its stdin", () => {
+    expect(messageOf("git commit -F - <<A <<'B'\nfirst\nA\nsecond\nB")).toBe("second");
+  });
+
+  // bash warns about a heredoc the line ends inside, and runs the command with the body it has.
+  it("reads an unterminated heredoc as bash does, to the end of the line", () => {
+    expect(messageOf("git commit -F - <<EOF\nbody")).toBe("body");
+  });
+
+  it("null when there is none, and when the body is empty", () => {
+    expect(messageOf("git commit -F -")).toBeNull();
+    expect(messageOf("git commit -F - <<EOF\nEOF")).toBeNull();
+  });
+
+  it("reads the parse a ctx carries, and never the line again", () => {
+    const commands = parseCommandLine("git commit -m 'feat: x'");
+    expect(commitMessage({ command: "git commit -m 'something else'", commands })).toBe("feat: x");
+    expect(commitMessage({ command: "git commit -m 'feat: x'", commands: null }), "a line that does not parse is not judged").toBeNull();
+  });
+});
+
+describe("gitCommand", () => {
+  const git = (line: string): GitCommand[] => (parseCommandLine(line) ?? []).flatMap((c) => gitCommand(c) ?? []);
+
+  it("splits git's own options from the subcommand and its arguments", () => {
+    const [g] = git("git -C /repo commit -m x");
+    expect([g?.globals, g?.subcommand, g?.args]).toEqual([["-C", "/repo"], "commit", ["-m", "x"]]);
+    expect(git("git commit -C HEAD")[0]?.globals, "`commit -C HEAD` reuses a message, it names no directory").toEqual([]);
+    expect(git("git --version")[0]?.subcommand).toBeNull();
+  });
+
+  it("reads the git commands the parse found, by program name or path, nested ones included", () => {
+    expect(git(`echo "git commit"`)).toEqual([]);
+    expect(git("cat > notes.md <<'EOF'\ngit clean -fd\nEOF")).toEqual([]);
+    expect(git("ls && /usr/bin/git status").map((g) => g.subcommand)).toEqual(["status"]);
+    expect(git("n=$(git rev-parse HEAD); bash -c 'git push'").map((g) => g.subcommand)).toEqual(["rev-parse", "push"]);
+  });
+
+  it("carries the command it was read from, heredocs and all", () => {
+    expect(git("git commit -F - <<'EOF'\nfix: x\nEOF")[0]?.command.heredocs).toEqual([{ body: "fix: x\n", quoted: true }]);
+  });
+});
+
+describe("shellCommands", () => {
+  it("is the parse the ctx carries, null included, and the line parsed here only when it carries none", () => {
+    const commands = parseCommandLine("ls");
+    expect(shellCommands({ command: "rm -rf x", commands })).toBe(commands);
+    expect(shellCommands({ command: "rm -rf x", commands: null })).toBeNull();
+    expect(shellCommands({ command: "rm -rf x" })?.map((c) => c.program)).toEqual(["rm"]);
   });
 });
 
