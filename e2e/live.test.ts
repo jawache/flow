@@ -879,6 +879,8 @@ const demo = definePack("demo", {
 
 export default defineConfig([pack(demo)]);
 `;
+  /** A commit gate that refuses a staged TODO. It runs only where a test points core.hooksPath at it. */
+  const GATE = "#!/bin/sh\nif git diff --cached -U0 | grep -q '^+.*TODO'; then echo 'gate: a TODO is staged' >&2; exit 1; fi\n";
   const at = (path: string): string | null => (existsSync(join(tree, path)) ? readFileSync(join(tree, path), "utf8") : null);
   const inTree = (...args: string[]): string => {
     const ran = runGit(tree, args);
@@ -910,7 +912,7 @@ export default defineConfig([pack(demo)]);
     mkdirSync(join(tree, ".githooks"));
     writeFileSync(join(tree, "src", "a.ts"), "export const a = 1;\n");
     writeFileSync(join(tree, "migrations", "001.sql"), "create table a ();\n");
-    writeFileSync(join(tree, ".githooks", "pre-commit"), "#!/bin/sh\nexit 0\n");
+    writeFileSync(join(tree, ".githooks", "pre-commit"), GATE, { mode: 0o755 });
     inTree("add", "-A");
     inTree("commit", "-qm", "main");
     inTree("branch", "-M", "main");
@@ -988,25 +990,34 @@ export default defineConfig([pack(demo)]);
     ).toStrictEqual(["src/a.ts"]);
   });
 
-  it("refuses and puts back an edit the same call commits past the gate — a commit the call made leaves nothing out", () => {
+  it("refuses and puts back a TODO the same call commits past a real commit gate: with --no-verify, and with the hook removed first", () => {
     backToMain();
     const main = inTree("rev-parse", "HEAD").trim();
+    inTree("config", "core.hooksPath", ".githooks");
     try {
-      // Written, then committed with the gate skipped: the file matches HEAD after the call.
-      const skipped = bash("echo '// TODO' >> src/a.ts && git commit -qam mine --no-verify");
+      // The gate refuses the TODO when nothing skips it.
+      writeFileSync(join(tree, "src", "a.ts"), "export const a = 1; // TODO\n");
+      expect(runGit(tree, ["commit", "-qam", "gated"]).code, "the gate refuses a staged TODO").not.toBe(0);
+      inTree("reset", "-q", "--hard", main);
+
+      const skipped = bash("echo '// TODO' >> src/a.ts && git commit -qam skipped --no-verify");
       expect(skipped.ran).toBe(0);
+      expect(inTree("rev-parse", "HEAD").trim(), "the commit landed").not.toBe(main);
       expect(skipped.code).toBe(2);
       expect(skipped.stderr).toContain("✗ demo.noTodo · src/a.ts");
       expect(at("src/a.ts"), "written back").toBe("export const a = 1;\n");
       inTree("reset", "-q", "--hard", main);
 
-      // The gate itself removed by a script, then a commit with no gate left to run.
-      const unhooked = bash("python3 -c \"import os; os.remove('.githooks/pre-commit')\" && git commit -qam unhooked");
+      const unhooked = bash("python3 -c \"import os; os.remove('.githooks/pre-commit')\" && echo '// TODO' >> src/a.ts && git commit -qam unhooked");
       expect(unhooked.ran).toBe(0);
+      expect(inTree("rev-parse", "HEAD").trim(), "the commit landed").not.toBe(main);
       expect(unhooked.code).toBe(2);
       expect(unhooked.stderr).toContain("✗ demo.keepHook · .githooks/pre-commit");
-      expect(at(".githooks/pre-commit"), "written back").toBe("#!/bin/sh\nexit 0\n");
+      expect(unhooked.stderr).toContain("✗ demo.noTodo · src/a.ts");
+      expect(at(".githooks/pre-commit"), "written back").toBe(GATE);
+      expect(at("src/a.ts"), "written back").toBe("export const a = 1;\n");
     } finally {
+      inTree("config", "--unset", "core.hooksPath");
       inTree("reset", "-q", "--hard", main);
     }
   });
