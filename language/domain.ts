@@ -405,7 +405,8 @@ const FAULTS = Symbol.for("flow.faults");
  * WHY IT IS A VALUE AND NOT A THROW: a check factory runs while the config module is evaluating, so
  * a throw there is a module that will not import, and the reader gets one fault with a stack trace
  * instead of every fault with its entry named. Marked instead, the load collects it beside the
- * grammar's own refusals and the engine blocks every gated moment with the same text — which is the
+ * grammar's own refusals, and the same text answers every gated moment — the engine's `guard`
+ * refuses with it, and the live hook rail passes it to the agent with each call — which is the
  * shape every other load failure already has.
  *
  * WHY IT EXISTS AT ALL: an option can be well-TYPED and still be nonsense — the class that bit here
@@ -1326,9 +1327,10 @@ export function overlay(
 // the line you typed. What arrives HERE is a config that reached a loader without an editor in
 // the way: generated, hand-edited, `as`-cast past the types, or built by an agent that guessed.
 //
-// Every class of grammar misuse gets a NAMED refusal carrying the entry it is about, because the
-// engine's answer to a config that will not load is to block every gated moment with that text
-// (F3). A refusal an agent cannot act on is a rail that stays shut.
+// Every class of grammar misuse gets a NAMED refusal carrying the entry it is about, because that
+// text is what every gated moment answers with while the config will not load: the live hook rail
+// passes it to the agent with each call, and the commit gate refuses with it (F3). A refusal an
+// agent cannot act on is a commit gate that stays shut.
 //
 // It COLLECTS rather than stops. A config with three mistakes reports three: stopping at the
 // first means three fix-and-rerun cycles, and the second mistake is usually the informative one.
