@@ -1185,21 +1185,37 @@ export function included(listed: readonly string[], include: readonly string[]):
 }
 
 /**
- * Of the paths a call changed, the ones the AGENT changed: each path that still differs from HEAD
- * after the call. A file identical to its copy in HEAD, or removed where HEAD holds none, is git's —
- * a checkout, a reset, a merge or a commit put it there, and the commit gate judged that content
- * when it was committed. So it leaves the diff before anything reads it: no rule, no write-back, no
- * breadcrumb, no shell-write row. CONTENT, never the command line: git run by a recipe is caught
- * the same way, and the `sed` in `git switch x && sed -i … f` is still judged.
+ * Of the paths a call changed, the ones the AGENT changed. The rest are git's — a checkout, a reset,
+ * a merge or a commit put them there, and the commit gate judged that content when it was
+ * committed — so they leave the diff before anything reads them: no rule, no write-back, no
+ * breadcrumb, no shell-write row. CONTENT, never the command line: git run by a recipe is caught the
+ * same way, and the `sed` in `git switch x && sed -i … f` is still judged.
  *
- * `differsFromHead` is every path where HEAD's tree and the tree after the call disagree, or null
- * when there is no HEAD to compare with (a repo with no commit yet), and then every change is the
- * agent's.
+ * - A file on disk after the call is git's when it is identical to its copy in HEAD after the call.
+ * - A file the call removed is git's when HEAD held it BEFORE the call and does not hold it after:
+ *   git removed it by moving HEAD. A file no commit holds — an untracked file, an included `.env` —
+ *   is the agent's to answer for when it goes.
+ *
+ * `nameStatus` is the call's own diff, `git diff-tree -r -z --name-status --no-renames`, in git's
+ * order. `differsAfter` and `differsBefore` are every path where HEAD's tree after the call, and
+ * before it, disagree with the tree after the call — null where there was no HEAD (a repo with no
+ * commit yet), and then nothing can match it. For a path gone from disk, being in `differsBefore`
+ * is exactly "HEAD held it before".
  */
-export function authored(changed: readonly string[], differsFromHead: readonly string[] | null): string[] {
-  if (differsFromHead === null) return [...changed];
-  const differs = new Set(differsFromHead);
-  return changed.filter((path) => differs.has(path));
+export function authored(nameStatus: string, differsAfter: readonly string[] | null, differsBefore: readonly string[] | null): string[] {
+  const after = differsAfter === null ? null : new Set(differsAfter);
+  const before = new Set(differsBefore ?? []);
+  const fields = nameStatus.split("\0");
+  const out: string[] = [];
+  for (let i = 0; i + 1 < fields.length; i += 2) {
+    const status = fields[i] ?? "";
+    const path = fields[i + 1] ?? "";
+    if (path === "") continue;
+    const matchesHead = after !== null && !after.has(path);
+    const gits = matchesHead && (!status.startsWith("D") || (differsBefore !== null && before.has(path)));
+    if (!gits) out.push(path);
+  }
+  return out;
 }
 
 /**

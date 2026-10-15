@@ -33,6 +33,7 @@ import {
   realWorld,
   revertChanges,
   runCommand,
+  runHook,
   takeSnapshot,
 } from "./claude.ts";
 import { overlapping } from "./domain.ts";
@@ -251,10 +252,7 @@ describe("the snapshot — the tree before a call, the tree after it, and the wa
     expect(read("secret.key"), "outside the snapshot, so outside the revert").toBe("new key\n");
   });
 
-  it("sees an included ignored file the call creates, and one HEAD holds that it deletes", () => {
-    // Committed, so its removal is not git's: HEAD still holds it after the call.
-    git("add", "-f", ".env");
-    git("commit", "-qm", "env", "--", ".env");
+  it("sees an included ignored file the call creates, and one it deletes", () => {
     takeSnapshot(repo, "toolu_4", [".env", "config/*.local.json"], who);
     unlinkSync(join(repo, ".env"));
     mkdirSync(join(repo, "config"));
@@ -289,7 +287,37 @@ describe("the snapshot — the tree before a call, the tree after it, and the wa
     takeSnapshot(repo, "toolu_9", [], who);
     spawnSync("bash", ["-c", "git checkout -q -- a.ts && rm notes.md && git switch -q main"], { cwd: repo });
     const back = observeDelta(repo, "toolu_9", []);
-    expect(back.ok && back.changes, "every file is main's again, and notes.md is in neither commit").toStrictEqual([]);
+    expect(back.ok && back.changes, "every file is main's again; notes.md was in no commit, so its removal is the call's").toStrictEqual([
+      { path: "notes.md", before: "scratch\n", after: null },
+    ]);
+  });
+
+  it("refuses and puts back the removal of an uncommitted .env snapshotInclude lists, made by a route other than rm", async () => {
+    // No commit holds .env, so its removal is the call's to answer for, whatever HEAD does.
+    const door = new URL("../index.ts", import.meta.url).pathname;
+    writeFileSync(
+      join(repo, "flow.config.ts"),
+      `import { defineConfig, definePack, deletion, guardrail, pack, protectedPath, write } from ${JSON.stringify(door)};
+const demo = definePack("demo", {
+  keepEnv: guardrail()
+    .at(write, deletion)
+    .on(".env")
+    .check(protectedPath({ existingOnly: true }))
+    .message("The .env stays.")
+    .test({ pass: [{ path: ".env", content: "new" }], block: [{ path: ".env", content: "x", world: { fs: { ".env": "old" } } }] }),
+});
+export default defineConfig([pack(demo)], { snapshotInclude: [".env"] });
+`,
+    );
+    const command = "python3 -c \"import os; os.remove('.env')\"";
+    const payload = { session_id: "s1", tool_name: "Bash", tool_input: { command }, tool_use_id: "toolu_env", cwd: repo };
+    expect((await runHook("pre-tool-use", payload, repo)).exitCode).toBe(0);
+    expect(spawnSync("bash", ["-c", command], { cwd: repo }).status).toBe(0);
+    expect(existsSync(join(repo, ".env")), "the script removed it").toBe(false);
+    const answer = await runHook("post-tool-use", payload, repo);
+    expect(answer.exitCode).toBe(2);
+    expect(answer.stderr).toContain("✗ demo.keepEnv · .env");
+    expect(read(".env"), "written back, byte for byte").toBe("TOKEN=old\n");
   });
 
   it("judges every change in a repo with no commit yet — there is no HEAD to match", () => {
@@ -298,7 +326,6 @@ describe("the snapshot — the tree before a call, the tree after it, and the wa
       spawnSync("git", ["init", "-q"], { cwd: fresh });
       writeFileSync(join(fresh, "a.ts"), "one\n");
       takeSnapshot(fresh, "toolu_10", [], who);
-      writeFileSync(join(fresh, "a.ts"), "two\n");
       unlinkSync(join(fresh, "a.ts"));
       writeFileSync(join(fresh, "b.ts"), "new\n");
       const delta = observeDelta(fresh, "toolu_10", []);
