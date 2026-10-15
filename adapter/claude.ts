@@ -86,6 +86,7 @@ import {
   forgettable,
   overlapping,
   deltaFault,
+  AFTER_CALL,
   readFault,
   hermeticEnv,
   isHookEvent,
@@ -704,7 +705,7 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
   const key = callKey(payload);
   const tool = typeof payload.tool_name === "string" ? payload.tool_name : "";
   const delta: (Delta & { readonly before?: string }) | null =
-    (hook === "post-tool-use" || hook === "post-tool-use-failure") && !off && tool !== ""
+    AFTER_CALL.has(hook) && !off && tool !== ""
       ? key === null
         ? { ok: false, fault: "The host sent no tool_use_id with this call, so its snapshot cannot be found." }
         : observeDelta(root, key, include)

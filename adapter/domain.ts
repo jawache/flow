@@ -1738,7 +1738,7 @@ export function deltaFault(fault: string): HookResult {
     stdout: "",
     stderr:
       `\nflow — could not see what this call changed:\n\n${fault}\n\n` +
-      "Nothing it wrote was judged and nothing was put back. Check what the call changed before you go on.\n",
+      "The call ran, and nothing it changed was checked or put back. Check what the call changed before you go on.\n",
     exitCode: 2,
   };
 }
@@ -1749,7 +1749,7 @@ export function decision(hook: HookEvent, additionalContext: string): string {
 }
 
 /** The rails that run once a tool call has landed: their exit 2 reports, it cannot block. */
-const AFTER_CALL: ReadonlySet<HookEvent> = new Set(["post-tool-use", "post-tool-use-failure"]);
+export const AFTER_CALL: ReadonlySet<HookEvent> = new Set(["post-tool-use", "post-tool-use-failure"]);
 
 /**
  * What the guard says when it could not read its own payload.
@@ -1757,21 +1757,11 @@ const AFTER_CALL: ReadonlySet<HookEvent> = new Set(["post-tool-use", "post-tool-
  * The three outcomes of a read are not one outcome. "There was nothing to guard" is safe and common
  * — a hand-run, an empty stdin — and silence is the right answer to it. "I could not SEE what I was
  * guarding" is the old engine's invisible swallow: both were folded into `{}`, so a PreToolUse rail
- * holding an unreadable payload found no tool call, allowed, and told nobody.
- *
- * AN AFTER-CALL RAIL says what actually happened, not what the guard felt. Its exit 2 blocks nothing
- * — the call has run — yet the host labels it a "blocking error", so "the guard could not read its
- * payload" read as a refusal of a call that had already landed (#12). It says instead that the call
- * ran and nothing it changed was checked, which is the one fact the model has to act on. Every other
- * rail keeps the guard's sentence; whether a rail blocks with it is `readFault`'s decision.
+ * holding an unreadable payload found no tool call, allowed, and told nobody. The sentence is the
+ * same on every rail; what differs is whether the rail blocks with it, and that is the caller's
+ * decision because it is a fact about what the event is FOR.
  */
 export function faultText(hook: HookEvent, why: "unreadable" | "unparseable", detail: string): string {
-  if (AFTER_CALL.has(hook)) {
-    return (
-      `[flow hook ${hook}] the tool call ran, but flow could not read what it changed, so nothing it changed was checked (${detail}). ` +
-      "Check what the call changed before you go on."
-    );
-  }
   const what =
     why === "unreadable" ? `could not READ its payload from stdin (${detail})` : `could not PARSE its payload (${detail})`;
   return `[flow hook ${hook}] the guard ${what}.`;
@@ -1785,10 +1775,15 @@ export function faultText(hook: HookEvent, why: "unreadable" | "unparseable", de
  * exit 2 blocks nothing (the call has run) and puts the sentence in front of the model beside the
  * result, so a call whose changes went unjudged is never passed as clean. The rest only add a
  * breadcrumb or end a turn, and say it on stderr with exit 0.
+ *
+ * AN AFTER-CALL RAIL answers with `deltaFault`, the one message for "flow could not see what this
+ * call changed": the host labels its exit 2 a "blocking error", so the guard's own sentence read as
+ * a refusal of a call that had already landed (#12). The fault line names only the hook and cause.
  */
 export function readFault(hook: HookEvent, why: "unreadable" | "unparseable", detail: string): HookResult {
+  if (AFTER_CALL.has(hook)) return deltaFault(`[flow hook ${hook}] could not read its payload (${detail}).`);
   const text = faultText(hook, why, detail);
-  return hook === "pre-tool-use" || AFTER_CALL.has(hook)
+  return hook === "pre-tool-use"
     ? { stdout: "", stderr: `\n${text}\n`, exitCode: 2 }
     : { stdout: "", stderr: `${text}\n`, exitCode: 0 };
 }
