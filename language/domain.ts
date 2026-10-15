@@ -869,7 +869,8 @@ const FAULTS = Symbol.for("flow.faults");
  * WHY IT IS A VALUE AND NOT A THROW: a check factory runs while the config module is evaluating, so
  * a throw there is a module that will not import, and the reader gets one fault with a stack trace
  * instead of every fault with its entry named. Marked instead, the load collects it beside the
- * grammar's own refusals and the engine blocks every gated moment with the same text — which is the
+ * grammar's own refusals, and the same text answers every gated moment — the engine's `guard`
+ * refuses with it, and the live hook rail passes it to the agent with each call — which is the
  * shape every other load failure already has.
  *
  * WHY IT EXISTS AT ALL: an option can be well-TYPED and still be nonsense — the class that bit here
@@ -991,12 +992,6 @@ export type Case =
 export interface Cases {
   readonly pass?: readonly Case[];
   readonly block?: readonly Case[];
-}
-
-/** Does this cases block prove anything? An entry whose answer is no does not load. */
-export function hasCases(cases: Cases | undefined): boolean {
-  if (!cases) return false;
-  return (cases.pass?.length ?? 0) + (cases.block?.length ?? 0) > 0;
 }
 
 /** What a recorded world was reached for and could not answer. */
@@ -1222,6 +1217,35 @@ type Scoping<At extends Moment, Verb, Scopable extends Moment = PathMoment> = [E
   ? (dead: DeadScope) => never
   : Verb;
 
+/**
+ * `.on(…)` / `.ignore(…)` as a call that takes at least one glob — the compile-time half of the
+ * empty-scope rule.
+ *
+ * Not `(glob: string, ...more: string[])`, and that is the whole design: a shipped pack scopes with
+ * `.on(...repo.files)`, a list whose length is the repo's to choose, and a spread of `string[]`
+ * into a first-required parameter is refused whether the list is empty or not. So the call infers
+ * the arguments it was given, and only the arguments KNOWN to be none — a literal `.on()` — land
+ * on a required parameter that was not passed: tsc's arity error, whose "an argument for
+ * 'atLeastOneGlob' was not provided" note is the advice. A spread list that turns out empty is the
+ * load's `empty-scope` refusal to catch. Both halves, always.
+ */
+type Globs<Next> = <G extends readonly string[]>(...globs: G extends readonly [] ? [atLeastOneGlob: string] : G) => Next;
+
+/** What the second form of a breadcrumb's prose becomes once the first was said. The TEXT is the diagnostic. */
+type DoubleProse<Said extends string> =
+  `flow: this breadcrumb already said .${Said}(…) — its note is exactly one of .text(…) and .file(…)`;
+
+/**
+ * `.text(…)` / `.file(…)`, or the refusal once the OTHER form was said — the compile-time half of
+ * the double-prose rule. The same form said twice is `Once`'s job, not this one.
+ *
+ * A wrong-argument refusal rather than a `never`, for the reason `Scoping` gives: the sentence lands
+ * in the diagnostic, on the line of the second form.
+ */
+type Prose<Spoken extends string, Other extends "text" | "file", Verb> = Other extends Spoken
+  ? (both: DoubleProse<Other>) => never
+  : Verb;
+
 /** Anything a pack may file under an entry name. The one shape `definePack` walks. */
 export interface Sentence<S extends EntrySpec = EntrySpec> {
   readonly spec: S;
@@ -1242,12 +1266,8 @@ export interface GuardrailSentence<Spoken extends GuardrailKey = never, At exten
     <M extends GuardrailMoment[]>(...moments: M) => GuardrailSentence<Spoken | "at", M[number]>
   >;
   readonly for: Once<Spoken, "for", (...categories: Category[]) => GuardrailSentence<Spoken | "for", At>>;
-  readonly on: Once<Spoken, "on", Scoping<At, (...globs: string[]) => GuardrailSentence<Spoken | "on", At>>>;
-  readonly ignore: Once<
-    Spoken,
-    "ignore",
-    Scoping<At, (...globs: string[]) => GuardrailSentence<Spoken | "ignore", At>>
-  >;
+  readonly on: Once<Spoken, "on", Scoping<At, Globs<GuardrailSentence<Spoken | "on", At>>>>;
+  readonly ignore: Once<Spoken, "ignore", Scoping<At, Globs<GuardrailSentence<Spoken | "ignore", At>>>>;
   readonly check: Once<Spoken, "check", (check: Check) => GuardrailSentence<Spoken | "check", At>>;
   readonly message: Once<Spoken, "message", (message: string) => GuardrailSentence<Spoken | "message", At>>;
   readonly disabled: Once<Spoken, "disabled", (reason?: string) => GuardrailSentence<Spoken | "disabled", At>>;
@@ -1269,18 +1289,14 @@ export interface BreadcrumbSentence<
     <M extends BreadcrumbMoment[]>(...moments: M) => BreadcrumbSentence<Spoken | "at", M[number]>
   >;
   readonly for: Once<Spoken, "for", (...categories: Category[]) => BreadcrumbSentence<Spoken | "for", At>>;
-  readonly on: Once<
-    Spoken,
-    "on",
-    Scoping<At, (...globs: string[]) => BreadcrumbSentence<Spoken | "on", At>, BriefScopeMoment>
-  >;
+  readonly on: Once<Spoken, "on", Scoping<At, Globs<BreadcrumbSentence<Spoken | "on", At>>, BriefScopeMoment>>;
   readonly ignore: Once<
     Spoken,
     "ignore",
-    Scoping<At, (...globs: string[]) => BreadcrumbSentence<Spoken | "ignore", At>, BriefScopeMoment>
+    Scoping<At, Globs<BreadcrumbSentence<Spoken | "ignore", At>>, BriefScopeMoment>
   >;
-  readonly text: Once<Spoken, "text", (text: string) => BreadcrumbSentence<Spoken | "text", At>>;
-  readonly file: Once<Spoken, "file", (path: string) => BreadcrumbSentence<Spoken | "file", At>>;
+  readonly text: Once<Spoken, "text", Prose<Spoken, "file", (text: string) => BreadcrumbSentence<Spoken | "text", At>>>;
+  readonly file: Once<Spoken, "file", Prose<Spoken, "text", (path: string) => BreadcrumbSentence<Spoken | "file", At>>>;
   readonly disabled: Once<Spoken, "disabled", (reason?: string) => BreadcrumbSentence<Spoken | "disabled", At>>;
   readonly description: Once<
     Spoken,
@@ -1696,16 +1712,16 @@ interface OverrideChain<Kind extends EntrySpec["kind"], Spoken extends OverrideK
     ) => OverrideChain<Kind, Spoken | "at">
   >;
   readonly for: Once<Spoken, "for", (...categories: Category[]) => OverrideChain<Kind, Spoken | "for">>;
-  readonly on: Once<Spoken, "on", (...globs: string[]) => OverrideChain<Kind, Spoken | "on">>;
-  readonly ignore: Once<Spoken, "ignore", (...globs: string[]) => OverrideChain<Kind, Spoken | "ignore">>;
+  readonly on: Once<Spoken, "on", Globs<OverrideChain<Kind, Spoken | "on">>>;
+  readonly ignore: Once<Spoken, "ignore", Globs<OverrideChain<Kind, Spoken | "ignore">>>;
   readonly message: Kind extends "guardrail"
     ? Once<Spoken, "message", (message: string) => OverrideChain<Kind, Spoken | "message">>
     : never;
   readonly text: Kind extends "breadcrumb"
-    ? Once<Spoken, "text", (text: string) => OverrideChain<Kind, Spoken | "text">>
+    ? Once<Spoken, "text", Prose<Spoken, "file", (text: string) => OverrideChain<Kind, Spoken | "text">>>
     : never;
   readonly file: Kind extends "breadcrumb"
-    ? Once<Spoken, "file", (path: string) => OverrideChain<Kind, Spoken | "file">>
+    ? Once<Spoken, "file", Prose<Spoken, "text", (path: string) => OverrideChain<Kind, Spoken | "file">>>
     : never;
   readonly disabled: Once<Spoken, "disabled", (reason?: string) => OverrideChain<Kind, Spoken | "disabled">>;
   readonly description: Once<
@@ -1779,10 +1795,16 @@ export function overlay(
   spoken: Readonly<Record<string, unknown>>,
   prior?: Readonly<Record<string, "pack" | "override">>,
 ): Overlaid {
+  // A breadcrumb's prose is ONE key said in two forms, so an override that says either form
+  // replaces whichever the pack used, rather than landing beside it as a note with both.
+  const isProse = (key: string) => key === "text" || key === "file";
+  const kept = Object.keys(spoken).some(isProse)
+    ? Object.fromEntries(Object.entries(base).filter(([key]) => !isProse(key)))
+    : base;
   const source: Record<string, "pack" | "override"> = {};
-  for (const key of Object.keys(base)) source[key] = prior?.[key] ?? "pack";
+  for (const key of Object.keys(kept)) source[key] = prior?.[key] ?? "pack";
   for (const key of Object.keys(spoken)) source[key] = "override";
-  return { spec: { ...base, ...spoken }, source };
+  return { spec: { ...kept, ...spoken } as EntrySpec, source };
 }
 
 
@@ -1796,9 +1818,10 @@ export function overlay(
 // the line you typed. What arrives HERE is a config that reached a loader without an editor in
 // the way: generated, hand-edited, `as`-cast past the types, or built by an agent that guessed.
 //
-// Every class of grammar misuse gets a NAMED refusal carrying the entry it is about, because the
-// engine's answer to a config that will not load is to block every gated moment with that text
-// (F3). A refusal an agent cannot act on is a rail that stays shut.
+// Every class of grammar misuse gets a NAMED refusal carrying the entry it is about, because that
+// text is what every gated moment answers with while the config will not load: the live hook rail
+// passes it to the agent with each call, and the commit gate refuses with it (F3). A refusal an
+// agent cannot act on is a commit gate that stays shut.
 //
 // It COLLECTS rather than stops. A config with three mistakes reports three: stopping at the
 // first means three fix-and-rerun cycles, and the second mistake is usually the informative one.
@@ -1815,10 +1838,12 @@ export const REFUSAL_CODES = [
   "unknown-moment",
   "missing-mandatory",
   "undeclared-category",
-  "no-cases",
+  "no-block-cases",
   "duplicate-id",
   "dead-scope",
   "bad-check-options",
+  "empty-scope",
+  "double-prose",
 ] as const;
 
 export type RefusalCode = (typeof REFUSAL_CODES)[number];
@@ -2023,6 +2048,41 @@ function judge(draft: Draft): Refusal[] {
       `\`${id}\` is scoped with \`.for(…)\` to something \`defineCategory\` never made. A category is a value with its recognizer aboard — import the one you mean.`,
     );
 
+  // A SCOPE WITH NO GLOBS. `.on()` matches no path and `.ignore()` carves out nothing, so either
+  // one is a sentence that reads as a decision and decides nothing. Before the disabled exemption
+  // on purpose: an empty scope is a mistake in what was written, not something the entry proves.
+  const empty = (["on", "ignore"] as const).filter((key) => spec[key]?.length === 0);
+  if (empty.length > 0) {
+    // Who said each one is decided per key: one verb may be the pack's and the other an override's,
+    // so the verbs are grouped by who said them and each group gets its own clause and its own fix.
+    // `overlay` gives every key of the spec a source, so each empty verb lands in exactly one group.
+    const said = (["pack", "override"] as const)
+      .map((who) => ({ who, keys: empty.filter((key) => draft.source[key] === who) }))
+      .filter((group) => group.keys.length > 0);
+    const verbs = (keys: readonly string[]) => keys.map((key) => `\`.${key}()\``).join(" and ");
+    const place = {
+      pack: { speaker: "its pack", fixIn: "the pack" },
+      override: { speaker: "an override", fixIn: "the override" },
+    } as const;
+    const fix = ({ who, keys }: (typeof said)[number]) =>
+      keys.length === 1
+        ? `In ${place[who].fixIn}, give ${verbs(keys)} at least one glob or delete it.`
+        : `In ${place[who].fixIn}, give ${verbs(keys)} each at least one glob or delete them.`;
+    say(
+      "empty-scope",
+      `\`${id}\` has a scope that narrows nothing: ${said.map(({ who, keys }) => `${place[who].speaker} says ${verbs(keys)} with no globs`).join(", and ")}. ${said.map(fix).join(" ")}`,
+    );
+  }
+
+  // PROSE SAID TWICE. A note shows one text, so a breadcrumb with both forms is a note whose author
+  // has not decided which one it is. An override's prose replaces the pack's (overlay), so what
+  // reaches here is one sentence, or one override, that said both.
+  if (spec.kind === "breadcrumb" && spec.text !== undefined && spec.file !== undefined)
+    say(
+      "double-prose",
+      `\`${id}\` says both \`.text(…)\` and \`.file(…)\`. A breadcrumb's note is exactly one of the two — keep the one you mean and drop the other.`,
+    );
+
   // A disabled entry is listed with its reason and never runs, so it is asked to prove nothing.
   // That is not a hole: what it says is already inert, and demanding a message and cases from an
   // entry somebody turned off is how an opt-out becomes cheaper to delete than to explain.
@@ -2053,10 +2113,12 @@ function judge(draft: Draft): Refusal[] {
       `\`${id}\` narrows by path but fires only at ${at.map((m) => `\`${m}\``).join(", ")}, which name no subject to narrow — its \`on\`/\`ignore\` would be read by nothing. Drop the scope, or add a moment that carries one (${(spec.kind === "breadcrumb" ? BRIEF_SCOPE_MOMENTS : PATH_MOMENTS).join(" · ")}).`,
     );
 
-  if (spec.kind === "guardrail" && !hasCases(spec.test))
+  // NO BLOCK CASE. Pass cases alone prove nothing about what the rule catches, so a guardrail
+  // without a block case does not load, however many pass cases it has.
+  if (spec.kind === "guardrail" && (spec.test?.block?.length ?? 0) === 0)
     say(
-      "no-cases",
-      `\`${id}\` carries no cases. A rule declares what must pass it and what it must block (\`.test({ pass, block })\`) — a fence whose block-case was never written is a fence nothing proves is alive.`,
+      "no-block-cases",
+      `\`${id}\` has no block case. A block case is an input the rule must refuse: add one to \`.test({ block })\`. Pass cases alone prove nothing about what the rule catches.`,
     );
 
   // A CHECK THAT SAID ITS OWN OPTIONS ARE UNUSABLE. The check answers this, not the loader: what

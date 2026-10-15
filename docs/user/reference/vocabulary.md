@@ -18,7 +18,7 @@ Each term below is used with this meaning on every page of these docs.
 | **check** | A function of `ctx` that returns `ctx.ok()` or `ctx.fail(detail)`: a stock one, or your own via `defineCheck`. See [the check contract](./ctx.md#the-check-contract) |
 | **ctx** | The one argument a check is called with, and its only access to the world: the event facts (`file · command · staged · turn · actor · moment`) and the effects (`fs · exec · git`). See [the ctx a check reads](./ctx.md) |
 | **category** | A name with its recognizer, `defineCategory`, read from host-written evidence and bound with `.for(…)`. See [categories](./config.md#categories) |
-| **case** | A canned `ctx` that must pass or must block, included on the entry as `.test({ pass, block })`. A guardrail with no case at all, pass or block, does not load. See [cases](./config.md#cases) |
+| **case** | A canned `ctx` that must pass or must block, included on the entry as `.test({ pass, block })`. A guardrail with no block case does not load. See [cases](./config.md#cases) |
 | **fitting** | What `flow status` checks beyond the rules: the config loads, the gate is armed, the hooks are registered. See [the flow command](./cli.md) |
 
 ---

@@ -15,7 +15,6 @@ import {
   BREADCRUMB_MOMENTS,
   type BreadcrumbSpec,
   cannedWorld,
-  type Cases,
   chain,
   type Check,
   checkSettings,
@@ -35,7 +34,6 @@ import {
   GUARDRAIL_KEYS,
   GUARDRAIL_MOMENTS,
   type GuardrailSpec,
-  hasCases,
   isBreadcrumbMoment,
   isCategory,
   isGuardrailMoment,
@@ -807,21 +805,6 @@ describe("a pack whose parameters are all optional", () => {
   });
 });
 
-describe("hasCases", () => {
-  it("is true when either arm carries a case", () => {
-    expect(hasCases({ block: ["git push origin main"] })).toBe(true);
-    expect(hasCases({ pass: [{ path: "a.ts", content: "" }] })).toBe(true);
-    expect(hasCases({ pass: [{ staged: ["package.json"] }] })).toBe(true);
-  });
-
-  it("is false for a cases block that proves nothing", () => {
-    const empty: Cases = {};
-    expect(hasCases(empty)).toBe(false);
-    expect(hasCases({ pass: [], block: [] })).toBe(false);
-    expect(hasCases(undefined)).toBe(false);
-  });
-});
-
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // ENTRIES — the sentence
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -1166,6 +1149,42 @@ describe("overlay — a spoken key replaces the pack's WHOLE key, nothing merges
     const { spec } = overlay(packSpec, { at: [command] });
     expect(spec.at).toEqual(["command"]);
   });
+
+  it("leaves a breadcrumb's prose alone when the override says none", () => {
+    const note = breadcrumb().at(touch).file("docs/long-note.md").spec;
+    const { spec, source } = overlay(note, { on: ["docs/**"] });
+    expect(spec.kind === "breadcrumb" && spec.file).toBe("docs/long-note.md");
+    expect(source["file"]).toBe("pack");
+  });
+});
+
+describe("overlay — a breadcrumb's prose is one key in two forms, and an override replaces it", () => {
+  const fileNote = breadcrumb().at(touch).on("docs/**").file("docs/long-note.md").spec;
+  const textNote = breadcrumb().at(touch).on("docs/**").text("One inline sentence.").spec;
+
+  it("an override's `.text(…)` replaces a pack's `.file(…)`, and the prose is the override's", () => {
+    const { spec, source } = overlay(fileNote, { text: "Shorter, inline." });
+    expect(spec).not.toHaveProperty("file");
+    expect(spec.kind === "breadcrumb" && spec.text).toBe("Shorter, inline.");
+    expect(source["text"]).toBe("override");
+    expect(source).not.toHaveProperty("file");
+    expect(source["on"]).toBe("pack");
+  });
+
+  it("an override's `.file(…)` replaces a pack's `.text(…)`, the reverse", () => {
+    const { spec, source } = overlay(textNote, { file: "docs/our-note.md" });
+    expect(spec).not.toHaveProperty("text");
+    expect(spec.kind === "breadcrumb" && spec.file).toBe("docs/our-note.md");
+    expect(source["file"]).toBe("override");
+    expect(source).not.toHaveProperty("text");
+  });
+
+  it("a later override's prose replaces an earlier override's", () => {
+    const first = overlay(fileNote, { text: "First." });
+    const second = overlay(first.spec, { file: "docs/second.md" }, first.source);
+    expect(second.spec).not.toHaveProperty("text");
+    expect(second.source["file"]).toBe("override");
+  });
 });
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -1355,14 +1374,27 @@ describe("the load refuses", () => {
     expect(shape(refusalsOf([fake]))).toEqual([["undeclared-category", "fake.x"]]);
   });
 
-  it("a guardrail that carries no cases — the dead-fence class, killed at authoring time", () => {
+  it("a guardrail that carries no block case — the dead-fence class, killed at authoring time", () => {
     const untested = rawPack("untested", { x: { spec: { kind: "guardrail", at: [commit], check: passes, message: "m" } } });
-    expect(shape(refusalsOf([untested]))).toEqual([["no-cases", "untested.x"]]);
+    expect(shape(refusalsOf([untested]))).toEqual([["no-block-cases", "untested.x"]]);
 
     const empty = rawPack("empty", {
       x: { spec: { kind: "guardrail", at: [commit], check: passes, message: "m", test: {} } },
     });
-    expect(shape(refusalsOf([empty]))).toEqual([["no-cases", "empty.x"]]);
+    expect(shape(refusalsOf([empty]))).toEqual([["no-block-cases", "empty.x"]]);
+
+    const bothEmpty = rawPack("bothEmpty", {
+      x: { spec: { kind: "guardrail", at: [commit], check: passes, message: "m", test: { pass: [], block: [] } } },
+    });
+    expect(shape(refusalsOf([bothEmpty]))).toEqual([["no-block-cases", "bothEmpty.x"]]);
+
+    // Pass cases alone prove nothing about what the rule catches, so they do not count.
+    const passOnly = rawPack("passOnly", {
+      x: { spec: { kind: "guardrail", at: [commit], check: passes, message: "m", test: { pass: [{ staged: ["a.ts"] }] } } },
+    });
+    const refusals = refusalsOf([passOnly]);
+    expect(shape(refusals)).toEqual([["no-block-cases", "passOnly.x"]]);
+    expect(refusals[0]?.detail).toContain("`passOnly.x` has no block case");
   });
 
   // A CHECK THAT SAID ITS OWN OPTIONS ARE UNUSABLE. The loader does not know what makes a depcruise
@@ -1462,6 +1494,132 @@ describe("the load refuses", () => {
     expect(shape(refusalsOf([rawPack("late", { x: late })]))).toEqual([["dead-scope", "late.x"]]);
   });
 
+  // An empty scope reaches the load the way a real config writes it: a list spread into the verb
+  // that turns out empty. The compiler refuses only a literal `.on()`; this one compiles, and the
+  // load is what catches it. Each case asserts the whole sentence, since the wording is the advice.
+  const none: string[] = [];
+
+  it("an empty `.on()` from the pack as empty-scope, on a guardrail", () => {
+    const rail = definePack("rail", {
+      x: guardrail().at(write).on(...none).check(passes).message("m").test(cases),
+    });
+    expect(refusalsOf([pack(rail)])).toEqual([
+      {
+        code: "empty-scope",
+        entry: "rail.x",
+        detail:
+          "`rail.x` has a scope that narrows nothing: its pack says `.on()` with no globs. In the pack, give `.on()` at least one glob or delete it.",
+      },
+    ]);
+  });
+
+  it("an empty `.ignore()` from the pack as empty-scope, on a breadcrumb", () => {
+    const note = definePack("note", {
+      x: breadcrumb().at(touch).on("docs/**").ignore(...none).text("hi"),
+    });
+    expect(refusalsOf([pack(note)])).toEqual([
+      {
+        code: "empty-scope",
+        entry: "note.x",
+        detail:
+          "`note.x` has a scope that narrows nothing: its pack says `.ignore()` with no globs. In the pack, give `.ignore()` at least one glob or delete it.",
+      },
+    ]);
+  });
+
+  it("both verbs empty in the pack, refused once naming both", () => {
+    const bare = definePack("bare", { x: breadcrumb().at(touch).on(...none).ignore(...none).text("hi") });
+    expect(refusalsOf([pack(bare)])).toEqual([
+      {
+        code: "empty-scope",
+        entry: "bare.x",
+        detail:
+          "`bare.x` has a scope that narrows nothing: its pack says `.on()` and `.ignore()` with no globs. In the pack, give `.on()` and `.ignore()` each at least one glob or delete them.",
+      },
+    ]);
+  });
+
+  it("an empty verb an override leaves, saying the override said it", () => {
+    expect(refusalsOf([pack(house), override(house.noTodo).on(...none)])).toEqual([
+      {
+        code: "empty-scope",
+        entry: "house.noTodo",
+        detail:
+          "`house.noTodo` has a scope that narrows nothing: an override says `.on()` with no globs. In the override, give `.on()` at least one glob or delete it.",
+      },
+    ]);
+  });
+
+  it("both verbs empty in one override, the override named once", () => {
+    expect(refusalsOf([pack(house), override(house.noTodo).on(...none).ignore(...none)])).toEqual([
+      {
+        code: "empty-scope",
+        entry: "house.noTodo",
+        detail:
+          "`house.noTodo` has a scope that narrows nothing: an override says `.on()` and `.ignore()` with no globs. In the override, give `.on()` and `.ignore()` each at least one glob or delete them.",
+      },
+    ]);
+  });
+
+  it("an empty scope split between the pack and an override, saying who said each and where to fix it", () => {
+    const mixed = definePack("mixed", { x: breadcrumb().at(touch).on(...none).text("hi") });
+    expect(refusalsOf([pack(mixed), override(mixed.x).ignore(...none)])).toEqual([
+      {
+        code: "empty-scope",
+        entry: "mixed.x",
+        detail:
+          "`mixed.x` has a scope that narrows nothing: its pack says `.on()` with no globs, and an override says `.ignore()` with no globs. In the pack, give `.on()` at least one glob or delete it. In the override, give `.ignore()` at least one glob or delete it.",
+      },
+    ]);
+  });
+
+  it("an empty scope the pack said and an override filled, which loads clean", () => {
+    // The check reads the entry after the override is laid over it: an override's `.on(…)`
+    // replaces the pack's whole list, so the pack's empty one is gone by the time it is judged.
+    const fixed = definePack("fixed", {
+      x: guardrail().at(write).on(...none).check(passes).message("m").test(cases),
+    });
+    expect(refusalsOf([pack(fixed), override(fixed.x).on("src/**")])).toEqual([]);
+  });
+
+  it("an empty scope on a disabled entry too — what was written is wrong, whatever the entry proves", () => {
+    const off = definePack("off", {
+      x: guardrail().at(write).on(...none).check(passes).message("m").test(cases),
+    });
+    expect(shape(refusalsOf([pack(off), override(off.x).disabled("not yet")]))).toEqual([["empty-scope", "off.x"]]);
+  });
+
+  it("a breadcrumb with both `.text(…)` and `.file(…)` as double-prose, naming the entry", () => {
+    const both = rawPack("both", { x: { spec: { kind: "breadcrumb", at: [session], text: "hi", file: "docs/hi.md" } } });
+    const refusals = refusalsOf([both]);
+    expect(shape(refusals)).toEqual([["double-prose", "both.x"]]);
+    expect(refusals[0]?.detail).toContain("both.x");
+
+    // The sentence chain, cast past its types as a config built outside an editor would be.
+    const spoken = (breadcrumb().at(session).text("hi") as unknown as { file: (p: string) => unknown }).file("docs/hi.md");
+    expect(shape(refusalsOf([rawPack("chained", { x: spoken })]))).toEqual([["double-prose", "chained.x"]]);
+  });
+
+  it("a breadcrumb with both on a disabled entry too", () => {
+    const off = rawPack("off", {
+      x: { spec: { kind: "breadcrumb", at: [session], text: "hi", file: "docs/hi.md", disabled: { reason: "not yet" } } },
+    });
+    expect(shape(refusalsOf([off]))).toEqual([["double-prose", "off.x"]]);
+  });
+
+  it("an override that says both, even over a pack that used one", () => {
+    const both = (override(house.orientation).text("Inline.") as unknown as { file: (p: string) => ConfigSentence }).file(
+      "docs/note.md",
+    );
+    expect(shape(refusalsOf([pack(house), both]))).toEqual([["double-prose", "house.orientation"]]);
+  });
+
+  it("but not an override's prose over a pack's other form — it replaces it, and loads", () => {
+    const files = definePack("files", { note: breadcrumb().at(touch).on("docs/**").file("docs/long-note.md") });
+    const [entry] = loadOrThrow([pack(files), override(files.note).text("One inline sentence.")]);
+    expect(entry?.spec.kind === "breadcrumb" && entry.spec.text).toBe("One inline sentence.");
+  });
+
   it("but never asks a disabled entry to prove itself", () => {
     const off = rawPack("off", { x: { spec: { kind: "guardrail", at: [commit], disabled: { reason: "not yet" } } } });
     expect(shape(refusalsOf([off]))).toEqual([]);
@@ -1490,7 +1648,7 @@ describe("the load refuses", () => {
     expect(shape(refusalsOf([broken]))).toEqual([
       ["missing-mandatory", "broken.a"],
       ["missing-mandatory", "broken.b"],
-      ["no-cases", "broken.c"],
+      ["no-block-cases", "broken.c"],
     ]);
   });
 
@@ -1511,10 +1669,12 @@ describe("REFUSAL_CODES", () => {
       "unknown-moment",
       "missing-mandatory",
       "undeclared-category",
-      "no-cases",
+      "no-block-cases",
       "duplicate-id",
       "dead-scope",
       "bad-check-options",
+      "empty-scope",
+      "double-prose",
     ]);
   });
 });

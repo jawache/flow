@@ -376,7 +376,10 @@ async function subjectsOf(entry: LoadedEntry, event: GuardEvent, world: World): 
 // and the fault notice fired on every hook without one person seeing it. Every way the guard can be
 // wrong ends in a BLOCK carrying the reason:
 //
-//   the config will not load    every gated moment refuses, with every refusal
+//   the config will not load    `guard` refuses every gated moment, with every refusal — the
+//                               answer a replay and the commit gate give. The live hook rail
+//                               answers with the adapter's `whileBroken` instead: it lets every
+//                               call through and passes the load error to the agent with it
 //   a classifier throws         who this session is is unknown, so every rail refuses
 //   an entry has no check       it blocks; a rail that cannot ask is not a rail that passes
 //   a check throws              that entry blocks, naming itself and the error

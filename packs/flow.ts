@@ -37,9 +37,10 @@ export interface Home {
    * list nobody reviews, and here it decides what two rules watch: the nudge when you edit the
    * guard, and the refusal to delete it. Both name it and neither defaults.
    *
-   * The engine derives the REPAIR surface from the config's imports directly (`configSurface`),
-   * because it is asked in the broken state and can only read text. This is the same fact asked
-   * at a moment where the config loads, so it is stated once, here, and typed.
+   * The engine reads the same folders out of the config's imports (`guardPaths`), for the
+   * weaken-after-block report, because that report must answer while the config will not load
+   * and text is all it can read then. This is the same fact asked at a moment where the config
+   * loads, so it is stated once, here, and typed.
    */
   readonly packs: readonly string[];
 
@@ -81,7 +82,7 @@ export const flow = definePack("flow", (repo: Home) => {
           "This repo is guarded by flow. Guardrails are rules that refuse a change, and every change to the files here is checked against them: a change made with the Edit tool is checked before it is written, and a change made by a shell command is checked the moment it has been written. A refused write is undone, and you are told why. The staged files are checked against the guardrails again at commit. Breadcrumbs are notes about the area you are working in, and you are shown them for any file you name in a tool call or read with a command such as `cat`.",
           "The whole guard is `flow.config.ts` — every rule that fires is reachable from that one file, whether it comes from a pack the config imports or from a pack this repo writes itself. Nothing resolves at run time and nothing defaults: what you read there is what fires. Authoring a new entry is always welcome; never loosen a guardrail to get an edit through — that is the user's call.",
           "There is no bypass token anywhere in this system. A guardrail is on or off, and turning one off is `override(pack.entry).disabled(\"why\")` in flow.config.ts — a committed change, visible in review.",
-          "If the config will not load, every gated moment refuses until it is fixed. A guard that fails open is a guard that lies about being there. The ONE exception is the repair itself: while the config is broken you may still write `flow.config.ts` and the pack files it imports, because otherwise the rule that demands a fix also forbids it. Commands stay blocked, and so does the commit gate — nothing written under that exception reaches a commit until the config loads green.",
+          "If the config will not load, flow is off: no guardrail and no breadcrumb fires, and the load error comes with every call instead — at session start, with each write, delete and command, and at turn-end — so the guard is never off without you reading that it is. Writes and commands go through, so you fix the config the way you do any other work, `npm ci` for a missing package included. The commit gate refuses every commit until the config loads again, so nothing written while flow was off reaches a commit before every guardrail has checked it.",
         ].join("\n"),
       ),
 
