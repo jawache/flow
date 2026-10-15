@@ -32,7 +32,7 @@
 //   PATH                a directory holding one `flow` shim, so GIT's own pre-commit hook — which
 //                       flow neither spawns nor configures — can find the binary under test.
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { copyFileSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
@@ -120,12 +120,17 @@ function env(repo: string, rig: Rig): NodeJS.ProcessEnv {
   };
 }
 
-/** The built binary, run in a repo, with whatever of the world the caller has set up. */
-export function flow(repo: string, args: readonly string[], rig: Rig = {}, stdin = ""): Ran {
+/**
+ * The built binary, run in a repo, with whatever of the world the caller has set up.
+ *
+ * `stdin` is the text written to it, or an open file descriptor handed over as its stdin, for a run
+ * whose stdin is something no text can make, such as a file it cannot read.
+ */
+export function flow(repo: string, args: readonly string[], rig: Rig = {}, stdin: string | number = ""): Ran {
   // This node, by its path: a run given its own PATH may not have node on it.
   const result = spawnSync(process.execPath, [binary(), ...args], {
     cwd: repo,
-    input: stdin,
+    ...(typeof stdin === "number" ? { stdio: [stdin, "pipe", "pipe"] } : { input: stdin }),
     encoding: "utf8",
     env: env(repo, rig),
   });
@@ -150,6 +155,34 @@ export function git(repo: string, args: readonly string[], rig: Rig = {}): Ran {
 /** One payload, on the rail the host would send it on. */
 export const hook = (repo: string, event: string, payload: unknown, rig: Rig = {}): Ran =>
   flow(repo, ["hook", event], rig, JSON.stringify(payload));
+
+/** Bytes in `hookInPieces`' first write; the rest follows in a second. */
+const FIRST_PIECE = 16_384;
+
+/** Milliseconds `hookInPieces` pauses between its two writes. */
+const PIECE_PAUSE_MS = 300;
+
+/**
+ * One payload on a hook's stdin, written the way a host writes one far larger than a pipe's buffer:
+ * in pieces, with a pause between them, so the hook can empty the pipe before the next piece lands.
+ * `hook` cannot show that: spawnSync hands the whole input over before the child reads a byte.
+ */
+export async function hookInPieces(repo: string, event: string, payload: unknown, nodeFlags: readonly string[] = []): Promise<Ran> {
+  const text = JSON.stringify(payload);
+  const child = spawn("node", [...nodeFlags, binary(), "hook", event], { cwd: repo, env: env(repo, {}) });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
+  child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+  // A hook that gives up early closes its stdin, and the second write must not crash the suite for it.
+  child.stdin.on("error", () => undefined);
+  const exited = new Promise<number>((settle) => child.on("close", (code) => { settle(code ?? -1); }));
+  child.stdin.write(text.slice(0, FIRST_PIECE));
+  await new Promise((wait) => setTimeout(wait, PIECE_PAUSE_MS));
+  child.stdin.end(text.slice(FIRST_PIECE));
+  const code = await exited;
+  return { stdout, stderr, code };
+}
 
 /** A PreToolUse payload, as the host writes it. The session id is the caller's — rows are keyed by it. */
 export const pre = (tool: string, input: Record<string, unknown>, session = "t-1"): Record<string, unknown> => ({
@@ -264,15 +297,15 @@ export function bindInConfig(
  * THE FOUR WAYS A CONFIG STOPS LOADING — a breaker per way, given the config's own text.
  *
  * It lives here rather than in either suite because both need it and they need it to be the SAME
- * four. `live.test.ts` drives them through the hook rail (does the repair get through, does
- * everything else refuse, does the turn end); `product.test.ts` drives them through the verbs
- * (does every one of them answer 2). A second copy in either file is a copy that would stop
- * agreeing about what "broken" means, and the whole F3 finding was that the two ways of breaking
- * had drifted into two behaviours while everyone believed they were one.
+ * four. `live.test.ts` drives them through the hook rail (does every write and command get through
+ * with the load error, does the commit still refuse, does the turn end); `product.test.ts` drives
+ * them through the verbs (does every one of them answer 2). A second copy in either file is a copy
+ * that would stop agreeing about what "broken" means, and the whole F3 finding was that the two
+ * ways of breaking had drifted into two behaviours while everyone believed they were one.
  *
  * THE FIRST will not import. THE OTHER THREE import perfectly and the grammar refuses them — and
  * the second of those, a deleted `.message(…)`, is the break docs/user/explanation/fail-loud.md
- * tells a reader to make, which is why it is the one that mattered.
+ * tells a reader to make.
  *
  * Each breaker is a text edit, so it works on any config carrying the shape it names: the deleted
  * `.message` needs one, and the last two rewrite the `defineConfig([…])` line the caller passes in.

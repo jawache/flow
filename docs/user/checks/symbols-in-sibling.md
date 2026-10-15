@@ -21,6 +21,22 @@ Every other export is left out of the check, such as:
 
 When the sibling test does not exist, the check refuses the file with `sibling test not found`, whether or not the file exports anything.
 
+## What it reports
+
+A refusal names the sibling test once and lists every export it never mentions. The line prints under the entry's `.message(…)`.
+
+The output below is from the [example](#example) entry, bound in a pack named `house`. `src/domain/rooms.ts` exports `ROOM_JOIN_TILES`, `roomJoinSoFar` and `roomName`, and its test names only `roomName`. The commit gate prints:
+
+```
+flow — commit blocked:
+
+✗ house.exportsTested · src/domain/rooms.ts
+  The exports listed below are never named in this file's test. Write a test that uses each one, then write the change again: a reference is enough, as this is a nudge, not coverage.
+    not referenced in src/domain/rooms.test.ts: ROOM_JOIN_TILES, roomJoinSoFar
+
+Fix the above, then commit again.
+```
+
 ## Limits
 
 - **A destructured `export const`**, such as `export const { a, b } = obj`, is read as one name, `{ a, b }`. That text never matches as a word in the test, so the file is always refused.
@@ -39,7 +55,7 @@ exportsTested: guardrail()
   .on("src/domain/**/*.ts")
   .ignore("**/*.test.ts")
   .check(symbolsInSibling({ sibling: "{dir}/{name}.test.ts" }))
-  .message("An exported function is never referenced in its test — a cheap nudge, not coverage.")
+  .message("The exports listed below are never named in this file's test. Write a test that uses each one, then write the change again: a reference is enough, as this is a nudge, not coverage.")
   .test({
     pass:  [{ path: "src/domain/a.ts", content: "export const x = 1;", world: { fs: { "src/domain/a.test.ts": "expect(x)" } } }],
     block: [{ path: "src/domain/a.ts", content: "export const y = 1;", world: { fs: { "src/domain/a.test.ts": "nothing" } } }],
