@@ -700,15 +700,27 @@ describe("toResult — one refusal spelling, one injection spelling", () => {
   it("is LOUD on every rail that judges a tool call, and speaks without holding on the rest", () => {
     // The after-call rails say it the way every unseen call is said — the call ran and nothing it
     // changed was checked — never as a guard refusing a call that has already landed (#12).
-    for (const hook of ["pre-tool-use", "post-tool-use", "post-tool-use-failure"] as const) {
-      const answer = readFault(hook, "unparseable", "not JSON");
-      expect(answer.exitCode, hook).toBe(2);
-      expect(answer.stderr, hook).toBe(
-        hook === "pre-tool-use"
-          ? `\n${faultText(hook, "unparseable", "not JSON")}\n`
-          : deltaFault(`[flow hook ${hook}] could not read its payload (not JSON).`).stderr,
-      );
-    }
+    expect(readFault("pre-tool-use", "unparseable", "not JSON")).toStrictEqual({
+      stdout: "",
+      stderr: "\n[flow hook pre-tool-use] the guard could not PARSE its payload (not JSON).\n",
+      exitCode: 2,
+    });
+    expect(readFault("post-tool-use", "unparseable", "not JSON")).toStrictEqual({
+      stdout: "",
+      stderr:
+        "\nflow — could not see what this call changed:\n\n" +
+        "[flow hook post-tool-use] could not read its payload (not JSON).\n\n" +
+        "The call ran, and nothing it changed was checked or put back. Check what the call changed before you go on.\n",
+      exitCode: 2,
+    });
+    expect(readFault("post-tool-use-failure", "unreadable", "EBADF")).toStrictEqual({
+      stdout: "",
+      stderr:
+        "\nflow — could not see what this call changed:\n\n" +
+        "[flow hook post-tool-use-failure] could not read its payload (EBADF).\n\n" +
+        "The call ran, and nothing it changed was checked or put back. Check what the call changed before you go on.\n",
+      exitCode: 2,
+    });
     for (const hook of ["session-start", "stop", "notification"] as const) {
       const answer = readFault(hook, "unreadable", "EBADF");
       expect(answer.exitCode, hook).toBe(0);
