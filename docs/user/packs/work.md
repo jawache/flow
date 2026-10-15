@@ -78,9 +78,9 @@ A builder owns its phase, not the plan — the verdict, the amendment and the co
 ```
 {
   "ban": [
-    "(?:^|[\\n;&|(]\\s*)\\s*work\\s+plan\\s+(?:verdict|amend)\\b",
-    "(?:^|[\\n;&|(]\\s*)\\s*work\\s+(?:save|task)\\b",
-    "(?:^|[\\n;&|(]\\s*)\\s*work\\s+cost\\s+record\\b"
+    "work\\s+plan\\s+(?:verdict|amend)\\b",
+    "work\\s+(?:save|task)\\b",
+    "work\\s+cost\\s+record\\b"
   ]
 }
 ```
@@ -153,7 +153,7 @@ The parent records verdicts; a box is ticked by the child that built it, with it
 ```
 {
   "ban": [
-    "(?:^|[\\n;&|(]\\s*)\\s*work\\s+plan\\s+tick\\b"
+    "work\\s+plan\\s+tick\\b"
   ]
 }
 ```
@@ -195,7 +195,7 @@ The inbox is the human's speccing queue — an agent raises a finding in chat, n
 ```
 {
   "ban": [
-    "(?:^|[\\n;&|(]\\s*)\\s*work\\s+inbox\\s+new\\b"
+    "work\\s+inbox\\s+new\\b"
   ]
 }
 ```
@@ -216,6 +216,7 @@ What you have is a finding. Say it in the chat — headline, why it matters, wha
 
 - running `work inbox list`
 - running `echo "the human runs work inbox new themselves" >> note.md`
+- running `git commit -m "docs: the human runs work inbox new themselves"`
 - running `cat > note.md <<'EOF'
 work inbox new --summary x
 EOF`
@@ -243,7 +244,8 @@ A backtick inside a double-quoted argument of a work verb that records prose is 
   "ban": [
     "(?:work\\s+(?:plan|task|recap|record|spec|complete)\\b)[^\"`]*(?:\"(?:(?!<<-?')[^\"])*\"[^\"`]*)*\"(?:(?!<<-?')[^\"])*`"
   ],
-  "matchHeredocs": true
+  "matchHeredocs": true,
+  "wholeLine": true
 }
 ```
 

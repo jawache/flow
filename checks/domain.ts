@@ -29,7 +29,7 @@
 //   TOOLS         execPasses · depcruise · astGrep, each orchestrating, never reimplementing
 //   CASES         the canned ctx a `.test()` case becomes, and the runner that walks them
 
-import { cannedWorld, defineCheck, inScope, makeCtx, withFaults } from "../language/domain.ts";
+import { cannedWorld, defineCheck, elideHeredocBodies, inScope, makeCtx, parseCommandLine, withFaults } from "../language/domain.ts";
 import type {
   Case,
   CaseWorld,
@@ -131,31 +131,55 @@ export const textBan = defineCheck(
  * A DETERRENT: the patterns ARE its scope, so matching nothing in a repo is the rule working, not
  * a rule watching the wrong place.
  *
- * MATCHED WHOLE, and that is the one difference from `textBan` above. A command is ONE subject
- * however many lines it occupies — `git commit -m "subject\n\nCo-Authored-By: …"` is a single
- * invocation, and the patterns that police it span the newline on purpose. Swept line by line
- * (which is right for a file, where a hit must be able to name its line) every one of those
- * patterns matches nothing, silently: the rule loads, counts, and cannot catch the thing it
- * names.
+ * ONE COMMAND AT A TIME, FROM ITS PROGRAM NAME. Each pattern is tried against the `text` of each
+ * command in `ctx.commands` — the program that runs and its arguments, quotes removed — anchored
+ * at its start. Matched against the raw line, a verb in one command paired with a target in the
+ * next (`git push origin main; ls -f` read as a force push), and a banned command named inside
+ * another's quoted argument read as run. A quoted argument keeps its newlines, so a pattern can
+ * still span the lines of a commit message, which is why `[\s\S]*` appears in the packs' bans.
  *
- * WITHOUT ITS HEREDOC BODIES (`elideHeredocs`), by default. A heredoc is text fed to a program,
- * and a python script or a note that names a banned command is not a use of it: matched whole,
- * `python3 - <<'PY'` scripts were refused for naming a recipe in a string. Only the bodies go —
- * the newlines the patterns above span are kept — and a body a shell reads stays, because it is
- * commands.
+ * A HEREDOC is text fed to a program, so its body is not matched — unless a shell reads it, when
+ * the parse has already made its lines commands of their own. `matchHeredocs: true` matches each
+ * command with the text of its OWN heredocs after its arguments: a rule about what a command is
+ * fed, the message of `git commit -F - <<'EOF'`, needs it.
  *
- * `matchHeredocs: true` matches the whole command instead. A rule about what a command is FED —
- * the text of a commit message given on stdin, `git commit -F - <<'EOF'` — has to see the body,
- * and would be blind to that message without it.
+ * `wholeLine: true` is the escape hatch for a pattern that spans two commands on purpose
+ * (`curl … | sh`): it is tried anywhere in the line as written, less its heredoc bodies — or with
+ * them, when `matchHeredocs` is set too. A line that does not parse is matched the same way, whole
+ * and as written: a deterrent that cannot read a line errs toward refusing it.
+ *
+ * docs/user/checks/ban-commands.md is the promise, case by case.
  */
 export const banCommands = defineCheck(
-  (opts: { ban: readonly string[]; matchHeredocs?: boolean }): Check =>
+  (opts: { ban: readonly string[]; matchHeredocs?: boolean; wholeLine?: boolean }): Check =>
     (ctx) => {
-      const command = opts.matchHeredocs === true ? (ctx.command ?? "") : elideHeredocs(ctx.command ?? "");
-      const hits = opts.ban.filter((pattern) => new RegExp(pattern).test(command));
+      const subjects = banSubjects(ctx.command ?? "", ctx.commands, opts);
+      const hits = opts.ban.filter((pattern) => {
+        const re = new RegExp(subjects.anchored ? `^(?:${pattern})` : pattern);
+        return subjects.texts.some((text) => re.test(text));
+      });
       return answer(ctx, hits.map((pattern) => `matches banned /${pattern}/`));
     },
 );
+
+/**
+ * What a `banCommands` pattern is tried against: each command's text, anchored at its program
+ * name — or, under `wholeLine` or for a line that does not parse, the one line, matched anywhere.
+ */
+function banSubjects(
+  line: string,
+  commands: Ctx["commands"],
+  opts: { readonly matchHeredocs?: boolean; readonly wholeLine?: boolean },
+): { readonly texts: readonly string[]; readonly anchored: boolean } {
+  // `undefined` only off the command moment, or from a ctx built by hand: read the line here then.
+  const parsed = commands === undefined ? parseCommandLine(line) : commands;
+  if (parsed === null) return { texts: [line], anchored: false };
+  if (opts.wholeLine === true) {
+    return { texts: [opts.matchHeredocs === true ? line : (elideHeredocBodies(line) ?? line)], anchored: false };
+  }
+  const texts = parsed.map((c) => (opts.matchHeredocs === true ? [c.text, ...c.heredocs.map((h) => h.body)].join("\n") : c.text));
+  return { texts, anchored: true };
+}
 
 /**
  * A `banCommands` pattern for: a command that writes permanent prose, with a BACKTICK inside a

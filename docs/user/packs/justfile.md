@@ -232,6 +232,8 @@ This repo has a recipe for that command — use it. The catalogue is the tooling
 - running `python3 - <<'PY'
 print("npx vitest")
 PY`
+- running `echo 'npx vitest'`
+- running `gh issue create --body "the builder ran npx vitest instead"`
 
 **blocks**
 
@@ -240,6 +242,7 @@ PY`
 print("x")
 PY
 npx vitest`
+- running `cd app && npx vitest`
 
 ## Where each part of this page comes from
 

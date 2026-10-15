@@ -278,10 +278,13 @@ const SITE = ["cl", "aude", "\\.com/", "cl", "aude", "-code"].join("");
 const LINK = ["cl", "aude", ".com/", "cl", "aude", "-code"].join("");
 const ROBOT = "\u{1F916}";
 
-// `git commit` as a regex source, with any of git's own options between the two words: `-C <dir>`,
-// `-c key=value`, `--git-dir=…`. A builder in a worktree commits as `git -C <worktree> commit`,
-// and a pattern that wanted the two words side by side let every one of those commits through.
-const GIT_COMMIT = String.raw`git(?:\s+-[Cc]\s+(?:"[^"]*"|'[^']*'|\S+)|\s+--[\w-]+(?:=\S+)?)*\s+commit`;
+// `git commit` as a regex source, from the program name, with any of git's own options between the
+// two words: `-C <dir>`, `-c key=value`, `--git-dir=…`. A builder in a worktree commits as
+// `git -C <worktree> commit`, and a pattern that wanted the two words side by side let every one
+// of those commits through. The parse has already removed the quotes, so a value is one word.
+const GIT_COMMIT = String.raw`(?:\S*/)?git(?:\s+-[Cc]\s+\S+|\s+--[\w-]+(?:=\S+)?)*\s+commit`;
+// `gh pr` or `gh issue`, run bare or through `work gh`, the wrapper a repo driven by work runs it as.
+const GH_PROSE = String.raw`(?:\S*/)?(?:work\s+)?gh\s+(?:pr|issue)\b`;
 
 /** What this pack cannot know: which recipe cuts a release, and which file carries the version. */
 export interface Release {
@@ -362,8 +365,8 @@ export const git = definePack("git", (repo: Release) => {
           `${GIT_COMMIT}[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(${VENDOR}|[Aa]nthropic)`,
           `${GIT_COMMIT}[\\s\\S]*[Gg]enerated with[\\s\\S]*${VENDOR}`,
           `${GIT_COMMIT}[\\s\\S]*(${SITE}|🤖 Generated)`,
-          `gh (pr|issue)[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(${VENDOR}|[Aa]nthropic)`,
-          `gh (pr|issue)[\\s\\S]*(${SITE}|🤖 Generated)`,
+          `${GH_PROSE}[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(${VENDOR}|[Aa]nthropic)`,
+          `${GH_PROSE}[\\s\\S]*(${SITE}|🤖 Generated)`,
         ],
         // A message fed on stdin — `git commit -F - <<'EOF'` — is still the commit's message.
         matchHeredocs: true,
@@ -384,6 +387,10 @@ export const git = definePack("git", (repo: Release) => {
         `git commit -F - <<'EOF'\nfix(auth): renew the session\n\n${TRAILER}: ${VENDOR}\nEOF`,
         `git commit -m "fix(auth): renew the session\n\n${TRAILER}: ${VENDOR} <noreply@anthropic.com>"`,
         `gh pr create --body "${TRAILER}: ${VENDOR}"`,
+        // …and through `work gh`, which is how a repo driven by work runs every gh call, on the
+        // line or fed as the body on stdin.
+        `work gh pr create --title x --body "${TRAILER}: ${VENDOR}"`,
+        `work gh issue create --title x --body-file - <<'EOF'\nopened with ${LINK}\nEOF`,
         // The generated-with line, and the tool's own footer — the site link and the robot emoji
         // beside it. Three of the five patterns had no case at all until this read.
         `git commit -m "fix(auth): renew the session\n\nGenerated with ${VENDOR} Code"`,
@@ -509,16 +516,12 @@ export const git = definePack("git", (repo: Release) => {
   noForcePush: guardrail()
     .at(command)
     .description("Blocks a force-push — rewriting pushed history is the one loss a stash cannot undo.")
-    // ANCHORED TO A COMMAND POSITION — the start of the line, or just past a shell operator —
-    // exactly as `work.noAgentInboxItems` is. Unanchored, the pattern refuses a script for EDITING
-    // the words, wherever they sit inside a heredoc it is writing, and a rule that cries wolf is
-    // one agents learn to route around.
+    // Matched one command at a time, from its program name: the `-f` must be an argument of the
+    // push itself, never of the command after it (`git push origin main; ls -f`), and the words in
+    // a note or a heredoc a script is writing are not a push at all.
     .check(
       banCommands({
-        ban: [
-          "(?:^|[\\n;&|(]\\s*)\\s*git\\s+push[^\\n]*\\s(--force|-f)(\\s|$)",
-          "(?:^|[\\n;&|(]\\s*)\\s*git\\s+push[^\\n]*--force-with-lease",
-        ],
+        ban: ["git\\s+push\\b[^\\n]*\\s(--force|-f)(\\s|$)", "git\\s+push\\b[^\\n]*--force-with-lease"],
       }),
     )
     .message(
@@ -533,6 +536,12 @@ export const git = definePack("git", (repo: Release) => {
         "cat > notes.md <<'EOF'\nnever run git push --force here\nEOF",
         // …and a heredoc body is not the command line at all, even where a body line starts with the verb.
         "cat > notes.md <<'EOF'\ngit push --force origin main\nEOF",
+        // ONE COMMAND AT A TIME: the flag belongs to the command after the push (#9, #14).
+        "git push origin main; ls -f",
+        "git push origin HEAD; gh api graphql -f query=x",
+        "git push && gh api -f a=b repos/x/y",
+        // …and a push named inside another command's argument is not one.
+        'echo "never git push -f here"',
       ],
       block: [
         "git push --force origin main",
@@ -540,6 +549,7 @@ export const git = definePack("git", (repo: Release) => {
         "git status\ngit push --force origin main",
         "bash <<'EOF'\ngit push --force origin main\nEOF",
         "git push -f",
+        "git push -f origin main",
         "git push --force-with-lease origin main",
         // …and a POSITION is not the start of the string: a real force-push chained behind another
         // command is still one, which is the half an anchor written as `^` alone would let through.
@@ -585,7 +595,14 @@ export const git = definePack("git", (repo: Release) => {
     .at(command)
     .description("A backtick inside a double-quoted argument of a commit or a PR body is live command substitution, not Markdown.")
     // matchHeredocs: an UNQUOTED heredoc in a `$(…)` is live, and its body is the message.
-    .check(banCommands({ ban: [substitutionInProse(["git\\s+commit\\b[^\\n]*?-{1,2}[a-zA-Z]*m", "gh\\s+(?:pr|issue)\\b"])], matchHeredocs: true }))
+    // wholeLine: this pattern reads quotes as written, which a command's text no longer has.
+    .check(
+      banCommands({
+        ban: [substitutionInProse(["git\\s+commit\\b[^\\n]*?-{1,2}[a-zA-Z]*m", "gh\\s+(?:pr|issue)\\b"])],
+        matchHeredocs: true,
+        wholeLine: true,
+      }),
+    )
     .message(SUBSTITUTION_MESSAGE)
     .test({
       pass: [

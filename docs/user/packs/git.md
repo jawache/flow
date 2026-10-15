@@ -94,11 +94,11 @@ Blocks Claude/Anthropic attribution in commits, PRs and issues.
 ```
 {
   "ban": [
-    "git(?:\\s+-[Cc]\\s+(?:\"[^\"]*\"|'[^']*'|\\S+)|\\s+--[\\w-]+(?:=\\S+)?)*\\s+commit[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(Claude|[Aa]nthropic)",
-    "git(?:\\s+-[Cc]\\s+(?:\"[^\"]*\"|'[^']*'|\\S+)|\\s+--[\\w-]+(?:=\\S+)?)*\\s+commit[\\s\\S]*[Gg]enerated with[\\s\\S]*Claude",
-    "git(?:\\s+-[Cc]\\s+(?:\"[^\"]*\"|'[^']*'|\\S+)|\\s+--[\\w-]+(?:=\\S+)?)*\\s+commit[\\s\\S]*(claude\\.com/claude-code|🤖 Generated)",
-    "gh (pr|issue)[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(Claude|[Aa]nthropic)",
-    "gh (pr|issue)[\\s\\S]*(claude\\.com/claude-code|🤖 Generated)"
+    "(?:\\S*/)?git(?:\\s+-[Cc]\\s+\\S+|\\s+--[\\w-]+(?:=\\S+)?)*\\s+commit[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(Claude|[Aa]nthropic)",
+    "(?:\\S*/)?git(?:\\s+-[Cc]\\s+\\S+|\\s+--[\\w-]+(?:=\\S+)?)*\\s+commit[\\s\\S]*[Gg]enerated with[\\s\\S]*Claude",
+    "(?:\\S*/)?git(?:\\s+-[Cc]\\s+\\S+|\\s+--[\\w-]+(?:=\\S+)?)*\\s+commit[\\s\\S]*(claude\\.com/claude-code|🤖 Generated)",
+    "(?:\\S*/)?(?:work\\s+)?gh\\s+(?:pr|issue)\\b[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(Claude|[Aa]nthropic)",
+    "(?:\\S*/)?(?:work\\s+)?gh\\s+(?:pr|issue)\\b[\\s\\S]*(claude\\.com/claude-code|🤖 Generated)"
   ],
   "matchHeredocs": true
 }
@@ -142,6 +142,10 @@ EOF`
 
 Co-Authored-By: Claude <noreply@anthropic.com>"`
 - running `gh pr create --body "Co-Authored-By: Claude"`
+- running `work gh pr create --title x --body "Co-Authored-By: Claude"`
+- running `work gh issue create --title x --body-file - <<'EOF'
+opened with claude.com/claude-code
+EOF`
 - running `git commit -m "fix(auth): renew the session
 
 Generated with Claude Code"`
@@ -224,8 +228,8 @@ Blocks a force-push — rewriting pushed history is the one loss a stash cannot 
 ```
 {
   "ban": [
-    "(?:^|[\\n;&|(]\\s*)\\s*git\\s+push[^\\n]*\\s(--force|-f)(\\s|$)",
-    "(?:^|[\\n;&|(]\\s*)\\s*git\\s+push[^\\n]*--force-with-lease"
+    "git\\s+push\\b[^\\n]*\\s(--force|-f)(\\s|$)",
+    "git\\s+push\\b[^\\n]*--force-with-lease"
   ]
 }
 ```
@@ -249,6 +253,10 @@ EOF`
 - running `cat > notes.md <<'EOF'
 git push --force origin main
 EOF`
+- running `git push origin main; ls -f`
+- running `git push origin HEAD; gh api graphql -f query=x`
+- running `git push && gh api -f a=b repos/x/y`
+- running `echo "never git push -f here"`
 
 **blocks**
 
@@ -259,6 +267,7 @@ git push --force origin main`
 git push --force origin main
 EOF`
 - running `git push -f`
+- running `git push -f origin main`
 - running `git push --force-with-lease origin main`
 - running `git status && git push --force origin main`
 
@@ -333,7 +342,8 @@ A backtick inside a double-quoted argument of a commit or a PR body is live comm
   "ban": [
     "(?:git\\s+commit\\b[^\\n]*?-{1,2}[a-zA-Z]*m|gh\\s+(?:pr|issue)\\b)[^\"`]*(?:\"(?:(?!<<-?')[^\"])*\"[^\"`]*)*\"(?:(?!<<-?')[^\"])*`"
   ],
-  "matchHeredocs": true
+  "matchHeredocs": true,
+  "wholeLine": true
 }
 ```
 
