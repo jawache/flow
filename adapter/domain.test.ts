@@ -108,6 +108,9 @@ import {
   staleRegistrations,
   withRegistrations,
   withMachineCommandsUpToDate,
+  listsFlow,
+  PACKAGE_BIN,
+  PACKAGE_DIR,
   callKey,
   deltaFault,
   included,
@@ -1684,8 +1687,19 @@ describe("the hook registrations flow writes", () => {
     for (const registration of HOOK_REGISTRATIONS)
       expect(ourHookCommand(registration.command), registration.command).toBe(true);
     expect(HOOK_REGISTRATIONS.map((r) => r.command)).toContain(
-      'PATH="$CLAUDE_PROJECT_DIR/node_modules/.bin:$PATH" flow hook session-start',
+      'f="$CLAUDE_PROJECT_DIR/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook session-start; exec flow hook session-start',
     );
+  });
+
+  // A `flow` in node_modules/.bin can be anyone's: Facebook's `flow-bin` installs one, and nothing
+  // guards the folder. Every caller flow writes runs its own package's file, by path, or the PATH's.
+  it("writes no command that finds flow through node_modules/.bin — only its own package's file, then the PATH", () => {
+    for (const command of [...HOOK_REGISTRATIONS.map((r) => r.command), PRE_COMMIT]) {
+      expect(command, command).not.toContain(LOCAL_BIN);
+      expect(command, command).not.toMatch(/\bPATH=/);
+      expect(command, command).toContain(PACKAGE_BIN);
+    }
+    expect(PACKAGE_BIN).toBe(`${PACKAGE_DIR}/dist/flow.mjs`);
   });
 
   it("recognises its own registration whatever path stands in front of the binary", () => {
@@ -1782,7 +1796,7 @@ describe("the hook registrations flow writes", () => {
     expect(status(statusFacts({ settings: older })).fittings.find((f) => f.id === "hooks")?.ok).toBe(true);
 
     const { settings, added } = withRegistrations(older);
-    expect(added).toEqual(five.map((event) => `${event} (now runs the flow in node_modules/.bin first)`));
+    expect(added).toEqual(five.map((event) => `${event} (now runs the flow in node_modules/@jawache/flow first)`));
     const hooks = (settings as { model: string; hooks: Record<string, { matcher?: string; hooks: { command: string }[] }[]> }).hooks;
     const flows = Object.values(hooks).flatMap((entries) => entries.flatMap((entry) => entry.hooks.map((h) => h.command)).filter(ourHookCommand));
     expect(flows, "exactly five of flow's, each the new command").toEqual(HOOK_REGISTRATIONS.map((r) => r.command));
@@ -1808,7 +1822,7 @@ describe("the hook registrations flow writes", () => {
       },
     };
     const { settings, added } = withRegistrations(older);
-    expect(added).toEqual(["PostToolUse (widened to every tool, now runs the flow in node_modules/.bin first)"]);
+    expect(added).toEqual(["PostToolUse (widened to every tool, now runs the flow in node_modules/@jawache/flow first)"]);
     expect((settings as { hooks: Record<string, unknown[]> }).hooks["PostToolUse"]).toEqual([
       {
         matcher: "*",
@@ -1843,7 +1857,7 @@ describe("the hook registrations flow writes", () => {
       },
     };
     const { settings, added } = withRegistrations(older);
-    expect(added).toEqual(["SubagentStop (now runs the flow in node_modules/.bin first)"]);
+    expect(added).toEqual(["SubagentStop (now runs the flow in node_modules/@jawache/flow first)"]);
     expect((settings as { hooks: Record<string, unknown[]> }).hooks["SubagentStop"]).toEqual([
       { hooks: [{ type: "command", command: hookCommand("stop") }] },
     ]);
@@ -1866,10 +1880,12 @@ describe("the git gate flow arms", () => {
   });
 
   // A DEV DEPENDENCY GUARDS THE REPO: git hands its hooks the PATH it was given, and a repo with
-  // flow only in node_modules/.bin has none there, so the gate puts the repo's own copy first.
-  it("puts the repo's node_modules/.bin first on the PATH before it runs flow", () => {
+  // flow only as a dev dependency has none there, so the gate runs the repo's own package first.
+  it("runs the repo's own @jawache/flow first, then the flow on the PATH", () => {
     const lines = PRE_COMMIT.split("\n").filter((line) => line !== "" && !line.startsWith("#"));
-    expect(lines).toEqual(['PATH="$PWD/node_modules/.bin:$PATH"', "exec flow hook commit"]);
+    expect(lines).toEqual([GATE_LOCAL_LINE, GATE_RUN_LINE]);
+    expect(GATE_LOCAL_LINE).toBe('f="$PWD/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook commit');
+    expect(GATE_RUN_LINE).toBe("exec flow hook commit");
   });
 
   it("names one hooks directory, and one gate inside it", () => {
@@ -2162,6 +2178,8 @@ describe("settingsFileFor — which settings file holds flow's hooks", () => {
 
   it("is the repo's own when package.json lists flow as a dependency", () => {
     expect(settingsFileFor(manifest({ dependencies: { "@jawache/flow": "0.3.0" } }), machine)).toBe(".claude/settings.json");
+    expect(listsFlow(manifest({ dependencies: { "@jawache/flow": "0.3.0" } })), "the rule status judges the repo's own copy by").toBe(true);
+    expect(listsFlow(manifest({ name: "@jawache/flow" }))).toBe(false);
   });
 
   it("is the machine-wide one when package.json lists other packages only — this repo, which IS flow, among them", () => {
@@ -2329,8 +2347,8 @@ const statusFacts = (over: Partial<StatusFacts> = {}): StatusFacts => ({
   ...over,
 });
 
-/** The gate an older `flow init` wrote: today's, without the line that puts node_modules/.bin first. */
-const PATH_ONLY_GATE = PRE_COMMIT.replace(/^PATH=.*\n/m, "");
+/** The gate an older `flow init` wrote: today's, without the line that runs the repo's own package first. */
+const PATH_ONLY_GATE = PRE_COMMIT.replace(`${GATE_LOCAL_LINE}\n`, "");
 
 describe("the binary fitting — can the hooks and the gate find flow", () => {
   const binary = (modules: boolean, path: boolean, over: Partial<StatusFacts> = {}) => {
@@ -2340,7 +2358,7 @@ describe("the binary fitting — can the hooks and the gate find flow", () => {
 
   it("fixes its two old shapes as fixtures: a gate without the PATH line, and the bare registration", () => {
     expect(armsFlow(PATH_ONLY_GATE)).toBe(true);
-    expect(PATH_ONLY_GATE).not.toContain(LOCAL_BIN);
+    expect(PATH_ONLY_GATE).not.toContain(PACKAGE_BIN);
     expect(bareRegistrations(BARE_SETTINGS)).toEqual(HOOK_REGISTRATIONS.map((r) => r.event));
   });
 
@@ -2350,12 +2368,12 @@ describe("the binary fitting — can the hooks and the gate find flow", () => {
     expect(green).toBe(true);
   });
 
-  // THE DEV DEPENDENCY: today's gate and registrations look in node_modules/.bin first, so the
+  // THE DEV DEPENDENCY: today's gate and registrations run the repo's own package first, so the
   // repo's copy answers them with no flow on the PATH, and wins over one that is there.
-  it("names node_modules/.bin when the repo has one, whatever the PATH holds", () => {
+  it("names node_modules/@jawache/flow when the repo has its own, whatever the PATH holds", () => {
     for (const path of [false, true]) {
       const { lines, green } = binary(true, path);
-      expect(lines).toContain("  ✓ binary: the hooks and the gate run the flow in node_modules/.bin");
+      expect(lines).toContain("  ✓ binary: the hooks and the gate run the flow in node_modules/@jawache/flow");
       expect(green).toBe(true);
     }
   });
@@ -2364,8 +2382,8 @@ describe("the binary fitting — can the hooks and the gate find flow", () => {
     const { fitting, green } = binary(true, false, { gateText: PATH_ONLY_GATE });
     expect(fitting?.ok).toBe(false);
     expect(fitting?.detail).toBe(
-      "the flow in node_modules/.bin is not on the PATH, and the gate looks for flow on the PATH alone, so git refuses every commit — " +
-        'add `PATH="$PWD/node_modules/.bin:$PATH"` to .githooks/pre-commit above the line that runs flow; ' +
+      "the flow in node_modules/@jawache/flow is not on the PATH, and the gate looks for flow on the PATH alone, so git refuses every commit — " +
+        'add `f="$PWD/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook commit` to .githooks/pre-commit above the line that runs flow; ' +
         "or install it for every repo with `npm i -g @jawache/flow`.",
     );
     expect(green).toBe(false);
@@ -2405,10 +2423,10 @@ describe("the binary fitting — can the hooks and the gate find flow", () => {
     expect(binary(true, true, { settings: BARE_SETTINGS }).fitting).toEqual({
       id: "binary",
       ok: true,
-      detail: "the hooks run the flow on the PATH, and the gate the flow in node_modules/.bin",
+      detail: "the hooks run the flow on the PATH, and the gate the flow in node_modules/@jawache/flow",
     });
     expect(binary(true, true, { gateText: PATH_ONLY_GATE }).fitting?.detail).toBe(
-      "the hooks run the flow in node_modules/.bin, and the gate the flow on the PATH",
+      "the hooks run the flow in node_modules/@jawache/flow, and the gate the flow on the PATH",
     );
     expect(binary(false, true, { gateText: PATH_ONLY_GATE, settings: BARE_SETTINGS }).fitting?.detail).toBe(
       "the hooks and the gate run the flow on the PATH",
@@ -2439,7 +2457,7 @@ describe("the binary fitting — can the hooks and the gate find flow", () => {
     for (const over of [{}, { gateText: PATH_ONLY_GATE, settings: BARE_SETTINGS }]) {
       const { fitting, green, lines } = binary(false, false, over);
       expect(fitting?.ok).toBe(false);
-      expect(fitting?.detail).toContain(`no flow in ${LOCAL_BIN} or on the PATH`);
+      expect(fitting?.detail).toContain(`no flow in ${PACKAGE_DIR} or on the PATH`);
       expect(fitting?.detail).toContain("npm i -D @jawache/flow");
       expect(fitting?.detail).toContain("npm i -g @jawache/flow");
       expect(green).toBe(false);

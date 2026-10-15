@@ -28,7 +28,6 @@ import {
   settingsHome,
   sh,
   shimBin,
-  writeShim,
   BREAKS,
   bindInConfig,
   fixturePack,
@@ -175,15 +174,17 @@ describe("flow status", () => {
 
   // THE SHELL'S OWN LOOKUP, end to end. The PATH holds git's exec-path folder and nothing else: git,
   // which status asks about the hooks path, and no `flow` — the machine's PATH cannot promise that.
-  it("goes red on the binary, and exits 1, when neither node_modules/.bin nor the PATH has flow", () => {
+  // The repo does not list @jawache/flow, so the link `flow init` makes is the running flow, not the
+  // repo's own copy, and status judges it by the PATH alone.
+  it("goes red on the binary, and exits 1, when the repo has no flow of its own and the PATH has none", () => {
     const stranded = newRepo();
     try {
       expect(flow(stranded, ["init"]).code).toBe(0);
       const gitOnly = runGit(stranded, ["--exec-path"]).stdout.trim();
       expect(existsSync(join(gitOnly, "flow")), "the PATH this run is given has no flow").toBe(false);
-      expect(existsSync(join(stranded, "node_modules", ".bin", "flow")), "nor does the repo").toBe(false);
+      expect(existsSync(join(stranded, "package.json")), "nor does the repo list flow").toBe(false);
       const said = runFlow(stranded, ["status"], { home, path: gitOnly });
-      expect(said.stdout).toContain("✗ binary: no flow in node_modules/.bin or on the PATH");
+      expect(said.stdout).toContain("✗ binary: no flow in node_modules/@jawache/flow or on the PATH");
       expect(said.stdout).toContain("1 red line");
       expect(said.code).toBe(1);
     } finally {
@@ -191,23 +192,29 @@ describe("flow status", () => {
     }
   });
 
-  // A DEV DEPENDENCY ALONE, end to end: flow is in the repo's node_modules/.bin and the PATH holds
-  // git and nothing else. The gate and the registrations `flow init` writes look there first, so
-  // status names that copy, git's own hook runs it, and a registered command answers through a shell.
-  it("names node_modules/.bin on the green binary line, and the gate and a hook run that copy, with no flow on the PATH", () => {
+  // A DEV DEPENDENCY ALONE, end to end: the repo lists @jawache/flow, its package is in
+  // node_modules/@jawache/flow (the link `flow init` makes, as `npm link` would), and the PATH holds
+  // git, node and nothing else. The gate and the registrations run that package's own file, so status
+  // names it, git's own hook runs it, and a registered command answers through a shell.
+  it("names node_modules/@jawache/flow on the green binary line, and the gate and a hook run that copy, with no flow on the PATH", () => {
     const local = newRepo();
+    const nodeOnly = mkdtempSync(join(tmpdir(), "flow-node-"));
     try {
-      expect(flow(local, ["init"]).code).toBe(0);
-      const localBin = join(local, "node_modules", ".bin");
-      mkdirSync(localBin, { recursive: true });
-      writeShim(localBin);
-      // git, and the system's own folders for the shell flow runs git through — no flow in any.
-      const path = [runGit(local, ["--exec-path"]).stdout.trim(), "/usr/bin", "/bin"];
+      const pkg = { name: "consumer", version: "1.0.0", devDependencies: { "@jawache/flow": "*" } };
+      writeFileSync(join(local, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
+      expect(flow(local, ["init"], home).code).toBe(0);
+      expect(existsSync(join(local, "node_modules", "@jawache", "flow", "dist", "flow.mjs")), "the repo's own package").toBe(true);
+      // A `flow` in node_modules/.bin that is not flow, as Facebook's flow-bin installs: never run.
+      mkdirSync(join(local, "node_modules", ".bin"), { recursive: true });
+      writeFileSync(join(local, "node_modules", ".bin", "flow"), "#!/bin/sh\necho not-flow\nexit 0\n", { mode: 0o755 });
+      symlinkSync(process.execPath, join(nodeOnly, "node"));
+      // git, node, and the system's own folders for the shell flow runs git through — no flow in any.
+      const path = [runGit(local, ["--exec-path"]).stdout.trim(), nodeOnly, "/usr/bin", "/bin"];
       for (const dir of path) expect(existsSync(join(dir, "flow")), `${dir} has no flow`).toBe(false);
       const world = { home, path: path.join(":") };
 
       const said = runFlow(local, ["status"], world);
-      expect(said.stdout).toContain("✓ binary: the hooks and the gate run the flow in node_modules/.bin");
+      expect(said.stdout).toContain("✓ binary: the hooks and the gate run the flow in node_modules/@jawache/flow");
       expect(said.code, said.stdout).toBe(0);
 
       const MARKER = ["DO", "NOT", "COMMIT"].join("-");
@@ -215,15 +222,18 @@ describe("flow status", () => {
       runGit(local, ["add", "secret.txt"], world);
       const refused = runGit(local, ["commit", "-m", "test: a marked file"], world);
       expect(refused.code, "git refuses when the gate exits non-zero").not.toBe(0);
-      expect(refused.stderr, "flow refused it, not `flow: not found`").toContain("demo.noMarkedFiles");
+      expect(refused.stderr, "flow refused it, not `flow: not found` and not the other flow").toContain("demo.noMarkedFiles");
 
-      const registered = (settings()["hooks"] as Record<string, { hooks: { command: string }[] }[]>)["PreToolUse"]?.[0]?.hooks[0]?.command;
-      expect(registered).toBe('PATH="$CLAUDE_PROJECT_DIR/node_modules/.bin:$PATH" flow hook pre-tool-use');
+      const written = JSON.parse(readFileSync(join(local, ".claude", "settings.json"), "utf8")) as {
+        hooks: Record<string, { hooks: { command: string }[] }[]>;
+      };
+      const registered = written.hooks["PreToolUse"]?.[0]?.hooks[0]?.command;
+      expect(registered).toBe('f="$CLAUDE_PROJECT_DIR/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook pre-tool-use; exec flow hook pre-tool-use');
       const answered = sh(local, registered ?? "", world, JSON.stringify(pre("Bash", { command: "git push --force origin main" }, "dev-dep-1")));
       expect(answered.code, answered.stderr).toBe(2);
       expect(answered.stderr).toContain("demo.noForcePush");
     } finally {
-      rmSync(local, { recursive: true, force: true });
+      for (const dir of [local, nodeOnly]) rmSync(dir, { recursive: true, force: true });
     }
   });
 
@@ -278,11 +288,13 @@ describe("flow init, run again", () => {
       expect(again.code).toBe(0);
       // The older flow wrote the bare command too, so the one entry is widened and rewritten at once.
       expect(again.stdout).toContain(
-        "PostToolUse (widened to every tool, now runs the flow in node_modules/.bin first) · PostToolUseFailure",
+        "PostToolUse (widened to every tool, now runs the flow in node_modules/@jawache/flow first) · PostToolUseFailure",
       );
       const hooks = (JSON.parse(readFileSync(join(older, "settings.json"), "utf8")) as { hooks: Record<string, unknown[]> }).hooks;
       expect(hooks["PostToolUse"], "one entry, widened — never a second one beside it").toHaveLength(1);
-      expect(JSON.stringify(hooks["PostToolUse"])).toContain(JSON.stringify('PATH="$CLAUDE_PROJECT_DIR/node_modules/.bin:$PATH" flow hook post-tool-use'));
+      expect(JSON.stringify(hooks["PostToolUse"])).toContain(
+        JSON.stringify('f="$CLAUDE_PROJECT_DIR/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook post-tool-use; exec flow hook post-tool-use'),
+      );
       expect(flow(repo, ["status"], older).code).toBe(0);
     } finally {
       rmSync(older, { recursive: true, force: true });

@@ -7,7 +7,7 @@ summary: "install flow as a dev dependency or globally, wire it into a repo with
 This guide shows you how to install flow, wire it into a repo, and remove it. flow needs **Node 24 or later**.
 
 > [!IMPORTANT]
-> Git and Claude Code run flow for you: the commit gate runs `flow hook commit`, and each Claude Code hook runs `flow hook <event>`. Each one looks for `flow` in the repo's `node_modules/.bin` first, then on the `PATH` that git and Claude Code use. If neither has it, every commit is refused with `flow: not found`, the session hooks check nothing, and `flow status` prints a red line.
+> Git and Claude Code run flow for you: the commit gate runs `flow hook commit`, and each Claude Code hook runs `flow hook <event>`. Each one runs the repo's own `@jawache/flow` package first, then the `flow` on the `PATH` that git and Claude Code use. If neither has it, every commit is refused with `flow: not found`, the session hooks check nothing, and `flow status` prints a red line.
 
 ## Install flow
 
@@ -70,10 +70,10 @@ With a dev dependency, type each `flow` command in this guide as `npx flow`.
 - **If you want an empty config**, run `flow init --empty`. It writes the same wiring with a config that binds no packs.
 - **If you already have a config or a commit hook**, run `flow init` anyway. It never writes over `flow.config.ts` or `.githooks/pre-commit`, and adds only what is missing.
 
-  If your commit hook does not run flow, add these two lines to the end of it. The first puts the repo's own flow first, and the second runs the gate:
+  If your commit hook does not run flow, add these two lines to the end of it. The first runs the repo's own `@jawache/flow` when it has one, and the second runs the `flow` on the `PATH` otherwise:
 
   ```
-  PATH="$PWD/node_modules/.bin:$PATH"
+  f="$PWD/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook commit
   exec flow hook commit
   ```
 

@@ -3458,17 +3458,38 @@ const REGISTERED: readonly { readonly hook: HookEvent; readonly matcher?: string
   { hook: "stop" },
 ];
 
-/** The repo's own bin folder, where a dev dependency's `flow` is, relative to the repo root. */
+/**
+ * The repo's bin folder, relative to the repo root. flow never runs a `flow` from here: any package
+ * can install one (Facebook's `flow-bin` does), and nothing guards the folder. `hostPath` drops it
+ * from the PATH npm hands one run.
+ */
 export const LOCAL_BIN = "node_modules/.bin";
 
+/** Where the repo's own `@jawache/flow` is, relative to the repo root: a dev dependency, or init's link. */
+export const PACKAGE_DIR = "node_modules/@jawache/flow";
+
+/** That package's own binary — the file its `bin` names. */
+export const PACKAGE_BIN = `${PACKAGE_DIR}/dist/flow.mjs`;
+
 /**
- * The command each registration runs: the repo's own `flow` first, then the PATH's.
+ * The repo-first half of a caller of flow: run the repo's own package's binary when it is there.
+ * `root` is how the shell names the repo: `$CLAUDE_PROJECT_DIR` for a hook, `$PWD` for git's.
+ */
+function repoFirst(root: string, verb: string): string {
+  return `f="${root}/${PACKAGE_BIN}"; [ -f "$f" ] && exec node "$f" ${verb}`;
+}
+
+/**
+ * The command each registration runs: the repo's own `@jawache/flow` first, then the PATH's.
  *
  * The host runs it through a shell with `$CLAUDE_PROJECT_DIR` set to the repo, so a repo with flow
- * only as a dev dependency answers its hooks, and its lockfile's version wins over a global one.
+ * only as a dev dependency answers its hooks, and its lockfile's version wins over a global one. It
+ * runs the package's own file, by path, never a `flow` in node_modules/.bin, which any package can
+ * put there. The same command goes in either settings file, so the host, which merges identical
+ * commands, runs it once when it is in both.
  */
 export function hookCommand(hook: HookEvent): string {
-  return `PATH="$CLAUDE_PROJECT_DIR/${LOCAL_BIN}:$PATH" flow hook ${hook}`;
+  return `${repoFirst("$CLAUDE_PROJECT_DIR", `hook ${hook}`)}; exec flow hook ${hook}`;
 }
 
 export const HOOK_REGISTRATIONS: readonly Registration[] = REGISTERED.map(({ hook, matcher }) => ({
@@ -3490,7 +3511,8 @@ export function settingsFileFor(manifest: string | null, machine: string): strin
   return listsFlow(manifest) ? REPO_SETTINGS : machine;
 }
 
-function listsFlow(manifest: string | null): boolean {
+/** Does this `package.json` list `@jawache/flow` as a dependency or a dev dependency? */
+export function listsFlow(manifest: string | null): boolean {
   if (manifest === null) return false;
   let parsed: unknown;
   try {
@@ -3680,7 +3702,7 @@ export function withRegistrations(settings: unknown): { settings: unknown; added
   for (const event of new Set([...HOOK_REGISTRATIONS.map((r) => r.event), ...bare])) {
     const why = [
       ...(stale.has(event) ? ["widened to every tool"] : []),
-      ...(bare.has(event) ? [`now runs the flow in ${LOCAL_BIN} first`] : []),
+      ...(bare.has(event) ? [`now runs the flow in ${PACKAGE_DIR} first`] : []),
     ];
     if (why.length > 0) added.push(`${event} (${why.join(", ")})`);
     else if (!already.has(event)) added.push(event);
@@ -3705,10 +3727,10 @@ export const GATE_PATH = `${HOOKS_DIR}/pre-commit`;
 export const SET_HOOKS_PATH = `git config core.hooksPath ${HOOKS_DIR}`;
 
 /**
- * The gate's line that puts the repo's own flow first: git runs the hook from the repo's root, so
- * `$PWD` is the repo. Written by `init`, looked for by `status`, and named in its fix.
+ * The gate's line that runs the repo's own `@jawache/flow` first: git runs the hook from the repo's
+ * root, so `$PWD` is the repo. Written by `init`, looked for by `status`, and named in its fixes.
  */
-export const GATE_LOCAL_LINE = `PATH="$PWD/${LOCAL_BIN}:$PATH"`;
+export const GATE_LOCAL_LINE = repoFirst("$PWD", "hook commit");
 
 /** The gate's line that runs flow, last, so its exit code is the hook's. */
 export const GATE_RUN_LINE = "exec flow hook commit";
@@ -3748,8 +3770,8 @@ export const PRE_COMMIT = `#!/bin/sh
 # for a human's commit, a merge and CI, with no session in the room. flow asks git itself what the
 # commit adds, changes and deletes.
 #
-# git runs this from the repo's root, so the repo's own flow, a dev dependency's, runs before any
-# on the PATH.
+# git runs this from the repo's root, so the repo's own @jawache/flow, a dev dependency's, runs
+# before any flow on the PATH.
 ${GATE_LOCAL_LINE}
 ${GATE_RUN_LINE}
 `;
@@ -4110,8 +4132,10 @@ export interface StatusFacts {
   /** The config's `snapshotInclude` globs: the ignored paths the snapshot records anyway. */
   readonly snapshotInclude: readonly string[];
   /**
-   * Where a `flow` the hooks and the gate call by name is: the repo's own `node_modules/.bin`, and
-   * the PATH this command was run with, less what npm added for this run (`hostPath`) — the nearest
+   * Where the flow the hooks and the gate run is. `modules`: the repo's `package.json` lists
+   * `@jawache/flow` and its package's binary is there — a link `flow init` made to the running flow,
+   * in a repo that does not list it, is that flow and not the repo's own. `path`: a `flow` on the
+   * PATH this command was run with, less what npm added for this run (`hostPath`) — the nearest
    * reading there is of the PATH git and the host hand their hooks.
    */
   readonly binary: { readonly modules: boolean; readonly path: boolean };
@@ -4285,14 +4309,14 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
   ];
 }
 
-/** Where a caller of `flow` looks for it: the repo's node_modules/.bin, then the PATH — or the PATH alone. */
+/** Where a caller of `flow` looks for it: the repo's own package, then the PATH — or the PATH alone. */
 type Reach = "local" | "path";
 
 /**
  * The gate, as written: one with `GATE_LOCAL_LINE` puts the repo's copy first, and one without it —
  * the gate an older `flow init` wrote, which it never rewrites — finds only the PATH. The LINE, not
- * the text `node_modules/.bin`: a gate that runs another tool from there still finds flow on the
- * PATH alone. A gate that does not call flow at all is judged as `flow init` writes one; its own
+ * text `node_modules/`: a gate that runs another tool from there still finds flow on the PATH
+ * alone. A gate that does not call flow at all is judged as `flow init` writes one; its own
  * fitting is red.
  */
 function gateReach(text: string | null): Reach {
@@ -4338,16 +4362,16 @@ export function hostPath(dirs: readonly string[], root: string): string[] {
  * CAN THE HOOKS AND THE GATE FIND `flow`? Both call it by name, so a repo can carry every other
  * fitting and still have each hook fail with `flow: not found` and every commit refused.
  *
- * Each is judged AS WRITTEN. Today's gate and registrations look in the repo's node_modules/.bin
- * first, so a dev dependency answers them and its copy wins over the PATH's. An older gate, or a
- * registration in the old shape, finds only the PATH — and a copy in node_modules/.bin is one it
- * never runs, a red line naming which of them is stranded and how to bring it up to date.
+ * Each is judged AS WRITTEN. Today's gate and registrations run the repo's own package first, so
+ * a dev dependency answers them and its copy wins over the PATH's. An older gate, or a
+ * registration in the old shape, finds only the PATH — and the repo's own copy is one it never
+ * runs, a red line naming which of them is stranded and how to bring it up to date.
  */
 function binaryFitting(facts: Pick<StatusFacts, "binary" | "gateText" | "settings">): Fitting {
   const { modules, path } = facts.binary;
   const hooks = hooksReach(facts.settings);
   const gate = gateReach(facts.gateText);
-  const runs = (reach: Reach): string | null => (reach === "local" && modules ? `in ${LOCAL_BIN}` : path ? "on the PATH" : null);
+  const runs = (reach: Reach): string | null => (reach === "local" && modules ? `in ${PACKAGE_DIR}` : path ? "on the PATH" : null);
   const [byHooks, byGate] = [runs(hooks), runs(gate)];
   if (byHooks !== null && byGate !== null)
     return {
@@ -4363,10 +4387,10 @@ function binaryFitting(facts: Pick<StatusFacts, "binary" | "gateText" | "setting
       id: "binary",
       ok: false,
       detail:
-        `no flow in ${LOCAL_BIN} or on the PATH, so every hook fails with \`flow: not found\` and git refuses every commit — ` +
+        `no flow in ${PACKAGE_DIR} or on the PATH, so every hook fails with \`flow: not found\` and git refuses every commit — ` +
         `install it for this repo with \`npm i -D @jawache/flow\`, or for every repo with \`npm i -g @jawache/flow\`.`,
     };
-  // A COPY IN node_modules/.bin, AND A CALLER THAT NEVER LOOKS THERE: name each stranded one, with
+  // A COPY IN THE REPO'S OWN PACKAGE, AND A CALLER THAT NEVER LOOKS THERE: name each stranded one, with
   // the fix that brings it up to date — init for the registrations, a line by hand for the gate,
   // which init never rewrites. Each carries its own verb: "the hooks look", "the gate looks".
   const stranded = [
@@ -4382,7 +4406,7 @@ function binaryFitting(facts: Pick<StatusFacts, "binary" | "gateText" | "setting
     id: "binary",
     ok: false,
     detail:
-      `the flow in ${LOCAL_BIN} is not on the PATH, and ${stranded.map((s) => s.who).join(" and ")} ${looks} for flow on the PATH alone, ` +
+      `the flow in ${PACKAGE_DIR} is not on the PATH, and ${stranded.map((s) => s.who).join(" and ")} ${looks} for flow on the PATH alone, ` +
       `so ${stranded.map((s) => s.fails).join(" and ")} — ${stranded.map((s) => s.fix).join("; ")}; or install it for every repo with \`npm i -g @jawache/flow\`.`,
   };
 }

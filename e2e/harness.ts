@@ -230,17 +230,9 @@ export const settingsHome = (prefix = "flow-home-"): string => mkdtempSync(join(
  */
 export function shimBin(prefix = "flow-bin-"): string {
   const bin = mkdtempSync(join(tmpdir(), prefix));
-  writeShim(bin);
+  // This node, by its path, as `flow()` runs it: a run given its own PATH may not have node on it.
+  writeFileSync(join(bin, "flow"), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(binary())} "$@"\n`, { mode: 0o755 });
   return bin;
-}
-
-/**
- * One `flow` shim, written into a folder that already exists — a temp PATH folder, or a repo's own
- * `node_modules/.bin`, where a dev dependency's copy would be. It runs this node by its path, as
- * `flow()` does: a run given its own PATH may not have node on it.
- */
-export function writeShim(dir: string): void {
-  writeFileSync(join(dir, "flow"), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(binary())} "$@"\n`, { mode: 0o755 });
 }
 
 /**

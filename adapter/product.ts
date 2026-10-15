@@ -32,7 +32,8 @@ import {
   initLines,
   lastMode,
   literalScopes,
-  LOCAL_BIN,
+  listsFlow,
+  PACKAGE_BIN,
   hostPath,
   pathLines,
   planInit,
@@ -345,7 +346,7 @@ export async function runStatus(cwd: string, args: readonly string[]): Promise<V
     ignored: ignoredPaths(root, literalScopes(regime.kind === "loaded" ? regime.load : null)),
     snapshotInclude: regime.kind === "loaded" ? (regime.config.settings.snapshotInclude ?? []) : [],
     binary: {
-      modules: hasFlow(join(root, LOCAL_BIN)),
+      modules: listsFlow(readText(root, "package.json")) && existsSync(join(root, PACKAGE_BIN)),
       path: hostPath((process.env["PATH"] ?? "").split(delimiter), root).some(hasFlow),
     },
   };
