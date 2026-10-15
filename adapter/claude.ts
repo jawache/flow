@@ -698,27 +698,61 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
   if (hook === "pre-tool-use" && !off && session.id !== "unknown")
     writeMarker(root, session.id, session.agent, session.branch);
 
-  // THE DELTA, on the after-call rails: what this call changed in the tree, from the snapshot the
-  // PreToolUse rail took. A call flow could not see is REPORTED and goes no further — nothing is
-  // judged as clean and nothing is put back on a guess. NOT TAKEN while the config will not load:
-  // nothing after the call can be refused or told then, so the diff would be work thrown away, and
-  // a diff that failed would print a fault about a call nothing judges.
-  const include = regime.kind === "loaded" ? (regime.config.settings.snapshotInclude ?? []) : [];
   const key = callKey(payload);
   const tool = typeof payload.tool_name === "string" ? payload.tool_name : "";
   const afterCall = (hook === "post-tool-use" || hook === "post-tool-use-failure") && !off && tool !== "";
-  const delta: (Delta & { readonly before?: string }) | null =
-    afterCall && regime.kind === "loaded" && regime.load.ok
-      ? key === null
-        ? { ok: false, fault: "The host sent no tool_use_id with this call, so its snapshot cannot be found." }
-        : observeDelta(root, key, include)
-      : null;
   // THE CALL IS OVER, however it went: its record says it finished, so a diff still to come can
   // tell this call overlapped it.
   const now = Date.now();
   const finish = (): void => {
     if (key !== null) finishSnapshot(root, key, now);
   };
+
+  // THE TREE BEFORE THE CALL, taken only once the call is ALLOWED: a refused call never runs, so its
+  // snapshot would be read as a call still in flight. It is taken while the config will not load as
+  // well, on purpose: the call that repairs the config needs it, because that call's after-call rail
+  // loads a healthy config and diffs against this snapshot.
+  const include = regime.kind === "loaded" ? (regime.config.settings.snapshotInclude ?? []) : [];
+  const snapshotted = (result: HookResult): HookResult => {
+    if (hook === "pre-tool-use" && !off && key !== null && result.exitCode === 0)
+      takeSnapshot(root, key, include, { session: session.id, agent: session.agent, tool });
+    return result;
+  };
+
+  // THE CONFIG WILL NOT LOAD. `kind: "broken"` is a module that would not import; a LoadResult
+  // carrying refusals is a module that imported and whose grammar was refused. Both are the same
+  // fact, "flow is off", and get the same answer: `whileBroken` refuses nothing and hands the agent
+  // the load error. They are asked in sequence only because the second needs the LoadResult the
+  // first does not have.
+  //
+  // NO DIFF IS TAKEN after the call: nothing then can be refused or told, so the diff would be work
+  // thrown away, and a diff that failed would print a fault about a call nothing judges. So NOTHING
+  // IS PUT BACK either: what the call wrote stands — `npm ci`'s `node_modules`, an edit to the
+  // config — and the commit gate, which stays shut until the config loads, is where it is checked.
+  // The call is over, so its record says so.
+  const outage = (sentence: string): HookResult => {
+    if (off) return ALLOW;
+    const answer = whileBroken(toEvent(hook, payload, eventWorld(root, session)), sentence);
+    if (afterCall) finish();
+    const result = toResult(hook, answer);
+    // TURN-END IS TOLD RATHER THAN HELD. `whileBroken` says why; this is the only place that can
+    // write it, because the Stop rail has no context channel and `toResult` speaks only the two the
+    // host reads. Exit 0 — the turn ends, and the sentence goes where a human and the log see it.
+    return snapshotted(answer.told === null ? result : { ...result, stderr: `${answer.told}\n` });
+  };
+  if (regime.kind === "broken") return outage(regime.message);
+
+  const { load, config } = regime;
+  if (!load.ok) return outage(refusalText(load.refusals));
+
+  // THE DELTA, on the after-call rails: what this call changed in the tree, from the snapshot the
+  // PreToolUse rail took. A call flow could not see is REPORTED and goes no further — nothing is
+  // judged as clean and nothing is put back on a guess.
+  const delta: (Delta & { readonly before?: string }) | null = afterCall
+    ? key === null
+      ? { ok: false, fault: "The host sent no tool_use_id with this call, so its snapshot cannot be found." }
+      : observeDelta(root, key, include)
+    : null;
   if (delta !== null && !delta.ok) {
     finish();
     return deltaFault(delta.fault);
@@ -727,7 +761,7 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
 
   // WHAT A REFUSAL MAY UNDO, asked only of a call that changed something: the repo's setting, and
   // the other actors' calls that overlapped this one.
-  const revert = regime.kind === "loaded" && regime.config.settings.revert === "all" ? "all" : "refused";
+  const revert = config.settings.revert === "all" ? "all" : "refused";
   const scopeOf = (landed: readonly Change[]): RevertScope => {
     if (landed.length === 0 || key === null) return { revert, overlap: [] };
     const log = callLog(root);
@@ -747,38 +781,6 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
     const landed = answer.refused.some((refusal) => refusal.observed !== undefined);
     return landed ? { ...answer, undone: { restored: plan.revert, kept: plan.kept, failed, scope } } : answer;
   };
-  // THE TREE BEFORE THE CALL, taken only once the call is ALLOWED: a refused call never runs, so its
-  // snapshot would be read as a call still in flight.
-  const snapshotted = (result: HookResult): HookResult => {
-    if (hook === "pre-tool-use" && !off && key !== null && result.exitCode === 0)
-      takeSnapshot(root, key, include, { session: session.id, agent: session.agent, tool });
-    return result;
-  };
-
-  // THE CONFIG WILL NOT LOAD. `kind: "broken"` is a module that would not import; a LoadResult
-  // carrying refusals is a module that imported and whose grammar was refused. Both are the same
-  // fact, "flow is off", and get the same answer: `whileBroken` refuses nothing and hands the agent
-  // the load error. They are asked in sequence only because the second needs the LoadResult the
-  // first does not have.
-  //
-  // NOTHING IS PUT BACK on the after-call rail, because nothing is refused: what the call wrote
-  // stands — `npm ci`'s `node_modules`, an edit to the config — and the commit gate, which stays
-  // shut until the config loads, is where it is checked. The call is over, so its record says so,
-  // with no diff taken.
-  const outage = (sentence: string): HookResult => {
-    if (off) return ALLOW;
-    const answer = whileBroken(toEvent(hook, payload, eventWorld(root, session, changes)), sentence);
-    if (afterCall) finish();
-    const result = toResult(hook, answer);
-    // TURN-END IS TOLD RATHER THAN HELD. `whileBroken` says why; this is the only place that can
-    // write it, because the Stop rail has no context channel and `toResult` speaks only the two the
-    // host reads. Exit 0 — the turn ends, and the sentence goes where a human and the log see it.
-    return snapshotted(answer.told === null ? result : { ...result, stderr: `${answer.told}\n` });
-  };
-  if (regime.kind === "broken") return outage(regime.message);
-
-  const { load, config } = regime;
-  if (!load.ok) return outage(refusalText(load.refusals));
 
   const entries = load.entries;
   const identity = identityOf(session, payload, categoriesIn(entries));
