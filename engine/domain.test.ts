@@ -403,10 +403,10 @@ describe("what an entry is run against", () => {
         .at(write)
         .check((ctx) => {
           seen.push(ctx.actor);
-          return ctx.ok();
+          return ctx.file?.content === "TODO" ? ctx.fail("TODO") : ctx.ok();
         })
         .message("x")
-        .test({ pass: [{ path: "a", content: "" }] }),
+        .test({ pass: [{ path: "a", content: "" }], block: [{ path: "a", content: "TODO" }] }),
       builderWrites: guardrail()
         .at(write)
         .check(oneWriter({ writers: ["builder"] }))
@@ -1449,7 +1449,7 @@ describe("replay — a recorded session, run again with no repo and no harness",
     expect(result.steps.filter((s) => s.step.rail === "compaction")[0]?.rows).toEqual([{ kind: "compaction" }]);
   });
 
-  it("a config that will not load refuses every replayed rail, exactly as it does live", async () => {
+  it("a config that will not load refuses every replayed rail: one guardrail row and one breadcrumb row", async () => {
     const broken = loadConfig(defineConfig([pack(rails), override(rails.everyone).at()]));
     const result = await replay({
       load: broken,

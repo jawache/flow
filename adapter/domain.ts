@@ -49,7 +49,6 @@ import {
 import {
   covers,
   FLOW_DIR,
-  fault,
   formatBlock,
   insideRepo,
   momentsView,
@@ -139,23 +138,22 @@ export const CONFIG_FILE = "flow.config.ts";
  * Every relative module the config names, READ OUT OF ITS TEXT.
  *
  * A regex over source, deliberately, and it is the only reader that can work here: this is asked
- * about a file that will not import, so anything that had to resolve, parse or evaluate it would
+ * about a file that may not import, so anything that had to resolve, parse or evaluate it would
  * be asking the broken thing to answer for itself. A line like `import { house } from
  * "./guards/house.ts";` survives almost every way a config breaks, because what breaks a config is
  * a missing `.message(…)` or a stray brace two hundred lines below its imports.
  *
  * Only `./…` and `../…` count. A bare specifier is a package — `@jawache/flow`, or a pack somebody
- * published — and a package is not this repo's source to repair. A `..` segment climbs out of the
- * root, so those are dropped too: the config sits at the repo root and the surface is
- * repo-relative or it is nothing. A leading dot in a FOLDER name is ordinary and is kept —
- * `./.guard/house.ts` is a pack like any other.
+ * published — and a package is not this repo's source. A `..` segment climbs out of the root, so
+ * those are dropped too: the config sits at the repo root and `guardPaths` is repo-relative or it
+ * is nothing. A leading dot in a FOLDER name is ordinary and is kept — `./.guard/house.ts` is a pack
+ * like any other.
  *
  * A `from '…'` phrase inside a QUOTED STRING is harvested as well — a rule whose `.message(…)`
- * spells an import line puts that path on the surface though no import named it. ACCEPTED, not
+ * spells an import line puts that path among the guard's files though no import named it. ACCEPTED, not
  * overlooked: telling a real import from a sentence quoting one takes a parser, and a parser is
  * the one thing a file that will not parse cannot give. The cost is bounded and one-directional —
- * the surface only ever WIDENS, it widens only while the config is already refusing every other
- * write, and the commit gate goes on refusing until the config loads green.
+ * the list only ever WIDENS, so the worst it does is report one extra path as a guard file.
  */
 export function configImports(configText: string): readonly string[] {
   const out: string[] = [];
@@ -167,48 +165,6 @@ export function configImports(configText: string): readonly string[] {
   }
   return out;
 }
-
-/**
- * THE CONFIG SURFACE — the files a write may target while the guard is broken, and nothing else.
- *
- * Fail-loud says a config that will not load refuses every gated moment, and it is right: a guard
- * that quietly carries on with yesterday's rules is a guard that lies about being there. But taken
- * without exception it also refuses the ONE write that can end the outage, and then the doctrine's
- * own instruction — "adjust the change so it passes, then retry" — is impossible to obey. A human
- * in an editor never meets this (no hooks sit in front of them, so they just undo); an agent that
- * broke the config is locked out of repairing it, and the repo stays broken until a human arrives.
- * Measured twice on the crossing that introduced it, once for real.
- *
- * So the exception is exactly as wide as the repair and no wider: a write whose target is the
- * config or a pack it imports. Everything else still refuses — every other path, every command,
- * and the commit gate, which goes on refusing until the config loads green, so nothing written
- * under the exception can reach a commit unreviewed by a working guard.
- *
- * DERIVED FROM THE CONFIG'S OWN TEXT, and it used to be a two-line constant: the config file, plus
- * one repo's pack folder spelled into the engine. Every other repo got a repair exception over a
- * folder it does not have, and an agent that broke the config there could not reach the pack it
- * broke. The text is readable when the module is not, so nothing is given up by asking it — and the
- * answer now follows whatever a repo actually called the folder.
- *
- * The FOLDER of each imported pack comes with the file, which is the one deliberate widening. A
- * repair is rarely one file: a pack imports its own helpers, and those the config never names. The
- * import graph cannot be walked (walking it means resolving, and resolving is what is broken), so
- * the folder is the honest approximation — and it is exactly the width the old constant had.
- */
-export function configSurface(configText: string | null): readonly string[] {
-  const surface: string[] = [CONFIG_FILE];
-  for (const file of configImports(configText ?? "")) {
-    if (!surface.includes(file)) surface.push(file);
-    const dir = file.includes("/") ? `${file.slice(0, file.lastIndexOf("/"))}/**` : null;
-    if (dir !== null && !surface.includes(dir)) surface.push(dir);
-  }
-  return surface;
-}
-
-// `onConfigSurface(path, surface)` used to sit here and was exactly `matchAny` under a longer
-// name: once the surface stopped being a module-level constant and became an argument, the
-// wrapper carried no fact of its own. Its two call sites read better without it — the local is
-// already called `surface`, and `matchAny(path, surface)` says the same sentence in one hop.
 
 export const HOOK_EVENTS = [
   "session-start",
@@ -1583,55 +1539,49 @@ export interface Answer {
 }
 
 /**
- * Is this event the WRITE that could fix a config that will not load?
+ * What the agent is told beside the load error, on every answer it rides: what that error means.
  *
- * The one exception to fail-loud, and it is deliberately the narrowest shape that works: a write
- * (or a delete) whose target is the guard's own source. `configSurface` above says why that surface
- * is read out of the config's own text rather than resolved.
- *
- * A COMMAND is never a repair, however plausible it looks. `sed -i` on the config would qualify by
- * intent and there is no way to tell it from `rm -rf` before it runs — a command rail sees a string,
- * not a target — so the command rail stays fully closed in the broken state, and the agent's route
- * back is the edit tools, which name the file they are about to write.
- *
- * It lives HERE rather than in the shell beside its caller because it decides and reads nothing.
- * The coverage gate over this file is what keeps the exception's exact width asserted.
+ * The load error says what broke; this says what flow is doing about it. Without it, a call that
+ * went through reads like a guard that judged it and passed.
  */
-export function repairs(event: AdapterEvent, surface: readonly string[]): boolean {
-  if (event.rail !== "guard") return false;
-  if (event.moment !== "write" && event.moment !== "delete") return false;
-  return event.file !== undefined && matchAny(event.file.path, surface);
-}
+export const FLOW_OFF = `flow is OFF until ${CONFIG_FILE} loads: every write, delete and command goes through unchecked, and every commit is refused.`;
 
 /**
  * WHAT EVERY RAIL ANSWERS WHILE THE CONFIG WILL NOT LOAD — one decision for both ways it can break.
  *
- * A config has two ways of not loading, and they used to get two different answers. One will not
- * IMPORT — a missing module, a syntax error — which the shell catches as a thrown error. The other
- * imports fine and the GRAMMAR refuses it: a missing `.message(…)`, an override naming an entry the
- * pack does not have, a mandatory parameter nobody supplied. Only the first ever reached the repair
- * exception, because the second was refused a layer deeper inside `guard()` — so the break
- * docs/user/explanation/fail-loud.md tells a reader to make was the one break an agent could not
- * repair itself out of. To everyone who meets them the two are the same fact, "the guard is
- * entirely off", and now they are the same answer as well.
+ * A config has two ways of not loading. One will not IMPORT — a missing module, a syntax error —
+ * which the shell catches as a thrown error. The other imports fine and the GRAMMAR refuses it: a
+ * missing `.message(…)`, an override naming an entry the pack does not have, a mandatory parameter
+ * nobody supplied. To everyone who meets them the two are the same fact, "the guard is entirely
+ * off", so they get the same answer.
  *
- * TURN-END IS TOLD, NOT REFUSED. Holding a turn open on a broken config prevents nothing risky —
- * every write, command and commit is already refused and the commit gate stays shut — while it does
- * stop the agent handing back to the one person who can fix it. So the fault is reported and the
- * turn ends.
+ * NOTHING IS REFUSED HERE (docs/user/explanation/fail-loud.md). A guard that refused every call
+ * would refuse the repair too — the fix for a missing package is `npm ci`, a command — and a write
+ * made now reaches the commit gate anyway, which stays shut until the config loads and then checks
+ * the staged files against every guardrail. The cost is the guardrails on commands, which nothing
+ * later can check; the agent is told on every call that they are off.
+ *
+ * TOLD BEFORE THE CALL, ONCE. The load error rides the answer to a session start and to every
+ * write, delete or command about to run — one notice per answer, however many events the payload
+ * carried. A touch never carries it, on either rail: a Read is not told, and a Bash call is told by
+ * its command, not by the files it reads. So the after-call rail, whose events are observed changes
+ * and touches, stays silent: the agent was told when the call was asked for, and saying it again
+ * with the result is the same sentence twice.
+ *
+ * TURN-END IS TOLD, NOT REFUSED. Holding a turn open on a broken config prevents nothing — the
+ * commit gate stays shut — while it does stop the agent handing back to the one person who can fix
+ * it. So the fault is reported and the turn ends.
  *
  * THE ENGINE HAS ITS OWN PAIR OF `!load.ok` BRANCHES — `guard()` blocks with the fault, `brief()`
  * notices it — and they are NOT this rule written twice. They answer a different question: "there
- * is nothing to run, say so", for the two callers that have no repair to make and no turn to end,
- * namely `replay` and the commit gate. Deleting them was considered at F3.B3 and measured first:
- * `flow replay` over a config the grammar refuses reaches `brief()`'s branch and emits the fault
- * notice, so the branch is live and its deletion would have dropped that notice silently. What IS
- * shared is the shape — `Outage extends Answer`, so the hook rail's answer and every other answer
- * are one type rather than two that happen to match.
+ * is nothing to run, say so", for the two callers that have no call to let through and no turn to
+ * end, namely `replay` and the commit gate. `flow replay` over a config the grammar refuses reaches
+ * `brief()`'s branch and emits the fault notice, so that branch is live. What IS shared is the
+ * shape — `Outage extends Answer`, so the hook rail's answer and every other answer are one type.
  */
 export interface Outage extends Answer {
   /**
-   * The sentence turn-end is TOLD instead of being refused with, or null when no turn ended here.
+   * The sentence turn-end is TOLD with, or null when no turn ended here.
    *
    * It is not `shown`: the Stop rail has no context channel to inject prose into, which is what
    * `DELIVERS` already says, so the shell writes this one to stderr and answers 0.
@@ -1639,18 +1589,22 @@ export interface Outage extends Answer {
   readonly told: string | null;
 }
 
-export function whileBroken(events: readonly AdapterEvent[], surface: readonly string[], message: string): Outage {
-  const rails = events.filter((event) => event.rail === "guard");
+/**
+ * Does this event's answer carry the load error? A session start, and a write, delete or command
+ * not yet run. Not a touch, not a change the after-call rail observed, and not turn-end, which is
+ * told on stderr instead.
+ */
+function carriesTheNotice(event: AdapterEvent): boolean {
+  if (event.rail === "brief") return event.moment !== "touch";
+  return event.moment !== "turn-end" && event.observed !== true;
+}
+
+export function whileBroken(events: readonly AdapterEvent[], message: string): Outage {
+  const body = `${message}\n\n${FLOW_OFF}`;
   return {
-    refused: rails
-      .filter((event) => event.moment !== "turn-end" && !repairs(event, surface))
-      .map((event) => ({
-        moment: event.moment,
-        block: fault(message),
-        ...(event.observed === true && event.file !== undefined ? { observed: event.file.path } : {}),
-      })),
-    shown: events.filter((event) => event.rail === "brief").map(() => ({ entry: null, cause: "fault", body: message })),
-    told: rails.some((event) => event.moment === "turn-end") ? message : null,
+    refused: [],
+    shown: events.some(carriesTheNotice) ? [{ entry: null, cause: "fault", body }] : [],
+    told: events.some((event) => event.rail === "guard" && event.moment === "turn-end") ? body : null,
   };
 }
 
@@ -2877,8 +2831,7 @@ export function mergeNarratives(each: readonly { session: string; read: Narrativ
  * The HOST's half of the guard: where the hooks that invoke any of it are registered.
  *
  * Fixed, because these are the harness's own file names and not a repo's choice — unlike the
- * repo's half, which is `configSurface` reading the config's imports. The old list spelled the two
- * halves as one constant, with one repo's pack folder standing in for every repo's.
+ * repo's half, which `guardPaths` reads out of the config's imports.
  *
  * THE GUARD PACK KEEPS ITS OWN, WIDER LIST, and the difference is deliberate — this is the one
  * place that says so, because two lists that look like copies are read as drift until somebody
@@ -2899,9 +2852,26 @@ export function mergeNarratives(each: readonly { session: string; read: Narrativ
  */
 export const HOST_SURFACE: readonly string[] = [".claude/settings.json", ".claude/settings.local.json", ".claude/agents/**"];
 
-/** Every file that decides what the guard does here — the config and its packs, plus the host's. */
+/**
+ * Every file that decides what the guard does here: the config and the packs it imports, then the
+ * host's half. `weakenedAfterBlock` reads it — "a rail refused, and then somebody edited the guard".
+ *
+ * The repo's half is READ OUT OF THE CONFIG'S TEXT (`configImports`) rather than resolved, so it
+ * answers the same whether or not the config loads, and it follows whatever a repo called its pack
+ * folder — no folder name is spelled into the engine.
+ *
+ * The FOLDER of each imported pack comes with the file, which is the one deliberate widening. A
+ * pack imports its own helpers, and those the config never names. The import graph cannot be
+ * walked from text, so the folder is the honest approximation.
+ */
 export function guardPaths(configText: string | null): readonly string[] {
-  return [...configSurface(configText), ...HOST_SURFACE];
+  const paths: string[] = [CONFIG_FILE];
+  for (const file of configImports(configText ?? "")) {
+    if (!paths.includes(file)) paths.push(file);
+    const dir = file.includes("/") ? `${file.slice(0, file.lastIndexOf("/"))}/**` : null;
+    if (dir !== null && !paths.includes(dir)) paths.push(dir);
+  }
+  return [...paths, ...HOST_SURFACE];
 }
 
 /** Is this one of the files that decides what the guard does? */

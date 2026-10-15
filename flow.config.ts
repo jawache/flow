@@ -84,8 +84,10 @@ export default defineConfig([
   // NAME rather than sitting dead — which is the difference between an opt-out and a lie. Both
   // command names are this repo's own: `just/secrets.just` is included by the justfile, so both
   // resolve even though there is nothing yet for them to decrypt. Handed over rather than left to
-  // default, so the one sentence the orientation prints here names a command this repo has.
-  pack(secrets, { dx: "just dx", encrypt: "just env-encrypt" }),
+  // default, so the one sentence the orientation prints here names a command this repo has. The key
+  // is kept in `.env.keys`, copied by hand to every machine, not in one machine's OS secret store:
+  // `custody: "file"`, which `just env-encrypt` honours by passing `--no-native`.
+  pack(secrets, { dx: "just dx", encrypt: "just env-encrypt", custody: "file" }),
   override(secrets.envEncrypted).disabled("no `.env*` in this repo — nothing to seal"),
 
   // ── TypeScript: strict stays on, the checker is never silenced ──

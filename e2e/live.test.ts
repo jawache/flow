@@ -34,7 +34,7 @@ import {
   git as runGit,
   type Ran,
 } from "./harness.ts";
-import { PRE_COMMIT, SET_HOOKS_PATH } from "../adapter/domain.ts";
+import { FLOW_OFF, PRE_COMMIT, SET_HOOKS_PATH } from "../adapter/domain.ts";
 
 let repo: string;
 
@@ -42,12 +42,10 @@ let repo: string;
  * The one pack this repo writes itself, in the folder it chose to write it in.
  *
  * A category and one turn-end rule, shared with `packs/machine.test.ts` as a fixture file rather
- * than kept twice as a string — see flow/__fixtures__/repo-pack.ts. It matters here for two
- * reasons beyond the rule: a `.for(…)` entry needs a rung to bind to at the commit gate, and the
- * repair exception is derived from the config's own RELATIVE imports, so a config that imports
- * nothing of its own has no pack half to prove. The folder name is this fixture's choice and
- * nothing else's — `guards/` is where this repo happens to keep them, and the engine no longer
- * knows the word.
+ * than kept twice as a string — see flow/__fixtures__/repo-pack.ts. It matters here beyond the
+ * rule: a `.for(…)` entry needs a rung to bind to at the commit gate, and a real config binds the
+ * repo's own pack beside the package's. The folder name is this fixture's choice and nothing
+ * else's — `guards/` is where this repo happens to keep them, and the engine knows no such word.
  */
 const HOUSE = (packageRoot: string): string => fixturePack("repo-pack", join(packageRoot, "index.ts"));
 
@@ -945,118 +943,119 @@ describe("the off switch", () => {
 });
 
 describe("a config that will not load", () => {
-  it("refuses the write rail with the reason, and degrades to a notice at a session moment", () => {
+  /** Break the config one of the `BREAKS` ways, drive the rails, and put the good config back. */
+  const withBrokenConfig = (breaker: (good: string) => string, drive: () => void): void => {
     const good = readFileSync(join(repo, "flow.config.ts"), "utf8");
-    writeFileSync(join(repo, "flow.config.ts"), `${good}\nthis is not typescript at all(((\n`);
+    writeFileSync(join(repo, "flow.config.ts"), breaker(good));
     try {
-      const guarded = hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "src/d.ts"), content: "fine" }));
-      expect(guarded.code, "a guard that cannot run must not look like a guard that passed").toBe(2);
-      expect(guarded.stderr).toContain("flow.config.ts could not be loaded");
-      const greeting = hook("session-start", { session_id: "live-3", source: "startup" });
-      expect(greeting.code, "refusing the opening greeting would wedge the session before anyone read why").toBe(0);
-      expect(greeting.stdout).toContain("could not be loaded");
+      drive();
     } finally {
       writeFileSync(join(repo, "flow.config.ts"), good);
     }
+  };
+
+  // The load error, whichever of its two spellings: a module that would not import, or a grammar
+  // that refused what it imported.
+  const LOAD_ERROR = /flow: (flow\.config\.ts could not be loaded|the config will not load)/;
+
+  /** What an allowed answer hands the agent: the PreToolUse `additionalContext`, or "". */
+  const context = (answer: Ran): string => {
+    if (answer.stdout.trim() === "") return "";
+    const parsed = JSON.parse(answer.stdout) as { hookSpecificOutput?: { additionalContext?: string } };
+    return parsed.hookSpecificOutput?.additionalContext ?? "";
+  };
+
+  /** A call went through, and the agent was told that flow is off and why. */
+  const throughAndTold = (answer: Ran, what: string): void => {
+    expect(answer.code, `${what} is let through: ${answer.stderr}`).toBe(0);
+    expect(answer.stderr, `${what} is not refused`).toBe("");
+    expect(context(answer), `${what} carries the load error`).toMatch(LOAD_ERROR);
+    expect(context(answer), `${what} says flow is off`).toContain(FLOW_OFF);
+  };
+
+  // EVERY WAY OF BREAKING IT, not just the one the shell happened to catch as a thrown error. Each
+  // call below is one a working rule in this config refuses, so "let through" is the broken state
+  // and not a rule that happened to pass.
+  it.each(Object.entries(BREAKS))("lets a write, an edit, a delete and a command through, each with the load error — %s", (_how, breaker) => {
+    withBrokenConfig(breaker, () => {
+      throughAndTold(hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "src/g.ts"), content: "// TODO" })), "a write");
+      throughAndTold(
+        hook("pre-tool-use", inThisSession("Edit", { file_path: join(repo, "src/a.ts"), old_string: "export const a = 1;", new_string: "// TODO" })),
+        "an edit",
+      );
+      throughAndTold(hook("pre-tool-use", inThisSession("Bash", { command: "rm migrations/001.sql" })), "a delete");
+      throughAndTold(hook("pre-tool-use", inThisSession("Bash", { command: "git push --force" })), "a command");
+      throughAndTold(hook("pre-tool-use", inThisSession("Bash", { command: "npm ci" })), "the install that fixes a missing package");
+    });
   });
 
-  // THE ONE EXCEPTION, and the reason it exists: taken without it, fail-loud refuses the only write
-  // that can end the outage, and the doctrine's own instruction — "adjust the change so it passes,
-  // then retry" — cannot be obeyed by anything that meets a hook. A human in an editor never hits
-  // it. An agent that broke the config is locked out of repairing it.
-  describe("the write that can fix it is allowed through, and nothing else is", () => {
-    const withBrokenConfig = (drive: () => void, how = "will not import at all"): void => {
-      const good = readFileSync(join(repo, "flow.config.ts"), "utf8");
-      const breaker = BREAKS[how];
-      expect(breaker, `no break called "${how}"`).toBeDefined();
-      writeFileSync(join(repo, "flow.config.ts"), (breaker as (good: string) => string)(good));
-      try {
-        drive();
-      } finally {
-        writeFileSync(join(repo, "flow.config.ts"), good);
-      }
-    };
-
-    // EVERY WAY OF BREAKING IT, not just the one the shell happened to catch as a thrown error.
-    it.each(Object.keys(BREAKS))("lets the repair through and refuses the rest — %s", (how) => {
-      withBrokenConfig(() => {
-        const broken = hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "src/g.ts"), content: "fine" }));
-        expect(broken.code, "the guard cannot run, so ordinary work is refused").toBe(2);
-
-        const repair = hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "flow.config.ts"), content: "// fixed" }));
-        expect(repair.code, "the repair is refused, so the repo stays broken until a human arrives").toBe(0);
-
-        const pack = hook("pre-tool-use", inThisSession("Edit", { file_path: join(repo, "guards", "house.ts"), new_string: "// fixed" }));
-        expect(pack.code, "a pack the config imports is as much the repair as the config is").toBe(0);
-
-        const command = hook("pre-tool-use", inThisSession("Bash", { command: "git push --force" }));
-        expect(command.code, "a command names a string, never a target — the rail stays shut").toBe(2);
-
-        const gated = runFlow(repo, ["hook", "commit"]);
-        expect(gated.code, "nothing written under the exception lands unguarded").toBe(2);
-      }, how);
-    });
-
-    // THE TURN ENDS. Holding it prevents nothing — every write, command and commit above is already
-    // refused — while it does stop the agent handing back to the one person who can fix the config.
-    it.each(Object.keys(BREAKS))("reports the fault at Stop and lets the turn end — %s", (how) => {
-      withBrokenConfig(() => {
-        const stop = hook("stop", { session_id: "live-stop", hook_event_name: "Stop" });
-        expect(stop.code, "a held turn cannot hand back to the human who would fix it").toBe(0);
-        expect(stop.stderr, "and it is not silent — the turn ends knowing why").not.toBe("");
-      }, how);
-    });
-
-    it("lets a write reach the config itself and the packs it imports", () => {
-      withBrokenConfig(() => {
-        const config = hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "flow.config.ts"), content: "// fixed" }));
-        expect(config.code, "the repair is refused, so the repo stays broken until a human arrives").toBe(0);
-        expect(config.stderr, "and it is allowed silently — a notice here is noise on the way out").toBe("");
-
-        const pack = hook("pre-tool-use", inThisSession("Edit", { file_path: join(repo, "guards", "house.ts"), new_string: "// fixed" }));
-        expect(pack.code, "a pack the config imports is as much the repair as the config is").toBe(0);
-
-        // And a pack it does NOT import is not the repair: the surface is read out of the config's
-        // own import lines, so a folder nobody named is an ordinary folder.
-        const stranger = hook("pre-tool-use", inThisSession("Edit", { file_path: join(repo, "rules", "other.ts"), new_string: "// fixed" }));
-        expect(stranger.code, "the exception is exactly as wide as this config's own imports").toBe(2);
+  it.each(Object.entries(BREAKS))("puts back nothing a command wrote — %s", (_how, breaker) => {
+    const before = readFileSync(join(repo, "src/a.ts"), "utf8");
+    try {
+      withBrokenConfig(breaker, () => {
+        // A TODO into src/ is what a working config puts back, byte for byte, on the after-call rail.
+        const payload = { ...inThisSession("Bash", { command: "echo '// TODO' >> src/a.ts" }), cwd: repo };
+        const after = called(payload, () => {
+          expect(shell("echo '// TODO' >> src/a.ts")).toBe(0);
+        });
+        expect(after.code, `the after-call rail reports no refusal: ${after.stderr}`).toBe(0);
+        expect(after.stderr).toBe("");
+        expect(readFileSync(join(repo, "src/a.ts"), "utf8"), "what the command wrote stands").toBe(`${before}// TODO\n`);
+        // THE CALL IS OVER, with no diff taken: its snapshot goes, as on a healthy config.
+        const left = existsSync(join(repo, ".flow", "snapshots"))
+          ? readdirSync(join(repo, ".flow", "snapshots")).filter((name) => name.startsWith("toolu_live_") && !name.startsWith("toolu_live_edit"))
+          : [];
+        expect(left, "a broken config still finishes the call's record").toStrictEqual([]);
       });
-    });
+    } finally {
+      writeFileSync(join(repo, "src/a.ts"), before);
+    }
+  });
 
-    it("still refuses every other write, so the exception is the repair and not an amnesty", () => {
-      withBrokenConfig(() => {
-        const ordinary = hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "src/e.ts"), content: "fine" }));
-        expect(ordinary.code, "a broken guard must not wave ordinary work through").toBe(2);
-        expect(ordinary.stderr).toContain("could not be loaded");
-      });
+  // NO DIFF AFTER THE CALL. A healthy config reports a call it has no snapshot for (the write rail's
+  // own case above); a broken one has nothing to judge the diff with, so it takes none, and so it
+  // has no fault to print about one.
+  it.each(Object.entries(BREAKS))("takes no diff after a call, so a call it has no snapshot for is not reported — %s", (_how, breaker) => {
+    withBrokenConfig(breaker, () => {
+      const after = hook("post-tool-use", { ...inThisSession("Bash", { command: "touch src/x.ts" }), tool_use_id: "toolu_broken_never_seen" });
+      expect(after.code, `the after-call rail lets it through: ${after.stderr}`).toBe(0);
+      expect(after.stderr, "no fault about a diff nothing would judge").toBe("");
     });
+  });
 
-    it("keeps the COMMAND rail fully closed — a command names a string, never a target", () => {
-      withBrokenConfig(() => {
-        // `sed -i` on the config would be a repair by intent, and there is no way to tell it from
-        // `rm -rf` before it runs. The route back is the edit tools, which name the file.
-        const command = hook("pre-tool-use", inThisSession("Bash", { command: `sed -i "" s/x/y/ ${join(repo, "flow.config.ts")}` }));
-        expect(command.code).toBe(2);
-        expect(command.stderr).toContain("could not be loaded");
-      });
+  it.each(Object.entries(BREAKS))("still refuses the commit, with the load error — %s", (_how, breaker) => {
+    withBrokenConfig(breaker, () => {
+      const gated = runFlow(repo, ["hook", "commit"]);
+      expect(gated.code, "a commit while the guard cannot run is a commit nothing checked").toBe(2);
+      expect(gated.stderr).toMatch(LOAD_ERROR);
     });
+  });
 
-    it("keeps the COMMIT gate closed, so nothing written under the exception lands unguarded", () => {
-      withBrokenConfig(() => {
-        const gated = runFlow(repo, ["hook", "commit"]);
-        expect(gated.code, "a commit while the guard cannot run is a commit nothing checked").toBe(2);
-        expect(gated.stderr).toContain("could not be loaded");
-      });
+  // THE TURN ENDS. Holding it prevents nothing — the commit gate stays shut — while it does stop the
+  // agent handing back to the one person who can fix the config.
+  it.each(Object.entries(BREAKS))("reports the fault at Stop and lets the turn end — %s", (_how, breaker) => {
+    withBrokenConfig(breaker, () => {
+      const stop = hook("stop", { session_id: "live-stop", hook_event_name: "Stop" });
+      expect(stop.code, "a held turn cannot hand back to the human who would fix it").toBe(0);
+      expect(stop.stderr, "and it is not silent — the turn ends knowing why").toMatch(LOAD_ERROR);
+      expect(stop.stderr, "the sentence turn-end is told with, not just any stderr").toContain(FLOW_OFF);
     });
+  });
 
-    it("changes nothing at all when the config is healthy", () => {
-      // The exception is keyed on the BROKEN state and nowhere else: with a working config the
-      // config surface is guarded exactly like every other path, by whatever rules watch it.
-      const config = hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "flow.config.ts"), content: "// TODO" }));
-      expect(config.code, "a healthy guard judges the config file on its rules, like any other file").toBe(0);
-      const ordinary = hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "src/f.ts"), content: "fine" }));
-      expect(ordinary.code).toBe(0);
+  it.each(Object.entries(BREAKS))("greets the session with the load error — %s", (_how, breaker) => {
+    withBrokenConfig(breaker, () => {
+      const greeting = hook("session-start", { session_id: "live-3", source: "startup" });
+      expect(greeting.code, "refusing the opening greeting would wedge the session before anyone read why").toBe(0);
+      expect(context(greeting)).toMatch(LOAD_ERROR);
     });
+  });
+
+  it("changes nothing at all when the config is healthy", () => {
+    // Letting everything through is keyed on the BROKEN state and nowhere else: with a working
+    // config, the same write is judged on its rules and refused.
+    const ordinary = hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "src/g.ts"), content: "// TODO" }));
+    expect(ordinary.code).toBe(2);
+    expect(ordinary.stderr).toContain("No TODOs in src/");
   });
 });
 
