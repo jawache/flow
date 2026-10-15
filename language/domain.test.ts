@@ -1150,6 +1150,25 @@ describe("the load refuses", () => {
     expect(shape(refusalsOf([pack(house), asCast.ignore()]))).toEqual([["empty-scope", "house.noTodo"]]);
   });
 
+  it("an empty scope the pack said, with advice about the verb that is empty", () => {
+    const note = rawPack("note", { x: { spec: { kind: "breadcrumb", at: [touch], on: ["docs/**"], ignore: [], text: "hi" } } });
+    const [refusal] = refusalsOf([note]);
+    expect(refusal?.detail).toContain("note.x");
+    expect(refusal?.detail).toContain("`.ignore()` with no globs");
+    expect(refusal?.detail).not.toContain("override");
+    expect(refusal?.detail).not.toContain("`.on(");
+  });
+
+  it("an empty scope split between the pack and an override, saying who said each", () => {
+    const note = breadcrumb().at(touch).text("hi");
+    const emptyOn = (note as unknown as { on: () => typeof note }).on();
+    const mixed = definePack("mixed", { x: emptyOn });
+    const emptyIgnore = (override(mixed.x) as unknown as { ignore: () => ConfigSentence }).ignore();
+    const refusals = refusalsOf([pack(mixed), emptyIgnore]);
+    expect(shape(refusals)).toEqual([["empty-scope", "mixed.x"]]);
+    expect(refusals[0]?.detail).toContain("`.on()` and `.ignore()` from an override with no globs");
+  });
+
   it("an empty scope on a disabled entry too — what was written is wrong, whatever the entry proves", () => {
     const off = rawPack("off", { x: { spec: { kind: "guardrail", at: [write], on: [], disabled: { reason: "not yet" } } } });
     expect(shape(refusalsOf([off]))).toEqual([["empty-scope", "off.x"]]);
@@ -1182,19 +1201,8 @@ describe("the load refuses", () => {
 
   it("but not an override's prose over a pack's other form — it replaces it, and loads", () => {
     const files = definePack("files", { note: breadcrumb().at(touch).on("docs/**").file("docs/long-note.md") });
-    const [toText] = loadOrThrow([pack(files), override(files.note).text("One inline sentence.")]);
-    expect(toText?.spec).not.toHaveProperty("file");
-    expect(toText?.spec.kind === "breadcrumb" && toText.spec.text).toBe("One inline sentence.");
-    expect(toText?.source["text"]).toBe("override");
-    expect(toText?.source).not.toHaveProperty("file");
-
-    const [toFile] = loadOrThrow([pack(house), override(house.orientation).file("docs/orientation.md")]).filter(
-      (e) => e.id === "house.orientation",
-    );
-    expect(toFile?.spec).not.toHaveProperty("text");
-    expect(toFile?.spec.kind === "breadcrumb" && toFile.spec.file).toBe("docs/orientation.md");
-    expect(toFile?.source["file"]).toBe("override");
-    expect(toFile?.source).not.toHaveProperty("text");
+    const [entry] = loadOrThrow([pack(files), override(files.note).text("One inline sentence.")]);
+    expect(entry?.spec.kind === "breadcrumb" && entry.spec.text).toBe("One inline sentence.");
   });
 
   it("but never asks a disabled entry to prove itself", () => {

@@ -1291,9 +1291,6 @@ export function defineConfig(sentences: readonly ConfigSentence[], settings: Set
 
 // ── the overlay ──────────────────────────────────────────────────────────────
 
-/** The two forms a breadcrumb's prose is said in: exactly one of them, never both. */
-const PROSE_KEYS = ["text", "file"] as const;
-
 /** An effective entry, and where each of its keys came from. */
 export interface Overlaid {
   readonly spec: EntrySpec;
@@ -1320,7 +1317,7 @@ export function overlay(
 ): Overlaid {
   // A breadcrumb's prose is ONE key said in two forms, so an override that says either form
   // replaces whichever the pack used, rather than landing beside it as a note with both.
-  const isProse = (key: string) => (PROSE_KEYS as readonly string[]).includes(key);
+  const isProse = (key: string) => key === "text" || key === "file";
   const kept = Object.keys(spoken).some(isProse)
     ? Object.fromEntries(Object.entries(base).filter(([key]) => !isProse(key)))
     : base;
@@ -1575,11 +1572,14 @@ function judge(draft: Draft): Refusal[] {
   // on purpose: an empty scope is a mistake in what was written, not something the entry proves.
   const empty = (["on", "ignore"] as const).filter((key) => spec[key]?.length === 0);
   if (empty.length > 0) {
-    const verbs = empty.map((key) => `\`.${key}()\``).join(" and ");
-    const fromOverride = empty.some((key) => draft.source[key] === "override");
+    // Who said each one is decided per key: one verb may be the pack's and the other an override's.
+    const verbs = empty
+      .map((key) => `\`.${key}()\`${draft.source[key] === "override" ? " from an override" : ""}`)
+      .join(" and ");
+    const one = empty.length === 1;
     say(
       "empty-scope",
-      `\`${id}\` says ${verbs} with no globs${fromOverride ? ", from an override" : ""}, which narrows nothing. Give it at least one glob, or ${fromOverride ? "drop it from the override so the pack's own scope applies" : "drop it: an entry with no `.on(…)` is about every path"}.`,
+      `\`${id}\` says ${verbs} with no globs, which narrows nothing. Give ${one ? "it" : "each"} at least one glob, or delete ${one ? "it" : "them"} from the sentence that said ${one ? "it" : "them"}.`,
     );
   }
 
