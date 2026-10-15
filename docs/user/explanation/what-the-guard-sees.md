@@ -6,7 +6,7 @@ summary: "about how flow detects every change to the tree, and why it judges the
 
 A guardrail is checked against what changed on disk, not against the tool that changed it.
 
-## One mechanism for every change
+## The snapshot: what a call changed
 
 Before each tool call, flow records the content of every file in the working tree. This record is the **snapshot**. After the call, flow compares the snapshot with the tree as it now stands, and the differences are the changes the call made:
 
@@ -14,7 +14,7 @@ Before each tool call, flow records the content of every file in the working tre
 - **Each file the call removed** is passed to the delete rules.
 - **Each breadcrumb whose globs match a changed path** is shown to the agent.
 
-Which rules a change is passed to depends on the change on disk, not on the command that made it. So a heredoc, `sed -i`, a Python script, a `just` recipe, an MCP tool and a subagent all reach the rules by the same route. That leaves one mechanism to understand, and no second one to reach for when a change arrives some new way.
+Which rules a change is passed to depends on the change on disk, not on the command that made it. So a heredoc, `sed -i`, a Python script, a `just` recipe, an MCP tool and a subagent all reach the rules by the same route. So no change escapes the snapshot, however it arrives.
 
 flow reads a tool call's input in two cases, each to act earlier than the diff can:
 
