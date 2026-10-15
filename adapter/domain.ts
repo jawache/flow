@@ -1557,8 +1557,10 @@ export const FLOW_OFF = `flow is OFF until ${CONFIG_FILE} loads: every write, de
  *
  * TOLD BEFORE THE CALL, ONCE. The load error rides the answer to a session start and to every
  * write, delete or command about to run — one notice per answer, however many events the payload
- * carried. The after-call rail (an `observed` change, a touch) stays silent: the agent was told when
- * the call was asked for, and saying it again with the result is the same sentence twice.
+ * carried. A touch never carries it, on either rail: a Read is not told, and a Bash call is told by
+ * its command, not by the files it reads. So the after-call rail, whose events are observed changes
+ * and touches, stays silent: the agent was told when the call was asked for, and saying it again
+ * with the result is the same sentence twice.
  *
  * TURN-END IS TOLD, NOT REFUSED. Holding a turn open on a broken config prevents nothing — the
  * commit gate stays shut — while it does stop the agent handing back to the one person who can fix
@@ -1581,8 +1583,12 @@ export interface Outage extends Answer {
   readonly told: string | null;
 }
 
-/** Is this event a call ABOUT to happen — the moment the agent is told the guard is off? */
-function beforeTheCall(event: AdapterEvent): boolean {
+/**
+ * Does this event's answer carry the load error? A session start, and a write, delete or command
+ * not yet run. Not a touch, not a change the after-call rail observed, and not turn-end, which is
+ * told on stderr instead.
+ */
+function carriesTheNotice(event: AdapterEvent): boolean {
   if (event.rail === "brief") return event.moment !== "touch";
   return event.moment !== "turn-end" && event.observed !== true;
 }
@@ -1591,7 +1597,7 @@ export function whileBroken(events: readonly AdapterEvent[], message: string): O
   const body = `${message}\n\n${FLOW_OFF}`;
   return {
     refused: [],
-    shown: events.some(beforeTheCall) ? [{ entry: null, cause: "fault", body }] : [],
+    shown: events.some(carriesTheNotice) ? [{ entry: null, cause: "fault", body }] : [],
     told: events.some((event) => event.rail === "guard" && event.moment === "turn-end") ? body : null,
   };
 }
