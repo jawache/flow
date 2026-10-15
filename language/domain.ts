@@ -529,12 +529,6 @@ export interface Cases {
   readonly block?: readonly Case[];
 }
 
-/** Does this cases block prove anything? An entry whose answer is no does not load. */
-export function hasCases(cases: Cases | undefined): boolean {
-  if (!cases) return false;
-  return (cases.pass?.length ?? 0) + (cases.block?.length ?? 0) > 0;
-}
-
 /** What a recorded world was reached for and could not answer. */
 export interface Unanswered {
   readonly kind: "exec" | "read";
@@ -1351,7 +1345,7 @@ export const REFUSAL_CODES = [
   "unknown-moment",
   "missing-mandatory",
   "undeclared-category",
-  "no-cases",
+  "no-block-cases",
   "duplicate-id",
   "dead-scope",
   "bad-check-options",
@@ -1589,10 +1583,12 @@ function judge(draft: Draft): Refusal[] {
       `\`${id}\` narrows by path but fires only at ${at.map((m) => `\`${m}\``).join(", ")}, which name no subject to narrow — its \`on\`/\`ignore\` would be read by nothing. Drop the scope, or add a moment that carries one (${(spec.kind === "breadcrumb" ? BRIEF_SCOPE_MOMENTS : PATH_MOMENTS).join(" · ")}).`,
     );
 
-  if (spec.kind === "guardrail" && !hasCases(spec.test))
+  // NO BLOCK CASE. Pass cases alone prove nothing about what the rule catches, so a guardrail
+  // without a block case does not load, however many pass cases it has.
+  if (spec.kind === "guardrail" && (spec.test?.block?.length ?? 0) === 0)
     say(
-      "no-cases",
-      `\`${id}\` carries no cases. A rule declares what must pass it and what it must block (\`.test({ pass, block })\`) — a fence whose block-case was never written is a fence nothing proves is alive.`,
+      "no-block-cases",
+      `\`${id}\` has no block case. A block case is an input the rule must refuse: add one to \`.test({ block })\`. Pass cases alone prove nothing about what the rule catches.`,
     );
 
   // A CHECK THAT SAID ITS OWN OPTIONS ARE UNUSABLE. The check answers this, not the loader: what

@@ -15,7 +15,6 @@ import {
   BREADCRUMB_MOMENTS,
   type BreadcrumbSpec,
   cannedWorld,
-  type Cases,
   chain,
   type Check,
   checkSettings,
@@ -35,7 +34,6 @@ import {
   GUARDRAIL_KEYS,
   GUARDRAIL_MOMENTS,
   type GuardrailSpec,
-  hasCases,
   isBreadcrumbMoment,
   isCategory,
   isGuardrailMoment,
@@ -425,21 +423,6 @@ describe("a pack whose parameters are all optional", () => {
     const load = loadConfig(defineConfig([{ kind: "pack", pack: packDefinition(required), params: undefined, hasParams: false }]));
     expect(load.ok).toBe(false);
     expect(!load.ok && load.refusals[0]?.code).toBe("missing-parameter");
-  });
-});
-
-describe("hasCases", () => {
-  it("is true when either arm carries a case", () => {
-    expect(hasCases({ block: ["git push origin main"] })).toBe(true);
-    expect(hasCases({ pass: [{ path: "a.ts", content: "" }] })).toBe(true);
-    expect(hasCases({ pass: [{ staged: ["package.json"] }] })).toBe(true);
-  });
-
-  it("is false for a cases block that proves nothing", () => {
-    const empty: Cases = {};
-    expect(hasCases(empty)).toBe(false);
-    expect(hasCases({ pass: [], block: [] })).toBe(false);
-    expect(hasCases(undefined)).toBe(false);
   });
 });
 
@@ -976,14 +959,27 @@ describe("the load refuses", () => {
     expect(shape(refusalsOf([fake]))).toEqual([["undeclared-category", "fake.x"]]);
   });
 
-  it("a guardrail that carries no cases — the dead-fence class, killed at authoring time", () => {
+  it("a guardrail that carries no block case — the dead-fence class, killed at authoring time", () => {
     const untested = rawPack("untested", { x: { spec: { kind: "guardrail", at: [commit], check: passes, message: "m" } } });
-    expect(shape(refusalsOf([untested]))).toEqual([["no-cases", "untested.x"]]);
+    expect(shape(refusalsOf([untested]))).toEqual([["no-block-cases", "untested.x"]]);
 
     const empty = rawPack("empty", {
       x: { spec: { kind: "guardrail", at: [commit], check: passes, message: "m", test: {} } },
     });
-    expect(shape(refusalsOf([empty]))).toEqual([["no-cases", "empty.x"]]);
+    expect(shape(refusalsOf([empty]))).toEqual([["no-block-cases", "empty.x"]]);
+
+    const bothEmpty = rawPack("bothEmpty", {
+      x: { spec: { kind: "guardrail", at: [commit], check: passes, message: "m", test: { pass: [], block: [] } } },
+    });
+    expect(shape(refusalsOf([bothEmpty]))).toEqual([["no-block-cases", "bothEmpty.x"]]);
+
+    // Pass cases alone prove nothing about what the rule catches, so they do not count.
+    const passOnly = rawPack("passOnly", {
+      x: { spec: { kind: "guardrail", at: [commit], check: passes, message: "m", test: { pass: [{ staged: ["a.ts"] }] } } },
+    });
+    const refusals = refusalsOf([passOnly]);
+    expect(shape(refusals)).toEqual([["no-block-cases", "passOnly.x"]]);
+    expect(refusals[0]?.detail).toContain("`passOnly.x` has no block case");
   });
 
   // A CHECK THAT SAID ITS OWN OPTIONS ARE UNUSABLE. The loader does not know what makes a depcruise
@@ -1111,7 +1107,7 @@ describe("the load refuses", () => {
     expect(shape(refusalsOf([broken]))).toEqual([
       ["missing-mandatory", "broken.a"],
       ["missing-mandatory", "broken.b"],
-      ["no-cases", "broken.c"],
+      ["no-block-cases", "broken.c"],
     ]);
   });
 
@@ -1132,7 +1128,7 @@ describe("REFUSAL_CODES", () => {
       "unknown-moment",
       "missing-mandatory",
       "undeclared-category",
-      "no-cases",
+      "no-block-cases",
       "duplicate-id",
       "dead-scope",
       "bad-check-options",

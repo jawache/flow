@@ -2242,12 +2242,12 @@ describe("status — the red lines, each carrying its fix", () => {
   it("a config that will not load — every refusal, and every rail off until it is fixed", () => {
     const s = status(
       statusFacts({
-        load: { ok: false, refusals: [{ code: "no-cases", entry: "demo.x", detail: "`demo.x` carries no cases." }] },
+        load: { ok: false, refusals: [{ code: "no-block-cases", entry: "demo.x", detail: "`demo.x` has no block case." }] },
       }),
     );
     expect(s.green).toBe(false);
     const said = statusLines(s).join("\n");
-    expect(said).toContain("carries no cases");
+    expect(said).toContain("has no block case");
     expect(said, "no moment table under a headline saying nothing is armed").not.toContain("commit  ");
   });
 
@@ -2293,7 +2293,7 @@ describe("status — the red lines, each carrying its fix", () => {
       { hasConfig: false, load: null },
       { settings: {} },
       { load: { ok: true, entries: [loaded("demo.late", noteAtTurnEnd)] } },
-      { load: { ok: false, refusals: [{ code: "no-cases", entry: "demo.x", detail: "no cases" }] } },
+      { load: { ok: false, refusals: [{ code: "no-block-cases", entry: "demo.x", detail: "no block case" }] } },
     ];
     for (const shape of shapes) {
       const s = status(statusFacts(shape));

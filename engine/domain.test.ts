@@ -403,10 +403,10 @@ describe("what an entry is run against", () => {
         .at(write)
         .check((ctx) => {
           seen.push(ctx.actor);
-          return ctx.ok();
+          return ctx.file?.content === "TODO" ? ctx.fail("TODO") : ctx.ok();
         })
         .message("x")
-        .test({ pass: [{ path: "a", content: "" }] }),
+        .test({ pass: [{ path: "a", content: "" }], block: [{ path: "a", content: "TODO" }] }),
       builderWrites: guardrail()
         .at(write)
         .check(oneWriter({ writers: ["builder"] }))
