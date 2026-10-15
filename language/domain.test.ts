@@ -443,6 +443,11 @@ describe("elideHeredocBodies", () => {
     expect(elideHeredocBodies("cat <<A\n$(cat <<B\nb\nB\n)\nA")).toBe("cat <<A\nA");
   });
 
+  it("keeps the body of a heredoc a shell reads, fed or piped, which is commands", () => {
+    for (const line of ["bash <<'EOF'\nls\nEOF", "cat <<'EOF' | sh\nls\nEOF"]) expect(elideHeredocBodies(line)).toBe(line);
+    expect(elideHeredocBodies("cat <<'EOF' | python3\nls\nEOF")).toBe("cat <<'EOF' | python3\nEOF");
+  });
+
   it("leaves a heredoc inside a string a shell is given, which is part of that string", () => {
     const line = "bash -c 'cat <<E\nx\nE'";
     expect(elideHeredocBodies(line)).toBe(line);

@@ -525,8 +525,9 @@ export function parseCommandLine(line: string): ShellCommand[] | null {
 /**
  * The line as written, less the body of every heredoc in it — the subject a `banCommands` rule
  * with `wholeLine` matches. The opener and the terminator line stay, and so does everything else,
- * newlines included. A body inside a string the parse reads again (`bash -c`, `eval`, a heredoc
- * fed to a shell) is part of that string, and stays with it. `null` when the line does not parse.
+ * newlines included. A heredoc a shell reads, directly or through a pipeline, holds commands, and
+ * its body stays; so does a body inside a string the parse reads again (`bash -c`, `eval`), which
+ * is part of that string. `null` when the line does not parse.
  */
 export function elideHeredocBodies(line: string): string | null {
   const walked = walkLine(line);
@@ -551,7 +552,14 @@ function walkLine(line: string): { readonly commands: ShellCommand[]; readonly b
   // How deep the walk is in text the parse read on its own — a `bash -c` string, an `eval`, a
   // heredoc fed to a shell, an escaped-backtick script — whose positions are not the line's.
   const foreign = { depth: 0 };
-  const bodies: (readonly [number, number])[] = [];
+  // Where each heredoc body sits in the line, and the ones a shell reads as its script: those are
+  // commands, so they stay in the line `elideHeredocBodies` returns.
+  const spans = new Map<ShellHeredoc, readonly [number, number]>();
+  const shellRead = new Set<ShellHeredoc>();
+  const readAsScript = (h: ShellHeredoc, out: ShellCommand[]): void => {
+    shellRead.add(h);
+    source(h.body, out);
+  };
 
   // A script the walk enters: the line itself, a substitution's body, a `bash -c` string.
   const script = (s: ParsedScript | undefined, nested: boolean, out: ShellCommand[]): void => {
@@ -679,8 +687,9 @@ function walkLine(line: string): { readonly commands: ShellCommand[]; readonly b
       return;
     }
     const quoted = r.delimiter?.quoted === true;
-    heredocs?.push({ body: r.body.text, quoted });
-    if (foreign.depth === 0) bodies.push([r.body.pos, r.body.end]);
+    const heredoc: ShellHeredoc = { body: r.body.text, quoted };
+    heredocs?.push(heredoc);
+    if (foreign.depth === 0) spans.set(heredoc, [r.body.pos, r.body.end]);
     if (!quoted) for (const part of r.body.parts ?? []) wordPart(part, subs, out);
   };
 
@@ -763,7 +772,7 @@ function walkLine(line: string): { readonly commands: ShellCommand[]; readonly b
       c !== undefined && (basename(c.program) === "eval" || (SHELLS.has(basename(c.program)) && shellInput(c.args) === "stdin"));
     outs.forEach((own, i) => {
       if (readsStdin(own[0]) || !outs.slice(i + 1).some((later) => readsStdin(later[0]))) return;
-      for (const c of own) for (const h of c.heredocs) source(h.body, out);
+      for (const c of own) for (const h of c.heredocs) readAsScript(h, out);
     });
   };
 
@@ -804,7 +813,7 @@ function walkLine(line: string): { readonly commands: ShellCommand[]; readonly b
     if (name === "eval") source(args.join(" "), out);
     if (!SHELLS.has(name)) return;
     const input = shellInput(args);
-    if (input === "stdin") for (const h of heredocs) source(h.body, out);
+    if (input === "stdin") for (const h of heredocs) readAsScript(h, out);
     else if (input !== null) source(input.string, out);
   };
   const assignment = (value: Word | { readonly elements: readonly Word[] }, subs: ShellSubstitution[], out: ShellCommand[]): void => {
@@ -814,6 +823,7 @@ function walkLine(line: string): { readonly commands: ShellCommand[]; readonly b
 
   const out: ShellCommand[] = [];
   script(parseBash(line), false, out);
+  const bodies = [...spans].filter(([h]) => !shellRead.has(h)).map(([, span]) => span);
   return fault.found ? null : { commands: out, bodies };
 }
 
