@@ -52,6 +52,7 @@ With a dev dependency, type each `flow` command in this guide as `npx flow`.
 
    - **A dev dependency:** the repo's `.claude/settings.json`. The hooks run only in this repo.
    - **A global install:** `~/.claude/settings.json`. The hooks run in every repo on the machine.
+   - **A dev dependency, on a machine an older flow set up:** `flow init` also rewrites flow's old commands in `~/.claude/settings.json` to the command in the repo's file. Claude Code then runs each hook once, not twice.
 
 2. Check the guard:
 

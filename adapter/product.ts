@@ -61,8 +61,23 @@ export interface VerbResult {
  * override. `settingsFileFor` decides; this only reads.
  */
 function settingsFile(root: string): string {
-  const machine = join(process.env["CLAUDE_CONFIG_DIR"] || join(homedir(), ".claude"), "settings.json");
-  return settingsFileFor(readText(root, "package.json"), machine);
+  return settingsFileFor(readText(root, "package.json"), machineSettings());
+}
+
+/** The host's machine-wide settings file, `CLAUDE_CONFIG_DIR` first. */
+function machineSettings(): string {
+  return join(process.env["CLAUDE_CONFIG_DIR"] || join(homedir(), ".claude"), "settings.json");
+}
+
+/**
+ * The machine-wide file, parsed, when flow's hooks are in the repo's own — the one place a hook
+ * there could run flow a second time — and null when `settingsPath` is the machine-wide file.
+ */
+function otherSettings(root: string, settingsPath: string): { path: string; settings: unknown; unreadable: boolean } | null {
+  const machine = machineSettings();
+  if (settingsPath === machine) return null;
+  const read = parsedFile(root, machine);
+  return { path: machine, settings: read.value, unreadable: read.unreadable };
 }
 
 /**
@@ -203,6 +218,7 @@ function initFacts(root: string, empty: boolean): InitFacts {
     settingsPath,
     settings: read.value,
     settingsUnreadable: read.unreadable,
+    machine: otherSettings(root, settingsPath),
     resolves: resolves(root),
     packageRoot: packageRoot(),
   };
@@ -250,10 +266,11 @@ function perform(root: string, plan: InitPlan): string[] {
       symlinkSync(plan.link as string, at, "dir");
     });
 
-  if (plan.settings !== null) {
-    const { path, value } = plan.settings;
+  // Repo-relative for a dev dependency's own file, absolute for the machine-wide one.
+  for (const settings of [plan.settings, plan.machine]) {
+    if (settings === null) continue;
+    const { path, value } = settings;
     attempt(`could not write ${path}`, () => {
-      // Repo-relative for a dev dependency's own file, absolute for the machine-wide one.
       const file = resolve(root, path);
       mkdirSync(dirname(file), { recursive: true });
       writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
@@ -315,6 +332,7 @@ export async function runStatus(cwd: string, args: readonly string[]): Promise<V
     hooksPath: hooksPath(root),
     settingsPath,
     settings: parsedFile(root, settingsPath).value,
+    machine: otherSettings(root, settingsPath),
     grammars:
       regime.kind === "loaded"
         ? grammarsAt(regime.config.settings, root).map((grammar) => ({

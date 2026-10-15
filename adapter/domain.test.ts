@@ -107,6 +107,7 @@ import {
   registeredEvents,
   staleRegistrations,
   withRegistrations,
+  withMachineCommandsUpToDate,
   callKey,
   deltaFault,
   included,
@@ -1936,6 +1937,7 @@ const bare: InitFacts = {
   settingsPath: "/home/.claude/settings.json",
   settings: {},
   settingsUnreadable: false,
+  machine: null,
   resolves: false,
   packageRoot: "/checkout/flow",
 };
@@ -2230,6 +2232,79 @@ describe("planInit — the flags and the edges", () => {
   });
 });
 
+// A DEV DEPENDENCY'S HOOKS are in the repo's own file, and the host merges only IDENTICAL commands
+// across its files: an older flow's bare command left in the machine-wide file runs flow twice.
+describe("the machine-wide file, beside a dev dependency's own", () => {
+  const machinePath = "/home/.claude/settings.json";
+  const theirs = { type: "command", command: "lint-on-stop" };
+  const older = {
+    theme: "dark",
+    hooks: {
+      ...BARE_SETTINGS.hooks,
+      PostToolUse: [{ matcher: "Read|Glob|Grep|Edit|Write|Bash", hooks: [{ type: "command", command: "flow hook post-tool-use" }] }],
+      Stop: [...(BARE_SETTINGS.hooks["Stop"] ?? []), { hooks: [theirs] }],
+      Notification: [{ hooks: [{ type: "command", command: "say done" }] }],
+    },
+  };
+
+  it("rewrites flow's old commands there to today's, and touches nothing else", () => {
+    const { settings, rewritten } = withMachineCommandsUpToDate(older);
+    expect(rewritten).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
+    const after = settings as typeof older;
+    expect(after.theme).toBe("dark");
+    expect(after.hooks.PostToolUse, "the command is rewritten, the matcher is left as it was").toEqual([
+      { matcher: "Read|Glob|Grep|Edit|Write|Bash", hooks: [{ type: "command", command: hookCommand("post-tool-use") }] },
+    ]);
+    expect(after.hooks.Stop).toEqual([{ hooks: [{ type: "command", command: hookCommand("stop") }] }, { hooks: [theirs] }]);
+    expect(after.hooks.Notification).toEqual(older.hooks.Notification);
+    expect(older.hooks.Stop[0], "a new object; the one handed in is not changed").toEqual(BARE_SETTINGS.hooks["Stop"]?.[0]);
+  });
+
+  it("adds no registration there, and has nothing to do a second time", () => {
+    const none = withMachineCommandsUpToDate({ theme: "dark" });
+    expect(none).toEqual({ settings: { theme: "dark" }, rewritten: [] });
+    expect(withMachineCommandsUpToDate(null).rewritten).toEqual([]);
+    const once = withMachineCommandsUpToDate(older);
+    expect(withMachineCommandsUpToDate(once.settings).rewritten).toEqual([]);
+  });
+
+  it("is planned and reported by init, and skipped when the file would not parse", () => {
+    const facts = { ...bare, settingsPath: ".claude/settings.json", settings: null };
+    const plan = planInit({ ...facts, machine: { path: machinePath, settings: older, unreadable: false } });
+    expect(plan.machine?.path).toBe(machinePath);
+    expect(plan.machine?.rewritten).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
+    expect(initLines(plan, []).join("\n")).toContain(
+      `+ ${machinePath} — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop (an older flow's command, now the same as .claude/settings.json's, so each hook runs once)`,
+    );
+    expect(planInit({ ...facts, machine: { path: machinePath, settings: null, unreadable: true } }).machine).toBeNull();
+    expect(planInit({ ...facts, machine: { path: machinePath, settings: { theme: "dark" }, unreadable: false } }).machine).toBeNull();
+    expect(planInit(bare).machine, "no machine-wide file to bring in line when it IS the hooks' file").toBeNull();
+  });
+
+  const hooks = (machine: unknown) => {
+    const facts = statusFacts({ settingsPath: ".claude/settings.json", machine: { path: machinePath, settings: machine } });
+    const s = status(facts);
+    return { fitting: s.fittings.find((f) => f.id === "hooks"), green: s.green };
+  };
+
+  it("turns the hooks line red when the machine-wide file calls flow with another command", () => {
+    const { fitting, green } = hooks(older);
+    expect(fitting?.ok).toBe(false);
+    expect(fitting?.detail).toBe(
+      `${machinePath} also calls flow for SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop, with another command than .claude/settings.json, ` +
+        "so Claude Code runs both and each of those hooks fires twice. Re-run `flow init`, which brings an older flow's commands there up to date, or remove flow's entries from that file.",
+    );
+    expect(green).toBe(false);
+    const debug = { hooks: { Stop: [{ hooks: [{ type: "command", command: "FLOW_DEBUG=1 flow hook stop" }] }] } };
+    expect(hooks(debug).fitting?.detail, "somebody's own command runs twice too").toContain("also calls flow for Stop,");
+  });
+
+  it("is green when the machine-wide file has the same commands, none of flow's, or nothing", () => {
+    for (const machine of [withMachineCommandsUpToDate(older).settings, withRegistrations({}).settings, { theme: "dark" }, null])
+      expect(hooks(machine).fitting?.ok, JSON.stringify(machine)).toBe(true);
+  });
+});
+
 // ── status ───────────────────────────────────────────────────────────────────
 
 const noteAtTurnEnd = { kind: "breadcrumb", at: ["turn-end"], text: "late" } as const;
@@ -2245,6 +2320,7 @@ const statusFacts = (over: Partial<StatusFacts> = {}): StatusFacts => ({
   hooksPath: HOOKS_DIR,
   settingsPath: "/home/.claude/settings.json",
   settings: withRegistrations({}).settings,
+  machine: null,
   grammars: [],
   session: null,
   ignored: [],

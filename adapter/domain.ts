@@ -3589,6 +3589,65 @@ export function bareRegistrations(settings: unknown): string[] {
 }
 
 /**
+ * The settings file's hooks, with flow's own entries on those events rewritten in place: a stale
+ * matcher widened, and an old-shape command (`bareHook`) made today's. FLOW'S OWN ENTRIES ARE
+ * FLOW'S TO REWRITE, and these are the only two rewrites flow makes. Adding a second entry beside
+ * either instead would fire flow twice for every event the old one already answers.
+ */
+function rewrittenOurs(settings: unknown, stale: ReadonlySet<string>, bare: ReadonlySet<string>): Record<string, unknown> {
+  const held = (settings && typeof settings === "object" ? settings : {}) as Record<string, unknown>;
+  const arrays = hookArrays(settings);
+  const hooks: Record<string, unknown> = { ...(held["hooks"] as Record<string, unknown> | undefined) };
+  const matcherOf = new Map(HOOK_REGISTRATIONS.map((r) => [r.event, r.matcher]));
+  for (const event of new Set([...stale, ...bare]))
+    hooks[event] = (arrays[event] ?? []).map((entry) => {
+      if (!isOurs(entry)) return entry;
+      const ours = entry as Record<string, unknown> & { hooks: unknown[] };
+      return {
+        ...ours,
+        ...(stale.has(event) ? { matcher: matcherOf.get(event) } : {}),
+        hooks: ours.hooks.map((inner) => {
+          const command = commandOf(inner);
+          const word = command === null ? null : bareHook(command);
+          return word === null ? inner : { ...(inner as Record<string, unknown>), command: hookCommand(word) };
+        }),
+      };
+    });
+  return hooks;
+}
+
+/**
+ * THE MACHINE-WIDE FILE, when a dev dependency's hooks are in the repo's own: flow's old-shape
+ * commands there (`bareHook`) rewritten to today's, and nothing else touched — no registration
+ * added, no matcher widened, no other key or hook changed. A NEW object; `rewritten` names the
+ * events, empty when there was nothing to do.
+ *
+ * The host merges only IDENTICAL commands across its settings files. An old `flow hook stop` in the
+ * machine-wide file beside today's command in the repo's would run flow twice for every event, so
+ * every rule would fire twice and every refusal print twice. Made the same command, it runs once.
+ */
+export function withMachineCommandsUpToDate(settings: unknown): { settings: unknown; rewritten: string[] } {
+  const bare = new Set(bareRegistrations(settings));
+  if (bare.size === 0) return { settings, rewritten: [] };
+  const held = settings as Record<string, unknown>;
+  return { settings: { ...held, hooks: rewrittenOurs(settings, new Set(), bare) }, rewritten: [...bare] };
+}
+
+/**
+ * The events the machine-wide file calls flow for with a command the repo's own file does not use
+ * for that event. The host runs both, so each of those hooks fires twice.
+ */
+function machineDiffers(repo: unknown, machine: unknown): string[] {
+  const repoArrays = hookArrays(repo);
+  return Object.entries(hookArrays(machine))
+    .filter(([event, entries]) => {
+      const repoCommands = new Set((repoArrays[event] ?? []).flatMap(commandsOf));
+      return entries.some((entry) => commandsOf(entry).some((command) => ourHookCommand(command) && !repoCommands.has(command)));
+    })
+    .map(([event]) => event);
+}
+
+/**
  * A settings file with flow's registrations in it — a NEW object, added to, and with flow's own
  * entries brought up to date.
  *
@@ -3606,26 +3665,7 @@ export function withRegistrations(settings: unknown): { settings: unknown; added
   if (wanted.length === 0 && stale.size === 0 && bare.size === 0) return { settings: base, added: [] };
 
   const arrays = hookArrays(settings);
-  const hooks: Record<string, unknown> = { ...(base["hooks"] as Record<string, unknown> | undefined) };
-  const matcherOf = new Map(HOOK_REGISTRATIONS.map((r) => [r.event, r.matcher]));
-  // FLOW'S OWN ENTRIES ARE FLOW'S TO REWRITE, in place, and these are the only two rewrites this
-  // function makes. A stale matcher is widened, and an old-shape command becomes one that looks in
-  // the repo's node_modules/.bin first. Adding a second entry beside either instead would fire flow
-  // twice for every event the old one already answers.
-  for (const event of new Set([...stale, ...bare]))
-    hooks[event] = (arrays[event] ?? []).map((entry) => {
-      if (!isOurs(entry)) return entry;
-      const held = entry as Record<string, unknown> & { hooks: unknown[] };
-      return {
-        ...held,
-        ...(stale.has(event) ? { matcher: matcherOf.get(event) } : {}),
-        hooks: held.hooks.map((inner) => {
-          const command = commandOf(inner);
-          const word = command === null ? null : bareHook(command);
-          return word === null ? inner : { ...(inner as Record<string, unknown>), command: hookCommand(word) };
-        }),
-      };
-    });
+  const hooks = rewrittenOurs(settings, stale, bare);
   for (const registration of wanted) {
     hooks[registration.event] = [
       ...(arrays[registration.event] ?? []),
@@ -3878,6 +3918,11 @@ export interface InitFacts {
    * settings.json holding JSONC comments: the write was one branch away.
    */
   readonly settingsUnreadable: boolean;
+  /**
+   * The machine-wide settings file, read, when flow's hooks go in the repo's own file — a dev
+   * dependency's — and null when they go in the machine-wide file itself.
+   */
+  readonly machine: { readonly path: string; readonly settings: unknown; readonly unreadable: boolean } | null;
   /** Does `@jawache/flow` already resolve from this repo? */
   readonly resolves: boolean;
   /**
@@ -3913,6 +3958,11 @@ export interface InitPlan {
   /** The rewritten settings, or null when they already call flow — or could not be read. */
   readonly settings: { readonly path: string; readonly value: unknown } | null;
   readonly registered: readonly string[];
+  /**
+   * The machine-wide file with flow's old commands brought up to date, for a dev dependency whose
+   * hooks are in the repo's own file — or null when it has none, or could not be read.
+   */
+  readonly machine: { readonly path: string; readonly value: unknown; readonly rewritten: readonly string[] } | null;
   /** The settings file was there and would not parse, so nothing was registered. Said out loud. */
   readonly settingsUnreadable: string | null;
 }
@@ -3925,6 +3975,8 @@ export function planInit(facts: InitFacts): InitPlan {
   // every other tool's hooks, gone. There is no safe merge into bytes nobody parsed, so init
   // registers nothing and says which file to fix.
   const registration = facts.settingsUnreadable ? { settings: facts.settings, added: [] } : withRegistrations(facts.settings);
+  // The same rule for the machine-wide file: one that would not parse is not written.
+  const machine = facts.machine === null || facts.machine.unreadable ? null : withMachineCommandsUpToDate(facts.machine.settings);
   return {
     config: facts.hasConfig ? null : { path: CONFIG_FILE, body: scaffold(facts.empty) },
     // NEVER over a hook that is already there. This is a scaffold, and a repo whose gate runs its
@@ -3940,6 +3992,10 @@ export function planInit(facts: InitFacts): InitPlan {
     hooksPath: facts.isGit && facts.hooksPath !== HOOKS_DIR,
     settings: registration.added.length === 0 ? null : { path: facts.settingsPath, value: registration.settings },
     registered: registration.added,
+    machine:
+      facts.machine === null || machine === null || machine.rewritten.length === 0
+        ? null
+        : { path: facts.machine.path, value: machine.settings, rewritten: machine.rewritten },
     settingsUnreadable: facts.settingsUnreadable ? facts.settingsPath : null,
   };
 }
@@ -3962,6 +4018,10 @@ export function initLines(plan: InitPlan, failures: readonly string[]): string[]
   // belongs. `npm i -D @jawache/flow` and this line is simply absent.
   if (plan.link) wrote.push(`node_modules/@jawache/flow → ${plan.link} (a link to the flow that is running — nothing here resolved @jawache/flow)`);
   if (plan.settings) wrote.push(`${plan.settings.path} — ${plan.registered.join(" · ")}`);
+  if (plan.machine)
+    wrote.push(
+      `${plan.machine.path} — ${plan.machine.rewritten.join(" · ")} (an older flow's command, now the same as ${REPO_SETTINGS}'s, so each hook runs once)`,
+    );
   if (plan.hooksPath) wrote.push(SET_HOOKS_PATH);
 
   const lines: string[] =
@@ -4016,6 +4076,11 @@ export interface StatusFacts {
   readonly hooksPath: string | null;
   readonly settingsPath: string;
   readonly settings: unknown;
+  /**
+   * The machine-wide settings file, parsed, when flow's hooks are in the repo's own file — a dev
+   * dependency's — and null when `settingsPath` is the machine-wide file itself.
+   */
+  readonly machine: { readonly path: string; readonly settings: unknown } | null;
   /**
    * The grammars the config declared, each with its library path made absolute and a straight
    * answer about whether that file is there.
@@ -4149,6 +4214,7 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
   const registered = registeredEvents(facts.settings);
   const missing = HOOK_REGISTRATIONS.filter((r) => !registered.includes(r.event)).map((r) => r.event);
   const stale = staleRegistrations(facts.settings);
+  const twice = facts.machine === null ? [] : machineDiffers(facts.settings, facts.machine.settings);
   const armed = armsFlow(facts.gateText);
   const old = !armed && armsOldFlow(facts.gateText);
   return [
@@ -4196,9 +4262,9 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
         ]),
     {
       id: "hooks",
-      ok: missing.length === 0 && stale.length === 0,
+      ok: missing.length === 0 && stale.length === 0 && twice.length === 0,
       detail:
-        missing.length === 0 && stale.length === 0
+        missing.length === 0 && stale.length === 0 && twice.length === 0
           ? `${facts.settingsPath} — ${registered.join(" · ")}`
           : [
               missing.length === 0
@@ -4207,6 +4273,9 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
               stale.length === 0
                 ? ""
                 : `${facts.settingsPath} calls flow for ${stale.join(" · ")} on some tools only — an older flow registered ${stale.length === 1 ? "it" : "them"} that way, and a change another tool makes is not judged after it lands. Re-run \`flow init\` to widen ${stale.length === 1 ? "it" : "them"}.`,
+              twice.length === 0 || facts.machine === null
+                ? ""
+                : `${facts.machine.path} also calls flow for ${twice.join(" · ")}, with another command than ${facts.settingsPath}, so Claude Code runs both and each of those hooks fires twice. Re-run \`flow init\`, which brings an older flow's commands there up to date, or remove flow's entries from that file.`,
             ]
               .filter((line) => line !== "")
               .join("\n"),

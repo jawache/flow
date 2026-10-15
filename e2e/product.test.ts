@@ -470,6 +470,54 @@ describe("a repo whose package.json lists flow", () => {
       for (const dir of [listed, machine]) rmSync(dir, { recursive: true, force: true });
     }
   });
+  // ONE RUN PER HOOK: the host merges only identical commands across its two settings files, so an
+  // older flow's bare command left in the machine-wide file would run flow a second time.
+  it("brings an older flow's commands in the machine-wide file up to the repo's, keeping the rest, and status names a command it left", () => {
+    const listed = newRepo();
+    const machine = settingsHome();
+    try {
+      const pkg = { name: "consumer", version: "1.0.0", devDependencies: { "@jawache/flow": "*" } };
+      writeFileSync(join(listed, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
+      const older = {
+        theme: "dark",
+        hooks: {
+          PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: "flow hook pre-tool-use" }] }],
+          Stop: [{ hooks: [{ type: "command", command: "flow hook stop" }] }, { hooks: [{ type: "command", command: "say done" }] }],
+        },
+      };
+      writeFileSync(join(machine, "settings.json"), `${JSON.stringify(older, null, 2)}\n`);
+
+      const init = flow(listed, ["init"], machine);
+      expect(init.code, init.stdout + init.stderr).toBe(0);
+      expect(init.stdout).toContain(
+        `+ ${join(machine, "settings.json")} — PreToolUse · Stop (an older flow's command, now the same as .claude/settings.json's, so each hook runs once)`,
+      );
+
+      type Hooks = Record<string, { matcher?: string; hooks: { type: string; command: string }[] }[]>;
+      const read = (file: string) => JSON.parse(readFileSync(file, "utf8")) as { theme?: string; hooks: Hooks };
+      const repo = read(join(listed, ".claude", "settings.json")).hooks;
+      const after = read(join(machine, "settings.json"));
+      expect(after.theme, "every other key is kept").toBe("dark");
+      expect(Object.keys(after.hooks), "no registration is added there").toEqual(["PreToolUse", "Stop"]);
+      expect(after.hooks["PreToolUse"]?.[0]?.hooks[0]?.command).toBe(repo["PreToolUse"]?.[0]?.hooks[0]?.command);
+      expect(after.hooks["Stop"]?.[0]?.hooks[0]?.command).toBe(repo["Stop"]?.[0]?.hooks[0]?.command);
+      expect(after.hooks["Stop"]?.[1], "another tool's hook is kept as it was").toEqual({ hooks: [{ type: "command", command: "say done" }] });
+
+      const green = flow(listed, ["status"], machine);
+      expect(green.stdout).toContain("✓ hooks: .claude/settings.json — ");
+      expect(green.code, green.stdout).toBe(0);
+      expect(flow(listed, ["init"], machine).stdout, "a second run has nothing to bring up to date").not.toContain(join(machine, "settings.json"));
+
+      // A command with more in it is somebody's own: init leaves it, and status says it runs twice.
+      after.hooks["Stop"] = [{ hooks: [{ type: "command", command: "FLOW_DEBUG=1 flow hook stop" }] }];
+      writeFileSync(join(machine, "settings.json"), `${JSON.stringify(after, null, 2)}\n`);
+      const red = flow(listed, ["status"], machine);
+      expect(red.stdout).toContain(`✗ hooks: ${join(machine, "settings.json")} also calls flow for Stop, with another command than .claude/settings.json`);
+      expect(red.code).toBe(1);
+    } finally {
+      for (const dir of [listed, machine]) rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("the repo's package.json type", () => {
