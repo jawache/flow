@@ -114,11 +114,16 @@ function env(repo: string, rig: Rig): NodeJS.ProcessEnv {
   };
 }
 
-/** The built binary, run in a repo, with whatever of the world the caller has set up. */
-export function flow(repo: string, args: readonly string[], rig: Rig = {}, stdin = ""): Ran {
+/**
+ * The built binary, run in a repo, with whatever of the world the caller has set up.
+ *
+ * `stdin` is the text written to it, or an open file descriptor handed over as its stdin, for a run
+ * whose stdin is something no text can make, such as a file it cannot read.
+ */
+export function flow(repo: string, args: readonly string[], rig: Rig = {}, stdin: string | number = ""): Ran {
   const result = spawnSync("node", [binary(), ...args], {
     cwd: repo,
-    input: stdin,
+    ...(typeof stdin === "number" ? { stdio: [stdin, "pipe", "pipe"] } : { input: stdin }),
     encoding: "utf8",
     env: env(repo, rig),
   });

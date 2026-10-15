@@ -16,7 +16,7 @@
 // the `Symbol.for` decision (flow/language/domain.ts) being paid off rather than a coincidence.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { closeSync, mkdtempSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
@@ -299,6 +299,25 @@ describe("what a broken or empty call does", () => {
     const annotating = run(["hook", "session-start"], "not json at all");
     expect(annotating.code, "breaking a session over a breadcrumb is the cure killing the patient").toBe(0);
     expect(annotating.stderr).toContain("could not PARSE its payload");
+  });
+
+  it("reports a stdin it cannot read on the after-call rails, naming the error, rather than retrying it", () => {
+    // Only EAGAIN means "wait for the next piece"; any other error is a payload nobody will ever
+    // see. A stdin opened for writing fails every read with EBADF. A CLOSED stdin cannot show this:
+    // node reopens a closed fd 0 on /dev/null before flow's first line runs, so it reads as empty.
+    const dir = mkdtempSync(join(tmpdir(), "flow-stdin-"));
+    const writeOnly = openSync(join(dir, "stdin"), "w");
+    try {
+      for (const event of ["post-tool-use", "post-tool-use-failure"]) {
+        const answer = runFlow(repo, ["hook", event], {}, writeOnly);
+        expect(answer.code, `${event} must not pass an unread call as clean`).toBe(2);
+        expect(answer.stderr).toContain("flow — could not see what this call changed");
+        expect(answer.stderr).toContain(`[flow hook ${event}] could not READ its payload from stdin (EBADF).`);
+      }
+    } finally {
+      closeSync(writeOnly);
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("is silent about an event it was never asked for", () => {
