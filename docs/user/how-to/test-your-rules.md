@@ -6,11 +6,11 @@ summary: "give every rule its cases, and run them"
 
 This guide shows you how to prove that each rule passes what it should and blocks what it should.
 
-Every guardrail has its own cases, written on the entry with `.test({ pass, block })`. A case is a canned `ctx`: the input a check is called with, supplied as data. `pass` lists the inputs the rule must let through, and `block` lists the inputs it must refuse. A guardrail with no cases at all does not load.
+Every guardrail has its own cases, written on the entry with `.test({ pass, block })`. A case is a canned `ctx`: the input a check is called with, supplied as data. `pass` lists the inputs the rule must let through, and `block` lists the inputs it must refuse. A guardrail with no block case does not load.
 
 ## Write the cases
 
-1. **Add a block case first.** flow loads a guardrail that has only pass cases, but such a rule proves nothing about what it catches. A block case that passes is how `flow test` reports a rule that catches nothing.
+1. **Add a block case first.** A guardrail with no block case does not load, because pass cases alone prove nothing about what it catches. A block case that passes is how `flow test` reports a rule that catches nothing.
 2. **Add a pass case** for an input the rule must let through.
 3. **If the rule is about a command**, write each case as a bare string. A bare string is always a command line:
 
