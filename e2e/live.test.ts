@@ -969,6 +969,11 @@ describe("a config that will not load", () => {
         expect(after.code, `the after-call rail reports no refusal: ${after.stderr}`).toBe(0);
         expect(after.stderr).toBe("");
         expect(readFileSync(join(repo, "src/a.ts"), "utf8"), "what the command wrote stands").toBe(`${before}// TODO\n`);
+        // THE CALL IS OVER, with no diff taken: its snapshot goes, as on a healthy config.
+        const left = existsSync(join(repo, ".flow", "snapshots"))
+          ? readdirSync(join(repo, ".flow", "snapshots")).filter((name) => name.startsWith("toolu_live_") && !name.startsWith("toolu_live_edit"))
+          : [];
+        expect(left, "a broken config still finishes the call's record").toStrictEqual([]);
       });
     } finally {
       writeFileSync(join(repo, "src/a.ts"), before);
