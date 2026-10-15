@@ -174,14 +174,16 @@ export const secrets = definePack("secrets", (repo: Seam = {}) => {
   // WHERE THE KEY IS, in the two sentences that name it: the custody sentence after the tiers, and
   // where to look when a decrypt comes back empty. `.env.keys` stays in the local tier either way —
   // `dotenvx native down` writes it under the OS store too, and it is still never read.
-  const keyPlace =
+  const { keyPlace, quietDecrypt } =
     custody === "file"
-      ? `\`.env.keys\` holds the decryption key: \`${encrypt}\` writes it, and it is copied by hand to every machine that runs the code; it is never in git.`
-      : "The decryption key is in this machine's OS secret store, where dotenvx put it; no file in this repo holds it.";
-  const quietDecrypt =
-    custody === "file"
-      ? "If a decrypt looks suspiciously quiet, check `.env.keys` exists before you commit anything."
-      : "If a decrypt looks suspiciously quiet, the key is missing from this machine's OS secret store; stop before you commit anything.";
+      ? {
+          keyPlace: `\`.env.keys\` holds the decryption key: \`${encrypt}\` writes it, and it is copied by hand to every machine that runs the code; it is never in git.`,
+          quietDecrypt: "If a decrypt looks suspiciously quiet, check `.env.keys` exists before you commit anything.",
+        }
+      : {
+          keyPlace: "The decryption key is in this machine's OS secret store, where dotenvx put it; no file in this repo holds it.",
+          quietDecrypt: "If a decrypt looks suspiciously quiet, the key is missing from this machine's OS secret store; stop before you commit anything.",
+        };
   // THE SEAM, AS A WHOLE INVOCATION, because the two spellings put the environment in different
   // places: a wrapper takes it as an argument (`just dx dev npm run build`), and dotenvx itself
   // takes the env FILE and a `--`. Written as one string here rather than as a template with a

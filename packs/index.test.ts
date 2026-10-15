@@ -155,10 +155,8 @@ describe("the packs surface", () => {
     expect(file("secrets.orientation")).not.toContain("OS secret store");
     expect(file("secrets.envEncrypted")).toContain("Seal it with `dotenvx encrypt --no-native -ek 'PUBLIC_*'`");
     expect(file("secrets.noSecretsInCommits")).toContain("`dotenvx encrypt --no-native -ek 'PUBLIC_*'`");
-
-    for (const orientation of [native("secrets.orientation"), file("secrets.orientation")]) {
-      expect(orientation).toContain("One seam: `dotenvx run -f .env.<env> -- <cmd>`");
-    }
+    // The seam takes no switch: `dotenvx run` reads `.env.keys` before the OS secret store.
+    expect(file("secrets.orientation")).toContain("One seam: `dotenvx run -f .env.<env> -- <cmd>`");
   });
 
   // A repo's own encrypt recipe is named as given under `"file"` — the switch is that recipe's to pass.
