@@ -25,6 +25,7 @@ import {
   buildBundles,
   cleanBundles,
   fixturePack,
+  hookInPieces,
   newRepo,
   pre,
   shimBin,
@@ -305,6 +306,30 @@ describe("what a broken or empty call does", () => {
     const answer = run(["hook", "user-prompt-submit"], "{}");
     expect(answer.code).toBe(0);
     expect(answer.stdout + answer.stderr).toBe("");
+  });
+});
+
+describe("a payload the host writes in pieces (#12)", () => {
+  // A Read of an image hands post-tool-use a payload far larger than a pipe's buffer, so the host
+  // writes it in pieces, and the hook can empty the pipe before the next piece lands. The
+  // `tool_use_id` comes after the image, so the after-call rail finds its snapshot only if the
+  // second piece was read too.
+  const image = (): Record<string, unknown> => {
+    const id = `toolu_live_${++calls}`;
+    const before = hook("pre-tool-use", { ...inThisSession("Read", { file_path: "shot.png" }), tool_use_id: id });
+    expect(before.code, before.stderr).toBe(0);
+    return {
+      ...inThisSession("Read", { file_path: "shot.png" }),
+      hook_event_name: "PostToolUse",
+      tool_response: { type: "image", file: { base64: "A".repeat(400_000) } },
+      tool_use_id: id,
+    };
+  };
+
+  it("is read whole, however long the host pauses between writes", async () => {
+    const answer = await hookInPieces(repo, "post-tool-use", image(), { first: 16_384, pause: 300 });
+    expect(answer.stderr).not.toContain("could not READ");
+    expect(answer.code, answer.stderr).toBe(0);
   });
 });
 

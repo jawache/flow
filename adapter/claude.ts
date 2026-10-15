@@ -28,6 +28,7 @@
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
+import { isatty } from "node:tty";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -1074,7 +1075,10 @@ export type PayloadRead =
  */
 export function readPayload(): PayloadRead {
   // HAND-RUN: a person typing `flow hook stop` has no payload and must not block on stdin forever.
-  if (process.stdin.isTTY) return { ok: true, payload: {} };
+  // Asked of fd 0 itself, never of `process.stdin`: merely reading that property opens a stream on
+  // fd 0, the stream makes it NON-BLOCKING, and the read below then gives up with EAGAIN the first
+  // time it empties the pipe before the host's next write lands (#12).
+  if (isatty(0)) return { ok: true, payload: {} };
   let raw: string;
   try {
     raw = readFileSync(0, "utf8");
