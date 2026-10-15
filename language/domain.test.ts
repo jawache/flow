@@ -1128,7 +1128,15 @@ describe("the load refuses", () => {
     const note = rawPack("note", {
       x: { spec: { kind: "breadcrumb", at: [touch], on: ["docs/**"], ignore: [], text: "hi" } },
     });
-    expect(shape(refusalsOf([note]))).toEqual([["empty-scope", "note.x"]]);
+    const refusals = refusalsOf([note]);
+    expect(shape(refusals)).toEqual([["empty-scope", "note.x"]]);
+    const refusal = refusals[0];
+    // Advice about the one verb that is empty, said by the pack, in the singular.
+    expect(refusal?.detail).toContain("note.x");
+    expect(refusal?.detail).toContain("`.ignore()` with no globs");
+    expect(refusal?.detail).toContain("Give it at least one glob");
+    expect(refusal?.detail).not.toContain("override");
+    expect(refusal?.detail).not.toContain("`.on(");
   });
 
   it("an empty scope once per entry, naming the entry and both verbs", () => {
@@ -1137,6 +1145,7 @@ describe("the load refuses", () => {
     expect(shape(refusals)).toEqual([["empty-scope", "bare.x"]]);
     expect(refusals[0]?.detail).toContain("bare.x");
     expect(refusals[0]?.detail).toContain("`.on()` and `.ignore()`");
+    expect(refusals[0]?.detail).toContain("Give each at least one glob, or delete them");
   });
 
   it("an empty scope an override leaves, saying the override said it", () => {
@@ -1148,15 +1157,6 @@ describe("the load refuses", () => {
     expect(onRefusals[0]?.detail).toContain("from an override");
 
     expect(shape(refusalsOf([pack(house), asCast.ignore()]))).toEqual([["empty-scope", "house.noTodo"]]);
-  });
-
-  it("an empty scope the pack said, with advice about the verb that is empty", () => {
-    const note = rawPack("note", { x: { spec: { kind: "breadcrumb", at: [touch], on: ["docs/**"], ignore: [], text: "hi" } } });
-    const [refusal] = refusalsOf([note]);
-    expect(refusal?.detail).toContain("note.x");
-    expect(refusal?.detail).toContain("`.ignore()` with no globs");
-    expect(refusal?.detail).not.toContain("override");
-    expect(refusal?.detail).not.toContain("`.on(");
   });
 
   it("an empty scope split between the pack and an override, saying who said each", () => {

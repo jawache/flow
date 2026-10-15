@@ -758,9 +758,6 @@ type Scoping<At extends Moment, Verb, Scopable extends Moment = PathMoment> = [E
   ? (dead: DeadScope) => never
   : Verb;
 
-/** What a bare `.on()` / `.ignore()` failed to pass: the editor shows it beside the missing argument. */
-type EmptyScope = "flow: .on()/.ignore() with no globs narrows nothing — give it at least one glob";
-
 /**
  * `.on(…)` / `.ignore(…)` as a call that takes at least one glob — the compile-time half of the
  * empty-scope rule.
@@ -769,10 +766,11 @@ type EmptyScope = "flow: .on()/.ignore() with no globs narrows nothing — give 
  * `.on(...repo.files)`, a list whose length is the repo's to choose, and a spread of `string[]`
  * into a first-required parameter is refused whether the list is empty or not. So the call infers
  * the arguments it was given, and only the arguments KNOWN to be none — a literal `.on()` — land
- * on a required parameter that was not passed. A spread list that turns out empty is the load's
- * `empty-scope` refusal to catch. Both halves, always.
+ * on a required parameter that was not passed: tsc's arity error, whose "an argument for
+ * 'atLeastOneGlob' was not provided" note is the advice. A spread list that turns out empty is the
+ * load's `empty-scope` refusal to catch. Both halves, always.
  */
-type Globs<Next> = <G extends readonly string[]>(...globs: G extends readonly [] ? [noGlobs: EmptyScope] : G) => Next;
+type Globs<Next> = <G extends readonly string[]>(...globs: G extends readonly [] ? [atLeastOneGlob: string] : G) => Next;
 
 /** What the second form of a breadcrumb's prose becomes once the first was said. The TEXT is the diagnostic. */
 type DoubleProse<Said extends string> =
