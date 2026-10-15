@@ -18,7 +18,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join, posix } from "node:path";
 import type { TurnAction } from "../index.ts";
-import { metrics, momentsView, spawnedAs, type Block, type Bound, type Row } from "../engine/domain.ts";
+import { metrics, momentsView, type Block, type Bound, type Row } from "../engine/domain.ts";
 import { missingGrammarText } from "../checks/domain.ts";
 import { matchAny } from "../glob.ts";
 import {
@@ -826,8 +826,6 @@ describe("who the session is, from what the host wrote", () => {
     expect(facts.subagent, "the agent id alone makes it a subagent, with no file read").toBe(true);
     expect(facts.agentType, "a category keyed on a type declines; the parent must not claim it").toBeUndefined();
     expect(facts.head).toBe("");
-    expect(spawnedAs({ types: ["builder"] })(facts)).toBe(false);
-    expect(spawnedAs({ parent: true })(facts)).toBe(false);
   });
 
   it("reads the parent by ABSENCE — no agent id, no type — even when a top-level --agent session sends a type", () => {

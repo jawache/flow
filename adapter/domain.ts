@@ -2022,24 +2022,6 @@ export function branchFromHead(head: string): string | null {
 }
 
 /**
- * The path of THIS agent's own transcript, from the payload — null when the payload names none.
- *
- * On a subagent's call the host sends the PARENT's `transcript_path`, and keeps the subagent's own
- * transcript under it: `…/<session>.jsonl` → `…/<session>/subagents/agent-<agent_id>.jsonl`. The
- * parent's path is the parent's transcript. Null too when a subagent's half is not what that
- * layout needs — an id that could step out of the folder included, since it becomes part of a path
- * that is then read.
- */
-export function ownTranscriptPath(payload: HookPayload): string | null {
-  const sent = typeof payload.transcript_path === "string" ? payload.transcript_path : "";
-  if (sent === "") return null;
-  const id = payload.agent_id;
-  if (typeof id !== "string" || id === "") return sent;
-  if (!sent.endsWith(".jsonl") || !/^[\w-]+$/.test(id)) return null;
-  return `${sent.slice(0, -".jsonl".length)}/subagents/agent-${id}.jsonl`;
-}
-
-/**
  * Host-written evidence about one session × agent, assembled — the shape a classifier sees.
  *
  * The payload's `agent_id` is what makes a call a subagent's, whether or not any file exists for
@@ -2219,7 +2201,11 @@ export function hermeticEnv(
 // `<sessionId>.jsonl` per top-level session and, for each, a `<sessionId>/subagents/agent-*.jsonl`
 // per child with an `agent-*.meta.json` beside it. Two readers of that layout existed in the old
 // platform — the CLI's corpus reader and the guard's backlog reader — and they disagreed about the
-// folder-name rule; there is one here.
+// folder-name rule. Here the layout is spelled once, in this section: `classifyStore` reads a
+// listing by it after the fact, and `ownTranscriptPath` finds a live subagent's transcript by it.
+
+/** The folder under a session that holds its subagents' transcripts. */
+const SUBAGENTS = "subagents";
 
 /**
  * The folder a working directory's transcripts live in.
@@ -2277,7 +2263,7 @@ export function classifyStore(paths: readonly string[]): {
       sessions.push({ path, meta: null, session: path.slice(0, -".jsonl".length), agent: null });
       continue;
     }
-    if (parts.length === 3 && parts[1] === "subagents" && path.endsWith(".jsonl")) {
+    if (parts.length === 3 && parts[1] === SUBAGENTS && path.endsWith(".jsonl")) {
       const meta = `${path.slice(0, -".jsonl".length)}.meta.json`;
       subagents.push({
         path,
@@ -2287,12 +2273,30 @@ export function classifyStore(paths: readonly string[]): {
       });
       continue;
     }
-    if (parts.length === 3 && parts[1] === "subagents" && path.endsWith(".meta.json")) continue;
+    if (parts.length === 3 && parts[1] === SUBAGENTS && path.endsWith(".meta.json")) continue;
     ignored.push(path);
   }
 
   // Sessions first, then their children — a stable order, so the read is reproducible.
   return { transcripts: [...sessions, ...subagents], ignored };
+}
+
+/**
+ * The path of THIS agent's own transcript, from a live payload — null when the payload names none.
+ *
+ * On a subagent's call the host sends the PARENT's `transcript_path`, and keeps the subagent's own
+ * transcript under it, in the store's layout: `…/<session>.jsonl` →
+ * `…/<session>/subagents/agent-<agent_id>.jsonl`. The parent's path is the parent's transcript.
+ * Null too when a subagent's half is not what that layout needs — an id that could step out of the
+ * folder included, since it becomes part of a path that is then read.
+ */
+export function ownTranscriptPath(payload: HookPayload): string | null {
+  const sent = typeof payload.transcript_path === "string" ? payload.transcript_path : "";
+  if (sent === "") return null;
+  const id = payload.agent_id;
+  if (typeof id !== "string" || id === "") return sent;
+  if (!sent.endsWith(".jsonl") || !/^[\w-]+$/.test(id)) return null;
+  return `${sent.slice(0, -".jsonl".length)}/${SUBAGENTS}/agent-${id}.jsonl`;
 }
 
 /**
@@ -2382,10 +2386,10 @@ const SPAWN_TOOL = "Agent";
  * Every spawn a parent transcript made, by tool_use id — the parent's half of the join.
  *
  * It is the WEAKER half and is read as such: what the parent asked for is a claim by the session
- * being classified, while the sidecar is host-written and unforgeable. Classification (engine,
- * `spawnedAs`) reads the agent type in the hook message and never this. What this is for is
- * everything the sidecar cannot say — when the spawn happened, and where in the parent's own
- * transcript to look.
+ * being classified, while the sidecar is host-written and unforgeable, and so outranks it here.
+ * Neither decides who a live session is: classification (engine, `spawnedAs`) reads the agent type
+ * in the hook message. What this is for is everything the sidecar cannot say — when the spawn
+ * happened, and where in the parent's own transcript to look.
  */
 export function spawnsIn(jsonl: string): Map<string, Spawn> {
   const out = new Map<string, Spawn>();

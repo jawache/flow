@@ -793,14 +793,16 @@ export default defineConfig([pack(demo), pack(work, { writers: ["builder", "pare
     expect(answer.code).toBe(2);
   });
 
-  it("lets a real builder write, and recognises a generic spawn by the brief in its own transcript", () => {
+  it("lets a subagent the host started as builder write, from its hook message", () => {
     const named = bash(spawned("b7", "builder"), "echo 'export const g = 7;' > src/g.ts");
     expect(named.before().code).toBe(0);
     expect(sh("echo 'export const g = 7;' > src/g.ts")).toBe(0);
     const allowed = named.after();
     expect(allowed.code, allowed.stderr).toBe(0);
     expect(at("src/g.ts")).toBe("export const g = 7;\n");
+  });
 
+  it("recognises a generic spawn by the brief in its own transcript, not the parent's", () => {
     // A `general-purpose` spawn carries no type information: the brief decides, and it is read from
     // the subagent's transcript, not the parent's ("run it").
     const generic = bash(spawned("g7", "general-purpose", "Follow `/work build` for F1"), "echo 'export const h = 7;' > src/h.ts");
