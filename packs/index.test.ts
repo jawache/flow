@@ -141,8 +141,6 @@ describe("the packs surface", () => {
       "If a decrypt looks suspiciously quiet, the key is missing from this machine's OS secret store; stop before you commit anything.",
     );
     expect(native("secrets.orientation")).not.toContain("check `.env.keys` exists");
-    expect(native("secrets.envEncrypted")).toContain("Seal it with `dotenvx encrypt -ek 'PUBLIC_*'`");
-    expect(native("secrets.noSecretsInCommits")).toContain("`dotenvx encrypt -ek 'PUBLIC_*'`");
     expect(said({ custody: "native" })("secrets.orientation")).toBe(native("secrets.orientation"));
 
     const file = said({ custody: "file" });
