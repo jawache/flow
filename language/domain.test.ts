@@ -1133,7 +1133,7 @@ describe("the load refuses", () => {
         code: "empty-scope",
         entry: "rail.x",
         detail:
-          "`rail.x` has a scope that narrows nothing: its pack says `.on()` with no globs. In the pack, give it at least one glob or delete it.",
+          "`rail.x` has a scope that narrows nothing: its pack says `.on()` with no globs. In the pack, give `.on()` at least one glob or delete it.",
       },
     ]);
   });
@@ -1147,7 +1147,7 @@ describe("the load refuses", () => {
         code: "empty-scope",
         entry: "note.x",
         detail:
-          "`note.x` has a scope that narrows nothing: its pack says `.ignore()` with no globs. In the pack, give it at least one glob or delete it.",
+          "`note.x` has a scope that narrows nothing: its pack says `.ignore()` with no globs. In the pack, give `.ignore()` at least one glob or delete it.",
       },
     ]);
   });
@@ -1159,7 +1159,7 @@ describe("the load refuses", () => {
         code: "empty-scope",
         entry: "bare.x",
         detail:
-          "`bare.x` has a scope that narrows nothing: its pack says `.on()` and `.ignore()` with no globs. In the pack, give each at least one glob or delete them.",
+          "`bare.x` has a scope that narrows nothing: its pack says `.on()` and `.ignore()` with no globs. In the pack, give `.on()` and `.ignore()` each at least one glob or delete them.",
       },
     ]);
   });
@@ -1170,7 +1170,7 @@ describe("the load refuses", () => {
         code: "empty-scope",
         entry: "house.noTodo",
         detail:
-          "`house.noTodo` has a scope that narrows nothing: an override says `.on()` with no globs. In the override, give it at least one glob or delete it.",
+          "`house.noTodo` has a scope that narrows nothing: an override says `.on()` with no globs. In the override, give `.on()` at least one glob or delete it.",
       },
     ]);
   });
@@ -1181,7 +1181,7 @@ describe("the load refuses", () => {
         code: "empty-scope",
         entry: "house.noTodo",
         detail:
-          "`house.noTodo` has a scope that narrows nothing: an override says `.on()` and `.ignore()` with no globs. In the override, give each at least one glob or delete them.",
+          "`house.noTodo` has a scope that narrows nothing: an override says `.on()` and `.ignore()` with no globs. In the override, give `.on()` and `.ignore()` each at least one glob or delete them.",
       },
     ]);
   });
@@ -1196,6 +1196,15 @@ describe("the load refuses", () => {
           "`mixed.x` has a scope that narrows nothing: its pack says `.on()` with no globs, and an override says `.ignore()` with no globs. In the pack, give `.on()` at least one glob or delete it. In the override, give `.ignore()` at least one glob or delete it.",
       },
     ]);
+  });
+
+  it("an empty scope the pack said and an override filled, which loads clean", () => {
+    // The check reads the entry after the override is laid over it: an override's `.on(…)`
+    // replaces the pack's whole list, so the pack's empty one is gone by the time it is judged.
+    const fixed = definePack("fixed", {
+      x: guardrail().at(write).on(...none).check(passes).message("m").test(cases),
+    });
+    expect(refusalsOf([pack(fixed), override(fixed.x).on("src/**")])).toEqual([]);
   });
 
   it("an empty scope on a disabled entry too — what was written is wrong, whatever the entry proves", () => {

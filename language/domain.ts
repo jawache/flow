@@ -1595,21 +1595,22 @@ function judge(draft: Draft): Refusal[] {
   if (empty.length > 0) {
     // Who said each one is decided per key: one verb may be the pack's and the other an override's,
     // so the verbs are grouped by who said them and each group gets its own clause and its own fix.
+    // `overlay` gives every key of the spec a source, so each empty verb lands in exactly one group.
     const said = (["pack", "override"] as const)
-      .map((who) => ({ who, keys: empty.filter((key) => (draft.source[key] ?? "pack") === who) }))
+      .map((who) => ({ who, keys: empty.filter((key) => draft.source[key] === who) }))
       .filter((group) => group.keys.length > 0);
     const verbs = (keys: readonly string[]) => keys.map((key) => `\`.${key}()\``).join(" and ");
-    const speaker = { pack: "its pack", override: "an override" } as const;
-    const where = { pack: "the pack", override: "the override" } as const;
-    // One group needs no verb named twice: "it" and "each" point back at the clause before.
-    const fix = ({ who, keys }: (typeof said)[number]) => {
-      const one = keys.length === 1;
-      const what = said.length === 1 ? (one ? "it" : "each") : verbs(keys);
-      return `In ${where[who]}, give ${what} at least one glob or delete ${one ? "it" : "them"}.`;
-    };
+    const place = {
+      pack: { speaker: "its pack", fixIn: "the pack" },
+      override: { speaker: "an override", fixIn: "the override" },
+    } as const;
+    const fix = ({ who, keys }: (typeof said)[number]) =>
+      keys.length === 1
+        ? `In ${place[who].fixIn}, give ${verbs(keys)} at least one glob or delete it.`
+        : `In ${place[who].fixIn}, give ${verbs(keys)} each at least one glob or delete them.`;
     say(
       "empty-scope",
-      `\`${id}\` has a scope that narrows nothing: ${said.map(({ who, keys }) => `${speaker[who]} says ${verbs(keys)} with no globs`).join(", and ")}. ${said.map(fix).join(" ")}`,
+      `\`${id}\` has a scope that narrows nothing: ${said.map(({ who, keys }) => `${place[who].speaker} says ${verbs(keys)} with no globs`).join(", and ")}. ${said.map(fix).join(" ")}`,
     );
   }
 
