@@ -132,6 +132,15 @@ export function flow(repo: string, args: readonly string[], rig: Rig = {}, stdin
   return { stdout: result.stdout, stderr: result.stderr, code: result.status ?? -1 };
 }
 
+/**
+ * A command line, through `/bin/sh -c`, in the same world — the way the host runs a registered hook
+ * command, with `CLAUDE_PROJECT_DIR` set to the repo.
+ */
+export function sh(repo: string, command: string, rig: Rig = {}, stdin = ""): Ran {
+  const result = spawnSync("/bin/sh", ["-c", command], { cwd: repo, input: stdin, encoding: "utf8", env: env(repo, rig) });
+  return { stdout: result.stdout, stderr: result.stderr, code: result.status ?? -1 };
+}
+
 /** git itself, in the same world — so a commit meets the same hook a person's would. */
 export function git(repo: string, args: readonly string[], rig: Rig = {}): Ran {
   const result = spawnSync("git", args, { cwd: repo, encoding: "utf8", env: env(repo, rig) });
@@ -186,8 +195,17 @@ export const settingsHome = (prefix = "flow-home-"): string => mkdtempSync(join(
  */
 export function shimBin(prefix = "flow-bin-"): string {
   const bin = mkdtempSync(join(tmpdir(), prefix));
-  writeFileSync(join(bin, "flow"), `#!/bin/sh\nexec node ${JSON.stringify(binary())} "$@"\n`, { mode: 0o755 });
+  writeShim(bin);
   return bin;
+}
+
+/**
+ * One `flow` shim, written into a folder that already exists — a temp PATH folder, or a repo's own
+ * `node_modules/.bin`, where a dev dependency's copy would be. It runs this node by its path, as
+ * `flow()` does: a run given its own PATH may not have node on it.
+ */
+export function writeShim(dir: string): void {
+  writeFileSync(join(dir, "flow"), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(binary())} "$@"\n`, { mode: 0o755 });
 }
 
 /**

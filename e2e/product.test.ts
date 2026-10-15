@@ -16,11 +16,9 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync, lstatSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import {
   PACKAGE,
-  binary,
   buildBundles,
   builtPackage,
   cleanBundles,
@@ -28,7 +26,9 @@ import {
   newRepo as freshRepo,
   pre,
   settingsHome,
+  sh,
   shimBin,
+  writeShim,
   BREAKS,
   bindInConfig,
   fixturePack,
@@ -200,9 +200,7 @@ describe("flow status", () => {
       expect(flow(local, ["init"]).code).toBe(0);
       const localBin = join(local, "node_modules", ".bin");
       mkdirSync(localBin, { recursive: true });
-      writeFileSync(join(localBin, "flow"), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(binary())} "$@"\n`, {
-        mode: 0o755,
-      });
+      writeShim(localBin);
       // git, and the system's own folders for the shell flow runs git through — no flow in any.
       const path = [runGit(local, ["--exec-path"]).stdout.trim(), "/usr/bin", "/bin"];
       for (const dir of path) expect(existsSync(join(dir, "flow")), `${dir} has no flow`).toBe(false);
@@ -221,13 +219,8 @@ describe("flow status", () => {
 
       const registered = (settings()["hooks"] as Record<string, { hooks: { command: string }[] }[]>)["PreToolUse"]?.[0]?.hooks[0]?.command;
       expect(registered).toBe('PATH="$CLAUDE_PROJECT_DIR/node_modules/.bin:$PATH" flow hook pre-tool-use');
-      const answered = spawnSync("/bin/sh", ["-c", registered ?? ""], {
-        cwd: local,
-        encoding: "utf8",
-        env: { ...process.env, CLAUDE_PROJECT_DIR: local, CLAUDE_CONFIG_DIR: home, PATH: world.path },
-        input: JSON.stringify(pre("Bash", { command: "git push --force origin main" }, "dev-dep-1")),
-      });
-      expect(answered.status, answered.stderr).toBe(2);
+      const answered = sh(local, registered ?? "", world, JSON.stringify(pre("Bash", { command: "git push --force origin main" }, "dev-dep-1")));
+      expect(answered.code, answered.stderr).toBe(2);
       expect(answered.stderr).toContain("demo.noForcePush");
     } finally {
       rmSync(local, { recursive: true, force: true });
