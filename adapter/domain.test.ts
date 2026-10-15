@@ -59,9 +59,9 @@ import {
   CONFIG_FILE,
   configImports,
   configSurface,
-  repairs,
   statusCode,
   whileBroken,
+  FLOW_OFF,
   guardPaths,
   HOST_SURFACE,
   formatFacts,
@@ -1882,7 +1882,7 @@ describe("planInit — a repo that already has a pre-commit hook", () => {
   });
 });
 
-describe("the config surface — what a write may target while the guard is broken", () => {
+describe("the config surface — the repo's own half of the guard, read out of the config's text", () => {
   // The config as this repo writes it, and as a broken one still reads: the imports survive
   // whatever went wrong two hundred lines below them.
   const CONFIG = [
@@ -1907,8 +1907,8 @@ describe("the config surface — what a write may target while the guard is brok
   });
 
   it("follows whatever the repo called the folder, and reaches nothing when the config names nothing", () => {
-    // The whole point of reading the text: `guards/` was one repo's name for it, and every other
-    // repo got a repair exception over a folder it does not have.
+    // The whole point of reading the text: `guards/` is one repo's name for it, and the engine
+    // knows no folder name of its own.
     const theirs = configSurface(`import { house } from "./.guard/house.ts";`);
     expect(matchAny(".guard/house.ts", theirs)).toBe(true);
     expect(matchAny(".guard/helpers/text.ts", theirs)).toBe(true);
@@ -1920,7 +1920,7 @@ describe("the config surface — what a write may target while the guard is brok
   });
 
   it("reads the TEXT, not the module — which is the only reader a broken config has", () => {
-    // Package specifiers are somebody else's source and never repairable here; `../` climbs out
+    // Package specifiers are somebody else's source, never this repo's guard; `../` climbs out
     // of the root, where a repo-relative surface cannot follow.
     expect(configImports(CONFIG)).toStrictEqual(["guards/house.ts"]);
     expect(configImports(`import x from "../outside/y.ts";`)).toStrictEqual([]);
@@ -1932,59 +1932,63 @@ describe("the config surface — what a write may target while the guard is brok
     ]);
     // A `from '…'` phrase inside a QUOTED MESSAGE is harvested too, and that is the accepted
     // behaviour rather than a miss: separating a real import from a sentence that quotes one takes
-    // a parser, and the file being asked about is the one that will not parse. Pinned here because
-    // it only ever WIDENS the repair surface, and only while the config is already refusing every
-    // other write — so the cost is one extra repairable path at a moment when nothing can commit.
+    // a parser, and the file being asked about may be one that will not parse. Pinned here because
+    // it only ever WIDENS the surface, so the cost is one extra path reported as a guard file.
     expect(configImports(`.message("write it as: import { x } from './guards/x.ts'")`)).toStrictEqual(["guards/x.ts"]);
   });
 });
 
 describe("what every rail answers while the config will not load", () => {
-  const SURFACE = ["flow.config.ts", "guards/house.ts", "guards/**"];
   const FAULT = "flow: the config will not load — 1 refusal.";
-  const write = (path: string): AdapterEvent => ({ rail: "guard", moment: "write", file: { path, content: "x" } });
+  const TOLD = `${FAULT}\n\n${FLOW_OFF}`;
 
-  describe("repairs — the exception is exactly as wide as the repair", () => {
-    it("is the config and the packs it imports, at a write or a delete", () => {
-      expect(repairs(write("flow.config.ts"), SURFACE)).toBe(true);
-      expect(repairs(write("guards/house.ts"), SURFACE)).toBe(true);
-      expect(repairs(write("guards/nested/helper.ts"), SURFACE), "the folder comes with the file").toBe(true);
-      expect(repairs({ rail: "guard", moment: "delete", file: { path: "flow.config.ts", content: "" } }, SURFACE)).toBe(true);
+  describe("whileBroken — every call goes through, and the agent is told why", () => {
+    it("refuses no write, edit, delete or command, and hands each one the load error", () => {
+      const files = world({ "src/a.ts": "a", "flow.config.ts": "old" });
+      for (const payload of [
+        pre("Write", { file_path: "/repo/src/b.ts", content: "fine" }),
+        pre("Edit", { file_path: "/repo/src/a.ts", old_string: "a", new_string: "b" }),
+        pre("Bash", { command: "rm src/a.ts" }),
+        pre("Bash", { command: "npm ci" }),
+        pre("Bash", { command: "git reset --hard" }),
+      ]) {
+        const answer = whileBroken(toEvent("pre-tool-use", payload, files), FAULT);
+        expect(answer.refused, `${JSON.stringify(payload.tool_input)} is let through`).toStrictEqual([]);
+        expect(answer.shown).toStrictEqual([{ entry: null, cause: "fault", body: TOLD }]);
+        expect(answer.told).toBeNull();
+        const result = toResult("pre-tool-use", answer);
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout, "the load error reaches the agent as context").toContain(FAULT);
+      }
     });
 
-    it("is nothing else — not another file, not a command, not a rail without a target", () => {
-      expect(repairs(write("src/a.ts"), SURFACE)).toBe(false);
-      // A command names a STRING, never a target: `sed -i` on the config reads exactly like
-      // `rm -rf` before either runs, so the command rail stays fully shut in the broken state.
-      expect(repairs({ rail: "guard", moment: "command", command: "sed -i s/x/y/ flow.config.ts" }, SURFACE)).toBe(false);
-      expect(repairs({ rail: "guard", moment: "commit", staged: ["flow.config.ts"] }, SURFACE)).toBe(false);
-      expect(repairs({ rail: "brief", moment: "touch", path: "flow.config.ts" }, SURFACE)).toBe(false);
-    });
-  });
-
-  describe("whileBroken — one answer, whichever way it broke", () => {
-    it("refuses every gated moment but the repair, and hands the fault to a breadcrumb rail", () => {
-      const answer = whileBroken(
-        [write("src/a.ts"), write("flow.config.ts"), { rail: "brief", moment: "session" }],
-        SURFACE,
-        FAULT,
-      );
-      expect(answer.refused.map((r) => r.moment), "the repair is not among them").toStrictEqual(["write"]);
-      expect(answer.refused[0]?.block.message).toBe(FAULT);
-      expect(answer.refused[0]?.block.entry, "the guard itself refused, not a rule").toBeNull();
-      expect(answer.shown.map((s) => s.body), "a breadcrumb rail has no rail to refuse with").toStrictEqual([FAULT]);
-      expect(answer.told).toBeNull();
+    it("tells the agent once per answer, however many events the payload carried", () => {
+      // One Bash call is a command, each file an `rm` removes, and each file it reads — four
+      // events here, and the agent needs the sentence once.
+      const events = toEvent("pre-tool-use", pre("Bash", { command: "rm src/a.ts && cat src/b.ts" }), world({ "src/a.ts": "a", "src/b.ts": "b" }));
+      expect(events.length).toBeGreaterThan(2);
+      expect(whileBroken(events, FAULT).shown).toHaveLength(1);
     });
 
-    it("tells turn-end rather than holding it, which is the only rail that changes", () => {
-      const answer = whileBroken([{ rail: "guard", moment: "turn-end", turn: [] }], SURFACE, FAULT);
+    it("greets a session with the load error in place of the breadcrumbs", () => {
+      expect(whileBroken([{ rail: "brief", moment: "session" }], FAULT).shown.map((note) => note.body)).toStrictEqual([TOLD]);
+    });
+
+    it("says nothing after the call, because the agent was told when it asked", () => {
+      const changes = [{ path: "src/a.ts", before: "a", after: "b" }];
+      const events = toEvent("post-tool-use", pre("Bash", { command: "python3 fix.py" }), { ...world(), changes });
+      expect(events.some((event) => event.rail === "guard" && event.observed === true), "the change was seen").toBe(true);
+      expect(whileBroken(events, FAULT)).toStrictEqual({ refused: [], shown: [], told: null });
+    });
+
+    it("tells turn-end rather than holding it", () => {
+      const answer = whileBroken([{ rail: "guard", moment: "turn-end", turn: [] }], FAULT);
       expect(answer.refused, "a held turn cannot hand back to the human who would fix it").toStrictEqual([]);
-      expect(answer.told, "and it is not silent either").toBe(FAULT);
+      expect(answer.told, "and it is not silent either").toBe(TOLD);
     });
 
     it("says nothing at all when the payload carried no rail", () => {
-      const answer = whileBroken([], SURFACE, FAULT);
-      expect(answer).toStrictEqual({ refused: [], shown: [], told: null });
+      expect(whileBroken([], FAULT)).toStrictEqual({ refused: [], shown: [], told: null });
     });
   });
 
@@ -2503,15 +2507,15 @@ describe("reversal — exactly the refused files go back", () => {
     expect(reversal(changes, [{ moment: "command", block: block("x") }])).toStrictEqual({ revert: [], kept: ["src/a.ts", "src/b.ts"] });
   });
 
-  it("honours the repair exception: a broken config's own repair lands and stays", () => {
-    const repair = [
+  it("puts nothing back while the config will not load: what a call wrote stands", () => {
+    const landed = [
       { path: "flow.config.ts", before: "old", after: "fixed" },
-      { path: "src/a.ts", before: "a", after: "b" },
+      { path: "package-lock.json", before: "a", after: "b" },
     ];
-    const events = toEvent("post-tool-use", pre("Bash", { command: "python3 fix.py" }), { ...world(), changes: repair });
-    const answer = whileBroken(events, configSurface(""), "the config will not load");
-    expect(answer.refused.map((r) => r.observed), "only the path off the surface is refused").toEqual(["src/a.ts"]);
-    expect(reversal(repair, answer.refused)).toStrictEqual({ revert: [repair[1]], kept: ["flow.config.ts"] });
+    const events = toEvent("post-tool-use", pre("Bash", { command: "npm install" }), { ...world(), changes: landed });
+    const answer = whileBroken(events, "the config will not load");
+    expect(reversal(landed, answer.refused)).toStrictEqual({ revert: [], kept: ["flow.config.ts", "package-lock.json"] });
+    expect(reversal(landed, answer.refused, { revert: "all", overlap: [] }).revert, "not even under revert: all").toStrictEqual([]);
   });
 });
 

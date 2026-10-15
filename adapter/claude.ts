@@ -78,7 +78,6 @@ import {
   ALLOW,
   CONFIG_FILE,
   configLoadFault,
-  configSurface,
   branchFromHead,
   callKey,
   callRecord,
@@ -754,22 +753,22 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
 
   // THE CONFIG WILL NOT LOAD, either way it can fail to. `kind: "broken"` is a module that would
   // not import; a LoadResult carrying refusals is a module that imported and whose grammar was
-  // refused. They were two branches with two behaviours until the F3 read found that only the first
-  // reached the repair exception — so a deleted `.message(…)`, which is the break
-  // docs/user/explanation/fail-loud.md tells a reader to make, locked the agent out of its own
-  // repair. One sentence, one answer, one place. They are asked in sequence only because the second
-  // needs the LoadResult the first does not have; `outage` is the answer both of them give.
+  // refused. Both are the same fact, "flow is off", and get the same answer: `whileBroken` refuses
+  // nothing and hands the agent the load error. They are asked in sequence only because the second
+  // needs the LoadResult the first does not have.
+  //
+  // NOTHING IS PUT BACK on the after-call rail: `settle` reverts only what a rule refused, and
+  // nothing refused. What the call wrote stands — `npm ci`'s `node_modules`, an edit to the config —
+  // and the commit gate, which stays shut until the config loads, is where it is checked. `settle`
+  // is still called because it is also where the call's snapshot is finished.
   const outage = (sentence: string): HookResult => {
     if (off) return ALLOW;
-    // The config's TEXT, not its module: the module is the thing that will not load, and the
-    // surface a repair may reach is whatever this config imports. Read once, here, and only here.
-    const surface = configSurface(readText(root, CONFIG_FILE));
-    const answer = whileBroken(toEvent(hook, payload, eventWorld(root, session, changes)), surface, sentence);
+    const answer = whileBroken(toEvent(hook, payload, eventWorld(root, session, changes)), sentence);
     const result = toResult(hook, settle(answer));
     // TURN-END IS TOLD RATHER THAN HELD. `whileBroken` says why; this is the only place that can
     // write it, because the Stop rail has no context channel and `toResult` speaks only the two the
     // host reads. Exit 0 — the turn ends, and the sentence goes where a human and the log see it.
-    return snapshotted(answer.told === null || result.exitCode !== 0 ? result : { ...result, stderr: `${answer.told}\n` });
+    return snapshotted(answer.told === null ? result : { ...result, stderr: `${answer.told}\n` });
   };
   if (regime.kind === "broken") return outage(regime.message);
 
@@ -1001,10 +1000,10 @@ export async function runCommit(root: string, scope: CommitScope): Promise<HookR
   if (regime.kind === "none") return ALLOW;
   if (isOff(root)) return ALLOW;
   // THE GATE USES THE ENGINE'S OWN FAULT, not `whileBroken` next door, and the difference is the
-  // point rather than an oversight: `whileBroken` exists to carve out the repair and to let a turn
-  // end, and the commit moment has neither. Nothing written under the repair exception may reach a
-  // commit until the config loads green, so this rail stays fully shut however the config broke —
-  // the import fault here, and a load refusal through `guard()`'s own `!load.ok` branch below.
+  // point rather than an oversight: `whileBroken` lets every call through, and the commit gate is
+  // the one rail that stays shut. Everything written while flow was off reaches a commit only once
+  // the config loads and every guardrail has checked it — so this rail refuses however the config
+  // broke: the import fault here, and a load refusal through `guard()`'s own `!load.ok` branch below.
   if (regime.kind === "broken") return refused([{ moment: "commit", block: fault(regime.message) }]) ?? ALLOW;
   const changes = readChanges(root, scope);
   if (!changes.ok) return refused([{ moment: "commit", block: fault(changes.why) }]) ?? ALLOW;
