@@ -178,17 +178,21 @@ export function isScopable(kind: EntrySpec["kind"], m: string): boolean {
  * The host-written record of one session × agent, as a classifier sees it.
  *
  * Every field is something a HARNESS wrote, not something the session said. `agentType` is the
- * strongest of them — the sidecar the host writes beside every subagent transcript — and it is
- * what a classifier should key on when it exists.
+ * strongest of them — the agent type the host puts in the hook message for every call a subagent
+ * makes — and it is what a classifier should key on when it exists.
  */
 export interface SessionFacts {
-  /** The head of this session's transcript: the brief it was started with, verbatim. */
+  /** The head of this session's own transcript: the brief it was started with, verbatim. */
   head: string;
   /** True when this is a spawned subagent rather than the parent session. */
   subagent: boolean;
-  /** The host's own agent type for this spawn, from the sidecar it wrote. Absent on a parent. */
+  /** The agent type the host started this spawn as, from its hook message. Absent on a parent. */
   agentType?: string | undefined;
-  /** The human-readable label the spawning agent gave this subagent. Absent on a parent. */
+  /**
+   * @deprecated Always undefined: a category that reads it never matches. It came from the sidecar
+   * file, which is no longer read, and the hook message carries no description. Kept so a config
+   * that names it still compiles.
+   */
   description?: string | undefined;
 }
 
