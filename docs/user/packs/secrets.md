@@ -1,5 +1,5 @@
 ---
-summary: "3 guardrails · 1 breadcrumb · fires at: session · write · commit · takes 6 parameters"
+summary: "3 guardrails · 1 breadcrumb · fires at: session · write · commit · takes 7 parameters"
 ---
 
 # The `secrets` pack
@@ -19,11 +19,15 @@ Three tiers, and every value lives in exactly one: committed-and-encrypted (`.en
 ephemera that must never be committed (`.env.keys`, `.dev.vars`, `.env.*.local`), and runtime
 secrets set per environment on the platform.
 
+The private key that decrypts the committed files is kept in one of two places, named by
+`custody`: the OS secret store, which is dotenvx's default, or a `.env.keys` file copied by hand
+to every machine.
+
 Generated from `packs/secrets.ts` by `just docs-packs`. Edit the pack, not this page. The commit gate refuses a page that has drifted.
 
 ## Binding it
 
-The pack takes 6 parameters. These are facts the pack cannot know about your repo:
+The pack takes 7 parameters. These are facts the pack cannot know about your repo:
 
 | Parameter | Type | What it is |
 | --- | --- | --- |
@@ -32,7 +36,8 @@ The pack takes 6 parameters. These are facts the pack cannot know about your rep
 | `envFiles` | `string` | The committed env files, as a glob. Defaults to `.env*`. |
 | `extraSecretShapes` | `readonly string[]` | Extra credential shapes to scan staged content for, added to the six this pack ships (Stripe live keys, AWS access keys, private key headers, GitHub and Slack tokens). Defaults to none.<br><br>One regular expression per shape. A vendor whose token this pack has never heard of is a fact only the repo has. |
 | `dx` | `string` | The repo's wrapper around dotenvx's runner, called as `<dx> <env> <cmd>` — it decrypts and injects, and every env-dependent command goes through it. Defaults to dotenvx itself, spelled `dotenvx run -f .env.<env> --`, which takes the env file rather than an environment name.<br><br>A wrapper is worth having and this pack cannot guess its name: `just dx` is one fleet's spelling, and written in here it would send every reader of a refusal to a command their repo does not have, in the one sentence they read at the moment they are stuck. |
-| `encrypt` | `string` | Seals every env file in place, leaving the public prefixes plaintext. Defaults to dotenvx's own `dotenvx encrypt`, excluding the prefixes above by name. |
+| `encrypt` | `string` | Seals every env file in place, leaving the public prefixes plaintext. Defaults to dotenvx's own `dotenvx encrypt`, excluding the prefixes above by name, and passing `--no-native` when `custody` is `"file"`. |
+| `custody` | `"native" \| "file"` | Where the private key that decrypts the env files is kept. Defaults to `"native"`.<br><br>`"native"` is the OS secret store: the macOS Keychain, Windows Credential Manager or Linux Secret Service. dotenvx 2.25 and later write the key there by default, and no file in the repo holds it. A machine without the key in its store decrypts nothing.<br><br>`"file"` is `.env.keys`, beside the env files and never committed. You copy it by hand to every machine that runs the code. dotenvx writes it only when `dotenvx encrypt` is passed `--no-native`.<br><br>The orientation tells the agent which of the two this repo uses, and where to look when a decrypt comes back empty. |
 
 Example config. The values are examples, and every glob and command on this page was rendered with them:
 
@@ -47,9 +52,10 @@ To turn one entry off, say so in the config: `override(secrets.orientation).disa
 
 ## What to install first
 
-dotenvx — https://dotenvx.com. It is what encrypts the committed files and what runs a
-command with them decrypted, and with nothing else in place every sentence below names it
-directly. The two command parameters are for a repo that has wrapped it in recipes of its own.
+dotenvx 2.25 or later — https://dotenvx.com. It is what encrypts the committed files
+and what runs a command with them decrypted, and with nothing else in place every sentence below
+names it directly. 2.25 is the first release that keeps the key in the OS secret store by
+default. The two command parameters are for a repo that has wrapped it in recipes of its own.
 
 ## What the repo needs in place
 
@@ -83,6 +89,13 @@ env-names file=".env":
 Bound, that repo hands over `dx: "just dx"` and `encrypt: "just env-encrypt"`. The third job is
 nobody's parameter — no sentence in this pack names it — and it is here because an env seam
 wants it.
+
+These recipes leave the key's place to dotenvx. Run with no terminal attached, as an agent runs
+them, it writes a new key to the OS secret store; in a terminal it asks. A repo bound with
+`custody: "file"` adds
+`--no-native` to the `dotenvx encrypt` line, so dotenvx writes the key to `.env.keys`. The switch
+matters only the first time a file is sealed, when its key is created. `dotenvx run` needs no
+switch in either case: it reads `.env.keys` before it looks in the OS secret store.
 
 ## Adopting it
 

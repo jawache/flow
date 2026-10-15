@@ -71,9 +71,26 @@ export interface Seam {
 
   /**
    * Seals every env file in place, leaving the public prefixes plaintext. Defaults to dotenvx's
-   * own `dotenvx encrypt`, excluding the prefixes above by name.
+   * own `dotenvx encrypt`, excluding the prefixes above by name, and passing `--no-native` when
+   * `custody` is `"file"`.
    */
   readonly encrypt?: string;
+
+  /**
+   * Where the private key that decrypts the env files is kept. Defaults to `"native"`.
+   *
+   * `"native"` is the OS secret store: the macOS Keychain, Windows Credential Manager or Linux
+   * Secret Service. dotenvx 2.25 and later write the key there by default, and no file in the repo
+   * holds it. A machine without the key in its store decrypts nothing.
+   *
+   * `"file"` is `.env.keys`, beside the env files and never committed. You copy it by hand to every
+   * machine that runs the code. dotenvx writes it only when `dotenvx encrypt` is passed
+   * `--no-native`.
+   *
+   * The orientation tells the agent which of the two this repo uses, and where to look when a
+   * decrypt comes back empty.
+   */
+  readonly custody?: "native" | "file";
 }
 
 /**
@@ -90,9 +107,14 @@ export interface Seam {
  * ephemera that must never be committed (`.env.keys`, `.dev.vars`, `.env.*.local`), and runtime
  * secrets set per environment on the platform.
  *
- * @install dotenvx — https://dotenvx.com. It is what encrypts the committed files and what runs a
- * command with them decrypted, and with nothing else in place every sentence below names it
- * directly. The two command parameters are for a repo that has wrapped it in recipes of its own.
+ * The private key that decrypts the committed files is kept in one of two places, named by
+ * `custody`: the OS secret store, which is dotenvx's default, or a `.env.keys` file copied by hand
+ * to every machine.
+ *
+ * @install dotenvx 2.25 or later — https://dotenvx.com. It is what encrypts the committed files
+ * and what runs a command with them decrypted, and with nothing else in place every sentence below
+ * names it directly. 2.25 is the first release that keeps the key in the OS secret store by
+ * default. The two command parameters are for a repo that has wrapped it in recipes of its own.
  * @setup `.env.keys`, `.dev.vars` and `.env.*.local` in `.gitignore` — the rules below refuse them
  * in a commit, and an ignore entry is what stops anyone reaching that refusal.
  *
@@ -123,6 +145,13 @@ export interface Seam {
  * Bound, that repo hands over `dx: "just dx"` and `encrypt: "just env-encrypt"`. The third job is
  * nobody's parameter — no sentence in this pack names it — and it is here because an env seam
  * wants it.
+ *
+ * These recipes leave the key's place to dotenvx. Run with no terminal attached, as an agent runs
+ * them, it writes a new key to the OS secret store; in a terminal it asks. A repo bound with
+ * `custody: "file"` adds
+ * `--no-native` to the `dotenvx encrypt` line, so dotenvx writes the key to `.env.keys`. The switch
+ * matters only the first time a file is sealed, when its key is created. `dotenvx run` needs no
+ * switch in either case: it reads `.env.keys` before it looks in the OS secret store.
  * @adopt A repo with no `.env*` at all binds this for `noSecretsInCommits` alone, which is worth
  * having in a repo that has never held a secret, and turns `envEncrypted` off BY NAME in its
  * config with the reason on the record — an entry sitting dead is not the same as one opted out of.
