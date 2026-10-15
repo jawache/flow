@@ -1291,6 +1291,9 @@ export function defineConfig(sentences: readonly ConfigSentence[], settings: Set
 
 // ── the overlay ──────────────────────────────────────────────────────────────
 
+/** The two forms a breadcrumb's prose is said in: exactly one of them, never both. */
+const PROSE_KEYS = ["text", "file"] as const;
+
 /** An effective entry, and where each of its keys came from. */
 export interface Overlaid {
   readonly spec: EntrySpec;
@@ -1315,10 +1318,16 @@ export function overlay(
   spoken: Readonly<Record<string, unknown>>,
   prior?: Readonly<Record<string, "pack" | "override">>,
 ): Overlaid {
+  // A breadcrumb's prose is ONE key said in two forms, so an override that says either form
+  // replaces whichever the pack used, rather than landing beside it as a note with both.
+  const isProse = (key: string) => (PROSE_KEYS as readonly string[]).includes(key);
+  const kept = Object.keys(spoken).some(isProse)
+    ? Object.fromEntries(Object.entries(base).filter(([key]) => !isProse(key)))
+    : base;
   const source: Record<string, "pack" | "override"> = {};
-  for (const key of Object.keys(base)) source[key] = prior?.[key] ?? "pack";
+  for (const key of Object.keys(kept)) source[key] = prior?.[key] ?? "pack";
   for (const key of Object.keys(spoken)) source[key] = "override";
-  return { spec: { ...base, ...spoken }, source };
+  return { spec: { ...kept, ...spoken } as EntrySpec, source };
 }
 
 
@@ -1573,6 +1582,15 @@ function judge(draft: Draft): Refusal[] {
       `\`${id}\` says ${verbs} with no globs${fromOverride ? ", from an override" : ""}, which narrows nothing. Give it at least one glob, or ${fromOverride ? "drop it from the override so the pack's own scope applies" : "drop it: an entry with no `.on(…)` is about every path"}.`,
     );
   }
+
+  // PROSE SAID TWICE. A note shows one text, so a breadcrumb with both forms is a note whose author
+  // has not decided which one it is. An override's prose replaces the pack's (overlay), so what
+  // reaches here is one sentence, or one override, that said both.
+  if (spec.kind === "breadcrumb" && spec.text !== undefined && spec.file !== undefined)
+    say(
+      "double-prose",
+      `\`${id}\` says both \`.text(…)\` and \`.file(…)\`. A breadcrumb's note is exactly one of the two — keep the one you mean and drop the other.`,
+    );
 
   // A disabled entry is listed with its reason and never runs, so it is asked to prove nothing.
   // That is not a hole: what it says is already inert, and demanding a message and cases from an

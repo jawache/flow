@@ -787,6 +787,42 @@ describe("overlay — a spoken key replaces the pack's WHOLE key, nothing merges
     const { spec } = overlay(packSpec, { at: [command] });
     expect(spec.at).toEqual(["command"]);
   });
+
+  it("leaves a breadcrumb's prose alone when the override says none", () => {
+    const note = breadcrumb().at(touch).file("docs/long-note.md").spec;
+    const { spec, source } = overlay(note, { on: ["docs/**"] });
+    expect(spec.kind === "breadcrumb" && spec.file).toBe("docs/long-note.md");
+    expect(source["file"]).toBe("pack");
+  });
+});
+
+describe("overlay — a breadcrumb's prose is one key in two forms, and an override replaces it", () => {
+  const fileNote = breadcrumb().at(touch).on("docs/**").file("docs/long-note.md").spec;
+  const textNote = breadcrumb().at(touch).on("docs/**").text("One inline sentence.").spec;
+
+  it("an override's `.text(…)` replaces a pack's `.file(…)`, and the prose is the override's", () => {
+    const { spec, source } = overlay(fileNote, { text: "Shorter, inline." });
+    expect(spec).not.toHaveProperty("file");
+    expect(spec.kind === "breadcrumb" && spec.text).toBe("Shorter, inline.");
+    expect(source["text"]).toBe("override");
+    expect(source).not.toHaveProperty("file");
+    expect(source["on"]).toBe("pack");
+  });
+
+  it("an override's `.file(…)` replaces a pack's `.text(…)`, the reverse", () => {
+    const { spec, source } = overlay(textNote, { file: "docs/our-note.md" });
+    expect(spec).not.toHaveProperty("text");
+    expect(spec.kind === "breadcrumb" && spec.file).toBe("docs/our-note.md");
+    expect(source["file"]).toBe("override");
+    expect(source).not.toHaveProperty("text");
+  });
+
+  it("a later override's prose replaces an earlier override's", () => {
+    const first = overlay(fileNote, { text: "First." });
+    const second = overlay(first.spec, { file: "docs/second.md" }, first.source);
+    expect(second.spec).not.toHaveProperty("text");
+    expect(second.source["file"]).toBe("override");
+  });
 });
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -1117,6 +1153,48 @@ describe("the load refuses", () => {
   it("an empty scope on a disabled entry too — what was written is wrong, whatever the entry proves", () => {
     const off = rawPack("off", { x: { spec: { kind: "guardrail", at: [write], on: [], disabled: { reason: "not yet" } } } });
     expect(shape(refusalsOf([off]))).toEqual([["empty-scope", "off.x"]]);
+  });
+
+  it("a breadcrumb with both `.text(…)` and `.file(…)` as double-prose, naming the entry", () => {
+    const both = rawPack("both", { x: { spec: { kind: "breadcrumb", at: [session], text: "hi", file: "docs/hi.md" } } });
+    const refusals = refusalsOf([both]);
+    expect(shape(refusals)).toEqual([["double-prose", "both.x"]]);
+    expect(refusals[0]?.detail).toContain("both.x");
+
+    // The sentence chain, cast past its types as a config built outside an editor would be.
+    const spoken = (breadcrumb().at(session).text("hi") as unknown as { file: (p: string) => unknown }).file("docs/hi.md");
+    expect(shape(refusalsOf([rawPack("chained", { x: spoken })]))).toEqual([["double-prose", "chained.x"]]);
+  });
+
+  it("a breadcrumb with both on a disabled entry too", () => {
+    const off = rawPack("off", {
+      x: { spec: { kind: "breadcrumb", at: [session], text: "hi", file: "docs/hi.md", disabled: { reason: "not yet" } } },
+    });
+    expect(shape(refusalsOf([off]))).toEqual([["double-prose", "off.x"]]);
+  });
+
+  it("an override that says both, even over a pack that used one", () => {
+    const both = (override(house.orientation).text("Inline.") as unknown as { file: (p: string) => ConfigSentence }).file(
+      "docs/note.md",
+    );
+    expect(shape(refusalsOf([pack(house), both]))).toEqual([["double-prose", "house.orientation"]]);
+  });
+
+  it("but not an override's prose over a pack's other form — it replaces it, and loads", () => {
+    const files = definePack("files", { note: breadcrumb().at(touch).on("docs/**").file("docs/long-note.md") });
+    const [toText] = loadOrThrow([pack(files), override(files.note).text("One inline sentence.")]);
+    expect(toText?.spec).not.toHaveProperty("file");
+    expect(toText?.spec.kind === "breadcrumb" && toText.spec.text).toBe("One inline sentence.");
+    expect(toText?.source["text"]).toBe("override");
+    expect(toText?.source).not.toHaveProperty("file");
+
+    const [toFile] = loadOrThrow([pack(house), override(house.orientation).file("docs/orientation.md")]).filter(
+      (e) => e.id === "house.orientation",
+    );
+    expect(toFile?.spec).not.toHaveProperty("text");
+    expect(toFile?.spec.kind === "breadcrumb" && toFile.spec.file).toBe("docs/orientation.md");
+    expect(toFile?.source["file"]).toBe("override");
+    expect(toFile?.source).not.toHaveProperty("text");
   });
 
   it("but never asks a disabled entry to prove itself", () => {
