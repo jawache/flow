@@ -380,7 +380,7 @@ describe("parseCommandLine — the 45 hand-labelled commands from triage's bake-
     "param ;": ["echo ${x:-a;b}", L(["echo"])],
     arith: ["echo $(( 1 + 2 )); ls", L(["echo", "ls"])],
     "[[ ]]": ['[[ $a == "b;c" ]] && echo y', L(["echo"])],
-    "pipe into sh": ['cat << "EOF" | sh\nrm -rf x\nEOF', L(["cat", "sh"], { heredocs: [["cat", true]] })],
+    "pipe into sh": ['cat << "EOF" | sh\nrm -rf x\nEOF', L(["cat", "sh", "rm"], { heredocs: [["cat", true]], spliced: ["rm"] })],
     "bash -c string": ["bash -c 'npx vitest run; ls'", L(["bash", "npx", "ls"], { spliced: ["npx", "ls"] })],
     "unclosed quote": ['echo "oops', L(null)],
   };
@@ -398,6 +398,34 @@ describe("parseCommandLine — the 45 hand-labelled commands from triage's bake-
       if (label.spliced !== undefined) expect(parsed?.filter((c) => c.nested).map((c) => c.program)).toEqual(label.spliced);
     });
   }
+});
+
+describe("parseCommandLine — a heredoc piped into a shell, and a here-string", () => {
+  const programs = (line: string): (string | null)[] | null => parseCommandLine(line)?.map((c) => (c.nested ? `>${c.program}` : c.program)) ?? null;
+
+  it("reads the heredoc of an earlier stage as the script of a later shell that reads its stdin", () => {
+    expect(programs("cat <<'EOF' | bash -s\nls; rm -rf x\nEOF")).toEqual(["cat", "bash", ">ls", ">rm"]);
+    expect(programs("cat <<EOF | grep . | sh\nrm -rf x\nEOF")).toEqual(["cat", "grep", "sh", ">rm"]);
+    expect(programs("cat <<'EOF' | eval\nrm -rf x\nEOF")).toEqual(["cat", "eval", ">rm"]);
+  });
+
+  it("leaves the body alone when no later stage reads it as a script", () => {
+    expect(programs("cat <<'EOF' | python3\nrm -rf x\nEOF")).toEqual(["cat", "python3"]);
+    expect(programs("cat <<'EOF' | bash script.sh\nrm -rf x\nEOF")).toEqual(["cat", "bash"]);
+    expect(programs("sh -s | cat <<'EOF'\nrm -rf x\nEOF")).toEqual(["sh", "cat"]);
+  });
+
+  it("reads a shell's own heredoc once, piped or not", () => {
+    expect(programs("bash <<'EOF' | sh\nls\nEOF")).toEqual(["bash", ">ls", "sh"]);
+  });
+
+  it("gives a here-string's text as its command's last argument, and no more", () => {
+    const [grep] = parseCommandLine('grep -c x <<< "a b" > out') ?? [];
+    expect(grep?.args).toEqual(["-c", "x", "a b"]);
+    expect(grep?.text).toBe("grep -c x a b");
+    // A here-string fed to a shell is that argument, not a script the parse reads.
+    expect(programs("bash <<< 'rm -rf x'")).toEqual(["bash"]);
+  });
 });
 
 // What a `banCommands` rule with `wholeLine` matches: the line as written, every heredoc body cut

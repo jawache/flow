@@ -690,8 +690,10 @@ function walkLine(line: string): { readonly commands: ShellCommand[]; readonly b
         node(n.command, nested, out);
         return;
       case "AndOr":
-      case "Pipeline":
         for (const c of n.commands) node(c, nested, out);
+        return;
+      case "Pipeline":
+        pipeline(n.commands, nested, out);
         return;
       case "Time":
       case "Negation":
@@ -746,6 +748,25 @@ function walkLine(line: string): { readonly commands: ShellCommand[]; readonly b
     }
   };
 
+  // A pipeline: each stage in order, then — when a later stage is a shell reading its stdin, or
+  // eval — the heredocs an earlier stage is fed are that shell's script, and are read as nested
+  // commands after the pipeline: `cat <<'EOF' | sh` runs the body. A stage that is itself a shell
+  // reading its own heredoc has already had it read, by `simple`.
+  const pipeline = (stages: readonly CommandNode[], nested: boolean, out: ShellCommand[]): void => {
+    const outs = stages.map((stage) => {
+      const own: ShellCommand[] = [];
+      node(stage, nested, own);
+      out.push(...own);
+      return own.filter((c) => c.nested === nested);
+    });
+    const readsStdin = (c: ShellCommand | undefined): boolean =>
+      c !== undefined && (basename(c.program) === "eval" || (SHELLS.has(basename(c.program)) && shellInput(c.args) === "stdin"));
+    outs.forEach((own, i) => {
+      if (readsStdin(own[0]) || !outs.slice(i + 1).some((later) => readsStdin(later[0]))) return;
+      for (const c of own) for (const h of c.heredocs) source(h.body, out);
+    });
+  };
+
   // ONE simple command: its argv with quotes removed, its heredocs, the substitutions that build
   // it, and — after it, in the order they appear — every command nested inside it.
   const simple = (c: BashCommand, nested: boolean, out: ShellCommand[]): void => {
@@ -771,6 +792,8 @@ function walkLine(line: string): { readonly commands: ShellCommand[]; readonly b
         assignment(s.value, subs, inner);
       } else redirection(s, heredocs, subs, inner);
     }
+    // A `<<<` here-string's text is the command's last argument, after every word.
+    if (argv.length > 0) for (const r of [...c.prefix, ...c.suffix]) if (r.type === "HereString" && r.target !== undefined) argv.push(r.target.value);
     const [program, ...args] = stepWrappers(argv);
     if (program !== undefined) {
       out.push({ program, args, text: [program, ...args].join(" "), heredocs, substitutions: subs, nested });
