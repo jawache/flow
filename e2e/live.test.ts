@@ -798,6 +798,217 @@ export default defineConfig([pack(demo), pack(work, { writers: ["builder", "pare
   });
 });
 
+describe("files git puts in place — a checkout is neither judged nor written back", () => {
+  // THE PROOF OF #8, in a repo of its own with history. `old` holds a file committed before the rule
+  // it now breaks, and a migration main has not got yet; main's append-only rule protects that
+  // migration once it exists. A file that matches HEAD after the call is git's, so a switch either
+  // way leaves the tree equal to HEAD — and anything else the same call changed is still judged.
+  let tree: string;
+  let ids = 0;
+  const session = "checkout";
+  const CHECKOUT_CONFIG = (packageRoot: string): string => `
+import { definePack, defineConfig, deletion, guardrail, pack, protectedPath, write } from ${JSON.stringify(join(packageRoot, "index.ts"))};
+
+const demo = definePack("demo", {
+  noTodo: guardrail()
+    .at(write)
+    .on("src/**")
+    .check((ctx) => (ctx.file?.content.includes("TODO") ? ctx.fail("line says TODO") : ctx.ok()))
+    .message("No TODOs in src/.")
+    .test({ pass: [{ path: "src/a.ts", content: "ok" }], block: [{ path: "src/a.ts", content: "TODO" }] }),
+
+  appendOnly: guardrail()
+    .at(write, deletion)
+    .on("migrations/**")
+    .check(protectedPath({ existingOnly: true }))
+    .message("A migration already written is history.")
+    .test({
+      pass: [{ path: "migrations/002.sql", content: "new" }],
+      block: [{ path: "migrations/001.sql", content: "edited", world: { fs: { "migrations/001.sql": "old" } } }, { staged: [], deleted: { "migrations/001.sql": "old" } }],
+    }),
+});
+
+export default defineConfig([pack(demo)]);
+`;
+  const at = (path: string): string | null => (existsSync(join(tree, path)) ? readFileSync(join(tree, path), "utf8") : null);
+  const inTree = (...args: string[]): string => {
+    const ran = runGit(tree, args);
+    expect(ran.code, `git ${args.join(" ")}: ${ran.stderr}`).toBe(0);
+    return ran.stdout;
+  };
+  /** The tree against HEAD, as a person reads it — empty is "the worktree is HEAD". */
+  const status = (): string => inTree("status", "--porcelain");
+  const backToMain = (): void => {
+    inTree("switch", "-qf", "main");
+    inTree("reset", "-q", "--hard");
+    inTree("clean", "-fdq");
+  };
+
+  /** One Bash call as the host brackets it: PreToolUse, the command itself, then PostToolUse. */
+  function bash(command: string, where = tree, who = session): Ran & { readonly ran: number } {
+    const payload = { ...pre("Bash", { command }, who), cwd: where, tool_use_id: `toolu_checkout_${++ids}` };
+    const before = runFlow(where, ["hook", "pre-tool-use"], {}, JSON.stringify(payload));
+    expect(before.code, `the call was refused before it ran: ${before.stderr}`).toBe(0);
+    const ran = spawnSync("bash", ["-c", command], { cwd: where }).status ?? -1;
+    return { ...runFlow(where, ["hook", "post-tool-use"], {}, JSON.stringify(payload)), ran };
+  }
+
+  /** `rows` above reads the main suite's repo; this one reads this suite's. */
+  function rows(id: string): Record<string, unknown>[] {
+    const file = join(tree, ".flow", "log", `${id}.jsonl`);
+    if (!existsSync(file)) return [];
+    return readFileSync(file, "utf8")
+      .split("\n")
+      .filter((line) => line.trim() !== "")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+  }
+
+  beforeAll(() => {
+    tree = newRepo("flow-checkout-");
+    writeFileSync(join(tree, "flow.config.ts"), CHECKOUT_CONFIG(PACKAGE));
+    mkdirSync(join(tree, "src"));
+    mkdirSync(join(tree, "migrations"));
+    writeFileSync(join(tree, "src", "a.ts"), "export const a = 1;\n");
+    writeFileSync(join(tree, "migrations", "001.sql"), "create table a ();\n");
+    inTree("add", "-A");
+    inTree("commit", "-qm", "main");
+    inTree("branch", "-M", "main");
+    inTree("switch", "-qc", "old");
+    writeFileSync(join(tree, "src", "legacy.ts"), "// TODO: from before the rule\n");
+    writeFileSync(join(tree, "migrations", "002.sql"), "create table b ();\n");
+    inTree("add", "-A");
+    inTree("commit", "-qm", "old");
+    inTree("switch", "-q", "main");
+  });
+  afterAll(() => {
+    rmSync(tree, { recursive: true, force: true });
+  });
+
+  it("switches TO a branch whose files break a current rule: exit 0, nothing put back, the tree equal to HEAD", () => {
+    const answer = bash("git switch -q old");
+    expect(answer.ran).toBe(0);
+    expect(answer.code, answer.stderr).toBe(0);
+    expect(answer.stderr).toBe("");
+    expect(answer.stdout, "no breadcrumb, no note: nothing reached a rule").toBe("");
+    expect(at("src/legacy.ts"), "old's own file, as old committed it").toBe("// TODO: from before the rule\n");
+    expect(at("migrations/002.sql")).toBe("create table b ();\n");
+    expect(status(), "the worktree is HEAD").toBe("");
+  });
+
+  it("switches BACK to a branch without a file an append-only rule protects: exit 0, the tree equal to HEAD", () => {
+    inTree("switch", "-qf", "old");
+    const answer = bash("git switch -q main");
+    expect(answer.ran).toBe(0);
+    expect(answer.code, answer.stderr).toBe(0);
+    expect(answer.stderr).toBe("");
+    expect(at("migrations/002.sql"), "main has no 002.sql, and it was not put back").toBeNull();
+    expect(at("src/legacy.ts")).toBeNull();
+    expect(status(), "the worktree is HEAD").toBe("");
+  });
+
+  it("records no shell write for a checkout's files, so `flow facts` counts none — and still counts the agent's", () => {
+    const user = mkdtempSync(join(tmpdir(), "flow-user-"));
+    try {
+      backToMain();
+      const id = "checkout-facts";
+      const store = join(user, ".claude", "projects", realpathSync(tree).replace(/[^a-zA-Z0-9]/g, "-"));
+      mkdirSync(store, { recursive: true });
+      writeFileSync(join(store, `${id}.jsonl`), `${JSON.stringify({ type: "user", message: { role: "user", content: "go" } })}\n`);
+      expect(bash("git switch -q old", tree, id).code).toBe(0);
+      expect(bash("git switch -q main", tree, id).code).toBe(0);
+      expect(bash("echo 'export const b = 1;' > src/b.ts", tree, id).code).toBe(0);
+      const read = runFlow(tree, ["facts", "--json", "--session", id], { user, home: join(user, ".claude") });
+      expect(read.code, read.stderr).toBe(0);
+      const facts = JSON.parse(read.stdout) as { narrative: { stats: { shellWrites: number }; shell: { writes: Record<string, number> } } };
+      expect(facts.narrative.stats.shellWrites, "src/b.ts only — not one file of either switch").toBe(1);
+      expect(facts.narrative.shell.writes).toStrictEqual({ "src/b.ts": 1 });
+    } finally {
+      rmSync(user, { recursive: true, force: true });
+    }
+  });
+
+  it("in `git switch old && sed -i …`, refuses and puts back the sed edit, and keeps the switch's own files", () => {
+    backToMain();
+    const seq = rows(session).length;
+    const answer = bash("git switch -q old && sed -i.orig 's|a = 1;|a = 1; // TODO|' src/a.ts && rm src/a.ts.orig");
+    expect(answer.ran).toBe(0);
+    expect(answer.code).toBe(2);
+    expect(answer.stderr).toContain("flow — write reverted after it landed:");
+    expect(answer.stderr).toContain("✗ demo.noTodo · src/a.ts");
+    expect(answer.stderr, "old's committed TODO is git's, not the agent's").not.toContain("legacy.ts");
+    expect(answer.stderr).not.toContain("002.sql");
+    expect(at("src/a.ts"), "the sed edit is gone").toBe("export const a = 1;\n");
+    expect(inTree("rev-parse", "--abbrev-ref", "HEAD").trim(), "the switch itself stands").toBe("old");
+    expect(at("src/legacy.ts")).toBe("// TODO: from before the rule\n");
+    expect(status(), "and so the tree is HEAD").toBe("");
+    expect(
+      rows(session).slice(seq).filter((row) => row["kind"] === "write").map((row) => row["path"]),
+      "the one shell write on the record is the sed's",
+    ).toStrictEqual(["src/a.ts"]);
+  });
+
+  it("judges what a stash pop, a merge stopped on conflicts and a cherry-pick --no-commit write — they match no commit", () => {
+    backToMain();
+    // A stash holding a TODO, from a time before the rule, popped back.
+    writeFileSync(join(tree, "src", "a.ts"), "export const a = 1; // TODO: stashed\n");
+    inTree("stash", "-q");
+    const popped = bash("git stash pop -q");
+    expect(popped.ran).toBe(0);
+    expect(popped.code).toBe(2);
+    expect(popped.stderr).toContain("✗ demo.noTodo · src/a.ts");
+    expect(at("src/a.ts")).toBe("export const a = 1;\n");
+    backToMain();
+
+    // A merge that stops on a conflict leaves the markers, and the other side's TODO, in the file.
+    inTree("switch", "-qc", "clash");
+    writeFileSync(join(tree, "src", "a.ts"), "export const a = 2; // TODO: theirs\n");
+    inTree("commit", "-qam", "clash");
+    inTree("switch", "-q", "main");
+    writeFileSync(join(tree, "src", "a.ts"), "export const a = 3;\n");
+    inTree("commit", "-qam", "ours");
+    const merged = bash("git merge -q clash");
+    expect(merged.ran, "the merge stopped on its conflict").not.toBe(0);
+    expect(merged.code).toBe(2);
+    expect(merged.stderr).toContain("✗ demo.noTodo · src/a.ts");
+    expect(at("src/a.ts")).toBe("export const a = 3;\n");
+    inTree("merge", "--abort");
+    backToMain();
+
+    // A cherry-pick that does not commit lands another branch's change with no commit of its own.
+    inTree("switch", "-qc", "picked");
+    writeFileSync(join(tree, "src", "c.ts"), "// TODO: picked\n");
+    inTree("add", "src/c.ts");
+    inTree("commit", "-qm", "picked");
+    inTree("switch", "-q", "main");
+    const picked = bash("git cherry-pick --no-commit picked");
+    expect(picked.ran).toBe(0);
+    expect(picked.code).toBe(2);
+    expect(picked.stderr).toContain("✗ demo.noTodo · src/c.ts");
+    expect(at("src/c.ts"), "created by the call, so gone again").toBeNull();
+    backToMain();
+  });
+
+  it("still refuses and puts back a shell write in a repo with no commit yet — there is no HEAD to match", () => {
+    const fresh = newRepo("flow-unborn-");
+    try {
+      writeFileSync(join(fresh, "flow.config.ts"), CHECKOUT_CONFIG(PACKAGE));
+      mkdirSync(join(fresh, "src"));
+      writeFileSync(join(fresh, "src", "a.ts"), "export const a = 1;\n");
+      expect(runGit(fresh, ["rev-parse", "--verify", "--quiet", "HEAD"]).code, "no commit yet").not.toBe(0);
+      const answer = bash("echo '// TODO' >> src/a.ts && echo '// TODO' > src/new.ts", fresh);
+      expect(answer.ran).toBe(0);
+      expect(answer.code).toBe(2);
+      expect(answer.stderr).toContain("flow — write reverted after it landed:");
+      expect(answer.stderr).toContain("✗ demo.noTodo · src/a.ts");
+      expect(answer.stderr).toContain("✗ demo.noTodo · src/new.ts");
+      expect(readFileSync(join(fresh, "src", "a.ts"), "utf8")).toBe("export const a = 1;\n");
+      expect(existsSync(join(fresh, "src", "new.ts"))).toBe(false);
+    } finally {
+      rmSync(fresh, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("the off switch", () => {
   it("silences every rail, and writes no telemetry while it is off", () => {
     writeFileSync(join(repo, ".flow", "off"), "");
