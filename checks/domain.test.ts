@@ -216,6 +216,14 @@ describe("banCommands", () => {
 
   it("a heredoc fed to a shell: its lines are commands, and each is matched", async () => {
     expect(await run(vitest, "command", "bash <<'EOF'\nls\nnpx vitest run\nEOF")).toContain("banned");
+    // …and a pipeline into one, whose earlier stage feeds it the heredoc.
+    expect(await run(vitest, "command", "cat <<'EOF' | sh\nnpx vitest run\nEOF")).toContain("banned");
+    expect(await run(vitest, "command", "cat <<'EOF' | python3\nnpx vitest run\nEOF")).toBeNull();
+  });
+
+  it("a here-string: its text is the last argument of its command, and is matched", async () => {
+    expect(await run(banCommands({ ban: ["grep -c x npx vitest run$"] }), "command", "grep -c x <<< 'npx vitest run'")).toContain("banned");
+    expect(await run(vitest, "command", "grep -c x <<< 'npx vitest run'")).toBeNull();
   });
 
   it("a line that does not parse is matched whole, as written", async () => {
