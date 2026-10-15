@@ -171,6 +171,24 @@ describe("flow status", () => {
     }
   });
 
+  // THE SHELL'S OWN LOOKUP, end to end. The PATH holds git's exec-path folder and nothing else: git,
+  // which status asks about the hooks path, and no `flow` — the machine's PATH cannot promise that.
+  it("goes red on the binary, and exits 1, when neither node_modules/.bin nor the PATH has flow", () => {
+    const stranded = newRepo();
+    try {
+      expect(flow(stranded, ["init"]).code).toBe(0);
+      const gitOnly = runGit(stranded, ["--exec-path"]).stdout.trim();
+      expect(existsSync(join(gitOnly, "flow")), "the PATH this run is given has no flow").toBe(false);
+      expect(existsSync(join(stranded, "node_modules", ".bin", "flow")), "nor does the repo").toBe(false);
+      const said = runFlow(stranded, ["status"], { home, path: gitOnly });
+      expect(said.stdout).toContain("✗ binary: no flow in node_modules/.bin or on the PATH");
+      expect(said.stdout).toContain("1 red line");
+      expect(said.code).toBe(1);
+    } finally {
+      rmSync(stranded, { recursive: true, force: true });
+    }
+  });
+
   it("refuses, loudly, over a config that will not even import — UAT step 5", () => {
     const broken = newRepo();
     try {

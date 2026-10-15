@@ -98,6 +98,11 @@ export interface Rig {
   /** A directory holding the `flow` shim, prepended to PATH for git's own hook. */
   readonly bin?: string | undefined;
   /**
+   * The whole PATH, in place of the machine's — for a run that must find no `flow` at all, which the
+   * machine's PATH cannot promise (node's own folder holds a global one wherever it is installed).
+   */
+  readonly path?: string | undefined;
+  /**
    * `HOME`: the user's home, where the host keeps its transcript store (`~/.claude/projects/…`)
    * when `home` does not move it. A run that reads conversations reads this one's, never the machine's.
    */
@@ -110,13 +115,15 @@ function env(repo: string, rig: Rig): NodeJS.ProcessEnv {
     CLAUDE_PROJECT_DIR: repo,
     ...(rig.home === undefined ? {} : { CLAUDE_CONFIG_DIR: rig.home }),
     ...(rig.bin === undefined ? {} : { PATH: `${rig.bin}:${process.env["PATH"] ?? ""}` }),
+    ...(rig.path === undefined ? {} : { PATH: rig.path }),
     ...(rig.user === undefined ? {} : { HOME: rig.user }),
   };
 }
 
 /** The built binary, run in a repo, with whatever of the world the caller has set up. */
 export function flow(repo: string, args: readonly string[], rig: Rig = {}, stdin = ""): Ran {
-  const result = spawnSync("node", [binary(), ...args], {
+  // This node, by its path: a run given its own PATH may not have node on it.
+  const result = spawnSync(process.execPath, [binary(), ...args], {
     cwd: repo,
     input: stdin,
     encoding: "utf8",
