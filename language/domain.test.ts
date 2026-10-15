@@ -190,7 +190,7 @@ describe("defineCategory", () => {
     ).toBe(false);
   });
 
-  it("can classify the parent by absence — no sidecar, no agent type", () => {
+  it("can classify the parent by absence — not spawned, no agent type", () => {
     const parent = defineCategory("parent", (s) => !s.subagent);
     expect(parent.classify(facts())).toBe(true);
     expect(parent.classify(facts({ subagent: true, agentType: "builder" }))).toBe(false);
