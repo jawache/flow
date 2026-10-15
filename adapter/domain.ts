@@ -4189,27 +4189,90 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
               .filter((line) => line !== "")
               .join("\n"),
     },
-    binaryFitting(facts.binary),
+    binaryFitting(facts),
     ...snapshotGaps(universe(facts.load?.ok === true ? facts.load.entries : []), facts.ignored, facts.snapshotInclude),
   ];
+}
+
+/** Where a caller of `flow` looks for it: the repo's node_modules/.bin, then the PATH — or the PATH alone. */
+type Reach = "local" | "path";
+
+/**
+ * The gate, as written: a command line naming node_modules/.bin puts the repo's copy first, and one
+ * without it — the gate an older `flow init` wrote, which it never rewrites — finds only the PATH. A
+ * gate that does not call flow at all is judged as `flow init` writes one; its own fitting is red.
+ */
+function gateReach(text: string | null): Reach {
+  if (text === null || (!armsFlow(text) && !armsOldFlow(text))) return "local";
+  return hookCommands(text).includes(LOCAL_BIN) ? "local" : "path";
+}
+
+/** Every command of flow's in this settings file: what the hooks run. */
+function ourCommands(settings: unknown): string[] {
+  return Object.values(hookArrays(settings)).flatMap((entries) =>
+    entries.flatMap((entry) => commandsOf(entry).filter((command) => ourHookCommand(command))),
+  );
+}
+
+/**
+ * The registrations, as written: one of flow's that calls `flow` by name with no node_modules/.bin
+ * in front — the old shape — finds only the PATH, and that is every hook it answers. A path to the
+ * binary names its own copy, and none at all is judged as `flow init` writes them.
+ */
+function hooksReach(settings: unknown): Reach {
+  const byName = (command: string): boolean => /(^|[\s;&|(])flow\s+hook\b/.test(command) && !command.includes(LOCAL_BIN);
+  return ourCommands(settings).some(byName) ? "path" : "local";
 }
 
 /**
  * CAN THE HOOKS AND THE GATE FIND `flow`? Both call it by name, so a repo can carry every other
  * fitting and still have each hook fail with `flow: not found` and every commit refused.
  *
- * Green only for the PATH: the gate and the registrations call bare `flow`, so a copy in
- * `node_modules/.bin` alone is one nothing runs — a red line of its own, naming the copy it found.
+ * Each is judged AS WRITTEN. Today's gate and registrations look in the repo's node_modules/.bin
+ * first, so a dev dependency answers them and its copy wins over the PATH's. An older gate, or a
+ * registration in the old shape, finds only the PATH — and a copy in node_modules/.bin is one it
+ * never runs, a red line naming which of them is stranded and how to bring it up to date.
  */
-function binaryFitting(binary: StatusFacts["binary"]): Fitting {
-  if (binary.path) return { id: "binary", ok: true, detail: "the hooks and the gate run the flow on the PATH" };
-  const refused = "so every hook fails with `flow: not found` and git refuses every commit";
+function binaryFitting(facts: Pick<StatusFacts, "binary" | "gateText" | "settings">): Fitting {
+  const { modules, path } = facts.binary;
+  const hooks = hooksReach(facts.settings);
+  const gate = gateReach(facts.gateText);
+  const runs = (reach: Reach): string | null => (reach === "local" && modules ? `in ${LOCAL_BIN}` : path ? "on the PATH" : null);
+  const [byHooks, byGate] = [runs(hooks), runs(gate)];
+  if (byHooks !== null && byGate !== null)
+    return {
+      id: "binary",
+      ok: true,
+      detail:
+        byHooks === byGate
+          ? `the hooks and the gate run the flow ${byHooks}`
+          : `the hooks run the flow ${byHooks}, and the gate the flow ${byGate}`,
+    };
+  if (!modules)
+    return {
+      id: "binary",
+      ok: false,
+      detail:
+        `no flow in ${LOCAL_BIN} or on the PATH, so every hook fails with \`flow: not found\` and git refuses every commit — ` +
+        `install it for this repo with \`npm i -D @jawache/flow\`, or for every repo with \`npm i -g @jawache/flow\`.`,
+    };
+  // A COPY IN node_modules/.bin, AND A CALLER THAT NEVER LOOKS THERE: name each stranded one, with
+  // the fix that brings it up to date — init for the registrations, a line by hand for the gate,
+  // which init never rewrites.
+  const stranded = [
+    ...(byHooks === null
+      ? [{ who: "the hooks", fails: "every hook fails with `flow: not found`", fix: "re-run `flow init`, which rewrites flow's registrations to look there first" }]
+      : []),
+    ...(byGate === null
+      ? [{ who: "the gate", fails: "git refuses every commit", fix: `add \`PATH="$PWD/${LOCAL_BIN}:$PATH"\` to ${GATE_PATH} above the line that runs flow` }]
+      : []),
+  ];
   return {
     id: "binary",
     ok: false,
-    detail: binary.modules
-      ? `the flow in ${LOCAL_BIN} is not on the PATH, and the hooks and the gate call flow by name, ${refused} — install it for every repo with \`npm i -g @jawache/flow\`.`
-      : `no flow in ${LOCAL_BIN} or on the PATH, ${refused} — install it for this repo with \`npm i -D @jawache/flow\`, or for every repo with \`npm i -g @jawache/flow\`.`,
+    detail:
+      `the flow in ${LOCAL_BIN} is not on the PATH, and ${stranded.map((s) => s.who).join(" and ")} ${stranded.length === 1 && byGate === null ? "looks" : "look"} for flow on the PATH alone, ` +
+      `so ${stranded.map((s) => s.fails).join(" and ")} — ${stranded.map((s) => s.fix).join("; ")}; or install it for every repo with \`npm i -g @jawache/flow\`.`,
   };
 }
 

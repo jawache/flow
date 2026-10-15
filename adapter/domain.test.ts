@@ -2173,38 +2173,111 @@ const statusFacts = (over: Partial<StatusFacts> = {}): StatusFacts => ({
   ...over,
 });
 
+/** The gate an older `flow init` wrote: today's, without the line that puts node_modules/.bin first. */
+const PATH_ONLY_GATE = PRE_COMMIT.replace(/^PATH=.*\n/m, "");
+
+/** The registrations an older `flow init` wrote: each the bare `flow hook <event>`. */
+const BARE_SETTINGS = {
+  hooks: Object.fromEntries(
+    HOOK_REGISTRATIONS.map((r) => [
+      r.event,
+      [{ ...(r.matcher === undefined ? {} : { matcher: r.matcher }), hooks: [{ type: "command", command: r.command.replace(/^.* flow /, "flow ") }] }],
+    ]),
+  ),
+};
+
 describe("the binary fitting — can the hooks and the gate find flow", () => {
-  const binary = (modules: boolean, path: boolean) => {
-    const s = status(statusFacts({ binary: { modules, path } }));
+  const binary = (modules: boolean, path: boolean, over: Partial<StatusFacts> = {}) => {
+    const s = status(statusFacts({ binary: { modules, path }, ...over }));
     return { fitting: s.fittings.find((f) => f.id === "binary"), green: s.green, lines: statusLines(s) };
   };
 
-  it("names the PATH when the PATH has one, in the tutorial's words, whatever node_modules/.bin holds", () => {
-    for (const modules of [true, false]) {
-      const { lines, green } = binary(modules, true);
-      expect(lines).toContain("  ✓ binary: the hooks and the gate run the flow on the PATH");
+  it("fixes its two old shapes as fixtures: a gate without the PATH line, and the bare registration", () => {
+    expect(armsFlow(PATH_ONLY_GATE)).toBe(true);
+    expect(PATH_ONLY_GATE).not.toContain(LOCAL_BIN);
+    expect(bareRegistrations(BARE_SETTINGS)).toEqual(HOOK_REGISTRATIONS.map((r) => r.event));
+  });
+
+  it("names the PATH when only the PATH has one, in the tutorial's words", () => {
+    const { lines, green } = binary(false, true);
+    expect(lines).toContain("  ✓ binary: the hooks and the gate run the flow on the PATH");
+    expect(green).toBe(true);
+  });
+
+  // THE DEV DEPENDENCY: today's gate and registrations look in node_modules/.bin first, so the
+  // repo's copy answers them with no flow on the PATH, and wins over one that is there.
+  it("names node_modules/.bin when the repo has one, whatever the PATH holds", () => {
+    for (const path of [false, true]) {
+      const { lines, green } = binary(true, path);
+      expect(lines).toContain("  ✓ binary: the hooks and the gate run the flow in node_modules/.bin");
       expect(green).toBe(true);
     }
   });
 
-  // THE FALSE GREEN this guards against: the gate and the hooks call `flow` by name, so a repo whose
-  // only copy is in node_modules/.bin has every commit refused with `flow: not found`.
-  it("is red when only node_modules/.bin has one, since the gate and the hooks call flow by name", () => {
-    const { fitting, green } = binary(true, false);
+  it("judges a gate older `flow init` wrote by the PATH alone, and says how to bring it up to date", () => {
+    const { fitting, green } = binary(true, false, { gateText: PATH_ONLY_GATE });
     expect(fitting?.ok).toBe(false);
-    expect(fitting?.detail).toContain(`the flow in ${LOCAL_BIN} is not on the PATH`);
-    expect(fitting?.detail).toContain("npm i -g @jawache/flow");
+    expect(fitting?.detail).toBe(
+      "the flow in node_modules/.bin is not on the PATH, and the gate looks for flow on the PATH alone, so git refuses every commit — " +
+        'add `PATH="$PWD/node_modules/.bin:$PATH"` to .githooks/pre-commit above the line that runs flow; ' +
+        "or install it for every repo with `npm i -g @jawache/flow`.",
+    );
+    expect(green).toBe(false);
+    expect(binary(true, false, { gateText: OLD_GATE }).fitting?.detail, "the old verb's gate too").toContain("the gate looks for flow on the PATH alone");
+  });
+
+  it("judges registrations in the old shape by the PATH alone, and names `flow init` as the fix", () => {
+    const { fitting, green } = binary(true, false, { settings: BARE_SETTINGS });
+    expect(fitting?.ok).toBe(false);
+    expect(fitting?.detail).toContain("the hooks look for flow on the PATH alone, so every hook fails with `flow: not found`");
+    expect(fitting?.detail).toContain("re-run `flow init`");
+    expect(fitting?.detail).not.toContain("the gate");
     expect(green).toBe(false);
   });
 
+  it("names both when both are old", () => {
+    const { fitting } = binary(true, false, { gateText: PATH_ONLY_GATE, settings: BARE_SETTINGS });
+    expect(fitting?.detail).toContain("the hooks and the gate look for flow on the PATH alone");
+    expect(fitting?.detail).toContain("every hook fails with `flow: not found` and git refuses every commit");
+  });
+
+  it("is green over old callers when the PATH has one, and says which copy each runs", () => {
+    expect(binary(true, true, { settings: BARE_SETTINGS }).fitting).toEqual({
+      id: "binary",
+      ok: true,
+      detail: "the hooks run the flow on the PATH, and the gate the flow in node_modules/.bin",
+    });
+    expect(binary(true, true, { gateText: PATH_ONLY_GATE }).fitting?.detail).toBe(
+      "the hooks run the flow in node_modules/.bin, and the gate the flow on the PATH",
+    );
+    expect(binary(false, true, { gateText: PATH_ONLY_GATE, settings: BARE_SETTINGS }).fitting?.detail).toBe(
+      "the hooks and the gate run the flow on the PATH",
+    );
+  });
+
+  it("does not judge a registration with a path to the binary by the PATH — it names its own copy", () => {
+    const pinned = {
+      hooks: { Stop: [{ hooks: [{ type: "command", command: "/usr/local/bin/flow hook stop" }] }] },
+    };
+    expect(binary(true, false, { settings: pinned }).fitting?.ok).toBe(true);
+  });
+
+  it("judges a gate and registrations not there yet as `flow init` will write them — their own fittings are red", () => {
+    const { fitting, green } = binary(true, false, { gateText: null, settings: {} });
+    expect(fitting?.ok).toBe(true);
+    expect(green, "the commit-gate and hooks lines are").toBe(false);
+  });
+
   it("is a red line naming both installs when neither has one, and status is not green", () => {
-    const { fitting, green, lines } = binary(false, false);
-    expect(fitting?.ok).toBe(false);
-    expect(fitting?.detail).toContain(`no flow in ${LOCAL_BIN} or on the PATH`);
-    expect(fitting?.detail).toContain("npm i -D @jawache/flow");
-    expect(fitting?.detail).toContain("npm i -g @jawache/flow");
-    expect(green).toBe(false);
-    expect(lines.at(-1)).toContain("1 red line");
+    for (const over of [{}, { gateText: PATH_ONLY_GATE, settings: BARE_SETTINGS }]) {
+      const { fitting, green, lines } = binary(false, false, over);
+      expect(fitting?.ok).toBe(false);
+      expect(fitting?.detail).toContain(`no flow in ${LOCAL_BIN} or on the PATH`);
+      expect(fitting?.detail).toContain("npm i -D @jawache/flow");
+      expect(fitting?.detail).toContain("npm i -g @jawache/flow");
+      expect(green).toBe(false);
+      expect(lines.at(-1)).toContain("1 red line");
+    }
   });
 });
 
