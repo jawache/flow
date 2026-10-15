@@ -139,6 +139,8 @@ import {
   scaffold,
   planInit,
   initLines,
+  REPO_SETTINGS,
+  settingsFileFor,
   status,
   statusLines,
   type InitFacts,
@@ -2120,6 +2122,37 @@ describe("what every rail answers while the config will not load", () => {
       expect(statusCode(answer({ refusals: [], green: true }))).toBe(0);
       expect(statusCode(answer({ refusals: [], green: false }))).toBe(1);
     });
+  });
+});
+
+describe("settingsFileFor — which settings file holds flow's hooks", () => {
+  const machine = "/home/someone/.claude/settings.json";
+  const manifest = (body: unknown): string => JSON.stringify(body);
+
+  it("is the repo's own when package.json lists flow as a dev dependency", () => {
+    expect(settingsFileFor(manifest({ devDependencies: { "@jawache/flow": "^0.3.0" } }), machine)).toBe(REPO_SETTINGS);
+    expect(REPO_SETTINGS).toBe(".claude/settings.json");
+  });
+
+  it("is the repo's own when package.json lists flow as a dependency", () => {
+    expect(settingsFileFor(manifest({ dependencies: { "@jawache/flow": "0.3.0" } }), machine)).toBe(REPO_SETTINGS);
+  });
+
+  it("is the machine-wide one when package.json lists other packages only — this repo, which IS flow, among them", () => {
+    expect(settingsFileFor(manifest({ name: "@jawache/flow", devDependencies: { vitest: "^3.0.0" } }), machine)).toBe(machine);
+    expect(settingsFileFor(manifest({ peerDependencies: { "@jawache/flow": "*" } }), machine)).toBe(machine);
+  });
+
+  it("is the machine-wide one when there is no package.json", () => {
+    expect(settingsFileFor(null, machine)).toBe(machine);
+  });
+
+  it("is the machine-wide one when package.json will not parse, or is not an object", () => {
+    expect(settingsFileFor('{ "devDependencies": { "@jawache/flow": "^0.3.0" }, }', machine)).toBe(machine);
+    expect(settingsFileFor("", machine)).toBe(machine);
+    expect(settingsFileFor("null", machine)).toBe(machine);
+    expect(settingsFileFor('["@jawache/flow"]', machine)).toBe(machine);
+    expect(settingsFileFor(manifest({ devDependencies: ["@jawache/flow"] }), machine)).toBe(machine);
   });
 });
 

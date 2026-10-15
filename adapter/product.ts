@@ -33,6 +33,7 @@ import {
   hostPath,
   pathLines,
   planInit,
+  settingsFileFor,
   status,
   statusCode,
   statusLines,
@@ -51,9 +52,14 @@ export interface VerbResult {
   readonly exitCode: number;
 }
 
-/** The host's settings file — `CLAUDE_CONFIG_DIR` first, because that is the host's own override. */
-function settingsFile(): string {
-  return join(process.env["CLAUDE_CONFIG_DIR"] || join(homedir(), ".claude"), "settings.json");
+/**
+ * The settings file flow's hooks live in for this repo — the repo's own when its package.json lists
+ * flow, else the host's machine-wide file, `CLAUDE_CONFIG_DIR` first because that is the host's own
+ * override. `settingsFileFor` decides; this only reads.
+ */
+function settingsFile(root: string): string {
+  const machine = join(process.env["CLAUDE_CONFIG_DIR"] || join(homedir(), ".claude"), "settings.json");
+  return settingsFileFor(readText(root, "package.json"), machine);
 }
 
 /**
@@ -180,7 +186,7 @@ function transcriptOf(root: string, session: string, agent: string): string {
 
 /** Everything init found, before it wrote anything. */
 function initFacts(root: string, empty: boolean): InitFacts {
-  const settingsPath = settingsFile();
+  const settingsPath = settingsFile(root);
   const read = parsedFile(root, settingsPath);
   return {
     root,
@@ -242,8 +248,8 @@ function perform(root: string, plan: InitPlan): string[] {
 
   if (plan.settings !== null)
     attempt(`could not write ${plan.settings.path}`, () => {
-      mkdirSync(dirname(plan.settings?.path ?? ""), { recursive: true });
-      writeFileSync(plan.settings?.path ?? "", `${JSON.stringify(plan.settings?.value, null, 2)}\n`);
+      mkdirSync(dirname(resolve(root, plan.settings?.path ?? "")), { recursive: true });
+      writeFileSync(resolve(root, plan.settings?.path ?? ""), `${JSON.stringify(plan.settings?.value, null, 2)}\n`);
     });
 
   // LAST, and after the gate file: `core.hooksPath` is what makes the hook run at all, so pointing
@@ -289,7 +295,7 @@ export async function runStatus(cwd: string, args: readonly string[]): Promise<V
   // could not be loaded — Cannot find module …" — which reads as two faults, not one.
   if (regime.kind === "broken") return { stdout: "", stderr: `${regime.message}\n`, exitCode: 2 };
 
-  const settingsPath = settingsFile();
+  const settingsPath = settingsFile(root);
   const facts: StatusFacts = {
     root,
     version: VERSION,

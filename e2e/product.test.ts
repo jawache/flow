@@ -420,6 +420,36 @@ describe("the README's example", () => {
 //
 // All four must init, load, go green and say NOTHING on stderr. A fifth shape is one row.
 
+describe("a repo whose package.json lists flow", () => {
+  it("gets the hooks in its own .claude/settings.json, keeping its keys, and the machine-wide file is untouched", () => {
+    const listed = newRepo();
+    const machine = settingsHome();
+    try {
+      const pkg = { name: "consumer", version: "1.0.0", devDependencies: { "@jawache/flow": "*" } };
+      writeFileSync(join(listed, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
+      mkdirSync(join(listed, ".claude"), { recursive: true });
+      writeFileSync(join(listed, ".claude", "settings.json"), `${JSON.stringify({ permissions: { allow: ["Bash(ls:*)"] } }, null, 2)}\n`);
+      const machineBefore = `${JSON.stringify({ theme: "dark" }, null, 2)}\n`;
+      writeFileSync(join(machine, "settings.json"), machineBefore);
+
+      const init = flow(listed, ["init"], machine);
+      expect(init.code, init.stdout + init.stderr).toBe(0);
+      expect(init.stdout).toContain("+ .claude/settings.json — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop");
+
+      const written = JSON.parse(readFileSync(join(listed, ".claude", "settings.json"), "utf8")) as Record<string, unknown>;
+      expect(written["permissions"], "the key already in the repo's file is kept").toEqual({ allow: ["Bash(ls:*)"] });
+      expect(Object.keys(written["hooks"] as object)).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
+      expect(readFileSync(join(machine, "settings.json"), "utf8"), "the machine-wide file, byte for byte").toBe(machineBefore);
+
+      const said = flow(listed, ["status"], machine);
+      expect(said.stdout).toContain("✓ hooks: .claude/settings.json — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop");
+      expect(said.code, said.stdout).toBe(0);
+    } finally {
+      for (const dir of [listed, machine]) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("the repo's package.json type", () => {
   const SHAPES = [
     { what: "absent", json: null },

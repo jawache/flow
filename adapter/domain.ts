@@ -3498,6 +3498,37 @@ export const HOOK_REGISTRATIONS: readonly Registration[] = REGISTERED.map(({ hoo
   ...(matcher === undefined ? {} : { matcher }),
 }));
 
+/** The repo's own Claude Code settings file, relative to the repo root. */
+export const REPO_SETTINGS = ".claude/settings.json";
+
+/**
+ * WHICH SETTINGS FILE holds flow's hooks: the repo's own `.claude/settings.json` when the repo's
+ * `package.json` lists `@jawache/flow` as a dependency or a dev dependency, and the machine-wide
+ * file otherwise.
+ *
+ * A dev dependency guards that one repo: the repo's file is committed, so a fresh clone is guarded
+ * after `npm install`, and a machine with no global flow is not handed a hook that fails in every
+ * other repo it opens. A `package.json` that is missing, or will not parse, lists nothing.
+ */
+export function settingsFileFor(manifest: string | null, machine: string): string {
+  return listsFlow(manifest) ? REPO_SETTINGS : machine;
+}
+
+function listsFlow(manifest: string | null): boolean {
+  if (manifest === null) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(manifest);
+  } catch {
+    return false;
+  }
+  if (typeof parsed !== "object" || parsed === null) return false;
+  const { dependencies, devDependencies } = parsed as Record<string, unknown>;
+  return [dependencies, devDependencies].some(
+    (listed) => typeof listed === "object" && listed !== null && Object.hasOwn(listed, "@jawache/flow"),
+  );
+}
+
 /**
  * Is this registration OURS?
  *
