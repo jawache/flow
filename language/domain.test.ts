@@ -961,24 +961,24 @@ describe("the load refuses", () => {
 
   it("a guardrail that carries no block case — the dead-fence class, killed at authoring time", () => {
     const untested = rawPack("untested", { x: { spec: { kind: "guardrail", at: [commit], check: passes, message: "m" } } });
-    expect(shape(refusalsOf([untested]))).toEqual([["no-cases", "untested.x"]]);
+    expect(shape(refusalsOf([untested]))).toEqual([["no-block-cases", "untested.x"]]);
 
     const empty = rawPack("empty", {
       x: { spec: { kind: "guardrail", at: [commit], check: passes, message: "m", test: {} } },
     });
-    expect(shape(refusalsOf([empty]))).toEqual([["no-cases", "empty.x"]]);
+    expect(shape(refusalsOf([empty]))).toEqual([["no-block-cases", "empty.x"]]);
 
     const bothEmpty = rawPack("bothEmpty", {
       x: { spec: { kind: "guardrail", at: [commit], check: passes, message: "m", test: { pass: [], block: [] } } },
     });
-    expect(shape(refusalsOf([bothEmpty]))).toEqual([["no-cases", "bothEmpty.x"]]);
+    expect(shape(refusalsOf([bothEmpty]))).toEqual([["no-block-cases", "bothEmpty.x"]]);
 
     // Pass cases alone prove nothing about what the rule catches, so they do not count.
     const passOnly = rawPack("passOnly", {
       x: { spec: { kind: "guardrail", at: [commit], check: passes, message: "m", test: { pass: [{ staged: ["a.ts"] }] } } },
     });
     const refusals = refusalsOf([passOnly]);
-    expect(shape(refusals)).toEqual([["no-cases", "passOnly.x"]]);
+    expect(shape(refusals)).toEqual([["no-block-cases", "passOnly.x"]]);
     expect(refusals[0]?.detail).toContain("`passOnly.x` has no block case");
   });
 
@@ -1107,7 +1107,7 @@ describe("the load refuses", () => {
     expect(shape(refusalsOf([broken]))).toEqual([
       ["missing-mandatory", "broken.a"],
       ["missing-mandatory", "broken.b"],
-      ["no-cases", "broken.c"],
+      ["no-block-cases", "broken.c"],
     ]);
   });
 
@@ -1128,7 +1128,7 @@ describe("REFUSAL_CODES", () => {
       "unknown-moment",
       "missing-mandatory",
       "undeclared-category",
-      "no-cases",
+      "no-block-cases",
       "duplicate-id",
       "dead-scope",
       "bad-check-options",

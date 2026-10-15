@@ -77,7 +77,7 @@ describe("the public surface", () => {
 });
 
 const refusals = [
-  { code: "no-cases", entry: "house.noTodo", detail: "`house.noTodo` has no block case." },
+  { code: "no-block-cases", entry: "house.noTodo", detail: "`house.noTodo` has no block case." },
   { code: "unknown-entry", entry: "tdd.x", detail: "`override(tdd.x)` names an entry no bound pack has." },
 ] as const;
 

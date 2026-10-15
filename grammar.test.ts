@@ -81,7 +81,7 @@ describe("the compiler refuses every grammar misuse", () => {
       "missing-mandatory.ts",
       "missing-parameter-field.ts",
       "missing-parameter.ts",
-      "no-cases.ts",
+      "no-block-cases.ts",
       "override-reaches-into-check.ts",
       "override-wrong-kind.ts",
       "said-twice.ts",

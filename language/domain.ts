@@ -1345,7 +1345,7 @@ export const REFUSAL_CODES = [
   "unknown-moment",
   "missing-mandatory",
   "undeclared-category",
-  "no-cases",
+  "no-block-cases",
   "duplicate-id",
   "dead-scope",
   "bad-check-options",
@@ -1587,7 +1587,7 @@ function judge(draft: Draft): Refusal[] {
   // without a block case does not load, however many pass cases it has.
   if (spec.kind === "guardrail" && (spec.test?.block?.length ?? 0) === 0)
     say(
-      "no-cases",
+      "no-block-cases",
       `\`${id}\` has no block case. A block case is an input the rule must refuse: add one to \`.test({ block })\`. Pass cases alone prove nothing about what the rule catches.`,
     );
 

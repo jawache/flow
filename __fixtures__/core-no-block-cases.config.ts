@@ -5,11 +5,11 @@
 //
 //   `.test()` never spoken       the COMPILER refuses, at the line you type, because the
 //                                completeness type requires it. That is F1's proof and it is
-//                                driven by ./refusals/no-cases.ts, which the compiler is run over
+//                                driven by ./refusals/no-block-cases.ts, which the compiler is run over
 //                                in flow/grammar.test.ts. It cannot be demonstrated here, because
 //                                a file that will not compile will not run either.
 //
-//   `.test({ pass })` spoken,    the LOAD refuses, naming the entry, with the `no-cases` code.
+//   `.test({ pass })` spoken,    the LOAD refuses, naming the entry, with the `no-block-cases` code.
 //   no block case in it          Pass cases alone do not count: they prove nothing about what the
 //                                rule catches, and an empty `.test({})` is refused the same way.
 //                                That is what this file demonstrates: it typechecks, it runs, and

@@ -160,7 +160,7 @@ Why a category reads evidence the host wrote is on [rules bound to who](../expla
 Each refusal is a closed code that includes the entry it names. The loader checks every one at load. Most are also compile errors in your editor. These are caught only at load:
 
 - **`duplicate-id`** and **`bad-check-options`**, always.
-- **`no-cases`**, when `.test(…)` is written with no block case in it.
+- **`no-block-cases`**, when `.test(…)` is written with no block case in it.
 - **`dead-scope`**, when `.on(…)` comes before `.at(…)`.
 - **`unknown-entry`**, when the override names an entry of a pack the config does not bind.
 
@@ -173,7 +173,7 @@ Each refusal is a closed code that includes the entry it names. The loader check
 | `unknown-moment` | A moment the entry's kind has no rail for: a breadcrumb at `write`, `delete` or `commit`, or a guardrail at `session` or `touch` |
 | `missing-mandatory` | A guardrail without `.at`, `.check` or `.message`, or a breadcrumb without `.at` or without `.text`/`.file`. A disabled entry is exempt |
 | `undeclared-category` | `.for(…)` a category nothing declared |
-| `no-cases` | A guardrail with no block case. Pass cases alone do not count |
+| `no-block-cases` | A guardrail with no block case. Pass cases alone do not count |
 | `duplicate-id` | Two entries have the same id, `<pack>.<entry>`: one pack bound twice, or two packs with the same name |
 | `bad-check-options` | A check was configured with options it cannot work with, and said so. For example, a depcruise layer written as a regex where the dialect takes globs. The check's own sentence is the refusal |
 | `dead-scope` | An `.on(…)` or `.ignore(…)` on an entry whose moments carry no path or command to narrow, such as a guardrail only at `command` or `turn-end`, or a breadcrumb only at `session` or `turn-end` |
