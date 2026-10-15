@@ -94,7 +94,7 @@ const SHIPPED: readonly Shipped[] = [
   // as a stranger.
   { pack: "fcis", params: EXAMPLE.fcis, cases: 15, guardrails: 7 },
   { pack: "flow", params: EXAMPLE.flow, cases: 2, guardrails: 1 },
-  { pack: "git", params: EXAMPLE.git, cases: 66, guardrails: 7 },
+  { pack: "git", params: EXAMPLE.git, cases: 84, guardrails: 8 },
   // `recipes` bound, so the entry that only exists when a repo has one is driven here too.
   { pack: "justfile", params: EXAMPLE.justfile, cases: 17, guardrails: 3 },
   { pack: "node", params: undefined, cases: 14, guardrails: 2 },
@@ -238,6 +238,7 @@ const ENTRIES: readonly string[] = [
   "git.conventionalCommitFormat",
   "git.noAiAttributionInCommits",
   "git.noForcePush",
+  "git.noGateSkip",
   "git.noGitDiscard",
   "git.noShellSubstitutionInProse",
   "git.node.noHandEditedVersion",

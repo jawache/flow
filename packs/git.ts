@@ -177,6 +177,81 @@ const noGitDiscard = defineCheck(
     },
 );
 
+/** `git commit`'s short options with a value: attached, the rest of the bundle; last, the next word. `-S` and `-u` take only an attached one. */
+const COMMIT_SHORT_VALUE = new Set(["m", "F", "c", "C", "t"]);
+const COMMIT_SHORT_ATTACHED = new Set(["S", "u"]);
+/** `git commit`'s options whose value is the next word, so a message such as `-n` is never read as one. */
+const COMMIT_TAKES_VALUE = new Set([
+  "-m",
+  "-F",
+  "-c",
+  "-C",
+  "-t",
+  "--message",
+  "--file",
+  "--reuse-message",
+  "--reedit-message",
+  "--template",
+  "--author",
+  "--date",
+  "--fixup",
+  "--squash",
+  "--trailer",
+  "--cleanup",
+  "--pathspec-from-file",
+]);
+
+/** Does this `git commit` argument list carry `--no-verify`, or `-n` alone or in a bundle such as `-anm`? */
+function skipsVerify(args: readonly string[]): boolean {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i] as string;
+    if (arg === "--") return false;
+    if (arg === "--no-verify") return true;
+    if (COMMIT_TAKES_VALUE.has(arg)) i++;
+    else if (/^-[^-]/.test(arg))
+      for (const flag of arg.slice(1)) {
+        if (flag === "n") return true;
+        if (COMMIT_SHORT_ATTACHED.has(flag)) break;
+        if (COMMIT_SHORT_VALUE.has(flag)) {
+          if (arg.endsWith(flag)) i++;
+          break;
+        }
+      }
+  }
+  return false;
+}
+
+/**
+ * Each way a command line writes a commit or a ref the commit gate never runs on, or [] when it
+ * writes none: `git commit --no-verify` or `-n`, `-c core.hooksPath=…` before any subcommand, and
+ * git's plumbing that writes commits and refs directly (`commit-tree`, `update-ref`,
+ * `hash-object -w`).
+ */
+export function gateSkips(command: string): string[] {
+  const out: string[] = [];
+  for (const { globals, subcommand, args } of gitInvocations(command) ?? []) {
+    for (let i = 0; i < globals.length; i++) {
+      const global = globals[i] as string;
+      const setting = global === "-c" ? (globals[++i] ?? "") : global.startsWith("-c") ? global.slice(2) : global.startsWith("--config-env=") ? global.slice(13) : "";
+      if (/^core\.hookspath=/i.test(setting)) out.push("`-c core.hooksPath=…` runs git with another hooks folder");
+    }
+    if (subcommand === "commit" && skipsVerify(args)) out.push("`git commit --no-verify` (or `-n`) skips the pre-commit hook");
+    if (subcommand === "commit-tree") out.push("`git commit-tree` writes a commit with no hook");
+    if (subcommand === "update-ref") out.push("`git update-ref` moves a ref with no hook");
+    if (subcommand === "hash-object" && args.includes("-w")) out.push("`git hash-object -w` writes an object with no hook");
+  }
+  return out;
+}
+
+/** Refuses a command that makes a commit the commit gate never judged. */
+const noGateSkip = defineCheck(
+  (_opts: Record<string, never>): Check =>
+    (ctx) => {
+      const skips = gateSkips(ctx.command ?? "");
+      return skips.length === 0 ? ctx.ok() : ctx.fail(skips.join("\n"));
+    },
+);
+
 /** Does this header line speak Conventional Commits for the given type set? */
 export function isConventional(header: string, types: readonly string[]): boolean {
   const alt = types.map(escapeRe).join("|");
@@ -544,6 +619,46 @@ export const git = definePack("git", (repo: Release) => {
         // …and a POSITION is not the start of the string: a real force-push chained behind another
         // command is still one, which is the half an anchor written as `^` alone would let through.
         "git status && git push --force origin main",
+      ],
+    }),
+
+  /**
+   * The commit gate is a hook, and git has ways to commit without running it. A commit made that
+   * way holds content no rule judged, and flow treats a commit that already exists as judged: a
+   * later `git switch` to it puts its files in place unread.
+   */
+  noGateSkip: guardrail()
+    .at(command)
+    .description("Blocks a commit the commit gate never runs on — --no-verify, -c core.hooksPath=…, commit-tree, update-ref, hash-object -w.")
+    .check(noGateSkip({}))
+    .message(
+      "That git command makes a commit, or moves a ref, without the commit gate judging it. Commit normally and fix what the gate refuses. There is no opt-out token; a repo whose workflow needs one of these disables this entry in flow.config.ts, visibly.",
+    )
+    .test({
+      pass: [
+        'git commit -m "fix: a thing"',
+        "git commit -qam 'fix: a thing'",
+        // A message is a value, never a flag, whatever it says.
+        "git commit -m '-n is not a flag here'",
+        'git commit -m "fix: drop --no-verify from the docs"',
+        // Other commands spell -n their own way: a dry run, a line count.
+        "git clean -n",
+        "git log -n 3",
+        "git -c user.name=me commit -m 'fix: a thing'",
+        "git hash-object src/a.ts",
+        "git push --no-verify",
+      ],
+      block: [
+        "git commit --no-verify -m 'fix: a thing'",
+        "git commit -n -m 'fix: a thing'",
+        // -n inside a bundle of short flags, and after a commit on the same line.
+        "git commit -qanm 'fix: a thing'",
+        "git add -A && git commit -nm 'fix: a thing'",
+        "git -c core.hooksPath=/dev/null commit -m 'fix: a thing'",
+        "git -C ../other -c core.hookspath=.nohooks commit -m 'fix: a thing'",
+        'git commit-tree HEAD^{tree} -p HEAD -m "fix: a thing"',
+        "git update-ref refs/heads/main abc123",
+        "echo hi | git hash-object -w --stdin",
       ],
     }),
 

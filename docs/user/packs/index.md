@@ -13,7 +13,7 @@ The packs `@jawache/flow/packs` ships. Each is a list of rules about a repo. Bin
 | [`docs`](./docs.md) | 1 · 2 | `root` `allow` | Two documentation audiences, one folder, nothing replicated. |
 | [`fcis`](./fcis.md) | 7 · 1 | `files` `homes` `coverage` `example` `sibling` `tests` | Functional Core, Imperative Shell (Bernhardt, "Boundaries", SCNA 2012). |
 | [`flow`](./flow.md) | 1 · 2 | `packs` `hostSurface` | flow's own orientation and self-protection, as a pack any repo binds. |
-| [`git`](./git.md) | 7 · 1 | `versionFile` `types` `release` | Conventional commit headers, computed versions, and nothing destroys uncommitted work. |
+| [`git`](./git.md) | 8 · 1 | `versionFile` `types` `release` | Conventional commit headers, computed versions, and nothing destroys uncommitted work. |
 | [`justfile`](./justfile.md) | 3 · 2 | `exempt` `tools` `recipes` | The justfile is the repo's TOOL CATALOGUE. |
 | [`node`](./node.md) | 2 · 1 | — | package.json discipline: reach for a maintained package, say why, pin it, move the lockfile with it. |
 | [`secrets`](./secrets.md) | 3 · 1 | `publicPrefixes` `localFiles` `envFiles` `extraSecretShapes` `dx` `encrypt` | Env files committed encrypted, decrypted through one seam, and the local-only files kept out of git. |
