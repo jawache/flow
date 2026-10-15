@@ -133,9 +133,9 @@ const run = (args: readonly string[], stdin: string): Ran => runFlow(repo, args,
 
 const hook = (event: string, payload: unknown): Ran => run(["hook", event], JSON.stringify(payload));
 
-/** Every row `.flow/` recorded for one session. */
-function rows(session: string): Record<string, unknown>[] {
-  const file = join(repo, ".flow", "log", `${session}.jsonl`);
+/** Every row `.flow/` recorded for one session, in the repo given. */
+function rows(where: string, session: string): Record<string, unknown>[] {
+  const file = join(where, ".flow", "log", `${session}.jsonl`);
   if (!existsSync(file)) return [];
   return readFileSync(file, "utf8")
     .split("\n")
@@ -228,8 +228,8 @@ describe("the write rail", () => {
     // The AGENT too: identity is stored per session x agent, so without this field the gate has no
     // state file to look up and an actor-scoped commit rule is silenced while reading as armed.
     expect(marked["agent"]).toBe("main");
-    expect(rows("live-1").some((row) => row["kind"] === "tool" && row["path"] === "src/b.ts")).toBe(true);
-    expect(rows("live-1").some((row) => row["kind"] === "guardrail" && row["out"] === "deny")).toBe(true);
+    expect(rows(repo, "live-1").some((row) => row["kind"] === "tool" && row["path"] === "src/b.ts")).toBe(true);
+    expect(rows(repo, "live-1").some((row) => row["kind"] === "guardrail" && row["out"] === "deny")).toBe(true);
   });
 });
 
@@ -486,7 +486,7 @@ describe("the commit gate", () => {
   it("attributes its rows to the session the marker names", () => {
     // The gate runs outside any session. Without the handshake its refusals would land in a shared
     // `commit` stream instead of the chat that caused them.
-    expect(rows("live-1").some((row) => row["kind"] === "run" && row["moment"] === "commit")).toBe(true);
+    expect(rows(repo, "live-1").some((row) => row["kind"] === "run" && row["moment"] === "commit")).toBe(true);
   });
 });
 
@@ -545,7 +545,7 @@ describe("the delta rail — every change to the tree, judged the moment it has 
     expect(answer.stderr).toContain("No TODOs in src/");
     expect(answer.stderr).toContain("src/a.ts is back to its previous content.");
     expect(readFileSync(join(repo, "src/a.ts")), "byte-identical to before the call").toStrictEqual(before);
-    expect(rows(session).some((row) => row["kind"] === "guardrail" && row["out"] === "deny"), "and it is on the record").toBe(true);
+    expect(rows(repo, session).some((row) => row["kind"] === "guardrail" && row["out"] === "deny"), "and it is on the record").toBe(true);
   });
 
   it("keeps a NEW file a command adds to an append-only folder, and puts back the one it edited", () => {
@@ -587,14 +587,14 @@ describe("the delta rail — every change to the tree, judged the moment it has 
   });
 
   it("records what went round the tool rows: the files a command read and wrote, the mode, and the host's disagreement", () => {
-    const seq = rows(session).length;
+    const seq = rows(repo, session).length;
     const command = `cat src/a.ts >/dev/null && ${heredoc("src/shelled.ts", "export const shelled = 1;")}`;
     // The host's own list names a file flow's diff never saw, and misses the one it did.
     const payload = { ...bash(command), permission_mode: "auto", tool_response: { stdout: "", bashEditDiff: { changedFiles: [join(repo, "src/other.ts")] } } };
     try {
       const answer = called(payload, () => { expect(shell(command)).toBe(0); });
       expect(answer.code, answer.stderr).toBe(0);
-      const logged = rows(session).slice(seq);
+      const logged = rows(repo, session).slice(seq);
       expect(logged.find((row) => row["kind"] === "tool")).toMatchObject({ tool: "Bash", mode: "auto" });
       expect(logged.filter((row) => row["kind"] === "read")).toMatchObject([{ tool: "Bash", path: "src/a.ts" }]);
       expect(logged.filter((row) => row["kind"] === "write")).toMatchObject([{ tool: "Bash", path: "src/shelled.ts", change: "created" }]);
@@ -623,7 +623,7 @@ describe("the delta rail — every change to the tree, judged the moment it has 
     const again = called({ session_id: "live-4", tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } });
     expect(again.stdout, "shown once, until the session drifts past the threshold").toBe("");
     expect(
-      rows("live-4").filter((row) => row["kind"] === "run").length,
+      rows(repo, "live-4").filter((row) => row["kind"] === "run").length,
       "a touch where nothing showed is not a run row — the tool row already said the call happened",
     ).toBe(1);
   });
@@ -853,16 +853,6 @@ export default defineConfig([pack(demo)]);
     return { ...runFlow(where, ["hook", "post-tool-use"], {}, JSON.stringify(payload)), ran };
   }
 
-  /** `rows` above reads the main suite's repo; this one reads this suite's. */
-  function rows(id: string): Record<string, unknown>[] {
-    const file = join(tree, ".flow", "log", `${id}.jsonl`);
-    if (!existsSync(file)) return [];
-    return readFileSync(file, "utf8")
-      .split("\n")
-      .filter((line) => line.trim() !== "")
-      .map((line) => JSON.parse(line) as Record<string, unknown>);
-  }
-
   beforeAll(() => {
     tree = newRepo("flow-checkout-");
     writeFileSync(join(tree, "flow.config.ts"), CHECKOUT_CONFIG(PACKAGE));
@@ -929,7 +919,7 @@ export default defineConfig([pack(demo)]);
 
   it("in `git switch old && sed -i …`, refuses and puts back the sed edit, and keeps the switch's own files", () => {
     backToMain();
-    const seq = rows(session).length;
+    const seq = rows(tree, session).length;
     const answer = bash("git switch -q old && sed -i.orig 's|a = 1;|a = 1; // TODO|' src/a.ts && rm src/a.ts.orig");
     expect(answer.ran).toBe(0);
     expect(answer.code).toBe(2);
@@ -942,7 +932,7 @@ export default defineConfig([pack(demo)]);
     expect(at("src/legacy.ts")).toBe("// TODO: from before the rule\n");
     expect(status(), "and so the tree is HEAD").toBe("");
     expect(
-      rows(session).slice(seq).filter((row) => row["kind"] === "write").map((row) => row["path"]),
+      rows(tree, session).slice(seq).filter((row) => row["kind"] === "write").map((row) => row["path"]),
       "the one shell write on the record is the sed's",
     ).toStrictEqual(["src/a.ts"]);
   });
@@ -1012,10 +1002,10 @@ export default defineConfig([pack(demo)]);
 describe("the off switch", () => {
   it("silences every rail, and writes no telemetry while it is off", () => {
     writeFileSync(join(repo, ".flow", "off"), "");
-    const before = rows("live-1").length;
+    const before = rows(repo, "live-1").length;
     expect(hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "src/c.ts"), content: "TODO" })).code).toBe(0);
     expect(gate("src/leak.ts").code).toBe(0);
-    expect(rows("live-1").length, "a half-off guard that still logged would make the A/B dishonest").toBe(before);
+    expect(rows(repo, "live-1").length, "a half-off guard that still logged would make the A/B dishonest").toBe(before);
     rmSync(join(repo, ".flow", "off"));
   });
 });
