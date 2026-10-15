@@ -65,15 +65,17 @@ Neither setting undoes anything except file content. If the same command ran the
 
 ## Files git puts in place
 
-A file that matches HEAD after the call is left out of the diff. HEAD is the commit the checked-out branch points at.
+A file that matches HEAD after the call is left out of the diff, when HEAD is a commit that existed before the call. HEAD is the commit the checked-out branch points at. A call that makes a new commit, such as a commit, a rebase or a merge that is not a fast-forward, has every change judged.
 
-A `git switch`, `checkout`, `reset`, `merge` or `rebase` writes files out of a commit. That content is already committed, and committed content is judged at the commit gate. Judging it again against today's rules refuses files that are right for that commit, and writing them back leaves the tree different from HEAD. So flow compares each changed file with its copy in HEAD after the call:
+A `git switch`, `checkout`, `reset` or fast-forward `merge` writes files out of a commit the repo already has. That content is already committed, and committed content is judged at the commit gate. Judging it again against today's rules refuses files that are right for that commit, and writing them back leaves the tree different from HEAD. So flow compares each changed file with its copy in HEAD after the call:
 
 - **A file identical to its copy in HEAD** is left out. It is not judged, not written back, and shows no breadcrumb, and `flow facts` does not count it as a shell write.
 - **A file the call removed that HEAD held before the call and does not hold after it** is left out the same way. A file no commit holds, such as an untracked file or `.env`, is still judged when it is removed.
 - **Every other change** is judged as above. An edit to a committed file differs from its copy in HEAD, so it is judged.
 
 The test reads content, not the command line. So git run by a `just` recipe or a script is covered, and in `git switch dev && sed -i … file` the `sed` edit is still judged.
+
+**A commit the call makes** does not leave its files out. A call can skip the commit gate, with `git commit --no-verify` or by removing the hook first, so the content of a commit it makes has not been judged. HEAD counts as a commit that existed before the call when, before the call, a ref or a worktree's HEAD pointed at it or at a commit built on it. A ref is a branch, a tag or a remote-tracking branch.
 
 A `git stash pop`, a merge stopped on conflicts and a `cherry-pick --no-commit` write files that match no commit. Those files are judged like any other write.
 

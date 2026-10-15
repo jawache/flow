@@ -1191,11 +1191,11 @@ export function included(listed: readonly string[], include: readonly string[]):
 }
 
 /**
- * Of the paths a call changed, the ones the AGENT changed. The rest are git's — a checkout, a reset,
- * a merge or a commit put them there, and the commit gate judged that content when it was
- * committed — so they leave the diff before anything reads them: no rule, no write-back, no
- * breadcrumb, no shell-write row. CONTENT, never the command line: git run by a recipe is caught the
- * same way, and the `sed` in `git switch x && sed -i … f` is still judged.
+ * Of the paths a call changed, the ones the AGENT changed. The rest are git's — a checkout, a reset
+ * or a fast-forward put them there, from a commit the repo already had, and the commit gate judged
+ * that content when it was committed — so they leave the diff before anything reads them: no rule,
+ * no write-back, no breadcrumb, no shell-write row. CONTENT, never the command line: git run by a
+ * recipe is caught the same way, and the `sed` in `git switch x && sed -i … f` is still judged.
  *
  * - A file on disk after the call is git's when it is identical to its copy in HEAD after the call.
  * - A file the call removed is git's when HEAD held it BEFORE the call and does not hold it after:
@@ -1204,9 +1204,10 @@ export function included(listed: readonly string[], include: readonly string[]):
  *
  * `nameStatus` is the call's own diff, `git diff-tree -r -z --name-status --no-renames`, in git's
  * order. `differsAfter` and `differsBefore` are every path where HEAD's tree after the call, and
- * before it, disagree with the tree after the call — null where there was no HEAD (a repo with no
- * commit yet), and then nothing can match it. For a path gone from disk, being in `differsBefore`
- * is exactly "HEAD held it before".
+ * before it, disagree with the tree after the call. `differsAfter` is null when HEAD after the call
+ * is no commit the repo had before it — none yet, or one the call made, whose content no gate is
+ * known to have judged — and then nothing is git's. `differsBefore` is null where there was no HEAD
+ * before; for a path gone from disk, being in it is exactly "HEAD held it before".
  */
 export function authored(nameStatus: string, differsAfter: readonly string[] | null, differsBefore: readonly string[] | null): string[] {
   const after = differsAfter === null ? null : new Set(differsAfter);

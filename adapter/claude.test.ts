@@ -292,6 +292,24 @@ describe("the snapshot — the tree before a call, the tree after it, and the wa
     ]);
   });
 
+  it("judges every change a call commits itself, and leaves out a reset or a fast-forward to a commit the repo had", () => {
+    git("stash", "-q");
+    const call = (key: string, command: string): ReturnType<typeof observeDelta> => {
+      takeSnapshot(repo, key, [], who);
+      expect(spawnSync("bash", ["-c", command], { cwd: repo }).status, command).toBe(0);
+      return observeDelta(repo, key, []);
+    };
+    // The files match the commit the call lands on — but the call made that commit, and skipped the gate doing it.
+    const made = call("toolu_11", "echo '// TODO' >> a.ts && rm gone.ts && git add a.ts gone.ts && git commit -qm mine --no-verify");
+    expect(made.ok && made.changes, "a commit the call made vouches for nothing").toStrictEqual([
+      { path: "a.ts", before: "export const a = 1;\n", after: "export const a = 1;\n// TODO\n" },
+      { path: "gone.ts", before: "export const gone = 1;\n", after: null },
+    ]);
+    git("branch", "mine");
+    expect(call("toolu_12", "git reset -q --hard HEAD~1"), "back to a commit main had").toMatchObject({ ok: true, changes: [] });
+    expect(call("toolu_13", "git merge -q --ff-only mine"), "forward to a commit a branch had").toMatchObject({ ok: true, changes: [] });
+  });
+
   it("refuses and puts back the removal of an uncommitted .env snapshotInclude lists, made by a route other than rm", async () => {
     // No commit holds .env, so its removal is the call's to answer for, whatever HEAD does.
     const door = new URL("../index.ts", import.meta.url).pathname;

@@ -302,10 +302,30 @@ function gitDir(root: string): string | null {
   }
 }
 
-/** HEAD's tree id, or null when there is none to read — a repo with no commit yet. */
-function headTree(root: string): string | null {
-  const head = runGit(root, ["rev-parse", "--verify", "--quiet", "HEAD^{tree}"]);
+/** HEAD's commit, or null when there is none to read — a repo with no commit yet. */
+function headCommit(root: string): string | null {
+  const head = runGit(root, ["rev-parse", "--verify", "--quiet", "HEAD"]);
   return head.ok ? head.stdout.toString("utf8").trim() : null;
+}
+
+/** The commits every ref and every worktree's HEAD point at — none when git cannot say. */
+function tips(root: string): string[] {
+  const listed = runGit(root, ["rev-list", "--all", "--no-walk"]);
+  return listed.ok ? listed.stdout.toString("utf8").split("\n").filter((line) => line !== "") : [];
+}
+
+/**
+ * HEAD after the call when it is a commit the repo already had before it: one `known`, the tips
+ * recorded before the call, reaches. A switch, a checkout, a reset or a fast-forward lands on such a
+ * commit. null when there is no HEAD, or when the call made it — a commit, a rebase, a merge that is
+ * not a fast-forward — since a commit the call made holds the call's own edits, and no gate it might
+ * have skipped (`--no-verify`, a removed hook) can be taken on trust.
+ */
+function existingHead(root: string, known: readonly string[]): string | null {
+  const head = headCommit(root);
+  if (head === null || known.includes(head)) return head;
+  const beyond = runGit(root, ["rev-list", "-n1", "--stdin"], { input: `${[head, ...known.map((tip) => `^${tip}`)].join("\n")}\n` });
+  return beyond.ok && beyond.stdout.toString("utf8").trim() === "" ? head : null;
 }
 
 /** Where one call's snapshot lives: what it recorded, and the throwaway index it was built in. */
@@ -376,9 +396,11 @@ export function takeSnapshot(
   const dir = gitDir(root);
   const taken = dir === null ? { fault: `${root} is not a git checkout, so there is no tree to snapshot` } : writeTree(root, files.index, join(dir, "index"), include);
   // HEAD before the call, beside the tree: a file the call removed is git's only if HEAD held it.
-  const head = "tree" in taken ? headTree(root) : null;
+  // And every tip the repo has, so the after-call rail can tell a commit it lands on from one it made.
+  const head = "tree" in taken ? headCommit(root) : null;
+  const known = "tree" in taken ? tips(root) : [];
   try {
-    writeFileSync(files.meta, JSON.stringify({ ...who, at: Date.now(), ...taken, ...(head === null ? {} : { head }) }));
+    writeFileSync(files.meta, JSON.stringify({ ...who, at: Date.now(), ...taken, ...(head === null ? {} : { head }), known }));
   } catch {
     // Nothing can be recorded, so the after-call rail finds no snapshot and says so — the loud way.
   }
@@ -424,9 +446,9 @@ function blobs(root: string, specs: readonly string[]): (string | null)[] | null
  */
 export function observeDelta(root: string, key: string, include: readonly string[]): Delta & { readonly before?: string } {
   const files = snapshotFiles(root, key);
-  let meta: { tree?: unknown; head?: unknown; fault?: unknown };
+  let meta: { tree?: unknown; head?: unknown; known?: unknown; fault?: unknown };
   try {
-    meta = JSON.parse(readFileSync(files.meta, "utf8")) as { tree?: unknown; head?: unknown; fault?: unknown };
+    meta = JSON.parse(readFileSync(files.meta, "utf8")) as { tree?: unknown; head?: unknown; known?: unknown; fault?: unknown };
   } catch {
     return { ok: false, fault: `No snapshot was taken before this call (tool_use_id ${key}), so there is nothing to compare the tree against.` };
   }
@@ -438,28 +460,27 @@ export function observeDelta(root: string, key: string, include: readonly string
   if (now.tree === before) return { ok: true, changes: [], before };
   // One entry per path, NUL-separated, never a human status format. Submodules are another
   // repository's business and are left out.
-  const diffTree = (from: string, format: "--name-status" | "--name-only"): { ok: true; out: string } | { ok: false; why: string } => {
+  const diffTree = (from: string, format: "--name-status" | "--name-only"): string | { why: string } => {
     const ran = runGit(root, ["diff-tree", "-r", "-z", format, "--no-renames", "--ignore-submodules=all", from, now.tree]);
-    return ran.ok ? { ok: true, out: ran.stdout.toString("utf8") } : { ok: false, why: ran.stderr };
+    return ran.ok ? ran.stdout.toString("utf8") : { why: ran.stderr };
   };
   const changed = diffTree(before, "--name-status");
-  if (!changed.ok) return { ok: false, fault: `git could not compare the trees: ${changed.why}.` };
+  if (typeof changed !== "string") return { ok: false, fault: `git could not compare the trees: ${changed.why}.` };
   // WHAT GIT PUT THERE leaves the diff here, before anything reads it: HEAD after the call and HEAD
   // before it, each against the tree after it, are one more tree comparison each (`authored`
-  // decides). No HEAD is no commit anything could match, and a HEAD git cannot read leaves every
-  // change judged — the safe way. HEAD did not move: one comparison answers for both.
-  const headAfter = headTree(root);
+  // decides). Only a HEAD the repo had before the call can be matched: none, or one the call made,
+  // leaves every change judged, and so does a HEAD git cannot read — the safe way. HEAD before only
+  // ever answers for a file that matches HEAD after, and when HEAD did not move one comparison
+  // answers for both.
+  const known = Array.isArray(meta.known) ? meta.known.filter((tip): tip is string => typeof tip === "string") : [];
+  const headAfter = existingHead(root, known);
   const headBefore = typeof meta.head === "string" ? meta.head : null;
-  const differs = (head: string | null): { ok: true; paths: string[] | null } | { ok: false; why: string } => {
-    if (head === null) return { ok: true, paths: null };
-    const ran = diffTree(head, "--name-only");
-    return ran.ok ? { ok: true, paths: nulPaths(ran.out) } : ran;
-  };
-  const fromAfter = differs(headAfter);
-  const fromBefore = headBefore === headAfter ? fromAfter : differs(headBefore);
-  if (!fromAfter.ok) return { ok: false, fault: `git could not compare the tree with HEAD: ${fromAfter.why}.` };
-  if (!fromBefore.ok) return { ok: false, fault: `git could not compare the tree with HEAD before the call: ${fromBefore.why}.` };
-  const paths = authored(changed.out, fromAfter.paths, fromBefore.paths);
+  const fromAfter = headAfter === null ? null : diffTree(headAfter, "--name-only");
+  const fromBefore = fromAfter === null || headBefore === null ? null : headBefore === headAfter ? fromAfter : diffTree(headBefore, "--name-only");
+  if (fromAfter !== null && typeof fromAfter !== "string") return { ok: false, fault: `git could not compare the tree with HEAD: ${fromAfter.why}.` };
+  if (fromBefore !== null && typeof fromBefore !== "string")
+    return { ok: false, fault: `git could not compare the tree with HEAD before the call: ${fromBefore.why}.` };
+  const paths = authored(changed, fromAfter === null ? null : nulPaths(fromAfter), fromBefore === null ? null : nulPaths(fromBefore));
   if (paths.some((path) => path.includes("\n")))
     return { ok: false, fault: "A changed path has a newline in its name, which flow cannot ask git about safely." };
   const content = blobs(root, paths.flatMap((path) => [`${before}:${path}`, `${now.tree}:${path}`]));

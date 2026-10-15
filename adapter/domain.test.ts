@@ -2736,7 +2736,7 @@ describe("snapshotInclude — where git looks, and what it keeps", () => {
     // src/a.ts still differs from HEAD after the call (the agent's edit); the other two now agree with it.
     expect(authored(diff, ["src/a.ts", "notes.md"], ["src/a.ts"])).toEqual(["src/a.ts"]);
     expect(authored(diff, [], []), "a call that leaves the tree equal to HEAD authored nothing").toEqual([]);
-    expect(authored(diff, null, null), "no HEAD to compare with: every change is the agent's").toEqual([
+    expect(authored(diff, null, null), "no HEAD the repo had before the call — none yet, or one the call made: every change is the agent's").toEqual([
       "migrations/002.sql",
       "src/a.ts",
       "src/legacy.ts",
