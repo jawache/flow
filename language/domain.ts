@@ -774,6 +774,21 @@ type EmptyScope = "flow: .on()/.ignore() with no globs narrows nothing — give 
  */
 type Globs<Next> = <G extends readonly string[]>(...globs: G extends readonly [] ? [noGlobs: EmptyScope] : G) => Next;
 
+/** What the second form of a breadcrumb's prose becomes once the first was said. The TEXT is the diagnostic. */
+type DoubleProse<Said extends string> =
+  `flow: this breadcrumb already said .${Said}(…) — its note is exactly one of .text(…) and .file(…)`;
+
+/**
+ * `.text(…)` / `.file(…)`, or the refusal once the OTHER form was said — the compile-time half of
+ * the double-prose rule. The same form said twice is `Once`'s job, not this one.
+ *
+ * A wrong-argument refusal rather than a `never`, for the reason `Scoping` gives: the sentence lands
+ * in the diagnostic, on the line of the second form.
+ */
+type Prose<Spoken extends string, Other extends "text" | "file", Verb> = Other extends Spoken
+  ? (both: DoubleProse<Other>) => never
+  : Verb;
+
 /** Anything a pack may file under an entry name. The one shape `definePack` walks. */
 export interface Sentence<S extends EntrySpec = EntrySpec> {
   readonly spec: S;
@@ -823,8 +838,8 @@ export interface BreadcrumbSentence<
     "ignore",
     Scoping<At, Globs<BreadcrumbSentence<Spoken | "ignore", At>>, BriefScopeMoment>
   >;
-  readonly text: Once<Spoken, "text", (text: string) => BreadcrumbSentence<Spoken | "text", At>>;
-  readonly file: Once<Spoken, "file", (path: string) => BreadcrumbSentence<Spoken | "file", At>>;
+  readonly text: Once<Spoken, "text", Prose<Spoken, "file", (text: string) => BreadcrumbSentence<Spoken | "text", At>>>;
+  readonly file: Once<Spoken, "file", Prose<Spoken, "text", (path: string) => BreadcrumbSentence<Spoken | "file", At>>>;
   readonly disabled: Once<Spoken, "disabled", (reason?: string) => BreadcrumbSentence<Spoken | "disabled", At>>;
   readonly description: Once<
     Spoken,
@@ -1246,10 +1261,10 @@ interface OverrideChain<Kind extends EntrySpec["kind"], Spoken extends OverrideK
     ? Once<Spoken, "message", (message: string) => OverrideChain<Kind, Spoken | "message">>
     : never;
   readonly text: Kind extends "breadcrumb"
-    ? Once<Spoken, "text", (text: string) => OverrideChain<Kind, Spoken | "text">>
+    ? Once<Spoken, "text", Prose<Spoken, "file", (text: string) => OverrideChain<Kind, Spoken | "text">>>
     : never;
   readonly file: Kind extends "breadcrumb"
-    ? Once<Spoken, "file", (path: string) => OverrideChain<Kind, Spoken | "file">>
+    ? Once<Spoken, "file", Prose<Spoken, "text", (path: string) => OverrideChain<Kind, Spoken | "file">>>
     : never;
   readonly disabled: Once<Spoken, "disabled", (reason?: string) => OverrideChain<Kind, Spoken | "disabled">>;
   readonly description: Once<
