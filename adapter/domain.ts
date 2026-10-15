@@ -4024,8 +4024,8 @@ export interface StatusFacts {
   readonly snapshotInclude: readonly string[];
   /**
    * Where a `flow` the hooks and the gate call by name is: the repo's own `node_modules/.bin`, and
-   * the PATH this command was run with — the nearest reading there is of the PATH git and the host
-   * hand their hooks.
+   * the PATH this command was run with, less what npm added for this run (`hostPath`) — the nearest
+   * reading there is of the PATH git and the host hand their hooks.
    */
   readonly binary: { readonly modules: boolean; readonly path: boolean };
 }
@@ -4207,21 +4207,34 @@ function gateReach(text: string | null): Reach {
   return hookCommands(text).includes(LOCAL_BIN) ? "local" : "path";
 }
 
-/** Every command of flow's in this settings file: what the hooks run. */
-function ourCommands(settings: unknown): string[] {
-  return Object.values(hookArrays(settings)).flatMap((entries) =>
-    entries.flatMap((entry) => commandsOf(entry).filter((command) => ourHookCommand(command))),
-  );
+/**
+ * The registrations, as written: one in the old shape (`bareHook`) finds only the PATH, and that is
+ * every hook it answers. The SAME rule `flow init` rewrites by, so the fix this names is one init
+ * can carry out. Any other command is somebody's own, and none at all is judged as init writes them.
+ */
+function hooksReach(settings: unknown): Reach {
+  return bareRegistrations(settings).length > 0 ? "path" : "local";
 }
 
 /**
- * The registrations, as written: one of flow's that calls `flow` by name with no node_modules/.bin
- * in front — the old shape — finds only the PATH, and that is every hook it answers. A path to the
- * binary names its own copy, and none at all is judged as `flow init` writes them.
+ * THE PATH GIT AND THE HOST HAND THEIR HOOKS, read off the PATH this command was run with: every
+ * folder of it but a `node_modules/.bin` that npm put there for this one run — the repo's own or an
+ * ancestor's, which `npx flow` and `npm run` add, and npx's cache of a package it fetched. Counted,
+ * `npx flow status` would find a dev dependency's copy "on the PATH" that git never sees.
+ *
+ * Another repo's node_modules/.bin stays: it is on the PATH because someone put it there.
  */
-function hooksReach(settings: unknown): Reach {
-  const byName = (command: string): boolean => /(^|[\s;&|(])flow\s+hook\b/.test(command) && !command.includes(LOCAL_BIN);
-  return ourCommands(settings).some(byName) ? "path" : "local";
+export function hostPath(dirs: readonly string[], root: string): string[] {
+  const tidy = (path: string): string => path.replace(/\\/g, "/").replace(/\/+$/, "");
+  const bin = `/${LOCAL_BIN}`;
+  const at = tidy(root);
+  return dirs.filter((dir) => {
+    const path = tidy(dir);
+    if (path === "") return false;
+    if (!path.endsWith(bin)) return true;
+    const owner = path.slice(0, -bin.length);
+    return !(at === owner || at.startsWith(`${owner}/`) || path.includes("/_npx/"));
+  });
 }
 
 /**

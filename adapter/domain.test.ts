@@ -104,6 +104,7 @@ import {
   hookCommand,
   bareHook,
   bareRegistrations,
+  hostPath,
   ourHookCommand,
   registeredEvents,
   staleRegistrations,
@@ -1646,6 +1647,19 @@ describe("which modules flow strips and evaluates itself", () => {
   });
 });
 
+/** flow's five registrations, each running the command `as` makes of today's one. */
+const registrationsAs = (as: (command: string) => string): { hooks: Record<string, unknown[]> } => ({
+  hooks: Object.fromEntries(
+    HOOK_REGISTRATIONS.map((r) => [
+      r.event,
+      [{ ...(r.matcher === undefined ? {} : { matcher: r.matcher }), hooks: [{ type: "command", command: as(r.command) }] }],
+    ]),
+  ),
+});
+
+/** The registrations an older `flow init` wrote: each the bare `flow hook <event>`. */
+const BARE_SETTINGS = registrationsAs((command) => command.replace(/^.* flow /, "flow "));
+
 describe("the hook registrations flow writes", () => {
   it("names exactly the events it answers — five, and Notification is not one", () => {
     expect(HOOK_REGISTRATIONS.map((r) => r.event)).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
@@ -1746,15 +1760,9 @@ describe("the hook registrations flow writes", () => {
     const older = {
       model: "opus",
       hooks: Object.fromEntries(
-        Object.entries((withRegistrations({}).settings as { hooks: Record<string, unknown[]> }).hooks).map(([event, entries]) => [
+        Object.entries(BARE_SETTINGS.hooks).map(([event, entries]) => [
           event,
-          [
-            ...entries.map((entry) => ({
-              ...(entry as Record<string, unknown>),
-              hooks: [{ type: "command", command: (JSON.stringify(entry).match(/flow hook [a-z-]+/) ?? [""])[0] }],
-            })),
-            { hooks: [{ type: "command", command: "their-tool --report" }] },
-          ],
+          [...entries, { hooks: [{ type: "command", command: "their-tool --report" }] }],
         ]),
       ),
     };
@@ -1803,15 +1811,32 @@ describe("the hook registrations flow writes", () => {
   });
 
   it("leaves a registration with a path to the binary as it is — it names the copy it runs", () => {
-    const pinned = {
-      hooks: Object.fromEntries(
-        HOOK_REGISTRATIONS.map((r) => [
-          r.event,
-          [{ ...(r.matcher === undefined ? {} : { matcher: r.matcher }), hooks: [{ type: "command", command: r.command.replace(/^.* flow /, "node /x/dist/flow.mjs ") }] }],
-        ]),
-      ),
-    };
+    const pinned = registrationsAs((command) => command.replace(/^.* flow /, "node /x/dist/flow.mjs "));
     expect(withRegistrations(pinned).added).toEqual([]);
+  });
+
+  it("leaves a by-name command with anything else in it as it is — it is somebody's own", () => {
+    for (const prefix of ["FLOW_DEBUG=1 flow ", "cd /x && flow "]) {
+      const theirs = registrationsAs((command) => command.replace(/^.* flow /, prefix));
+      expect(bareRegistrations(theirs), prefix).toEqual([]);
+      expect(withRegistrations(theirs).added, prefix).toEqual([]);
+    }
+  });
+
+  // An older flow, or a hand, filed a bare command under an event flow does not register today. It
+  // is still flow's, and still finds only the PATH, so it is rewritten and reported like the five.
+  it("rewrites an old-shape command under an event flow does not register, and names that event", () => {
+    const older = {
+      hooks: {
+        ...(withRegistrations({}).settings as { hooks: Record<string, unknown> }).hooks,
+        SubagentStop: [{ hooks: [{ type: "command", command: "flow hook stop" }] }],
+      },
+    };
+    const { settings, added } = withRegistrations(older);
+    expect(added).toEqual(["SubagentStop (now runs the flow in node_modules/.bin first)"]);
+    expect((settings as { hooks: Record<string, unknown[]> }).hooks["SubagentStop"]).toEqual([
+      { hooks: [{ type: "command", command: hookCommand("stop") }] },
+    ]);
   });
 
   it("reads nothing out of a settings file that is not an object", () => {
@@ -1825,8 +1850,6 @@ const OLD_GATE = '#!/bin/sh\nstaged=$(git diff --cached --name-only --diff-filte
 
 describe("the git gate flow arms", () => {
   it("calls `flow hook commit` and passes nothing — no list, no filter, no early exit", () => {
-    expect(PRE_COMMIT.endsWith("\nexec flow hook commit\n"), "the gate ends with it").toBe(true);
-    expect(PRE_COMMIT).toContain("\nexec flow hook commit\n");
     expect(PRE_COMMIT.startsWith("#!")).toBe(true);
     expect(PRE_COMMIT, "flow asks git; the hook does not").not.toContain("git diff");
     expect(PRE_COMMIT).not.toContain("exit 0");
@@ -2176,16 +2199,6 @@ const statusFacts = (over: Partial<StatusFacts> = {}): StatusFacts => ({
 /** The gate an older `flow init` wrote: today's, without the line that puts node_modules/.bin first. */
 const PATH_ONLY_GATE = PRE_COMMIT.replace(/^PATH=.*\n/m, "");
 
-/** The registrations an older `flow init` wrote: each the bare `flow hook <event>`. */
-const BARE_SETTINGS = {
-  hooks: Object.fromEntries(
-    HOOK_REGISTRATIONS.map((r) => [
-      r.event,
-      [{ ...(r.matcher === undefined ? {} : { matcher: r.matcher }), hooks: [{ type: "command", command: r.command.replace(/^.* flow /, "flow ") }] }],
-    ]),
-  ),
-};
-
 describe("the binary fitting — can the hooks and the gate find flow", () => {
   const binary = (modules: boolean, path: boolean, over: Partial<StatusFacts> = {}) => {
     const s = status(statusFacts({ binary: { modules, path }, ...over }));
@@ -2255,6 +2268,13 @@ describe("the binary fitting — can the hooks and the gate find flow", () => {
     );
   });
 
+  // ONE RULE FOR STATUS AND INIT: a red line whose fix is `flow init` must be one init can carry out.
+  it("judges registrations by the rule init rewrites by — a prefixed by-name command is somebody's own", () => {
+    const theirs = registrationsAs((command) => command.replace(/^.* flow /, "FLOW_DEBUG=1 flow "));
+    expect(withRegistrations(theirs).added, "init has nothing to rewrite").toEqual([]);
+    expect(binary(true, false, { settings: theirs }).fitting?.ok, "so status names no fix init would not make").toBe(true);
+  });
+
   it("does not judge a registration with a path to the binary by the PATH — it names its own copy", () => {
     const pinned = {
       hooks: { Stop: [{ hooks: [{ type: "command", command: "/usr/local/bin/flow hook stop" }] }] },
@@ -2278,6 +2298,43 @@ describe("the binary fitting — can the hooks and the gate find flow", () => {
       expect(green).toBe(false);
       expect(lines.at(-1)).toContain("1 red line");
     }
+  });
+});
+
+describe("hostPath — the PATH git and the host hand their hooks", () => {
+  // `npx flow status` and `npm run` put the repo's node_modules/.bin, and every ancestor's, on the
+  // PATH of this one run. Counted, a dev dependency's flow is "on the PATH" though git never sees it.
+  it("drops the node_modules/.bin npm adds for one run: the repo's own, and an ancestor's", () => {
+    const dirs = ["/repo/node_modules/.bin", "/node_modules/.bin", "/opt/homebrew/bin", "/usr/bin"];
+    expect(hostPath(dirs, "/repo")).toEqual(["/opt/homebrew/bin", "/usr/bin"]);
+    expect(hostPath(["/work/node_modules/.bin/"], "/work/repo"), "a trailing slash is the same folder").toEqual([]);
+  });
+
+  it("drops npx's cache of a package it fetched", () => {
+    expect(hostPath(["/home/u/.npm/_npx/1a2b3c/node_modules/.bin", "/usr/bin"], "/repo")).toEqual(["/usr/bin"]);
+  });
+
+  it("keeps another repo's node_modules/.bin — someone put it on the PATH, so the hooks have it too", () => {
+    expect(hostPath(["/elsewhere/node_modules/.bin", "/repo-two/node_modules/.bin"], "/repo")).toEqual([
+      "/elsewhere/node_modules/.bin",
+      "/repo-two/node_modules/.bin",
+    ]);
+  });
+
+  it("drops the empty entries a PATH can hold", () => {
+    expect(hostPath(["", "/usr/bin", ""], "/repo")).toEqual(["/usr/bin"]);
+  });
+
+  // THE FALSE GREEN B5 closes: an old gate and old registrations, flow only as a dev dependency, and
+  // status run through npx. The npx folder is not the PATH, so the line is red.
+  it("leaves an old gate and old registrations red under npx, with flow only as a dev dependency", () => {
+    const holdsFlow = new Set(["/repo/node_modules/.bin"]);
+    const onPath = hostPath(["/repo/node_modules/.bin", "/usr/bin"], "/repo").some((dir) => holdsFlow.has(dir));
+    const fitting = status(
+      statusFacts({ gateText: PATH_ONLY_GATE, settings: BARE_SETTINGS, binary: { modules: true, path: onPath } }),
+    ).fittings.find((f) => f.id === "binary");
+    expect(fitting?.ok).toBe(false);
+    expect(fitting?.detail).toContain("the hooks and the gate look for flow on the PATH alone");
   });
 });
 

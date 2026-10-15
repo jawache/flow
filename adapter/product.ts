@@ -30,6 +30,7 @@ import {
   lastMode,
   literalScopes,
   LOCAL_BIN,
+  hostPath,
   pathLines,
   planInit,
   status,
@@ -313,7 +314,7 @@ export async function runStatus(cwd: string, args: readonly string[]): Promise<V
     snapshotInclude: regime.kind === "loaded" ? (regime.config.settings.snapshotInclude ?? []) : [],
     binary: {
       modules: hasFlow(join(root, LOCAL_BIN)),
-      path: (process.env["PATH"] ?? "").split(delimiter).some((dir) => dir !== "" && hasFlow(dir)),
+      path: hostPath((process.env["PATH"] ?? "").split(delimiter), root).some(hasFlow),
     },
   };
 
