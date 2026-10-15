@@ -10,20 +10,17 @@ The parser reads the file as TSX, so JavaScript files are read too. It reads thr
 
 - **`export function`** with no return type and no type parameters, `async` included
 - **`export class`** with no `extends`, no `implements` and no type parameters
-- **`export const`** with no type annotation
+- **`export const`** with no type annotation, which includes:
+  - **every declarator**: `export const a = 1, b = 2` is read as `a` and `b`
+  - **destructuring**: every name the pattern binds is read, so `export const { a, b: c, ...d } = obj` is read as `a`, `c` and `d`, and `export const [x, y] = arr` as `x` and `y`
 
 Every other export is left out of the check, such as:
 
 - `export let`, `interface`, `type`, `enum`, `export default` and re-exports
 - generator functions (`export function*`)
 - `export abstract class`
-- every declarator after the first in `export const a = 1, b = 2`: only `a` is read
 
 When the sibling test does not exist, the check refuses the file with `sibling test not found`, whether or not the file exports anything.
-
-## Limits
-
-- **A destructured `export const`**, such as `export const { a, b } = obj`, is read as one name, `{ a, b }`. That text never matches as a word in the test, so the file is always refused.
 
 ## Options
 
