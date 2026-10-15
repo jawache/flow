@@ -64,7 +64,7 @@ that, never to disable the rule.
 - [`fcis.noShellInPure`](#fcisnoshellinpure--guardrail) · guardrail · Pure code imports no filesystem, process, socket or OS module — the leak the call-site rule cannot see.
 - [`fcis.noThrowInPure`](#fcisnothrowinpure--guardrail) · guardrail · Pure decisions return errors as values, never throw control flow.
 - [`fcis.pureHasTest`](#fcispurehastest--guardrail) · guardrail · A pure file has its sibling test — the test-first artefact exists.
-- [`fcis.pureExportsTested`](#fcispureexportstested--guardrail) · guardrail · Every exported pure function is at least referenced in its test — the 'wrote no test' nudge.
+- [`fcis.pureExportsTested`](#fcispureexportstested--guardrail) · guardrail · Every pure export is at least referenced in its test — the 'wrote no test' nudge.
 - [`fcis.pureCovered`](#fcispurecovered--guardrail) · guardrail · Blocks a commit if the pure core's coverage gate fails — only runs when pure files changed.
 - [`fcis.newPureFileNeedsReason`](#fcisnewpurefileneedsreason--guardrail) · guardrail · A commit adding a non-test file to the pure core must say why the pure file it belongs in isn't the place.
 
@@ -282,7 +282,7 @@ A pure file has its sibling test — the test-first artefact exists.
 ### What the agent reads when refused
 
 ```
-The pure core is test-first (red → green): {dir}/{name}.test.ts is missing. Write the failing test, then the code.
+The pure core is test-first (red → green): this file's sibling test, named below, is missing. Write the failing test, then the code.
 ```
 
 ### Proved by
@@ -298,7 +298,7 @@ The pure core is test-first (red → green): {dir}/{name}.test.ts is missing. Wr
 
 ## `fcis.pureExportsTested` — guardrail
 
-Every exported pure function is at least referenced in its test — the 'wrote no test' nudge.
+Every pure export is at least referenced in its test — the 'wrote no test' nudge.
 
 - **Refuses at** a file is written or edited · the commit gate, over the staged set
 - **Watches** `core/**/*.ts`
@@ -319,7 +319,7 @@ Every exported pure function is at least referenced in its test — the 'wrote n
 ### What the agent reads when refused
 
 ```
-An exported pure function is never referenced in its test. Cheap nudge, not coverage — but 'added a function, wrote no test' is exactly the miss it catches.
+The exports listed below are never named in this file's test. Write a test that uses each one, then write the change again: a reference is enough, as this is a nudge, not coverage.
 ```
 
 ### Proved by

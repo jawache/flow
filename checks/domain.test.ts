@@ -433,6 +433,11 @@ describe("exportedNames", () => {
     expect(names).toContain("Baz");
     expect(names).not.toContain("nope");
   });
+
+  it("lists them in the order the file declares them, whatever their kind", async () => {
+    const names = await exportedNames("export const A = 1;\nexport function b(){}\nexport class C {}\nexport const d = 2;\n");
+    expect(names).toEqual(["A", "b", "C", "d"]);
+  });
 });
 
 describe("symbolsInSibling", () => {
@@ -445,7 +450,16 @@ describe("symbolsInSibling", () => {
       content: source,
       world: { fs: { "a/x.test.ts": "test(foo)" } },
     });
-    expect(detail).toContain("'bar' is never referenced in a/x.test.ts");
+    expect(detail).toBe("not referenced in a/x.test.ts: bar");
+  });
+
+  it("names the test once and lists every unreferenced export on one line", async () => {
+    const detail = await run(check, "write", {
+      path: "a/x.ts",
+      content: source,
+      world: { fs: { "a/x.test.ts": "nothing here" } },
+    });
+    expect(detail).toBe("not referenced in a/x.test.ts: foo, bar");
   });
 
   it("passes when every export is referenced", async () => {
