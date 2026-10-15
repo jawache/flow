@@ -52,11 +52,11 @@ Write each string in `.text(…)` or `.message(…)` on **one line**, however lo
 
 ```
 // wrapped to fit an editor — the page shows the break, the model sees a newline
-"· One page, one job: the quick start",
-"  teaches by doing; the guide solves situations.",
+"· One page, one job: a tutorial teaches",
+"  by doing; a how-to guide solves one task.",
 
 // one line, however long
-"· One page, one job: the quick start teaches by doing; the guide solves situations.",
+"· One page, one job: a tutorial teaches by doing; a how-to guide solves one task.",
 ```
 
 Wrap doc comments the other way: a person reads those, so wrap them at the width the rest of the file uses.
