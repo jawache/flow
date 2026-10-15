@@ -1,8 +1,9 @@
 // NO CASES — a rule that carries nothing proving it is alive.
 //
 // This is the class of bug that shipped two dead import fences for four days: a matcher that
-// matched nothing, in a config that loaded green. A rule whose block-case passes cannot ship, and
-// a rule with no block-case cannot be written.
+// matched nothing, in a config that loaded green. A rule whose block case passes cannot ship, and
+// a rule with no block case does not load: `.test()` never said is a compile error, and a
+// `.test(…)` with no block case in it is refused at load with `no-cases`.
 
 import { definePack, guardrail, commit, type Check } from "../../index.ts";
 

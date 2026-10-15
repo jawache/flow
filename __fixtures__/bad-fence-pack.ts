@@ -24,9 +24,10 @@ export const fence = definePack("fence", {
   /**
    * The architecture, as regexes — which is the bug, and the only reason this pack exists.
    *
-   * ITS CASES ARE THE MINIMUM that clears `no-cases`, deliberately: they prove the entry reads a
-   * violation report, which is all a canned world can ever prove, and this file is here to show
-   * that a rule with green cases can still be a rule that cannot match anything.
+   * ITS CASES ARE A BARE MINIMUM, deliberately: one pass case, and the block case that clears
+   * `no-cases`. They prove the entry reads a violation report, which is all a canned world can
+   * ever prove, and this file is here to show that a rule with green cases can still be a rule
+   * that cannot match anything.
    */
   imports: guardrail()
     .at(commit)

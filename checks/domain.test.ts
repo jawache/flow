@@ -1727,7 +1727,7 @@ describe("every stock check, bound in a real config", () => {
     expect(results).toHaveLength(28);
   });
 
-  it("an entry whose cases block is empty does not load at all, and the refusal names it", async () => {
+  it("an entry with a pass case and no block case does not load at all, and the refusal names it", async () => {
     const { default: config } = await import("../__fixtures__/core-no-cases.config.ts");
     const loaded = loadConfig(config);
     expect(loaded.ok).toBe(false);
