@@ -159,7 +159,7 @@ Five ideas in this file explain the rest of flow:
 - **A check is a function of `ctx`**, and it reaches the world only through it: `ctx.command`, `ctx.staged`, `ctx.file`, `ctx.fs`, `ctx.exec` and `ctx.git`. It returns `ctx.ok()` or `ctx.fail(detail)`. Because of that one rule, the same check runs live, runs in a test case, and replays from a recording with no repo at all.
 - **Scope is part of the sentence.** `noMarkedFiles` has no `.on(…)`, so it is about the commit: it is called once, with the whole staged set. With paths in `.on(…)`, the gate calls the rule once per staged file in scope, with that file. A file the commit deletes is passed only to a rule bound at both `deletion` and `commit`. A rule bound at `commit` alone checks the files the commit will contain, and a deleted file is not one of them.
 - **A category reads evidence the host wrote.** `subagent` is recognised from a sidecar file the harness wrote, never from anything the session claimed. [Rules bound to who](./rules-bound-to-who.md) explains why.
-- **Every rule has its own cases.** `.test({ pass, block })` is part of the rule: a guardrail with no cases does not load, and a block case is what proves it catches something. [How to test your rules](../how-to/test-your-rules.md) gives the steps.
+- **Every rule has its own cases.** `.test({ pass, block })` is part of the rule: a guardrail with no block case does not load, because a block case is what proves it catches something. [How to test your rules](../how-to/test-your-rules.md) gives the steps.
 
 ---
 
