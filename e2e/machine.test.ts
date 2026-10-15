@@ -280,7 +280,11 @@ const ENTRIES: readonly string[] = [
 // ── the road ─────────────────────────────────────────────────────────────────
 
 let home: string;
-/** A directory holding one `flow` shim, so git's own hook can find the binary under test. */
+/**
+ * A directory holding one `flow` shim, which runs the build under test: the PATH's flow. The repo
+ * init links runs its own node_modules/@jawache/flow first, the same build, so the shim is only the
+ * fallback, and it keeps the machine's own flow out of every run.
+ */
 let bin: string;
 let repo: string;
 let scaffolded: Ran;

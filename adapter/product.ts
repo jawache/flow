@@ -62,11 +62,11 @@ export interface VerbResult {
  * override. `settingsFileFor` decides; this only reads.
  */
 function settingsFile(root: string): string {
-  return settingsFileFor(readText(root, "package.json"), machineSettings());
+  return settingsFileFor(readText(root, "package.json"), machineSettingsPath());
 }
 
 /** The host's machine-wide settings file, `CLAUDE_CONFIG_DIR` first. */
-function machineSettings(): string {
+function machineSettingsPath(): string {
   return join(process.env["CLAUDE_CONFIG_DIR"] || join(homedir(), ".claude"), "settings.json");
 }
 
@@ -74,8 +74,8 @@ function machineSettings(): string {
  * The machine-wide file, parsed, when flow's hooks are in the repo's own — the one place a hook
  * there could run flow a second time — and null when `settingsPath` is the machine-wide file.
  */
-function otherSettings(root: string, settingsPath: string): { path: string; settings: unknown; unreadable: boolean } | null {
-  const machine = machineSettings();
+function machineFile(root: string, settingsPath: string): { path: string; settings: unknown; unreadable: boolean } | null {
+  const machine = machineSettingsPath();
   if (settingsPath === machine) return null;
   const read = parsedFile(root, machine);
   return { path: machine, settings: read.value, unreadable: read.unreadable };
@@ -219,7 +219,7 @@ function initFacts(root: string, empty: boolean): InitFacts {
     settingsPath,
     settings: read.value,
     settingsUnreadable: read.unreadable,
-    machine: otherSettings(root, settingsPath),
+    machine: machineFile(root, settingsPath),
     resolves: resolves(root),
     packageRoot: packageRoot(),
   };
@@ -333,7 +333,7 @@ export async function runStatus(cwd: string, args: readonly string[]): Promise<V
     hooksPath: hooksPath(root),
     settingsPath,
     settings: parsedFile(root, settingsPath).value,
-    machine: otherSettings(root, settingsPath),
+    machine: machineFile(root, settingsPath),
     grammars:
       regime.kind === "loaded"
         ? grammarsAt(regime.config.settings, root).map((grammar) => ({
@@ -346,7 +346,8 @@ export async function runStatus(cwd: string, args: readonly string[]): Promise<V
     ignored: ignoredPaths(root, literalScopes(regime.kind === "loaded" ? regime.load : null)),
     snapshotInclude: regime.kind === "loaded" ? (regime.config.settings.snapshotInclude ?? []) : [],
     binary: {
-      modules: listsFlow(readText(root, "package.json")) && existsSync(join(root, PACKAGE_BIN)),
+      listed: listsFlow(readText(root, "package.json")),
+      copy: existsSync(join(root, PACKAGE_BIN)),
       path: hostPath((process.env["PATH"] ?? "").split(delimiter), root).some(hasFlow),
     },
   };

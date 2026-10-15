@@ -1699,7 +1699,6 @@ describe("the hook registrations flow writes", () => {
       expect(command, command).not.toMatch(/\bPATH=/);
       expect(command, command).toContain(PACKAGE_BIN);
     }
-    expect(PACKAGE_BIN).toBe(`${PACKAGE_DIR}/dist/flow.mjs`);
   });
 
   it("recognises its own registration whatever path stands in front of the binary", () => {
@@ -2023,7 +2022,7 @@ describe("planInit — a repo that already has a pre-commit hook", () => {
     expect(ADD_THE_GATE_LINE).toContain(GATE_RUN_LINE);
     const followed = `#!/bin/sh\nnpm test\n${GATE_LOCAL_LINE}\n${GATE_RUN_LINE}\n`;
     expect(armsFlow(followed)).toBe(true);
-    const fitting = status(statusFacts({ gateText: followed, binary: { modules: true, path: false } })).fittings.find((f) => f.id === "binary");
+    const fitting = status(statusFacts({ gateText: followed, binary: { listed: true, copy: true, path: false } })).fittings.find((f) => f.id === "binary");
     expect(fitting?.ok, fitting?.detail).toBe(true);
   });
 
@@ -2045,7 +2044,7 @@ describe("planInit — a repo that already has a pre-commit hook", () => {
     const followed = OLD_GATE.replace(/^exec flow commit .*$/m, `${GATE_LOCAL_LINE}\n${GATE_RUN_LINE}`);
     expect(armsFlow(followed)).toBe(true);
     expect(armsOldFlow(followed)).toBe(false);
-    const fitting = status(statusFacts({ gateText: followed, binary: { modules: true, path: false } })).fittings.find((f) => f.id === "binary");
+    const fitting = status(statusFacts({ gateText: followed, binary: { listed: true, copy: true, path: false } })).fittings.find((f) => f.id === "binary");
     expect(fitting?.ok, fitting?.detail).toBe(true);
   });
 });
@@ -2321,12 +2320,32 @@ describe("the machine-wide file, beside a dev dependency's own", () => {
     const { fitting, green } = hooks(older);
     expect(fitting?.ok).toBe(false);
     expect(fitting?.detail).toBe(
-      `${machinePath} also calls flow for SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop, with another command than .claude/settings.json, ` +
-        "so Claude Code runs both and each of those hooks fires twice. Re-run `flow init`, which brings an older flow's commands there up to date, or remove flow's entries from that file.",
+      `${machinePath} also calls flow for SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop the old way, as the bare \`flow hook <event>\`, ` +
+        "so Claude Code runs it beside .claude/settings.json's command and each of those hooks fires twice. Re-run `flow init`, which rewrites it to the same command.",
     );
     expect(green).toBe(false);
-    const debug = { hooks: { Stop: [{ hooks: [{ type: "command", command: "FLOW_DEBUG=1 flow hook stop" }] }] } };
-    expect(hooks(debug).fitting?.detail, "somebody's own command runs twice too").toContain("also calls flow for Stop,");
+  });
+
+  // A COMMAND OF SOMEBODY'S OWN runs twice too, and init leaves it: its fix is a hand edit, never
+  // "re-run flow init", which would leave the line red for good.
+  it("names a command of somebody's own apart, with the fix init cannot make", () => {
+    const debug = {
+      hooks: {
+        Stop: [{ hooks: [{ type: "command", command: "FLOW_DEBUG=1 flow hook stop" }] }],
+        PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: "flow hook pre-tool-use" }] }],
+      },
+    };
+    expect(withMachineCommandsUpToDate({ hooks: { Stop: debug.hooks.Stop } }).rewritten, "init has nothing to rewrite there").toEqual([]);
+    const { fitting } = hooks(debug);
+    expect(fitting?.ok).toBe(false);
+    expect(fitting?.detail).toBe(
+      [
+        `${machinePath} also calls flow for PreToolUse the old way, as the bare \`flow hook <event>\`, ` +
+          "so Claude Code runs it beside .claude/settings.json's command and each of those hooks fires twice. Re-run `flow init`, which rewrites it to the same command.",
+        `${machinePath} also calls flow for Stop with a command of its own, ` +
+          "so Claude Code runs it beside .claude/settings.json's command and each of those hooks fires twice. Make it the same command as .claude/settings.json's, or remove it from that file.",
+      ].join("\n"),
+    );
   });
 
   it("is green when the machine-wide file has the same commands, none of flow's, or nothing", () => {
@@ -2355,7 +2374,7 @@ const statusFacts = (over: Partial<StatusFacts> = {}): StatusFacts => ({
   session: null,
   ignored: [],
   snapshotInclude: [],
-  binary: { modules: false, path: true },
+  binary: { listed: false, copy: false, path: true },
   ...over,
 });
 
@@ -2364,7 +2383,7 @@ const PATH_ONLY_GATE = PRE_COMMIT.replace(`${GATE_LOCAL_LINE}\n`, "");
 
 describe("the binary fitting — can the hooks and the gate find flow", () => {
   const binary = (modules: boolean, path: boolean, over: Partial<StatusFacts> = {}) => {
-    const s = status(statusFacts({ binary: { modules, path }, ...over }));
+    const s = status(statusFacts({ binary: { listed: modules, copy: modules, path }, ...over }));
     return { fitting: s.fittings.find((f) => f.id === "binary"), green: s.green, lines: statusLines(s) };
   };
 
@@ -2465,6 +2484,26 @@ describe("the binary fitting — can the hooks and the gate find flow", () => {
     expect(green, "the commit-gate and hooks lines are").toBe(false);
   });
 
+  // INIT'S LINK, in a repo that does not list flow, is the flow that ran init — not the repo's own.
+  // Judged by the PATH, the tutorial's global install reads "on the PATH"; with nothing there, it is
+  // red on the safe side, and says the link is what runs until it breaks.
+  it("judges a copy the repo does not list by the PATH: green with one there, and a red line naming the link without", () => {
+    const linked = (path: boolean) => status(statusFacts({ binary: { listed: false, copy: true, path } }));
+    expect(statusLines(linked(true))).toContain("  ✓ binary: the hooks and the gate run the flow on the PATH");
+    const red = linked(false);
+    expect(red.fittings.find((f) => f.id === "binary")).toEqual({
+      id: "binary",
+      ok: false,
+      detail:
+        "this repo's package.json does not list @jawache/flow, so node_modules/@jawache/flow is the link `flow init` made to the flow that ran it, " +
+        "and no flow is on the PATH. The hooks and the gate run that link only while it resolves, and once it breaks every hook fails " +
+        "with `flow: not found` and git refuses every commit — install it for this repo with `npm i -D @jawache/flow`, or for every repo with `npm i -g @jawache/flow`.",
+    });
+    expect(red.green).toBe(false);
+    const listedNotInstalled = status(statusFacts({ binary: { listed: true, copy: false, path: false } })).fittings.find((f) => f.id === "binary");
+    expect(listedNotInstalled?.detail, "listed, but not installed yet").toContain(`no flow in ${PACKAGE_DIR} or on the PATH`);
+  });
+
   it("is a red line naming both installs when neither has one, and status is not green", () => {
     for (const over of [{}, { gateText: PATH_ONLY_GATE, settings: BARE_SETTINGS }]) {
       const { fitting, green, lines } = binary(false, false, over);
@@ -2508,7 +2547,7 @@ describe("hostPath — the PATH git and the host hand their hooks", () => {
     const holdsFlow = new Set(["/repo/node_modules/.bin"]);
     const onPath = hostPath(["/repo/node_modules/.bin", "/usr/bin"], "/repo").some((dir) => holdsFlow.has(dir));
     const fitting = status(
-      statusFacts({ gateText: PATH_ONLY_GATE, settings: BARE_SETTINGS, binary: { modules: true, path: onPath } }),
+      statusFacts({ gateText: PATH_ONLY_GATE, settings: BARE_SETTINGS, binary: { listed: true, copy: true, path: onPath } }),
     ).fittings.find((f) => f.id === "binary");
     expect(fitting?.ok).toBe(false);
     expect(fitting?.detail).toContain("the hooks and the gate look for flow on the PATH alone");

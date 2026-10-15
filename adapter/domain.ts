@@ -3657,16 +3657,20 @@ export function withMachineCommandsUpToDate(settings: unknown): { settings: unkn
 
 /**
  * The events the machine-wide file calls flow for with a command the repo's own file does not use
- * for that event. The host runs both, so each of those hooks fires twice.
+ * for that event. The host runs both, so each of those hooks fires twice. Split by the fix: `bare`
+ * holds only old-shape commands, which `flow init` rewrites; `theirs` holds a command of somebody's
+ * own (`FLOW_DEBUG=1 flow hook stop`), which init leaves as it is.
  */
-function machineDiffers(repo: unknown, machine: unknown): string[] {
+function machineDiffers(repo: unknown, machine: unknown): { bare: string[]; theirs: string[] } {
   const repoArrays = hookArrays(repo);
-  return Object.entries(hookArrays(machine))
-    .filter(([event, entries]) => {
-      const repoCommands = new Set((repoArrays[event] ?? []).flatMap(commandsOf));
-      return entries.some((entry) => commandsOf(entry).some((command) => ourHookCommand(command) && !repoCommands.has(command)));
-    })
-    .map(([event]) => event);
+  const out = { bare: [] as string[], theirs: [] as string[] };
+  for (const [event, entries] of Object.entries(hookArrays(machine))) {
+    const repoCommands = new Set((repoArrays[event] ?? []).flatMap(commandsOf));
+    const differ = entries.flatMap(commandsOf).filter((command) => ourHookCommand(command) && !repoCommands.has(command));
+    if (differ.length === 0) continue;
+    (differ.every((command) => bareHook(command) !== null) ? out.bare : out.theirs).push(event);
+  }
+  return out;
 }
 
 /**
@@ -3989,6 +3993,17 @@ export interface InitPlan {
   readonly settingsUnreadable: string | null;
 }
 
+/**
+ * The machine-wide file's write, with its path: null when there is no such file to bring in line,
+ * nothing in it to rewrite, or it would not parse — the same rule as the hooks' own file: bytes
+ * nobody parsed are not written.
+ */
+function machineRewrite(file: InitFacts["machine"]): InitPlan["machine"] {
+  if (file === null || file.unreadable) return null;
+  const { settings, rewritten } = withMachineCommandsUpToDate(file.settings);
+  return rewritten.length === 0 ? null : { path: file.path, value: settings, rewritten };
+}
+
 /** What init will do to this repo. Pure: every branch reads a fact the shell already gathered. */
 export function planInit(facts: InitFacts): InitPlan {
   // A file we could not read is a file we may not write. `withRegistrations` builds a NEW object
@@ -3997,8 +4012,6 @@ export function planInit(facts: InitFacts): InitPlan {
   // every other tool's hooks, gone. There is no safe merge into bytes nobody parsed, so init
   // registers nothing and says which file to fix.
   const registration = facts.settingsUnreadable ? { settings: facts.settings, added: [] } : withRegistrations(facts.settings);
-  // The same rule for the machine-wide file: one that would not parse is not written.
-  const machine = facts.machine === null || facts.machine.unreadable ? null : withMachineCommandsUpToDate(facts.machine.settings);
   return {
     config: facts.hasConfig ? null : { path: CONFIG_FILE, body: scaffold(facts.empty) },
     // NEVER over a hook that is already there. This is a scaffold, and a repo whose gate runs its
@@ -4014,10 +4027,7 @@ export function planInit(facts: InitFacts): InitPlan {
     hooksPath: facts.isGit && facts.hooksPath !== HOOKS_DIR,
     settings: registration.added.length === 0 ? null : { path: facts.settingsPath, value: registration.settings },
     registered: registration.added,
-    machine:
-      facts.machine === null || machine === null || machine.rewritten.length === 0
-        ? null
-        : { path: facts.machine.path, value: machine.settings, rewritten: machine.rewritten },
+    machine: machineRewrite(facts.machine),
     settingsUnreadable: facts.settingsUnreadable ? facts.settingsPath : null,
   };
 }
@@ -4132,13 +4142,13 @@ export interface StatusFacts {
   /** The config's `snapshotInclude` globs: the ignored paths the snapshot records anyway. */
   readonly snapshotInclude: readonly string[];
   /**
-   * Where the flow the hooks and the gate run is. `modules`: the repo's `package.json` lists
-   * `@jawache/flow` and its package's binary is there — a link `flow init` made to the running flow,
-   * in a repo that does not list it, is that flow and not the repo's own. `path`: a `flow` on the
-   * PATH this command was run with, less what npm added for this run (`hostPath`) — the nearest
-   * reading there is of the PATH git and the host hand their hooks.
+   * Where the flow the hooks and the gate run is, as three stats. `listed`: the repo's
+   * `package.json` lists `@jawache/flow`. `copy`: its package's binary, `PACKAGE_BIN`, is there —
+   * a dev dependency's, or the link `flow init` made to the flow that ran it. `path`: a `flow` on
+   * the PATH this command was run with, less what npm added for this run (`hostPath`) — the nearest
+   * reading there is of the PATH git and the host hand their hooks. `binaryFitting` judges them.
    */
-  readonly binary: { readonly modules: boolean; readonly path: boolean };
+  readonly binary: { readonly listed: boolean; readonly copy: boolean; readonly path: boolean };
 }
 
 /**
@@ -4238,7 +4248,8 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
   const registered = registeredEvents(facts.settings);
   const missing = HOOK_REGISTRATIONS.filter((r) => !registered.includes(r.event)).map((r) => r.event);
   const stale = staleRegistrations(facts.settings);
-  const twice = facts.machine === null ? [] : machineDiffers(facts.settings, facts.machine.settings);
+  const twice = facts.machine === null ? { bare: [], theirs: [] } : machineDiffers(facts.settings, facts.machine.settings);
+  const once = twice.bare.length === 0 && twice.theirs.length === 0;
   const armed = armsFlow(facts.gateText);
   const old = !armed && armsOldFlow(facts.gateText);
   return [
@@ -4286,9 +4297,9 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
         ]),
     {
       id: "hooks",
-      ok: missing.length === 0 && stale.length === 0 && twice.length === 0,
+      ok: missing.length === 0 && stale.length === 0 && once,
       detail:
-        missing.length === 0 && stale.length === 0 && twice.length === 0
+        missing.length === 0 && stale.length === 0 && once
           ? `${facts.settingsPath} — ${registered.join(" · ")}`
           : [
               missing.length === 0
@@ -4297,9 +4308,12 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
               stale.length === 0
                 ? ""
                 : `${facts.settingsPath} calls flow for ${stale.join(" · ")} on some tools only — an older flow registered ${stale.length === 1 ? "it" : "them"} that way, and a change another tool makes is not judged after it lands. Re-run \`flow init\` to widen ${stale.length === 1 ? "it" : "them"}.`,
-              twice.length === 0 || facts.machine === null
+              twice.bare.length === 0 || facts.machine === null
                 ? ""
-                : `${facts.machine.path} also calls flow for ${twice.join(" · ")}, with another command than ${facts.settingsPath}, so Claude Code runs both and each of those hooks fires twice. Re-run \`flow init\`, which brings an older flow's commands there up to date, or remove flow's entries from that file.`,
+                : `${facts.machine.path} also calls flow for ${twice.bare.join(" · ")} the old way, as the bare \`flow hook <event>\`, so Claude Code runs it beside ${facts.settingsPath}'s command and each of those hooks fires twice. Re-run \`flow init\`, which rewrites it to the same command.`,
+              twice.theirs.length === 0 || facts.machine === null
+                ? ""
+                : `${facts.machine.path} also calls flow for ${twice.theirs.join(" · ")} with a command of its own, so Claude Code runs it beside ${facts.settingsPath}'s command and each of those hooks fires twice. Make it the same command as ${facts.settingsPath}'s, or remove it from that file.`,
             ]
               .filter((line) => line !== "")
               .join("\n"),
@@ -4368,7 +4382,11 @@ export function hostPath(dirs: readonly string[], root: string): string[] {
  * runs, a red line naming which of them is stranded and how to bring it up to date.
  */
 function binaryFitting(facts: Pick<StatusFacts, "binary" | "gateText" | "settings">): Fitting {
-  const { modules, path } = facts.binary;
+  const { listed, copy, path } = facts.binary;
+  // THE REPO'S OWN COPY is one its package.json lists. In a repo that does not list flow, the copy
+  // is the link `flow init` made to the flow that ran it — the PATH's, in the ordinary global
+  // install — so it is judged by the PATH, and the tutorial's line names the PATH.
+  const modules = listed && copy;
   const hooks = hooksReach(facts.settings);
   const gate = gateReach(facts.gateText);
   const runs = (reach: Reach): string | null => (reach === "local" && modules ? `in ${PACKAGE_DIR}` : path ? "on the PATH" : null);
@@ -4382,13 +4400,24 @@ function binaryFitting(facts: Pick<StatusFacts, "binary" | "gateText" | "setting
           ? `the hooks and the gate run the flow ${byHooks}`
           : `the hooks run the flow ${byHooks}, and the gate the flow ${byGate}`,
     };
+  const install = `install it for this repo with \`npm i -D @jawache/flow\`, or for every repo with \`npm i -g @jawache/flow\`.`;
+  // LINKED, NOT LISTED, AND NOTHING ON THE PATH: the hooks and the gate run the link while it
+  // resolves, so this is red on the safe side, and it says so rather than "no flow".
+  if (!modules && copy)
+    return {
+      id: "binary",
+      ok: false,
+      detail:
+        `this repo's package.json does not list @jawache/flow, so ${PACKAGE_DIR} is the link \`flow init\` made to the flow that ran it, ` +
+        `and no flow is on the PATH. The hooks and the gate run that link only while it resolves, and once it breaks every hook fails ` +
+        `with \`flow: not found\` and git refuses every commit — ${install}`,
+    };
   if (!modules)
     return {
       id: "binary",
       ok: false,
       detail:
-        `no flow in ${PACKAGE_DIR} or on the PATH, so every hook fails with \`flow: not found\` and git refuses every commit — ` +
-        `install it for this repo with \`npm i -D @jawache/flow\`, or for every repo with \`npm i -g @jawache/flow\`.`,
+        `no flow in ${PACKAGE_DIR} or on the PATH, so every hook fails with \`flow: not found\` and git refuses every commit — ${install}`,
     };
   // A COPY IN THE REPO'S OWN PACKAGE, AND A CALLER THAT NEVER LOOKS THERE: name each stranded one, with
   // the fix that brings it up to date — init for the registrations, a line by hand for the gate,

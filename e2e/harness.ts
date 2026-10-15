@@ -29,10 +29,11 @@
 //   CLAUDE_PROJECT_DIR  which repo a hook payload is about. Always set here, to the repo being
 //                       driven, because that is what a harness does and a rail that had to guess
 //                       would be guessing in the suite too.
-//   PATH                a directory holding one `flow` shim, so GIT's own pre-commit hook — which
-//                       flow neither spawns nor configures — can find the binary under test. Or
-//                       the whole PATH, in place of the machine's, for a run that must find no
-//                       `flow` there at all (`Rig.path`).
+//   PATH                a directory holding one `flow` shim that runs the binary under test: the
+//                       fallback the gate and the hooks run when the repo has no
+//                       node_modules/@jawache/flow of its own, and what keeps the machine's own
+//                       `flow` out of a run. Or the whole PATH, in place of the machine's, for a
+//                       run that must find no `flow` there at all (`Rig.path`).
 
 import { spawn, spawnSync } from "node:child_process";
 import { copyFileSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -223,10 +224,11 @@ export const settingsHome = (prefix = "flow-home-"): string => mkdtempSync(join(
 /**
  * A temp directory holding one `flow` shim, for PATH.
  *
- * Git's pre-commit hook runs `flow commit …` by NAME — that is what a real repo's hook says, and
- * flow does not get to choose what is on PATH when git spawns it. Without this the gate would
- * either find whatever `flow` the machine has installed or nothing at all, and the suite would be
- * testing somebody else's binary.
+ * The gate and the hooks run the repo's own node_modules/@jawache/flow first, and the `flow` on
+ * the PATH by NAME otherwise — and flow does not get to choose what is on PATH when git spawns its
+ * hook. A repo `flow init` linked to the build under test never reaches the PATH; one with no link
+ * of its own does, and without this shim it would find whatever `flow` the machine has installed,
+ * or nothing at all, and the suite would be testing somebody else's binary.
  */
 export function shimBin(prefix = "flow-bin-"): string {
   const bin = mkdtempSync(join(tmpdir(), prefix));

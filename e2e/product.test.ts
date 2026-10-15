@@ -37,7 +37,11 @@ import {
 } from "./harness.ts";
 
 let home: string;
-/** A directory holding one `flow` shim, so git's own hook can find the binary under test. */
+/**
+ * A directory holding one `flow` shim, which runs the build under test: the PATH's flow. A repo
+ * `flow init` linked runs its own node_modules/@jawache/flow first, the same build, so the shim is
+ * the fallback half of the gate and the hooks, and it keeps the machine's own flow out of every run.
+ */
 let bin: string;
 
 /** The built binary, in a given repo, with the throwaway host settings and the shim on PATH. */
@@ -175,7 +179,7 @@ describe("flow status", () => {
   // THE SHELL'S OWN LOOKUP, end to end. The PATH holds git's exec-path folder and nothing else: git,
   // which status asks about the hooks path, and no `flow` — the machine's PATH cannot promise that.
   // The repo does not list @jawache/flow, so the link `flow init` makes is the running flow, not the
-  // repo's own copy, and status judges it by the PATH alone.
+  // repo's own copy, and status judges it by the PATH alone: red on the safe side, naming the link.
   it("goes red on the binary, and exits 1, when the repo has no flow of its own and the PATH has none", () => {
     const stranded = newRepo();
     try {
@@ -184,7 +188,9 @@ describe("flow status", () => {
       expect(existsSync(join(gitOnly, "flow")), "the PATH this run is given has no flow").toBe(false);
       expect(existsSync(join(stranded, "package.json")), "nor does the repo list flow").toBe(false);
       const said = runFlow(stranded, ["status"], { home, path: gitOnly });
-      expect(said.stdout).toContain("✗ binary: no flow in node_modules/@jawache/flow or on the PATH");
+      expect(said.stdout).toContain(
+        "✗ binary: this repo's package.json does not list @jawache/flow, so node_modules/@jawache/flow is the link `flow init` made to the flow that ran it, and no flow is on the PATH.",
+      );
       expect(said.stdout).toContain("1 red line");
       expect(said.code).toBe(1);
     } finally {
@@ -234,6 +240,42 @@ describe("flow status", () => {
       expect(answered.stderr).toContain("demo.noForcePush");
     } finally {
       for (const dir of [local, nodeOnly]) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // THE FALLBACK HALF, end to end: `; exec flow hook …`. Every other repo here has init's link, so
+  // the repo-first half always answers. This one resolves @jawache/flow from a folder above it, as a
+  // monorepo's package would, so init links nothing, the repo has no node_modules/@jawache/flow of
+  // its own, and the gate and a hook run the flow on the PATH: the shim, which runs the build under
+  // test. (Removing init's link instead would leave the config unable to import @jawache/flow.)
+  it("runs the flow on the PATH when the repo has no @jawache/flow of its own: the gate refuses, and a hook answers 2", () => {
+    const above = mkdtempSync(join(tmpdir(), "flow-above-"));
+    try {
+      mkdirSync(join(above, "node_modules", "@jawache"), { recursive: true });
+      symlinkSync(builtPackage(), join(above, "node_modules", "@jawache", "flow"), "dir");
+      const below = join(above, "repo");
+      mkdirSync(below);
+      for (const args of [["init", "-q"], ["config", "user.email", "t@example.com"], ["config", "user.name", "t"]]) git(below, args);
+
+      const init = flow(below, ["init"]);
+      expect(init.code, init.stdout + init.stderr).toBe(0);
+      expect(existsSync(join(below, "node_modules")), "init links nothing: @jawache/flow resolves from above").toBe(false);
+      expect(flow(below, ["status"]).stdout).toContain("✓ binary: the hooks and the gate run the flow on the PATH");
+
+      const MARKER = ["DO", "NOT", "COMMIT"].join("-");
+      writeFileSync(join(below, "secret.txt"), `${MARKER} — an api key would go here\n`);
+      git(below, ["add", "secret.txt"]);
+      const refused = git(below, ["commit", "-m", "test: a marked file"]);
+      expect(refused.code, "git refuses when the gate exits non-zero").not.toBe(0);
+      expect(refused.stderr, "the PATH's flow refused it").toContain("demo.noMarkedFiles");
+
+      const registered = (settings()["hooks"] as Record<string, { hooks: { command: string }[] }[]>)["PreToolUse"]?.[0]?.hooks[0]?.command;
+      expect(registered).toContain("; exec flow hook pre-tool-use");
+      const answered = sh(below, registered ?? "", { home, bin }, JSON.stringify(pre("Bash", { command: "git push --force origin main" }, "fallback-1")));
+      expect(answered.code, answered.stderr).toBe(2);
+      expect(answered.stderr).toContain("demo.noForcePush");
+    } finally {
+      rmSync(above, { recursive: true, force: true });
     }
   });
 
@@ -524,7 +566,9 @@ describe("a repo whose package.json lists flow", () => {
       after.hooks["Stop"] = [{ hooks: [{ type: "command", command: "FLOW_DEBUG=1 flow hook stop" }] }];
       writeFileSync(join(machine, "settings.json"), `${JSON.stringify(after, null, 2)}\n`);
       const red = flow(listed, ["status"], machine);
-      expect(red.stdout).toContain(`✗ hooks: ${join(machine, "settings.json")} also calls flow for Stop, with another command than .claude/settings.json`);
+      expect(red.stdout).toContain(
+        `✗ hooks: ${join(machine, "settings.json")} also calls flow for Stop with a command of its own, so Claude Code runs it beside .claude/settings.json's command and each of those hooks fires twice. Make it the same command as .claude/settings.json's, or remove it from that file.`,
+      );
       expect(red.code).toBe(1);
     } finally {
       for (const dir of [listed, machine]) rmSync(dir, { recursive: true, force: true });
