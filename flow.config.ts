@@ -24,6 +24,7 @@
 
 import { defineConfig, override, pack } from "@jawache/flow";
 import { docs, fcis, flow, git, justfile, node, secrets, tdd, typescript, work } from "@jawache/flow/packs";
+import { driven } from "./guards/driven.ts";
 import { house } from "./guards/house.ts";
 
 // THIS REPO'S PURE HOME, stated once and used by every fcis rail and by the import fence.
@@ -133,6 +134,12 @@ export default defineConfig([
   // mechanises the ladder is bound whole. It is a plain consumer of the grammar's public door and
   // imports nothing from the work CLI it is about — which is what lets this package ship it at all.
   pack(work),
+
+  // ── driven by the work daemon ──
+  //
+  // `guards/driven.ts` is the default workflow's pack, copied in by `work init --template` rather
+  // than written here: each issue's session acts on GitHub through `work gh`, never a bare gh.
+  pack(driven),
 
   // ── this repo's own terrain ──
   pack(house, { pure: PURE }),
