@@ -11,8 +11,8 @@
 // seam that makes a recorded session replayable with no harness at all (F5), and the reason a
 // second harness is a second column rather than a second engine.
 //
-// THE SEVEN QUESTIONS (pack-engine guide §7) are what an adapter IS. Five are answered here; the
-// two that need disk are answered by the shell next door:
+// THE SEVEN QUESTIONS (pack-engine guide §7) are what an adapter IS. Six are answered here; the
+// one that needs the process environment is answered by the shell next door:
 //
 //   how does a live moment arrive   JSON on stdin of `flow hook <event>`       → toEvent
 //   how do we block                 exit 2, stderr shown to the model          → toResult
@@ -20,7 +20,7 @@
 //   how many tokens so far          parsed from the transcript                 → tokensFromTranscript
 //   what moments can it deliver     the honest list, never a faked one         → DELIVERS
 //   which repo is this              CLAUDE_PROJECT_DIR, falling back to cwd    → claude.ts
-//   where is the session log        the payload's own transcript_path          → claude.ts
+//   where is the session log        transcript_path; a subagent's own under it → ownTranscriptPath
 //
 // IT IS STILL A PURE HOME. `flow/**/domain.ts` is flow's pure shape, so there is no node:fs, no
 // child_process and no process.env here — the bytes are handed over. That split is what lets the
@@ -88,7 +88,13 @@ import { matchAny } from "../glob.ts";
  */
 export interface HookPayload {
   readonly session_id?: string;
+  /** Present on every call a SUBAGENT makes, and only then: the host's id for that one spawn. */
   readonly agent_id?: string;
+  /**
+   * The agent type the host started this subagent as, sent beside `agent_id` on its every call.
+   * Host-written: the session cannot change the message, which is why a category may key on it.
+   */
+  readonly agent_type?: string;
   readonly hook_event_name?: string;
   readonly transcript_path?: string;
   readonly stop_hook_active?: boolean;
@@ -277,7 +283,7 @@ function text(value: unknown): string {
 
 /**
  * One event in the engine's vocabulary, minus the two things the engine's own event types demand
- * and this file cannot know: who the session is (`wearing`, which needs the sidecar and the stored
+ * and this file cannot know: who the session is (`wearing`, which needs the transcript and the stored
  * verdict) and how far it has drifted (`tokens`, which needs the transcript). The shell adds both,
  * because both come off disk.
  */
@@ -2016,39 +2022,28 @@ export function branchFromHead(head: string): string | null {
 }
 
 /**
- * The sidecar beside a subagent's transcript: `…/agent-<id>.jsonl` → `…/agent-<id>.meta.json`.
- *
- * The host writes one for every spawn — present 335/335 in the probe — and it is the strongest
- * evidence in the system precisely because the session did not write it. A session could claim to
- * be anything, and permissions resting on the claim would rest on a lie.
- */
-export function sidecarPath(transcriptPath: string): string | null {
-  return transcriptPath.endsWith(".jsonl") ? `${transcriptPath.slice(0, -".jsonl".length)}.meta.json` : null;
-}
-
-/**
  * Host-written evidence about one session × agent, assembled — the shape a classifier sees.
  *
- * The sidecar's absence is itself the evidence for the top-level session: there is no positive
- * marker for being the parent, only the absence of having been spawned. A sidecar that will not
- * parse is NOT the same as none — the session was spawned, we simply cannot say as what — so
- * `subagent` stays true and `agentType` is left undefined, and a category keyed on a specific type
- * declines rather than the parent category wrongly claiming it.
+ * The payload's `agent_id` is what makes a call a subagent's, whether or not any file exists for
+ * it, and its `agent_type` is the type that subagent was started as. Both are in the message the
+ * host writes, which the session cannot change. A subagent whose message carries no type is
+ * spawned as something unknown: `subagent` stays true and `agentType` is left undefined, so a
+ * category keyed on a specific type declines rather than the parent category wrongly claiming it.
+ * The parent is recognised by ABSENCE — there is no positive marker for being the top-level
+ * session, only the absence of having been spawned.
+ *
+ * `transcript` is this agent's own transcript, a subagent's included, and its head is the brief.
  */
-export function sessionFactsFrom(args: {
-  readonly payload: HookPayload;
-  readonly transcript: string | null;
-  readonly sidecar: string | null;
-}): SessionFacts {
+export function sessionFactsFrom(args: { readonly payload: HookPayload; readonly transcript: string | null }): SessionFacts {
   const spawned = typeof args.payload.agent_id === "string" && args.payload.agent_id !== "";
-  const meta = parseObject(args.sidecar);
-  const agentType = typeof meta?.["agentType"] === "string" ? meta["agentType"] : undefined;
-  const description = typeof meta?.["description"] === "string" ? meta["description"] : undefined;
+  // Read only beside an `agent_id`: the host also sends `agent_type` on a top-level session started
+  // with `--agent`, and that session is still the parent.
+  const type = args.payload.agent_type;
+  const agentType = spawned && typeof type === "string" && type !== "" ? type : undefined;
   return {
     head: args.transcript === null ? "" : briefHead(args.transcript),
-    subagent: spawned || meta !== null,
+    subagent: spawned,
     ...(agentType === undefined ? {} : { agentType }),
-    ...(description === undefined ? {} : { description }),
   };
 }
 
@@ -2206,7 +2201,12 @@ export function hermeticEnv(
 // `<sessionId>.jsonl` per top-level session and, for each, a `<sessionId>/subagents/agent-*.jsonl`
 // per child with an `agent-*.meta.json` beside it. Two readers of that layout existed in the old
 // platform — the CLI's corpus reader and the guard's backlog reader — and they disagreed about the
-// folder-name rule; there is one here.
+// folder-name rule. Here the layout is read in two places: this section, where `classifyStore`
+// sorts a listing by it after the fact and `ownTranscriptPath` finds a live subagent's transcript
+// by it, and the store listing in archive.ts, which spells the `subagents` folder again to walk it.
+
+/** The folder under a session that holds its subagents' transcripts. */
+const SUBAGENTS = "subagents";
 
 /**
  * The folder a working directory's transcripts live in.
@@ -2264,7 +2264,7 @@ export function classifyStore(paths: readonly string[]): {
       sessions.push({ path, meta: null, session: path.slice(0, -".jsonl".length), agent: null });
       continue;
     }
-    if (parts.length === 3 && parts[1] === "subagents" && path.endsWith(".jsonl")) {
+    if (parts.length === 3 && parts[1] === SUBAGENTS && path.endsWith(".jsonl")) {
       const meta = `${path.slice(0, -".jsonl".length)}.meta.json`;
       subagents.push({
         path,
@@ -2274,7 +2274,7 @@ export function classifyStore(paths: readonly string[]): {
       });
       continue;
     }
-    if (parts.length === 3 && parts[1] === "subagents" && path.endsWith(".meta.json")) continue;
+    if (parts.length === 3 && parts[1] === SUBAGENTS && path.endsWith(".meta.json")) continue;
     ignored.push(path);
   }
 
@@ -2283,13 +2283,31 @@ export function classifyStore(paths: readonly string[]): {
 }
 
 /**
+ * The path of THIS agent's own transcript, from a live payload — null when the payload names none.
+ *
+ * On a subagent's call the host sends the PARENT's `transcript_path`, and keeps the subagent's own
+ * transcript under it, in the store's layout: `…/<session>.jsonl` →
+ * `…/<session>/subagents/agent-<agent_id>.jsonl`. The parent's path is the parent's transcript.
+ * Null too when a subagent's half is not what that layout needs — an id that could step out of the
+ * folder included, since it becomes part of a path that is then read.
+ */
+export function ownTranscriptPath(payload: HookPayload): string | null {
+  const sent = typeof payload.transcript_path === "string" ? payload.transcript_path : "";
+  if (sent === "") return null;
+  const id = payload.agent_id;
+  if (typeof id !== "string" || id === "") return sent;
+  if (!sent.endsWith(".jsonl") || !/^[\w-]+$/.test(id)) return null;
+  return `${sent.slice(0, -".jsonl".length)}/${SUBAGENTS}/agent-${id}.jsonl`;
+}
+
+/**
  * The sidecar the host writes beside every subagent transcript, read.
  *
  * `toolUseId` is the field that makes this more than a label: it is the id of the parent's own
- * `Agent` tool call, so a sidecar and the block that spawned it join exactly. That join is what
- * lets cost attribution and classification agree about who an actor was — the sidecar says what a
- * spawn WAS, the parent's block says when it happened and what it was asked for, and neither
- * alone answers both.
+ * `Agent` tool call, so a sidecar and the block that spawned it join exactly. That join names an
+ * actor for cost attribution, after the fact — the sidecar says what a spawn WAS, the parent's
+ * block says when it happened and what it was asked for, and neither alone answers both. A live
+ * session is not classified from it: that reads the agent type in its hook message.
  */
 export interface SpawnMeta {
   readonly agentType: string | null;
@@ -2369,9 +2387,10 @@ const SPAWN_TOOL = "Agent";
  * Every spawn a parent transcript made, by tool_use id — the parent's half of the join.
  *
  * It is the WEAKER half and is read as such: what the parent asked for is a claim by the session
- * being classified, while the sidecar is host-written and unforgeable. The classification order
- * (engine, `spawnedAs`) reads the sidecar and never this. What this is for is everything the
- * sidecar cannot say — when the spawn happened, and where in the parent's own transcript to look.
+ * being classified, while the sidecar is host-written and unforgeable, and so outranks it here.
+ * Neither decides who a live session is: classification (engine, `spawnedAs`) reads the agent type
+ * in the hook message. What this is for is everything the sidecar cannot say — when the spawn
+ * happened, and where in the parent's own transcript to look.
  */
 export function spawnsIn(jsonl: string): Map<string, Spawn> {
   const out = new Map<string, Spawn>();
@@ -3058,9 +3077,9 @@ export function health({ armed, rows, withRecord, analysed }: HealthArgs): Healt
  *
  * The sidecar says what a spawn WAS (`agentType`, unforgeable, written by the host) and the
  * parent's own `Agent` block says when it happened and what was asked for. Joining them on
- * `toolUseId` is what lets classification and cost attribution name the same actor: a builder
- * spawned under a generic bucket is `general-purpose` in the parent's claim and `builder` in the
- * host's record, and only one of those is evidence.
+ * `toolUseId` names an actor for cost attribution, after the fact: a builder spawned under a
+ * generic bucket is `general-purpose` in the parent's claim and `builder` in the host's record,
+ * and only one of those is evidence. A live session is classified from its hook message instead.
  */
 export interface SpawnRecord {
   /** The conversation that spawned it. */
@@ -3696,8 +3715,8 @@ import { banCommands, command, commit, defineCategory, defineConfig, definePack,
 import { flow } from "@jawache/flow/packs";
 
 // A category is a name and the HOST-WRITTEN evidence that recognises it — never a claim a session
-// made about itself. This one is "the harness wrote a sidecar for you", which is what a spawned
-// subagent is and a chat is not.
+// made about itself. This one is "the harness sent an agent id with your call", which is what a
+// spawned subagent is and a chat is not.
 const subagent = defineCategory("subagent", (facts) => facts.subagent);
 
 // Spelled in pieces on purpose. Written whole it would appear in this very file, and the gate below
