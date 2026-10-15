@@ -53,8 +53,9 @@ describe("docs/user — every page, as a reader would follow it", () => {
   it.each(all.map((file) => [relative(PACKAGE, file), file] as const))("%s — opens with a summary in front matter, and no date", (_name, file) => {
     const fields = frontMatterFields(readFileSync(file, "utf8"));
     expect(fields, "the page does not open with a --- front-matter block").not.toBeNull();
-    expect([...(fields ?? new Map<string, string>()).keys()]).toContain("summary");
-    const dated = [...(fields ?? new Map<string, string>())].filter(([key, value]) => /date|updated|created/i.test(key) || /\b20\d\d-\d\d-\d\d\b/.test(value));
+    if (fields === null) return;
+    expect([...fields.keys()]).toContain("summary");
+    const dated = [...fields].filter(([key, value]) => /date|updated|created/i.test(key) || /\b20\d\d-\d\d-\d\d\b/.test(value));
     expect(dated).toStrictEqual([]);
   });
 
