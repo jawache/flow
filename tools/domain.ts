@@ -743,9 +743,10 @@ export function renderPacksIndex(docs: readonly PackDoc[]): string {
 //
 // `unbalanced`, `unescapedInCode` and `unknownElements` lived here while docs/user/ was HTML. Each
 // asked what a PARSER would do rather than what the text said, and the one that earned them found a
-// live fault: `new-dep: <name> — <why>` sat unescaped inside a code block on the guidebook, a parser
-// read the two placeholders as unknown ELEMENTS, and every reader was taught `put new-dep:  —  in
-// the message`. Every byte of the file was exactly as its author typed it.
+// live fault: `new-dep: <name> — <why>` sat unescaped inside a code block on the page that is now
+// docs/user/how-to/require-a-reason-in-the-commit-message.md, a parser read the two placeholders as
+// unknown ELEMENTS, and every reader was taught `put new-dep:  —  in the message`. Every byte of
+// the file was exactly as its author typed it.
 //
 // Markdown cannot lose a word that way: inside a fence or a backtick span nothing is markup, and a
 // `<word>` in prose is text. So the three are retired rather than ported, and what replaces them is

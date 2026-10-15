@@ -547,8 +547,9 @@ describe("the model", () => {
 // THE THREE HTML CHECKERS ARE GONE, and what they were is worth saying once: `unbalanced`,
 // `unescapedInCode` and `unknownElements` asked what a PARSER would do with a page rather than what
 // the text said, because the fault that earned them was silent — `new-dep: <name> — <why>` sat
-// unescaped in a code block on the guidebook, the parser read the placeholders as unknown elements
-// and deleted them, and the page taught `put new-dep:  —  in the message`.
+// unescaped in a code block on the page that is now
+// docs/user/how-to/require-a-reason-in-the-commit-message.md, the parser read the placeholders as
+// unknown elements and deleted them, and the page taught `put new-dep:  —  in the message`.
 //
 // Markdown cannot lose a word that way. What it can lose is a LINK: an anchor is derived from a
 // heading rather than written on one, so `index.md#checks` resolves to a file that exists and a
