@@ -36,11 +36,11 @@ This guide shows you how to refuse a write or a commit of a module whose test fi
 
 3. Run `flow test`.
 
-The `sibling` pattern is built from the path of the file being written. It takes four placeholders: `{dir}`, `{name}`, `{base}` and `{path}`.
+The `sibling` pattern is built from the path of the file being written. It takes four placeholders. For the file `src/domain/x.ts`, `{dir}` is `src/domain`, `{base}` is `x.ts`, `{name}` is `x` and `{path}` is `src/domain/x`, the path without its extension.
 
 ## Variants
 
-- **If you also want every export referenced in that test**, add a second entry that runs [`symbolsInSibling`](../checks/symbols-in-sibling.md). It reads TypeScript only. It checks that each exported name appears in the test, and it does not measure coverage.
+- **If you also want every export referenced in that test**, add a second entry that runs [`symbolsInSibling`](../checks/symbols-in-sibling.md). It checks that each exported name it reads appears in the test's text, and it does not measure coverage. It reads three shapes of export: `export function` with no return type and no type parameters, `export class` with no `extends` or `implements`, and `export const` with no type annotation. Every other export is left out of the check, such as `export let`, `interface`, `type`, `enum`, `export default` and re-exports. The file is parsed as TSX, so JavaScript files are read too.
 
 ---
 

@@ -10,12 +10,24 @@ Import fences over the real dependency graph, compiled to [dependency-cruiser](h
 
 | Key | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `scan` | glob | yes | what to cruise — a glob, because a bare directory cruises zero modules |
+| `scan` | string | yes | what dependency-cruiser cruises, passed to it as its one path argument: a directory such as `src`, or a glob such as `src/**/*.ts` |
 | `layers` | map of name → globs, or `{ path, not }` | yes | the named regions of the graph. **Globs, never regexes** — a regex is escaped into a literal and the fence then matches nothing, so one is refused at load, naming the layer and the entry. For a layer with holes in it (a folder minus a few subtrees), say `{ path: ["src/pages/**"], not: ["src/pages/api/**"] }` rather than a lookahead |
-| `forbid` | list of edges | no | each: `from` · `to` · `why` — the edge that must not exist |
+| `forbid` | list | no | the edges that must not exist. Each item is one of the forms in [the `forbid` forms](#the-forbid-forms) |
 | `only` | map | no | fail-closed allowlist: a layer may reach ONLY these layers |
 | `require` | list | no | an inverted fence: modules in a path MUST import a target |
-| `except` | list | no | carve-outs — `type-only` above all |
+| `except` | list | no | only `"type-only"` is read; any other string is ignored. It exempts type-only imports from the fences. The check runs dependency-cruiser with `tsPreCompilationDeps: false`, so a type-only import is never an edge in the first place, and `except` changes nothing unless `options` sets `tsPreCompilationDeps` to `true` |
+| `warn` | list | no | only `"sdp"` is read: a rule against depending on a more unstable module (the Stable Dependencies Principle). It is compiled at severity `warn`, and a `warn` violation refuses the commit like any other violation |
+| `options` | object | no | dependency-cruiser's own options, merged over the check's defaults |
+
+## The `forbid` forms
+
+| Form | Forbids |
+| --- | --- |
+| `{ from, to, why? }` | any import from a module in layer `from` into a module in layer `to`. `why` is the sentence the violation prints |
+| `{ from, to, transitive: true, why? }` | the same, but for any module `from` can reach through other imports, not only direct ones |
+| `{ cyclesBetween, why? }` | an import from one feature folder into a sibling feature folder, inside the named layer. The feature folder is the last `*` of the layer's first glob |
+| `"circular"` | any dependency cycle |
+| `"orphans"` | a module nothing imports, other than `.d.ts` files. It is compiled at severity `warn`, and it refuses the commit like any other violation |
 
 ## A layer with holes in it
 
@@ -50,4 +62,4 @@ layersFenced: guardrail()
 
 ---
 
-[All stock checks](../index.md#the-stock-checks--one-page-each) · the sentence around it: [the config reference](../reference/config.md) · this page's example is copied from a pack that `flow test` proves green.
+[All stock checks](../index.md#the-stock-checks--one-page-each) · the sentence around it: [the config reference](../reference/config.md)

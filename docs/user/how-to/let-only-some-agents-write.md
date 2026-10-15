@@ -17,9 +17,25 @@ This guide shows you how to let only some agents change files when several agent
    });
    ```
 
-   Add `deletion` and `oneWriter` to the import.
+   Add `breadcrumb`, `defineCategory`, `deletion`, `oneWriter`, `session` and `spawnedAs` to the import.
 
-2. Add an entry that runs `oneWriter` at `write` and `deletion`. `writers` lists the categories allowed to create, change or delete a file:
+2. Declare a category for each kind of actor that may write. A category is a name for an actor, together with a function that decides which sessions have it. `spawnedAs` builds that function from evidence the harness wrote about the session: `parent: true` matches the top-level chat, and `types` matches a subagent by the agent type it was started as.
+
+   ```
+   const parent = defineCategory("parent", spawnedAs({ parent: true }));
+   const builder = defineCategory("builder", spawnedAs({ types: ["builder"] }));
+   ```
+
+3. Name those categories in the `.for(…)` of an entry the config binds. flow works out a session's categories only from the categories some bound entry names in `.for(…)`. A name listed only in `oneWriter`'s `writers` is never matched, so every session's `ctx.actor` is empty and every write is refused, the top-level chat's included. A session breadcrumb for the writers does the job:
+
+   ```
+   writers: breadcrumb()
+     .at(session)
+     .for(builder, parent)
+     .text("You may change files in this worktree. Every other agent hands its finding back instead."),
+   ```
+
+4. Add an entry that runs `oneWriter` at `write` and `deletion`. `writers` lists the categories allowed to create, change or delete a file:
 
    ```
    builderWrites: guardrail()
@@ -32,18 +48,21 @@ This guide shows you how to let only some agents change files when several agent
      }),
    ```
 
-3. Run `flow test`.
+5. Run `flow test`. In a test case, `actor: ["builder"]` gives the canned session its categories.
 
-A category is a name for an actor. flow matches it from evidence the harness wrote about the session. In a test case, `actor: ["builder"]` gives the canned session its categories.
+6. Run `flow status`. Its `categories` line lists `builder` and `parent`.
+
+If the top-level chat should not write either, leave `parent` out of `writers` and out of the breadcrumb's `.for(…)`.
 
 ## What happens when the rule refuses
 
 Every actor outside `writers` is refused.
 
-- **Through the Edit tool**, the write is refused before it lands.
-- **Through a shell command**, the file is written back to its previous content after the command.
+- **Through the Edit or Write tool**, the write is refused before it lands.
+- **Through `rm`, `git rm`, `mv` or `git mv` naming a file**, the delete is refused before the command runs. For `mv` and `git mv`, the file being moved away is the one deleted.
+- **Through any other shell command**, the change lands, flow checks it, and flow writes the file's previous content back.
 
-[What the guard sees](../explanation/what-the-guard-sees.md) explains both routes. [Rules bound to who](../explanation/rules-bound-to-who.md) explains categories.
+[What the guard sees](../explanation/what-the-guard-sees.md) explains the routes. [Rules bound to who](../explanation/rules-bound-to-who.md) explains categories.
 
 ---
 

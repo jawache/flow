@@ -12,6 +12,8 @@ The check is for a worktree several agents share — one builder that writes fil
 
 The parent chat has no category unless the config defines one for it. List a category the parent chat does have, or the parent chat's own writes and deletes are refused too.
 
+A session is given only the categories that some bound entry names in its `.for(…)`. The names in `writers` are strings, and they add no category on their own. If no bound entry names a category in `.for(…)`, no session has it, and every write and delete is refused. [How to let only some agents write](../how-to/let-only-some-agents-write.md) shows a config that declares each category and names it in `.for(…)`.
+
 ## Options
 
 | Key | Type | Required | Meaning |
@@ -35,4 +37,4 @@ A case adds an `actor` field beside `path` and `content`. `actor: ["builder"]` i
 
 ---
 
-[All stock checks](../index.md#the-stock-checks--one-page-each) · the sentence around it: [the config reference](../reference/config.md) · this page's example is copied from a pack that `flow test` proves green.
+[All stock checks](../index.md#the-stock-checks--one-page-each) · the sentence around it: [the config reference](../reference/config.md)

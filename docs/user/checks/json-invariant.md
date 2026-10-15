@@ -10,9 +10,11 @@ Holds one or more assertions over the values in a JSON file. Each assertion digs
 
 | Key | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `assert` | list of assertions | yes | each: `path?` (dotted, root if absent), and one of `equals` · `matches` (regex) · `keysPrefixedWith`, plus `required?` |
+| `assert` | list of assertions | yes | each: `path?` (dotted, root if absent), any of `equals` · `matches` (regex) · `keysPrefixedWith`, and `required?`. Every key present is checked |
 
-Set `required: true` on any path that must exist — without it, a missing path skips silently.
+Set `required: true` on any path that must exist. Without it, an assertion on a missing path passes.
+
+A file that does not parse as JSON passes every assertion, `required` included. The check runs on the file as it would be after each edit, and a half-typed file is often not valid JSON yet.
 
 ## Example
 
@@ -30,4 +32,4 @@ strictStaysOn: guardrail()
 
 ---
 
-[All stock checks](../index.md#the-stock-checks--one-page-each) · the sentence around it: [the config reference](../reference/config.md) · this page's example is copied from a pack that `flow test` proves green.
+[All stock checks](../index.md#the-stock-checks--one-page-each) · the sentence around it: [the config reference](../reference/config.md)

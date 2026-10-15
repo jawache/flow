@@ -1,5 +1,5 @@
 ---
-summary: "about how flow detects every change to the tree, and why it compares the disk instead of reading the tool"
+summary: "about how flow detects every change to the tree, and why it judges the change on disk rather than the tool that made it"
 ---
 
 # What the guard sees
@@ -14,28 +14,42 @@ Before each tool call, flow records the content of every file in the working tre
 - **Each file the call removed** is passed to the delete rules.
 - **Each breadcrumb whose globs match a changed path** is shown to the agent.
 
-flow never reads what the agent typed to make the change. So an edit through the Edit tool, a heredoc, `sed -i`, a Python script, a `just` recipe, an MCP tool and a subagent all reach the rules by the same route. That leaves one mechanism to understand, and no second one to reach for when a change arrives some new way.
+Which rules a change is passed to depends on the change on disk, not on the command that made it. So a heredoc, `sed -i`, a Python script, a `just` recipe, an MCP tool and a subagent all reach the rules by the same route. That leaves one mechanism to understand, and no second one to reach for when a change arrives some new way.
+
+flow reads a tool call's input in three cases, each to act earlier than the diff can:
+
+- **The Edit and Write tools:** flow builds the file the tool would produce from the tool's input, and judges it before it is written.
+- **An `rm` command:** flow reads the files it names from the command line, and judges each delete before the command runs.
+- **A shell command's reads:** flow reads the paths it reads from the command line, to show their breadcrumbs.
 
 ## Two routes, one outcome
 
 The two routes differ in timing, not in outcome:
 
 - **A change made through the Edit or Write tool** is checked before it lands. flow builds the file the tool would produce, holds it in memory, and calls the rules on that. A refusal leaves the disk untouched.
+- **A file an `rm` command names** is checked before the command runs. A refusal stops the command.
 - **A change made any other way** is checked once it has landed, because until then its content does not exist anywhere to check. When a rule refuses it, flow writes the file back to the content it had before the call, byte for byte. The agent is told which rule refused and why, in the same place it reads the tool's own result.
 
 Either way, a refused write never stays on disk. Someone writing a rule does not need to know which route ran. A check is called with a path and the file's content in both cases, and its message reads the same either way.
 
-The first line of the refusal differs between the two routes, so a reader of the log can tell which one happened:
+The first line of the refusal differs between the routes, so a reader of the log can tell which one happened:
 
 ```
 flow — blocked before the write landed:          an Edit, judged in memory — disk untouched
+flow — blocked before the delete:                an rm, judged before it ran
 flow — write reverted after it landed:           a shell edit, undone from the snapshot
+flow — delete reverted after it landed:          a shell delete, restored from the snapshot
+```
 
+A refused shell edit then reads like this. The last line is on every refusal after a change has landed:
+
+```
 ✗ house.noTodo · src/b.ts
   No TODOs in src/ — do it now, or track it properly.
-    line 3 says TODO
+    line 3: matches /\bTODO\b/
 
 src/b.ts is back to its previous content. Adjust the change so it passes and write it again — through Edit, which is judged before it lands.
+Only file content was put back: anything else the call did has already happened.
 ```
 
 ## How much a refusal undoes
@@ -49,9 +63,9 @@ Neither setting undoes anything except file content. If the same command ran the
 
 ## Several agents in one worktree
 
-The **harness** is the coding-agent program flow plugs into, such as Claude Code. It runs one writing tool call at a time within a session, so inside one session a revert only touches the files of the call being refused.
+The **harness** is the coding-agent program flow plugs into, such as Claude Code. It runs one writing tool call at a time for each agent in a session, so the calls of one agent never overlap each other.
 
-A parent agent and its subagents are not ordered against each other that way, and their calls can overlap in time. flow works out the overlap from its own log: a snapshot with no diff recorded after it belongs to a call that has not finished. While such a call is outstanding, flow writes back only the refused files, even where `revert: "all"` is set, and the message lists the calls that had not finished.
+A parent agent and its subagents are not ordered against each other that way, and their calls can overlap in time. flow works out the overlap from its own log of each call's snapshot and diff. Another agent's call overlaps this one if it started before this call's diff, and either has not finished or finished after this call's snapshot. When any call overlaps, flow writes back only the refused files, even where `revert: "all"` is set, and the message lists the overlapping calls.
 
 ## A command started in the background
 

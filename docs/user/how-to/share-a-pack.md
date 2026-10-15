@@ -31,9 +31,9 @@ A pack is a TypeScript module, so sharing it is a move, not a rewrite. The entri
 
    A repo that binds the pack without stating the fact does not compile, so the pack never applies another repo's assumptions.
 
-3. **Import the pack in each repo's `flow.config.ts`** from the package, and bind it with `pack(…)`. The import path is the only line that changes.
+3. **Import the pack in each repo's `flow.config.ts`** from the package, and bind it with `pack(…)`, passing the repo's own value for each parameter from step 2.
 4. **If a repo disagrees with one entry**, override that entry in the repo's config. Do not fork the pack. [How to change or turn off one entry of a pack](./override-an-entry.md) gives the steps.
-5. **Write the pack's doc comments**, so its generated page explains it to a reader who has never seen your repo. [How to document a pack](./document-a-pack.md) gives the steps.
+5. **Write the pack's doc comments**, so a reader who has never seen your repo can tell what the pack is for and what each parameter means. [How to document a pack](./document-a-pack.md) gives the steps.
 
 ---
 

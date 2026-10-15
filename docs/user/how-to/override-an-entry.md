@@ -10,8 +10,8 @@ This guide shows you how to change one entry of a pack your repo binds, or turn 
 
 ## Change or turn off the entry
 
-1. **Find the entry's name.** `flow status` lists every bound entry as `<pack>.<entry>`, for example `git.noForcePush`.
-2. **Add an `override(…)` line** to the list in `defineConfig([…])`, after the `pack(…)` line that binds the pack.
+1. **Find the entry's name.** `flow status` lists every bound entry as `<pack>.<entry>`, for example `tdd.vitest`. An entry inside a group has the group in its name, for example `tdd.vitestIdioms.noOnlyInTests`.
+2. **Add an `override(…)` line** to the list in `defineConfig([…])`. Its position in the list does not matter: flow applies every override after it has bound every pack.
 3. **Chain the key you want to change:**
 
    - **If you want a different scope**, chain `.on(…)` with the globs for this repo.
@@ -19,18 +19,23 @@ This guide shows you how to change one entry of a pack your repo binds, or turn 
    - **If you want the entry off**, chain `.disabled("why")` with the reason.
 
    ```
+   import { defineConfig, override, pack } from "@jawache/flow";
+   import { tdd } from "@jawache/flow/packs";
+
    export default defineConfig([
-     pack(tdd),
-     override(tdd.commitRunsTests).on("src/**"),                       // this repo's scope
-     override(tdd.coverageGate).disabled("no coverage bar here yet"),  // visible opt-out
+     pack(tdd, { run: "just test" }),
+     override(tdd.testingStrategy).on("src/**/*.test.ts"),                    // this repo's scope
+     override(tdd.vitest).disabled("this repo's suite runs on node:test"),    // visible opt-out
    ]);
    ```
 
+   An override also accepts `.at(…)`, `.for(…)`, `.ignore(…)` and `.description(…)`, and on a breadcrumb `.text(…)` and `.file(…)`. It never accepts `.check(…)` or `.test(…)`.
+
 4. **List the whole value.** An override replaces the key it names. A narrowed `.on(…)` is the whole list of globs, never a merge with the pack's list, so the pack's own globs are not added back beside it.
-5. **Run `flow status`.** It prints the override's reason beside the entry.
+5. **Run `flow status`.** An entry turned off with `.disabled("why")` is marked `○`, with `off: <reason>` under it. An entry with a new `.on(…)` shows its new globs.
 
 > [!NOTE]
-> `.disabled("why")` is the only way to turn a rule off. It is a committed line in `flow.config.ts`, so it shows in review.
+> `.disabled("why")` turns one entry off in a committed line of `flow.config.ts`, so it shows in review. Two other things also turn rules off: leaving the pack out of `defineConfig([…])`, and the `.flow/off` switch, which turns every rule off and is never committed. See [the flow command](../reference/cli.md) for `.flow/off`.
 
 ---
 

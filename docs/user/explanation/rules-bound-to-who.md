@@ -8,7 +8,7 @@ A rule can give a different answer to the same act depending on who does it, and
 
 ## The same act, a different answer
 
-A **category** is a name for an actor, with the function that recognises it. `.for(category)` binds a rule to that actor, so the rule runs only for sessions in that category.
+A **category** is a name for an actor, with the function that recognises it. `.for(category)` binds a rule to that actor, so the rule runs only for sessions in that category. `.for(…)` may list several categories, and the rule then runs for a session in any of them.
 
 ```
 const subagent = defineCategory("subagent", (facts) => facts.subagent);
@@ -22,12 +22,21 @@ This matters when several agents share one worktree. A builder agent should chan
 
 The function that recognises a category reads **host-written evidence**: a sidecar file the harness wrote, or the brief a spawned agent was given. It never reads a claim the session made about itself.
 
-The reason is that a permission resting on a claim rests on nothing. A session that could say "I am the builder" and be believed could write any file the builder may write. Evidence the harness wrote is outside the session's reach, so the session cannot change which category it is in.
+The reason is that a permission resting on a claim rests on nothing. A session that could say "I am the builder" and be believed could write any file the builder may write.
 
-## The two ways to declare a category
+The evidence is not out of reach of every command. The sidecar sits beside the session's transcript, outside the repo, and flow remembers each session's identity under `.flow/`, which git ignores. Both are ordinary files. What keeps them out of a rule's way is that neither is in the snapshot flow judges a change against, and nothing the session says in its own messages is read.
 
-- **`spawnedAs("builder")`** recognises a session by the agent it was spawned as. It is the stock way, and the one that is hardest to get wrong.
-- **`defineCategory`** takes any function over the host's facts. Use it for every other case.
+## Recognising a category
+
+Every category is declared with `defineCategory(name, recognise)`. The second argument is the function that recognises it, and there are two ways to write it:
+
+- **`spawnedAs({ types: ["builder"] })`** builds the function from the agent a session was spawned as. It checks the evidence in a fixed order, so it is the way that is hardest to get wrong:
+
+  ```
+  const builder = defineCategory("builder", spawnedAs({ types: ["builder"] }));
+  ```
+
+- **A function of your own** over the host's facts, as `subagent` above is. Use it for every other case.
 
 [Categories](../reference/config.md#categories) in the config reference gives the syntax.
 

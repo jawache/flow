@@ -10,11 +10,11 @@ A check is a function of `ctx`, and `ctx` is its only access to the world. What 
 
 A check is `(ctx) => ctx.ok() | ctx.fail(detail)`.
 
-- **`defineCheck`** takes a function of an options object, and returns the check. The options are an ordinary typed argument, so a wrong value is a compile error.
+- **`defineCheck(factory)`** takes a factory, `(options) => check`, and returns a function of the same shape: called with options, it returns the check. The options are an ordinary typed argument, so a wrong value is a compile error.
 - **A check may be async.**
 - **A check reaches the world only through `ctx`.** It never uses `node:fs`, `child_process` or `process.env`. That is what lets the same check run live, run in a case, and replay from a recording with no repo.
 - **`ctx.fail(detail)`** takes a sentence naming what was seen and what to do.
-- **A check that throws** is a load-time fault that names the file. It never loads as a rule that has stopped checking.
+- **A check that throws while it runs** blocks, with the detail `the check threw: <message>`, and the refusal names the entry. In `flow test`, the case fails. A throw while `flow.config.ts` is being imported is a load fault that names `flow.config.ts`.
 
 ```
 const frontmatterComplete = defineCheck((_opts: Record<string, never>) => (ctx) => {
@@ -31,7 +31,7 @@ A check declares no moments, no schema and no `kind`. The entry's `.at(…)` set
 | --- | --- |
 | `ctx.file` | The file this moment is about, `{ path, content, existed }`, at a file moment. See [ctx.file](#ctxfile) |
 | `ctx.command` | The shell command line, at the command moment |
-| `ctx.staged` | The staged paths, at the commit moment |
+| `ctx.staged` | The staged paths, at the commit moment, in every call that moment makes |
 | `ctx.turn` | The turn's actions (edits and runs), at turn-end |
 | `ctx.actor` | The category names that match the session making this change. Each name comes from evidence the host wrote about that session, never from a claim the session made about itself. The stock `oneWriter` check reads this field |
 | `ctx.moment` | Which moment this is, to branch on |
@@ -44,7 +44,8 @@ A check declares no moments, no schema and no `kind`. The entry's `.at(…)` set
 - **`existed` after a shell command** is `true` if a file was at `path` before the command ran, and `false` if the command created it. The check runs after the command, so `ctx.fs.exists(path)` returns `true` for a file the command created.
 - **`existed` at commit** is `true` if the last commit has the file, and `false` if it does not.
 - **When `existed` is not set**, use `ctx.fs.exists(path)`. At write, it returns whether the file was there before the change.
-- **A file the commit deletes** is passed to a rule bound at both `deletion` and `commit`. `ctx.moment` is `delete`, `content` is the file as the last commit has it, and `existed` is `true`.
+- **A file the commit deletes** is passed to a rule bound at both `deletion` and `commit`, with paths in `.on(…)`. `ctx.moment` is `delete`, `content` is the file as the last commit has it, and `existed` is `true`.
+- **At an in-session delete**, `ctx.file` is `{ path, content }`, with no `existed`. `content` is the file before it was removed.
 
 Read `existed` when it is set.
 
@@ -52,10 +53,12 @@ Read `existed` when it is set.
 
 | At | The check reads |
 | --- | --- |
-| `write` · `commit` (a file rule) | `ctx.file` = `{ path, content }`. At commit, the check is called once per staged file, when the rule lists globs with `.on(…)` |
+| `write` | `ctx.file` = `{ path, content }`, plus `existed` when a shell command made the change |
+| `delete` | `ctx.file` = `{ path, content }`, where `content` is the file before it was removed |
+| `commit` (a file rule) | When the rule lists globs with `.on(…)`, the check is called once per staged file in scope that is on disk. `ctx.file` = `{ path, content, existed }`, and `ctx.staged` is the whole staged set |
 | `command` | `ctx.command`: the line about to run |
 | `commit` (no `.on`) | `ctx.staged`: the whole staged set, in one call |
-| `commit`, for a deleted file | Only when the rule is bound at both `deletion` and `commit`, and lists globs with `.on(…)`. `ctx.moment` is `delete`, and `ctx.file` = `{ path, content, existed: true }`, where `content` is the file as the last commit has it. It is the same `ctx` the rule is called with when a file is deleted during a session |
+| `commit`, for a deleted file | Only when the rule is bound at both `deletion` and `commit`, and lists globs with `.on(…)`. `ctx.moment` is `delete`, and `ctx.file` = `{ path, content, existed: true }`, where `content` is the file as the last commit has it. `ctx.staged` is the whole staged set |
 | `turn-end` | `ctx.turn`: the edits and runs of the turn |
 | any | `ctx.actor`, `ctx.fs`, `ctx.exec`, `ctx.git` and `ctx.moment` |
 

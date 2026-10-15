@@ -40,6 +40,8 @@ Each assertion takes one or more of four checks: `equals`, `matches`, `keysPrefi
 > [!IMPORTANT]
 > Set `required: true` on any path that must exist. Without it, an assertion on a missing path passes.
 
+A file that does not parse as JSON passes every assertion, `required` included.
+
 ---
 
 [Index](../index.md) · every option: [`jsonInvariant`](../checks/json-invariant.md) · the verbs of an entry: [the config reference](../reference/config.md#a-guardrail)

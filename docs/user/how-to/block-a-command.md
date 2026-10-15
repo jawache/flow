@@ -35,7 +35,7 @@ A command rule takes no `.on(…)`. The patterns are its scope.
 
 - **The whole command line** is one input, however many lines it has. A pattern can match across a newline.
 - **A heredoc's body is left out.** A heredoc passes text to a program on standard input, and that text is not part of the command line. So a script that only contains the words of a banned command is not refused.
-- **A heredoc fed to a shell is matched.** When the program reading the heredoc is `bash`, `sh`, `zsh` or `eval`, the body is a list of commands, and the patterns are matched against it too.
+- **A heredoc fed to a shell is matched.** When the heredoc is read by `bash`, `sh`, `zsh`, `dash`, `ksh` or `eval`, the body is a list of commands, and the patterns are matched against it too. This includes a heredoc piped into one of them, as in `cat <<EOF | sh`.
 
 ## Variants
 

@@ -10,7 +10,7 @@ A file must have its required companion on disk — every `src/domain/**` needs 
 
 | Key | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `sibling` | template string | yes | the companion path — `{dir} {name} {base} {path}` expand from the touched file |
+| `sibling` | template string | yes | the companion path. For the file `a/b/x.ts`, `{dir}` is `a/b`, `{base}` is `x.ts`, `{name}` is `x` and `{path}` is `a/b/x`, the path without its extension |
 
 ## Example
 
@@ -29,4 +29,4 @@ pureHasTest: guardrail()
 
 ---
 
-[All stock checks](../index.md#the-stock-checks--one-page-each) · the sentence around it: [the config reference](../reference/config.md) · this page's example is copied from a pack that `flow test` proves green.
+[All stock checks](../index.md#the-stock-checks--one-page-each) · the sentence around it: [the config reference](../reference/config.md)

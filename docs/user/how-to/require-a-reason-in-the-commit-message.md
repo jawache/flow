@@ -19,7 +19,7 @@ This guide shows you how to let a change through only when its commit message gi
 
    Add `commitReason` to the import.
 
-2. Add an entry that runs `commitReason` at `command`. `whenChanged` lists the files that need a reason, and `token` is the word the message must contain:
+2. Add an entry that runs `commitReason` at `command`. `whenChanged` lists the files that need a reason. `token` is the word that must start a line of its own in the message, followed by a colon, as in `new-dep: zod — checked ajv`. The match ignores case:
 
    ```
    newDependency: guardrail()
@@ -28,7 +28,7 @@ This guide shows you how to let a change through only when its commit message gi
      .message("Adding a dependency is fine; adding it silently is not — put `new-dep: <name> — <why>` in the message.")
      .test({
        // the case records the git answers the check reaches for — the staged, added and untracked sets
-       pass: [{ command: "git commit -m 'feat: x\\n\\nnew-dep: zod — checked ajv'", world: { exec: {
+       pass: [{ command: "git commit -m 'feat: x\n\nnew-dep: zod — checked ajv'", world: { exec: {
          "git diff HEAD --name-only": { stdout: "package.json" },
          "git diff HEAD --name-only --diff-filter=A": { stdout: "" },
          "git ls-files --others --exclude-standard": { stdout: "" },

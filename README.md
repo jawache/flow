@@ -43,15 +43,16 @@ Adjust the command, then retry.
 
 ## Get started
 
-flow needs Node 24 or later, git, and Claude Code for the session rules. In the repo you want guarded, install it as a dev dependency, so every clone gets the same version:
+flow needs Node 24 or later, git, and Claude Code for the session rules. Install it globally, then run it in the repo you want guarded:
 
 ```sh
-npm i -D @jawache/flow
-npx flow init
-npx flow status
+npm i -g @jawache/flow
+cd my-repo
+flow init
+flow status
 ```
 
-For a folder with no `package.json`, install it globally with `npm i -g @jawache/flow` and run `flow init`.
+Git and Claude Code call `flow` by name, so it must be on your `PATH`. A dev dependency (`npm i -D @jawache/flow`) pins the version in the repo's lockfile, but the hooks still call the `flow` on your `PATH`, so keep the global install too. [How to install flow](./docs/user/how-to/install-flow.md) has the details.
 
 `flow init` writes `flow.config.ts`, a git pre-commit hook and flow's hook registrations for Claude Code. `flow status` lists every rule and checks the wiring: green means every rule loads and is in place. Then follow [Getting started](./docs/user/tutorials/getting-started.md), which takes you from an unguarded repo to a refused commit in five minutes.
 

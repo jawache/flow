@@ -22,13 +22,13 @@ flow gives an agent two kinds of guidance:
 - **A breadcrumb** steers. It is a note added to the agent's session when it works in an area, such as "this code runs in a Worker, no Node natives".
 - **A guardrail** blocks. It is a check that refuses a write, a command or a commit, and says why.
 
-There are no warnings. A rule either blocks or it is a breadcrumb. A warning is a third kind that an agent learns to read past, so flow does not have one.
+There are no warnings. A rule either blocks or it is a breadcrumb. In our view a warning is a third kind that an agent learns to read past, which is why flow does not have one.
 
 ## `flow.config.ts` is the whole guard
 
-`flow.config.ts` is one TypeScript file at the repo root, and a rule that cannot be reached from it does not run. There is no rule library on the machine, nothing resolves at run time, and nothing defaults. What the file says is exactly what runs.
+`flow.config.ts` is one TypeScript file at the repo root, and a rule that cannot be reached from it does not run. There is no rule library on the machine, and nothing resolves at run time. No rule is on unless the file binds it, so the file lists exactly what runs. The dials about the run itself, such as `revert`, have defaults, and so do some pack parameters.
 
-The file is code for a reason. A misspelled verb is a red squiggle in your editor, and a rule that cannot compile never loads. A guard written as data would let the same mistake through until it failed at run time.
+The file is code for a reason. A misspelled verb is a red squiggle in your editor, and a rule that cannot compile never loads. The mistake shows where you write it, before anything runs.
 
 ## Packs and overrides
 
@@ -47,9 +47,9 @@ export default defineConfig([
 ```
 
 - **`pack(x)`** binds a pack and every entry in it.
-- **`override(x.entry)`** states only what it changes: a different `.on(…)`, a different `.message(…)`, or `.disabled("why")`. Everything it leaves out comes from the pack.
+- **`override(x.entry)`** states only what it changes, such as a different `.on(…)`, a different `.message(…)`, or `.disabled("why")`. Everything it leaves out comes from the pack. It can never change the entry's `.check(…)` or `.test(…)`.
 
-An override replaces the key it names. A narrowed `.on(…)` is the whole list, never a merge, so a re-scope never takes the pack's own globs back beside it. Where two repos disagree about one entry, the second one overrides it instead of forking the pack, and `flow status` prints the override's reason beside the entry. The difference between the repos stays visible.
+An override replaces the key it names. A narrowed `.on(…)` is the whole list, never a merge, so a re-scope never takes the pack's own globs back beside it. Where two repos disagree about one entry, the second one overrides it instead of forking the pack. The override is a committed line in its config, so the difference between the repos stays visible, and `flow status` prints the reason for an entry turned off with `.disabled("why")`.
 
 [How to change or turn off one entry of a pack](../how-to/override-an-entry.md) gives the steps.
 
@@ -68,7 +68,7 @@ A pack that needs a fact about the repo declares it as a mandatory typed paramet
 
 ## Moments
 
-A guardrail runs at one or more **moments**: `write`, `command`, `delete`, `commit` and `turn-end`. A breadcrumb has its own: `session`, `touch`, `command` and `turn-end`. [The moments reference](../reference/moments.md) lists when each one runs.
+A guardrail runs at one or more **moments**: `write`, `command`, `delete`, `commit` and `turn-end`. A breadcrumb is shown at `session`, `touch` or `command`. The grammar also accepts `turn-end` for a breadcrumb, but Claude Code gives flow no way to show a note there, so such a breadcrumb is never shown. [The moments reference](../reference/moments.md) lists when each one runs.
 
 The commit moment comes from git's own pre-commit hook, not from any harness. The hook runs `flow hook commit`, and flow reads the staged changes from git: the files the commit adds, changes and deletes. Because git runs the hook, every harness gets the commit gate, and so does a person committing in a terminal. To git, a rename is a deletion of the old path plus an add of the new one.
 
@@ -147,7 +147,7 @@ export default defineConfig([
 
 Five ideas in this file explain the rest of flow:
 
-- **A sentence states everything, and defaults nothing.** Each verb is one part of the rule:
+- **A sentence states the whole rule.** Each verb is one part of it:
   - `.at(…)` is when it runs.
   - `.on(…)` and `.ignore(…)` are which files.
   - `.for(…)` is which actor.
@@ -159,7 +159,7 @@ Five ideas in this file explain the rest of flow:
 - **A check is a function of `ctx`**, and it reaches the world only through it: `ctx.command`, `ctx.staged`, `ctx.file`, `ctx.fs`, `ctx.exec` and `ctx.git`. It returns `ctx.ok()` or `ctx.fail(detail)`. Because of that one rule, the same check runs live, runs in a test case, and replays from a recording with no repo at all.
 - **Scope is part of the sentence.** `noMarkedFiles` has no `.on(…)`, so it is about the commit: it is called once, with the whole staged set. With paths in `.on(…)`, the gate calls the rule once per staged file in scope, with that file. A file the commit deletes is passed only to a rule bound at both `deletion` and `commit`. A rule bound at `commit` alone checks the files the commit will contain, and a deleted file is not one of them.
 - **A category reads evidence the host wrote.** `subagent` is recognised from a sidecar file the harness wrote, never from anything the session claimed. [Rules bound to who](./rules-bound-to-who.md) explains why.
-- **Every rule has its own cases.** `.test({ pass, block })` is part of the rule: a rule with no block case does not load. [How to test your rules](../how-to/test-your-rules.md) gives the steps.
+- **Every rule has its own cases.** `.test({ pass, block })` is part of the rule: a guardrail with no cases does not load, and a block case is what proves it catches something. [How to test your rules](../how-to/test-your-rules.md) gives the steps.
 
 ---
 
