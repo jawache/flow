@@ -162,6 +162,7 @@ Each refusal is a closed code that includes the entry it names. The loader check
 - **`duplicate-id`** and **`bad-check-options`**, always.
 - **`no-cases`**, when `.test({})` is written with no cases in it.
 - **`dead-scope`**, when `.on(…)` comes before `.at(…)`.
+- **`empty-scope`**, when `.on(…)` or `.ignore(…)` spreads a list that turns out empty, such as `.on(...files)`.
 - **`unknown-entry`**, when the override names an entry of a pack the config does not bind.
 
 | Code | Cause |
