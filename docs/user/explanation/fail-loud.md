@@ -1,24 +1,27 @@
 ---
-summary: "about a config that will not load: why flow refuses instead of passing, and why repairing it is still allowed"
+summary: "about a config that will not load: why flow lets work through and reports the fault on every call, and why the commit gate stays shut"
 ---
 
-# Fail loud, and the one repair exception
+# Fail loud
 
-If `flow.config.ts` will not load, flow refuses every write, command and commit, loudly, until you fix it.
+If `flow.config.ts` will not load, flow turns every guardrail and breadcrumb off and reports the load error on every call. The commit gate refuses every commit until the config loads again.
 
-## Why flow refuses instead of passing
+## What happens while the config will not load
 
-A guard that fails open lies about being there. If a broken config let every action through, nobody would notice that the guard had stopped, because nothing would be refused. So a broken config refuses every write, command and commit, and says why.
+| Moment | What flow does |
+| --- | --- |
+| **Session start** | Shows the load error in place of the breadcrumbs. |
+| **Write, delete, command** | Lets the call through, and passes the load error to the agent with it. |
+| **Turn-end** | Reports the load error, and the turn ends. |
+| **Commit** | Refuses the commit, with the load error. |
+| **`flow status`** | Prints the load error, and exits 2. |
 
-Two moments are told rather than refused:
-
-- **Turn-end** reports the fault, and the turn ends. Holding the turn open would stop the agent handing back to the person who can fix the config, and every risky action is already refused.
-- **Breadcrumbs** are replaced by a notice of the fault.
+So the agent can repair the config the way it does any other work: with the edit tools, or with a command. In a fresh clone that has no `node_modules` yet, `npm ci` runs.
 
 You see the fault in three places. Delete a `.message(…)` from an entry and save:
 
 - **Your editor** marks the line in red, because the config is TypeScript. This needs the editor to resolve `@jawache/flow`'s types.
-- **The next write or command in a session** is refused, with the load error on screen.
+- **The next write or command in a session** carries the load error to the agent.
 - **`flow status`** prints the fault and names the entry. The first line names the version of flow that is running:
 
 ```
@@ -28,20 +31,36 @@ flow 0.2.3 — the config will not load, so every guardrail and breadcrumb here 
 1 red line — flow is NOT fully in force here.
 ```
 
-## The one exception: the repair
+## Why flow reports instead of refusing
 
-While the config is broken, a write to `flow.config.ts` still goes through. So does a write to a pack it imports, whatever you called that folder, and so does a delete of either.
+A guard must never be off without anyone reading that it is off. A config that will not load is the one failure where flow still runs. flow has the load error, and it passes it to the agent on every call, so the agent reads that the guard is off, and why, at the moment it acts.
 
-Without the exception, the rule that demands a fix would also forbid it. An agent, or anything else with a hook in front of it, would be locked out of its own repair.
+Refusing every call as well costs more than it buys:
 
-flow works out which files count as the repair by reading the config's relative import lines as text. It cannot load the module to find them, because the module is the thing that will not load.
+- **It refuses the repair.** The fix for a missing package is a command such as `npm ci`, and a guard that refuses every command refuses that one too.
+- **Writes reach the commit gate anyway.** Once the config loads, the commit gate checks the staged files against every guardrail. A write made while flow was off is checked before it reaches a commit.
 
-The exception covers writes and deletes of those files, and nothing else:
+## What is off while the config will not load
 
-- **Commands** stay refused, even one that would edit the config. A command line does not say which file it will change before it runs.
-- **The commit gate** stays refused.
+Guardrails on commands are the rules a later commit cannot check. The git pack's refusal of `git reset --hard` and `git clean -f` is one. While the config will not load, those commands run.
 
-So nothing written under the exception reaches a commit until the config loads green again.
+The window lasts until the config loads again. The agent has the load error on every call, so it can fix the config straight away, or hand back to you.
+
+## The commit gate stays shut
+
+A commit turns work in the tree into history. The commit gate refuses every commit while the config will not load, so nothing reaches a commit until every guardrail has checked it.
+
+## When flow cannot report
+
+flow reports a fault only while it runs. Two failures stop it from running at all:
+
+- **The hooks are not registered** in Claude Code's settings. Nothing calls flow.
+- **`flow` is not on your `PATH`.** Claude Code runs the call and shows the hook's error to you, not to the agent. git refuses the commit with `flow: not found`.
+
+Run `flow status` to check for both:
+
+- **Its `hooks` line is red** when the settings file does not call flow for every hook.
+- **Your shell prints `command not found`** when `flow` is not on your `PATH`.
 
 ---
 

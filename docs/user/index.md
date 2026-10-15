@@ -80,7 +80,7 @@ For you when you want to know why flow is built the way it is.
 
 - [How flow works](./explanation/how-flow-works.md): the two kinds of guidance, why one file is the whole guard, packs and overrides, and the demo config read line by line.
 - [Rules bound to who, not what](./explanation/rules-bound-to-who.md): categories, and why they read evidence the host wrote.
-- [Fail loud, and the one repair exception](./explanation/fail-loud.md): why a config that will not load refuses everything, and the one exception for its repair.
+- [Fail loud](./explanation/fail-loud.md): why a config that will not load turns flow off and reports it on every call, and why every commit is refused until it loads.
 - [What the guard sees](./explanation/what-the-guard-sees.md): how flow finds every change to the tree, and what a refusal puts back.
 
 ## Not here

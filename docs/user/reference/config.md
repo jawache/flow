@@ -179,7 +179,7 @@ Each refusal is a closed code that includes the entry it names. The loader check
 | `dead-scope` | An `.on(…)` or `.ignore(…)` on an entry whose moments carry no path or command to narrow, such as a guardrail only at `command` or `turn-end`, or a breadcrumb only at `session` or `turn-end` |
 
 > [!IMPORTANT]
-> If the file does not load at all, every write, delete, command and commit is refused until it is fixed. A turn-end is reported and not refused. A write or delete of `flow.config.ts` or of a pack it imports still goes through, so the config can be repaired. See [fail loud](../explanation/fail-loud.md).
+> If the file does not load at all, every guardrail and breadcrumb is off until it is fixed. Every write, delete and command goes through, and the agent is given the load error with each one. Every commit is refused. See [fail loud](../explanation/fail-loud.md).
 
 ---
 
