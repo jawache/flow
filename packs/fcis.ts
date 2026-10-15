@@ -216,7 +216,7 @@ export const fcis = definePack("fcis", (repo: Convention) => {
       .ignore("**/*.test.ts")
       .description("A pure file has its sibling test — the test-first artefact exists.")
       .check(siblingExists({ sibling }))
-      .message("The pure core is test-first (red → green): {dir}/{name}.test.ts is missing. Write the failing test, then the code.")
+      .message("The pure core is test-first (red → green): this file's sibling test, named below, is missing. Write the failing test, then the code.")
       .test({
         pass: [{ path: "cli/pure/a.ts", content: "", world: { fs: { "cli/pure/a.test.ts": "" } } }],
         block: [{ path: "cli/pure/b.ts", content: "" }],
@@ -229,7 +229,7 @@ export const fcis = definePack("fcis", (repo: Convention) => {
       .description("Every exported pure function is at least referenced in its test — the 'wrote no test' nudge.")
       .check(symbolsInSibling({ sibling }))
       .message(
-        "An exported pure function is never referenced in its test. Cheap nudge, not coverage — but 'added a function, wrote no test' is exactly the miss it catches.",
+        "The exports listed below are never named in this file's test. Write a test that uses each one, then write the change again: a reference is enough, as this is a nudge, not coverage.",
       )
       .test({
         pass: [{ path: "cli/pure/a.ts", content: "export const x = 1;", world: { fs: { "cli/pure/a.test.ts": "expect(x)" } } }],

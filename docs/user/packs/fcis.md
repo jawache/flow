@@ -282,7 +282,7 @@ A pure file has its sibling test — the test-first artefact exists.
 ### What the agent reads when refused
 
 ```
-The pure core is test-first (red → green): {dir}/{name}.test.ts is missing. Write the failing test, then the code.
+The pure core is test-first (red → green): this file's sibling test, named below, is missing. Write the failing test, then the code.
 ```
 
 ### Proved by
@@ -319,7 +319,7 @@ Every exported pure function is at least referenced in its test — the 'wrote n
 ### What the agent reads when refused
 
 ```
-An exported pure function is never referenced in its test. Cheap nudge, not coverage — but 'added a function, wrote no test' is exactly the miss it catches.
+The exports listed below are never named in this file's test. Write a test that uses each one, then write the change again: a reference is enough, as this is a nudge, not coverage.
 ```
 
 ### Proved by
