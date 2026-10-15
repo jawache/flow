@@ -1,6 +1,8 @@
-# `changeTogether`
+---
+summary: "reads: staged set · fires at: commit"
+---
 
-reads: staged set · fires at: commit · 2026-09-06
+# `changeTogether`
 
 When one file changes, another must be staged with it — a schema and its migration, an interface and its fixture. Each group names the trigger set and the set at least one of which must move too.
 

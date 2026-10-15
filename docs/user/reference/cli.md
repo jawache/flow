@@ -1,6 +1,8 @@
-# The flow command
+---
+summary: "every `flow` command, what `flow init` writes, the two switch files, and the exit codes"
+---
 
-docs/user/reference · every `flow` command, what `flow init` writes, the two switch files, and the exit codes · 2026-10-15
+# The flow command
 
 `flow` is one binary. You type `flow init`, `flow status` and `flow test`, and Claude Code and git call `flow hook` for you.
 

@@ -1,6 +1,8 @@
-# How to test your rules
+---
+summary: "give every rule its cases, and run them"
+---
 
-docs/user/how-to · give every rule its cases, and run them · 2026-10-15
+# How to test your rules
 
 This guide shows you how to prove that each rule passes what it should and blocks what it should.
 

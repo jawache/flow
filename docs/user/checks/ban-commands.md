@@ -1,6 +1,8 @@
-# `banCommands`
+---
+summary: "reads: command line · fires at: command"
+---
 
-reads: command line · fires at: command · 2026-09-28
+# `banCommands`
 
 Bans a shell command before it runs. The patterns are tried against the whole command line. One command is one subject however many lines it occupies, so a pattern may match across a newline: an agent writing `git commit` with a message body sends one command over several lines. A heredoc is the text after `<<` on the command line, fed to a program on its standard input. That text is not matched, so a script fed to `python3`, or a file written with `cat`, is not refused even when it includes the words of a banned command. The exception is a heredoc fed to a shell (`bash`, `sh`, `zsh`, `eval`), whose text is commands and is matched. A rule that has to see heredoc text sets `matchHeredocs: true`, and its patterns are then tried against the whole command, heredocs included. A command rule takes no `.on(…)`, because its patterns are its scope. A rule whose patterns match nothing in a repo is not misconfigured.
 

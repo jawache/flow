@@ -1,6 +1,8 @@
-# flow — user documentation
+---
+summary: "flow's human-facing docs"
+---
 
-docs/user · flow's human-facing docs · 2026-10-15
+# flow — user documentation
 
 **flow** guards a repo that coding agents work in. Your whole guard is one TypeScript file, `flow.config.ts`, and these pages are how to write it. Every example on these pages is run against the shipped binary.
 

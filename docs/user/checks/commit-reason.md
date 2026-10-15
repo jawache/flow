@@ -1,6 +1,8 @@
-# `commitReason`
+---
+summary: "reads: command line · fires at: command"
+---
 
-reads: command line · fires at: command · 2026-09-07
+# `commitReason`
 
 Makes an act legal when the commit message explains it — the classic being “adding a dependency is fine, adding it silently is not”. The reason lands in git history, where the next reviewer reads it. It fires at `command`, not `commit`: git runs the pre-commit gate before the message exists, so the only place a message can be read is the typed command — which also means it polices agent-typed commits only.
 

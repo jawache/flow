@@ -1,6 +1,8 @@
-# The ctx a check reads
+---
+summary: "the check contract, every field of `ctx`, and what each moment fills in"
+---
 
-docs/user/reference · the check contract, every field of `ctx`, and what each moment fills in · 2026-10-15
+# The ctx a check reads
 
 A check is a function of `ctx`, and `ctx` is its only access to the world. What is filled in depends on the moment.
 

@@ -1,6 +1,8 @@
-# Fail loud, and the one repair exception
+---
+summary: "about a config that will not load: why every gated moment refuses, and why repairing it is still allowed"
+---
 
-docs/user/explanation · about a config that will not load: why every gated moment refuses, and why repairing it is still allowed · 2026-10-15
+# Fail loud, and the one repair exception
 
 If `flow.config.ts` will not load, every gated moment refuses, loudly, until you fix it.
 

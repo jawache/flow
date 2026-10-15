@@ -1,6 +1,8 @@
-# How to pin a value in a JSON file
+---
+summary: "refuse a change that breaks an assertion about a JSON file, with `jsonInvariant`"
+---
 
-docs/user/how-to · refuse a change that breaks an assertion about a JSON file, with `jsonInvariant` · 2026-10-15
+# How to pin a value in a JSON file
 
 This guide shows you how to refuse a write or a commit that changes a value in a JSON file you need to stay fixed, such as `strict` in `tsconfig.json`.
 

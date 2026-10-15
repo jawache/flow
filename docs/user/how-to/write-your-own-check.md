@@ -1,6 +1,8 @@
-# How to write your own check
+---
+summary: "a check no stock one expresses, with `defineCheck`"
+---
 
-docs/user/how-to · a check no stock one expresses, with `defineCheck` · 2026-10-15
+# How to write your own check
 
 This guide shows you how to write a check of your own, for a rule that no stock check expresses.
 

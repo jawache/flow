@@ -1,6 +1,8 @@
-# The config
+---
+summary: "`flow.config.ts`, its settings, a pack, every verb of a guardrail and a breadcrumb, cases, categories, and what the loader refuses"
+---
 
-docs/user/reference · `flow.config.ts`, its settings, a pack, every verb of a guardrail and a breadcrumb, cases, categories, and what the loader refuses · 2026-10-15
+# The config
 
 `flow.config.ts` is the whole guard: a TypeScript file at the repo root that binds packs and overrides their entries. Because the config is TypeScript, most of what this page calls a refusal is a compile error in your editor. The loader checks the same things again at run time, for a config edited outside an editor.
 

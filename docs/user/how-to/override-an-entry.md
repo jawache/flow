@@ -1,6 +1,8 @@
-# How to change or turn off one entry of a pack
+---
+summary: "`override(…)` in `flow.config.ts`, for one entry of a bound pack"
+---
 
-docs/user/how-to · `override(…)` in `flow.config.ts`, for one entry of a bound pack · 2026-10-15
+# How to change or turn off one entry of a pack
 
 This guide shows you how to change one entry of a pack your repo binds, or turn it off, without editing the pack.
 

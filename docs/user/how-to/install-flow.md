@@ -1,6 +1,8 @@
-# How to install flow
+---
+summary: "a global install or a dev dependency, then `flow init`"
+---
 
-docs/user/how-to · a global install or a dev dependency, then `flow init` · 2026-10-15
+# How to install flow
 
 This guide shows you how to install flow and wire it into a repo. flow needs **Node 24 or later**.
 

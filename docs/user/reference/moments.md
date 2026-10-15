@@ -1,6 +1,8 @@
-# Moments
+---
+summary: "the seven moments a rule runs at, and how each is delivered"
+---
 
-docs/user/reference · the seven moments a rule runs at, and how each is delivered · 2026-10-15
+# Moments
 
 A moment is when a rule runs. A guardrail runs at one or more moments, set with `.at(…)`, and a breadcrumb has four of its own.
 

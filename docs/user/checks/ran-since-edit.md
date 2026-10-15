@@ -1,6 +1,8 @@
-# `ranSinceEdit`
+---
+summary: "reads: the turn · fires at: turn-end"
+---
 
-reads: the turn · fires at: turn-end · 2026-09-06
+# `ranSinceEdit`
 
 Holds the turn open once when the agent edited a matching file this turn but never ran the command afterwards — “you changed a guard but never ran the tests”. It reads the turn's own actions, holds no state, and never traps: the next stop attempt goes through.
 

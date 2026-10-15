@@ -1,6 +1,8 @@
-# How to ban a pattern in files
+---
+summary: "refuse a word or a regex in the files you choose, with `textBan`"
+---
 
-docs/user/how-to · refuse a word or a regex in the files you choose, with `textBan` · 2026-10-15
+# How to ban a pattern in files
 
 This guide shows you how to refuse a write or a commit when a file contains a banned word or pattern.
 

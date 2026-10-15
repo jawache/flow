@@ -1,6 +1,8 @@
-# `protectedPath`
+---
+summary: "reads: file path · fires at: write · delete · commit"
+---
 
-reads: file path · fires at: write · delete · commit · 2026-09-06
+# `protectedPath`
 
 Refuses a hand-edit of a protected path. The `.on(…)` set *is* the protected set — any file that reaches the check is protected by definition, so matching it is the violation. Name the bare folder alongside its glob, or an `rm -rf` of the directory slips past. A protected-path rule is block-only: everything in scope is refused, so there is nothing to pass.
 

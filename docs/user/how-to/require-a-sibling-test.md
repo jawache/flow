@@ -1,6 +1,8 @@
-# How to require a sibling test
+---
+summary: "refuse a module that has no test file beside it, with `siblingExists`"
+---
 
-docs/user/how-to · refuse a module that has no test file beside it, with `siblingExists` · 2026-10-15
+# How to require a sibling test
 
 This guide shows you how to refuse a write or a commit of a module whose test file does not exist.
 

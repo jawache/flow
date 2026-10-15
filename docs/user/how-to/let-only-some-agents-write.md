@@ -1,6 +1,8 @@
-# How to let only some agents write
+---
+summary: "refuse a file change from any actor outside a list, with `oneWriter`"
+---
 
-docs/user/how-to · refuse a file change from any actor outside a list, with `oneWriter` · 2026-10-15
+# How to let only some agents write
 
 This guide shows you how to let only some agents change files when several agents share one worktree. For example, a builder changes files and a checker only reports.
 

@@ -1,6 +1,8 @@
-# How to steer without blocking
+---
+summary: "show the agent a note when it reads or changes an area, with a breadcrumb"
+---
 
-docs/user/how-to · show the agent a note when it reads or changes an area, with a breadcrumb · 2026-10-15
+# How to steer without blocking
 
 This guide shows you how to show the agent a note about an area of the code, without refusing anything. A note of this kind is a breadcrumb.
 

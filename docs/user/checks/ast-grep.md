@@ -1,6 +1,8 @@
-# `astGrep`
+---
+summary: "reads: file body · fires at: write · commit"
+---
 
-reads: file body · fires at: write · commit · 2026-09-06
+# `astGrep`
 
 Bans or requires a structural code pattern, parsed rather than text-matched — so a match inside a string or a comment never false-fires. `language` is always stated and never defaulted: the wrong grammar mis-parses quietly. `rule` is an [ast-grep](https://ast-grep.github.io) rule object.
 

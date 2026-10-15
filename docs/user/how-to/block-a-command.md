@@ -1,6 +1,8 @@
-# How to block a command
+---
+summary: "refuse a shell command before it runs, with `banCommands`"
+---
 
-docs/user/how-to · refuse a shell command before it runs, with `banCommands` · 2026-10-15
+# How to block a command
 
 This guide shows you how to refuse a dangerous shell command before it runs.
 

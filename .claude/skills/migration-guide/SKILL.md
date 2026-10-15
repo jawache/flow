@@ -42,9 +42,13 @@ A change belongs on the page when it changes something in the other repo:
 ## The page, in this order
 
 ```
+---
+summary: "upgrade to <version> from <previous>"
+---
+
 # Upgrade to <version>
 
-From <previous> · <release date, or "unreleased"> · [all guides](./index.md)
+[All guides](./index.md)
 
 <One paragraph: what this release changes for a repo that uses flow, and whether it needs any
 change. "No changes needed" is a valid answer, and is stated here.>

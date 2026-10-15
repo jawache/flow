@@ -1,6 +1,8 @@
-# What the guard sees
+---
+summary: "about how flow detects every change to the tree, and why it compares the disk instead of reading the tool"
+---
 
-docs/user/explanation · about how flow detects every change to the tree, and why it compares the disk instead of reading the tool · 2026-10-15
+# What the guard sees
 
 A guardrail is checked against what changed on disk, not against the tool that changed it.
 

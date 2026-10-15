@@ -1,6 +1,8 @@
-# How to require a reason in the commit message
+---
+summary: "allow a change only when the commit message explains it, with `commitReason`"
+---
 
-docs/user/how-to · allow a change only when the commit message explains it, with `commitReason` · 2026-10-15
+# How to require a reason in the commit message
 
 This guide shows you how to let a change through only when its commit message gives a reason for it, such as adding a dependency. The reason then sits in the git history, where the next reviewer reads it.
 

@@ -1,6 +1,8 @@
-# `depcruise`
+---
+summary: "reads: runs a tool · fires at: commit"
+---
 
-reads: runs a tool · fires at: commit · 2026-09-06
+# `depcruise`
 
 Import fences over the real dependency graph, compiled to [dependency-cruiser](https://github.com/sverweij/dependency-cruiser)'s own schema. Name your layers as globs, then forbid the edges that must never exist — a fence pointed the right way is what keeps a package a package rather than a folder.
 

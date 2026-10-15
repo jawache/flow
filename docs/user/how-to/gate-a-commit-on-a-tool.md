@@ -1,6 +1,8 @@
-# How to gate a commit on a tool
+---
+summary: "refuse a commit when your test suite, typecheck or any tool exits non-zero, with `execPasses`"
+---
 
-docs/user/how-to · refuse a commit when your test suite, typecheck or any tool exits non-zero, with `execPasses` · 2026-10-15
+# How to gate a commit on a tool
 
 This guide shows you how to run your test suite, a typecheck or any other tool before each commit, and refuse the commit when it fails.
 

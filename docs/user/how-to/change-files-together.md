@@ -1,6 +1,8 @@
-# How to make files change together
+---
+summary: "refuse a commit that stages one file without its partner, with `changeTogether`"
+---
 
-docs/user/how-to · refuse a commit that stages one file without its partner, with `changeTogether` · 2026-10-15
+# How to make files change together
 
 This guide shows you how to refuse a commit that changes one file without the file that must change with it, such as a schema without its migration.
 

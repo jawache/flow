@@ -1,6 +1,8 @@
-# How flow works
+---
+summary: "about flow: the two kinds of guidance, the one file, packs, and the demo config read line by line"
+---
 
-docs/user/explanation · about flow: the two kinds of guidance, the one file, packs, and the demo config read line by line · 2026-10-15
+# How flow works
 
 flow stops an agent's predictable mistakes at the moment they happen, instead of leaving them for you to find at review.
 

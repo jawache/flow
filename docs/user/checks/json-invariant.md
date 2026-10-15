@@ -1,6 +1,8 @@
-# `jsonInvariant`
+---
+summary: "reads: file body · fires at: write · commit"
+---
 
-reads: file body · fires at: write · commit · 2026-09-06
+# `jsonInvariant`
 
 Holds one or more assertions over the values in a JSON file. Each assertion digs to a dotted path and states one thing that must be true there.
 

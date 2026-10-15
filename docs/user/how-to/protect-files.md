@@ -1,6 +1,8 @@
-# How to protect files
+---
+summary: "refuse every write, delete and commit of the paths you list, with `protectedPath`"
+---
 
-docs/user/how-to · refuse every write, delete and commit of the paths you list, with `protectedPath` · 2026-10-15
+# How to protect files
 
 This guide shows you how to stop anyone changing or deleting files that nobody should edit, such as generated code.
 

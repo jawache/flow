@@ -1,6 +1,8 @@
-# Vocabulary
+---
+summary: "the terms the flow docs use, and what each one means"
+---
 
-docs/user/reference · the terms the flow docs use, and what each one means · 2026-10-15
+# Vocabulary
 
 Each term below is used with this meaning on every page of these docs.
 

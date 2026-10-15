@@ -1,6 +1,8 @@
-# `siblingExists`
+---
+summary: "reads: file path · fires at: write · commit"
+---
 
-reads: file path · fires at: write · commit · 2026-09-06
+# `siblingExists`
 
 A file must have its required companion on disk — every `src/domain/**` needs its `.test.ts`. The check asks one question: does the sibling exist. (To also require each export be referenced in that test, add [`symbolsInSibling`](./symbols-in-sibling.md).)
 

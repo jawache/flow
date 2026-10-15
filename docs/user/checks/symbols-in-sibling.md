@@ -1,6 +1,8 @@
-# `symbolsInSibling`
+---
+summary: "reads: file body · fires at: write · commit"
+---
 
-reads: file body · fires at: write · commit · 2026-09-06
+# `symbolsInSibling`
 
 Every name a TypeScript file exports must be referenced somewhere in its sibling test's text. A real parser reads the exports, so `export const x` inside a string or comment never false-matches. TypeScript only — a cheap nudge, not coverage.
 

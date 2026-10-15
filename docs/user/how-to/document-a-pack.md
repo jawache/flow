@@ -1,6 +1,8 @@
-# How to document a pack
+---
+summary: "the doc comments a pack's generated page is built from"
+---
 
-docs/user/how-to · the doc comments a pack's generated page is built from · 2026-10-15
+# How to document a pack
 
 This guide shows you how to write the doc comments that a pack's generated page is built from.
 

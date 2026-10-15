@@ -1,6 +1,8 @@
-# Getting started
+---
+summary: "from an unguarded repo to a refused command and a refused commit"
+---
 
-docs/user/tutorials · from an unguarded repo to a refused command and a refused commit · 2026-10-15
+# Getting started
 
 In this tutorial, we will guard a git repo with flow, see a banned command refused before it runs, see the commit gate refuse a commit, and run every rule's own test cases. It takes about five minutes, and every command below is real, so run each one as you read.
 

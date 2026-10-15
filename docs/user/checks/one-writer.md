@@ -1,6 +1,8 @@
-# `oneWriter`
+---
+summary: "reads: the actor · fires at: write · delete"
+---
 
-reads: the actor · fires at: write · delete · 2026-09-28
+# `oneWriter`
 
 Refuses a write or a delete by an actor that has none of the categories listed in `writers`. An actor is the session that made the change: the parent chat, or one of the subagents it started. A category is a name for an actor, defined in the config together with the recognizer that decides which sessions have it. The check reads the acting session's category names from `ctx.actor`. Those names come from evidence the harness wrote about the session, never from a claim the session made about itself.
 

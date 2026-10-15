@@ -1,6 +1,8 @@
-# Rules bound to who, not what
+---
+summary: "about categories: why a rule can depend on the actor, and why the actor is read from host-written evidence"
+---
 
-docs/user/explanation · about categories: why a rule can depend on the actor, and why the actor is read from host-written evidence · 2026-10-15
+# Rules bound to who, not what
 
 A rule can give a different answer to the same act depending on who does it, and flow decides who from evidence the host wrote, never from what the session says about itself.
 

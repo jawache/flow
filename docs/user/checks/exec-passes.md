@@ -1,6 +1,8 @@
-# `execPasses`
+---
+summary: "reads: runs a tool · fires at: commit"
+---
 
-reads: runs a tool · fires at: commit · 2026-09-06
+# `execPasses`
 
 Runs a whole-project tool and blocks on a non-zero exit, showing its failing lines. flow decides WHEN it runs; the tool owns its own job and config. If `run` contains `{files}`, flow substitutes the changed set.
 

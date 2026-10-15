@@ -1,6 +1,8 @@
-# How to share a pack across repos
+---
+summary: "move a pack from `guards/` to a package a second repo imports"
+---
 
-docs/user/how-to · move a pack from `guards/` to a package a second repo imports · 2026-10-15
+# How to share a pack across repos
 
 This guide shows you how to share a pack you wrote in one repo with a second repo.
 

@@ -1,6 +1,8 @@
-# `canonicalFiles`
+---
+summary: "reads: file path · fires at: write · commit"
+---
 
-reads: file path · fires at: write · commit · 2026-09-06
+# `canonicalFiles`
 
 Judges a folder against a canon: which filenames a tier may hold, and/or which folders may sit directly under a root. The canon is the whole content of the rule, so both allowlists are stated rather than defaulted.
 
