@@ -1593,14 +1593,23 @@ function judge(draft: Draft): Refusal[] {
   // on purpose: an empty scope is a mistake in what was written, not something the entry proves.
   const empty = (["on", "ignore"] as const).filter((key) => spec[key]?.length === 0);
   if (empty.length > 0) {
-    // Who said each one is decided per key: one verb may be the pack's and the other an override's.
-    const verbs = empty
-      .map((key) => `\`.${key}()\`${draft.source[key] === "override" ? " from an override" : ""}`)
-      .join(" and ");
-    const one = empty.length === 1;
+    // Who said each one is decided per key: one verb may be the pack's and the other an override's,
+    // so the verbs are grouped by who said them and each group gets its own clause and its own fix.
+    const said = (["pack", "override"] as const)
+      .map((who) => ({ who, keys: empty.filter((key) => (draft.source[key] ?? "pack") === who) }))
+      .filter((group) => group.keys.length > 0);
+    const verbs = (keys: readonly string[]) => keys.map((key) => `\`.${key}()\``).join(" and ");
+    const speaker = { pack: "its pack", override: "an override" } as const;
+    const where = { pack: "the pack", override: "the override" } as const;
+    // One group needs no verb named twice: "it" and "each" point back at the clause before.
+    const fix = ({ who, keys }: (typeof said)[number]) => {
+      const one = keys.length === 1;
+      const what = said.length === 1 ? (one ? "it" : "each") : verbs(keys);
+      return `In ${where[who]}, give ${what} at least one glob or delete ${one ? "it" : "them"}.`;
+    };
     say(
       "empty-scope",
-      `\`${id}\` says ${verbs} with no globs, which narrows nothing. Give ${one ? "it" : "each"} at least one glob, or delete ${one ? "it" : "them"} from the sentence that said ${one ? "it" : "them"}.`,
+      `\`${id}\` has a scope that narrows nothing: ${said.map(({ who, keys }) => `${speaker[who]} says ${verbs(keys)} with no globs`).join(", and ")}. ${said.map(fix).join(" ")}`,
     );
   }
 

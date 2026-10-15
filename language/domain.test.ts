@@ -1119,59 +1119,90 @@ describe("the load refuses", () => {
     expect(shape(refusalsOf([rawPack("late", { x: late })]))).toEqual([["dead-scope", "late.x"]]);
   });
 
-  it("an empty `.on()` or `.ignore()` as empty-scope, on a guardrail and on a breadcrumb", () => {
-    const rail = rawPack("rail", {
-      x: { spec: { kind: "guardrail", at: [write], on: [], check: passes, message: "m", test: cases } },
+  // An empty scope reaches the load the way a real config writes it: a list spread into the verb
+  // that turns out empty. The compiler refuses only a literal `.on()`; this one compiles, and the
+  // load is what catches it. Each case asserts the whole sentence, since the wording is the advice.
+  const none: string[] = [];
+
+  it("an empty `.on()` from the pack as empty-scope, on a guardrail", () => {
+    const rail = definePack("rail", {
+      x: guardrail().at(write).on(...none).check(passes).message("m").test(cases),
     });
-    expect(shape(refusalsOf([rail]))).toEqual([["empty-scope", "rail.x"]]);
+    expect(refusalsOf([pack(rail)])).toEqual([
+      {
+        code: "empty-scope",
+        entry: "rail.x",
+        detail:
+          "`rail.x` has a scope that narrows nothing: its pack says `.on()` with no globs. In the pack, give it at least one glob or delete it.",
+      },
+    ]);
+  });
 
-    const note = rawPack("note", {
-      x: { spec: { kind: "breadcrumb", at: [touch], on: ["docs/**"], ignore: [], text: "hi" } },
+  it("an empty `.ignore()` from the pack as empty-scope, on a breadcrumb", () => {
+    const note = definePack("note", {
+      x: breadcrumb().at(touch).on("docs/**").ignore(...none).text("hi"),
     });
-    const refusals = refusalsOf([note]);
-    expect(shape(refusals)).toEqual([["empty-scope", "note.x"]]);
-    const refusal = refusals[0];
-    // Advice about the one verb that is empty, said by the pack, in the singular.
-    expect(refusal?.detail).toContain("note.x");
-    expect(refusal?.detail).toContain("`.ignore()` with no globs");
-    expect(refusal?.detail).toContain("Give it at least one glob");
-    expect(refusal?.detail).not.toContain("override");
-    expect(refusal?.detail).not.toContain("`.on(");
+    expect(refusalsOf([pack(note)])).toEqual([
+      {
+        code: "empty-scope",
+        entry: "note.x",
+        detail:
+          "`note.x` has a scope that narrows nothing: its pack says `.ignore()` with no globs. In the pack, give it at least one glob or delete it.",
+      },
+    ]);
   });
 
-  it("an empty scope once per entry, naming the entry and both verbs", () => {
-    const bare = rawPack("bare", { x: { spec: { kind: "breadcrumb", at: [touch], on: [], ignore: [], text: "hi" } } });
-    const refusals = refusalsOf([bare]);
-    expect(shape(refusals)).toEqual([["empty-scope", "bare.x"]]);
-    expect(refusals[0]?.detail).toContain("bare.x");
-    expect(refusals[0]?.detail).toContain("`.on()` and `.ignore()`");
-    expect(refusals[0]?.detail).toContain("Give each at least one glob, or delete them");
+  it("both verbs empty in the pack, refused once naming both", () => {
+    const bare = definePack("bare", { x: breadcrumb().at(touch).on(...none).ignore(...none).text("hi") });
+    expect(refusalsOf([pack(bare)])).toEqual([
+      {
+        code: "empty-scope",
+        entry: "bare.x",
+        detail:
+          "`bare.x` has a scope that narrows nothing: its pack says `.on()` and `.ignore()` with no globs. In the pack, give each at least one glob or delete them.",
+      },
+    ]);
   });
 
-  it("an empty scope an override leaves, saying the override said it", () => {
-    // Cast past the chain's types, as a config built outside an editor would be: the load is the
-    // backstop that catches it there.
-    const asCast = override(house.noTodo) as unknown as { on: () => ConfigSentence; ignore: () => ConfigSentence };
-    const onRefusals = refusalsOf([pack(house), asCast.on()]);
-    expect(shape(onRefusals)).toEqual([["empty-scope", "house.noTodo"]]);
-    expect(onRefusals[0]?.detail).toContain("from an override");
-
-    expect(shape(refusalsOf([pack(house), asCast.ignore()]))).toEqual([["empty-scope", "house.noTodo"]]);
+  it("an empty verb an override leaves, saying the override said it", () => {
+    expect(refusalsOf([pack(house), override(house.noTodo).on(...none)])).toEqual([
+      {
+        code: "empty-scope",
+        entry: "house.noTodo",
+        detail:
+          "`house.noTodo` has a scope that narrows nothing: an override says `.on()` with no globs. In the override, give it at least one glob or delete it.",
+      },
+    ]);
   });
 
-  it("an empty scope split between the pack and an override, saying who said each", () => {
-    const note = breadcrumb().at(touch).text("hi");
-    const emptyOn = (note as unknown as { on: () => typeof note }).on();
-    const mixed = definePack("mixed", { x: emptyOn });
-    const emptyIgnore = (override(mixed.x) as unknown as { ignore: () => ConfigSentence }).ignore();
-    const refusals = refusalsOf([pack(mixed), emptyIgnore]);
-    expect(shape(refusals)).toEqual([["empty-scope", "mixed.x"]]);
-    expect(refusals[0]?.detail).toContain("`.on()` and `.ignore()` from an override with no globs");
+  it("both verbs empty in one override, the override named once", () => {
+    expect(refusalsOf([pack(house), override(house.noTodo).on(...none).ignore(...none)])).toEqual([
+      {
+        code: "empty-scope",
+        entry: "house.noTodo",
+        detail:
+          "`house.noTodo` has a scope that narrows nothing: an override says `.on()` and `.ignore()` with no globs. In the override, give each at least one glob or delete them.",
+      },
+    ]);
+  });
+
+  it("an empty scope split between the pack and an override, saying who said each and where to fix it", () => {
+    const mixed = definePack("mixed", { x: breadcrumb().at(touch).on(...none).text("hi") });
+    expect(refusalsOf([pack(mixed), override(mixed.x).ignore(...none)])).toEqual([
+      {
+        code: "empty-scope",
+        entry: "mixed.x",
+        detail:
+          "`mixed.x` has a scope that narrows nothing: its pack says `.on()` with no globs, and an override says `.ignore()` with no globs. In the pack, give `.on()` at least one glob or delete it. In the override, give `.ignore()` at least one glob or delete it.",
+      },
+    ]);
   });
 
   it("an empty scope on a disabled entry too — what was written is wrong, whatever the entry proves", () => {
-    const off = rawPack("off", { x: { spec: { kind: "guardrail", at: [write], on: [], disabled: { reason: "not yet" } } } });
-    expect(shape(refusalsOf([off]))).toEqual([["empty-scope", "off.x"]]);
+    const off = definePack("off", {
+      x: guardrail().at(write).on(...none).check(passes).message("m").test(cases),
+    });
+    expect(shape(refusalsOf([pack(off), override(off.x).disabled("not yet")]))).toEqual([["empty-scope", "off.x"]]);
   });
 
   it("a breadcrumb with both `.text(…)` and `.file(…)` as double-prose, naming the entry", () => {
