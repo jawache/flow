@@ -189,8 +189,9 @@ export interface SessionFacts {
   /** The agent type the host started this spawn as, from its hook message. Absent on a parent. */
   agentType?: string | undefined;
   /**
-   * @deprecated flow never sets this. It came from the sidecar file, which is no longer read, and
-   * the hook message carries no description. Kept so a config that names it still compiles.
+   * @deprecated Always undefined: a category that reads it never matches. It came from the sidecar
+   * file, which is no longer read, and the hook message carries no description. Kept so a config
+   * that names it still compiles.
    */
   description?: string | undefined;
 }
