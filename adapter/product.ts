@@ -15,9 +15,9 @@
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { chmodSync, existsSync, lstatSync, mkdirSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { VERSION } from "../version.ts";
 import { ensureFlowDir, isOff, readRows } from "../engine/state.ts";
@@ -29,6 +29,7 @@ import {
   initLines,
   lastMode,
   literalScopes,
+  LOCAL_BIN,
   pathLines,
   planInit,
   status,
@@ -85,6 +86,16 @@ function packageRoot(): string | null {
 function resolves(root: string): boolean {
   try {
     createRequire(join(root, "noop.js")).resolve("@jawache/flow");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Is there a `flow` this user can run in that folder? What a shell looking it up by name asks. */
+function hasFlow(dir: string): boolean {
+  try {
+    accessSync(join(dir, "flow"), constants.X_OK);
     return true;
   } catch {
     return false;
@@ -300,6 +311,10 @@ export async function runStatus(cwd: string, args: readonly string[]): Promise<V
     session: liveSession(root),
     ignored: ignoredPaths(root, literalScopes(regime.kind === "loaded" ? regime.load : null)),
     snapshotInclude: regime.kind === "loaded" ? (regime.config.settings.snapshotInclude ?? []) : [],
+    binary: {
+      modules: hasFlow(join(root, LOCAL_BIN)),
+      path: (process.env["PATH"] ?? "").split(delimiter).some((dir) => dir !== "" && hasFlow(dir)),
+    },
   };
 
   // ONE CODE FOR A CONFIG THAT WILL NOT LOAD, however it broke — `statusCode` says why. The branch

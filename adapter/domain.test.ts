@@ -127,6 +127,7 @@ import {
   staticPrefix,
   PRE_COMMIT,
   HOOKS_DIR,
+  LOCAL_BIN,
   GATE_PATH,
   SET_HOOKS_PATH,
   ADD_THE_GATE_LINE,
@@ -2074,7 +2075,40 @@ const statusFacts = (over: Partial<StatusFacts> = {}): StatusFacts => ({
   session: null,
   ignored: [],
   snapshotInclude: [],
+  binary: { modules: false, path: true },
   ...over,
+});
+
+describe("the binary fitting — can the hooks and the gate find flow", () => {
+  const binary = (modules: boolean, path: boolean) => {
+    const s = status(statusFacts({ binary: { modules, path } }));
+    return { fitting: s.fittings.find((f) => f.id === "binary"), green: s.green, lines: statusLines(s) };
+  };
+
+  it("names the repo's own copy when node_modules/.bin has one, whatever the PATH holds", () => {
+    for (const path of [true, false]) {
+      const { fitting, green } = binary(true, path);
+      expect(fitting?.ok).toBe(true);
+      expect(fitting?.detail).toBe(`the hooks and the gate run the flow in ${LOCAL_BIN}`);
+      expect(green).toBe(true);
+    }
+  });
+
+  it("names the PATH when only the PATH has one, in the tutorial's words", () => {
+    const { lines, green } = binary(false, true);
+    expect(lines).toContain("  ✓ binary: the hooks and the gate run the flow on the PATH");
+    expect(green).toBe(true);
+  });
+
+  it("is a red line naming both installs when neither has one, and status is not green", () => {
+    const { fitting, green, lines } = binary(false, false);
+    expect(fitting?.ok).toBe(false);
+    expect(fitting?.detail).toContain(`no flow in ${LOCAL_BIN} or on the PATH`);
+    expect(fitting?.detail).toContain("npm i -D @jawache/flow");
+    expect(fitting?.detail).toContain("npm i -g @jawache/flow");
+    expect(green).toBe(false);
+    expect(lines.at(-1)).toContain("1 red line");
+  });
 });
 
 describe("the grammar fitting", () => {

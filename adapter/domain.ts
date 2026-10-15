@@ -3944,6 +3944,12 @@ export interface StatusFacts {
   readonly ignored: readonly string[];
   /** The config's `snapshotInclude` globs: the ignored paths the snapshot records anyway. */
   readonly snapshotInclude: readonly string[];
+  /**
+   * Where a `flow` the hooks and the gate call by name is: the repo's own `node_modules/.bin`, and
+   * the PATH this command was run with — the nearest reading there is of the PATH git and the host
+   * hand their hooks.
+   */
+  readonly binary: { readonly modules: boolean; readonly path: boolean };
 }
 
 /**
@@ -4105,8 +4111,29 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
               .filter((line) => line !== "")
               .join("\n"),
     },
+    binaryFitting(facts.binary),
     ...snapshotGaps(universe(facts.load?.ok === true ? facts.load.entries : []), facts.ignored, facts.snapshotInclude),
   ];
+}
+
+/** The repo's own bin folder, where a dev dependency's `flow` is, relative to the repo root. */
+export const LOCAL_BIN = "node_modules/.bin";
+
+/**
+ * CAN THE HOOKS AND THE GATE FIND `flow`? Both call it by name, so a repo can carry every other
+ * fitting and still have each hook fail with `flow: not found` and every commit refused. The repo's
+ * own copy is named first, because it is the one the hooks look for first.
+ */
+function binaryFitting(binary: StatusFacts["binary"]): Fitting {
+  if (binary.modules) return { id: "binary", ok: true, detail: `the hooks and the gate run the flow in ${LOCAL_BIN}` };
+  if (binary.path) return { id: "binary", ok: true, detail: "the hooks and the gate run the flow on the PATH" };
+  return {
+    id: "binary",
+    ok: false,
+    detail:
+      `no flow in ${LOCAL_BIN} or on the PATH, so every hook fails with \`flow: not found\` and git refuses every commit — ` +
+      "install it for this repo with `npm i -D @jawache/flow`, or for every repo with `npm i -g @jawache/flow`.",
+  };
 }
 
 /**
