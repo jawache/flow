@@ -78,6 +78,7 @@ describe("the compiler refuses every grammar misuse", () => {
     expect(fixtureFiles).toEqual([
       "breadcrumb-no-prose.ts",
       "dead-scope.ts",
+      "empty-scope.ts",
       "missing-mandatory.ts",
       "missing-parameter-field.ts",
       "missing-parameter.ts",

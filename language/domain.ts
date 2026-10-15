@@ -758,6 +758,22 @@ type Scoping<At extends Moment, Verb, Scopable extends Moment = PathMoment> = [E
   ? (dead: DeadScope) => never
   : Verb;
 
+/** What a bare `.on()` / `.ignore()` failed to pass: the editor shows it beside the missing argument. */
+type EmptyScope = "flow: .on()/.ignore() with no globs narrows nothing — give it at least one glob";
+
+/**
+ * `.on(…)` / `.ignore(…)` as a call that takes at least one glob — the compile-time half of the
+ * empty-scope rule.
+ *
+ * Not `(glob: string, ...more: string[])`, and that is the whole design: a shipped pack scopes with
+ * `.on(...repo.files)`, a list whose length is the repo's to choose, and a spread of `string[]`
+ * into a first-required parameter is refused whether the list is empty or not. So the call infers
+ * the arguments it was given, and only the arguments KNOWN to be none — a literal `.on()` — land
+ * on a required parameter that was not passed. A spread list that turns out empty is the load's
+ * `empty-scope` refusal to catch. Both halves, always.
+ */
+type Globs<Next> = <G extends readonly string[]>(...globs: G extends readonly [] ? [noGlobs: EmptyScope] : G) => Next;
+
 /** Anything a pack may file under an entry name. The one shape `definePack` walks. */
 export interface Sentence<S extends EntrySpec = EntrySpec> {
   readonly spec: S;
@@ -778,12 +794,8 @@ export interface GuardrailSentence<Spoken extends GuardrailKey = never, At exten
     <M extends GuardrailMoment[]>(...moments: M) => GuardrailSentence<Spoken | "at", M[number]>
   >;
   readonly for: Once<Spoken, "for", (...categories: Category[]) => GuardrailSentence<Spoken | "for", At>>;
-  readonly on: Once<Spoken, "on", Scoping<At, (...globs: string[]) => GuardrailSentence<Spoken | "on", At>>>;
-  readonly ignore: Once<
-    Spoken,
-    "ignore",
-    Scoping<At, (...globs: string[]) => GuardrailSentence<Spoken | "ignore", At>>
-  >;
+  readonly on: Once<Spoken, "on", Scoping<At, Globs<GuardrailSentence<Spoken | "on", At>>>>;
+  readonly ignore: Once<Spoken, "ignore", Scoping<At, Globs<GuardrailSentence<Spoken | "ignore", At>>>>;
   readonly check: Once<Spoken, "check", (check: Check) => GuardrailSentence<Spoken | "check", At>>;
   readonly message: Once<Spoken, "message", (message: string) => GuardrailSentence<Spoken | "message", At>>;
   readonly disabled: Once<Spoken, "disabled", (reason?: string) => GuardrailSentence<Spoken | "disabled", At>>;
@@ -805,15 +817,11 @@ export interface BreadcrumbSentence<
     <M extends BreadcrumbMoment[]>(...moments: M) => BreadcrumbSentence<Spoken | "at", M[number]>
   >;
   readonly for: Once<Spoken, "for", (...categories: Category[]) => BreadcrumbSentence<Spoken | "for", At>>;
-  readonly on: Once<
-    Spoken,
-    "on",
-    Scoping<At, (...globs: string[]) => BreadcrumbSentence<Spoken | "on", At>, BriefScopeMoment>
-  >;
+  readonly on: Once<Spoken, "on", Scoping<At, Globs<BreadcrumbSentence<Spoken | "on", At>>, BriefScopeMoment>>;
   readonly ignore: Once<
     Spoken,
     "ignore",
-    Scoping<At, (...globs: string[]) => BreadcrumbSentence<Spoken | "ignore", At>, BriefScopeMoment>
+    Scoping<At, Globs<BreadcrumbSentence<Spoken | "ignore", At>>, BriefScopeMoment>
   >;
   readonly text: Once<Spoken, "text", (text: string) => BreadcrumbSentence<Spoken | "text", At>>;
   readonly file: Once<Spoken, "file", (path: string) => BreadcrumbSentence<Spoken | "file", At>>;
@@ -1232,8 +1240,8 @@ interface OverrideChain<Kind extends EntrySpec["kind"], Spoken extends OverrideK
     ) => OverrideChain<Kind, Spoken | "at">
   >;
   readonly for: Once<Spoken, "for", (...categories: Category[]) => OverrideChain<Kind, Spoken | "for">>;
-  readonly on: Once<Spoken, "on", (...globs: string[]) => OverrideChain<Kind, Spoken | "on">>;
-  readonly ignore: Once<Spoken, "ignore", (...globs: string[]) => OverrideChain<Kind, Spoken | "ignore">>;
+  readonly on: Once<Spoken, "on", Globs<OverrideChain<Kind, Spoken | "on">>>;
+  readonly ignore: Once<Spoken, "ignore", Globs<OverrideChain<Kind, Spoken | "ignore">>>;
   readonly message: Kind extends "guardrail"
     ? Once<Spoken, "message", (message: string) => OverrideChain<Kind, Spoken | "message">>
     : never;
