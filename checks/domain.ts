@@ -510,7 +510,12 @@ export async function exportedNames(content: string): Promise<string[]> {
   return [...out];
 }
 
-/** Every exported symbol is referenced in its sibling test. */
+/**
+ * Every exported symbol is referenced in its sibling test.
+ *
+ * One line naming the test once and every missing export after it, because the test is the same
+ * for all of them: a line per export repeated the path, and in a big file pushed the names apart.
+ */
 export const symbolsInSibling = defineCheck(
   (opts: { sibling: string }): Check =>
     async (ctx) => {
@@ -519,7 +524,7 @@ export const symbolsInSibling = defineCheck(
       if (!(await ctx.fs.exists(sibling))) return ctx.fail(`sibling test not found: ${sibling}`);
       const text = await ctx.fs.read(sibling);
       const missing = unreferenced(await exportedNames(content), text);
-      return answer(ctx, missing.map((n) => `exported '${n}' is never referenced in ${sibling}`));
+      return answer(ctx, missing.length === 0 ? [] : [`not referenced in ${sibling}: ${missing.join(", ")}`]);
     },
 );
 
