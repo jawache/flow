@@ -226,7 +226,7 @@ export const fcis = definePack("fcis", (repo: Convention) => {
       .at(write, commit)
       .on(...repo.files)
       .ignore("**/*.test.ts")
-      .description("Every exported pure function is at least referenced in its test — the 'wrote no test' nudge.")
+      .description("Every pure export is at least referenced in its test — the 'wrote no test' nudge.")
       .check(symbolsInSibling({ sibling }))
       .message(
         "The exports listed below are never named in this file's test. Write a test that uses each one, then write the change again: a reference is enough, as this is a nudge, not coverage.",
