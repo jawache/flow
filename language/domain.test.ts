@@ -15,7 +15,6 @@ import {
   BREADCRUMB_MOMENTS,
   type BreadcrumbSpec,
   cannedWorld,
-  type Cases,
   chain,
   type Check,
   checkSettings,
@@ -35,7 +34,6 @@ import {
   GUARDRAIL_KEYS,
   GUARDRAIL_MOMENTS,
   type GuardrailSpec,
-  hasBlockCase,
   isBreadcrumbMoment,
   isCategory,
   isGuardrailMoment,
@@ -425,22 +423,6 @@ describe("a pack whose parameters are all optional", () => {
     const load = loadConfig(defineConfig([{ kind: "pack", pack: packDefinition(required), params: undefined, hasParams: false }]));
     expect(load.ok).toBe(false);
     expect(!load.ok && load.refusals[0]?.code).toBe("missing-parameter");
-  });
-});
-
-describe("hasBlockCase", () => {
-  it("is true when the block arm carries a case, whatever the pass arm holds", () => {
-    expect(hasBlockCase({ block: ["git push origin main"] })).toBe(true);
-    expect(hasBlockCase({ pass: ["ls"], block: [{ path: "a.ts", content: "TODO" }] })).toBe(true);
-  });
-
-  it("is false when no block case is written, however many pass cases are", () => {
-    const empty: Cases = {};
-    expect(hasBlockCase(empty)).toBe(false);
-    expect(hasBlockCase({ pass: [], block: [] })).toBe(false);
-    expect(hasBlockCase(undefined)).toBe(false);
-    expect(hasBlockCase({ pass: [{ path: "a.ts", content: "" }] })).toBe(false);
-    expect(hasBlockCase({ pass: [{ staged: ["package.json"] }], block: [] })).toBe(false);
   });
 });
 
@@ -985,6 +967,11 @@ describe("the load refuses", () => {
       x: { spec: { kind: "guardrail", at: [commit], check: passes, message: "m", test: {} } },
     });
     expect(shape(refusalsOf([empty]))).toEqual([["no-cases", "empty.x"]]);
+
+    const bothEmpty = rawPack("bothEmpty", {
+      x: { spec: { kind: "guardrail", at: [commit], check: passes, message: "m", test: { pass: [], block: [] } } },
+    });
+    expect(shape(refusalsOf([bothEmpty]))).toEqual([["no-cases", "bothEmpty.x"]]);
   });
 
   it("a guardrail that carries pass cases and no block case — passing proves nothing it catches", () => {

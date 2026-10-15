@@ -529,14 +529,6 @@ export interface Cases {
   readonly block?: readonly Case[];
 }
 
-/**
- * Does this cases block hold a block case? A guardrail whose answer is no does not load: pass cases
- * alone prove nothing about what the rule catches.
- */
-export function hasBlockCase(cases: Cases | undefined): boolean {
-  return (cases?.block?.length ?? 0) > 0;
-}
-
 /** What a recorded world was reached for and could not answer. */
 export interface Unanswered {
   readonly kind: "exec" | "read";
@@ -1591,7 +1583,9 @@ function judge(draft: Draft): Refusal[] {
       `\`${id}\` narrows by path but fires only at ${at.map((m) => `\`${m}\``).join(", ")}, which name no subject to narrow — its \`on\`/\`ignore\` would be read by nothing. Drop the scope, or add a moment that carries one (${(spec.kind === "breadcrumb" ? BRIEF_SCOPE_MOMENTS : PATH_MOMENTS).join(" · ")}).`,
     );
 
-  if (spec.kind === "guardrail" && !hasBlockCase(spec.test))
+  // NO BLOCK CASE. Pass cases alone prove nothing about what the rule catches, so a guardrail
+  // without a block case does not load, however many pass cases it has.
+  if (spec.kind === "guardrail" && (spec.test?.block?.length ?? 0) === 0)
     say(
       "no-cases",
       `\`${id}\` has no block case. A block case is an input the rule must refuse: add one to \`.test({ block })\`. Pass cases alone prove nothing about what the rule catches.`,
