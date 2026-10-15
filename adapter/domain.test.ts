@@ -129,6 +129,7 @@ import {
   staticPrefix,
   PRE_COMMIT,
   GATE_LOCAL_LINE,
+  GATE_RUN_LINE,
   HOOKS_DIR,
   LOCAL_BIN,
   GATE_PATH,
@@ -1995,6 +1996,17 @@ describe("planInit — a repo that already has a pre-commit hook", () => {
     const said = initLines(theirs, []).join("\n");
     expect(said).toContain("kept");
     expect(said, "the same instruction status gives, in the same words").toContain(ADD_THE_GATE_LINE);
+  });
+
+  // FOLLOWED TO THE LETTER, the advice must leave a dev-dependency repo able to commit: both lines,
+  // the one that puts the repo's own flow first and the one that runs it.
+  it("names both of the gate's lines, and a hook that follows it is armed and finds the repo's own flow", () => {
+    expect(ADD_THE_GATE_LINE).toContain(GATE_LOCAL_LINE);
+    expect(ADD_THE_GATE_LINE).toContain(GATE_RUN_LINE);
+    const followed = `#!/bin/sh\nnpm test\n${GATE_LOCAL_LINE}\n${GATE_RUN_LINE}\n`;
+    expect(armsFlow(followed)).toBe(true);
+    const fitting = status(statusFacts({ gateText: followed, binary: { modules: true, path: false } })).fittings.find((f) => f.id === "binary");
+    expect(fitting?.ok, fitting?.detail).toBe(true);
   });
 
   it("never overwrites flow's OLD gate either, and says which line to replace", () => {

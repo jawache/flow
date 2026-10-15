@@ -68,6 +68,14 @@ With a dev dependency, type each `flow` command in this guide as `npx flow`.
 
 - **If you want an empty config**, run `flow init --empty`. It writes the same wiring with a config that binds no packs.
 - **If you already have a config or a commit hook**, run `flow init` anyway. It never writes over `flow.config.ts` or `.githooks/pre-commit`, and adds only what is missing.
+
+  If your commit hook does not run flow, add these two lines to the end of it. The first puts the repo's own flow first, and the second runs the gate:
+
+  ```
+  PATH="$PWD/node_modules/.bin:$PATH"
+  exec flow hook commit
+  ```
+
 - **If `core.hooksPath` already points at another folder**, such as `.husky/_`, move those hooks into `.githooks/` first. `flow init` sets `core.hooksPath` to `.githooks`, and git then stops running the hooks in the old folder.
 - **If you cloned a repo that already uses flow**, run `flow init` in the clone. `core.hooksPath` is a setting of one clone, so each clone needs it. If the repo has flow as a dev dependency, run `npm install` first.
 - **If you want to work on flow itself**, clone it and run `just install`, then `just link`. That puts your checkout on your `PATH` in place of the global install.

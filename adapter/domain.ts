@@ -3665,13 +3665,24 @@ export const GATE_PATH = `${HOOKS_DIR}/pre-commit`;
 export const SET_HOOKS_PATH = `git config core.hooksPath ${HOOKS_DIR}`;
 
 /**
- * How to arm a gate flow will not write over, in the ONE wording both readers use.
+ * The gate's line that puts the repo's own flow first: git runs the hook from the repo's root, so
+ * `$PWD` is the repo. Written by `init`, looked for by `status`, and named in its fix.
+ */
+export const GATE_LOCAL_LINE = `PATH="$PWD/${LOCAL_BIN}:$PATH"`;
+
+/** The gate's line that runs flow, last, so its exit code is the hook's. */
+export const GATE_RUN_LINE = "exec flow hook commit";
+
+/**
+ * How to arm a gate flow will not write over, in the ONE wording both readers use. Both of the
+ * gate's lines: the run line alone finds flow on the PATH alone, and a repo with flow only as a dev
+ * dependency then fails every commit.
  *
  * `init` says it about the hook it just declined to overwrite; `status` says it about the hook it
  * found unarmed. The same instruction, at the two moments a person can meet it — and two spellings
  * of an instruction are two instructions the day one of them is edited.
  */
-export const ADD_THE_GATE_LINE = "add `flow hook commit` to it";
+export const ADD_THE_GATE_LINE = `add \`${GATE_LOCAL_LINE}\` and then \`${GATE_RUN_LINE}\` to the end of it`;
 
 /**
  * How to bring a gate written for the old verb up to date, in the ONE wording both readers use.
@@ -3689,12 +3700,6 @@ export const UPDATE_THE_GATE_LINE = "replace its `flow commit …` line with `ex
  * flow asks git what the commit adds, changes and deletes, so there is one source of the staged set
  * whoever calls the gate, and nothing in this file to filter it or to skip flow when it is empty.
  */
-/**
- * The gate's line that puts the repo's own flow first: git runs the hook from the repo's root, so
- * `$PWD` is the repo. Written by `init`, looked for by `status`, and named in its fix.
- */
-export const GATE_LOCAL_LINE = `PATH="$PWD/${LOCAL_BIN}:$PATH"`;
-
 export const PRE_COMMIT = `#!/bin/sh
 # The flow commit gate. Written by \`flow init\`; \`${SET_HOOKS_PATH}\` arms it.
 #
@@ -3706,7 +3711,7 @@ export const PRE_COMMIT = `#!/bin/sh
 # git runs this from the repo's root, so the repo's own flow, a dev dependency's, runs before any
 # on the PATH.
 ${GATE_LOCAL_LINE}
-exec flow hook commit
+${GATE_RUN_LINE}
 `;
 
 /** A hook's commands, without its comments — a comment that names the gate does not run it. */
