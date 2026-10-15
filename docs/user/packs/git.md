@@ -1,8 +1,10 @@
-[flow packs](./index.md) › git
+---
+summary: "7 guardrails · 1 breadcrumb · fires at: session · command · write · commit · takes 3 parameters"
+---
 
 # The `git` pack
 
-7 guardrails · 1 breadcrumb · fires at: session · command · write · commit · takes 3 parameters
+[flow packs](./index.md) › git
 
 Conventional commit headers, computed versions, and nothing destroys uncommitted work.
 

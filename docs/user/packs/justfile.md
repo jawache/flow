@@ -1,8 +1,10 @@
-[flow packs](./index.md) › justfile
+---
+summary: "3 guardrails · 2 breadcrumbs · fires at: session · touch · write · commit · command · takes 3 parameters"
+---
 
 # The `justfile` pack
 
-3 guardrails · 2 breadcrumbs · fires at: session · touch · write · commit · command · takes 3 parameters
+[flow packs](./index.md) › justfile
 
 The justfile is the repo's TOOL CATALOGUE.
 

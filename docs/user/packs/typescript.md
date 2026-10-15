@@ -1,8 +1,10 @@
-[flow packs](./index.md) › typescript
+---
+summary: "4 guardrails · 1 breadcrumb · fires at: touch · write · commit · takes 5 parameters"
+---
 
 # The `typescript` pack
 
-4 guardrails · 1 breadcrumb · fires at: touch · write · commit · takes 5 parameters
+[flow packs](./index.md) › typescript
 
 TypeScript discipline as shared configuration: strict stays on, the checker is never silenced.
 

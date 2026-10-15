@@ -1,8 +1,10 @@
-[flow packs](./index.md) › tdd
+---
+summary: "6 guardrails · 1 breadcrumb · fires at: touch · write · commit · takes 2 parameters"
+---
 
 # The `tdd` pack
 
-6 guardrails · 1 breadcrumb · fires at: touch · write · commit · takes 2 parameters
+[flow packs](./index.md) › tdd
 
 Test-first artefacts exist; tests test behaviour, not implementation; the suite gates the commit.
 

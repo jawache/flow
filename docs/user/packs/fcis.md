@@ -1,8 +1,10 @@
-[flow packs](./index.md) › fcis
+---
+summary: "7 guardrails · 1 breadcrumb · fires at: touch · write · commit · command · takes 6 parameters"
+---
 
 # The `fcis` pack
 
-7 guardrails · 1 breadcrumb · fires at: touch · write · commit · command · takes 6 parameters
+[flow packs](./index.md) › fcis
 
 Functional Core, Imperative Shell (Bernhardt, "Boundaries", SCNA 2012).
 

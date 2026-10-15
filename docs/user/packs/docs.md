@@ -1,8 +1,10 @@
-[flow packs](./index.md) › docs
+---
+summary: "1 guardrail · 2 breadcrumbs · fires at: touch · write · commit · takes 2 parameters"
+---
 
 # The `docs` pack
 
-1 guardrail · 2 breadcrumbs · fires at: touch · write · commit · takes 2 parameters
+[flow packs](./index.md) › docs
 
 *No lead. Add a doc comment on `definePack` saying what this pack is for.*
 
