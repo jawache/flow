@@ -331,6 +331,16 @@ describe("a payload the host writes in pieces (#12)", () => {
     expect(answer.stderr).not.toContain("could not READ");
     expect(answer.code, answer.stderr).toBe(0);
   });
+
+  it("is read whole on a stdin already non-blocking before flow starts", async () => {
+    // The preload opens `process.stdin` before flow's first line runs, and that stream sets fd 0
+    // non-blocking, as a host may leave it. The read then meets EAGAIN between the pieces, and has
+    // to wait the pause out rather than give up.
+    const nonBlocking = ["--import", "data:text/javascript,process.stdin"];
+    const answer = await hookInPieces(repo, "post-tool-use", image(), { first: 16_384, pause: 300, node: nonBlocking });
+    expect(answer.stderr).not.toContain("could not READ");
+    expect(answer.code, answer.stderr).toBe(0);
+  });
 });
 
 /**

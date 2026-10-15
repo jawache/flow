@@ -26,7 +26,7 @@
 //   direction.
 
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isatty } from "node:tty";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -1061,6 +1061,38 @@ export type PayloadRead =
   | { readonly ok: true; readonly payload: HookPayload }
   | { readonly ok: false; readonly why: "unreadable" | "unparseable"; readonly detail: string };
 
+/** What `readStdin` sleeps on between tries: nothing ever wakes it, so each wait runs its full timeout. */
+const NAP = new Int32Array(new SharedArrayBuffer(4));
+
+/** How long one EAGAIN waits before the next try: the host's next write is usually milliseconds away. */
+const STDIN_NAP_MS = 5;
+
+/**
+ * Every byte on fd 0, to the end of the stream.
+ *
+ * `readFileSync(0)` gives up the first time a NON-BLOCKING stdin is empty, with EAGAIN, and empty
+ * there means "the host has not written the next piece yet", not "there is no more". A payload far
+ * larger than a pipe's buffer arrives in pieces, so it is exactly the payload that read loses (#12).
+ * This one waits for the next piece instead, and the thread SLEEPS between tries rather than
+ * spinning. Every other error is thrown, for `readPayload` to report.
+ */
+function readStdin(): string {
+  const pieces: Buffer[] = [];
+  for (;;) {
+    const piece = Buffer.alloc(64 * 1024);
+    let got: number;
+    try {
+      got = readSync(0, piece, 0, piece.length, null);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EAGAIN") throw error;
+      Atomics.wait(NAP, 0, 0, STDIN_NAP_MS);
+      continue;
+    }
+    if (got === 0) return Buffer.concat(pieces).toString("utf8");
+    pieces.push(piece.subarray(0, got));
+  }
+}
+
 /**
  * Read the payload, and REPORT which of three things happened.
  *
@@ -1081,7 +1113,7 @@ export function readPayload(): PayloadRead {
   if (isatty(0)) return { ok: true, payload: {} };
   let raw: string;
   try {
-    raw = readFileSync(0, "utf8");
+    raw = readStdin();
   } catch (error) {
     // The errno is the actionable half, and only the errno: a raw error string can carry a
     // stack-shaped prefix, and this text goes in front of the model.
