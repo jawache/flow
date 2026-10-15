@@ -151,8 +151,9 @@ function ignoredPaths(root: string, literals: readonly string[]): string[] {
  * file holding a stray comma or a `//` comment gets replaced by five registrations and nothing
  * else — every other key in it belonging to somebody, and no safe merge into bytes nobody parsed.
  *
- * `root` is what a repo-relative path is read against; the host's settings file is absolute and
- * passes straight through, which is the same rule every other read in the package follows.
+ * `root` is what a repo-relative path is read against: a dev dependency's `.claude/settings.json`
+ * is one. The machine-wide settings file is absolute and passes straight through, which is the
+ * same rule every other read in the package follows.
  */
 function parsedFile(root: string, path: string): { readonly value: unknown; readonly unreadable: boolean } {
   const text = readText(root, path);

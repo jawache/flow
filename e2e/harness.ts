@@ -30,7 +30,9 @@
 //                       driven, because that is what a harness does and a rail that had to guess
 //                       would be guessing in the suite too.
 //   PATH                a directory holding one `flow` shim, so GIT's own pre-commit hook — which
-//                       flow neither spawns nor configures — can find the binary under test.
+//                       flow neither spawns nor configures — can find the binary under test. Or
+//                       the whole PATH, in place of the machine's, for a run that must find no
+//                       `flow` there at all (`Rig.path`).
 
 import { spawn, spawnSync } from "node:child_process";
 import { copyFileSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";

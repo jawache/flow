@@ -2823,6 +2823,12 @@ export function mergeNarratives(each: readonly { session: string; read: Narrativ
 // ── weaken-after-block ─────────────────────────────────────────────────────
 
 /**
+ * The repo's own Claude Code settings file, relative to the repo root: guarded here, and where
+ * `settingsFileFor` registers a dev dependency's hooks.
+ */
+const REPO_SETTINGS = ".claude/settings.json";
+
+/**
  * The HOST's half of the guard: where the hooks that invoke any of it are registered.
  *
  * Fixed, because these are the harness's own file names and not a repo's choice — unlike the
@@ -2845,12 +2851,6 @@ export function mergeNarratives(each: readonly { session: string; read: Narrativ
  *     door — which would put one harness's file names into the GRAMMAR every config is written
  *     in, and that is the coupling the fence exists to prevent.
  */
-/**
- * The repo's own Claude Code settings file, relative to the repo root: guarded here, and where
- * `settingsFileFor` registers a dev dependency's hooks.
- */
-const REPO_SETTINGS = ".claude/settings.json";
-
 export const HOST_SURFACE: readonly string[] = [REPO_SETTINGS, ".claude/settings.local.json", ".claude/agents/**"];
 
 /**
@@ -3850,8 +3850,9 @@ export interface InitFacts {
   readonly hasFlowDir: boolean;
   /** `git config core.hooksPath` as it stands. */
   readonly hooksPath: string | null;
+  /** The settings file flow's hooks go in: the repo's own, repo-relative, or the machine-wide one. */
   readonly settingsPath: string;
-  /** The parsed host settings file. */
+  /** That file, parsed. */
   readonly settings: unknown;
   /**
    * The settings file is THERE and would not parse.
