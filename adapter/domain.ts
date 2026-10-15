@@ -3533,14 +3533,17 @@ function isOurs(entry: unknown): boolean {
   return commandsOf(entry).some((command) => ourHookCommand(command));
 }
 
-/** The commands of one entry of a hook array. Loose, like everything read out of the file. */
+/** The command of one hook inside an entry, or null when it has none. Loose, like everything read out of the file. */
+function commandOf(held: unknown): string | null {
+  const command = (held as { command?: unknown } | null)?.command;
+  return typeof command === "string" ? command : null;
+}
+
+/** The commands of one entry of a hook array. */
 function commandsOf(entry: unknown): string[] {
   const inner = (entry as { hooks?: unknown } | null)?.hooks;
   if (!Array.isArray(inner)) return [];
-  return inner.flatMap((held) => {
-    const command = (held as { command?: unknown } | null)?.command;
-    return typeof command === "string" ? [command] : [];
-  });
+  return inner.flatMap((held) => commandOf(held) ?? []);
 }
 
 /** The events this settings file already calls flow for. What makes init idempotent and status honest. */
@@ -3617,8 +3620,8 @@ export function withRegistrations(settings: unknown): { settings: unknown; added
         ...held,
         ...(stale.has(event) ? { matcher: matcherOf.get(event) } : {}),
         hooks: held.hooks.map((inner) => {
-          const command = (inner as { command?: unknown } | null)?.command;
-          const word = typeof command === "string" ? bareHook(command) : null;
+          const command = commandOf(inner);
+          const word = command === null ? null : bareHook(command);
           return word === null ? inner : { ...(inner as Record<string, unknown>), command: hookCommand(word) };
         }),
       };
@@ -3632,17 +3635,17 @@ export function withRegistrations(settings: unknown): { settings: unknown; added
       },
     ];
   }
-  const why = (event: string): string =>
-    [stale.has(event) ? "widened to every tool" : "", bare.has(event) ? `now runs the flow in ${LOCAL_BIN} first` : ""]
-      .filter((said) => said !== "")
-      .join(", ");
-  const order = [...HOOK_REGISTRATIONS.map((r) => r.event), ...bare];
-  return {
-    settings: { ...base, hooks },
-    added: [...new Set(order)]
-      .filter((event) => stale.has(event) || bare.has(event) || wanted.some((r) => r.event === event))
-      .map((event) => (why(event) === "" ? event : `${event} (${why(event)})`)),
-  };
+  // THE REPORT, in registration order: each event added, widened or rewritten, once, with why.
+  const added: string[] = [];
+  for (const event of new Set([...HOOK_REGISTRATIONS.map((r) => r.event), ...bare])) {
+    const why = [
+      ...(stale.has(event) ? ["widened to every tool"] : []),
+      ...(bare.has(event) ? [`now runs the flow in ${LOCAL_BIN} first`] : []),
+    ];
+    if (why.length > 0) added.push(`${event} (${why.join(", ")})`);
+    else if (!already.has(event)) added.push(event);
+  }
+  return { settings: { ...base, hooks }, added };
 }
 
 // ── the git gate ─────────────────────────────────────────────────────────────
