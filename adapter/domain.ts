@@ -1218,7 +1218,7 @@ export function authored(nameStatus: string, differsAfter: readonly string[] | n
     const path = fields[i + 1] ?? "";
     if (path === "") continue;
     const matchesHead = after !== null && !after.has(path);
-    const gits = matchesHead && (!status.startsWith("D") || (differsBefore !== null && before.has(path)));
+    const gits = matchesHead && (!status.startsWith("D") || before.has(path));
     if (!gits) out.push(path);
   }
   return out;
