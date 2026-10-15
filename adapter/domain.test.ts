@@ -2506,17 +2506,6 @@ describe("reversal — exactly the refused files go back", () => {
   it("reverts nothing on a refusal that names no landed change — a revert is never a guess", () => {
     expect(reversal(changes, [{ moment: "command", block: block("x") }])).toStrictEqual({ revert: [], kept: ["src/a.ts", "src/b.ts"] });
   });
-
-  it("puts nothing back while the config will not load: what a call wrote stands", () => {
-    const landed = [
-      { path: "flow.config.ts", before: "old", after: "fixed" },
-      { path: "package-lock.json", before: "a", after: "b" },
-    ];
-    const events = toEvent("post-tool-use", pre("Bash", { command: "npm install" }), { ...world(), changes: landed });
-    const answer = whileBroken(events, "the config will not load");
-    expect(reversal(landed, answer.refused)).toStrictEqual({ revert: [], kept: ["flow.config.ts", "package-lock.json"] });
-    expect(reversal(landed, answer.refused, { revert: "all", overlap: [] }).revert, "not even under revert: all").toStrictEqual([]);
-  });
 });
 
 describe("an observed refusal — its own banner, and what was put back", () => {

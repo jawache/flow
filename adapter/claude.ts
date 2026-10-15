@@ -757,14 +757,14 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
   // nothing and hands the agent the load error. They are asked in sequence only because the second
   // needs the LoadResult the first does not have.
   //
-  // NOTHING IS PUT BACK on the after-call rail: `settle` reverts only what a rule refused, and
-  // nothing refused. What the call wrote stands — `npm ci`'s `node_modules`, an edit to the config —
-  // and the commit gate, which stays shut until the config loads, is where it is checked. `settle`
-  // is still called because it is also where the call's snapshot is finished.
+  // NOTHING IS PUT BACK on the after-call rail, because nothing is refused: what the call wrote
+  // stands — `npm ci`'s `node_modules`, an edit to the config — and the commit gate, which stays
+  // shut until the config loads, is where it is checked. The call is over, so its snapshot is.
   const outage = (sentence: string): HookResult => {
     if (off) return ALLOW;
     const answer = whileBroken(toEvent(hook, payload, eventWorld(root, session, changes)), sentence);
-    const result = toResult(hook, settle(answer));
+    if (delta !== null) finish();
+    const result = toResult(hook, answer);
     // TURN-END IS TOLD RATHER THAN HELD. `whileBroken` says why; this is the only place that can
     // write it, because the Stop rail has no context channel and `toResult` speaks only the two the
     // host reads. Exit 0 — the turn ends, and the sentence goes where a human and the log see it.
