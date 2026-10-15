@@ -10,6 +10,10 @@
 #
 # Which environments exist is the repo's own fact: the `dx` recipe below reads dev|staging|prod,
 # and a repo with only dev|prod simply never passes staging.
+#
+# The key is kept in `.env.keys`, and flow.config.ts says so with `custody: "file"`. `env-encrypt`
+# passes `--no-native` for it: without the switch, dotenvx 2.25 and later write a new key to the OS
+# secret store and no `.env.keys`. `dx` needs no switch — `dotenvx run` reads `.env.keys` first.
 
 [doc("Run any command with this environment's secrets injected — the ONE env seam. Usage: just dx dev npm run build")]
 dx env +cmd:
@@ -24,7 +28,7 @@ env-encrypt:
     # exit 1 having done its work. The `echo` below hid it here; a repo copying the seam without
     # one got a red recipe for no reason.
     for f in .env .env.development.local .env.staging .env.production; do
-      if [ -f "$f" ]; then dotenvx encrypt -f "$f" -ek 'PUBLIC_*'; fi
+      if [ -f "$f" ]; then dotenvx encrypt --no-native -f "$f" -ek 'PUBLIC_*'; fi
     done
     echo "sealed. Re-run after editing values; quote # / $ / space values with SINGLE quotes or they truncate."
 
