@@ -14,7 +14,7 @@ Before each tool call, flow records the content of every file in the working tre
 - **Each file the call removed** is passed to the delete rules.
 - **Each breadcrumb whose globs match a changed path** is shown to the agent.
 
-A file that matches HEAD after the call is left out of all three, because git put it there. See [Files git puts in place](#files-git-puts-in-place).
+A file git put in place is left out of all three. That is a file that matches HEAD after the call, or one the call removed that HEAD held before the call and does not hold after it. Either counts only when HEAD after the call is a commit that existed before the call. See [Files git puts in place](#files-git-puts-in-place).
 
 Which rules a change is passed to depends on the change on disk, not on the command that made it. So a heredoc, `sed -i`, a Python script, a `just` recipe, an MCP tool and a subagent all reach the rules by the same route. That leaves one mechanism to understand, and no second one to reach for when a change arrives some new way.
 
