@@ -30,8 +30,26 @@
 // The PUBLIC surface is ../index.ts, not this file. A pack or a config imports from there — which
 // is what leaves this layout free to move again.
 
-// The ONE import: `../glob.ts`, the package's single shared file, because a scope's `on` / `ignore`
-// keys are glob-shaped and the dialect they speak has exactly one parser.
+// TWO imports. `../glob.ts`, the package's single shared file, because a scope's `on` / `ignore`
+// keys are glob-shaped and the dialect they speak has exactly one parser. And `unbash`, a bash
+// parser with no dependencies and no I/O, because `ctx.commands` is a shell line read as code and
+// shell has exactly one parser here too — see THE PARSE.
+import { parse as parseBash } from "unbash";
+import type {
+  ArithmeticExpression,
+  CommandNode,
+  ParameterOperation,
+  ParsedScript,
+  PipelineNode,
+  Redirection,
+  Statement,
+  TestExpression,
+  Word,
+  WordPart,
+  Command as BashCommand,
+  AndOr,
+  CompoundList,
+} from "unbash";
 import { matchAny } from "../glob.ts";
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -362,6 +380,372 @@ export const verdict = {
  * no way to grow a fourth capability that a `.test()` case has no means of recording.
  */
 export type World = Pick<Ctx, "exec" | "fs" | "git">;
+
+// ── THE PARSE — a shell line read as code, once, and handed to every check as `ctx.commands` ──
+//
+// A regex over the raw line cannot tell one command from the next, or a command from the same
+// words inside a quoted argument, so nothing in flow decides what a command does by matching the
+// line. `unbash` reads it as bash; this section reduces its tree to the one shape a check needs:
+// the simple commands, each with the program that actually runs. docs/user/reference/ctx.md
+// states the fields, and docs/user/explanation/what-the-guard-sees.md § The parse is the why.
+//
+// What cost time to find in unbash: a word's `parts` is a lazy getter, so the walk below reads it
+// by name and never by `Object.keys`; a parse error inside a nested script sits on THAT script's
+// `errors`, not the root's, so every script the walk enters is asked; and a quoted heredoc's body
+// carries no parts at all, which is the shell running nothing in it.
+
+/** One heredoc a command is fed. `quoted` is a delimiter in quotes or after a backslash. */
+export interface ShellHeredoc {
+  readonly body: string;
+  readonly quoted: boolean;
+}
+
+/** One `$( … )` or backtick substitution the shell runs: the command inside, and which spelling. */
+export interface ShellSubstitution {
+  readonly text: string;
+  readonly backtick: boolean;
+}
+
+/** One simple command in a parsed line — the fields docs/user/reference/ctx.md promises. */
+export interface ShellCommand {
+  /** The program that runs, after any `FOO=1` assignment and any wrapper. */
+  readonly program: string;
+  /** Its arguments as the program receives them, quotes removed. */
+  readonly args: readonly string[];
+  /** `program` and `args` joined by single spaces. */
+  readonly text: string;
+  readonly heredocs: readonly ShellHeredoc[];
+  /** What the shell runs while building this command's arguments and unquoted heredocs. */
+  readonly substitutions: readonly ShellSubstitution[];
+  /** Inside a substitution, a `<( … )`, a `bash -c` or `eval` string, or a heredoc fed to a shell. */
+  readonly nested: boolean;
+}
+
+/**
+ * The wrappers stepped past to the program that runs, each with the options that take a value —
+ * the word after one of those is the value, not the program. `assignments` is env's `NAME=value`
+ * list, `operands` the words a wrapper takes before the program (timeout's duration), and `lookup`
+ * the flags that make it run nothing at all: `command -v rm` asks where rm is.
+ */
+const WRAPPERS: Readonly<
+  Record<string, { readonly valued: readonly string[]; readonly assignments?: true; readonly operands?: number; readonly lookup?: readonly string[] }>
+> = {
+  sudo: { valued: ["-u", "-g", "-p", "-C", "-D", "-r", "-t", "-T", "-U", "--user", "--group", "--prompt", "--chdir", "--role", "--type"] },
+  env: { valued: ["-u", "-C", "--unset", "--chdir"], assignments: true },
+  nohup: { valued: [] },
+  nice: { valued: ["-n", "--adjustment"] },
+  time: { valued: ["-o", "-f", "--output", "--format"] },
+  timeout: { valued: ["-s", "-k", "--signal", "--kill-after"], operands: 1 },
+  command: { valued: [], lookup: ["-v", "-V"] },
+  exec: { valued: ["-a"] },
+  xargs: {
+    valued: ["-I", "-L", "-n", "-P", "-s", "-d", "-E", "-a", "--arg-file", "--delimiter", "--max-args", "--max-procs", "--max-chars", "--eof", "--max-lines", "--process-slot-var"],
+  },
+};
+
+/** The shells whose `-c` string, or whose stdin heredoc, is itself a script the parse reads. */
+const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh"]);
+
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+const basename = (program: string): string => program.slice(program.lastIndexOf("/") + 1);
+
+/** Step past every wrapper at the head of an argv. A wrapper with nothing after it stays the program. */
+function stepWrappers(argv: readonly string[]): readonly string[] {
+  let rest = argv;
+  for (;;) {
+    const spec = WRAPPERS[basename(rest[0] ?? "")];
+    if (spec === undefined) return rest;
+    const flags: string[] = [];
+    let i = 1;
+    while (i < rest.length) {
+      const word = rest[i] ?? "";
+      if (word === "--") {
+        i += 1;
+        break;
+      }
+      if (spec.assignments && ASSIGNMENT.test(word)) i += 1;
+      else if (word.startsWith("-") && word !== "-") {
+        flags.push(word);
+        i += spec.valued.includes(word) ? 2 : 1;
+      } else break;
+    }
+    i += spec.operands ?? 0;
+    if (spec.lookup?.some((flag) => flags.includes(flag)) || i >= rest.length) return rest;
+    rest = rest.slice(i);
+  }
+}
+
+/**
+ * What a shell is told to run: its `-c` string, or its stdin (a heredoc it is fed) when it has no
+ * script file to read, or nothing. `-o` and `-O` take the next word; any other flag word is flags.
+ */
+function shellInput(args: readonly string[]): { readonly string: string } | "stdin" | null {
+  let c = false;
+  let s = false;
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i] ?? "";
+    if (/^[-+][oO]$/.test(arg)) i += 1;
+    else if (/^[-+][A-Za-z]+$/.test(arg)) {
+      c ||= arg.startsWith("-") && arg.includes("c");
+      s ||= arg.startsWith("-") && arg.includes("s");
+    } else if (arg === "-" || arg.startsWith("--")) continue;
+    else return c ? { string: arg } : s ? "stdin" : null;
+  }
+  return c ? null : "stdin";
+}
+
+/** The command inside a substitution's text, without its `$( … )` or backticks. */
+function substitutionText(text: string): ShellSubstitution {
+  const backtick = text.startsWith("`");
+  return { text: (backtick ? text.slice(1, -1) : text.slice(2, -1)).trim(), backtick };
+}
+
+/**
+ * Parse one shell command line as bash: every simple command in it, nested ones included, in the
+ * order they appear — or `null` when the line, or any script nested inside it, does not parse.
+ */
+export function parseCommandLine(line: string): ShellCommand[] | null {
+  // An object, not a `let`: the walk below sets it from inside closures, which narrowing cannot see.
+  const fault = { found: false };
+
+  // A script the walk enters: the line itself, a substitution's body, a `bash -c` string.
+  const script = (s: ParsedScript | undefined, nested: boolean, out: ShellCommand[]): void => {
+    if (s === undefined || (s.errors?.length ?? 0) > 0) {
+      fault.found = true;
+      return;
+    }
+    for (const statement of s.commands) node(statement, nested, out);
+  };
+  const source = (text: string, out: ShellCommand[]): void => {
+    script(parseBash(text), true, out);
+  };
+
+  // A word's parts: every substitution in it is recorded for the command it belongs to (`subs`,
+  // null where it belongs to none) and the commands inside it are read as nested ones.
+  const word = (w: Word | undefined, subs: ShellSubstitution[] | null, out: ShellCommand[]): void => {
+    for (const part of w?.parts ?? []) wordPart(part, subs, out);
+  };
+  const wordPart = (part: WordPart, subs: ShellSubstitution[] | null, out: ShellCommand[]): void => {
+    switch (part.type) {
+      case "CommandExpansion":
+        subs?.push(substitutionText(part.text));
+        script(part.script, true, out);
+        return;
+      case "ProcessSubstitution":
+        script(part.script, true, out);
+        return;
+      case "DoubleQuoted":
+      case "LocaleString":
+        for (const child of part.parts) wordPart(child, subs, out);
+        return;
+      case "ExtendedGlob":
+      case "BraceExpansion":
+        for (const child of part.parts ?? []) wordPart(child, subs, out);
+        return;
+      case "ParameterExpansion":
+        word(part.index, subs, out);
+        if (part.operation !== undefined) operation(part.operation, subs, out);
+        return;
+      case "ArithmeticExpansion":
+        arithmetic(part.expression, subs, out);
+        return;
+      default:
+        return;
+    }
+  };
+  const operation = (op: ParameterOperation, subs: ShellSubstitution[] | null, out: ShellCommand[]): void => {
+    switch (op.type) {
+      case "Default":
+      case "Remove":
+      case "Transform":
+      case "CaseModification":
+        word(op.operand, subs, out);
+        return;
+      case "Replace":
+        word(op.pattern, subs, out);
+        word(op.replacement, subs, out);
+        return;
+      case "Slice":
+        word(op.offset, subs, out);
+        word(op.length, subs, out);
+        return;
+      default:
+        return;
+    }
+  };
+  const arithmetic = (e: ArithmeticExpression | undefined, subs: ShellSubstitution[] | null, out: ShellCommand[]): void => {
+    if (e === undefined) return;
+    switch (e.type) {
+      case "ArithmeticBinary":
+        arithmetic(e.left, subs, out);
+        arithmetic(e.right, subs, out);
+        return;
+      case "ArithmeticUnary":
+        arithmetic(e.operand, subs, out);
+        return;
+      case "ArithmeticTernary":
+        arithmetic(e.test, subs, out);
+        arithmetic(e.consequent, subs, out);
+        arithmetic(e.alternate, subs, out);
+        return;
+      case "ArithmeticGroup":
+        arithmetic(e.expression, subs, out);
+        return;
+      case "ArithmeticWord":
+        for (const part of e.parts ?? []) wordPart(part, subs, out);
+        return;
+      case "ArithmeticCommandExpansion":
+        subs?.push(substitutionText(e.text));
+        script(e.script, true, out);
+        return;
+    }
+  };
+  const test = (e: TestExpression, out: ShellCommand[]): void => {
+    switch (e.type) {
+      case "TestUnary":
+        word(e.operand, null, out);
+        return;
+      case "TestBinary":
+        word(e.left, null, out);
+        word(e.right, null, out);
+        return;
+      case "TestLogical":
+        test(e.left, out);
+        test(e.right, out);
+        return;
+      case "TestNot":
+        test(e.operand, out);
+        return;
+      case "TestGroup":
+        test(e.expression, out);
+        return;
+    }
+  };
+  // A redirection's target or body. A heredoc is recorded for its command; an unquoted one's body
+  // is expanded by the shell, so its substitutions are that command's too.
+  const redirection = (r: Redirection, heredocs: ShellHeredoc[] | null, subs: ShellSubstitution[] | null, out: ShellCommand[]): void => {
+    if (r.type !== "HereDoc") {
+      word(r.target, subs, out);
+      return;
+    }
+    const quoted = r.delimiter?.quoted ?? false;
+    heredocs?.push({ body: r.body.text, quoted });
+    if (!quoted) for (const part of r.body.parts ?? []) wordPart(part, subs, out);
+  };
+  const list = (l: CompoundList, nested: boolean, out: ShellCommand[]): void => {
+    for (const statement of l.commands) node(statement, nested, out);
+  };
+
+  const node = (n: Statement | AndOr | PipelineNode | CommandNode | CompoundList, nested: boolean, out: ShellCommand[]): void => {
+    switch (n.type) {
+      case "Statement":
+        node(n.command, nested, out);
+        return;
+      case "AndOr":
+      case "Pipeline":
+        for (const c of n.commands) node(c, nested, out);
+        return;
+      case "Time":
+      case "Negation":
+        if (n.command !== undefined) node(n.command, nested, out);
+        return;
+      case "Command":
+        simple(n, nested, out);
+        return;
+      case "Redirected":
+        node(n.command, nested, out);
+        for (const r of n.redirects) redirection(r, null, null, out);
+        return;
+      case "CompoundList":
+        list(n, nested, out);
+        return;
+      case "ArithmeticFor":
+        arithmetic(n.initialize, null, out);
+        arithmetic(n.test, null, out);
+        arithmetic(n.update, null, out);
+        list(n.body, nested, out);
+        return;
+      case "Subshell":
+      case "BraceGroup":
+      case "Function":
+      case "Coproc":
+        node(n.body, nested, out);
+        return;
+      case "If":
+        list(n.clause, nested, out);
+        list(n.then, nested, out);
+        if (n.else !== undefined) node(n.else, nested, out);
+        return;
+      case "For":
+      case "Select":
+        for (const w of n.wordlist ?? []) word(w, null, out);
+        list(n.body, nested, out);
+        return;
+      case "While":
+        list(n.clause, nested, out);
+        list(n.body, nested, out);
+        return;
+      case "Case":
+        word(n.word, null, out);
+        for (const item of n.items) list(item.body, nested, out);
+        return;
+      case "TestCommand":
+        test(n.expression, out);
+        return;
+      case "ArithmeticCommand":
+        arithmetic(n.expression, null, out);
+        return;
+    }
+  };
+
+  // ONE simple command: its argv with quotes removed, its heredocs, the substitutions that build
+  // it, and — after it, in the order they appear — every command nested inside it.
+  const simple = (c: BashCommand, nested: boolean, out: ShellCommand[]): void => {
+    const argv: string[] = [];
+    const heredocs: ShellHeredoc[] = [];
+    const subs: ShellSubstitution[] = [];
+    const inner: ShellCommand[] = [];
+    for (const p of c.prefix) {
+      if (p.type === "Assignment") assignment(p.value, subs, inner);
+      else redirection(p, heredocs, subs, inner);
+    }
+    if (c.name !== undefined) {
+      argv.push(c.name.value);
+      word(c.name, subs, inner);
+    }
+    for (const s of c.suffix) {
+      if (s.type === "Word") {
+        argv.push(s.value);
+        word(s, subs, inner);
+      } else if (s.type === "Assignment") {
+        const value = s.value.type === "Word" ? s.value.value : `(${s.value.elements.map((e) => e.value).join(" ")})`;
+        argv.push(`${s.name}${s.index === undefined ? "" : `[${s.index.value}]`}${s.append ? "+=" : "="}${value}`);
+        assignment(s.value, subs, inner);
+      } else redirection(s, heredocs, subs, inner);
+    }
+    const [program, ...args] = stepWrappers(argv);
+    if (program !== undefined) {
+      out.push({ program, args, text: [program, ...args].join(" "), heredocs, substitutions: subs, nested });
+    }
+    out.push(...inner);
+    if (program === undefined) return;
+    const name = basename(program);
+    if (name === "eval") source(args.join(" "), out);
+    if (!SHELLS.has(name)) return;
+    const input = shellInput(args);
+    if (input === "stdin") for (const h of heredocs) source(h.body, out);
+    else if (input !== null) source(input.string, out);
+  };
+  const assignment = (value: Word | { readonly elements: readonly Word[] }, subs: ShellSubstitution[], out: ShellCommand[]): void => {
+    if ("elements" in value) for (const e of value.elements) word(e, subs, out);
+    else word(value, subs, out);
+  };
+
+  const out: ShellCommand[] = [];
+  script(parseBash(line), false, out);
+  return fault.found ? null : out;
+}
 
 /**
  * THE ctx builder — the one place a check's world is assembled, and there must only ever be one.

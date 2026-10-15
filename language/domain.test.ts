@@ -46,6 +46,8 @@ import {
   overlay,
   override,
   pack,
+  parseCommandLine,
+  type ShellCommand,
   BRIEF_SCOPE_MOMENTS,
   withFaults,
   isScopable,
@@ -298,6 +300,251 @@ describe("makeCtx — the ONE assembler", () => {
     }
     const built = makeCtx("command", { command: "ls" }, new Adapter());
     expect((await built.exec("ls")).stdout).toBe("live:ls");
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE PARSE — a shell line read as code
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+describe("parseCommandLine — the 45 hand-labelled commands from triage's bake-off", () => {
+  // Lifted from LABELLED in the bake-off that chose unbash (.work/tmp/bakeoff/bakeoff.mjs, #17).
+  // Each label is what a shell does with the line: the programs that run, in the order they appear,
+  // nested ones included; each heredoc's owner and whether its delimiter is quoted; and the
+  // programs a substitution runs. One label differs from the bake-off's on purpose: `bash -c`
+  // lists the commands in its string, which the bake-off did not ask of any parser.
+  interface Label {
+    readonly programs: readonly string[] | null;
+    readonly heredocs?: readonly (readonly [string, boolean])[];
+    readonly spliced?: readonly string[];
+  }
+  const L = (programs: readonly string[] | null, extra: Omit<Label, "programs"> = {}): Label => ({ programs, ...extra });
+  const LABELLED: Record<string, readonly [string, Label]> = {
+    // the issue's cases
+    "#14 keyfile": ['grep -n "a" src/RoomMap.tsx | head -20; echo ---; grep -n "square.key" src/RoomBingoCard.tsx | head -12', L(["grep", "head", "echo", "grep", "head"])],
+    "#9 push;ls": ["git push origin main; ls -f", L(["git", "ls"])],
+    "#9 push;gh": ["git push origin HEAD; gh api graphql -f query=x", L(["git", "gh"])],
+    "#9 push&&gh": ["git push && gh api -f a=b repos/x/y", L(["git", "gh"])],
+    "#4 body prose": ['gh issue create --body "the builder ran npx vitest run instead of just test"', L(["gh"])],
+    "#4 echo": ["echo 'npx vitest run'", L(["echo"])],
+    "#10A": ["gh pr create --body-file - <<'EOF'\nRun \"`just test`\" before merging.\nEOF", L(["gh"], { heredocs: [["gh", true]], spliced: [] })],
+    "#10B": [
+      "gh issue view 35 --json body --jq .body > body.md\npython3 - <<'EOF'\nnew = f\"\"\"- **Docs** `work` starts the daemon\"\"\"\nEOF",
+      L(["gh", "python3"], { heredocs: [["python3", true]], spliced: [] }),
+    ],
+    "#10C": ["gh issue view 1 > old.md\ncat > new.md <<'EOF'\nsay \"run `just test`\"\nEOF", L(["gh", "cat"], { heredocs: [["cat", true]], spliced: [] })],
+    "#11D": ['gh issue comment 1 --body "run \\`just test\\` first"', L(["gh"], { spliced: [] })],
+    "#11E": ['gh issue view 10 --json body --jq .body | grep -n "x\\\\\\\\\\`"', L(["gh", "grep"], { spliced: [] })],
+    "#11F": ['gh issue comment 1 --body "run `just test` first"', L(["gh", "just"], { spliced: ["just"] })],
+    "#9 two heredocs": ["python3 - <<'EOF'\nprint(1)\nEOF\ngit commit -F - <<'EOF'\nfix: a thing\nEOF", L(["python3", "git"], { heredocs: [["python3", true], ["git", true]] })],
+    "unquoted $(cat <<EOF)": ['git commit -m "$(cat <<EOF\nfix: a `thing`\nEOF\n)"', L(["git", "cat", "thing"], { heredocs: [["cat", false]], spliced: ["cat", "thing"] })],
+    // quoting and splitting traps
+    "ops in dquotes": ['echo "a; b && c | d"', L(["echo"])],
+    "adjacent squotes": ["echo 'it''s'; ls", L(["echo", "ls"])],
+    "heredoc body ops": ["cat <<EOF\na; b | c\ndon't\nEOF", L(["cat"], { heredocs: [["cat", false]] })],
+    "<<- tabs": ["cat <<-EOF\n\tx; y\n\tEOF\necho done", L(["cat", "echo"], { heredocs: [["cat", false]] })],
+    "<<\\X escaped": ["cat <<\\X\n$(rm -rf /)\nX", L(["cat"], { heredocs: [["cat", true]], spliced: [] })],
+    'cat << "EOF"': ['cat << "EOF" > f\n`danger`\nEOF', L(["cat"], { heredocs: [["cat", true]], spliced: [] })],
+    "unquoted heredoc subst": ['python3 - <<EOF\nprint("$(whoami)")\nEOF', L(["python3", "whoami"], { heredocs: [["python3", false]], spliced: ["whoami"] })],
+    "two heredocs one line": ["paste <(cat) <<A\na\nA", L(["paste", "cat"], { heredocs: [["paste", false]] })],
+    subshell: ["(cd x && make) || echo fail", L(["cd", "make", "echo"])],
+    "group redirect": ["{ a; b; } > out", L(["a", "b"])],
+    "for loop": ['for f in *.ts; do wc -l "$f"; done', L(["wc"])],
+    if: ["if [ -f x ]; then rm x; fi", L(["[", "rm"])],
+    "while <": ['while read l; do echo "$l"; done < file', L(["read", "echo"])],
+    "assign subst": ["x=$(git rev-parse HEAD) && echo $x", L(["git", "echo"], { spliced: ["git"] })],
+    "process subst": ["diff <(sort a) <(sort b)", L(["diff", "sort", "sort"], { spliced: ["sort", "sort"] })],
+    backquote: ["echo `date`", L(["echo", "date"], { spliced: ["date"] })],
+    "line continuation": ["ls \\\n  -la", L(["ls"])],
+    "; in squoted fmt": ["git log --format='%H;%s' | head", L(["git", "head"])],
+    "comment ;": ["npm test # runs; everything", L(["npm"])],
+    "background &": ["a & b", L(["a", "b"])],
+    case: ["case $x in a) echo a;; b) echo b;; esac", L(["echo", "echo"])],
+    "env prefix": ['FOO=1 BAR="x y" node app.js', L(["node"])],
+    "python writes rm text": ["cat > f.py <<'PY'\nimport os; os.system(\"rm -rf /\")\nPY\npython3 f.py", L(["cat", "python3"], { heredocs: [["cat", true]] })],
+    "quoted heredoc in $()": ["git commit -m \"$(cat <<'EOF'\nfeat: x; y `z`\nEOF\n)\"", L(["git", "cat"], { heredocs: [["cat", true]], spliced: ["cat"] })],
+    "nested dquote subst": ['echo "$(echo "nested \\"q\\"; x")"', L(["echo", "echo"], { spliced: ["echo"] })],
+    "param ;": ["echo ${x:-a;b}", L(["echo"])],
+    arith: ["echo $(( 1 + 2 )); ls", L(["echo", "ls"])],
+    "[[ ]]": ['[[ $a == "b;c" ]] && echo y', L(["echo"])],
+    "pipe into sh": ['cat << "EOF" | sh\nrm -rf x\nEOF', L(["cat", "sh"], { heredocs: [["cat", true]] })],
+    "bash -c string": ["bash -c 'npx vitest run; ls'", L(["bash", "npx", "ls"], { spliced: ["npx", "ls"] })],
+    "unclosed quote": ['echo "oops', L(null)],
+  };
+
+  it("is the whole set, all 45", () => {
+    expect(Object.keys(LABELLED)).toHaveLength(45);
+  });
+
+  for (const [name, [line, label]] of Object.entries(LABELLED)) {
+    it(name, () => {
+      const parsed = parseCommandLine(line);
+      if (label.programs === null) {
+        expect(parsed).toBeNull();
+        return;
+      }
+      expect(parsed?.map((c) => c.program)).toEqual(label.programs);
+      if (label.heredocs !== undefined)
+        expect(parsed?.flatMap((c) => c.heredocs.map((h) => [c.program, h.quoted]))).toEqual(label.heredocs);
+      if (label.spliced !== undefined) expect(parsed?.filter((c) => c.nested).map((c) => c.program)).toEqual(label.spliced);
+    });
+  }
+});
+
+describe("parseCommandLine — the six fields", () => {
+  const only = (line: string): ShellCommand => {
+    const parsed = parseCommandLine(line);
+    expect(parsed).toHaveLength(1);
+    return (parsed ?? [])[0] as ShellCommand;
+  };
+
+  it("hands each argument over as the program receives it, quotes removed, and joins them as text", () => {
+    expect(only(`gh issue create --body "ran npx vitest run" 'a b' c\\ d`)).toEqual({
+      program: "gh",
+      args: ["issue", "create", "--body", "ran npx vitest run", "a b", "c d"],
+      text: "gh issue create --body ran npx vitest run a b c d",
+      heredocs: [],
+      substitutions: [],
+      nested: false,
+    });
+  });
+
+  it("attaches each heredoc to the command it feeds, with its body and whether it is quoted", () => {
+    const [python, git] = parseCommandLine("python3 - <<'EOF'\nprint(1)\nEOF\ngit commit -F - <<EOF\nfix: a thing\nEOF") ?? [];
+    expect(python?.heredocs).toEqual([{ body: "print(1)\n", quoted: true }]);
+    expect(git?.heredocs).toEqual([{ body: "fix: a thing\n", quoted: false }]);
+  });
+
+  it("counts every quoting of a heredoc delimiter as quoted: '…', \"…\" and a backslash, and their <<- forms", () => {
+    for (const opener of ["<<'X'", '<<"X"', "<<\\X", "<<-'X'", '<<-"X"', "<<-\\X"])
+      expect(only(`cat ${opener}\nbody\nX`).heredocs.map((h) => h.quoted)).toEqual([true]);
+    expect(only("cat <<-X\nbody\nX").heredocs.map((h) => h.quoted)).toEqual([false]);
+  });
+
+  it("records the substitutions the shell runs, with which spelling, and not the ones it does not", () => {
+    const [gh] = parseCommandLine('gh issue comment 1 --body "run `just test` and $(date)"') ?? [];
+    expect(gh?.substitutions).toEqual([
+      { text: "just test", backtick: true },
+      { text: "date", backtick: false },
+    ]);
+    expect(only('gh issue comment 1 --body "run \\`just test\\` first"').substitutions).toEqual([]);
+    expect(only("gh issue comment 1 --body 'run `just test` first'").substitutions).toEqual([]);
+    expect(only("gh pr create --body-file - <<'EOF'\nRun `just test`\nEOF").substitutions).toEqual([]);
+    const [cat] = parseCommandLine("cat <<EOF\nRun `just test`\nEOF") ?? [];
+    expect(cat?.substitutions).toEqual([{ text: "just test", backtick: true }]);
+  });
+});
+
+describe("parseCommandLine — the program that runs", () => {
+  const programs = (line: string): (readonly [string, readonly string[]])[] | undefined =>
+    parseCommandLine(line)?.map((c) => [c.program, c.args] as const);
+
+  it("steps past every wrapper the banCommands page names, and an assignment", () => {
+    expect(programs("sudo rm -rf build")).toEqual([["rm", ["-rf", "build"]]]);
+    expect(programs("sudo -u root rm x")).toEqual([["rm", ["x"]]]);
+    expect(programs("env FOO=1 -u BAR node app.js")).toEqual([["node", ["app.js"]]]);
+    expect(programs("nohup make &")).toEqual([["make", []]]);
+    expect(programs("nice -n 5 make")).toEqual([["make", []]]);
+    expect(programs("time git push")).toEqual([["git", ["push"]]]);
+    expect(programs("sudo time -p git push")).toEqual([["git", ["push"]]]);
+    expect(programs("timeout 5 git push")).toEqual([["git", ["push"]]]);
+    expect(programs("timeout -s KILL --preserve-status 5s git push")).toEqual([["git", ["push"]]]);
+    expect(programs("command git push")).toEqual([["git", ["push"]]]);
+    expect(programs("exec node app.js")).toEqual([["node", ["app.js"]]]);
+    expect(programs("find . -name x | xargs -I {} -0 rm {}")).toEqual([
+      ["find", [".", "-name", "x"]],
+      ["rm", ["{}"]],
+    ]);
+    expect(programs("FOO=1 BAR=2 git push")).toEqual([["git", ["push"]]]);
+  });
+
+  it("steps past a chain of wrappers, and a wrapper named by its path", () => {
+    expect(programs("FOO=1 sudo env BAR=2 nice -n 5 timeout 10 nohup git push -f")).toEqual([["git", ["push", "-f"]]]);
+    expect(programs("/usr/bin/env node app.js")).toEqual([["node", ["app.js"]]]);
+  });
+
+  it("leaves a wrapper that runs nothing as the program", () => {
+    expect(programs("command -v rm")).toEqual([["command", ["-v", "rm"]]]);
+    expect(programs("env")).toEqual([["env", []]]);
+    expect(programs("exec >log")).toEqual([["exec", []]]);
+  });
+
+  it("lists no command for a line of assignments alone, but reads what they run", () => {
+    expect(programs("x=1")).toEqual([]);
+    expect(programs("x=$(git rev-parse HEAD)")).toEqual([["git", ["rev-parse", "HEAD"]]]);
+  });
+});
+
+describe("parseCommandLine — nested commands", () => {
+  const nested = (line: string): (readonly [string, boolean])[] | undefined => parseCommandLine(line)?.map((c) => [c.program, c.nested] as const);
+
+  it("reads a $( … ), a backtick and a <( … ) as commands of their own, nested", () => {
+    expect(nested("echo $(rm x) `rm y`; diff <(sort a) b")).toEqual([
+      ["echo", false],
+      ["rm", true],
+      ["rm", true],
+      ["diff", false],
+      ["sort", true],
+    ]);
+  });
+
+  it("reads the string given to bash -c, sh -c and eval", () => {
+    expect(nested("bash -c 'npx vitest run; ls'")).toEqual([
+      ["bash", false],
+      ["npx", true],
+      ["ls", true],
+    ]);
+    expect(nested('sh -ec "rm -rf x"')).toEqual([
+      ["sh", false],
+      ["rm", true],
+    ]);
+    expect(nested("bash -o pipefail -lc 'git push -f'")).toEqual([
+      ["bash", false],
+      ["git", true],
+    ]);
+    expect(nested('eval "rm -rf x && ls"')).toEqual([
+      ["eval", false],
+      ["rm", true],
+      ["ls", true],
+    ]);
+    expect(nested("xargs sh -c 'rm \"$1\"' _")).toEqual([
+      ["sh", false],
+      ["rm", true],
+    ]);
+  });
+
+  it("reads a heredoc fed to a shell, and not one fed to a shell that runs a script file", () => {
+    expect(nested("bash <<'EOF'\nrm -rf x\nEOF")).toEqual([
+      ["bash", false],
+      ["rm", true],
+    ]);
+    expect(nested("sh -s <<EOF\ngit push -f\nEOF")).toEqual([
+      ["sh", false],
+      ["git", true],
+    ]);
+    expect(nested("bash deploy.sh <<'EOF'\nrm -rf x\nEOF")).toEqual([["bash", false]]);
+    expect(nested("python3 - <<'EOF'\nrm -rf x\nEOF")).toEqual([["python3", false]]);
+  });
+
+  it("keeps a command nested at any depth", () => {
+    expect(nested("bash -c 'echo $(rm x)'")).toEqual([
+      ["bash", false],
+      ["echo", true],
+      ["rm", true],
+    ]);
+  });
+});
+
+describe("parseCommandLine — a line that does not parse", () => {
+  it("is null, whether the fault is in the line or in a script nested in it", () => {
+    expect(parseCommandLine('echo "oops')).toBeNull();
+    expect(parseCommandLine("echo $(ls")).toBeNull();
+    expect(parseCommandLine("if true; then ls")).toBeNull();
+    expect(parseCommandLine("bash -c 'echo \"oops'")).toBeNull();
+  });
+
+  it("is an empty list for an empty line, which parses to nothing", () => {
+    expect(parseCommandLine("")).toEqual([]);
   });
 });
 
