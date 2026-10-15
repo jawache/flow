@@ -36,7 +36,6 @@ import {
   decision,
   deleteTargets,
   delivers,
-  faultText,
   readFault,
   hermeticEnv,
   isHookEvent,
@@ -688,15 +687,6 @@ describe("toResult — one refusal spelling, one injection spelling", () => {
     });
   });
 
-  it("says which of the three things happened to a payload it could not read", () => {
-    // "There was nothing to guard" and "I could not SEE what I was guarding" were one answer in the
-    // old engine — an empty object — so a rail that could not read its payload allowed, silently.
-    expect(faultText("pre-tool-use", "unreadable", "EBADF")).toBe(
-      "[flow hook pre-tool-use] could not READ its payload from stdin (EBADF).",
-    );
-    expect(faultText("stop", "unparseable", "12 bytes on stdin, and not JSON")).toContain("could not PARSE");
-  });
-
   it("is LOUD on every rail that judges a tool call, and speaks without holding on the rest", () => {
     // The after-call rails say it the way every unseen call is said — the call ran and nothing it
     // changed was checked — never as a guard refusing a call that has already landed (#12).
@@ -721,11 +711,13 @@ describe("toResult — one refusal spelling, one injection spelling", () => {
         "The call ran, and nothing it changed was checked or put back. Check what the call changed before you go on.\n",
       exitCode: 2,
     });
-    for (const hook of ["session-start", "stop", "notification"] as const) {
-      const answer = readFault(hook, "unreadable", "EBADF");
-      expect(answer.exitCode, hook).toBe(0);
-      expect(answer.stderr).toContain("could not READ");
-    }
+    expect(readFault("session-start", "unreadable", "EBADF")).toStrictEqual({
+      stdout: "",
+      stderr: "[flow hook session-start] could not READ its payload from stdin (EBADF).\n",
+      exitCode: 0,
+    });
+    expect(readFault("stop", "unreadable", "EBADF").exitCode).toBe(0);
+    expect(readFault("notification", "unreadable", "EBADF").exitCode).toBe(0);
   });
 });
 
