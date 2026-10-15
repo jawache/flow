@@ -1,42 +1,61 @@
+---
+summary: "flow's human-facing docs"
+---
+
 # flow — user documentation
 
-docs/user · flow's human-facing docs · 2026-09-28
+**flow** guards a repo that coding agents work in. Your whole guard is one TypeScript file, `flow.config.ts`, and these pages are how to write it. Every example on these pages is run against the shipped binary.
 
-**flow** is the guard: your whole guard is one TypeScript file, and these pages are how to write it. New here? Run the [quick start](./01-quick-start.md) — five minutes, real commands. A rule just blocked you? The [guidebook](./00-guide.md)'s cookbook has the shape of every rule you'll meet. Everything on these pages is executed against the shipped binary, not read off the code.
+Each page is one of four kinds: a lesson, a guide to one task, a description to look things up in, or an explanation of why.
 
-## The pages
+## Learn it
 
-### [00 · The guidebook](./00-guide.md)
+For you if you are new to flow: one lesson, from an unguarded repo to a refused commit.
 
-The front door: what a guard is, the demo config read line by line, the “I want to…” cookbook, categories, testing, and how a pack travels to a second repo.
+- [Getting started](./tutorials/getting-started.md): guard a repo, watch a banned command and a commit refused, and run every rule's own cases, in about five minutes.
 
-### [01 · Quick start](./01-quick-start.md)
+## Get something done
 
-From an unguarded repo to a blocked commit, hands on, in five minutes.
+For you if flow already runs and you have one task to finish: each guide gives the steps to one result.
 
-### [02 · Config reference](./02-entry-reference.md)
+- [How to install flow](./how-to/install-flow.md)
+- [How to ban a pattern in files](./how-to/ban-a-pattern-in-files.md)
+- [How to block a command](./how-to/block-a-command.md)
+- [How to protect files](./how-to/protect-files.md)
+- [How to gate a commit on a tool](./how-to/gate-a-commit-on-a-tool.md)
+- [How to make files change together](./how-to/change-files-together.md)
+- [How to pin a value in a JSON file](./how-to/pin-a-value-in-a-json-file.md)
+- [How to require a sibling test](./how-to/require-a-sibling-test.md)
+- [How to require a reason in the commit message](./how-to/require-a-reason-in-the-commit-message.md)
+- [How to let only some agents write](./how-to/let-only-some-agents-write.md)
+- [How to steer without blocking](./how-to/steer-without-blocking.md)
+- [How to test your rules](./how-to/test-your-rules.md)
+- [How to write your own check](./how-to/write-your-own-check.md)
+- [How to change or turn off one entry of a pack](./how-to/override-an-entry.md)
+- [How to share a pack across repos](./how-to/share-a-pack.md)
+- [How to document a pack](./how-to/document-a-pack.md)
 
-Every verb of the sentence grammar — `guardrail`, `breadcrumb`, `pack`, `override`, the moments, the `ctx` — and what the loader refuses.
+### Upgrading flow
 
-### [03 · Authoring a pack](./03-authoring-scripts.md)
+[The migration guides](./migrations/index.md) have one page per release: what a repo that uses flow must change to upgrade to that version, as steps an agent can follow.
 
-Writing a check no stock one expresses — the `defineCheck` contract — and packing rules for a second repo.
+## Look something up
 
-### [04 · Command reference](./04-cli-reference.md)
+For you when you need an exact command, verb, moment or field: each page describes one part of flow.
 
-Every `flow` command, what `flow init` writes, the two switch files, and the exit codes.
+- [The flow command](./reference/cli.md): every `flow` command, what `flow init` writes, the two switch files and the exit codes.
+- [The config](./reference/config.md): `flow.config.ts`, its settings, every verb of a guardrail and a breadcrumb, cases, categories, and what the loader refuses.
+- [Moments](./reference/moments.md): the seven moments a rule runs at, and when each one happens.
+- [The ctx a check reads](./reference/ctx.md): the contract a check is written to, and every field of `ctx` at each moment.
+- [Vocabulary](./reference/vocabulary.md): every term these pages use.
 
-### [Upgrading flow](./migrations/index.md)
+### The shipped packs — one page each
 
-One migration guide per release: what a repo that uses flow must change to upgrade to that version, as steps an agent can follow.
+Ten packs arrive with the install, behind `@jawache/flow/packs`. A repo binds the ones it needs, one line each. Each page is generated from the pack itself: every entry, when it runs and over which files, the exact words an agent reads, the check's settings as written, and both sides of every case. Start at [the packs](./packs/index.md).
 
-## The shipped packs — one page each
+### The stock checks — one page each
 
-Ten packs arrive with the install, behind `@jawache/flow/packs`, and a repo binds the ones it wants a line at a time. Each page is generated from the pack itself: every entry, when it fires and over what, the exact words an agent reads, the check's settings as written, and both sides of every case. Start at [the packs](./packs/index.md).
-
-## The stock checks — one page each
-
-Fourteen configured checks cover what a guard actually asks. You import one and hand it to `.check(…)`; each page lists its options and a real example.
+flow ships fourteen configured checks. You import one and pass it to `.check(…)`. Each page lists its options and a real example.
 
 | Check | Reads | Checks |
 | --- | --- | --- |
@@ -46,15 +65,25 @@ Fourteen configured checks cover what a guard actually asks. You import one and 
 | [`symbolsInSibling`](./checks/symbols-in-sibling.md) | file body | exported symbols are referenced in the sibling test |
 | [`banCommands`](./checks/ban-commands.md) | command line | banned shell commands, before they run |
 | [`commitReason`](./checks/commit-reason.md) | command line | this commit needs a reason recorded in its message |
-| [`protectedPath`](./checks/protected-path.md) | file path | paths that must not be touched (or are append-only) |
+| [`protectedPath`](./checks/protected-path.md) | file path | paths that must not be changed (or are append-only) |
 | [`oneWriter`](./checks/one-writer.md) | the acting session's categories | only the listed categories may change a file; any other actor's write is refused, and one that already landed is put back |
 | [`siblingExists`](./checks/sibling-exists.md) | file path | a file's required companion exists on disk |
 | [`canonicalFiles`](./checks/canonical-files.md) | file path | only approved names in a folder |
-| [`changeTogether`](./checks/change-together.md) | staged set | files that must move in the same commit |
-| [`execPasses`](./checks/exec-passes.md) | runs a tool | run any whole-project tool; block on a non-zero exit |
+| [`changeTogether`](./checks/change-together.md) | staged set | files that must change in the same commit |
+| [`execPasses`](./checks/exec-passes.md) | runs a tool | runs any whole-project tool, and blocks on a non-zero exit |
 | [`depcruise`](./checks/depcruise.md) | runs a tool | import fences over the real dependency graph |
-| [`ranSinceEdit`](./checks/ran-since-edit.md) | the turn | “you changed X this turn but never ran Y” — at turn-end |
+| [`ranSinceEdit`](./checks/ran-since-edit.md) | the turn | “you changed X this turn but never ran Y”, at turn-end |
 
----
+## Understand it
 
-The repo's README says what flow is and why you would use it; `packs/` holds the ten packs `@jawache/flow/packs` ships.
+For you when you want to know why flow is built the way it is.
+
+- [How flow works](./explanation/how-flow-works.md): the two kinds of guidance, why one file is the whole guard, packs and overrides, and the demo config read line by line.
+- [Rules bound to who, not what](./explanation/rules-bound-to-who.md): categories, and why they read evidence the host wrote.
+- [Fail loud, and the one repair exception](./explanation/fail-loud.md): why a config that will not load refuses everything, and the one exception for its repair.
+- [What the guard sees](./explanation/what-the-guard-sees.md): how flow finds every change to the tree, and what a refusal puts back.
+
+## Not here
+
+- What flow is and why you would use it: the repo's [README](../../README.md).
+- The research and the numbered decisions behind flow: [docs/agent](../agent/README.md).

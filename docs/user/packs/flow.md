@@ -1,8 +1,10 @@
-[flow packs](./index.md) › flow
+---
+summary: "1 guardrail · 2 breadcrumbs · fires at: session · touch · delete · takes 2 parameters"
+---
 
 # The `flow` pack
 
-1 guardrail · 2 breadcrumbs · fires at: session · touch · delete · takes 2 parameters
+[flow packs](./index.md) › flow
 
 flow's own orientation and self-protection, as a pack any repo binds.
 

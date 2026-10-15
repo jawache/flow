@@ -1,6 +1,8 @@
-# `ranSinceEdit`
+---
+summary: "reads: the turn · fires at: turn-end"
+---
 
-reads: the turn · fires at: turn-end · 2026-09-06
+# `ranSinceEdit`
 
 Holds the turn open once when the agent edited a matching file this turn but never ran the command afterwards — “you changed a guard but never ran the tests”. It reads the turn's own actions, holds no state, and never traps: the next stop attempt goes through.
 
@@ -26,4 +28,4 @@ guardsTested: guardrail()
 
 ---
 
-[All stock checks](../index.md#the-stock-checks--one-page-each) · the sentence around it: [the config reference](../02-entry-reference.md) · this page's example is copied from a pack that `flow test` proves green.
+[All stock checks](../index.md#the-stock-checks--one-page-each) · the sentence around it: [the config reference](../reference/config.md)

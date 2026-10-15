@@ -1,10 +1,16 @@
-[flow packs](./index.md) › docs
+---
+summary: "1 guardrail · 2 breadcrumbs · fires at: touch · write · commit · takes 2 parameters"
+---
 
 # The `docs` pack
 
-1 guardrail · 2 breadcrumbs · fires at: touch · write · commit · takes 2 parameters
+[flow packs](./index.md) › docs
 
-*No lead. Add a doc comment on `definePack` saying what this pack is for.*
+Two documentation audiences, one folder, nothing replicated.
+
+Every repo documents for exactly two readers who want opposite things: the end user wants the
+least possible cognitive load, and the agent wants almost nothing in context. So `docs/` has
+exactly two doors and everything inside follows its door's rules.
 
 Generated from `packs/docs.ts` by `just docs-packs`. Edit the pack, not this page. The commit gate refuses a page that has drifted.
 
@@ -14,7 +20,7 @@ The pack takes 2 parameters. These are facts the pack cannot know about your rep
 
 | Parameter | Type | What it is |
 | --- | --- | --- |
-| `root` | `string` | The documentation folder, as a path from the repo root. Defaults to `docs`.<br><br>Both guardrails and both breadcrumbs are scoped to it, so a repo whose pages live in `documentation/` names that here and keeps every rule. |
+| `root` | `string` | The documentation folder, as a path from the repo root. Defaults to `docs`.<br><br>Its guardrail and both breadcrumbs are scoped to it, so a repo whose pages live in `documentation/` names that here and keeps every rule. |
 | `allow` | `readonly string[]` | Filenames allowed to sit LOOSE at the top of that folder, beside the two doors. Defaults to none — every file belongs behind `user/` or `agent/`.<br><br>A repo that keeps a `README.md` at the top of its docs folder names it here. |
 
 Example config. The values are examples, and every glob and command on this page was rendered with them:
@@ -28,10 +34,20 @@ export default defineConfig([pack(docs, { root: "documentation", allow: ["README
 
 To turn one entry off, say so in the config: `override(docs.docs).disabled("why")`. It is a committed change, so a reviewer sees it.
 
+## What the repo needs in place
+
+A `docs/` folder holding exactly `user/` and `agent/`, each with its own index — an index
+file under `docs/user/` for people and `docs/agent/README.md` as a list of pointers. The user
+pages are markdown, and each one is one of the four kinds of the Diátaxis method
+(https://diataxis.fr): a tutorial, a how-to guide, a reference or an explanation. The
+breadcrumbs say so as guidance and refuse nothing, so how `docs/user/` is foldered inside stays
+the repo's choice. The guardrail below refuses anything else at the top of the folder, so a repo
+with a different shape either moves its pages or does not bind this pack.
+
 ## Entries
 
 - [`docs.docs`](#docsdocs--breadcrumb) · breadcrumb · The two audiences, the admission test, and the discipline that keeps docs true.
-- [`docs.userDocsStyle`](#docsuserdocsstyle--breadcrumb) · breadcrumb · The ruled style of docs/user — Diátaxis page discipline, the language rules, captured output.
+- [`docs.userDocsStyle`](#docsuserdocsstyle--breadcrumb) · breadcrumb · The ruled style of docs/user — markdown, the four Diátaxis kinds, the language rules, captured output.
 - [`docs.docsShape`](#docsdocsshape--guardrail) · guardrail · docs/ holds exactly user/ and agent/ — the folder allowlist.
 
 ## `docs.docs` — breadcrumb
@@ -51,7 +67,7 @@ already says, which go stale silently while still reading as true.
 ### What the agent reads
 
 ```
-Two audiences, two doors, opposite rules. `docs/user/` is for PEOPLE: HTML or markdown, entered through an index file, and multimodal on purpose — images, SVGs and short recordings are encouraged wherever they explain better than sentences. The measure of a user doc is how little work the reader has to do.
+Two audiences, two doors, opposite rules. `docs/user/` is for PEOPLE: markdown pages entered through an index file, and multimodal on purpose: images, SVGs and short recordings are encouraged wherever they explain better than sentences. The measure of a user doc is how little work the reader has to do.
 `docs/agent/` is ARCHIVAL CONTEXT, loaded on demand, entered through README.md as an index of pointers. The admission test: could a fresh agent derive this from the code, the config or the guard layer? Then it does not belong — derivable content is replication, and replication goes stale silently while still reading as true. Only expensive syntheses live here: understanding that took hours to establish and would take hours to re-derive. Pointers outward, never copies inward; this folder must never compete with the breadcrumb layer.
 The style law, both sides: state CURRENT FACTS in the present tense. No litigation, no rationale essays, no history — the journal owns the past. Where a decision would otherwise look wrong, one Chesterton-fence line pointing at the decision record, never a retelling.
 The failure mode is silent staleness, not error: a doc stays literally correct while a whole task's machinery lands unmentioned, and nothing complains. So if the work you just shipped changed a boundary, a component's job or the lifecycle, the doc changes in the SAME commit.
@@ -59,7 +75,7 @@ The failure mode is silent staleness, not error: a doc stays literally correct w
 
 ## `docs.userDocsStyle` — breadcrumb
 
-The ruled style of docs/user — Diátaxis page discipline, the language rules, captured output.
+The ruled style of docs/user — markdown, the four Diátaxis kinds, the language rules, captured output.
 
 - **Shown when** the first time in a session a file it watches is touched
 - **Watches** `documentation/user/**`
@@ -75,7 +91,7 @@ style guide — so nothing in it is one repo's taste.
 
 ```
 The user docs have a ruled style — hold it:
-· One page, one job (the Diátaxis framework, https://diataxis.fr): the quick start teaches by doing (explanation is linked, never inlined); the guide solves situations; reference pages state facts for lookup, no narrative.
+· Markdown, and one page, one job: every page is exactly one of the four kinds of the Diátaxis method (https://diataxis.fr), never a mix. A TUTORIAL is a lesson that teaches by doing, along one path. A HOW-TO GUIDE solves one task the reader already has, and is titled "How to …". A REFERENCE page states facts for lookup, no narrative. An EXPLANATION says why, and the other kinds link to it rather than inline it.
 · Language (per the Google developer style guide, https://developers.google.com/style): second person, present tense, active voice. Define a term on first use or do not use it. Spend words in proportion to difficulty — one sentence for the simple thing, the full walkthrough for the hard one. No "simply", no filler.
 · Code examples are TypeScript, formatted as the repo formats it — a config example is copied from a file that compiles, never typed into the page.
 · Every claim and printed output is captured from the shipped binary, never paraphrased — re-run the example before you change its text.

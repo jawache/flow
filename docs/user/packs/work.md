@@ -1,8 +1,10 @@
-[flow packs](./index.md) › work
+---
+summary: "6 guardrails · 0 breadcrumbs · fires at: command · write · delete · takes 1 parameter"
+---
 
 # The `work` pack
 
-6 guardrails · 0 breadcrumbs · fires at: command · write · delete · takes 1 parameter
+[flow packs](./index.md) › work
 
 The WORK LIFECYCLE's rungs: who is acting, and what each rung may do.
 

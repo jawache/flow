@@ -755,10 +755,10 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
   // THE CONFIG WILL NOT LOAD, either way it can fail to. `kind: "broken"` is a module that would
   // not import; a LoadResult carrying refusals is a module that imported and whose grammar was
   // refused. They were two branches with two behaviours until the F3 read found that only the first
-  // reached the repair exception — so a deleted `.message(…)`, which is the break both the README
-  // and the guidebook tell a reader to make, locked the agent out of its own repair. One sentence,
-  // one answer, one place. They are asked in sequence only because the second needs the LoadResult
-  // the first does not have; `outage` is the answer both of them give.
+  // reached the repair exception — so a deleted `.message(…)`, which is the break
+  // docs/user/explanation/fail-loud.md tells a reader to make, locked the agent out of its own
+  // repair. One sentence, one answer, one place. They are asked in sequence only because the second
+  // needs the LoadResult the first does not have; `outage` is the answer both of them give.
   const outage = (sentence: string): HookResult => {
     if (off) return ALLOW;
     // The config's TEXT, not its module: the module is the thing that will not load, and the

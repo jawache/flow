@@ -1,6 +1,8 @@
-# `textBan`
+---
+summary: "reads: file body · fires at: write · commit"
+---
 
-reads: file body · fires at: write · commit · 2026-09-06
+# `textBan`
 
 Bans a word or pattern in text — prose, config, comments, anything. Each regex is tried against every line; a match is a finding naming the line. Case-sensitive. For code *shapes* prefer [`astGrep`](./ast-grep.md), which parses the tree and cannot false-match inside a string or a comment.
 
@@ -23,4 +25,4 @@ noTodo: guardrail()
 
 ---
 
-[All stock checks](../index.md#the-stock-checks--one-page-each) · the sentence around it: [the config reference](../02-entry-reference.md) · this page's example is copied from a pack that `flow test` proves green.
+[All stock checks](../index.md#the-stock-checks--one-page-each) · the sentence around it: [the config reference](../reference/config.md)

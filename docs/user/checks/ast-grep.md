@@ -1,6 +1,8 @@
-# `astGrep`
+---
+summary: "reads: file body · fires at: write · commit"
+---
 
-reads: file body · fires at: write · commit · 2026-09-06
+# `astGrep`
 
 Bans or requires a structural code pattern, parsed rather than text-matched — so a match inside a string or a comment never false-fires. `language` is always stated and never defaulted: the wrong grammar mis-parses quietly. `rule` is an [ast-grep](https://ast-grep.github.io) rule object.
 
@@ -46,4 +48,4 @@ Three routes, tried in this order. A name that matches none of them is a **refus
 
 ---
 
-[All stock checks](../index.md#the-stock-checks--one-page-each) · the sentence around it: [the config reference](../02-entry-reference.md) · this page's example is copied from a pack that `flow test` proves green.
+[All stock checks](../index.md#the-stock-checks--one-page-each) · the sentence around it: [the config reference](../reference/config.md)

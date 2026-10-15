@@ -1,6 +1,8 @@
-# Upgrading flow — migration guides
+---
+summary: "one page per release"
+---
 
-docs/user/migrations · one page per release · 2026-10-07
+# Upgrading flow — migration guides
 
 Each page lists what a repo that uses flow must change to upgrade to one version from the version before it. A repo that uses flow has a `flow.config.ts`, a `.githooks/pre-commit` written by `flow init`, and flow's hook registrations in the Claude Code settings file.
 

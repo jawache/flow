@@ -1,8 +1,10 @@
-[flow packs](./index.md) › secrets
+---
+summary: "3 guardrails · 1 breadcrumb · fires at: session · write · commit · takes 6 parameters"
+---
 
 # The `secrets` pack
 
-3 guardrails · 1 breadcrumb · fires at: session · write · commit · takes 6 parameters
+[flow packs](./index.md) › secrets
 
 Env files committed encrypted, decrypted through one seam, and the local-only files kept out of
 git.

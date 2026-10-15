@@ -1,6 +1,8 @@
-# `execPasses`
+---
+summary: "reads: runs a tool · fires at: commit"
+---
 
-reads: runs a tool · fires at: commit · 2026-09-06
+# `execPasses`
 
 Runs a whole-project tool and blocks on a non-zero exit, showing its failing lines. flow decides WHEN it runs; the tool owns its own job and config. If `run` contains `{files}`, flow substitutes the changed set.
 
@@ -26,4 +28,4 @@ testsGreen: guardrail()
 
 ---
 
-[All stock checks](../index.md#the-stock-checks--one-page-each) · the sentence around it: [the config reference](../02-entry-reference.md) · this page's example is copied from a pack that `flow test` proves green.
+[All stock checks](../index.md#the-stock-checks--one-page-each) · the sentence around it: [the config reference](../reference/config.md)

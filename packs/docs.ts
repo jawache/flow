@@ -2,23 +2,12 @@
 
 import { breadcrumb, canonicalFiles, commit, definePack, guardrail, touch, write } from "../index.ts";
 
-/**
- * Two documentation audiences, one folder, nothing replicated.
- *
- * Every repo documents for exactly two readers who want opposite things: the end user wants the
- * least possible cognitive load, and the agent wants almost nothing in context. So `docs/` has
- * exactly two doors and everything inside follows its door's rules.
- *
- * @setup A `docs/` folder holding exactly `user/` and `agent/`, each with its own index — an index
- * file under `docs/user/` for people and `docs/agent/README.md` as a list of pointers. The
- * guardrail below refuses anything else at the top of the folder, so a repo with a different shape
- * either moves its pages or does not bind this pack.
- */
+/** The two facts about a repo's docs folder the pack cannot know: where it is, and what may sit loose in it. */
 export interface Doors {
   /**
    * The documentation folder, as a path from the repo root. Defaults to `docs`.
    *
-   * Both guardrails and both breadcrumbs are scoped to it, so a repo whose pages live in
+   * Its guardrail and both breadcrumbs are scoped to it, so a repo whose pages live in
    * `documentation/` names that here and keeps every rule.
    */
   readonly root?: string;
@@ -32,6 +21,21 @@ export interface Doors {
   readonly allow?: readonly string[];
 }
 
+/**
+ * Two documentation audiences, one folder, nothing replicated.
+ *
+ * Every repo documents for exactly two readers who want opposite things: the end user wants the
+ * least possible cognitive load, and the agent wants almost nothing in context. So `docs/` has
+ * exactly two doors and everything inside follows its door's rules.
+ *
+ * @setup A `docs/` folder holding exactly `user/` and `agent/`, each with its own index — an index
+ * file under `docs/user/` for people and `docs/agent/README.md` as a list of pointers. The user
+ * pages are markdown, and each one is one of the four kinds of the Diátaxis method
+ * (https://diataxis.fr): a tutorial, a how-to guide, a reference or an explanation. The
+ * breadcrumbs say so as guidance and refuse nothing, so how `docs/user/` is foldered inside stays
+ * the repo's choice. The guardrail below refuses anything else at the top of the folder, so a repo
+ * with a different shape either moves its pages or does not bind this pack.
+ */
 export const docs = definePack("docs", (repo: Doors = {}) => {
   const root = repo.root ?? "docs";
   const allow = repo.allow ?? [];
@@ -47,7 +51,7 @@ export const docs = definePack("docs", (repo: Doors = {}) => {
       .description("The two audiences, the admission test, and the discipline that keeps docs true.")
       .text(
         [
-          "Two audiences, two doors, opposite rules. `docs/user/` is for PEOPLE: HTML or markdown, entered through an index file, and multimodal on purpose — images, SVGs and short recordings are encouraged wherever they explain better than sentences. The measure of a user doc is how little work the reader has to do.",
+          "Two audiences, two doors, opposite rules. `docs/user/` is for PEOPLE: markdown pages entered through an index file, and multimodal on purpose: images, SVGs and short recordings are encouraged wherever they explain better than sentences. The measure of a user doc is how little work the reader has to do.",
           "`docs/agent/` is ARCHIVAL CONTEXT, loaded on demand, entered through README.md as an index of pointers. The admission test: could a fresh agent derive this from the code, the config or the guard layer? Then it does not belong — derivable content is replication, and replication goes stale silently while still reading as true. Only expensive syntheses live here: understanding that took hours to establish and would take hours to re-derive. Pointers outward, never copies inward; this folder must never compete with the breadcrumb layer.",
           "The style law, both sides: state CURRENT FACTS in the present tense. No litigation, no rationale essays, no history — the journal owns the past. Where a decision would otherwise look wrong, one Chesterton-fence line pointing at the decision record, never a retelling.",
           "The failure mode is silent staleness, not error: a doc stays literally correct while a whole task's machinery lands unmentioned, and nothing complains. So if the work you just shipped changed a boundary, a component's job or the lifecycle, the doc changes in the SAME commit.",
@@ -65,11 +69,11 @@ export const docs = definePack("docs", (repo: Doors = {}) => {
     userDocsStyle: breadcrumb()
       .at(touch)
       .on(`${root}/user/**`)
-      .description("The ruled style of docs/user — Diátaxis page discipline, the language rules, captured output.")
+      .description("The ruled style of docs/user — markdown, the four Diátaxis kinds, the language rules, captured output.")
       .text(
         [
           "The user docs have a ruled style — hold it:",
-          "· One page, one job (the Diátaxis framework, https://diataxis.fr): the quick start teaches by doing (explanation is linked, never inlined); the guide solves situations; reference pages state facts for lookup, no narrative.",
+          "· Markdown, and one page, one job: every page is exactly one of the four kinds of the Diátaxis method (https://diataxis.fr), never a mix. A TUTORIAL is a lesson that teaches by doing, along one path. A HOW-TO GUIDE solves one task the reader already has, and is titled \"How to …\". A REFERENCE page states facts for lookup, no narrative. An EXPLANATION says why, and the other kinds link to it rather than inline it.",
           "· Language (per the Google developer style guide, https://developers.google.com/style): second person, present tense, active voice. Define a term on first use or do not use it. Spend words in proportion to difficulty — one sentence for the simple thing, the full walkthrough for the hard one. No \"simply\", no filler.",
           "· Code examples are TypeScript, formatted as the repo formats it — a config example is copied from a file that compiles, never typed into the page.",
           "· Every claim and printed output is captured from the shipped binary, never paraphrased — re-run the example before you change its text.",

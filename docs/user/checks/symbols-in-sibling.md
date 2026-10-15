@@ -1,14 +1,35 @@
+---
+summary: "reads: file body · fires at: write · commit"
+---
+
 # `symbolsInSibling`
 
-reads: file body · fires at: write · commit · 2026-09-06
+Every name a file exports must be referenced somewhere in its sibling test's text. A real parser reads the exports, so `export const x` inside a string or comment never false-matches. It is a cheap nudge, not coverage.
 
-Every name a TypeScript file exports must be referenced somewhere in its sibling test's text. A real parser reads the exports, so `export const x` inside a string or comment never false-matches. TypeScript only — a cheap nudge, not coverage.
+The parser reads the file as TSX, so JavaScript files are read too. It reads three shapes of export:
+
+- **`export function`** with no return type and no type parameters, `async` included
+- **`export class`** with no `extends`, no `implements` and no type parameters
+- **`export const`** with no type annotation
+
+Every other export is left out of the check, such as:
+
+- `export let`, `interface`, `type`, `enum`, `export default` and re-exports
+- generator functions (`export function*`)
+- `export abstract class`
+- every declarator after the first in `export const a = 1, b = 2`: only `a` is read
+
+When the sibling test does not exist, the check refuses the file with `sibling test not found`, whether or not the file exports anything.
+
+## Limits
+
+- **A destructured `export const`**, such as `export const { a, b } = obj`, is read as one name, `{ a, b }`. That text never matches as a word in the test, so the file is always refused.
 
 ## Options
 
 | Key | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `sibling` | template string | yes | the companion path — `{dir} {name} {base} {path}` expand from the touched file |
+| `sibling` | template string | yes | the companion path. For the file `a/b/x.ts`, `{dir}` is `a/b`, `{base}` is `x.ts`, `{name}` is `x` and `{path}` is `a/b/x`, the path without its extension |
 
 ## Example
 
@@ -27,4 +48,4 @@ exportsTested: guardrail()
 
 ---
 
-[All stock checks](../index.md#the-stock-checks--one-page-each) · the sentence around it: [the config reference](../02-entry-reference.md) · this page's example is copied from a pack that `flow test` proves green.
+[All stock checks](../index.md#the-stock-checks--one-page-each) · the sentence around it: [the config reference](../reference/config.md)

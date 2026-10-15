@@ -303,7 +303,7 @@ const unindented = (code: string): string =>
  * One machine's output, in the spelling a page quotes.
  *
  * ONE spelling of each path for every page — a second copy of this function differing in one string
- * is how the quick start's transcripts drifted for a release in the first place.
+ * is how the Getting started tutorial's transcripts drifted for a release in the first place.
  */
 function asQuoted(output: string, repo: string, settingsHome: string): string {
   return output
@@ -450,19 +450,20 @@ describe("flow init --empty", () => {
 // THE PRINCIPLE, ruled with the human on 2026-09-09: a GENERATED page is captured from the code
 // (that is `just docs-packs` and its drift gate); a HAND-WRITTEN page is pinned by a test that
 // fails when it and the binary disagree. The README's transcripts had that already, and were the
-// only pages that had not drifted — the quick start claimed a scaffold that stopped existing at the
-// split, and the exit-code table published a 1/2 split the binary never made.
+// only pages that had not drifted — the Getting started tutorial claimed a scaffold that stopped
+// existing at the split, and the exit-code table published a 1/2 split the binary never made.
 //
-// The three substitutions above are this file's, and the quick start quotes the same spellings.
+// The three substitutions above are this file's, and docs/user/tutorials/getting-started.md quotes
+// the same spellings.
 
 /** The fenced block on a docs page that opens with this line, as text. */
 const paged = (page: string, opening: string): string => fenced(join(PACKAGE, "docs", "user", page), opening);
 
-describe("the quick start's transcripts", () => {
+describe("the Getting started tutorial's transcripts", () => {
   it("are what `flow init`, `flow status`, `flow test` and both refusals really print", () => {
     const mine = newRepo();
     const firstTime = mkdtempSync(join(tmpdir(), "flow-quickstart-"));
-    const page = (opening: string): string => paged("01-quick-start.md", opening);
+    const page = (opening: string): string => paged(join("tutorials", "getting-started.md"), opening);
     const said = (args: readonly string[], stdin = ""): string => {
       const ran = runFlow(mine, args, { home: firstTime, bin }, stdin);
       return asQuoted(ran.stdout || ran.stderr, mine, firstTime);
@@ -491,7 +492,7 @@ describe("the quick start's transcripts", () => {
 describe("the command reference's exit-code table", () => {
   /** The table's rows, as `{ "0": "passed — …" }` — the codes it publishes and what it says they mean. */
   function published(): Record<string, string> {
-    const text = readFileSync(join(PACKAGE, "docs", "user", "04-cli-reference.md"), "utf8");
+    const text = readFileSync(join(PACKAGE, "docs", "user", "reference", "cli.md"), "utf8");
     const table = text.slice(text.indexOf("## Exit codes"));
     const rows = [...table.matchAll(/^\| `(\d)` \| (.+?) \|$/gm)];
     expect(rows.length, "the exit-code table has three rows").toBe(3);

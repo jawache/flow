@@ -380,25 +380,117 @@ export function headingSlugs(markdown: string): string[] {
 }
 
 /**
+ * WHICH LINES OF A PAGE SIT IN A FENCED BLOCK, the fences themselves included. A fence closes on a
+ * line holding nothing but a run of backticks at least as long as the one that opened it, so a
+ * block that shows a fence of its own survives intact.
+ */
+function inFence(lines: readonly string[]): boolean[] {
+  let open = "";
+  return lines.map((line) => {
+    const fence = /^ {0,3}(`{3,})/.exec(line);
+    if (open === "") {
+      if (fence === null) return false;
+      open = fence[1] ?? "";
+      return true;
+    }
+    if (fence !== null && (fence[1] ?? "").length >= open.length && line.trim() === fence[1]) open = "";
+    return true;
+  });
+}
+
+/**
  * A PAGE WITH ITS FENCED BLOCKS BLANKED. Inside a fence a `#` is a shell comment and a `[x](y)` is
  * a line of someone's config — neither is a heading or a link, and a sweep that read them as such
  * would go red over a page that is perfectly correct.
  */
 function withoutFences(markdown: string): string {
-  let open = "";
-  return markdown
-    .split("\n")
-    .map((line) => {
-      const fence = /^ {0,3}(`{3,})/.exec(line);
-      if (open === "") {
-        if (fence === null) return line;
-        open = fence[1] ?? "";
-        return "";
-      }
-      if (fence !== null && (fence[1] ?? "").length >= open.length && line.trim() === fence[1]) open = "";
-      return "";
-    })
-    .join("\n");
+  const lines = markdown.split("\n");
+  const fenced = inFence(lines);
+  return lines.map((line, at) => (fenced[at] === true ? "" : line)).join("\n");
+}
+
+/**
+ * EVERY LINE OF CODE A PAGE SHOWS, its fenced blocks run together with the fences dropped — the
+ * other half of `withoutFences`, read by the sweep that holds a page's examples to the real API.
+ */
+export function fencedCode(markdown: string): string {
+  const lines = markdown.split("\n");
+  const fenced = inFence(lines);
+  return lines.filter((line, at) => fenced[at] === true && !/^ {0,3}`{3,}/.test(line)).join("\n");
+}
+
+/** One `import { … } from "…"` in a page's code: the module, and each name as that module exports it. */
+interface CodeImport {
+  readonly from: string;
+  readonly names: readonly string[];
+}
+
+/** The names in a `{ … }` list, as the module exports them: a `type` marker and an `as` alias dropped. */
+function specifierNames(list: string): string[] {
+  return list
+    .split(",")
+    .map((held) => (held.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0] ?? "").trim())
+    .filter((name) => name !== "");
+}
+
+/** Every named import in some code, one line or spread over several. */
+export function codeImports(code: string): CodeImport[] {
+  return [...code.matchAll(/\bimport\s+(?:type\s+)?\{([^}]*)\}\s*from\s*["']([^"']+)["']/g)].map((found) => ({
+    from: found[2] ?? "",
+    names: specifierNames(found[1] ?? ""),
+  }));
+}
+
+/**
+ * EVERY NAME A DOOR FILE EXPORTS, types included — read off its `export { … }` lists, because a
+ * type is a promise of the door too and leaves nothing behind at runtime to read it back by.
+ */
+export function exportedNames(source: string): string[] {
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  return [...code.matchAll(/\bexport\s+(?:type\s+)?\{([^}]*)\}/g)].flatMap((found) => specifierNames(found[1] ?? ""));
+}
+
+/**
+ * The check each `.check(name(…))` in some code asks for, by the name it is called by. A check
+ * written inline — `.check(async (ctx) => …)` — names nothing, so it is not in the list.
+ */
+export function checksCalled(code: string): string[] {
+  return [...code.matchAll(/\.check\(\s*([A-Za-z_$][\w$]*)\s*\(/g)].map((found) => found[1] ?? "").filter((name) => name !== "async" && name !== "function");
+}
+
+/** Every check some code defines for itself: `const name = defineCheck(…)`. */
+export function checksDefined(code: string): string[] {
+  return [...code.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*defineCheck\s*\(/g)].map((found) => found[1] ?? "");
+}
+
+/** Every named import in some code from `@jawache/flow` or one of its subpath doors. */
+export function flowImports(code: string): CodeImport[] {
+  return codeImports(code).filter((found) => found.from === "@jawache/flow" || found.from.startsWith("@jawache/flow/"));
+}
+
+/** What a page's examples are held to: every door with the names it exports, and the stock checks by name. */
+export interface Api {
+  readonly doors: ReadonlyMap<string, ReadonlySet<string>>;
+  readonly stockChecks: ReadonlySet<string>;
+}
+
+/**
+ * EVERY WAY A PAGE'S EXAMPLES HAVE FALLEN BEHIND THE API, one line per fault: an import from a
+ * door that does not exist, a name the door does not export, and a `.check(name(…))` that is
+ * neither a stock check nor one the same code defines with `defineCheck`.
+ */
+export function exampleFaults(code: string, api: Api): string[] {
+  const defined = new Set(checksDefined(code));
+  return [
+    ...flowImports(code).flatMap(({ from, names }) => {
+      const exported = api.doors.get(from);
+      if (exported === undefined) return [`${from} — no such door`];
+      return names.filter((name) => !exported.has(name)).map((name) => `${name} — ${from} does not export it`);
+    }),
+    ...checksCalled(code)
+      .filter((name) => !api.stockChecks.has(name) && !defined.has(name))
+      .map((name) => `.check(${name}(…)) — neither a stock check nor a defineCheck on this page`),
+  ];
 }
 
 /** One link a page makes: where it points, and the heading it expects to find there. */
@@ -604,6 +696,37 @@ function census(doc: PackDoc): string {
   return `${rails} guardrail${rails === 1 ? "" : "s"} · ${crumbs} breadcrumb${crumbs === 1 ? "" : "s"} · fires at: ${moments.join(" · ")} · ${takes}`;
 }
 
+/**
+ * THE PAGE'S OPENING LINES — YAML front matter holding one `summary`, the same shape every
+ * hand-written page under docs/user/ opens with.
+ *
+ * The summary is the line that used to sit under the title, so the page carries it once. It is
+ * quoted as JSON, which YAML reads as a double-quoted string: a summary holding a `"`, a `:` or a
+ * `#` stays one string rather than ending the field early. No date goes in it, because the drift
+ * check compares bytes.
+ */
+export function frontMatter(summary: string): string {
+  return `---\nsummary: ${JSON.stringify(summary)}\n---`;
+}
+
+/**
+ * THE FRONT MATTER A PAGE OPENS WITH, as its fields, or null when the page does not open with one.
+ *
+ * Read back by the sweep over docs/user/, which holds every page — generated and hand-written —
+ * to the same opening. One `key: value` per line is all the pages use, so that is all it reads; a
+ * value keeps its quotes, because the sweep asks which fields are there, not what they say.
+ */
+export function frontMatterFields(markdown: string): ReadonlyMap<string, string> | null {
+  const block = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(markdown);
+  if (block === null) return null;
+  const fields = new Map<string, string>();
+  for (const line of (block[1] ?? "").split("\n")) {
+    const field = /^([A-Za-z_][\w-]*):\s*(.*)$/.exec(line);
+    if (field !== null) fields.set(field[1] ?? "", field[2] ?? "");
+  }
+  return fields;
+}
+
 /** Where every part of the page came from — the page explaining itself, once, at the bottom. */
 const PROVENANCE = [
   "## Where each part of this page comes from",
@@ -654,9 +777,9 @@ const PROVENANCE = [
  */
 export function renderPackPage(doc: PackDoc): string {
   return `${[
-    `[flow packs](./index.md) › ${doc.name}`,
+    frontMatter(census(doc)),
     `# The \`${doc.name}\` pack`,
-    census(doc),
+    `[flow packs](./index.md) › ${doc.name}`,
     doc.lead === "" ? "*No lead. Add a doc comment on `definePack` saying what this pack is for.*" : doc.lead.trim(),
     "Generated from `packs/" + doc.name + ".ts` by `just docs-packs`. Edit the pack, not this page. The commit gate refuses a page that has drifted.",
     "## Binding it",
@@ -697,10 +820,10 @@ export function renderPacksIndex(docs: readonly PackDoc[]): string {
     ];
   });
   return `${[
-    "[flow](../index.md) › packs",
+    frontMatter(`${docs.length} packs · one page each · generated by \`just docs-packs\``),
     "# The packs",
-    `${docs.length} packs · one page each · generated by \`just docs-packs\``,
-    "The ten packs `@jawache/flow/packs` ships. Each is a list of rules about a repo. Binding one is a single line in `flow.config.ts`, and a pack you do not bind does nothing.",
+    "[flow](../index.md) › packs",
+    "The packs `@jawache/flow/packs` ships. Each is a list of rules about a repo. Binding one is a single line in `flow.config.ts`, and a pack you do not bind does nothing.",
     table(["Pack", "Guardrails · breadcrumbs", "Parameters", "What it is about"], rows),
     "Generated from `packs/*.ts` by `just docs-packs`. Edit the packs, not these pages. The commit gate refuses a page that has drifted.",
     "---",
@@ -712,9 +835,10 @@ export function renderPacksIndex(docs: readonly PackDoc[]): string {
 //
 // `unbalanced`, `unescapedInCode` and `unknownElements` lived here while docs/user/ was HTML. Each
 // asked what a PARSER would do rather than what the text said, and the one that earned them found a
-// live fault: `new-dep: <name> — <why>` sat unescaped inside a code block on the guidebook, a parser
-// read the two placeholders as unknown ELEMENTS, and every reader was taught `put new-dep:  —  in
-// the message`. Every byte of the file was exactly as its author typed it.
+// live fault: `new-dep: <name> — <why>` sat unescaped inside a code block on the page that is now
+// docs/user/how-to/require-a-reason-in-the-commit-message.md, a parser read the two placeholders as
+// unknown ELEMENTS, and every reader was taught `put new-dep:  —  in the message`. Every byte of
+// the file was exactly as its author typed it.
 //
 // Markdown cannot lose a word that way: inside a fence or a backtick span nothing is markup, and a
 // `<word>` in prose is text. So the three are retired rather than ported, and what replaces them is

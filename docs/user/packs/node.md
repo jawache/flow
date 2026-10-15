@@ -1,8 +1,10 @@
-[flow packs](./index.md) › node
+---
+summary: "2 guardrails · 1 breadcrumb · fires at: touch · command · commit · takes no parameters"
+---
 
 # The `node` pack
 
-2 guardrails · 1 breadcrumb · fires at: touch · command · commit · takes no parameters
+[flow packs](./index.md) › node
 
 package.json discipline: reach for a maintained package, say why, pin it, move the lockfile with
 it.

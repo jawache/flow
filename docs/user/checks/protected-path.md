@@ -1,8 +1,10 @@
+---
+summary: "reads: file path · fires at: write · delete · commit"
+---
+
 # `protectedPath`
 
-reads: file path · fires at: write · delete · commit · 2026-09-06
-
-Refuses a hand-edit of a protected path. The `.on(…)` set *is* the protected set — any file that reaches the check is protected by definition, so matching it is the violation. Name the bare folder alongside its glob, or an `rm -rf` of the directory slips past. A protected-path rule is block-only: everything in scope is refused, so there is nothing to pass.
+Refuses a hand-edit of a protected path. The `.on(…)` set *is* the protected set — any file that reaches the check is protected by definition, so matching it is the violation. When the rule is bound at `deletion`, a glob such as `src/generated/**` also covers an `rm -rf` of the folder: each file the command removed is judged after it runs, and written back when refused. Without `existingOnly`, every file in scope is refused, so the rule has only block cases. With `existingOnly: true`, a new file passes, so a pass case can name one.
 
 ## Options
 
@@ -15,7 +17,7 @@ Refuses a hand-edit of a protected path. The `.on(…)` set *is* the protected s
 ```
 keepGenerated: guardrail()
   .at(write, deletion, commit)
-  .on("src/generated/**", "src/generated")
+  .on("src/generated/**")
   .check(protectedPath({}))
   .message("Machine-written — edit the source the header names, then re-run the build.")
   .test({ block: [{ path: "src/generated/api.ts", content: "" }] }),
@@ -23,4 +25,4 @@ keepGenerated: guardrail()
 
 ---
 
-[All stock checks](../index.md#the-stock-checks--one-page-each) · the sentence around it: [the config reference](../02-entry-reference.md) · this page's example is copied from a pack that `flow test` proves green.
+[All stock checks](../index.md#the-stock-checks--one-page-each) · the sentence around it: [the config reference](../reference/config.md)

@@ -20,7 +20,7 @@ if (dry.status !== 0 || version === null || guide === null) {
   process.exitCode = 1;
 } else if (!existsSync(guide)) {
   process.stderr.write(
-    `release-guide: ${version} has no migration guide. Write ${guide} before releasing — what a repo that uses flow must change to upgrade to ${version}, in the format .claude/skills/documentation/SKILL.md gives, linked from docs/user/migrations/index.md.\n`,
+    `release-guide: ${version} has no migration guide. Write ${guide} before releasing — what a repo that uses flow must change to upgrade to ${version}, in the format .claude/skills/migration-guide/SKILL.md gives, linked from docs/user/migrations/index.md.\n`,
   );
   process.exitCode = 1;
 } else {

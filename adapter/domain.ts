@@ -1516,10 +1516,10 @@ function listed(paths: readonly string[]): string {
  * What an observed refusal ends with: what was put back, what to do now, what stayed, and what a
  * revert cannot reach.
  *
- * The first line is the guide's own sentence pair (docs/user/00-guide.md §8) for the common case of
- * one file changed and refused. Everything after it is conditional except the last line: a revert
- * writes file content back and nothing else, so a test run, a commit or a push the same command made
- * has already happened, and the agent is told so every time.
+ * The first line is the docs' own sentence pair (docs/user/explanation/what-the-guard-sees.md) for
+ * the common case of one file changed and refused. Everything after it is conditional except the
+ * last line: a revert writes file content back and nothing else, so a test run, a commit or a push
+ * the same command made has already happened, and the agent is told so every time.
  */
 function observedTail(refusals: readonly Refused[], undone: Undone): string {
   const failed = new Set(undone.failed.map((failure) => failure.path));
@@ -1604,10 +1604,10 @@ export function repairs(event: AdapterEvent, surface: readonly string[]): boolea
  * IMPORT — a missing module, a syntax error — which the shell catches as a thrown error. The other
  * imports fine and the GRAMMAR refuses it: a missing `.message(…)`, an override naming an entry the
  * pack does not have, a mandatory parameter nobody supplied. Only the first ever reached the repair
- * exception, because the second was refused a layer deeper inside `guard()` — so the break the
- * README and the guidebook both tell a reader to make was the one break an agent could not repair
- * itself out of. To everyone who meets them the two are the same fact, "the guard is entirely off",
- * and now they are the same answer as well.
+ * exception, because the second was refused a layer deeper inside `guard()` — so the break
+ * docs/user/explanation/fail-loud.md tells a reader to make was the one break an agent could not
+ * repair itself out of. To everyone who meets them the two are the same fact, "the guard is
+ * entirely off", and now they are the same answer as well.
  *
  * TURN-END IS TOLD, NOT REFUSED. Holding a turn open on a broken config prevents nothing risky —
  * every write, command and commit is already refused and the commit gate stays shut — while it does

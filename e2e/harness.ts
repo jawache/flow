@@ -246,8 +246,8 @@ export function bindInConfig(
  * had drifted into two behaviours while everyone believed they were one.
  *
  * THE FIRST will not import. THE OTHER THREE import perfectly and the grammar refuses them — and
- * the second of those, a deleted `.message(…)`, is the break the README and the guidebook both
- * tell a reader to make, which is why it is the one that mattered.
+ * the second of those, a deleted `.message(…)`, is the break docs/user/explanation/fail-loud.md
+ * tells a reader to make, which is why it is the one that mattered.
  *
  * Each breaker is a text edit, so it works on any config carrying the shape it names: the deleted
  * `.message` needs one, and the last two rewrite the `defineConfig([…])` line the caller passes in.
