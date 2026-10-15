@@ -462,22 +462,25 @@ function stepWrappers(argv: readonly string[]): readonly string[] {
     const spec = WRAPPERS[basename(rest[0] ?? "")];
     if (spec === undefined) return rest;
     const flags: string[] = [];
-    let i = 1;
-    while (i < rest.length) {
-      const word = rest[i] ?? "";
-      if (word === "--") {
-        i += 1;
+    let at = rest.length; // where the program is: past every flag, value and assignment
+    let value = false; // the word before was a flag that takes this one as its value
+    for (const [n, word] of rest.slice(1).entries()) {
+      if (value) value = false;
+      else if (word === "--") {
+        at = n + 2;
         break;
-      }
-      if (spec.assignments && ASSIGNMENT.test(word)) i += 1;
+      } else if (spec.assignments && ASSIGNMENT.test(word)) continue;
       else if (word.startsWith("-") && word !== "-") {
         flags.push(word);
-        i += spec.valued.includes(word) ? 2 : 1;
-      } else break;
+        value = spec.valued.includes(word);
+      } else {
+        at = n + 1;
+        break;
+      }
     }
-    i += spec.operands ?? 0;
-    if (spec.lookup?.some((flag) => flags.includes(flag)) || i >= rest.length) return rest;
-    rest = rest.slice(i);
+    at += spec.operands ?? 0;
+    if (spec.lookup?.some((flag) => flags.includes(flag)) || at >= rest.length) return rest;
+    rest = rest.slice(at);
   }
 }
 
@@ -488,9 +491,10 @@ function stepWrappers(argv: readonly string[]): readonly string[] {
 function shellInput(args: readonly string[]): { readonly string: string } | "stdin" | null {
   let c = false;
   let s = false;
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i] ?? "";
-    if (/^[-+][oO]$/.test(arg)) i += 1;
+  let value = false; // the word before was `-o` or `-O`, which takes this one
+  for (const arg of args) {
+    if (value) value = false;
+    else if (/^[-+][oO]$/.test(arg)) value = true;
     else if (/^[-+][A-Za-z]+$/.test(arg)) {
       c ||= arg.startsWith("-") && arg.includes("c");
       s ||= arg.startsWith("-") && arg.includes("s");
@@ -634,12 +638,9 @@ export function parseCommandLine(line: string): ShellCommand[] | null {
       word(r.target, subs, out);
       return;
     }
-    const quoted = r.delimiter?.quoted ?? false;
+    const quoted = r.delimiter?.quoted === true;
     heredocs?.push({ body: r.body.text, quoted });
     if (!quoted) for (const part of r.body.parts ?? []) wordPart(part, subs, out);
-  };
-  const list = (l: CompoundList, nested: boolean, out: ShellCommand[]): void => {
-    for (const statement of l.commands) node(statement, nested, out);
   };
 
   const node = (n: Statement | AndOr | PipelineNode | CommandNode | CompoundList, nested: boolean, out: ShellCommand[]): void => {
@@ -663,13 +664,13 @@ export function parseCommandLine(line: string): ShellCommand[] | null {
         for (const r of n.redirects) redirection(r, null, null, out);
         return;
       case "CompoundList":
-        list(n, nested, out);
+        for (const statement of n.commands) node(statement, nested, out);
         return;
       case "ArithmeticFor":
         arithmetic(n.initialize, null, out);
         arithmetic(n.test, null, out);
         arithmetic(n.update, null, out);
-        list(n.body, nested, out);
+        node(n.body, nested, out);
         return;
       case "Subshell":
       case "BraceGroup":
@@ -678,22 +679,22 @@ export function parseCommandLine(line: string): ShellCommand[] | null {
         node(n.body, nested, out);
         return;
       case "If":
-        list(n.clause, nested, out);
-        list(n.then, nested, out);
+        node(n.clause, nested, out);
+        node(n.then, nested, out);
         if (n.else !== undefined) node(n.else, nested, out);
         return;
       case "For":
       case "Select":
         for (const w of n.wordlist ?? []) word(w, null, out);
-        list(n.body, nested, out);
+        node(n.body, nested, out);
         return;
       case "While":
-        list(n.clause, nested, out);
-        list(n.body, nested, out);
+        node(n.clause, nested, out);
+        node(n.body, nested, out);
         return;
       case "Case":
         word(n.word, null, out);
-        for (const item of n.items) list(item.body, nested, out);
+        for (const item of n.items) node(item.body, nested, out);
         return;
       case "TestCommand":
         test(n.expression, out);

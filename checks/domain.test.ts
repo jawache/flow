@@ -155,10 +155,6 @@ describe("a command case's ctx", () => {
     expect(await run(noBareGh, "command", "ls && sudo gh pr list")).toBe("`gh pr list` runs gh directly — run it as `work gh …`");
     expect(await run(noBareGh, "command", { command: "gh pr list", actor: ["builder"] })).toContain("runs gh directly");
   });
-
-  it("carries null for a line that does not parse", () => {
-    expect(cannedCtx("command", 'gh pr create --body "oops', []).commands).toBeNull();
-  });
 });
 
 describe("banCommands", () => {

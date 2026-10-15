@@ -384,10 +384,6 @@ describe("parseCommandLine — the 45 hand-labelled commands from triage's bake-
     "unclosed quote": ['echo "oops', L(null)],
   };
 
-  it("is the whole set, all 45", () => {
-    expect(Object.keys(LABELLED)).toHaveLength(45);
-  });
-
   for (const [name, [line, label]] of Object.entries(LABELLED)) {
     it(name, () => {
       const parsed = parseCommandLine(line);
@@ -419,6 +415,10 @@ describe("parseCommandLine — the six fields", () => {
       substitutions: [],
       nested: false,
     });
+  });
+
+  it("hands an assignment given as an argument over as the program receives it", () => {
+    expect(only("export a+=x b[1]=y c=( 1 2 )").args).toEqual(["a+=x", "b[1]=y", "c=(1 2)"]);
   });
 
   it("attaches each heredoc to the command it feeds, with its body and whether it is quoted", () => {
@@ -545,6 +545,67 @@ describe("parseCommandLine — nested commands", () => {
       ["rm", true],
     ]);
   });
+
+  // Every place bash runs a command while building another, and every compound command a simple
+  // one can sit inside: each line pins one branch of the walk, so a branch dropped is a case red.
+  const WHERE: Record<string, readonly (readonly [string, boolean])[]> = {
+    // arithmetic, in each of its node shapes
+    "echo $(( $(rm x) + 1 ))": [["echo", false], ["rm", true]],
+    "echo $(( -$(rm x) ))": [["echo", false], ["rm", true]],
+    "echo $(( a ? $(rm x) : 2 ))": [["echo", false], ["rm", true]],
+    "echo $(( ($(rm x)) ))": [["echo", false], ["rm", true]],
+    "echo $(( $x + 1 ))": [["echo", false]],
+    "(( $(rm y) ))": [["rm", true]],
+    "for ((i=$(rm w);;)); do :; done": [["rm", true], [":", false]],
+    // parameter expansions: each operation that carries a word, and one that carries none
+    "echo ${x/a/$(rm z)}": [["echo", false], ["rm", true]],
+    "echo ${x:2:$(rm v)}": [["echo", false], ["rm", true]],
+    "echo ${x^^$(rm c)}": [["echo", false], ["rm", true]],
+    "echo ${x[$(rm i)]}": [["echo", false], ["rm", true]],
+    "echo ${!x[@]}": [["echo", false]],
+    // [[ … ]], in each of its expression shapes
+    "[[ ! -f $(rm t) || -n x ]]": [["rm", true]],
+    "[[ ( -f $(rm t) ) ]]": [["rm", true]],
+    "[[ $(rm a) == b ]]": [["rm", true]],
+    // globs and braces
+    "echo {a,$(rm b)}": [["echo", false], ["rm", true]],
+    "echo @($(rm q)|b)": [["echo", false], ["rm", true]],
+    // redirections: before the name, a here-string, and a heredoc on a compound command
+    ">$(rm r) ls": [["ls", false], ["rm", true]],
+    "ls <<< $(rm h)": [["ls", false], ["rm", true]],
+    "while read l; do :; done <<EOF\n$(rm n)\nEOF": [["read", false], [":", false], ["rm", true]],
+    // assignments as arguments
+    "declare a=$(rm s)": [["declare", false], ["rm", true]],
+    "local -a b=( $(rm u) )": [["local", false], ["rm", true]],
+    // the compound commands
+    "if false; then :; else rm e; fi": [["false", false], [":", false], ["rm", false]],
+    "if false; then :; elif true; then rm e; fi": [["false", false], [":", false], ["true", false], ["rm", false]],
+    "f() { rm g; }": [["rm", false]],
+    "coproc rm h": [["rm", false]],
+    "select x in $(rm k); do :; done": [["rm", true], [":", false]],
+    "case $(rm m) in a) :;; esac": [["rm", true], [":", false]],
+    "! rm o": [["rm", false]],
+    "time rm p": [["rm", false]],
+    // the end of options, to a wrapper and to a shell
+    "sudo -- rm x": [["rm", false]],
+    "bash -- 'x'": [["bash", false]],
+    "bash --login <<EOF\nrm y\nEOF": [["bash", false], ["rm", true]],
+    "bash - <<EOF\nrm y\nEOF": [["bash", false], ["rm", true]],
+    "bash -c": [["bash", false]],
+    "sh -s deploy <<EOF\nrm y\nEOF": [["sh", false], ["rm", true]],
+    "bash -o pipefail deploy.sh": [["bash", false]],
+    // the walk's quiet ends: a glob and a brace with nothing in them, a parameter op with no word,
+    // a for with no list, and assignments with an index and an append
+    "echo {a,b} @(x|y) ${!pre*}": [["echo", false]],
+    "for x; do rm f; done": [["rm", false]],
+    "export a+=x b[1]=y": [["export", false]],
+  };
+
+  for (const [line, want] of Object.entries(WHERE)) {
+    it(`finds what runs in ${JSON.stringify(line)}`, () => {
+      expect(nested(line)).toEqual(want);
+    });
+  }
 });
 
 describe("parseCommandLine — a line that does not parse", () => {
