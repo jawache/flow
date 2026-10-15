@@ -96,7 +96,7 @@ import {
   type CommitScope,
   type StagedChanges,
   sessionFactsFrom,
-  sidecarPath,
+  ownTranscriptPath,
   refused,
   reversal,
   toEvent,
@@ -235,8 +235,8 @@ export function currentBranch(root: string): string | null {
  * surprise the marker exists to prevent.
  *
  * `agent` is null when the marker is missing, stale or malformed, and then the wearer wears NOTHING
- * rather than a guess: there is no transcript and no sidecar out here, so the stored verdict is the
- * only truthful answer there can be.
+ * rather than a guess: there is no transcript and no hook message out here, so the stored verdict is
+ * the only truthful answer there can be.
  */
 export function wearer(root: string): {
   readonly branch: string | null;
@@ -600,8 +600,7 @@ interface Session {
   readonly id: string;
   readonly agent: string;
   readonly branch: string | null;
-  /** The transcript's own path, as the host named it. Empty when the payload carried none. */
-  readonly transcriptPath: string;
+  /** This agent's own transcript: a subagent's own, never its parent's. */
   readonly transcript: () => string | null;
   readonly tokens: () => number;
   readonly turn: () => readonly TurnAction[];
@@ -616,16 +615,20 @@ function once<T>(answer: () => T): () => T {
   };
 }
 
-/** What the payload says about this session, with the expensive answers left unasked. */
+/**
+ * What the payload says about this session, with the expensive answers left unasked.
+ *
+ * A subagent's call carries its PARENT's `transcript_path`, so the transcript this agent's brief,
+ * tokens and turn are read from is the subagent's own one under it, found by its `agent_id`.
+ */
 function sessionOf(payload: HookPayload, root: string): Session {
-  const transcriptPath = typeof payload.transcript_path === "string" ? payload.transcript_path : "";
-  const transcript = once((): string | null => (transcriptPath === "" ? null : readText(root, transcriptPath)));
+  const path = ownTranscriptPath(payload);
+  const transcript = once((): string | null => (path === null ? null : readText(root, path)));
   return {
     root,
     id: typeof payload.session_id === "string" && payload.session_id !== "" ? payload.session_id : "unknown",
     agent: typeof payload.agent_id === "string" && payload.agent_id !== "" ? payload.agent_id : "main",
     branch: currentBranch(root),
-    transcriptPath,
     transcript,
     tokens: once((): number => {
       const text = transcript();
@@ -641,9 +644,9 @@ function sessionOf(payload: HookPayload, root: string): Session {
 /**
  * Who this session × agent is, read once and then remembered on disk.
  *
- * The sidecar is the answer when there is one, and the transcript's head is consulted only for the
- * generic buckets a recipe declares — that order is `spawnedAs`'s and is enforced there. What this
- * owes is the evidence, gathered from the two files the host wrote.
+ * The agent type in the hook message is the answer when there is one, and the transcript's head is
+ * consulted only for the generic buckets a recipe declares — that order is `spawnedAs`'s and is
+ * enforced there. What this owes is the evidence: the message, and this agent's own transcript.
  *
  * NO CATEGORIES, NO QUESTION. A config that declares none has nobody to be, so the transcript is
  * never opened and no state file is written to remember an empty answer — which is the common case
@@ -652,12 +655,7 @@ function sessionOf(payload: HookPayload, root: string): Session {
  */
 function identityOf(session: Session, payload: HookPayload, categories: readonly Category[]): Identity {
   if (categories.length === 0) return { wearing: [], faults: [], fresh: false };
-  const sidecar = session.transcriptPath === "" ? null : sidecarPath(session.transcriptPath);
-  const facts = sessionFactsFrom({
-    payload,
-    transcript: session.transcript(),
-    sidecar: sidecar === null ? null : readText(session.root, sidecar),
-  });
+  const facts = sessionFactsFrom({ payload, transcript: session.transcript() });
   return stickyIdentity(session.root, session.id, session.agent, facts, categories);
 }
 
@@ -994,7 +992,7 @@ function readChanges(
  * WHO IT IS comes from the marker the PreToolUse rail left — session AND agent — so a commit's rows
  * land in the session that caused them and an actor-scoped rule fires at this moment as honestly as
  * at any other. The classification itself is never re-derived here: there is no transcript and no
- * sidecar outside a session, so the STORED verdict is the only truthful answer, and a fresh commit
+ * hook message outside a session, so the STORED verdict is the only truthful answer, and a fresh commit
  * on a stale or absent marker wears nothing rather than wearing a guess.
  */
 export async function runCommit(root: string, scope: CommitScope): Promise<HookResult> {
