@@ -101,6 +101,7 @@ import {
   configLoadFault,
   loadsAsStrippedModule,
   HOOK_REGISTRATIONS,
+  hookCommand,
   ourHookCommand,
   registeredEvents,
   staleRegistrations,
@@ -1656,7 +1657,9 @@ describe("the hook registrations flow writes", () => {
   it("commands a word this build answers to — the list is derived, so it cannot name one it doesn't", () => {
     for (const registration of HOOK_REGISTRATIONS)
       expect(ourHookCommand(registration.command), registration.command).toBe(true);
-    expect(HOOK_REGISTRATIONS.map((r) => r.command)).toContain("flow hook session-start");
+    expect(HOOK_REGISTRATIONS.map((r) => r.command)).toContain(
+      'PATH="$CLAUDE_PROJECT_DIR/node_modules/.bin:$PATH" flow hook session-start',
+    );
   });
 
   it("recognises its own registration whatever path stands in front of the binary", () => {
@@ -1675,7 +1678,7 @@ describe("the hook registrations flow writes", () => {
     const after = settings as { permissions: unknown; hooks: Record<string, unknown[]> };
     expect(after.permissions, "untouched, byte for byte").toEqual(before.permissions);
     expect(registeredEvents(settings)).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
-    expect(after.hooks["Stop"]).toEqual([{ hooks: [{ type: "command", command: "flow hook stop" }] }]);
+    expect(after.hooks["Stop"]).toEqual([{ hooks: [{ type: "command", command: hookCommand("stop") }] }]);
     expect(after.hooks["PreToolUse"]?.[0]).toMatchObject({ matcher: "*" });
   });
 
@@ -1692,14 +1695,14 @@ describe("the hook registrations flow writes", () => {
     expect(added).toContain("Stop");
     const stop = (settings as { hooks: Record<string, unknown[]> }).hooks["Stop"];
     expect(JSON.stringify(stop), "theirs survives — we add, we never rewrite").toContain("their-tool --report");
-    expect(JSON.stringify(stop)).toContain("flow hook stop");
+    expect(JSON.stringify(stop)).toContain(JSON.stringify(hookCommand("stop")));
   });
 
   it("asks for every tool after the call, succeeded or failed — any tool can change the tree", () => {
     const matcher = (event: string): string | undefined => HOOK_REGISTRATIONS.find((r) => r.event === event)?.matcher;
     expect(matcher("PostToolUse")).toBe("*");
     expect(matcher("PostToolUseFailure")).toBe("*");
-    expect(HOOK_REGISTRATIONS.find((r) => r.event === "PostToolUseFailure")?.command).toBe("flow hook post-tool-use-failure");
+    expect(HOOK_REGISTRATIONS.find((r) => r.event === "PostToolUseFailure")?.command).toBe(hookCommand("post-tool-use-failure"));
   });
 
   it("widens its OWN narrow registration in place, and says so — a second entry would fire twice", () => {
@@ -1735,10 +1738,18 @@ const OLD_GATE = '#!/bin/sh\nstaged=$(git diff --cached --name-only --diff-filte
 
 describe("the git gate flow arms", () => {
   it("calls `flow hook commit` and passes nothing — no list, no filter, no early exit", () => {
+    expect(PRE_COMMIT.endsWith("\nexec flow hook commit\n"), "the gate ends with it").toBe(true);
     expect(PRE_COMMIT).toContain("\nexec flow hook commit\n");
     expect(PRE_COMMIT.startsWith("#!")).toBe(true);
     expect(PRE_COMMIT, "flow asks git; the hook does not").not.toContain("git diff");
     expect(PRE_COMMIT).not.toContain("exit 0");
+  });
+
+  // A DEV DEPENDENCY GUARDS THE REPO: git hands its hooks the PATH it was given, and a repo with
+  // flow only in node_modules/.bin has none there, so the gate puts the repo's own copy first.
+  it("puts the repo's node_modules/.bin first on the PATH before it runs flow", () => {
+    const lines = PRE_COMMIT.split("\n").filter((line) => line !== "" && !line.startsWith("#"));
+    expect(lines).toEqual(['PATH="$PWD/node_modules/.bin:$PATH"', "exec flow hook commit"]);
   });
 
   it("names one hooks directory, and one gate inside it", () => {

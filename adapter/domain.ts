@@ -3479,9 +3479,22 @@ const REGISTERED: readonly { readonly hook: HookEvent; readonly matcher?: string
   { hook: "stop" },
 ];
 
+/** The repo's own bin folder, where a dev dependency's `flow` is, relative to the repo root. */
+export const LOCAL_BIN = "node_modules/.bin";
+
+/**
+ * The command each registration runs: the repo's own `flow` first, then the PATH's.
+ *
+ * The host runs it through a shell with `$CLAUDE_PROJECT_DIR` set to the repo, so a repo with flow
+ * only as a dev dependency answers its hooks, and its lockfile's version wins over a global one.
+ */
+export function hookCommand(hook: HookEvent): string {
+  return `PATH="$CLAUDE_PROJECT_DIR/${LOCAL_BIN}:$PATH" flow hook ${hook}`;
+}
+
 export const HOOK_REGISTRATIONS: readonly Registration[] = REGISTERED.map(({ hook, matcher }) => ({
   event: HOST_EVENT[hook],
-  command: `flow hook ${hook}`,
+  command: hookCommand(hook),
   ...(matcher === undefined ? {} : { matcher }),
 }));
 
@@ -3631,6 +3644,10 @@ export const PRE_COMMIT = `#!/bin/sh
 # git refuses the commit. This is the half of the promise the PreToolUse rail cannot make: it fires
 # for a human's commit, a merge and CI, with no session in the room. flow asks git itself what the
 # commit adds, changes and deletes.
+#
+# git runs this from the repo's root, so the repo's own flow, a dev dependency's, runs before any
+# on the PATH.
+PATH="$PWD/${LOCAL_BIN}:$PATH"
 exec flow hook commit
 `;
 
@@ -4134,9 +4151,6 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
     ...snapshotGaps(universe(facts.load?.ok === true ? facts.load.entries : []), facts.ignored, facts.snapshotInclude),
   ];
 }
-
-/** The repo's own bin folder, where a dev dependency's `flow` is, relative to the repo root. */
-export const LOCAL_BIN = "node_modules/.bin";
 
 /**
  * CAN THE HOOKS AND THE GATE FIND `flow`? Both call it by name, so a repo can carry every other
