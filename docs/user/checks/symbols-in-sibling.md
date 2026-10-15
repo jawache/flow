@@ -27,4 +27,4 @@ exportsTested: guardrail()
 
 ---
 
-[All stock checks](../index.md#the-stock-checks--one-page-each) · the sentence around it: [the config reference](../02-entry-reference.md) · this page's example is copied from a pack that `flow test` proves green.
+[All stock checks](../index.md#the-stock-checks--one-page-each) · the sentence around it: [the config reference](../reference/config.md) · this page's example is copied from a pack that `flow test` proves green.

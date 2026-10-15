@@ -29,8 +29,8 @@ builderWrites: guardrail()
   }),
 ```
 
-A case adds an `actor` field beside `path` and `content`. `actor: ["builder"]` is the list of category names the canned session has. The [config reference](../02-entry-reference.md#categories) gives the syntax for defining a category, and for binding a rule to one with `.for(…)`. `.for(…)` limits which actor a rule applies to. `oneWriter` limits which actors may change the file, and refuses every other one.
+A case adds an `actor` field beside `path` and `content`. `actor: ["builder"]` is the list of category names the canned session has. The [config reference](../reference/config.md#categories) gives the syntax for defining a category, and for binding a rule to one with `.for(…)`. `.for(…)` limits which actor a rule applies to. `oneWriter` limits which actors may change the file, and refuses every other one.
 
 ---
 
-[All stock checks](../index.md#the-stock-checks--one-page-each) · the sentence around it: [the config reference](../02-entry-reference.md) · this page's example is copied from a pack that `flow test` proves green.
+[All stock checks](../index.md#the-stock-checks--one-page-each) · the sentence around it: [the config reference](../reference/config.md) · this page's example is copied from a pack that `flow test` proves green.

@@ -1,0 +1,87 @@
+# What the guard sees
+
+docs/user/explanation · about how flow detects every change to the tree, and why it compares the disk instead of reading the tool · 2026-10-15
+
+A guardrail is checked against what changed on disk, not against the tool that changed it.
+
+## One mechanism for every change
+
+Before each tool call, flow records the content of every file in the working tree. This record is the **snapshot**. After the call, flow compares the snapshot with the tree as it now stands, and the differences are the changes the call made:
+
+- **Each file the call created or changed** is passed to the write rules, with the content now on disk.
+- **Each file the call removed** is passed to the delete rules.
+- **Each breadcrumb whose globs match a changed path** is shown to the agent.
+
+flow never reads what the agent typed to make the change. So an edit through the Edit tool, a heredoc, `sed -i`, a Python script, a `just` recipe, an MCP tool and a subagent all reach the rules by the same route. That leaves one mechanism to understand, and no second one to reach for when a change arrives some new way.
+
+## Two routes, one outcome
+
+The two routes differ in timing, not in outcome:
+
+- **A change made through the Edit or Write tool** is checked before it lands. flow builds the file the tool would produce, holds it in memory, and calls the rules on that. A refusal leaves the disk untouched.
+- **A change made any other way** is checked once it has landed, because until then its content does not exist anywhere to check. When a rule refuses it, flow writes the file back to the content it had before the call, byte for byte. The agent is told which rule refused and why, in the same place it reads the tool's own result.
+
+Either way, a refused write never stays on disk. Someone writing a rule does not need to know which route ran. A check is called with a path and the file's content in both cases, and its message reads the same either way.
+
+The first line of the refusal differs between the two routes, so a reader of the log can tell which one happened:
+
+```
+flow — blocked before the write landed:          an Edit, judged in memory — disk untouched
+flow — write reverted after it landed:           a shell edit, undone from the snapshot
+
+✗ house.noTodo · src/b.ts
+  No TODOs in src/ — do it now, or track it properly.
+    line 3 says TODO
+
+src/b.ts is back to its previous content. Adjust the change so it passes and write it again — through Edit, which is judged before it lands.
+```
+
+## How much a refusal undoes
+
+How much of a call a refusal undoes is a choice, set by `revert` in the config's [settings](../reference/config.md#settings):
+
+- **`revert: "refused"`**, the default, writes back only the files that failed a rule. The other files the same command wrote stay as the command wrote them, and the refusal message lists them.
+- **`revert: "all"`** writes back every file the call changed. Choose it if you would rather a refusal mean the call never happened.
+
+Neither setting undoes anything except file content. If the same command ran the tests over the bad content, made a commit, pushed, or ran a migration, those have already happened and they stay. The refusal message says so.
+
+## Several agents in one worktree
+
+The **harness** is the coding-agent program flow plugs into, such as Claude Code. It runs one writing tool call at a time within a session, so inside one session a revert only touches the files of the call being refused.
+
+A parent agent and its subagents are not ordered against each other that way, and their calls can overlap in time. flow works out the overlap from its own log: a snapshot with no diff recorded after it belongs to a call that has not finished. While such a call is outstanding, flow writes back only the refused files, even where `revert: "all"` is set, and the message lists the calls that had not finished.
+
+## A command started in the background
+
+A command started in the background gets no special treatment. The tool call returns before the process does, and the harness runs no hook when the process ends. So what the process writes after that point shows up in the diff of whichever later tool call finds it. It is judged there, and written back if a rule refuses it. With `revert: "all"` set, it goes back with everything else that call changed.
+
+A revert can therefore land on a file a process is still writing. Keep what a background process writes, such as logs, build output and caches, in a path git ignores. flow never records an ignored path unless `snapshotInclude` lists it. An untracked folder that git does not ignore is still recorded.
+
+## Who may write is a separate question
+
+Overlap is about when a write happened. The [`oneWriter`](../checks/one-writer.md) check is about who was allowed to make it. It is given the categories that may change files, where a category is flow's name for the actor behind a call, and it fails for any actor outside that list. So a verifier agent that corrects a typo of its own accord has the file written back, and the message says which actor wrote it.
+
+## Reads through the shell
+
+A breadcrumb is a note shown to the agent, not a refusal, so it is worth showing on a file the agent only reads. That is why the `touch` moment also matches the paths a shell command reads. `cat`, `head`, `sed -n` and `grep` on a path all match the `touch` moment, and the note is shown before the command's output comes back.
+
+Reading paths out of a command line is best-effort, so a script that computes its own paths is not detected. The diff still catches what that misses: a file that changes without any detected read has its breadcrumb shown at the change. That is later than it would otherwise be, but it is not skipped.
+
+## Two commands report on all of this
+
+- **`flow status`** prints the permission mode the session runs under. Under Claude Code's auto mode, it says whether the session is being steered towards shell edits.
+- **`flow facts`** counts shell writes and shell reads alongside the edits made through tool calls, and lists their paths. That is why its lead and coverage figures count everything that happened.
+
+## The edges of the snapshot
+
+The snapshot holds what git holds: every tracked file, and every untracked file that git does not ignore.
+
+- **A file git ignores** is not in it, so a shell write to that file is not judged, and neither is anything under `.git`. Some ignored files are worth guarding, and an `.env` file is the usual one. `snapshotInclude` in the config lists globs for the ignored paths to record as well.
+- **A rule whose scope reaches an ignored path** that the snapshot leaves out is reported by `flow status` as a red line naming the rule and the setting, so the gap cannot stay silent.
+- **Files outside the repository** are never recorded.
+- **A file that one command creates and then deletes** leaves nothing in the diff, so no rule is called on it.
+- **A command you type yourself with `!`** is your own work rather than the agent's, and it is not put through the guard.
+
+---
+
+[Index](../index.md) · `revert` and `snapshotInclude`: [the settings](../reference/config.md#settings) · when each rule runs: [the moments](../reference/moments.md) · the model: [how flow works](./how-flow-works.md)

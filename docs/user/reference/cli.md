@@ -1,8 +1,8 @@
-# Command reference
+# The flow command
 
-docs/user · the `flow` command · 2026-10-07
+docs/user/reference · every `flow` command, what `flow init` writes, the two switch files, and the exit codes · 2026-10-15
 
-Every `flow` command, what `flow init` writes, the two switch files, and the exit codes.
+`flow` is one binary. You type `flow init`, `flow status` and `flow test`, and Claude Code and git call `flow hook` for you.
 
 ## Commands
 
@@ -50,3 +50,7 @@ A hook has two codes: 0 lets the action go ahead, and 2 refuses it and shows sta
 Only `flow status` and `flow test` exit 1, because they report rather than refuse. A config that does not load makes both of them exit 2.
 
 `e2e/product.test.ts` runs every row of this table against the binary.
+
+---
+
+[Index](../index.md) · what `flow.config.ts` holds: [the config](./config.md) · when each rule runs: [moments](./moments.md) · the install choices: [how to install flow](../how-to/install-flow.md)

@@ -53,24 +53,25 @@ npx flow status
 
 For a folder with no `package.json`, install it globally with `npm i -g @jawache/flow` and run `flow init`.
 
-`flow init` writes `flow.config.ts`, a git pre-commit hook and flow's hook registrations for Claude Code. `flow status` lists every rule and checks the wiring: green means every rule loads and is in place. Then follow the [quick start](./docs/user/01-quick-start.md), which takes you from an unguarded repo to a refused commit in five minutes.
+`flow init` writes `flow.config.ts`, a git pre-commit hook and flow's hook registrations for Claude Code. `flow status` lists every rule and checks the wiring: green means every rule loads and is in place. Then follow [Getting started](./docs/user/tutorials/getting-started.md), which takes you from an unguarded repo to a refused commit in five minutes.
 
 ## Documentation
 
 | To | Read |
 | --- | --- |
-| Learn flow by doing, in five minutes | [Quick start](./docs/user/01-quick-start.md) |
-| Solve a specific problem: protect files, ban a command, gate a commit on your tests | [Guidebook](./docs/user/00-guide.md) |
-| Look up the rule grammar, the moments, `ctx` and test cases | [Config reference](./docs/user/02-entry-reference.md) |
-| Look up a command, a switch or an exit code | [Command reference](./docs/user/04-cli-reference.md) |
-| Write your own check or pack | [Authoring a pack](./docs/user/03-authoring-scripts.md) |
+| Learn flow by doing, in five minutes | [Getting started](./docs/user/tutorials/getting-started.md) |
+| Solve a specific problem: protect files, ban a command, gate a commit on your tests | [The how-to guides](./docs/user/index.md#get-something-done) |
+| Look up the rule grammar, the moments, `ctx` and test cases | [The config](./docs/user/reference/config.md) · [moments](./docs/user/reference/moments.md) · [`ctx`](./docs/user/reference/ctx.md) |
+| Look up a command, a switch or an exit code | [The flow command](./docs/user/reference/cli.md) |
+| Write your own check or pack | [How to write your own check](./docs/user/how-to/write-your-own-check.md) · [how to share a pack](./docs/user/how-to/share-a-pack.md) |
 | See what a shipped pack or check does | [The packs](./docs/user/packs/index.md) · [the checks](./docs/user/index.md#the-stock-checks--one-page-each) |
+| Understand why flow works the way it does | [How flow works](./docs/user/explanation/how-flow-works.md) |
 | Upgrade a repo that already uses flow | [Migration guides](./docs/user/migrations/index.md) |
 | See what changed in each release | [CHANGELOG.md](./CHANGELOG.md) |
 
 ## How it works
 
-`flow init` registers flow with Claude Code, and adds a git pre-commit hook. Claude Code then runs `flow` when a session starts, before and after every tool call, and when the agent finishes. Git runs `flow hook commit` before every commit. Each time, flow loads `flow.config.ts` and runs the rules bound to that moment: `session`, `touch`, `write`, `delete`, `command`, `commit` or `turn-end`. A guardrail refuses by exiting with code 2, which Claude Code and git both treat as "do not go ahead", and its message is shown to the agent. A breadcrumb never refuses: its text is added to the agent's context. The [guidebook](./docs/user/00-guide.md) explains each moment.
+`flow init` registers flow with Claude Code, and adds a git pre-commit hook. Claude Code then runs `flow` when a session starts, before and after every tool call, and when the agent finishes. Git runs `flow hook commit` before every commit. Each time, flow loads `flow.config.ts` and runs the rules bound to that moment: `session`, `touch`, `write`, `delete`, `command`, `commit` or `turn-end`. A guardrail refuses by exiting with code 2, which Claude Code and git both treat as "do not go ahead", and its message is shown to the agent. A breadcrumb never refuses: its text is added to the agent's context. [Moments](./docs/user/reference/moments.md) describes each one.
 
 ## Working on flow
 

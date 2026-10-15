@@ -462,7 +462,7 @@ describe("the quick start's transcripts", () => {
   it("are what `flow init`, `flow status`, `flow test` and both refusals really print", () => {
     const mine = newRepo();
     const firstTime = mkdtempSync(join(tmpdir(), "flow-quickstart-"));
-    const page = (opening: string): string => paged("01-quick-start.md", opening);
+    const page = (opening: string): string => paged(join("tutorials", "getting-started.md"), opening);
     const said = (args: readonly string[], stdin = ""): string => {
       const ran = runFlow(mine, args, { home: firstTime, bin }, stdin);
       return asQuoted(ran.stdout || ran.stderr, mine, firstTime);
@@ -491,7 +491,7 @@ describe("the quick start's transcripts", () => {
 describe("the command reference's exit-code table", () => {
   /** The table's rows, as `{ "0": "passed — …" }` — the codes it publishes and what it says they mean. */
   function published(): Record<string, string> {
-    const text = readFileSync(join(PACKAGE, "docs", "user", "04-cli-reference.md"), "utf8");
+    const text = readFileSync(join(PACKAGE, "docs", "user", "reference", "cli.md"), "utf8");
     const table = text.slice(text.indexOf("## Exit codes"));
     const rows = [...table.matchAll(/^\| `(\d)` \| (.+?) \|$/gm)];
     expect(rows.length, "the exit-code table has three rows").toBe(3);
