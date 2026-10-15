@@ -1874,7 +1874,7 @@ describe("planInit — a repo that already has a pre-commit hook", () => {
   });
 });
 
-describe("the guard's own files — the repo's half read out of the config's text, then the host's", () => {
+describe("the guard's own files — the repo's half read out of the config's text, and the host's", () => {
   // The config as this repo writes it, and as a broken one still reads: the imports survive
   // whatever went wrong two hundred lines below them.
   const CONFIG = [
@@ -1885,9 +1885,11 @@ describe("the guard's own files — the repo's half read out of the config's tex
     `export default defineConfig([pack(git), pack(house)]);`,
   ].join("\n");
 
-  it("is the config and the packs it imports, then the host's half, and nothing else", () => {
+  it("is the config, the packs it imports and the host's half, and nothing else", () => {
+    // MEMBERSHIP, never order: the one caller asks whether a path is in the list, so an order
+    // pinned here would break on a reshuffle that changes nothing a user sees.
     const paths = guardPaths(CONFIG);
-    expect(paths.slice(-HOST_SURFACE.length), "the host's half comes last, whole").toStrictEqual([...HOST_SURFACE]);
+    expect(paths, "the host's half is there, whole").toEqual(expect.arrayContaining([...HOST_SURFACE]));
     expect(matchAny(CONFIG_FILE, paths)).toBe(true);
     expect(matchAny("guards/house.ts", paths)).toBe(true);
     expect(matchAny("guards/git.ts", paths), "the folder comes with the file").toBe(true);
@@ -1908,8 +1910,8 @@ describe("the guard's own files — the repo's half read out of the config's tex
     expect(matchAny("guards/house.ts", theirs)).toBe(false);
     // A config with every rule written inline imports no pack, so the repo's half is the config alone.
     const inline = guardPaths(`import { defineConfig } from "@jawache/flow";`);
-    expect([...inline]).toStrictEqual([CONFIG_FILE, ...HOST_SURFACE]);
-    expect([...guardPaths(null)]).toStrictEqual([CONFIG_FILE, ...HOST_SURFACE]);
+    expect(new Set(inline)).toStrictEqual(new Set([CONFIG_FILE, ...HOST_SURFACE]));
+    expect(new Set(guardPaths(null))).toStrictEqual(new Set([CONFIG_FILE, ...HOST_SURFACE]));
   });
 
   it("reads the TEXT, not the module — which is the only reader a broken config has", () => {
