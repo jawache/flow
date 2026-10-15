@@ -4140,18 +4140,20 @@ export const LOCAL_BIN = "node_modules/.bin";
 
 /**
  * CAN THE HOOKS AND THE GATE FIND `flow`? Both call it by name, so a repo can carry every other
- * fitting and still have each hook fail with `flow: not found` and every commit refused. The repo's
- * own copy is named first, because it is the one the hooks look for first.
+ * fitting and still have each hook fail with `flow: not found` and every commit refused.
+ *
+ * Green only for the PATH: the gate and the registrations call bare `flow`, so a copy in
+ * `node_modules/.bin` alone is one nothing runs — a red line of its own, naming the copy it found.
  */
 function binaryFitting(binary: StatusFacts["binary"]): Fitting {
-  if (binary.modules) return { id: "binary", ok: true, detail: `the hooks and the gate run the flow in ${LOCAL_BIN}` };
   if (binary.path) return { id: "binary", ok: true, detail: "the hooks and the gate run the flow on the PATH" };
+  const refused = "so every hook fails with `flow: not found` and git refuses every commit";
   return {
     id: "binary",
     ok: false,
-    detail:
-      `no flow in ${LOCAL_BIN} or on the PATH, so every hook fails with \`flow: not found\` and git refuses every commit — ` +
-      "install it for this repo with `npm i -D @jawache/flow`, or for every repo with `npm i -g @jawache/flow`.",
+    detail: binary.modules
+      ? `the flow in ${LOCAL_BIN} is not on the PATH, and the hooks and the gate call flow by name, ${refused} — install it for every repo with \`npm i -g @jawache/flow\`.`
+      : `no flow in ${LOCAL_BIN} or on the PATH, ${refused} — install it for this repo with \`npm i -D @jawache/flow\`, or for every repo with \`npm i -g @jawache/flow\`.`,
   };
 }
 
