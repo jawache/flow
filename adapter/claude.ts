@@ -697,12 +697,15 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
 
   // THE DELTA, on the after-call rails: what this call changed in the tree, from the snapshot the
   // PreToolUse rail took. A call flow could not see is REPORTED and goes no further — nothing is
-  // judged as clean and nothing is put back on a guess.
+  // judged as clean and nothing is put back on a guess. NOT TAKEN while the config will not load:
+  // nothing after the call can be refused or told then, so the diff would be work thrown away, and
+  // a diff that failed would print a fault about a call nothing judges.
   const include = regime.kind === "loaded" ? (regime.config.settings.snapshotInclude ?? []) : [];
   const key = callKey(payload);
   const tool = typeof payload.tool_name === "string" ? payload.tool_name : "";
+  const afterCall = (hook === "post-tool-use" || hook === "post-tool-use-failure") && !off && tool !== "";
   const delta: (Delta & { readonly before?: string }) | null =
-    (hook === "post-tool-use" || hook === "post-tool-use-failure") && !off && tool !== ""
+    afterCall && regime.kind === "loaded" && regime.load.ok
       ? key === null
         ? { ok: false, fault: "The host sent no tool_use_id with this call, so its snapshot cannot be found." }
         : observeDelta(root, key, include)
@@ -749,19 +752,20 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
     return result;
   };
 
-  // THE CONFIG WILL NOT LOAD, either way it can fail to. `kind: "broken"` is a module that would
-  // not import; a LoadResult carrying refusals is a module that imported and whose grammar was
-  // refused. Both are the same fact, "flow is off", and get the same answer: `whileBroken` refuses
-  // nothing and hands the agent the load error. They are asked in sequence only because the second
-  // needs the LoadResult the first does not have.
+  // THE CONFIG WILL NOT LOAD. `kind: "broken"` is a module that would not import; a LoadResult
+  // carrying refusals is a module that imported and whose grammar was refused. Both are the same
+  // fact, "flow is off", and get the same answer: `whileBroken` refuses nothing and hands the agent
+  // the load error. They are asked in sequence only because the second needs the LoadResult the
+  // first does not have.
   //
   // NOTHING IS PUT BACK on the after-call rail, because nothing is refused: what the call wrote
   // stands — `npm ci`'s `node_modules`, an edit to the config — and the commit gate, which stays
-  // shut until the config loads, is where it is checked. The call is over, so its snapshot is.
+  // shut until the config loads, is where it is checked. The call is over, so its record says so,
+  // with no diff taken.
   const outage = (sentence: string): HookResult => {
     if (off) return ALLOW;
     const answer = whileBroken(toEvent(hook, payload, eventWorld(root, session, changes)), sentence);
-    if (delta !== null) finish();
+    if (afterCall) finish();
     const result = toResult(hook, answer);
     // TURN-END IS TOLD RATHER THAN HELD. `whileBroken` says why; this is the only place that can
     // write it, because the Stop rail has no context channel and `toResult` speaks only the two the

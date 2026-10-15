@@ -975,6 +975,17 @@ describe("a config that will not load", () => {
     }
   });
 
+  // NO DIFF AFTER THE CALL. A healthy config reports a call it has no snapshot for (the write rail's
+  // own case above); a broken one has nothing to judge the diff with, so it takes none, and so it
+  // has no fault to print about one.
+  it.each(Object.entries(BREAKS))("takes no diff after a call, so a call it has no snapshot for is not reported — %s", (_how, breaker) => {
+    withBrokenConfig(breaker, () => {
+      const after = hook("post-tool-use", { ...inThisSession("Bash", { command: "touch src/x.ts" }), tool_use_id: "toolu_broken_never_seen" });
+      expect(after.code, `the after-call rail lets it through: ${after.stderr}`).toBe(0);
+      expect(after.stderr, "no fault about a diff nothing would judge").toBe("");
+    });
+  });
+
   it.each(Object.entries(BREAKS))("still refuses the commit, with the load error — %s", (_how, breaker) => {
     withBrokenConfig(breaker, () => {
       const gated = runFlow(repo, ["hook", "commit"]);
