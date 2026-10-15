@@ -4282,20 +4282,21 @@ function binaryFitting(facts: Pick<StatusFacts, "binary" | "gateText" | "setting
     };
   // A COPY IN node_modules/.bin, AND A CALLER THAT NEVER LOOKS THERE: name each stranded one, with
   // the fix that brings it up to date — init for the registrations, a line by hand for the gate,
-  // which init never rewrites.
+  // which init never rewrites. Each carries its own verb: "the hooks look", "the gate looks".
   const stranded = [
     ...(byHooks === null
-      ? [{ who: "the hooks", fails: "every hook fails with `flow: not found`", fix: "re-run `flow init`, which rewrites flow's registrations to look there first" }]
+      ? [{ who: "the hooks", looks: "look", fails: "every hook fails with `flow: not found`", fix: "re-run `flow init`, which rewrites flow's registrations to look there first" }]
       : []),
     ...(byGate === null
-      ? [{ who: "the gate", fails: "git refuses every commit", fix: `add \`PATH="$PWD/${LOCAL_BIN}:$PATH"\` to ${GATE_PATH} above the line that runs flow` }]
+      ? [{ who: "the gate", looks: "looks", fails: "git refuses every commit", fix: `add \`PATH="$PWD/${LOCAL_BIN}:$PATH"\` to ${GATE_PATH} above the line that runs flow` }]
       : []),
   ];
+  const looks = stranded.length === 1 ? stranded[0]?.looks : "look";
   return {
     id: "binary",
     ok: false,
     detail:
-      `the flow in ${LOCAL_BIN} is not on the PATH, and ${stranded.map((s) => s.who).join(" and ")} ${stranded.length === 1 && byGate === null ? "looks" : "look"} for flow on the PATH alone, ` +
+      `the flow in ${LOCAL_BIN} is not on the PATH, and ${stranded.map((s) => s.who).join(" and ")} ${looks} for flow on the PATH alone, ` +
       `so ${stranded.map((s) => s.fails).join(" and ")} — ${stranded.map((s) => s.fix).join("; ")}; or install it for every repo with \`npm i -g @jawache/flow\`.`,
   };
 }
