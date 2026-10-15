@@ -31,7 +31,7 @@ export interface Doors {
  * @setup A `docs/` folder holding exactly `user/` and `agent/`, each with its own index — an index
  * file under `docs/user/` for people and `docs/agent/README.md` as a list of pointers. The user
  * pages are markdown, and each one is one of the four kinds of the Diátaxis method
- * (https://diataxis.fr): a tutorial, a how-to guide, a reference or an explanation. The two
+ * (https://diataxis.fr): a tutorial, a how-to guide, a reference or an explanation. The
  * breadcrumbs say so as guidance and refuse nothing, so how `docs/user/` is foldered inside stays
  * the repo's choice. The guardrail below refuses anything else at the top of the folder, so a repo
  * with a different shape either moves its pages or does not bind this pack.
@@ -51,7 +51,7 @@ export const docs = definePack("docs", (repo: Doors = {}) => {
       .description("The two audiences, the admission test, and the discipline that keeps docs true.")
       .text(
         [
-          "Two audiences, two doors, opposite rules. `docs/user/` is for PEOPLE: markdown pages entered through an index file, each page one of the four kinds of the Diátaxis method (https://diataxis.fr) — a tutorial, a how-to guide, a reference or an explanation. It is multimodal on purpose: images, SVGs and short recordings are encouraged wherever they explain better than sentences. The measure of a user doc is how little work the reader has to do.",
+          "Two audiences, two doors, opposite rules. `docs/user/` is for PEOPLE: markdown pages entered through an index file, and multimodal on purpose: images, SVGs and short recordings are encouraged wherever they explain better than sentences. The measure of a user doc is how little work the reader has to do.",
           "`docs/agent/` is ARCHIVAL CONTEXT, loaded on demand, entered through README.md as an index of pointers. The admission test: could a fresh agent derive this from the code, the config or the guard layer? Then it does not belong — derivable content is replication, and replication goes stale silently while still reading as true. Only expensive syntheses live here: understanding that took hours to establish and would take hours to re-derive. Pointers outward, never copies inward; this folder must never compete with the breadcrumb layer.",
           "The style law, both sides: state CURRENT FACTS in the present tense. No litigation, no rationale essays, no history — the journal owns the past. Where a decision would otherwise look wrong, one Chesterton-fence line pointing at the decision record, never a retelling.",
           "The failure mode is silent staleness, not error: a doc stays literally correct while a whole task's machinery lands unmentioned, and nothing complains. So if the work you just shipped changed a boundary, a component's job or the lifecycle, the doc changes in the SAME commit.",

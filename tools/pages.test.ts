@@ -16,7 +16,7 @@
 import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
-import { headingSlugs, localLinks } from "./domain.ts";
+import { frontMatterFields, headingSlugs, localLinks } from "./domain.ts";
 
 const PACKAGE = resolve(import.meta.dirname, "..");
 const DOCS = join(PACKAGE, "docs", "user");
@@ -45,6 +45,17 @@ describe("docs/user — every page, as a reader would follow it", () => {
         return statSync(at).isDirectory() ? html(at) : name.endsWith(".html") ? [relative(PACKAGE, at)] : [];
       });
     expect(html(DOCS)).toStrictEqual([]);
+  });
+
+  // THE RULE AGREED ON #18: every page's summary is YAML front matter, and no page carries a date.
+  // A date is the one fact on a page that is wrong the day after it is written, and nothing would
+  // ever say so — so it is refused as a field and as a value alike.
+  it.each(all.map((file) => [relative(PACKAGE, file), file] as const))("%s — opens with a summary in front matter, and no date", (_name, file) => {
+    const fields = frontMatterFields(readFileSync(file, "utf8"));
+    expect(fields, "the page does not open with a --- front-matter block").not.toBeNull();
+    expect([...(fields ?? new Map<string, string>()).keys()]).toContain("summary");
+    const dated = [...(fields ?? new Map<string, string>())].filter(([key, value]) => /date|updated|created/i.test(key) || /\b20\d\d-\d\d-\d\d\b/.test(value));
+    expect(dated).toStrictEqual([]);
   });
 
   it.each(all.map((file) => [relative(PACKAGE, file), file] as const))("%s — every link resolves", (_name, file) => {
