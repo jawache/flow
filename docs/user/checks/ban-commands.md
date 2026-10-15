@@ -4,14 +4,27 @@ summary: "reads: command line · fires at: command"
 
 # `banCommands`
 
-Bans a shell command before it runs. The patterns are tried against the whole command line. One command is one subject however many lines it occupies, so a pattern may match across a newline: an agent writing `git commit` with a message body sends one command over several lines. A heredoc is the lines after a `<<WORD` opener, up to the line that holds only `WORD`, fed to a program on its standard input. Those lines are not matched, so a script fed to `python3`, or a file written with `cat`, is not refused even when it includes the words of a banned command. The rest of the opener's own line is matched: in `cat <<EOF > out.txt && drizzle-kit drop`, the `drizzle-kit drop` part is matched. A `<<<` here-string is matched too. The exception is a heredoc fed to a shell (`bash`, `sh`, `zsh`, `dash`, `ksh` or `eval`, or a pipeline into one of them), whose lines are commands and are matched. A rule that has to see heredoc text sets `matchHeredocs: true`, and its patterns are then tried against the whole command, heredocs included. A command rule takes no `.on(…)`, because its patterns are its scope. A rule whose patterns match nothing in a repo is not misconfigured.
+Bans a shell command before it runs. flow parses the command line as bash and splits it into simple commands, each one program and its arguments. Each pattern is tried against each command on its own, from the command's program name. A command rule takes no `.on(…)`, because its patterns are its scope. A rule whose patterns match nothing in a repo is not misconfigured.
+
+## What a pattern is matched against
+
+- **One command at a time.** `git push origin main; ls -f` is two commands: `git push origin main` and `ls -f`. A pattern for a force push matches neither, because the `-f` is an argument of `ls`.
+- **From the program name.** A pattern matches only at the start of a command. The pattern `npx vitest run` refuses `npx vitest run --watch` and `cd app && npx vitest run`. It does not refuse `echo 'npx vitest run'`, or `gh issue create --body "ran npx vitest run"`, where the words are an argument.
+- **With quotes removed.** Each argument is matched as the program receives it: `git commit -m "fix: x"` is matched as `git commit -m fix: x`. A quoted argument keeps its newlines, so a pattern can match across the lines of a commit message.
+- **Past a wrapper.** A variable assignment such as `FOO=1` in front of the program is skipped. So are `sudo`, `env`, `nohup`, `nice`, `time`, `timeout`, `command`, `exec` and `xargs`, with their own options and arguments. `sudo rm -rf build` and `timeout 5 rm -rf build` are both matched as `rm -rf build`.
+- **Nested commands.** A command inside `$( … )`, backticks or `<( … )` is a command of its own, and is matched. So is each command in the string given to `bash -c`, `sh -c` or `eval`.
+- **Not inside a heredoc.** A heredoc is the lines after a `<<WORD` opener, up to the line that holds only `WORD`, fed to a program on its standard input. Those lines are not matched. So a script fed to `python3`, or a file written with `cat`, is not refused when it includes the words of a banned command.
+- **A heredoc fed to a shell.** The lines of a heredoc read by `bash`, `sh`, `zsh`, `dash`, `ksh` or `eval`, or by a pipeline into one of them, are commands. Each one is matched.
+- **A here-string.** The text of a `<<<` here-string is the last argument of its command, and is matched.
+- **A line that does not parse.** A line flow cannot parse, such as one with an unclosed quote, is matched whole, as written.
 
 ## Options
 
 | Key | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `ban` | list of regex | yes | each pattern is tried against the whole command line. Text a heredoc feeds to a program is left out of that line, unless the program is `bash`, `sh`, `zsh`, `dash`, `ksh` or `eval`, or a pipeline the heredoc feeds into one of them, where the text is itself commands. Any pattern that matches refuses the command |
-| `matchHeredocs` | boolean | no | set `true` to match the text of every heredoc as well. A rule about what a command is fed — a commit message given on standard input — needs it; without it that text is left out, as above |
+| `ban` | list of regex | yes | each pattern is tried against each command in the line, from its program name, as described above. Any pattern that matches refuses the command |
+| `matchHeredocs` | boolean | no | set `true` to match each command together with the text of its own heredocs, added after its arguments. A rule about what a command is fed, such as a commit message given with `git commit -F - <<'EOF'`, needs it |
+| `wholeLine` | boolean | no | set `true` to try each pattern against the whole command line as written, less its heredoc bodies. A pattern then matches anywhere in the line. Use it for a pattern that spans two commands on purpose, such as `curl … \| sh` |
 
 ## Example
 
