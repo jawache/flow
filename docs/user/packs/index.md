@@ -10,7 +10,7 @@ The ten packs `@jawache/flow/packs` ships. Each is a list of rules about a repo.
 
 | Pack | Guardrails · breadcrumbs | Parameters | What it is about |
 | --- | --- | --- | --- |
-| [`docs`](./docs.md) | 1 · 2 | `root` `allow` | *no lead yet* |
+| [`docs`](./docs.md) | 1 · 2 | `root` `allow` | Two documentation audiences, one folder, nothing replicated. |
 | [`fcis`](./fcis.md) | 7 · 1 | `files` `homes` `coverage` `example` `sibling` `tests` | Functional Core, Imperative Shell (Bernhardt, "Boundaries", SCNA 2012). |
 | [`flow`](./flow.md) | 1 · 2 | `packs` `hostSurface` | flow's own orientation and self-protection, as a pack any repo binds. |
 | [`git`](./git.md) | 7 · 1 | `versionFile` `types` `release` | Conventional commit headers, computed versions, and nothing destroys uncommitted work. |
