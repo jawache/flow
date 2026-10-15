@@ -239,11 +239,11 @@ export function bindInConfig(
  * THE FOUR WAYS A CONFIG STOPS LOADING — a breaker per way, given the config's own text.
  *
  * It lives here rather than in either suite because both need it and they need it to be the SAME
- * four. `live.test.ts` drives them through the hook rail (does every write and command get
- * through with the load error, does the commit still refuse, does the turn end); `product.test.ts` drives them through the verbs
- * (does every one of them answer 2). A second copy in either file is a copy that would stop
- * agreeing about what "broken" means, and the whole F3 finding was that the two ways of breaking
- * had drifted into two behaviours while everyone believed they were one.
+ * four. `live.test.ts` drives them through the hook rail (does every write and command get through
+ * with the load error, does the commit still refuse, does the turn end); `product.test.ts` drives
+ * them through the verbs (does every one of them answer 2). A second copy in either file is a copy
+ * that would stop agreeing about what "broken" means, and the whole F3 finding was that the two
+ * ways of breaking had drifted into two behaviours while everyone believed they were one.
  *
  * THE FIRST will not import. THE OTHER THREE import perfectly and the grammar refuses them — and
  * the second of those, a deleted `.message(…)`, is the break docs/user/explanation/fail-loud.md
