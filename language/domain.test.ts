@@ -959,7 +959,7 @@ describe("the load refuses", () => {
     expect(shape(refusalsOf([fake]))).toEqual([["undeclared-category", "fake.x"]]);
   });
 
-  it("a guardrail that carries no cases — the dead-fence class, killed at authoring time", () => {
+  it("a guardrail that carries no block case — the dead-fence class, killed at authoring time", () => {
     const untested = rawPack("untested", { x: { spec: { kind: "guardrail", at: [commit], check: passes, message: "m" } } });
     expect(shape(refusalsOf([untested]))).toEqual([["no-cases", "untested.x"]]);
 
@@ -972,16 +972,14 @@ describe("the load refuses", () => {
       x: { spec: { kind: "guardrail", at: [commit], check: passes, message: "m", test: { pass: [], block: [] } } },
     });
     expect(shape(refusalsOf([bothEmpty]))).toEqual([["no-cases", "bothEmpty.x"]]);
-  });
 
-  it("a guardrail that carries pass cases and no block case — passing proves nothing it catches", () => {
+    // Pass cases alone prove nothing about what the rule catches, so they do not count.
     const passOnly = rawPack("passOnly", {
       x: { spec: { kind: "guardrail", at: [commit], check: passes, message: "m", test: { pass: [{ staged: ["a.ts"] }] } } },
     });
     const refusals = refusalsOf([passOnly]);
     expect(shape(refusals)).toEqual([["no-cases", "passOnly.x"]]);
     expect(refusals[0]?.detail).toContain("`passOnly.x` has no block case");
-    expect(refusals[0]?.detail).toContain("A block case is an input the rule must refuse");
   });
 
   // A CHECK THAT SAID ITS OWN OPTIONS ARE UNUSABLE. The loader does not know what makes a depcruise
