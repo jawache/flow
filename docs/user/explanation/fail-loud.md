@@ -42,7 +42,12 @@ Refusing every call as well costs more than it buys:
 
 ## What is off while the config will not load
 
-Guardrails on commands are the rules a later commit cannot check. The git pack's refusal of `git reset --hard` and `git clean -f` is one. While the config will not load, those commands run.
+Every guardrail is off until the config loads again. Two kinds are rules a later commit cannot check:
+
+- **Guardrails on commands.** The git pack's refusal of `git reset --hard` and `git clean -f` is one. While the config will not load, those commands run.
+- **The rule that protects flow's own files.** The flow pack's [`flow.noDeleteGuardrails`](../packs/flow.md#flownodeleteguardrails--guardrail) refuses a command that deletes `flow.config.ts`, a pack it imports, or `.githooks/pre-commit`, the script git runs as the commit gate. While the config will not load, that command runs, and a commit made after it is not checked. Once the config loads, `flow status` reports a missing commit gate as a red line.
+
+The agent can put flow in this state itself. Deleting one `.message(…)` from the config is an ordinary edit, and the config then does not load.
 
 The window lasts until the config loads again. The agent has the load error on every call, so it can fix the config straight away, or hand back to you.
 
