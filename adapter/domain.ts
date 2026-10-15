@@ -3710,8 +3710,8 @@ import { banCommands, command, commit, defineCategory, defineConfig, definePack,
 import { flow } from "@jawache/flow/packs";
 
 // A category is a name and the HOST-WRITTEN evidence that recognises it — never a claim a session
-// made about itself. This one is "the harness wrote a sidecar for you", which is what a spawned
-// subagent is and a chat is not.
+// made about itself. This one is "the harness sent an agent id with your call", which is what a
+// spawned subagent is and a chat is not.
 const subagent = defineCategory("subagent", (facts) => facts.subagent);
 
 // Spelled in pieces on purpose. Written whole it would appear in this very file, and the gate below
