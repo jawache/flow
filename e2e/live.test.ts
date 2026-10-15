@@ -867,6 +867,14 @@ const demo = definePack("demo", {
       pass: [{ path: "migrations/002.sql", content: "new" }],
       block: [{ path: "migrations/001.sql", content: "edited", world: { fs: { "migrations/001.sql": "old" } } }, { staged: [], deleted: { "migrations/001.sql": "old" } }],
     }),
+
+  // The shape of the shipped flow.noDeleteGuardrails, on the one file that runs the commit gate.
+  keepHook: guardrail()
+    .at(deletion)
+    .on(".githooks/pre-commit")
+    .check(protectedPath({}))
+    .message("The commit gate stays.")
+    .test({ block: [{ path: ".githooks/pre-commit", content: "" }] }),
 });
 
 export default defineConfig([pack(demo)]);
@@ -899,8 +907,10 @@ export default defineConfig([pack(demo)]);
     writeFileSync(join(tree, "flow.config.ts"), CHECKOUT_CONFIG(PACKAGE));
     mkdirSync(join(tree, "src"));
     mkdirSync(join(tree, "migrations"));
+    mkdirSync(join(tree, ".githooks"));
     writeFileSync(join(tree, "src", "a.ts"), "export const a = 1;\n");
     writeFileSync(join(tree, "migrations", "001.sql"), "create table a ();\n");
+    writeFileSync(join(tree, ".githooks", "pre-commit"), "#!/bin/sh\nexit 0\n");
     inTree("add", "-A");
     inTree("commit", "-qm", "main");
     inTree("branch", "-M", "main");
@@ -976,6 +986,29 @@ export default defineConfig([pack(demo)]);
       rows(tree, session).slice(seq).filter((row) => row["kind"] === "write").map((row) => row["path"]),
       "the one shell write on the record is the sed's",
     ).toStrictEqual(["src/a.ts"]);
+  });
+
+  it("refuses and puts back an edit the same call commits past the gate — a commit the call made leaves nothing out", () => {
+    backToMain();
+    const main = inTree("rev-parse", "HEAD").trim();
+    try {
+      // Written, then committed with the gate skipped: the file matches HEAD after the call.
+      const skipped = bash("echo '// TODO' >> src/a.ts && git commit -qam mine --no-verify");
+      expect(skipped.ran).toBe(0);
+      expect(skipped.code).toBe(2);
+      expect(skipped.stderr).toContain("✗ demo.noTodo · src/a.ts");
+      expect(at("src/a.ts"), "written back").toBe("export const a = 1;\n");
+      inTree("reset", "-q", "--hard", main);
+
+      // The gate itself removed by a script, then a commit with no gate left to run.
+      const unhooked = bash("python3 -c \"import os; os.remove('.githooks/pre-commit')\" && git commit -qam unhooked");
+      expect(unhooked.ran).toBe(0);
+      expect(unhooked.code).toBe(2);
+      expect(unhooked.stderr).toContain("✗ demo.keepHook · .githooks/pre-commit");
+      expect(at(".githooks/pre-commit"), "written back").toBe("#!/bin/sh\nexit 0\n");
+    } finally {
+      inTree("reset", "-q", "--hard", main);
+    }
   });
 
   it("judges what a stash pop, a merge stopped on conflicts and a cherry-pick --no-commit write — they match no commit", () => {
