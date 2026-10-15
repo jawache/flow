@@ -135,24 +135,21 @@ export function git(repo: string, args: readonly string[], rig: Rig = {}): Ran {
 export const hook = (repo: string, event: string, payload: unknown, rig: Rig = {}): Ran =>
   flow(repo, ["hook", event], rig, JSON.stringify(payload));
 
-/** How a payload reaches the hook in `hookInPieces`: where it splits, how long the host pauses, and what node loads first. */
-export interface Pieces {
-  /** Bytes in the first write; the rest follows in a second. */
-  readonly first: number;
-  /** Milliseconds between the two writes. */
-  readonly pause: number;
-  /** Node flags placed before the binary, such as an `--import` that leaves stdin in another state. */
-  readonly node?: readonly string[];
-}
+/** Bytes in `hookInPieces`' first write; the rest follows in a second. */
+const FIRST_PIECE = 16_384;
+
+/** Milliseconds `hookInPieces` pauses between its two writes. */
+const PIECE_PAUSE_MS = 300;
 
 /**
  * One payload on a hook's stdin, written the way a host writes one far larger than a pipe's buffer:
  * in pieces, with a pause between them, so the hook can empty the pipe before the next piece lands.
  * `hook` cannot show that: spawnSync hands the whole input over before the child reads a byte.
+ * `node` is the flags placed before the binary, such as an `--import` that leaves stdin in another state.
  */
-export async function hookInPieces(repo: string, event: string, payload: unknown, pieces: Pieces, rig: Rig = {}): Promise<Ran> {
+export async function hookInPieces(repo: string, event: string, payload: unknown, node: readonly string[] = []): Promise<Ran> {
   const text = JSON.stringify(payload);
-  const child = spawn("node", [...(pieces.node ?? []), binary(), "hook", event], { cwd: repo, env: env(repo, rig) });
+  const child = spawn("node", [...node, binary(), "hook", event], { cwd: repo, env: env(repo, {}) });
   let stdout = "";
   let stderr = "";
   child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
@@ -160,9 +157,9 @@ export async function hookInPieces(repo: string, event: string, payload: unknown
   // A hook that gives up early closes its stdin, and the second write must not crash the suite for it.
   child.stdin.on("error", () => undefined);
   const exited = new Promise<number>((settle) => child.on("close", (code) => { settle(code ?? -1); }));
-  child.stdin.write(text.slice(0, pieces.first));
-  await new Promise((wait) => setTimeout(wait, pieces.pause));
-  child.stdin.end(text.slice(pieces.first));
+  child.stdin.write(text.slice(0, FIRST_PIECE));
+  await new Promise((wait) => setTimeout(wait, PIECE_PAUSE_MS));
+  child.stdin.end(text.slice(FIRST_PIECE));
   const code = await exited;
   return { stdout, stderr, code };
 }

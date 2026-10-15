@@ -1078,8 +1078,8 @@ const STDIN_NAP_MS = 5;
  */
 function readStdin(): string {
   const pieces: Buffer[] = [];
+  const piece = Buffer.alloc(64 * 1024);
   for (;;) {
-    const piece = Buffer.alloc(64 * 1024);
     let got: number;
     try {
       got = readSync(0, piece, 0, piece.length, null);
@@ -1089,7 +1089,7 @@ function readStdin(): string {
       continue;
     }
     if (got === 0) return Buffer.concat(pieces).toString("utf8");
-    pieces.push(piece.subarray(0, got));
+    pieces.push(Buffer.from(piece.subarray(0, got)));
   }
 }
 
@@ -1108,8 +1108,8 @@ function readStdin(): string {
 export function readPayload(): PayloadRead {
   // HAND-RUN: a person typing `flow hook stop` has no payload and must not block on stdin forever.
   // Asked of fd 0 itself, never of `process.stdin`: merely reading that property opens a stream on
-  // fd 0, the stream makes it NON-BLOCKING, and the read below then gives up with EAGAIN the first
-  // time it empties the pipe before the host's next write lands (#12).
+  // fd 0 and the stream makes it NON-BLOCKING (#12). `isatty(0)` leaves fd 0 blocking, so on an
+  // ordinary pipe the read below never meets EAGAIN and its wait loop is not needed.
   if (isatty(0)) return { ok: true, payload: {} };
   let raw: string;
   try {
