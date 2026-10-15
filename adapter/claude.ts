@@ -466,30 +466,35 @@ export function observeDelta(root: string, key: string, include: readonly string
   };
   const changed = diffTree(before, "--name-status");
   if (typeof changed !== "string") return { ok: false, fault: `git could not compare the trees: ${changed.why}.` };
+  /** The delta, once `authored` has said which changed paths are the call's own. */
+  const delta = (paths: readonly string[]): Delta & { readonly before?: string } => {
+    if (paths.some((path) => path.includes("\n")))
+      return { ok: false, fault: "A changed path has a newline in its name, which flow cannot ask git about safely." };
+    const content = blobs(root, paths.flatMap((path) => [`${before}:${path}`, `${now.tree}:${path}`]));
+    if (content === null) return { ok: false, fault: "git could not read the changed files back out of the snapshot." };
+    return {
+      ok: true,
+      changes: paths.map((path, i) => ({ path, before: content[2 * i] ?? null, after: content[2 * i + 1] ?? null })),
+      before,
+    };
+  };
   // WHAT GIT PUT THERE leaves the diff here, before anything reads it: HEAD after the call and HEAD
   // before it, each against the tree after it, are one more tree comparison each (`authored`
-  // decides). Only a HEAD the repo had before the call can be matched: none, or one the call made,
-  // leaves every change judged, and so does a HEAD git cannot read — the safe way. HEAD before only
-  // ever answers for a file that matches HEAD after, and when HEAD did not move one comparison
-  // answers for both.
+  // decides). Only a HEAD the repo already had can be matched: none, or one the call made, leaves
+  // every change judged. HEAD before only ever answers for a file that matches HEAD after, and when
+  // HEAD did not move one comparison answers for both.
   const known = Array.isArray(meta.known) ? meta.known.filter((tip): tip is string => typeof tip === "string") : [];
   const headAfter = existingHead(root, known);
+  if (headAfter === null) return delta(authored(changed, null, null));
+  const fromAfter = diffTree(headAfter, "--name-only");
+  if (typeof fromAfter !== "string") return { ok: false, fault: `git could not compare the tree with HEAD: ${fromAfter.why}.` };
+  const differsAfter = nulPaths(fromAfter);
   const headBefore = typeof meta.head === "string" ? meta.head : null;
-  const fromAfter = headAfter === null ? null : diffTree(headAfter, "--name-only");
-  const fromBefore = fromAfter === null || headBefore === null ? null : headBefore === headAfter ? fromAfter : diffTree(headBefore, "--name-only");
-  if (fromAfter !== null && typeof fromAfter !== "string") return { ok: false, fault: `git could not compare the tree with HEAD: ${fromAfter.why}.` };
-  if (fromBefore !== null && typeof fromBefore !== "string")
-    return { ok: false, fault: `git could not compare the tree with HEAD before the call: ${fromBefore.why}.` };
-  const paths = authored(changed, fromAfter === null ? null : nulPaths(fromAfter), fromBefore === null ? null : nulPaths(fromBefore));
-  if (paths.some((path) => path.includes("\n")))
-    return { ok: false, fault: "A changed path has a newline in its name, which flow cannot ask git about safely." };
-  const content = blobs(root, paths.flatMap((path) => [`${before}:${path}`, `${now.tree}:${path}`]));
-  if (content === null) return { ok: false, fault: "git could not read the changed files back out of the snapshot." };
-  return {
-    ok: true,
-    changes: paths.map((path, i) => ({ path, before: content[2 * i] ?? null, after: content[2 * i + 1] ?? null })),
-    before,
-  };
+  if (headBefore === null) return delta(authored(changed, differsAfter, null));
+  if (headBefore === headAfter) return delta(authored(changed, differsAfter, differsAfter));
+  const fromBefore = diffTree(headBefore, "--name-only");
+  if (typeof fromBefore !== "string") return { ok: false, fault: `git could not compare the tree with HEAD before the call: ${fromBefore.why}.` };
+  return delta(authored(changed, differsAfter, nulPaths(fromBefore)));
 }
 
 /**
