@@ -2201,8 +2201,9 @@ export function hermeticEnv(
 // `<sessionId>.jsonl` per top-level session and, for each, a `<sessionId>/subagents/agent-*.jsonl`
 // per child with an `agent-*.meta.json` beside it. Two readers of that layout existed in the old
 // platform — the CLI's corpus reader and the guard's backlog reader — and they disagreed about the
-// folder-name rule. Here both readers of the layout live in this section: `classifyStore` reads a
-// listing by it after the fact, and `ownTranscriptPath` finds a live subagent's transcript by it.
+// folder-name rule. Here the layout is read in two places: this section, where `classifyStore`
+// sorts a listing by it after the fact and `ownTranscriptPath` finds a live subagent's transcript
+// by it, and the store listing in archive.ts, which spells the `subagents` folder again to walk it.
 
 /** The folder under a session that holds its subagents' transcripts. */
 const SUBAGENTS = "subagents";
