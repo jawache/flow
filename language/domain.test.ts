@@ -35,7 +35,7 @@ import {
   GUARDRAIL_KEYS,
   GUARDRAIL_MOMENTS,
   type GuardrailSpec,
-  hasCases,
+  hasBlockCase,
   isBreadcrumbMoment,
   isCategory,
   isGuardrailMoment,
@@ -428,18 +428,19 @@ describe("a pack whose parameters are all optional", () => {
   });
 });
 
-describe("hasCases", () => {
-  it("is true when either arm carries a case", () => {
-    expect(hasCases({ block: ["git push origin main"] })).toBe(true);
-    expect(hasCases({ pass: [{ path: "a.ts", content: "" }] })).toBe(true);
-    expect(hasCases({ pass: [{ staged: ["package.json"] }] })).toBe(true);
+describe("hasBlockCase", () => {
+  it("is true when the block arm carries a case, whatever the pass arm holds", () => {
+    expect(hasBlockCase({ block: ["git push origin main"] })).toBe(true);
+    expect(hasBlockCase({ pass: ["ls"], block: [{ path: "a.ts", content: "TODO" }] })).toBe(true);
   });
 
-  it("is false for a cases block that proves nothing", () => {
+  it("is false when no block case is written, however many pass cases are", () => {
     const empty: Cases = {};
-    expect(hasCases(empty)).toBe(false);
-    expect(hasCases({ pass: [], block: [] })).toBe(false);
-    expect(hasCases(undefined)).toBe(false);
+    expect(hasBlockCase(empty)).toBe(false);
+    expect(hasBlockCase({ pass: [], block: [] })).toBe(false);
+    expect(hasBlockCase(undefined)).toBe(false);
+    expect(hasBlockCase({ pass: [{ path: "a.ts", content: "" }] })).toBe(false);
+    expect(hasBlockCase({ pass: [{ staged: ["package.json"] }], block: [] })).toBe(false);
   });
 });
 
@@ -984,6 +985,16 @@ describe("the load refuses", () => {
       x: { spec: { kind: "guardrail", at: [commit], check: passes, message: "m", test: {} } },
     });
     expect(shape(refusalsOf([empty]))).toEqual([["no-cases", "empty.x"]]);
+  });
+
+  it("a guardrail that carries pass cases and no block case — passing proves nothing it catches", () => {
+    const passOnly = rawPack("passOnly", {
+      x: { spec: { kind: "guardrail", at: [commit], check: passes, message: "m", test: { pass: [{ staged: ["a.ts"] }] } } },
+    });
+    const refusals = refusalsOf([passOnly]);
+    expect(shape(refusals)).toEqual([["no-cases", "passOnly.x"]]);
+    expect(refusals[0]?.detail).toContain("`passOnly.x` has no block case");
+    expect(refusals[0]?.detail).toContain("A block case is an input the rule must refuse");
   });
 
   // A CHECK THAT SAID ITS OWN OPTIONS ARE UNUSABLE. The loader does not know what makes a depcruise
