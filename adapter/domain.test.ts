@@ -139,7 +139,6 @@ import {
   scaffold,
   planInit,
   initLines,
-  REPO_SETTINGS,
   settingsFileFor,
   status,
   statusLines,
@@ -2130,12 +2129,11 @@ describe("settingsFileFor — which settings file holds flow's hooks", () => {
   const manifest = (body: unknown): string => JSON.stringify(body);
 
   it("is the repo's own when package.json lists flow as a dev dependency", () => {
-    expect(settingsFileFor(manifest({ devDependencies: { "@jawache/flow": "^0.3.0" } }), machine)).toBe(REPO_SETTINGS);
-    expect(REPO_SETTINGS).toBe(".claude/settings.json");
+    expect(settingsFileFor(manifest({ devDependencies: { "@jawache/flow": "^0.3.0" } }), machine)).toBe(".claude/settings.json");
   });
 
   it("is the repo's own when package.json lists flow as a dependency", () => {
-    expect(settingsFileFor(manifest({ dependencies: { "@jawache/flow": "0.3.0" } }), machine)).toBe(REPO_SETTINGS);
+    expect(settingsFileFor(manifest({ dependencies: { "@jawache/flow": "0.3.0" } }), machine)).toBe(".claude/settings.json");
   });
 
   it("is the machine-wide one when package.json lists other packages only — this repo, which IS flow, among them", () => {

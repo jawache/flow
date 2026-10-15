@@ -9,9 +9,12 @@
 // nothing. What to write given what is already there, and what to SAY given what loaded, are
 // `planInit` and `status` next door in domain.ts, where every branch has a test.
 //
-// WHERE THE SETTINGS LIVE. The host reads `~/.claude/settings.json`, and `CLAUDE_CONFIG_DIR` is its
-// own documented override — honoured here rather than hard-coding a home, because it is also the
-// seam that lets this file be driven over a throwaway directory instead of somebody's real setup.
+// WHERE THE SETTINGS LIVE. A repo whose package.json lists `@jawache/flow` keeps flow's hooks in its
+// own `.claude/settings.json`; every other repo uses the machine-wide file — `settingsFileFor` in
+// domain.ts decides which. The machine-wide file is `~/.claude/settings.json`, and
+// `CLAUDE_CONFIG_DIR` is the host's own documented override — honoured here rather than
+// hard-coding a home, because it is also the seam that lets this file be driven over a throwaway
+// directory instead of somebody's real setup.
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
@@ -246,11 +249,15 @@ function perform(root: string, plan: InitPlan): string[] {
       symlinkSync(plan.link as string, at, "dir");
     });
 
-  if (plan.settings !== null)
-    attempt(`could not write ${plan.settings.path}`, () => {
-      mkdirSync(dirname(resolve(root, plan.settings?.path ?? "")), { recursive: true });
-      writeFileSync(resolve(root, plan.settings?.path ?? ""), `${JSON.stringify(plan.settings?.value, null, 2)}\n`);
+  if (plan.settings !== null) {
+    const { path, value } = plan.settings;
+    attempt(`could not write ${path}`, () => {
+      // Repo-relative for a dev dependency's own file, absolute for the machine-wide one.
+      const file = resolve(root, path);
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
     });
+  }
 
   // LAST, and after the gate file: `core.hooksPath` is what makes the hook run at all, so pointing
   // git at a directory before the hook is in it would leave a window where a commit runs nothing.

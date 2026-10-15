@@ -421,6 +421,28 @@ describe("the README's example", () => {
 // All four must init, load, go green and say NOTHING on stderr. A fifth shape is one row.
 
 describe("a repo whose package.json lists flow", () => {
+  it("creates .claude/settings.json inside the repo on the first run, when it has no .claude/ folder, and the machine-wide file is untouched", () => {
+    const listed = newRepo();
+    const machine = settingsHome();
+    try {
+      const pkg = { name: "consumer", version: "1.0.0", devDependencies: { "@jawache/flow": "*" } };
+      writeFileSync(join(listed, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
+      const machineBefore = `${JSON.stringify({ theme: "dark" }, null, 2)}\n`;
+      writeFileSync(join(machine, "settings.json"), machineBefore);
+      expect(existsSync(join(listed, ".claude")), "no .claude/ folder before init").toBe(false);
+
+      const init = flow(listed, ["init"], machine);
+      expect(init.code, init.stdout + init.stderr).toBe(0);
+      expect(init.stdout).toContain("+ .claude/settings.json — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop");
+
+      const written = JSON.parse(readFileSync(join(listed, ".claude", "settings.json"), "utf8")) as Record<string, unknown>;
+      expect(Object.keys(written["hooks"] as object)).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
+      expect(readFileSync(join(machine, "settings.json"), "utf8"), "the machine-wide file, byte for byte").toBe(machineBefore);
+    } finally {
+      for (const dir of [listed, machine]) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("gets the hooks in its own .claude/settings.json, keeping its keys, and the machine-wide file is untouched", () => {
     const listed = newRepo();
     const machine = settingsHome();

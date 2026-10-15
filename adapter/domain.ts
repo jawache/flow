@@ -2889,7 +2889,13 @@ export function mergeNarratives(each: readonly { session: string; read: Narrativ
  *     door — which would put one harness's file names into the GRAMMAR every config is written
  *     in, and that is the coupling the fence exists to prevent.
  */
-export const HOST_SURFACE: readonly string[] = [".claude/settings.json", ".claude/settings.local.json", ".claude/agents/**"];
+/**
+ * The repo's own Claude Code settings file, relative to the repo root: guarded here, and where
+ * `settingsFileFor` registers a dev dependency's hooks.
+ */
+const REPO_SETTINGS = ".claude/settings.json";
+
+export const HOST_SURFACE: readonly string[] = [REPO_SETTINGS, ".claude/settings.local.json", ".claude/agents/**"];
 
 /** Every file that decides what the guard does here — the config and its packs, plus the host's. */
 export function guardPaths(configText: string | null): readonly string[] {
@@ -3497,9 +3503,6 @@ export const HOOK_REGISTRATIONS: readonly Registration[] = REGISTERED.map(({ hoo
   command: hookCommand(hook),
   ...(matcher === undefined ? {} : { matcher }),
 }));
-
-/** The repo's own Claude Code settings file, relative to the repo root. */
-export const REPO_SETTINGS = ".claude/settings.json";
 
 /**
  * WHICH SETTINGS FILE holds flow's hooks: the repo's own `.claude/settings.json` when the repo's
