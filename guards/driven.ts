@@ -26,12 +26,25 @@ import {
   spawnedAs,
 } from "@jawache/flow";
 
-// Words that run the word after them as a command, so the program is further on: the checker's
-// word walk below skips them.
+// The ban is written to hold under both readings of a command line. `work init --template` copies
+// this file into repos whose @jawache/flow may still match the whole line, where a bare `gh` would
+// refuse every `work gh …`; and START opens with `^`, so per-command matching from the program
+// name reads it too.
+//
+// Where a shell starts a new command: the start of the line, after a separator, inside $( ) or
+// backticks, after a brace or a keyword, or at the head of a string handed to a shell.
+const START = String.raw`(?:^|[\n;&|({\x60]|\$\(|\b(?:ba|z)?sh\s+-c\s+['"]|\beval\s+['"]?)`;
+/** Words that run the word after them as a command, so the program is further on. */
 const PREFIXES = new Set(["command", "exec", "env", "sudo", "nohup", "time", "xargs", "if", "then", "else", "elif", "do", "while", "until", "!"]);
-// gh itself, by name or by path, as a whole word. `banCommands` tries it against each command from
-// its program name, past any assignment or wrapper, so it needs nothing in front of it.
-const GH = String.raw`(?:\S*/)?gh(?=\s|$)`;
+// What may sit between that start and the program: whitespace, variable assignments, and the
+// PREFIXES (each with its own flags), the same list the checker's word walk skips. An assignment
+// whose value opens a `$(` is not skipped over: START already begins a new command inside it.
+const LEAD =
+  String.raw`\s*(?:[A-Za-z_][A-Za-z0-9_]*=(?!\$\()\S*\s+)*(?:(?:` +
+  [...PREFIXES].map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") +
+  String.raw`)(?:\s+-\S+)*\s+)*`;
+// gh itself, by name or by path, as a whole word.
+const GH = String.raw`(?:\S*/)?gh(?=\s|$|[;&|)\x60'"])`;
 
 // ── what a checker may not run ──
 //
@@ -210,7 +223,7 @@ export const driven = definePack("driven", {
    */
   noBareGh: guardrail()
     .at(command)
-    .check(banCommands({ ban: [GH] }))
+    .check(banCommands({ ban: [START + LEAD + GH] }))
     .message(
       "Bare `gh` in a repo driven by work. Run the same command as `work gh …`: it runs `gh project …` as you, so the board can be read and moved, and everything else as the GitHub App, so comments and pull requests are the App's and the daemon can tell them from yours. Bare `gh` would post as you.",
     )
