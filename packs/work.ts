@@ -1,7 +1,7 @@
 // flow/packs/work.ts — the WORK LIFECYCLE's rungs.
 //
 // EVERY ONE OF THEM READS HOST-WRITTEN EVIDENCE AND NOTHING ELSE. `spawnedAs` enforces the order
-// the 335-transcript probe settled (flow F3): the sidecar's `agentType` decides and ends the read;
+// the 335-transcript probe settled (flow F3): the host's agent type decides and ends the read;
 // the brief is consulted only for the buckets the harness treats as generic; the parent is the
 // absence of both. A session's own claim about itself is never consulted, because a permission that
 // rests on a claim rests on a lie.
@@ -35,7 +35,7 @@ import {
  */
 const GENERIC = ["general-purpose", "claude"] as const;
 
-/** The top-level chat: no sidecar, no agent type. The supervisor's rung. */
+/** The top-level chat: not spawned, no agent type. The supervisor's rung. */
 export const parent = defineCategory("parent", spawnedAs({ parent: true }));
 
 /**
@@ -118,7 +118,7 @@ export const work = definePack("work", (repo: Rungs = {}) => ({
   // state in prose: a builder owns its phase and not the plan, a checker reads and does not write,
   // a parent supervises and does not tick a box it did not build. They are RULES rather than mode
   // files because a rung is assigned by the harness that spawned you, and a rule that reads the
-  // sidecar cannot be talked out of it — which is the whole reason `.for(…)` exists.
+  // host's agent type cannot be talked out of it — which is the whole reason `.for(…)` exists.
   //
   // They are also what makes the three categories real. A category nothing names is never
   // classified and never shown: `flow status` lists the ones some entry binds to, so an unbound

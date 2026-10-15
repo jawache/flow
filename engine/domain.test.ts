@@ -178,7 +178,7 @@ describe("spawnedAs — the settled classification order", () => {
     brief: ["Follow `/work build`"],
   };
 
-  it("keys on the host's own agent type first — the sidecar is evidence, not a claim", () => {
+  it("keys on the host's own agent type first — the hook message is evidence, not a claim", () => {
     expect(spawnedAs(recipe)(facts({ agentType: "builder", head: "anything at all" }))).toBe(true);
   });
 
@@ -199,8 +199,10 @@ describe("spawnedAs — the settled classification order", () => {
     expect(spawnedAs(recipe)(facts({ agentType: "claude", head: "summarise this file" }))).toBe(false);
   });
 
-  it("says no to a spawn recipe when there is no agent type at all — that is the parent", () => {
+  it("says no to a spawn recipe when there is no agent type at all — the parent, or an untyped subagent", () => {
     expect(spawnedAs(recipe)(facts({ subagent: false }))).toBe(false);
+    const untyped = facts({ subagent: true, head: "Follow `/work build`" });
+    expect(spawnedAs(recipe)(untyped), "a subagent whose hook message carried no type, even with a brief that matches").toBe(false);
   });
 
   it("recognises the parent by ABSENCE, and never by what it is doing", () => {
