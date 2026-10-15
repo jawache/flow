@@ -15,10 +15,13 @@
 //
 // IT FAILS IN TWO DIRECTIONS ON PURPOSE, and the split is the whole doctrine:
 //
-//   THE GUARD fails LOUD. A config that will not load, a classifier that throws, a check that
-//   crashes, a bound command that is missing — every one of them BLOCKS, carrying the reason. The
-//   engine decides that; this file just does not soften it. 2026-08-22 is why: this repo's own
-//   config was broken for a day, the fault notice fired on every hook, and the human never saw one.
+//   THE GUARD fails LOUD. A classifier that throws, a check that crashes, a bound command that is
+//   missing — every one of them BLOCKS, carrying the reason. The engine decides that; this file
+//   just does not soften it. A config that will not load is loud the other way: it goes to
+//   `whileBroken`, which lets every call through and hands the agent the load error with each one,
+//   and the commit gate refuses every commit until the config loads. 2026-08-22 is why it must
+//   never be silent: this repo's own config was broken for a day, the fault notice fired on every
+//   hook, and the human never saw one.
 //
 //   THE TELEMETRY fails SAFE and silent. A log that cannot be written must never be the reason a
 //   write is refused — `.flow/` answers with a boolean and this file does not look. State is a
@@ -527,10 +530,10 @@ export function projectRoot(cwd: string): string {
  * once in the host's settings and fire in every repo the agent visits, so a missing config is the
  * ordinary case and blocking on it would make flow unusable the moment it was installed.
  *
- * `broken` is the opposite fact and gets the opposite answer: a config file that is THERE and will
- * not even import is a guard that cannot run, which is what fail-loud exists for. (A config that
- * imports and then will not load is the engine's own path — `load.ok === false` — and refuses with
- * the same shape from inside `guard`.)
+ * `broken` is the opposite fact and must never be silent: a config file that is THERE and will
+ * not even import is a guard that cannot run. The hook rail hands it to `whileBroken`, which lets
+ * every call through with the load error, and the commit gate refuses. (A config that imports and
+ * then will not load — `load.ok === false` — is the same fact and gets the same two answers.)
  */
 export type Regime =
   | { readonly kind: "none" }
