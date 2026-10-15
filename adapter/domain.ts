@@ -11,8 +11,8 @@
 // seam that makes a recorded session replayable with no harness at all (F5), and the reason a
 // second harness is a second column rather than a second engine.
 //
-// THE SEVEN QUESTIONS (pack-engine guide §7) are what an adapter IS. Five are answered here; the
-// two that need disk are answered by the shell next door:
+// THE SEVEN QUESTIONS (pack-engine guide §7) are what an adapter IS. Six are answered here; the
+// one that needs the process environment is answered by the shell next door:
 //
 //   how does a live moment arrive   JSON on stdin of `flow hook <event>`       → toEvent
 //   how do we block                 exit 2, stderr shown to the model          → toResult
@@ -2201,7 +2201,7 @@ export function hermeticEnv(
 // `<sessionId>.jsonl` per top-level session and, for each, a `<sessionId>/subagents/agent-*.jsonl`
 // per child with an `agent-*.meta.json` beside it. Two readers of that layout existed in the old
 // platform — the CLI's corpus reader and the guard's backlog reader — and they disagreed about the
-// folder-name rule. Here the layout is spelled once, in this section: `classifyStore` reads a
+// folder-name rule. Here both readers of the layout live in this section: `classifyStore` reads a
 // listing by it after the fact, and `ownTranscriptPath` finds a live subagent's transcript by it.
 
 /** The folder under a session that holds its subagents' transcripts. */
@@ -2303,10 +2303,10 @@ export function ownTranscriptPath(payload: HookPayload): string | null {
  * The sidecar the host writes beside every subagent transcript, read.
  *
  * `toolUseId` is the field that makes this more than a label: it is the id of the parent's own
- * `Agent` tool call, so a sidecar and the block that spawned it join exactly. That join is what
- * lets cost attribution and classification agree about who an actor was — the sidecar says what a
- * spawn WAS, the parent's block says when it happened and what it was asked for, and neither
- * alone answers both.
+ * `Agent` tool call, so a sidecar and the block that spawned it join exactly. That join names an
+ * actor for cost attribution, after the fact — the sidecar says what a spawn WAS, the parent's
+ * block says when it happened and what it was asked for, and neither alone answers both. A live
+ * session is not classified from it: that reads the agent type in its hook message.
  */
 export interface SpawnMeta {
   readonly agentType: string | null;
@@ -3076,9 +3076,9 @@ export function health({ armed, rows, withRecord, analysed }: HealthArgs): Healt
  *
  * The sidecar says what a spawn WAS (`agentType`, unforgeable, written by the host) and the
  * parent's own `Agent` block says when it happened and what was asked for. Joining them on
- * `toolUseId` is what lets classification and cost attribution name the same actor: a builder
- * spawned under a generic bucket is `general-purpose` in the parent's claim and `builder` in the
- * host's record, and only one of those is evidence.
+ * `toolUseId` names an actor for cost attribution, after the fact: a builder spawned under a
+ * generic bucket is `general-purpose` in the parent's claim and `builder` in the host's record,
+ * and only one of those is evidence. A live session is classified from its hook message instead.
  */
 export interface SpawnRecord {
   /** The conversation that spawned it. */
