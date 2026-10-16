@@ -228,6 +228,29 @@ export const house = definePack("house", (repo: Terrain) => ({
       ].join("\n"),
     ),
 
+  /**
+   * Without it, the next rule that needs one fact about a command — its program, a heredoc, a
+   * redirect — gets a regex over the raw line or a splitter of its own, and the false refusals
+   * #17 removed come back one reader at a time: a verb in one command paired with a target in the
+   * next, a banned name read out of a quoted argument, a backtick in a quoted heredoc read as live.
+   * Five hand-written scanners grew that way before the parse replaced them all.
+   */
+  shellParse: breadcrumb()
+    .at(touch)
+    .on("language/domain.ts", "checks/domain.ts", "engine/domain.ts", "adapter/domain.ts", "packs/**", "guards/**")
+    .description("Every reading of a shell command goes through the one parse — never a regex or a splitter over the raw line.")
+    .text(
+      [
+        "EVERY READING OF A SHELL COMMAND GOES THROUGH THE ONE PARSE. `parseCommandLine` in `language/domain.ts` parses the line as bash with `unbash`, once; checks read it as `ctx.commands`, and the adapter's delete, read and recipe detection read the same walk as `parseShellSteps`.",
+        "· A check, a pack or a guard reads `ctx.commands`, or `shellCommands(ctx)` and `gitCommands(ctx)` where an older engine may hand no parse. Match a pattern against one command's `text`, never against `ctx.command`.",
+        "· Never write a second reader: no splitting the line on `;`, `&&`, `|` or a newline, no scanning for where a quote, a `$(` or a heredoc closes, no regex over the raw line to find a program, an argument, a heredoc, a substitution or a redirect.",
+        "· The parse lacks a fact the rule needs? Add it to the parse in `language/domain.ts`, and its row to `docs/user/reference/ctx.md`, so every reader gets it.",
+        "· `ctx.commands` is null when the line does not parse. Read null as \"cannot tell\": stand aside, or match the whole line as written the way `banCommands` does; never fall back to splitting or lexing it yourself.",
+        "· A pattern that spans commands on purpose sets `banCommands`' `wholeLine`, which matches the line less its heredoc bodies, cut by the same parse (`elideHeredocBodies`).",
+        "How the parse works and what it cannot know: `docs/user/explanation/what-the-guard-sees.md` § The parse.",
+      ].join("\n"),
+    ),
+
   // The fence config IS this repo's architecture, so it is local by design — the dialect comes
   // from the package, the boundaries are ours. See https://github.com/sverweij/dependency-cruiser.
   importBoundaries: guardrail()
