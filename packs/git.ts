@@ -407,19 +407,24 @@ const ROBOT = "\u{1F916}";
 const GH_PROSE_VERBS = ["pr", "issue"] as const;
 
 /**
- * The backtick rule's heads for the same verbs, in words: each run bare, and through `work gh`, the
- * wrapper a repo driven by work runs it as.
+ * The commands that record that prose, in words: each verb run bare, and through `work gh`, the
+ * wrapper a repo driven by work runs it as. The backtick rule names them as its heads, and the
+ * attribution rule reads the same commands through `isGhProse`.
  */
 const GH_PROSE_HEADS = [...GH_PROSE_VERBS.map((verb) => `gh ${verb}`), ...GH_PROSE_VERBS.map((verb) => `work gh ${verb}`)];
 
 /**
- * The arguments after the verb of a `gh pr` or `gh issue` command, run bare or as `work gh`, the
- * wrapper a repo driven by work runs it as — or null for any other command.
+ * The command is one of `GH_PROSE_HEADS`, matched as the backtick rule matches a head: the same
+ * program, less its path, and every word of the head among its arguments, compared whole. An option
+ * before the verb leaves it a head, so `gh --repo a/b pr create` and `work --verbose gh pr create`
+ * are both read.
  */
-function ghProseArgs(c: ShellCommand): readonly string[] | null {
+function isGhProse(c: ShellCommand): boolean {
   const program = programName(c.program);
-  const words = program === "gh" ? c.args : program === "work" && c.args[0] === "gh" ? c.args.slice(1) : null;
-  return words !== null && GH_PROSE_VERBS.some((verb) => words[0] === verb) ? words.slice(1) : null;
+  return GH_PROSE_HEADS.some((head) => {
+    const [name, ...words] = head.split(" ");
+    return program === name && words.every((word) => c.args.includes(word));
+  });
 }
 
 /**
@@ -431,8 +436,9 @@ function ghProseArgs(c: ShellCommand): readonly string[] | null {
  * it. `message` is matched against each commit's arguments after `commit`, one per line, and the
  * bodies of the heredocs it is fed: every argument rather than the `-m` values alone, so `-am`,
  * `-m"…"` and a `"$(cat <<'EOF' … EOF)"` message are all in view. `prose` is matched the same way
- * against a `gh pr` or `gh issue` command's arguments after its verb and its heredocs' bodies, so a
- * `--body-file -` fed on stdin is in view too. A line that does not parse is matched whole.
+ * against every argument of a `gh pr` or `gh issue` command, found as the backtick rule finds it,
+ * and its heredocs' bodies, so a `--body-file -` fed on stdin is in view too. A line that does not
+ * parse is matched whole.
  */
 const noAttribution = defineCheck((opts: { message: readonly string[]; prose: readonly string[] }): Check => (ctx) => {
   const parsed = shellCommands(ctx);
@@ -448,10 +454,7 @@ const noAttribution = defineCheck((opts: { message: readonly string[]; prose: re
           const commits = gitCommands(ctx)
             .filter((g) => g.subcommand === "commit")
             .map((g) => given(g.args, g.command));
-          const prose = parsed.flatMap((c) => {
-            const args = ghProseArgs(c);
-            return args === null ? [] : [given(args, c)];
-          });
+          const prose = parsed.filter(isGhProse).map((c) => given(c.args, c));
           return [
             ...matching(opts.message, commits).map((pattern) => `the commit's message matches /${pattern}/`),
             ...matching(opts.prose, prose).map((pattern) => `the PR or issue text matches /${pattern}/`),
@@ -586,6 +589,10 @@ export const git = definePack("git", (repo: Release) => {
         // line or fed as the body on stdin.
         `work gh pr create --title x --body "${TRAILER}: ${VENDOR}"`,
         `work gh issue create --title x --body-file - <<'EOF'\nopened with ${LINK}\nEOF`,
+        // …and with an option before the verb, bare or through `work`: the backtick rule finds the
+        // verb anywhere among the arguments, and this rule finds the same commands.
+        `gh --repo a/b pr create --body "${TRAILER}: ${VENDOR}"`,
+        `work --verbose gh pr create --body "${TRAILER}: ${VENDOR}"`,
         // The generated-with line, and the tool's own footer — the site link and the robot emoji
         // beside it. Three of the five patterns had no case at all until this read.
         `git commit -m "fix(auth): renew the session\n\nGenerated with ${VENDOR} Code"`,

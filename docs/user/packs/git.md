@@ -172,6 +172,8 @@ Co-Authored-By: Claude <noreply@anthropic.com>"`
 - running `work gh issue create --title x --body-file - <<'EOF'
 opened with claude.com/claude-code
 EOF`
+- running `gh --repo a/b pr create --body "Co-Authored-By: Claude"`
+- running `work --verbose gh pr create --body "Co-Authored-By: Claude"`
 - running `git commit -m "fix(auth): renew the session
 
 Generated with Claude Code"`
