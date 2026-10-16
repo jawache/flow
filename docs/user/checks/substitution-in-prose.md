@@ -10,7 +10,9 @@ Refuses a command that records prose, such as a commit message or a pull request
 
 The check reads [the parse](../explanation/what-the-guard-sees.md#the-parse-what-a-command-is) of the command line, one command at a time.
 
-- **A command named by a head.** Each head is a regex, tried against a command from its program name, as [`banCommands`](./ban-commands.md#what-a-pattern-is-matched-against) tries a pattern. A command that no head matches is never refused.
+- **A command named by a head.** Each head is a regex, tried against a command from its program name, as [`banCommands`](./ban-commands.md#what-a-pattern-is-matched-against) tries a pattern.
+- **A git command named by its subcommand.** A git command is matched by the subcommand the parse finds after git's own options, so `git -C '/a b' commit` and `git --git-dir /x commit` are both `commit`.
+- **Any other command** is never refused.
 - **A backtick the shell runs.** The command is refused when one of its [substitutions](../reference/ctx.md#ctxcommands) is a backtick. That covers a backtick in a double-quoted or bare argument, and in an unquoted heredoc the command is fed.
 - **Through a `$( … )`.** A `$( … )` alone is not refused. A backtick that runs inside it is: `git commit -m "$(cat <<EOF … EOF)"` with a backtick in the heredoc is refused.
 - **A line that does not parse** is passed.
@@ -27,6 +29,7 @@ These run nothing, so they pass:
 | Key | Type | Required | Meaning |
 | --- | --- | --- | --- |
 | `heads` | list of regex | yes | the commands that record prose. Each is tried against each command in the line, from its program name |
+| `gitSubcommands` | list of strings | no | the git subcommands that record prose, such as `commit`. A git command whose subcommand is in the list is checked, whatever options come before the subcommand |
 
 ## Example
 

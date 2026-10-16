@@ -146,9 +146,9 @@ export const textBan = defineCheck(
  * fed, the message of `git commit -F - <<'EOF'`, needs it.
  *
  * `wholeLine: true` is the escape hatch for a pattern that spans two commands on purpose
- * (`curl … | sh`): it is tried anywhere in the line as written, less its heredoc bodies — or with
- * them, when `matchHeredocs` is set too. A line that does not parse is matched the same way, whole
- * and as written: a deterrent that cannot read a line errs toward refusing it.
+ * (`curl … | sh`): it is tried anywhere in the line as written, less its heredoc bodies. A line
+ * that does not parse is matched whole and as written: a deterrent that cannot read a line errs
+ * toward refusing it.
  *
  * docs/user/checks/ban-commands.md is the promise, case by case.
  */
@@ -176,7 +176,7 @@ function banSubjects(
   const parsed = shellCommands({ command: line, commands });
   if (parsed === null) return { texts: [line], anchored: false };
   if (opts.wholeLine === true) {
-    return { texts: [opts.matchHeredocs === true ? line : (elideHeredocBodies(line) ?? line)], anchored: false };
+    return { texts: [elideHeredocBodies(line) ?? line], anchored: false };
   }
   const texts = parsed.map((c) => (opts.matchHeredocs === true ? [c.text, ...c.heredocs.map((h) => h.body)].join("\n") : c.text));
   return { texts, anchored: true };
@@ -187,7 +187,9 @@ function banSubjects(
  * while building it — a commit message, a PR or issue body, a journal entry.
  *
  * `heads` are the commands that record prose, each a regex matched from a command's program name
- * as `banCommands` matches one. The verdict reads the parse, never the line: a backtick the shell
+ * as `banCommands` matches one. `gitSubcommands` names git's own, `commit`, and is read through
+ * `gitCommand`: git's options sit between `git` and its subcommand, and a value with a space in it,
+ * `-C '/a b'`, is two words in a command's text, where a regex loses it. The verdict reads the parse, never the line: a backtick the shell
  * runs is one the parse lists as the command's substitution — in a double-quoted or bare argument,
  * or in an unquoted heredoc the command is fed. A single-quoted argument, an escaped backtick and a
  * QUOTED heredoc run nothing, so none is refused, and neither is a backtick in another command on
@@ -201,11 +203,13 @@ function banSubjects(
  * while both still read as armed.
  */
 export const substitutionInProse = defineCheck(
-  (opts: { heads: readonly string[] }): Check =>
+  (opts: { heads: readonly string[]; gitSubcommands?: readonly string[] }): Check =>
     (ctx) => {
       const heads = opts.heads.map((head) => new RegExp(`^(?:${head})`));
       const hits = (shellCommands(ctx) ?? []).flatMap((c) => {
-        const head = heads.map((re) => re.exec(c.text)?.[0]).find((m) => m !== undefined);
+        const sub = gitCommand(c)?.subcommand;
+        const head =
+          sub != null && opts.gitSubcommands?.includes(sub) === true ? `git ${sub}` : heads.map((re) => re.exec(c.text)?.[0]).find((m) => m !== undefined);
         if (head === undefined) return [];
         return backticksRun(c.substitutions).map((run) => `\`${head}\` would run \`${run}\` and record its output in place of the backticks`);
       });
@@ -1093,7 +1097,7 @@ export function gitCommand(command: ShellCommand): GitCommand | null {
 }
 
 /** Every git command the line runs, in the order the parse lists them; none when it does not parse. */
-function gitCommands(facts: CommandFacts): GitCommand[] {
+export function gitCommands(facts: CommandFacts): GitCommand[] {
   return (shellCommands(facts) ?? []).flatMap((c) => gitCommand(c) ?? []);
 }
 

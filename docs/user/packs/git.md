@@ -53,7 +53,7 @@ refuse the first few commits while everyone re-learns the format — that is the
 - [`git.noGitDiscard`](#gitnogitdiscard--guardrail) · guardrail · Blocks a git command that would wipe uncommitted work — checkout/restore/reset --hard/clean -f. No bypass; use git stash.
 - [`git.noForcePush`](#gitnoforcepush--guardrail) · guardrail · Blocks a force-push — rewriting pushed history is the one loss a stash cannot undo.
 - [`git.conventionalCommitFormat`](#gitconventionalcommitformat--guardrail) · guardrail · The commit header must speak Conventional Commits v1.0.0 (checked before git commit runs).
-- [`git.noShellSubstitutionInProse`](#gitnoshellsubstitutioninprose--guardrail) · guardrail · A backtick inside a double-quoted argument of a commit or a PR body is live command substitution, not Markdown.
+- [`git.noShellSubstitutionInProse`](#gitnoshellsubstitutioninprose--guardrail) · guardrail · A backtick the shell would run in a commit message or a PR or issue body (double-quoted, bare, or in an unquoted heredoc) is live command substitution, not Markdown.
 - [`git.node.versionIsSemver`](#gitnodeversionissemver--guardrail) · guardrail · The manifest's version is valid SemVer 2.0.0 — the number the computed release writes. See https://semver.org/
 - [`git.node.noHandEditedVersion`](#gitnodenohandeditedversion--guardrail) · guardrail · The version field is written by the release commit, never by hand.
 
@@ -357,7 +357,7 @@ EOF
 
 ## `git.noShellSubstitutionInProse` — guardrail
 
-A backtick inside a double-quoted argument of a commit or a PR body is live command substitution, not Markdown.
+A backtick the shell would run in a commit message or a PR or issue body (double-quoted, bare, or in an unquoted heredoc) is live command substitution, not Markdown.
 
 - **Refuses at** a shell command is about to run
 - **Watches** not scoped by path
@@ -369,8 +369,10 @@ A backtick inside a double-quoted argument of a commit or a PR body is live comm
 ```
 {
   "heads": [
-    "(?:\\S*/)?git(?:\\s+-[Cc]\\s+\\S+|\\s+--[\\w-]+(?:=\\S+)?)*\\s+commit\\b",
     "(?:\\S*/)?(?:work\\s+)?gh\\s+(?:pr|issue)\\b"
+  ],
+  "gitSubcommands": [
+    "commit"
   ]
 }
 ```
@@ -427,6 +429,8 @@ EOF
 - running `git commit -F - <<EOF
 fix: run `just test` first
 EOF`
+- running `git -C '/a b' commit -m "fix: `date`"`
+- running `git --git-dir /x commit -m "fix: `date`"`
 
 ## `git.node.versionIsSemver` — guardrail
 

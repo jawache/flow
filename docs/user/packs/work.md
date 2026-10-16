@@ -61,7 +61,7 @@ only those rungs change files in the worktree.
 - [`work.checkersDoNotWrite`](#workcheckersdonotwrite--guardrail) · guardrail · A verifier and the review lenses sit at a boundary they must not write to.
 - [`work.ticksAreTheChilds`](#workticksarethechilds--guardrail) · guardrail · The parent records verdicts; a box is ticked by the child that built it, with its evidence.
 - [`work.noAgentInboxItems`](#worknoagentinboxitems--guardrail) · guardrail · The inbox is the human's speccing queue — an agent raises a finding in chat, never files one.
-- [`work.noShellSubstitutionInProse`](#worknoshellsubstitutioninprose--guardrail) · guardrail · A backtick inside a double-quoted argument of a work verb that records prose is live command substitution, not Markdown.
+- [`work.noShellSubstitutionInProse`](#worknoshellsubstitutioninprose--guardrail) · guardrail · A backtick the shell would run in a work verb that records prose (double-quoted, bare, or in an unquoted heredoc) is live command substitution, not Markdown.
 - [`work.builderWrites`](#workbuilderwrites--guardrail) · guardrail · Only the named rungs change files in this worktree — a checker or a stray helper hands its finding back.
 
 ## `work.planIsTheParents` — guardrail
@@ -230,7 +230,7 @@ work inbox new --summary x`
 
 ## `work.noShellSubstitutionInProse` — guardrail
 
-A backtick inside a double-quoted argument of a work verb that records prose is live command substitution, not Markdown.
+A backtick the shell would run in a work verb that records prose (double-quoted, bare, or in an unquoted heredoc) is live command substitution, not Markdown.
 
 - **Refuses at** a shell command is about to run
 - **Watches** not scoped by path

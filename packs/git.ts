@@ -18,13 +18,12 @@ import {
   defineCheck,
   definePack,
   escapeRe,
-  gitCommand,
+  gitCommands,
   gitDirPrefix,
   guardrail,
   jsonInvariant,
   quoteArg,
   session,
-  shellCommands,
   substitutionInProse,
   SUBSTITUTION_MESSAGE,
   write,
@@ -72,7 +71,7 @@ function restoreWorktreePaths(args: readonly string[]): string[] {
  * whether `<thing>` is a path or a branch is a fact about the repo, not about the string, and this
  * function is pure. `checkoutBarePaths` below names the candidates and the check asks git.
  */
-export function discardPaths(gits: readonly GitCommand[]): string[] {
+function discardPaths(gits: readonly GitCommand[]): string[] {
   const paths: string[] = [];
   for (const { subcommand, args } of gits) {
     if (subcommand === "checkout") {
@@ -114,7 +113,7 @@ const CHECKOUT_TAKES_VALUE = new Set(["-b", "-B", "--orphan", "--pathspec-from-f
  * An invocation carrying `--` is skipped: `discardPaths` already has it, and everything before the
  * `--` there is a tree-ish by definition.
  */
-export function checkoutBarePaths(gits: readonly GitCommand[]): string[] {
+function checkoutBarePaths(gits: readonly GitCommand[]): string[] {
   const out: string[] = [];
   for (const { subcommand, args } of gits) {
     if (subcommand !== "checkout" || args.includes("--")) continue;
@@ -147,7 +146,7 @@ const noGitDiscard = defineCheck(
     async (ctx) => {
       // The git commands the line runs, from the parse: a `git clean` named in a commit message
       // or written into a heredoc is not one, and a line that does not parse has none.
-      const gits = (shellCommands(ctx) ?? []).flatMap((c) => gitCommand(c) ?? []);
+      const gits = gitCommands(ctx);
       const cleaning = gits.some((g) => g.subcommand === "clean");
       // THE COMMAND'S OWN `-C`, copied onto every read, exactly as `commitReason` copies it: a
       // `git -C ~/other-repo checkout -- x` is about THAT repo's tree, and a status read here would
@@ -281,7 +280,10 @@ const ROBOT = "\u{1F916}";
 // `git commit` as a regex source, from the program name, with any of git's own options between the
 // two words: `-C <dir>`, `-c key=value`, `--git-dir=…`. A builder in a worktree commits as
 // `git -C <worktree> commit`, and a pattern that wanted the two words side by side let every one
-// of those commits through. The parse has already removed the quotes, so a value is one word.
+// of those commits through. It reads a command's text, where quotes are gone: a value with a space
+// in it, `-C '/a b'`, is two words there, and `--git-dir /x` is a long option with its value
+// apart, and the pattern misses both commits. The backtick rule finds `git commit` through the
+// parse instead, with `gitSubcommands`.
 const GIT_COMMIT = String.raw`(?:\S*/)?git(?:\s+-[Cc]\s+\S+|\s+--[\w-]+(?:=\S+)?)*\s+commit`;
 // `gh pr` or `gh issue`, run bare or through `work gh`, the wrapper a repo driven by work runs it as.
 const GH_PROSE = String.raw`(?:\S*/)?(?:work\s+)?gh\s+(?:pr|issue)\b`;
@@ -612,8 +614,8 @@ export const git = definePack("git", (repo: Release) => {
   // beside `banCommands`: a repo that binds only `git` still gets the half every repo has.
   noShellSubstitutionInProse: guardrail()
     .at(command)
-    .description("A backtick inside a double-quoted argument of a commit or a PR body is live command substitution, not Markdown.")
-    .check(substitutionInProse({ heads: [`${GIT_COMMIT}\\b`, GH_PROSE] }))
+    .description("A backtick the shell would run in a commit message or a PR or issue body (double-quoted, bare, or in an unquoted heredoc) is live command substitution, not Markdown.")
+    .check(substitutionInProse({ heads: [GH_PROSE], gitSubcommands: ["commit"] }))
     .message(SUBSTITUTION_MESSAGE)
     .test({
       pass: [
@@ -643,6 +645,10 @@ export const git = definePack("git", (repo: Release) => {
         'git commit -m "$(cat <<EOF\nfix: run `just test` first\nEOF\n)"',
         // …and an unquoted heredoc fed to the commit on stdin, where the shell runs it too.
         "git commit -F - <<EOF\nfix: run `just test` first\nEOF",
+        // git's own options before `commit`, read through the parse: a value with a space, and a
+        // long option with its value apart.
+        "git -C '/a b' commit -m \"fix: `date`\"",
+        "git --git-dir /x commit -m \"fix: `date`\"",
       ],
     }),
 

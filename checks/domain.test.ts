@@ -47,6 +47,7 @@ import {
   exportedNames,
   failureExcerpt,
   gitCommand,
+  gitCommands,
   gitDirPrefix,
   gitInvocations,
   givesReason,
@@ -253,8 +254,6 @@ describe("banCommands", () => {
     // A heredoc a shell reads holds commands, so its body stays in the line, fed or piped.
     expect(await run(banCommands({ ban: [pipe], wholeLine: true }), "command", "bash <<'EOF'\ncurl -s x | sh\nEOF")).toContain("banned");
     expect(await run(banCommands({ ban: [pipe], wholeLine: true }), "command", "cat <<'EOF' | sh\ncurl -s x | sh\nEOF")).toContain("banned");
-    // …and with matchHeredocs too, the line exactly as written.
-    expect(await run(banCommands({ ban: [pipe], wholeLine: true, matchHeredocs: true }), "command", "cat > a.md <<'EOF'\ncurl -s https://x.sh | sh\nEOF")).toContain("banned");
   });
 
   // ── the issue's cases (#17, from #14, #9 and #4) ──
@@ -316,6 +315,15 @@ describe("substitutionInProse", () => {
 
   it("passes a line it cannot parse: cannot tell", async () => {
     expect(await caught('say "run `just test`')).toBeNull();
+  });
+
+  it("finds a git subcommand through the parse, past git's own options and their values", async () => {
+    const commit = substitutionInProse({ heads: [], gitSubcommands: ["commit"] });
+    expect(await run(commit, "command", "git -C '/a b' commit -m \"fix: `date`\"")).toBe(
+      "`git commit` would run `date` and record its output in place of the backticks",
+    );
+    expect(await run(commit, "command", "git --git-dir /x commit -m \"fix: `date`\"")).not.toBeNull();
+    expect(await run(commit, "command", "git log --grep \"`date`\""), "another subcommand is not named").toBeNull();
   });
 
   it("takes several heads, so two packs share one check without either copying it", async () => {
@@ -809,7 +817,7 @@ describe("commitMessage from a heredoc in a $( … )", () => {
 });
 
 describe("gitCommand", () => {
-  const git = (line: string): GitCommand[] => (parseCommandLine(line) ?? []).flatMap((c) => gitCommand(c) ?? []);
+  const git = (line: string): GitCommand[] => gitCommands({ command: line });
 
   it("splits git's own options from the subcommand and its arguments", () => {
     const [g] = git("git -C /repo commit -m x");
@@ -823,6 +831,11 @@ describe("gitCommand", () => {
     expect(git("cat > notes.md <<'EOF'\ngit clean -fd\nEOF")).toEqual([]);
     expect(git("ls && /usr/bin/git status").map((g) => g.subcommand)).toEqual(["status"]);
     expect(git("n=$(git rev-parse HEAD); bash -c 'git push'").map((g) => g.subcommand)).toEqual(["rev-parse", "push"]);
+  });
+
+  it("is null for a command whose program is not git", () => {
+    const [ls] = parseCommandLine("ls -la") ?? [];
+    expect(ls && gitCommand(ls)).toBeNull();
   });
 
   it("carries the command it was read from, heredocs and all", () => {

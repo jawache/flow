@@ -35,6 +35,7 @@ describe("the public surface", () => {
       "execPasses",
       "faultsOf",
       "gitCommand",
+      "gitCommands",
       "gitDirPrefix",
       "gitInvocations",
       "givesReason",

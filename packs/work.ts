@@ -208,7 +208,7 @@ export const work = definePack("work", (repo: Rungs = {}) => ({
   // to an APPEND-ONLY journal, which is the half of the rule with no undo of any kind.
   noShellSubstitutionInProse: guardrail()
     .at(command)
-    .description("A backtick inside a double-quoted argument of a work verb that records prose is live command substitution, not Markdown.")
+    .description("A backtick the shell would run in a work verb that records prose (double-quoted, bare, or in an unquoted heredoc) is live command substitution, not Markdown.")
     .check(substitutionInProse({ heads: ["work\\s+(?:plan|task|recap|record|spec|complete)\\b"] }))
     .message(SUBSTITUTION_MESSAGE)
     .test({

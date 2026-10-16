@@ -251,6 +251,7 @@ export const driven = definePack("driven", {
         "git log --oneline -3 | xargs -n1 echo",
         "wc -l < notes.md",
         "go test ./... 2>&1 >/dev/null | tail -5",
+        "go test 2>&-",
       ],
       block: [
         "echo x > notes.md",
@@ -293,6 +294,9 @@ export const driven = definePack("driven", {
         "{ go test ./...; go vet ./...; } > out.log",
         "while read l; do echo $l; done < in.txt >> out.txt",
         "go test ./... &> out.log",
+        "echo x >&out.txt",
+        "echo x >| f",
+        "go test &>> f",
       ],
     }),
 });
