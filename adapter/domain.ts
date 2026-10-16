@@ -4153,7 +4153,6 @@ const RESET = "\u001b[0m";
  * plain text, so nothing that reads the output has escape codes to strip.
  */
 export function wantsColour(terminal: boolean, noColor: string | undefined): boolean {
-  // `isTTY` is undefined, not false, on a stream that is not a terminal, whatever its type says.
   if (!terminal) return false;
   return noColor === undefined || noColor === "";
 }

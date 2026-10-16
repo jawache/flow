@@ -334,6 +334,7 @@ export function runInit(cwd: string, args: readonly string[]): VerbResult {
   const failures = perform(root, plan);
   return {
     // `flow.ts` writes this to the process's own stdout, so that is the terminal asked about.
+    // `isTTY` is undefined, not false, on a stream that is not a terminal, whatever its type says.
     stdout: `${initLines(plan, failures, wantsColour(process.stdout.isTTY, process.env["NO_COLOR"])).join("\n")}\n`,
     stderr: "",
     exitCode: initCode(plan, failures),
