@@ -1697,3 +1697,69 @@ export default defineConfig([pack(demo)]);
     expect(meta).toMatchObject({ kind: "meta", v: 1, session: "agents" });
   });
 });
+
+describe("a breadcrumb row names what was touched (#15)", () => {
+  // A repo of its own, so every note here is shown for the first time by the calls below. A session
+  // note, an area note and a command note: one of each cause a touch can and cannot carry.
+  let tree: string;
+  let ids = 0;
+  const NOTES_CONFIG = (packageRoot: string): string => `
+import { breadcrumb, command, definePack, defineConfig, pack, session, touch } from ${JSON.stringify(join(packageRoot, "index.ts"))};
+
+const demo = definePack("demo", {
+  orientation: breadcrumb().at(session).text("This repo is guarded by flow."),
+  area: breadcrumb().at(touch).on("src/**").text("src/ is the product."),
+  history: breadcrumb().at(command).on("git log*").text("The journal owns the past."),
+});
+
+export default defineConfig([pack(demo)]);
+`;
+  const BUILDER = { agent_id: "a6009b558b4c9155c", agent_type: "builder" };
+  const send = (event: string, payload: unknown): Ran => runFlow(tree, ["hook", event], {}, JSON.stringify(payload));
+  /** One tool call from the builder, both halves. */
+  function call(tool: string, input: Record<string, unknown>): void {
+    const payload = { session_id: "notes", ...BUILDER, tool_name: tool, tool_input: input, tool_use_id: `toolu_notes_${++ids}`, cwd: tree };
+    expect(send("pre-tool-use", payload).code).toBe(0);
+    expect(send("post-tool-use", payload).code).toBe(0);
+  }
+
+  beforeAll(() => {
+    tree = newRepo("flow-notes-");
+    writeFileSync(join(tree, "flow.config.ts"), NOTES_CONFIG(PACKAGE));
+    mkdirSync(join(tree, "src"), { recursive: true });
+    writeFileSync(join(tree, "src", "a.ts"), "export const a = 1;\n");
+
+    expect(send("session-start", { session_id: "notes", source: "startup" }).code).toBe(0);
+    call("Read", { file_path: join(tree, "src/a.ts") });
+    call("Bash", { command: "git log --oneline -1" });
+  });
+  afterAll(() => {
+    rmSync(tree, { recursive: true, force: true });
+  });
+
+  const crumbs = (): Record<string, unknown>[] => rows(tree, "notes").filter((row) => row["kind"] === "breadcrumb");
+  const crumb = (id: string): Record<string, unknown> | undefined => crumbs().find((row) => row["id"] === id);
+
+  it("names the file whose first touch showed an area note, repo-relative", () => {
+    expect(crumb("demo.area")).toMatchObject({
+      agent: "a6009b558b4c9155c",
+      agentType: "builder",
+      kind: "breadcrumb",
+      moment: "touch",
+      id: "demo.area",
+      cause: "first-touch",
+      subject: "src/a.ts",
+    });
+  });
+
+  it("names the command line that showed a command note", () => {
+    expect(crumb("demo.history")).toMatchObject({ moment: "command", cause: "first-touch", subject: "git log --oneline -1" });
+  });
+
+  it("writes no subject on a session note's row, which fired on no touch", () => {
+    const greeting = crumb("demo.orientation");
+    expect(greeting).toMatchObject({ agent: "main", moment: "session", cause: "session" });
+    expect(greeting).not.toHaveProperty("subject");
+    expect(crumbs().map((row) => row["id"]).sort()).toEqual(["demo.area", "demo.history", "demo.orientation"]);
+  });
+});
