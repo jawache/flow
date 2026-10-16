@@ -29,8 +29,11 @@
 //   CLAUDE_PROJECT_DIR  which repo a hook payload is about. Always set here, to the repo being
 //                       driven, because that is what a harness does and a rail that had to guess
 //                       would be guessing in the suite too.
-//   PATH                a directory holding one `flow` shim, so GIT's own pre-commit hook — which
-//                       flow neither spawns nor configures — can find the binary under test.
+//   PATH                a directory holding one `flow` shim that runs the binary under test: the
+//                       fallback the gate and the hooks run when the repo has no
+//                       node_modules/@jawache/flow of its own, and what keeps the machine's own
+//                       `flow` out of a run. Or the whole PATH, in place of the machine's, for a
+//                       run that must find no `flow` there at all (`Rig.path`).
 
 import { spawn, spawnSync } from "node:child_process";
 import { copyFileSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -98,6 +101,11 @@ export interface Rig {
   /** A directory holding the `flow` shim, prepended to PATH for git's own hook. */
   readonly bin?: string | undefined;
   /**
+   * The whole PATH, in place of the machine's — for a run that must find no `flow` at all, which the
+   * machine's PATH cannot promise (node's own folder holds a global one wherever it is installed).
+   */
+  readonly path?: string | undefined;
+  /**
    * `HOME`: the user's home, where the host keeps its transcript store (`~/.claude/projects/…`)
    * when `home` does not move it. A run that reads conversations reads this one's, never the machine's.
    */
@@ -110,6 +118,7 @@ function env(repo: string, rig: Rig): NodeJS.ProcessEnv {
     CLAUDE_PROJECT_DIR: repo,
     ...(rig.home === undefined ? {} : { CLAUDE_CONFIG_DIR: rig.home }),
     ...(rig.bin === undefined ? {} : { PATH: `${rig.bin}:${process.env["PATH"] ?? ""}` }),
+    ...(rig.path === undefined ? {} : { PATH: rig.path }),
     ...(rig.user === undefined ? {} : { HOME: rig.user }),
   };
 }
@@ -121,12 +130,22 @@ function env(repo: string, rig: Rig): NodeJS.ProcessEnv {
  * whose stdin is something no text can make, such as a file it cannot read.
  */
 export function flow(repo: string, args: readonly string[], rig: Rig = {}, stdin: string | number = ""): Ran {
-  const result = spawnSync("node", [binary(), ...args], {
+  // This node, by its path: a run given its own PATH may not have node on it.
+  const result = spawnSync(process.execPath, [binary(), ...args], {
     cwd: repo,
     ...(typeof stdin === "number" ? { stdio: [stdin, "pipe", "pipe"] } : { input: stdin }),
     encoding: "utf8",
     env: env(repo, rig),
   });
+  return { stdout: result.stdout, stderr: result.stderr, code: result.status ?? -1 };
+}
+
+/**
+ * A command line, through `/bin/sh -c`, in the same world — the way the host runs a registered hook
+ * command, with `CLAUDE_PROJECT_DIR` set to the repo.
+ */
+export function sh(repo: string, command: string, rig: Rig = {}, stdin = ""): Ran {
+  const result = spawnSync("/bin/sh", ["-c", command], { cwd: repo, input: stdin, encoding: "utf8", env: env(repo, rig) });
   return { stdout: result.stdout, stderr: result.stderr, code: result.status ?? -1 };
 }
 
@@ -205,14 +224,16 @@ export const settingsHome = (prefix = "flow-home-"): string => mkdtempSync(join(
 /**
  * A temp directory holding one `flow` shim, for PATH.
  *
- * Git's pre-commit hook runs `flow commit …` by NAME — that is what a real repo's hook says, and
- * flow does not get to choose what is on PATH when git spawns it. Without this the gate would
- * either find whatever `flow` the machine has installed or nothing at all, and the suite would be
- * testing somebody else's binary.
+ * The gate and the hooks run the repo's own node_modules/@jawache/flow first, and the `flow` on
+ * the PATH by NAME otherwise — and flow does not get to choose what is on PATH when git spawns its
+ * hook. A repo `flow init` linked to the build under test never reaches the PATH; one with no link
+ * of its own does, and without this shim it would find whatever `flow` the machine has installed,
+ * or nothing at all, and the suite would be testing somebody else's binary.
  */
 export function shimBin(prefix = "flow-bin-"): string {
   const bin = mkdtempSync(join(tmpdir(), prefix));
-  writeFileSync(join(bin, "flow"), `#!/bin/sh\nexec node ${JSON.stringify(binary())} "$@"\n`, { mode: 0o755 });
+  // This node, by its path, as `flow()` runs it: a run given its own PATH may not have node on it.
+  writeFileSync(join(bin, "flow"), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(binary())} "$@"\n`, { mode: 0o755 });
   return bin;
 }
 

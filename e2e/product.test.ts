@@ -26,6 +26,7 @@ import {
   newRepo as freshRepo,
   pre,
   settingsHome,
+  sh,
   shimBin,
   BREAKS,
   bindInConfig,
@@ -36,7 +37,11 @@ import {
 } from "./harness.ts";
 
 let home: string;
-/** A directory holding one `flow` shim, so git's own hook can find the binary under test. */
+/**
+ * A directory holding one `flow` shim, which runs the build under test: the PATH's flow. A repo
+ * `flow init` linked runs its own node_modules/@jawache/flow first, the same build, so the shim is
+ * the fallback half of the gate and the hooks, and it keeps the machine's own flow out of every run.
+ */
 let bin: string;
 
 /** The built binary, in a given repo, with the throwaway host settings and the shim on PATH. */
@@ -171,6 +176,109 @@ describe("flow status", () => {
     }
   });
 
+  // THE SHELL'S OWN LOOKUP, end to end. The PATH holds git's exec-path folder and nothing else: git,
+  // which status asks about the hooks path, and no `flow` — the machine's PATH cannot promise that.
+  // The repo does not list @jawache/flow, so the link `flow init` makes is the running flow, not the
+  // repo's own copy, and status judges it by the PATH alone: red on the safe side, naming the link.
+  it("goes red on the binary, and exits 1, when the repo has no flow of its own and the PATH has none", () => {
+    const stranded = newRepo();
+    try {
+      expect(flow(stranded, ["init"]).code).toBe(0);
+      const gitOnly = runGit(stranded, ["--exec-path"]).stdout.trim();
+      expect(existsSync(join(gitOnly, "flow")), "the PATH this run is given has no flow").toBe(false);
+      expect(existsSync(join(stranded, "package.json")), "nor does the repo list flow").toBe(false);
+      const said = runFlow(stranded, ["status"], { home, path: gitOnly });
+      expect(said.stdout).toContain(
+        "✗ binary: this repo's package.json does not list @jawache/flow, so node_modules/@jawache/flow is the link `flow init` made to the flow that ran it, and no flow is on the PATH.",
+      );
+      expect(said.stdout).toContain("1 red line");
+      expect(said.code).toBe(1);
+    } finally {
+      rmSync(stranded, { recursive: true, force: true });
+    }
+  });
+
+  // A DEV DEPENDENCY ALONE, end to end: the repo lists @jawache/flow, its package is in
+  // node_modules/@jawache/flow (the link `flow init` makes, as `npm link` would), and the PATH holds
+  // git, node and nothing else. The gate and the registrations run that package's own file, so status
+  // names it, git's own hook runs it, and a registered command answers through a shell.
+  it("names node_modules/@jawache/flow on the green binary line, and the gate and a hook run that copy, with no flow on the PATH", () => {
+    const local = newRepo();
+    const nodeOnly = mkdtempSync(join(tmpdir(), "flow-node-"));
+    try {
+      const pkg = { name: "consumer", version: "1.0.0", devDependencies: { "@jawache/flow": "*" } };
+      writeFileSync(join(local, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
+      expect(flow(local, ["init"], home).code).toBe(0);
+      expect(existsSync(join(local, "node_modules", "@jawache", "flow", "dist", "flow.mjs")), "the repo's own package").toBe(true);
+      // A `flow` in node_modules/.bin that is not flow, as Facebook's flow-bin installs: never run.
+      mkdirSync(join(local, "node_modules", ".bin"), { recursive: true });
+      writeFileSync(join(local, "node_modules", ".bin", "flow"), "#!/bin/sh\necho not-flow\nexit 0\n", { mode: 0o755 });
+      symlinkSync(process.execPath, join(nodeOnly, "node"));
+      // git, node, and the system's own folders for the shell flow runs git through — no flow in any.
+      const path = [runGit(local, ["--exec-path"]).stdout.trim(), nodeOnly, "/usr/bin", "/bin"];
+      for (const dir of path) expect(existsSync(join(dir, "flow")), `${dir} has no flow`).toBe(false);
+      const world = { home, path: path.join(":") };
+
+      const said = runFlow(local, ["status"], world);
+      expect(said.stdout).toContain("✓ binary: the hooks and the gate run the flow in node_modules/@jawache/flow");
+      expect(said.code, said.stdout).toBe(0);
+
+      const MARKER = ["DO", "NOT", "COMMIT"].join("-");
+      writeFileSync(join(local, "secret.txt"), `${MARKER} — an api key would go here\n`);
+      runGit(local, ["add", "secret.txt"], world);
+      const refused = runGit(local, ["commit", "-m", "test: a marked file"], world);
+      expect(refused.code, "git refuses when the gate exits non-zero").not.toBe(0);
+      expect(refused.stderr, "flow refused it, not `flow: not found` and not the other flow").toContain("demo.noMarkedFiles");
+
+      const written = JSON.parse(readFileSync(join(local, ".claude", "settings.json"), "utf8")) as {
+        hooks: Record<string, { hooks: { command: string }[] }[]>;
+      };
+      const registered = written.hooks["PreToolUse"]?.[0]?.hooks[0]?.command;
+      expect(registered).toBe('f="$CLAUDE_PROJECT_DIR/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook pre-tool-use; exec flow hook pre-tool-use');
+      const answered = sh(local, registered ?? "", world, JSON.stringify(pre("Bash", { command: "git push --force origin main" }, "dev-dep-1")));
+      expect(answered.code, answered.stderr).toBe(2);
+      expect(answered.stderr).toContain("demo.noForcePush");
+    } finally {
+      for (const dir of [local, nodeOnly]) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // THE FALLBACK HALF, end to end: `; exec flow hook …`. Every other repo here has init's link, so
+  // the repo-first half always answers. This one resolves @jawache/flow from a folder above it, as a
+  // monorepo's package would, so init links nothing, the repo has no node_modules/@jawache/flow of
+  // its own, and the gate and a hook run the flow on the PATH: the shim, which runs the build under
+  // test. (Removing init's link instead would leave the config unable to import @jawache/flow.)
+  it("runs the flow on the PATH when the repo has no @jawache/flow of its own: the gate refuses, and a hook answers 2", () => {
+    const above = mkdtempSync(join(tmpdir(), "flow-above-"));
+    try {
+      mkdirSync(join(above, "node_modules", "@jawache"), { recursive: true });
+      symlinkSync(builtPackage(), join(above, "node_modules", "@jawache", "flow"), "dir");
+      const below = join(above, "repo");
+      mkdirSync(below);
+      for (const args of [["init", "-q"], ["config", "user.email", "t@example.com"], ["config", "user.name", "t"]]) git(below, args);
+
+      const init = flow(below, ["init"]);
+      expect(init.code, init.stdout + init.stderr).toBe(0);
+      expect(existsSync(join(below, "node_modules")), "init links nothing: @jawache/flow resolves from above").toBe(false);
+      expect(flow(below, ["status"]).stdout).toContain("✓ binary: the hooks and the gate run the flow on the PATH");
+
+      const MARKER = ["DO", "NOT", "COMMIT"].join("-");
+      writeFileSync(join(below, "secret.txt"), `${MARKER} — an api key would go here\n`);
+      git(below, ["add", "secret.txt"]);
+      const refused = git(below, ["commit", "-m", "test: a marked file"]);
+      expect(refused.code, "git refuses when the gate exits non-zero").not.toBe(0);
+      expect(refused.stderr, "the PATH's flow refused it").toContain("demo.noMarkedFiles");
+
+      const registered = (settings()["hooks"] as Record<string, { hooks: { command: string }[] }[]>)["PreToolUse"]?.[0]?.hooks[0]?.command;
+      expect(registered).toContain("; exec flow hook pre-tool-use");
+      const answered = sh(below, registered ?? "", { home, bin }, JSON.stringify(pre("Bash", { command: "git push --force origin main" }, "fallback-1")));
+      expect(answered.code, answered.stderr).toBe(2);
+      expect(answered.stderr).toContain("demo.noForcePush");
+    } finally {
+      rmSync(above, { recursive: true, force: true });
+    }
+  });
+
   it("refuses, loudly, over a config that will not even import — UAT step 5", () => {
     const broken = newRepo();
     try {
@@ -220,9 +328,15 @@ describe("flow init, run again", () => {
 
       const again = flow(repo, ["init"], older);
       expect(again.code).toBe(0);
-      expect(again.stdout).toContain("PostToolUse (widened to every tool) · PostToolUseFailure");
+      // The older flow wrote the bare command too, so the one entry is widened and rewritten at once.
+      expect(again.stdout).toContain(
+        "PostToolUse (widened to every tool, now runs the flow in node_modules/@jawache/flow first) · PostToolUseFailure",
+      );
       const hooks = (JSON.parse(readFileSync(join(older, "settings.json"), "utf8")) as { hooks: Record<string, unknown[]> }).hooks;
       expect(hooks["PostToolUse"], "one entry, widened — never a second one beside it").toHaveLength(1);
+      expect(JSON.stringify(hooks["PostToolUse"])).toContain(
+        JSON.stringify('f="$CLAUDE_PROJECT_DIR/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook post-tool-use; exec flow hook post-tool-use'),
+      );
       expect(flow(repo, ["status"], older).code).toBe(0);
     } finally {
       rmSync(older, { recursive: true, force: true });
@@ -359,6 +473,108 @@ describe("the README's example", () => {
 // · MODULE — always worked. flow's own repo and the work repo, which is why nobody noticed.
 //
 // All four must init, load, go green and say NOTHING on stderr. A fifth shape is one row.
+
+describe("a repo whose package.json lists flow", () => {
+  it("creates .claude/settings.json inside the repo on the first run, when it has no .claude/ folder, and the machine-wide file is untouched", () => {
+    const listed = newRepo();
+    const machine = settingsHome();
+    try {
+      const pkg = { name: "consumer", version: "1.0.0", devDependencies: { "@jawache/flow": "*" } };
+      writeFileSync(join(listed, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
+      const machineBefore = `${JSON.stringify({ theme: "dark" }, null, 2)}\n`;
+      writeFileSync(join(machine, "settings.json"), machineBefore);
+      expect(existsSync(join(listed, ".claude")), "no .claude/ folder before init").toBe(false);
+
+      const init = flow(listed, ["init"], machine);
+      expect(init.code, init.stdout + init.stderr).toBe(0);
+      expect(init.stdout).toContain("+ .claude/settings.json — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop");
+
+      const written = JSON.parse(readFileSync(join(listed, ".claude", "settings.json"), "utf8")) as Record<string, unknown>;
+      expect(Object.keys(written["hooks"] as object)).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
+      expect(readFileSync(join(machine, "settings.json"), "utf8"), "the machine-wide file, byte for byte").toBe(machineBefore);
+    } finally {
+      for (const dir of [listed, machine]) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("gets the hooks in its own .claude/settings.json, keeping its keys, and the machine-wide file is untouched", () => {
+    const listed = newRepo();
+    const machine = settingsHome();
+    try {
+      const pkg = { name: "consumer", version: "1.0.0", devDependencies: { "@jawache/flow": "*" } };
+      writeFileSync(join(listed, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
+      mkdirSync(join(listed, ".claude"), { recursive: true });
+      writeFileSync(join(listed, ".claude", "settings.json"), `${JSON.stringify({ permissions: { allow: ["Bash(ls:*)"] } }, null, 2)}\n`);
+      const machineBefore = `${JSON.stringify({ theme: "dark" }, null, 2)}\n`;
+      writeFileSync(join(machine, "settings.json"), machineBefore);
+
+      const init = flow(listed, ["init"], machine);
+      expect(init.code, init.stdout + init.stderr).toBe(0);
+      expect(init.stdout).toContain("+ .claude/settings.json — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop");
+
+      const written = JSON.parse(readFileSync(join(listed, ".claude", "settings.json"), "utf8")) as Record<string, unknown>;
+      expect(written["permissions"], "the key already in the repo's file is kept").toEqual({ allow: ["Bash(ls:*)"] });
+      expect(Object.keys(written["hooks"] as object)).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
+      expect(readFileSync(join(machine, "settings.json"), "utf8"), "the machine-wide file, byte for byte").toBe(machineBefore);
+
+      const said = flow(listed, ["status"], machine);
+      expect(said.stdout).toContain("✓ hooks: .claude/settings.json — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop");
+      expect(said.code, said.stdout).toBe(0);
+    } finally {
+      for (const dir of [listed, machine]) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  // ONE RUN PER HOOK: the host merges only identical commands across its two settings files, so an
+  // older flow's bare command left in the machine-wide file would run flow a second time.
+  it("brings an older flow's commands in the machine-wide file up to the repo's, keeping the rest, and status names a command it left", () => {
+    const listed = newRepo();
+    const machine = settingsHome();
+    try {
+      const pkg = { name: "consumer", version: "1.0.0", devDependencies: { "@jawache/flow": "*" } };
+      writeFileSync(join(listed, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
+      const older = {
+        theme: "dark",
+        hooks: {
+          PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: "flow hook pre-tool-use" }] }],
+          Stop: [{ hooks: [{ type: "command", command: "flow hook stop" }] }, { hooks: [{ type: "command", command: "say done" }] }],
+        },
+      };
+      writeFileSync(join(machine, "settings.json"), `${JSON.stringify(older, null, 2)}\n`);
+
+      const init = flow(listed, ["init"], machine);
+      expect(init.code, init.stdout + init.stderr).toBe(0);
+      expect(init.stdout).toContain(
+        `+ ${join(machine, "settings.json")} — PreToolUse · Stop (an older flow's command, now the same as .claude/settings.json's, so each hook runs once)`,
+      );
+
+      type Hooks = Record<string, { matcher?: string; hooks: { type: string; command: string }[] }[]>;
+      const read = (file: string) => JSON.parse(readFileSync(file, "utf8")) as { theme?: string; hooks: Hooks };
+      const repo = read(join(listed, ".claude", "settings.json")).hooks;
+      const after = read(join(machine, "settings.json"));
+      expect(after.theme, "every other key is kept").toBe("dark");
+      expect(Object.keys(after.hooks), "no registration is added there").toEqual(["PreToolUse", "Stop"]);
+      expect(after.hooks["PreToolUse"]?.[0]?.hooks[0]?.command).toBe(repo["PreToolUse"]?.[0]?.hooks[0]?.command);
+      expect(after.hooks["Stop"]?.[0]?.hooks[0]?.command).toBe(repo["Stop"]?.[0]?.hooks[0]?.command);
+      expect(after.hooks["Stop"]?.[1], "another tool's hook is kept as it was").toEqual({ hooks: [{ type: "command", command: "say done" }] });
+
+      const green = flow(listed, ["status"], machine);
+      expect(green.stdout).toContain("✓ hooks: .claude/settings.json — ");
+      expect(green.code, green.stdout).toBe(0);
+      expect(flow(listed, ["init"], machine).stdout, "a second run has nothing to bring up to date").not.toContain(join(machine, "settings.json"));
+
+      // A command with more in it is somebody's own: init leaves it, and status says it runs twice.
+      after.hooks["Stop"] = [{ hooks: [{ type: "command", command: "FLOW_DEBUG=1 flow hook stop" }] }];
+      writeFileSync(join(machine, "settings.json"), `${JSON.stringify(after, null, 2)}\n`);
+      const red = flow(listed, ["status"], machine);
+      expect(red.stdout).toContain(
+        `✗ hooks: ${join(machine, "settings.json")} also calls flow for Stop with a command of its own, so Claude Code runs it beside .claude/settings.json's command and each of those hooks fires twice. Make it the same command as .claude/settings.json's, or remove it from that file.`,
+      );
+      expect(red.code).toBe(1);
+    } finally {
+      for (const dir of [listed, machine]) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("the repo's package.json type", () => {
   const SHAPES = [
