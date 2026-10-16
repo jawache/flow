@@ -572,9 +572,15 @@ describe("exportedNames", () => {
     expect(names).toEqual(["f", "g"]);
   });
 
-  it("leaves out an export const with a type annotation, destructured or not, and an export let", async () => {
-    const names = await exportedNames("export const a: number = 1;\nexport const { b }: T = o;\nexport let c = 1;\nexport const d = 2;");
+  it("leaves out an export const with a type annotation, destructured or not, an export let, and a declare with no value", async () => {
+    const names = await exportedNames(
+      "export const a: number = 1;\nexport const { b }: T = o;\nexport let c = 1;\nexport const d = 2;\nexport declare const z;",
+    );
     expect(names).toEqual(["d"]);
+  });
+
+  it("leaves out only the typed declarator of a line that types one name and not the other", async () => {
+    expect(await exportedNames("export const e = 1, f: number = 2;")).toEqual(["e"]);
   });
 });
 
