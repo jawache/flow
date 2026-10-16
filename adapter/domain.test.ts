@@ -388,6 +388,9 @@ describe("bashReads — the files a Bash command reads, before it runs", () => {
     expect(reads("cat src/a.ts &> log.txt; cat src/b.ts &>> log.txt; cat c.ts 2>&1")).toStrictEqual(["src/a.ts", "src/b.ts", "c.ts"]);
     expect(reads("grep x <<< 'some text'")).toStrictEqual([]);
     expect(reads("while read l; do echo $l; done < list.txt")).toStrictEqual(["list.txt"]);
+    // A group's redirect is each inner command's own, target as written: expanded once, never the cwd.
+    expect(reads('F=list.txt; { cat; head -1; } < "$F"')).toStrictEqual(["list.txt"]);
+    expect(reads("cat <&- a.ts")).toStrictEqual(["a.ts"]);
   });
 
   it("does not read a heredoc's body as commands, quoted or dash delimiters alike", () => {

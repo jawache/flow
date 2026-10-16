@@ -747,7 +747,7 @@ describe("parseShellSteps — the same parse, in the order the shell runs it", (
     const [quoted] = parseShellSteps("cat '$HOME/a' \\$F ~/b '~/c' \"$G\" ${H} ${X:-y} $1 $(ls) < '$I'") ?? [];
     if (quoted?.kind !== "command") throw new Error("no command step");
     expect(quoted.words.map(written)).toEqual(["cat", "$HOME/a", "$F", "{~}/b", "~/c", "{G}", "{H}", "{?}", "{?}", "{?}"]);
-    expect(quoted.targets.map(written)).toEqual(["$I"]);
+    expect(quoted.redirects.map((r) => `${r.operator} ${written(r.target)}`)).toEqual(["< $I"]);
   });
 
   it("lists the commands ctx.commands holds, in the order they appear, a group's redirects on each", () => {

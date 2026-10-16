@@ -695,11 +695,11 @@ export function bashReads(steps: readonly ShellStep[] | null, where: BashWhere):
     else scope.vars.set(name, expanded);
   };
   const run = (step: Extract<ShellStep, { kind: "command" }>, scope: ShellScope): void => {
-    step.command.redirects.forEach(({ operator }, i) => {
-      if (operator !== "<" && operator !== "<>") return;
-      const path = expandWord(step.targets[i] ?? [], scope.vars, where.home);
+    for (const { operator, target } of step.redirects) {
+      if (operator !== "<" && operator !== "<>") continue;
+      const path = expandWord(target, scope.vars, where.home);
       add(reads, path === null ? null : at(path, scope.cwd));
-    });
+    }
     const expand = (word: ShellWord): string | null => expandWord(word, scope.vars, where.home);
     const list = xargsList(step.words.slice(0, step.at).map(expand));
     if (list !== null) add(reads, at(list, scope.cwd));

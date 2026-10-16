@@ -469,8 +469,8 @@ export type ShellStep =
        */
       readonly words: readonly ShellWord[];
       readonly at: number;
-      /** Each of `command.redirects`' targets as written, in the same order. */
-      readonly targets: readonly ShellWord[];
+      /** `command.redirects` with each target as written, so a reader expands `< $F` and leaves `< '$F'` alone. */
+      readonly redirects: readonly StepRedirect[];
       /** The substitutions that build its words, which run before it does. */
       readonly before: readonly ShellStep[];
     }
@@ -491,23 +491,42 @@ export function stepCommands(steps: readonly ShellStep[]): ShellCommand[] {
   );
 }
 
-/** Redirects as they are gathered: the public pair, and each target as written, in step. */
-interface Redirects {
-  readonly list: ShellRedirect[];
-  readonly targets: ShellWord[];
+/** A redirect on a step: its operator, and its target as written. A redirect with no target has one unknown piece. */
+export interface StepRedirect {
+  readonly operator: string;
+  readonly target: ShellWord;
 }
 
+/** One redirect as it is gathered, from which both its public form and its step form are built. */
+interface Gathered {
+  readonly operator: string;
+  /** The target with quotes removed, as `ShellRedirect.target` gives it. */
+  readonly value: string;
+  readonly written: ShellWord;
+}
+
+/** The public form, for `ctx.commands`. */
+const publicRedirect = (r: Gathered): ShellRedirect => ({ operator: r.operator, target: r.value });
+
+/** The step's form, for a reader that expands the target. */
+const stepRedirect = (r: Gathered): StepRedirect => ({ operator: r.operator, target: r.written });
+
 /** The steps with a group's or a loop's redirects added to each command at its own level, however deep in a subshell or a loop. */
-function withRedirects(steps: readonly ShellStep[], nested: boolean, redirects: Redirects): ShellStep[] {
+function withRedirects(steps: readonly ShellStep[], nested: boolean, gathered: readonly Gathered[]): ShellStep[] {
   return steps.map((step): ShellStep => {
     if (step.kind === "assign") return step;
     if (step.kind === "command") {
       const c = step.command;
-      const before = withRedirects(step.before, nested, redirects);
+      const before = withRedirects(step.before, nested, gathered);
       if (c.nested !== nested) return { ...step, before };
-      return { ...step, before, command: { ...c, redirects: [...c.redirects, ...redirects.list] }, targets: [...step.targets, ...redirects.targets] };
+      return {
+        ...step,
+        before,
+        command: { ...c, redirects: [...c.redirects, ...gathered.map(publicRedirect)] },
+        redirects: [...step.redirects, ...gathered.map(stepRedirect)],
+      };
     }
-    return { ...step, body: withRedirects(step.body, nested, redirects) };
+    return { ...step, body: withRedirects(step.body, nested, gathered) };
   });
 }
 
@@ -820,15 +839,13 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
   const redirection = (
     r: Redirection,
     heredocs: ShellHeredoc[] | null,
-    redirects: Redirects,
+    redirects: Gathered[],
     subs: ShellSubstitution[] | null,
     out: ShellStep[],
   ): void => {
     if (r.type !== "HereDoc") {
-      if (r.type === "Redirect") {
-        redirects.list.push({ operator: r.operator, target: r.target?.value ?? "" });
-        redirects.targets.push(r.target === undefined ? [] : shellWord(r.target));
-      }
+      if (r.type === "Redirect")
+        redirects.push({ operator: r.operator, value: r.target?.value ?? "", written: r.target === undefined ? [{ kind: "unknown" }] : shellWord(r.target) });
       word(r.target, subs, out);
       return;
     }
@@ -860,7 +877,7 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
       case "Redirected": {
         // A group's or a loop's redirects apply to every command inside it, so each one lists them.
         const inside: ShellStep[] = [];
-        const redirects: Redirects = { list: [], targets: [] };
+        const redirects: Gathered[] = [];
         node(n.command, nested, inside);
         for (const r of n.redirects) redirection(r, null, redirects, null, inside);
         out.push(...withRedirects(inside, nested, redirects));
@@ -941,7 +958,7 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
     const argv: string[] = [];
     const words: ShellWord[] = [];
     const heredocs: ShellHeredoc[] = [];
-    const redirects: Redirects = { list: [], targets: [] };
+    const redirects: Gathered[] = [];
     const subs: ShellSubstitution[] = [];
     const inner: ShellStep[] = [];
     for (const p of c.prefix) {
@@ -971,8 +988,8 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
     const at = wrapperWords(argv);
     const [program, ...args] = argv.slice(at);
     if (program !== undefined) {
-      const command = { program, args, text: [program, ...args].join(" "), heredocs, substitutions: subs, redirects: redirects.list, nested };
-      out.push({ kind: "command", command, words, at, targets: redirects.targets, before: inner });
+      const command = { program, args, text: [program, ...args].join(" "), heredocs, substitutions: subs, redirects: redirects.map(publicRedirect), nested };
+      out.push({ kind: "command", command, words, at, redirects: redirects.map(stepRedirect), before: inner });
     } else {
       // Assignments alone set the shell's variables, once the substitutions in their values have run.
       out.push(...inner);
