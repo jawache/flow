@@ -403,15 +403,19 @@ const SITE = ["cl", "aude", "\\.com/", "cl", "aude", "-code"].join("");
 const LINK = ["cl", "aude", ".com/", "cl", "aude", "-code"].join("");
 const ROBOT = "\u{1F916}";
 
-/** The `gh` verbs that record prose: a pull request's and an issue's title, body and comments. */
-const GH_PROSE_VERBS = ["pr", "issue"] as const;
-
 /**
- * The commands that record that prose, in words: each verb run bare, and through `work gh`, the
- * wrapper a repo driven by work runs it as. The backtick rule names them as its heads, and the
- * attribution rule reads the same commands through `isGhProse`.
+ * The commands that record prose, a pull request's and an issue's title, body and comments, in
+ * words: each run bare, and through `work gh`, the wrapper a repo driven by work runs it as. The
+ * backtick rule names them as its heads, and the attribution rule reads the same commands through
+ * `isGhProse`.
  */
-const GH_PROSE_HEADS = [...GH_PROSE_VERBS.map((verb) => `gh ${verb}`), ...GH_PROSE_VERBS.map((verb) => `work gh ${verb}`)];
+const GH_PROSE_HEADS = ["gh pr", "gh issue", "work gh pr", "work gh issue"];
+
+/** Each of `GH_PROSE_HEADS` as its program and the words after it, split once. */
+const GH_PROSE_WORDS = GH_PROSE_HEADS.map((head) => {
+  const [program = "", ...words] = head.split(" ");
+  return { program, words };
+});
 
 /**
  * The command is one of `GH_PROSE_HEADS`, matched as the backtick rule matches a head: the same
@@ -421,10 +425,7 @@ const GH_PROSE_HEADS = [...GH_PROSE_VERBS.map((verb) => `gh ${verb}`), ...GH_PRO
  */
 function isGhProse(c: ShellCommand): boolean {
   const program = programName(c.program);
-  return GH_PROSE_HEADS.some((head) => {
-    const [name, ...words] = head.split(" ");
-    return program === name && words.every((word) => c.args.includes(word));
-  });
+  return GH_PROSE_WORDS.some((head) => program === head.program && head.words.every((word) => c.args.includes(word)));
 }
 
 /**
