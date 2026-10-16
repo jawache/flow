@@ -767,6 +767,99 @@ describe("flow uninstall", () => {
     }
   });
 
+  // THE MACHINE-WIDE FILE: every repo on the machine reads it, so only `--machine` writes it. Each
+  // case points CLAUDE_CONFIG_DIR at its own throwaway folder, holding a hook of the user's own
+  // beside the six flow init registers there.
+  describe("--machine", () => {
+    const theirs = { hooks: [{ type: "command", command: "say done" }] };
+    const own = { permissions: { allow: ["Bash(ls:*)"] }, hooks: { Stop: [theirs] } };
+    /** A throwaway machine-wide folder whose settings file holds the user's own hook, and then flow's. */
+    const machineWithFlow = (): { machine: string; file: string } => {
+      const machine = settingsHome();
+      const file = join(machine, "settings.json");
+      writeFileSync(file, `${JSON.stringify(own, null, 2)}\n`);
+      const global = newRepo();
+      try {
+        expect(flow(global, ["init"], machine).code).toBe(0);
+      } finally {
+        rmSync(global, { recursive: true, force: true });
+      }
+      expect(Object.keys((JSON.parse(readFileSync(file, "utf8")) as { hooks: object }).hooks).sort(), "flow's six are in it").toEqual([...REGISTERED].sort());
+      return { machine, file };
+    };
+
+    it("a global install: a plain run leaves the machine-wide file byte for byte and names --machine; --machine then takes flow's six out and keeps the user's hook", () => {
+      const global = newRepo();
+      const { machine, file } = machineWithFlow();
+      try {
+        expect(flow(global, ["init"], machine).code).toBe(0);
+        const before = readFileSync(file, "utf8");
+
+        const plain = flow(global, ["uninstall"], machine);
+        expect(plain.code, plain.stdout + plain.stderr).toBe(0);
+        expect(readFileSync(file, "utf8"), "without --machine, the machine-wide file is unchanged").toBe(before);
+        expect(plain.stdout).toContain(`  · ${file} still holds flow's hooks, and every repo on this machine runs them — \`flow uninstall --machine\` removes them.`);
+        expect(plain.stdout.trim().split("\n").at(-1)).toBe(
+          "  next: `flow uninstall --machine` once no repo on this machine needs flow, then `npm uninstall -g @jawache/flow` — removes the hooks, then the package.",
+        );
+
+        const said = flow(global, ["uninstall", "--machine"], machine);
+        expect(said.code, said.stdout + said.stderr).toBe(0);
+        expect(said.stdout).toContain(`  - ${file} — ${LISTED}`);
+        expect(said.stdout.trim().split("\n").at(-1)).toBe("  next: `npm uninstall -g @jawache/flow` — removes the package.");
+        expect(JSON.parse(readFileSync(file, "utf8")), "flow's six are gone, and the user's hook and keys stay").toEqual(own);
+        expect(flow(global, ["uninstall", "--machine"], machine).stdout, "a second run").toContain("nothing of flow's here to remove");
+      } finally {
+        for (const dir of [global, machine]) rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("a dev dependency: a plain run leaves the machine-wide file byte for byte and says nothing of it; --machine cleans it beside the repo's own", () => {
+      const listed = newRepo();
+      const { machine, file } = machineWithFlow();
+      try {
+        const pkg = { name: "consumer", version: "1.0.0", devDependencies: { "@jawache/flow": "*" } };
+        writeFileSync(join(listed, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
+        expect(flow(listed, ["init"], machine).code).toBe(0);
+        const before = readFileSync(file, "utf8");
+
+        const plain = flow(listed, ["uninstall"], machine);
+        expect(plain.code, plain.stdout + plain.stderr).toBe(0);
+        expect(readFileSync(file, "utf8"), "without --machine, the machine-wide file is unchanged").toBe(before);
+        expect(plain.stdout).not.toContain(file);
+
+        expect(flow(listed, ["init"], machine).code).toBe(0);
+        const said = flow(listed, ["uninstall", "--machine"], machine);
+        expect(said.code, said.stdout + said.stderr).toBe(0);
+        expect(said.stdout).toContain(`  - .claude/settings.json — ${LISTED}`);
+        expect(said.stdout).toContain(`  - ${file} — ${LISTED}`);
+        expect(JSON.parse(readFileSync(file, "utf8")), "flow's six are gone, and the user's hook and keys stay").toEqual(own);
+      } finally {
+        for (const dir of [listed, machine]) rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("writes nothing to a machine-wide file that would not parse, says so, and answers 1", () => {
+      const global = newRepo();
+      const machine = settingsHome();
+      const file = join(machine, "settings.json");
+      try {
+        expect(flow(global, ["init"], machine).code).toBe(0);
+        const unparseable = `${readFileSync(file, "utf8")}// a comment\n`;
+        writeFileSync(file, unparseable);
+
+        const said = flow(global, ["uninstall", "--machine"], machine);
+        expect(said.code).toBe(1);
+        expect(said.stdout).toContain(`  ✗ ${file} is not valid JSON`);
+        expect(said.stdout).toContain("run `flow uninstall --machine` again.");
+        expect(said.stdout, "the repo's own steps still ran").toContain("  - .githooks/pre-commit");
+        expect(readFileSync(file, "utf8"), "the file nobody could parse is not written").toBe(unparseable);
+      } finally {
+        for (const dir of [global, machine]) rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
   it("lists a step it could not do, still does the others, and answers 1", () => {
     const broken = newRepo();
     const machine = settingsHome();
