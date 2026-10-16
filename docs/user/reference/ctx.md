@@ -56,7 +56,7 @@ Read `existed` when it is set.
 
 | Field | Is |
 | --- | --- |
-| `program` | The program that runs, after any `FOO=1` assignment and any wrapper: `sudo`, `env`, `nohup`, `nice`, `time`, `timeout`, `command`, `exec` or `xargs` |
+| `program` | The program that runs, after any `FOO=1` assignment and any wrapper: `sudo`, `env`, `nohup`, `nice`, `time`, `timeout`, `command`, `exec` or `xargs`. It keeps any path it is run by, such as `/usr/bin/gh`. `programName(program)`, from `@jawache/flow`, returns it without the path: `gh` |
 | `args` | Its arguments, in order, each as the program receives it, with quotes removed |
 | `text` | `program` and `args` joined by single spaces, for a message to show. A check compares `program` and `args`, never this |
 | `heredocs` | Each heredoc the command is fed, as `{ body, quoted }`. `quoted` is `true` for a delimiter in quotes or after a backslash, such as `<<'EOF'`, where the shell runs nothing in the body |
@@ -66,9 +66,11 @@ Read `existed` when it is set.
 
 `ctx.commands` is `null` when the line does not parse, for example when a quote never closes. A check reads `null` as "cannot tell", and the stock checks then pass, except `banCommands`, which refuses the line when the program and every argument it names appear in it as whole words.
 
+This check compares each program without its path, with `programName`, so `/usr/bin/gh` counts as `gh`:
+
 ```
 const noBareGh = defineCheck((_opts: Record<string, never>) => (ctx) => {
-  const bare = (ctx.commands ?? []).find((c) => c.program === "gh");
+  const bare = (ctx.commands ?? []).find((c) => programName(c.program) === "gh");
   return bare === undefined ? ctx.ok() : ctx.fail(`\`${bare.text}\` runs gh directly — run it as \`work gh …\``);
 });
 ```
