@@ -4149,7 +4149,6 @@ export interface Status {
 function fittingsOf(facts: StatusFacts): Fitting[] {
   const registered = registeredEvents(facts.settings);
   const unregistered = REGISTERED.filter(({ hook }) => !registered.includes(HOST_EVENT[hook]));
-  const missing = unregistered.map(({ hook }) => HOST_EVENT[hook]);
   const stale = staleRegistrations(facts.settings);
   const twice = facts.machine === null ? { bare: [], theirs: [] } : machineDiffers(facts.settings, facts.machine.settings);
   const once = twice.bare.length === 0 && twice.theirs.length === 0;
@@ -4200,14 +4199,14 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
         ]),
     {
       id: "hooks",
-      ok: missing.length === 0 && stale.length === 0 && once,
+      ok: unregistered.length === 0 && stale.length === 0 && once,
       detail:
-        missing.length === 0 && stale.length === 0 && once
+        unregistered.length === 0 && stale.length === 0 && once
           ? `${facts.settingsPath} — ${registered.join(" · ")}`
           : [
-              missing.length === 0
+              unregistered.length === 0
                 ? ""
-                : `${facts.settingsPath} does not call flow for ${missing.join(" · ")} — re-run \`flow init\`. Until it does, ${unregistered.map((r) => r.unregistered).join("; ")}.`,
+                : `${facts.settingsPath} does not call flow for ${unregistered.map((r) => HOST_EVENT[r.hook]).join(" · ")} — re-run \`flow init\`. Until it does, ${unregistered.map((r) => r.unregistered).join("; ")}.`,
               stale.length === 0
                 ? ""
                 : `${facts.settingsPath} calls flow for ${stale.join(" · ")} on some tools only — an older flow registered ${stale.length === 1 ? "it" : "them"} that way, and a change another tool makes is not judged after it lands. Re-run \`flow init\` to widen ${stale.length === 1 ? "it" : "them"}.`,
