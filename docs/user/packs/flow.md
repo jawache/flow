@@ -1,5 +1,5 @@
 ---
-summary: "1 guardrail · 2 breadcrumbs · fires at: session · touch · delete · takes 2 parameters"
+summary: "2 guardrails · 2 breadcrumbs · fires at: session · touch · delete · command · takes 2 parameters"
 ---
 
 # The `flow` pack
@@ -8,8 +8,9 @@ summary: "1 guardrail · 2 breadcrumbs · fires at: session · touch · delete �
 
 flow's own orientation and self-protection, as a pack any repo binds.
 
-Every guarded repo wants these three: a note saying what is steering you, a nudge when you edit
-the steering itself, and a refusal when a command would delete it.
+Every guarded repo wants these four: a note saying what is steering you, a nudge when you edit
+the steering itself, a refusal when a command would delete it, and a refusal when an agent runs
+`flow uninstall`, which removes the guard without deleting a file the delete refusal watches.
 
 Generated from `packs/flow.ts` by `just docs-packs`. Edit the pack, not this page. The commit gate refuses a page that has drifted.
 
@@ -48,6 +49,7 @@ not it agrees with a single other opinion in this package.
 - [`flow.orientation`](#floworientation--breadcrumb) · breadcrumb · What the guard layer is and how it steers — shown at the start of every session.
 - [`flow.editingTheGuardrails`](#floweditingtheguardrails--breadcrumb) · breadcrumb · A nudge when you edit the guardrails themselves; it never blocks.
 - [`flow.noDeleteGuardrails`](#flownodeleteguardrails--guardrail) · guardrail · Stops a command from deleting the committed guard surface. No bypass — disable entries in the file instead.
+- [`flow.noUninstall`](#flownouninstall--guardrail) · guardrail · Refuses `flow uninstall` when an agent runs it. Taking flow off a repo or a machine is the user's call, made in their own terminal.
 
 ## `flow.orientation` — breadcrumb
 
@@ -120,6 +122,69 @@ That command would delete this repo's guard surface (flow.config.ts binds every 
 
 - writing `flow.config.ts`
 - writing `.githooks/pre-commit`
+
+## `flow.noUninstall` — guardrail
+
+Refuses `flow uninstall` when an agent runs it. Taking flow off a repo or a machine is the user's call, made in their own terminal.
+
+- **Refuses at** a shell command is about to run
+- **Watches** not scoped by path
+- **Categories** every session
+- **Check** [`banCommands`](../checks/ban-commands.md)
+
+<details><summary>settings</summary>
+
+```
+{
+  "ban": [
+    "(?:\\S*/)?flow\\s+uninstall\\b",
+    "(?:npx|pnpx|bunx|yarn|(?:npm|pnpm|yarn)\\s+(?:exec|dlx))\\s+(?:\\S+\\s+)*?(?:\\S*/)?flow(?:@\\S+)?\\s+uninstall\\b",
+    "node\\s+(?:\\S+\\s+)*?\\S*flow\\.mjs\\s+uninstall\\b"
+  ]
+}
+```
+
+</details>
+
+### Why it exists
+
+Without it, an agent that hit a guardrail could take the whole guard off with one command.
+`flow uninstall` removes the commit gate, unsets `core.hooksPath` and removes flow's hook
+registrations from inside its own process, so no shell command deletes a file that
+`noDeleteGuardrails` watches, and that refusal never fires. A person in their own terminal
+has no hooks in front of them, so this refusal never reaches them.
+
+### What the agent reads when refused
+
+```
+`flow uninstall` removes this repo's guard: the commit gate, `core.hooksPath` and flow's hook registrations, and with `--machine` the hooks every repo on this machine runs. An agent does not take off the guard it works under, so there is no bypass. If flow should come off, say so and ask the user to run `flow uninstall` in their own terminal. If a guardrail is in your way, `override(pack.entry).disabled("why")` inside flow.config.ts is the visible, committed route, and it is the user's call too.
+```
+
+### Proved by
+
+**passes**
+
+- running `flow status`
+- running `flow init`
+- running `npx flow test`
+- running `echo "run flow uninstall in your own terminal"`
+- running `git commit -m "docs: flow uninstall leaves flow.config.ts in place"`
+- running `grep -rn "flow uninstall" docs`
+- running `cat > note.md <<'EOF'
+flow uninstall --machine
+EOF`
+
+**blocks**
+
+- running `flow uninstall`
+- running `flow uninstall --machine`
+- running `npx flow uninstall`
+- running `npx @jawache/flow uninstall --machine`
+- running `npm exec -- flow uninstall`
+- running `./node_modules/.bin/flow uninstall`
+- running `node node_modules/@jawache/flow/dist/flow.mjs uninstall`
+- running `cd app && flow uninstall`
+- running `bash -c 'flow uninstall --machine'`
 
 ## Where each part of this page comes from
 

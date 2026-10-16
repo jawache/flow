@@ -11,7 +11,7 @@
 // have — a nudge that never fires and a delete refusal that protects nothing, both counted as
 // armed. That is the exact failure flow exists to make impossible.
 //
-// THREE ENTRIES, and the count is the pack's definition rather than a coincidence: this is flow's
+// FOUR ENTRIES, and the count is the pack's definition rather than a coincidence: this is flow's
 // self-protection and nothing else. Two entries that used to sit here left when the packs moved
 // into the package, because neither was about the guard — `noAgentInboxItems` is the work
 // lifecycle's and is in `work`, and the prose-substitution rule's `git commit` / `gh` head is in
@@ -25,7 +25,7 @@
 // never narrow anything is the dead-scope refusal. A rule re-asking at commit what the compiler
 // already refused at the keystroke is a rule that can only ever agree.
 
-import { breadcrumb, deletion, definePack, guardrail, protectedPath, session, touch } from "../index.ts";
+import { banCommands, breadcrumb, command, deletion, definePack, guardrail, protectedPath, session, touch } from "../index.ts";
 
 /** The one fact this pack cannot know: where this repo keeps the packs its config imports. */
 export interface Home {
@@ -59,8 +59,9 @@ export interface Home {
 /**
  * flow's own orientation and self-protection, as a pack any repo binds.
  *
- * Every guarded repo wants these three: a note saying what is steering you, a nudge when you edit
- * the steering itself, and a refusal when a command would delete it.
+ * Every guarded repo wants these four: a note saying what is steering you, a nudge when you edit
+ * the steering itself, a refusal when a command would delete it, and a refusal when an agent runs
+ * `flow uninstall`, which removes the guard without deleting a file the delete refusal watches.
  *
  * @setup A `flow.config.ts` at the repo root and a folder for the packs the repo writes itself —
  * whatever it is called, named here as the `packs` parameter. `flow init` writes both.
@@ -118,5 +119,54 @@ export const flow = definePack("flow", (repo: Home) => {
         "That command would delete this repo's guard surface (flow.config.ts binds every rule; the packs it imports are where this repo writes its own; .githooks/pre-commit is what runs them at the gate). Deleting any of them is the same attack. There is no bypass — `override(pack.entry).disabled(\"why\")` inside flow.config.ts is the visible, committed route.",
       )
       .test({ block: [{ path: "flow.config.ts", content: "" }, { path: ".githooks/pre-commit", content: "" }] }),
+
+    /**
+     * Without it, an agent that hit a guardrail could take the whole guard off with one command.
+     * `flow uninstall` removes the commit gate, unsets `core.hooksPath` and removes flow's hook
+     * registrations from inside its own process, so no shell command deletes a file that
+     * `noDeleteGuardrails` watches, and that refusal never fires. A person in their own terminal
+     * has no hooks in front of them, so this refusal never reaches them.
+     */
+    noUninstall: guardrail()
+      .at(command)
+      .description("Refuses `flow uninstall` when an agent runs it. Taking flow off a repo or a machine is the user's call, made in their own terminal.")
+      // Matched from the program name, so a commit message, an echo or a heredoc that names the
+      // command is prose about it. Three ways in: flow on PATH or by path (`./node_modules/.bin/flow`),
+      // through a package runner (`npx flow`, `npx @jawache/flow`, `npm exec -- flow`), and the
+      // bundle itself under node, which is how the registered hooks call it.
+      .check(
+        banCommands({
+          ban: [
+            "(?:\\S*/)?flow\\s+uninstall\\b",
+            "(?:npx|pnpx|bunx|yarn|(?:npm|pnpm|yarn)\\s+(?:exec|dlx))\\s+(?:\\S+\\s+)*?(?:\\S*/)?flow(?:@\\S+)?\\s+uninstall\\b",
+            "node\\s+(?:\\S+\\s+)*?\\S*flow\\.mjs\\s+uninstall\\b",
+          ],
+        }),
+      )
+      .message(
+        "`flow uninstall` removes this repo's guard: the commit gate, `core.hooksPath` and flow's hook registrations, and with `--machine` the hooks every repo on this machine runs. An agent does not take off the guard it works under, so there is no bypass. If flow should come off, say so and ask the user to run `flow uninstall` in their own terminal. If a guardrail is in your way, `override(pack.entry).disabled(\"why\")` inside flow.config.ts is the visible, committed route, and it is the user's call too.",
+      )
+      .test({
+        pass: [
+          "flow status",
+          "flow init",
+          "npx flow test",
+          'echo "run flow uninstall in your own terminal"',
+          'git commit -m "docs: flow uninstall leaves flow.config.ts in place"',
+          'grep -rn "flow uninstall" docs',
+          "cat > note.md <<'EOF'\nflow uninstall --machine\nEOF",
+        ],
+        block: [
+          "flow uninstall",
+          "flow uninstall --machine",
+          "npx flow uninstall",
+          "npx @jawache/flow uninstall --machine",
+          "npm exec -- flow uninstall",
+          "./node_modules/.bin/flow uninstall",
+          "node node_modules/@jawache/flow/dist/flow.mjs uninstall",
+          "cd app && flow uninstall",
+          "bash -c 'flow uninstall --machine'",
+        ],
+      }),
   };
 });
