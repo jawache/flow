@@ -767,6 +767,18 @@ describe("parseShellSteps — the same parse, in the order the shell runs it", (
     expect(steps("F=$(pick)")).toEqual([{ scope: ["pick"] }, "F={?}"]);
   });
 
+  it("marks a command with an assignment in front as assigned, its program still the first word after it", () => {
+    const [front] = parseShellSteps("FOO=1 rm") ?? [];
+    if (front?.kind !== "command") throw new Error("no command step");
+    expect(front.assigned).toBe(true);
+    expect(front.at).toBe(0);
+    expect(front.command.program).toBe("rm");
+    expect(front.words.map(written)).toEqual(["rm"]);
+    const [bare] = parseShellSteps("rm FOO=1") ?? [];
+    if (bare?.kind !== "command") throw new Error("no command step");
+    expect(bare.assigned).toBe(false);
+  });
+
   it("lists each assignment a declaration makes as a step after it, and nothing for one that appends or sets an element", () => {
     expect(steps("export F=src/a.ts G; cat $F")).toEqual(["export F=src/a.ts G", "F=src/a.ts", "cat $F"]);
     expect(steps("declare -x F=$HOME/a")).toEqual(["declare -x F=$HOME/a", "F={HOME}/a"]);
