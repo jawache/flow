@@ -160,10 +160,20 @@ import {
   armsFlow,
   scaffold,
   planInit,
+  initCode,
   initLines,
+  notInstalledLines,
+  NOT_INSTALLED,
+  HOOKS_UNKNOWN,
+  wantsColour,
+  hooksDirOf,
+  otherHooks,
+  preCommitOf,
   settingsFileFor,
   status,
   statusLines,
+  type HooksFolder,
+  type OtherHooks,
   type InitFacts,
   type Status,
   type StatusFacts,
@@ -2222,6 +2232,7 @@ const bare: InitFacts = {
   gateText: null,
   hasFlowDir: false,
   hooksPath: null,
+  hooksFolder: { dir: ".git/hooks", files: ["pre-commit.sample", "pre-push.sample"], preCommitText: null, preCommitExecutable: false },
   settingsPath: "/home/.claude/settings.json",
   settings: {},
   settingsUnreadable: false,
@@ -2229,6 +2240,352 @@ const bare: InitFacts = {
   resolves: false,
   packageRoot: "/checkout/flow",
 };
+
+/** Flow's two lines at the end of somebody's pre-commit hook: what the block asks a person to add. */
+const WIRED = `#!/bin/sh\nnpm test\n${GATE_LOCAL_LINE}\n${GATE_RUN_LINE}\n`;
+
+/**
+ * A repo husky set up: git runs `.husky/_`, and a person edits `.husky/pre-commit`, which husky's
+ * stub runs with `sh`, so it carries no execute bit here.
+ */
+const husky = (preCommitText: string | null): Partial<InitFacts> => ({
+  hooksPath: ".husky/_",
+  hooksFolder: { dir: ".husky/_", files: ["h", "husky.sh", "pre-commit", "pre-push"], preCommitText, preCommitExecutable: false },
+});
+
+/** A repo with a hook of its own in `.git/hooks`, which git runs while `core.hooksPath` is unset. */
+const gitHooks = (files: readonly string[], preCommitText: string | null = null, preCommitExecutable = preCommitText !== null): Partial<InitFacts> => ({
+  hooksFolder: { dir: ".git/hooks", files: ["pre-commit.sample", ...files], preCommitText, preCommitExecutable },
+});
+
+describe("other hooks — what counts, and the pre-commit hook a person edits", () => {
+  const folder = (files: readonly string[], dir = ".git/hooks", preCommitText: string | null = null, preCommitExecutable = preCommitText !== null): HooksFolder => ({
+    dir,
+    files,
+    preCommitText,
+    preCommitExecutable,
+  });
+
+  it("a fresh `git init` has only sample hooks, and they do not count", () => {
+    expect(otherHooks(null, folder(["pre-commit.sample", "pre-push.sample", "update.sample"]))).toBeNull();
+    expect(otherHooks(null, folder([])), "nor does an empty or missing folder").toBeNull();
+  });
+
+  it("any other file in .git/hooks counts, not only a pre-commit: Git LFS installs pre-push", () => {
+    expect(otherHooks(null, folder(["pre-push.sample", "pre-push"]))).toStrictEqual({
+      dir: ".git/hooks",
+      preCommit: ".git/hooks/pre-commit",
+      fix: "create",
+    });
+  });
+
+  it("a core.hooksPath anywhere but .githooks counts, whatever is in it", () => {
+    expect(otherHooks(".husky/_", folder([], ".husky/_"))?.dir).toBe(".husky/_");
+    expect(otherHooks("hooks", folder([], "hooks"))?.preCommit).toBe("hooks/pre-commit");
+  });
+
+  it("flow's own .githooks is not other hooks, whatever .git/hooks holds", () => {
+    expect(otherHooks(HOOKS_DIR, folder(["pre-commit"], HOOKS_DIR))).toBeNull();
+  });
+
+  it("compares the folder git resolved, so any spelling of .githooks is flow's own", () => {
+    for (const set of [".githooks/", "./.githooks", "/repo/.githooks"])
+      expect(otherHooks(set, folder(["pre-commit"], hooksDirOf("/repo", set))), set).toBeNull();
+  });
+
+  it("names the folder repo-relative when it is inside the repo, and absolute when it is not", () => {
+    expect(hooksDirOf("/repo", ".husky/_")).toBe(".husky/_");
+    expect(hooksDirOf("/repo", ".git/hooks")).toBe(".git/hooks");
+    expect(hooksDirOf("/repo", "..foo/hooks"), "a name that starts with .. is still inside").toBe("..foo/hooks");
+    expect(hooksDirOf("/repo", "../sibling/hooks"), "a sibling of the repo is outside it").toBe("/sibling/hooks");
+    expect(hooksDirOf("/wt", "/main/.git/hooks"), "a worktree's shared folder").toBe("/main/.git/hooks");
+    expect(hooksDirOf("/repo", "."), "the repo root itself is not a folder inside it").toBe("/repo");
+  });
+
+  it("is wired once the pre-commit hook a person edits calls flow, and a comment naming it does not", () => {
+    expect(otherHooks(".husky/_", folder([], ".husky/_", WIRED))?.fix).toBeNull();
+    expect(otherHooks(".husky/_", folder([], ".husky/_", "#!/bin/sh\n# flow hook commit\nnpm test\n"))?.fix).not.toBeNull();
+  });
+
+  describe("a pre-commit hook git runs itself counts only with the execute bit, as git runs it", () => {
+    const lfs = (preCommit: string | null, executable: boolean): OtherHooks | null =>
+      otherHooks(null, folder(["pre-push", ...(preCommit === null ? [] : ["pre-commit"])], ".git/hooks", preCommit, executable));
+
+    it("calls flow but is not executable: git ignores it, so not wired, and the fix is the execute bit", () => {
+      expect(lfs(WIRED, false)).toStrictEqual({ dir: ".git/hooks", preCommit: ".git/hooks/pre-commit", fix: "chmod" });
+      expect(otherHooks("hooks", folder([], "hooks", WIRED, false))?.fix, "a core.hooksPath folder's own pre-commit too").toBe("chmod");
+    });
+
+    it("calls flow and is executable: wired", () => {
+      expect(lfs(WIRED, true)).toStrictEqual({ dir: ".git/hooks", preCommit: ".git/hooks/pre-commit", fix: null });
+    });
+
+    it("not there yet: the fix is to create it", () => {
+      expect(lfs(null, false)?.fix).toBe("create");
+    });
+
+    it("does not call flow: the two lines, and the execute bit too when it lacks one", () => {
+      expect(lfs("#!/bin/sh\nnpm test\n", true)?.fix).toBe("add");
+      expect(lfs("#!/bin/sh\nnpm test\n", false)?.fix).toBe("add-and-chmod");
+    });
+
+    it("husky's .husky/pre-commit needs no execute bit: its stub runs it with sh", () => {
+      expect(otherHooks(".husky/_", folder([], ".husky/_", WIRED, false))).toStrictEqual({
+        dir: ".husky/_",
+        preCommit: ".husky/pre-commit",
+        fix: null,
+      });
+      expect(otherHooks(".husky/_", folder([], ".husky/_", null, false))?.fix, "and is never created: the stub skips a missing hook").toBe("add");
+    });
+  });
+
+  it("husky's stub folder `.husky/_` maps to `.husky/pre-commit`; any other folder to its own", () => {
+    expect(preCommitOf(".husky/_")).toBe(".husky/pre-commit");
+    expect(preCommitOf(".husky/_/")).toBe(".husky/pre-commit");
+    expect(preCommitOf(".husky"), "husky 5 to 8 pointed git at .husky itself").toBe(".husky/pre-commit");
+    expect(preCommitOf(".git/hooks")).toBe(".git/hooks/pre-commit");
+    expect(preCommitOf("/main/.git/hooks"), "a worktree's shared folder is absolute").toBe("/main/.git/hooks/pre-commit");
+  });
+
+  it("init's plan carries it, and a repo with no other hooks plans none", () => {
+    expect(planInit(bare).otherHooks).toBeNull();
+    expect(planInit({ ...bare, ...husky(null) }).otherHooks).toStrictEqual({ dir: ".husky/_", preCommit: ".husky/pre-commit", fix: "add" });
+    expect(planInit({ ...bare, ...gitHooks(["pre-push"]) }).otherHooks?.dir).toBe(".git/hooks");
+    expect(planInit({ ...bare, ...husky(null), isGit: false }).otherHooks, "outside git there are no hooks to keep").toBeNull();
+    expect(planInit({ ...bare, hooksPath: ".husky/_", hooksFolder: null }).otherHooks, "nor when git could not say").toBeNull();
+  });
+});
+
+describe("planInit — when git already runs other hooks", () => {
+  const block = (plan: ReturnType<typeof planInit>): string[] => {
+    const said = initLines(plan, []);
+    const at = said.findIndex((line) => line.startsWith(NOT_INSTALLED));
+    return at === -1 ? [] : said.slice(at);
+  };
+
+  describe("a husky repo whose .husky/pre-commit does not call flow", () => {
+    const plan = planInit({ ...bare, ...husky("#!/bin/sh\nnpm test\n") });
+
+    it("leaves core.hooksPath alone, and still writes every other file", () => {
+      expect(plan.hooksPath).toBe(false);
+      expect(plan.config?.path).toBe("flow.config.ts");
+      expect(plan.gate?.path, "the second fix moves hooks in beside this gate").toBe(GATE_PATH);
+      expect(plan.flowDir).toBe(true);
+      expect(plan.registered).toEqual(REGISTERED_EVENTS);
+      expect(initLines(plan, []).join("\n")).not.toContain(`+ ${SET_HOOKS_PATH}`);
+    });
+
+    it("ends with the block: the folder git runs hooks from, and both fixes", () => {
+      const said = initLines(plan, []);
+      const lines = block(plan);
+      expect(lines, "the block is the end of the output").toStrictEqual(notInstalledLines({ dir: ".husky/_", preCommit: ".husky/pre-commit", fix: "add" }));
+      expect(said[said.length - lines.length - 1], "set apart from the report by a blank line").toBe("");
+      const text = lines.join("\n");
+      expect(text).toContain("Git runs hooks from .husky/_");
+      expect(text).toContain("Add these two lines to the end of .husky/pre-commit:");
+      expect(text).toContain(GATE_LOCAL_LINE);
+      expect(text).toContain(GATE_RUN_LINE);
+      expect(text).toContain(`move those hooks into ${HOOKS_DIR}/`);
+      expect(text).toContain(SET_HOOKS_PATH);
+    });
+
+    it("answers 1, whatever else landed", () => {
+      expect(initCode(plan, [])).toBe(1);
+    });
+
+    it("followed to the letter, the first fix wires it", () => {
+      const lines = block(plan);
+      const at = lines.findIndex((line) => line.includes("Add these two lines to the end of .husky/pre-commit:"));
+      const added = lines.slice(at + 1, at + 3).map((line) => line.trim());
+      const followed = `#!/bin/sh\nnpm test\n${added.join("\n")}\n`;
+      expect(planInit({ ...bare, ...husky(followed) }).otherHooks?.fix).toBeNull();
+    });
+  });
+
+  describe("when git could not name the folder it runs hooks from", () => {
+    // That folder may be husky's, so setting core.hooksPath over it is the very switch-off this guards.
+    for (const hooksPath of [".husky/_", HOOKS_DIR, null]) {
+      const plan = planInit({ ...bare, hooksPath, hooksFolder: null });
+
+      it(`leaves core.hooksPath alone (set to ${String(hooksPath)}), and says what status says`, () => {
+        expect(plan.hooksPath).toBe(false);
+        expect(plan.hooksUnknown).toBe(true);
+        const said = initLines(plan, []);
+        expect(said.join("\n")).not.toContain(`+ ${SET_HOOKS_PATH}`);
+        expect(said).toContain(`  ✗ ${HOOKS_UNKNOWN}`);
+        expect(plan.gate?.path, "every other file is still written").toBe(GATE_PATH);
+      });
+
+      it(`answers 1, since flow cannot tell it is installed (core.hooksPath ${String(hooksPath)})`, () => {
+        expect(initCode(plan, [])).toBe(1);
+      });
+    }
+
+    it("never reads as unknown outside git, or when git named the folder", () => {
+      expect(planInit({ ...bare, isGit: false, hooksFolder: null }).hooksUnknown).toBe(false);
+      expect(planInit(bare).hooksUnknown).toBe(false);
+      expect(planInit(bare).hooksPath, "a fresh clone still gets core.hooksPath").toBe(true);
+    });
+  });
+
+  it("run again with nothing left to write, it never says the repo is set up above a block saying it is not", () => {
+    const again = planInit({
+      ...bare,
+      ...husky("#!/bin/sh\nnpm test\n"),
+      hasConfig: true,
+      gateText: PRE_COMMIT,
+      hasFlowDir: true,
+      resolves: true,
+      settings: withRegistrations({}).settings,
+    });
+    const said = initLines(again, []).join("\n");
+    expect(said).not.toContain("already set up");
+    expect(said).toContain("nothing new to write");
+    expect(said).toContain(NOT_INSTALLED);
+    expect(initCode(again, [])).toBe(1);
+  });
+
+  it("run again with nothing left to write while git cannot name its hooks folder, it never says the repo is set up", () => {
+    const again = planInit({
+      ...bare,
+      hooksFolder: null,
+      hasConfig: true,
+      gateText: PRE_COMMIT,
+      hasFlowDir: true,
+      resolves: true,
+      settings: withRegistrations({}).settings,
+    });
+    const said = initLines(again, []).join("\n");
+    expect(said).not.toContain("already set up");
+    expect(said).toContain("nothing new to write");
+    expect(initCode(again, [])).toBe(1);
+  });
+
+  it("a repo with a hook in .git/hooks names that folder and its pre-commit", () => {
+    const plan = planInit({ ...bare, ...gitHooks(["pre-push", "post-checkout"], "#!/bin/sh\nnpm test\n") });
+    expect(plan.hooksPath).toBe(false);
+    expect(block(plan)[0]).toContain("Git runs hooks from .git/hooks");
+    expect(block(plan).join("\n")).toContain("Add these two lines to the end of .git/hooks/pre-commit:");
+    expect(initCode(plan, [])).toBe(1);
+  });
+
+  describe("a pre-commit hook git runs itself, and the execute bit git needs to run it", () => {
+    /** The first fix: the lines from the block's third up to the second fix. */
+    const firstFix = (plan: ReturnType<typeof planInit>): string[] => {
+      const lines = block(plan);
+      return lines.slice(2, lines.findIndex((line) => line.startsWith("  - Or move")));
+    };
+
+    it("Git LFS's hooks and no pre-commit yet: create it as an executable shell script", () => {
+      const plan = planInit({ ...bare, ...gitHooks(["pre-push", "post-checkout"]) });
+      expect(block(plan)[0]).toBe(
+        `${NOT_INSTALLED}. Git runs hooks from .git/hooks, and there is no .git/hooks/pre-commit, so no commit runs flow's gate.`,
+      );
+      expect(firstFix(plan)).toStrictEqual([
+        "  - Create .git/hooks/pre-commit with these three lines, then run `chmod +x .git/hooks/pre-commit` so git runs it:",
+        "      #!/bin/sh",
+        `      ${GATE_LOCAL_LINE}`,
+        `      ${GATE_RUN_LINE}`,
+      ]);
+      expect(block(plan).join("\n"), "the second fix is unchanged").toContain(`move those hooks into ${HOOKS_DIR}/`);
+      expect(initCode(plan, [])).toBe(1);
+    });
+
+    it("followed to the letter, creating it wires it", () => {
+      const created = `${firstFix(planInit({ ...bare, ...gitHooks(["pre-push"]) }))
+        .slice(1)
+        .map((line) => line.trim())
+        .join("\n")}\n`;
+      const plan = planInit({ ...bare, ...gitHooks(["pre-push", "pre-commit"], created, true) });
+      expect(plan.otherHooks?.fix).toBeNull();
+      expect(block(plan)).toStrictEqual([]);
+      expect(initCode(plan, [])).toBe(0);
+    });
+
+    it("a hook that calls flow without the execute bit: not installed, and it says the file must be executable", () => {
+      const plan = planInit({ ...bare, ...gitHooks(["pre-push", "pre-commit"], WIRED, false) });
+      expect(block(plan)[0]).toBe(
+        `${NOT_INSTALLED}. Git runs hooks from .git/hooks, and .git/hooks/pre-commit calls flow but is not executable, so git ignores it and no commit runs flow's gate.`,
+      );
+      expect(firstFix(plan)).toStrictEqual(["  - Make .git/hooks/pre-commit executable, so git runs it: `chmod +x .git/hooks/pre-commit`"]);
+      expect(initLines(plan, []).join("\n"), "never the quiet note that it calls flow").not.toContain("· git runs hooks from");
+      expect(initCode(plan, [])).toBe(1);
+    });
+
+    it("a hook that neither calls flow nor has the execute bit: both, in the one fix", () => {
+      const plan = planInit({ ...bare, ...gitHooks(["pre-commit"], "#!/bin/sh\nnpm test\n", false) });
+      expect(block(plan)[0]).toContain(".git/hooks/pre-commit does not call flow and is not executable, so git ignores it");
+      expect(firstFix(plan)[0]).toBe(
+        "  - Add these two lines to the end of .git/hooks/pre-commit, then run `chmod +x .git/hooks/pre-commit` so git runs it:",
+      );
+    });
+
+    it("the chmod to paste leaves a plain path as it is, and single-quotes one the shell would split or expand", () => {
+      const chmodOf = (dir: string): string[] =>
+        firstFix(planInit({ ...bare, hooksFolder: { dir, files: ["pre-commit"], preCommitText: WIRED, preCommitExecutable: false } }));
+      const said = (dir: string, typed: string): string[] => [`  - Make ${dir}/pre-commit executable, so git runs it: \`chmod +x ${typed}\``];
+      expect(chmodOf("/main/.git/hooks"), "a worktree's shared folder").toStrictEqual(said("/main/.git/hooks", "/main/.git/hooks/pre-commit"));
+      const spaced = "/Users/me/My Projects/app/.git/hooks";
+      expect(chmodOf(spaced), "a space, as under ~/My Projects/").toStrictEqual(said(spaced, `'${spaced}/pre-commit'`));
+      expect(chmodOf("/it's/$HOME/hooks"), "a quote and a $").toStrictEqual(said("/it's/$HOME/hooks", `'/it'\\''s/$HOME/hooks/pre-commit'`));
+    });
+
+    it("husky's .husky/pre-commit, with no execute bit, still counts once it calls flow, and its fix is unchanged", () => {
+      expect(initCode(planInit({ ...bare, ...husky(WIRED) }), [])).toBe(0);
+      for (const preCommit of [null, "npm test\n"])
+        expect(firstFix(planInit({ ...bare, ...husky(preCommit) })), String(preCommit)).toStrictEqual([
+          "  - Add these two lines to the end of .husky/pre-commit:",
+          `      ${GATE_LOCAL_LINE}`,
+          `      ${GATE_RUN_LINE}`,
+        ]);
+    });
+  });
+
+  it("once the hook git runs calls flow, no block, a quiet note, and 0", () => {
+    const plan = planInit({ ...bare, ...husky(WIRED) });
+    expect(plan.hooksPath, "still never set over husky's").toBe(false);
+    expect(block(plan)).toStrictEqual([]);
+    expect(initLines(plan, []).join("\n")).toContain("· git runs hooks from .husky/_, and .husky/pre-commit calls flow");
+    expect(initCode(plan, [])).toBe(0);
+  });
+
+  describe("in a terminal", () => {
+    const plan = planInit({ ...bare, ...husky(null) });
+    const BOLD_RED = "\u001b[1;31m";
+    const RESET = "\u001b[0m";
+
+    it("the block is bold red, line by line, and nothing else is", () => {
+      const said = initLines(plan, [], true);
+      const at = said.findIndex((line) => line.includes(NOT_INSTALLED));
+      expect(said.slice(at)).toStrictEqual(
+        notInstalledLines({ dir: ".husky/_", preCommit: ".husky/pre-commit", fix: "add" }).map((line) => `${BOLD_RED}${line}${RESET}`),
+      );
+      expect(said.slice(0, at).join("\n"), "the report above it stays plain").not.toContain("\u001b[");
+    });
+
+    it("is plain when colour is off, and a repo without the block never carries a colour code", () => {
+      expect(initLines(plan, [], false).join("\n")).not.toContain("\u001b[");
+      expect(initLines(planInit(bare), [], true).join("\n")).not.toContain("\u001b[");
+    });
+
+    it("colour is on only in a terminal, and NO_COLOR set to anything but empty turns it off", () => {
+      expect(wantsColour(true, undefined)).toBe(true);
+      expect(wantsColour(false, undefined), "piped, or written to a file").toBe(false);
+      expect(wantsColour(true, "1")).toBe(false);
+      expect(wantsColour(true, "0"), "any value, per no-color.org").toBe(false);
+      expect(wantsColour(true, ""), "an empty NO_COLOR is unset, per no-color.org").toBe(true);
+    });
+  });
+
+  it("a repo with no other hooks gets exactly what it got before: the setting, no block, 0", () => {
+    const plan = planInit(bare);
+    expect(plan.hooksPath).toBe(true);
+    expect(block(plan)).toStrictEqual([]);
+    expect(initLines(plan, []).join("\n")).not.toContain("git runs hooks from");
+    expect(initCode(plan, [])).toBe(0);
+    expect(initCode(plan, ["could not write .githooks/pre-commit: EACCES"]), "a failure is still a 1").toBe(1);
+  });
+});
 
 describe("planInit — a repo that has never heard of flow", () => {
   const plan = planInit(bare);
@@ -2259,6 +2616,7 @@ describe("planInit — the second run", () => {
     gateText: PRE_COMMIT,
     hasFlowDir: true,
     hooksPath: HOOKS_DIR,
+    hooksFolder: { dir: HOOKS_DIR, files: ["pre-commit"], preCommitText: PRE_COMMIT, preCommitExecutable: true },
     resolves: true,
     settings: withRegistrations({}).settings,
   });
@@ -2640,6 +2998,7 @@ const statusFacts = (over: Partial<StatusFacts> = {}): StatusFacts => ({
   load: { ok: true, entries: [] },
   gateText: PRE_COMMIT,
   hooksPath: HOOKS_DIR,
+  hooksFolder: { dir: HOOKS_DIR, files: ["pre-commit"], preCommitText: PRE_COMMIT, preCommitExecutable: true },
   settingsPath: "/home/.claude/settings.json",
   settings: withRegistrations({}).settings,
   machine: null,
@@ -2650,6 +3009,9 @@ const statusFacts = (over: Partial<StatusFacts> = {}): StatusFacts => ({
   binary: { listed: false, copy: false, path: true },
   ...over,
 });
+
+/** A fresh clone's hooks folder: `core.hooksPath` unset, and `.git/hooks` holding only git's samples. */
+const FRESH_CLONE: HooksFolder = { dir: ".git/hooks", files: ["pre-commit.sample", "pre-push.sample"], preCommitText: null, preCommitExecutable: false };
 
 /** The gate an older `flow init` wrote: today's, without the line that runs the repo's own package first. */
 const PATH_ONLY_GATE = PRE_COMMIT.replace(`${GATE_LOCAL_LINE}\n`, "");
@@ -2995,6 +3357,101 @@ describe("status — the whole answer", () => {
   });
 });
 
+describe("status — does git run the commit gate", () => {
+  const judged = (over: Partial<StatusFacts>) => {
+    const s = status(statusFacts(over));
+    // As printed: a detail of several lines is several lines on the page.
+    const line = statusLines(s).join("\n").split("\n").find((said) => said.includes(" hooks-path: "));
+    return { s, fitting: s.fittings.find((f) => f.id === "hooks-path"), line, code: statusCode(s) };
+  };
+  /** Husky's setup: git runs `.husky/_`, and a person edits `.husky/pre-commit`. */
+  const husky = (preCommitText: string | null): Partial<StatusFacts> => ({
+    hooksPath: ".husky/_",
+    hooksFolder: { dir: ".husky/_", files: ["h", "husky.sh", "pre-commit"], preCommitText, preCommitExecutable: false },
+  });
+
+  it("flow's own .githooks is green, as it always read", () => {
+    const { s, line } = judged({});
+    expect(line).toBe(`  ✓ hooks-path: core.hooksPath = ${HOOKS_DIR}`);
+    expect(s.green).toBe(true);
+  });
+
+  it("counts `.githooks/`, `./.githooks` and an absolute path to it as flow's own, as init does", () => {
+    for (const set of [".githooks/", "./.githooks", "/repo/.githooks"]) {
+      const { s, line } = judged({ hooksPath: set, hooksFolder: { dir: hooksDirOf("/repo", set), files: ["pre-commit"], preCommitText: PRE_COMMIT, preCommitExecutable: true } });
+      expect(line, set).toBe(`  ✓ hooks-path: core.hooksPath = ${HOOKS_DIR}`);
+      expect(s.green, set).toBe(true);
+    }
+  });
+
+  describe("other hooks that do not call flow", () => {
+    it("husky's: red, in the words of init's block — the folder and both fixes — and exits 1", () => {
+      const { s, fitting, line, code } = judged(husky("npm test\n"));
+      const other = { dir: ".husky/_", preCommit: ".husky/pre-commit", fix: "add" } as const;
+      expect(fitting).toStrictEqual({ id: "hooks-path", ok: false, detail: notInstalledLines(other).join("\n") });
+      expect(line).toBe(`  ✗ hooks-path: ${NOT_INSTALLED}. Git runs hooks from .husky/_, and .husky/pre-commit does not call flow, so no commit runs flow's gate.`);
+      const said = statusLines(s).join("\n");
+      // Every later line of the block sits under the row, four in, its own indent kept after that.
+      const page = said.split("\n");
+      const at = page.findIndex((l) => l.includes(" hooks-path: "));
+      expect(page.slice(at + 1, at + 6)).toStrictEqual(notInstalledLines(other).slice(1).map((l) => `    ${l}`));
+      expect(said).toContain("Add these two lines to the end of .husky/pre-commit:");
+      expect(said).toContain(GATE_RUN_LINE);
+      expect(said).toContain(`move those hooks into ${HOOKS_DIR}/`);
+      expect(said).toContain(SET_HOOKS_PATH);
+      expect(s.green).toBe(false);
+      expect(code).toBe(1);
+    });
+
+    it("a hook in .git/hooks, with core.hooksPath unset: red, naming that folder and its pre-commit", () => {
+      const { fitting, code } = judged({ hooksPath: null, hooksFolder: { ...FRESH_CLONE, files: [...FRESH_CLONE.files, "pre-push"] } });
+      expect(fitting?.ok).toBe(false);
+      expect(fitting?.detail).toContain("Git runs hooks from .git/hooks, and there is no .git/hooks/pre-commit");
+      expect(fitting?.detail).toContain("Create .git/hooks/pre-commit with these three lines, then run `chmod +x .git/hooks/pre-commit`");
+      expect(code).toBe(1);
+    });
+
+    it("a pre-commit in .git/hooks that calls flow without the execute bit: red, saying it must be executable", () => {
+      const lfs: HooksFolder = { dir: ".git/hooks", files: ["pre-push", "pre-commit"], preCommitText: PRE_COMMIT, preCommitExecutable: false };
+      const { fitting, code } = judged({ hooksPath: null, hooksFolder: lfs });
+      expect(fitting).toStrictEqual({
+        id: "hooks-path",
+        ok: false,
+        detail: notInstalledLines({ dir: ".git/hooks", preCommit: ".git/hooks/pre-commit", fix: "chmod" }).join("\n"),
+      });
+      expect(fitting?.detail).toContain("calls flow but is not executable, so git ignores it");
+      expect(code).toBe(1);
+      expect(judged({ hooksPath: null, hooksFolder: { ...lfs, preCommitExecutable: true } }).fitting?.ok, "and green once it is").toBe(true);
+    });
+  });
+
+  it("other hooks whose pre-commit calls flow: green, naming the folder and the hook", () => {
+    const { s, line, code } = judged(husky(`#!/bin/sh\nnpm test\n${GATE_LOCAL_LINE}\n${GATE_RUN_LINE}\n`));
+    expect(line).toBe("  ✓ hooks-path: git runs hooks from .husky/_, and .husky/pre-commit calls flow");
+    expect(s.green).toBe(true);
+    expect(code).toBe(0);
+  });
+
+  it("no other hooks and core.hooksPath unset: the red line it always was, with the setting to make", () => {
+    const { fitting } = judged({ hooksPath: null, hooksFolder: FRESH_CLONE });
+    expect(fitting).toStrictEqual({
+      id: "hooks-path",
+      ok: false,
+      detail: `core.hooksPath is unset — run \`${SET_HOOKS_PATH}\`. It is per-clone, so every fresh checkout needs it.`,
+    });
+    expect(fitting?.detail).not.toContain(NOT_INSTALLED);
+  });
+
+  it("when git could not name its hooks folder, red and cannot judge — never advice to set core.hooksPath", () => {
+    for (const hooksPath of [".husky/_", HOOKS_DIR, null]) {
+      const { fitting } = judged({ hooksPath, hooksFolder: null });
+      expect(fitting?.ok, String(hooksPath)).toBe(false);
+      expect(fitting?.detail, String(hooksPath)).toBe(HOOKS_UNKNOWN);
+      expect(fitting?.detail, String(hooksPath)).not.toContain("core.hooksPath");
+    }
+  });
+});
+
 describe("status — the red lines, each carrying its fix", () => {
   const red = (over: Partial<StatusFacts>): string => statusLines(status(statusFacts(over))).join("\n");
 
@@ -3027,7 +3484,7 @@ describe("status — the red lines, each carrying its fix", () => {
   });
 
   it("a hooksPath git was never told about — the one a fresh clone always needs", () => {
-    expect(red({ hooksPath: null })).toContain(SET_HOOKS_PATH);
+    expect(red({ hooksPath: null, hooksFolder: FRESH_CLONE })).toContain(SET_HOOKS_PATH);
   });
 
   it("a host that is not registered to call flow at all", () => {
@@ -3044,7 +3501,7 @@ describe("status — the red lines, each carrying its fix", () => {
   });
 
   it("counts the reds it found, so a caller's exit code and the page agree", () => {
-    const s = status(statusFacts({ gateText: null, hooksPath: null }));
+    const s = status(statusFacts({ gateText: null, hooksPath: null, hooksFolder: FRESH_CLONE }));
     expect(s.green).toBe(false);
     expect(statusLines(s).at(-1)).toContain("2 red lines");
   });
