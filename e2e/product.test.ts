@@ -14,7 +14,7 @@
 // driven for real instead of mocked — the seam is the product's, not the suite's.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync, lstatSync, symlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync, lstatSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -401,6 +401,111 @@ describe("flow init, run again", () => {
     } finally {
       rmSync(theirs, { recursive: true, force: true });
     }
+  });
+});
+
+// ── when git already runs other hooks ───────────────────────────────────────
+//
+// Git runs hooks from one folder. Pointing it at `.githooks` over husky's, or over a hook in
+// `.git/hooks`, turns those off without a word, so init leaves them alone and says loudly that flow
+// is not installed until the pre-commit hook git runs calls it.
+
+/** The words the block opens with, as the docs fix them. */
+const NOT_INSTALLED = "FLOW IS NOT INSTALLED";
+
+/** Flow's two lines, as the block prints them for a person to add. */
+const FLOW_LINES = 'f="$PWD/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook commit\nexec flow hook commit\n';
+
+/**
+ * A repo set up the way husky 9 sets one up: `core.hooksPath` is `.husky/_`, whose `pre-commit` is
+ * a stub that runs `.husky/pre-commit`, the file a person edits.
+ */
+function huskyRepo(preCommit: string): string {
+  const repo = newRepo();
+  mkdirSync(join(repo, ".husky", "_"), { recursive: true });
+  writeFileSync(join(repo, ".husky", "_", "pre-commit"), '#!/bin/sh\nexec sh -e "$(dirname "$0")/../pre-commit" "$@"\n', { mode: 0o755 });
+  writeFileSync(join(repo, ".husky", "pre-commit"), preCommit);
+  git(repo, ["config", "core.hooksPath", ".husky/_"]);
+  return repo;
+}
+
+/** The block, from its first line to the end of the output, or nothing when there is none. */
+const blockOf = (stdout: string): string => {
+  const at = stdout.indexOf(NOT_INSTALLED);
+  return at === -1 ? "" : stdout.slice(at);
+};
+
+describe("flow init, when git already runs other hooks", () => {
+  it("leaves husky's core.hooksPath alone, writes every other file, ends with the block, and answers 1", () => {
+    const husky = huskyRepo("npm test\n");
+    try {
+      const said = flow(husky, ["init"]);
+      expect(said.code, said.stdout + said.stderr).toBe(1);
+      expect(git(husky, ["config", "--get", "core.hooksPath"]).stdout.trim(), "husky's setting, as it was").toBe(".husky/_");
+      expect(said.stdout).not.toContain("+ git config core.hooksPath");
+      expect(readFileSync(join(husky, ".husky", "pre-commit"), "utf8"), "husky's hook, untouched").toBe("npm test\n");
+      expect(readFileSync(join(husky, ".githooks", "pre-commit"), "utf8")).toContain("flow hook commit");
+      expect(existsSync(join(husky, "flow.config.ts"))).toBe(true);
+      expect(existsSync(join(husky, ".flow"))).toBe(true);
+
+      const block = blockOf(said.stdout);
+      expect(block, "the block is the end of the output").not.toBe("");
+      expect(block).toContain("Git runs hooks from .husky/_");
+      expect(block).toContain("Add these two lines to the end of .husky/pre-commit:");
+      expect(block).toContain("exec flow hook commit");
+      expect(block).toContain("move those hooks into .githooks/");
+      expect(block).toContain("git config core.hooksPath .githooks");
+      expect(said.stdout, "not a terminal, so no colour").not.toContain("\u001b[");
+    } finally {
+      rmSync(husky, { recursive: true, force: true });
+    }
+  });
+
+  it("counts flow installed once .husky/pre-commit calls it: no block, 0, and husky's hook runs the gate", () => {
+    const husky = huskyRepo("npm test\n");
+    try {
+      expect(flow(husky, ["init"]).code).toBe(1);
+      writeFileSync(join(husky, ".husky", "pre-commit"), `echo husky ran\n${FLOW_LINES}`);
+
+      const again = flow(husky, ["init"]);
+      expect(again.code, again.stdout + again.stderr).toBe(0);
+      expect(again.stdout).not.toContain(NOT_INSTALLED);
+      expect(again.stdout).toContain("git runs hooks from .husky/_, and .husky/pre-commit calls flow");
+      expect(git(husky, ["config", "--get", "core.hooksPath"]).stdout.trim()).toBe(".husky/_");
+
+      // Wired, the gate really runs through husky's stub: the scaffold's marker rule refuses.
+      writeFileSync(join(husky, "secret.txt"), `${["DO", "NOT", "COMMIT"].join("-")}\n`);
+      git(husky, ["add", "secret.txt"]);
+      const refused = git(husky, ["commit", "-m", "test: a marked file"]);
+      expect(refused.code, "git refuses when husky's hook runs the gate").not.toBe(0);
+      expect(refused.stderr).toContain("demo.noMarkedFiles");
+    } finally {
+      rmSync(husky, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves a hook in .git/hooks alone, names that folder, and answers 1", () => {
+    const lfs = newRepo();
+    try {
+      writeFileSync(join(lfs, ".git", "hooks", "pre-push"), "#!/bin/sh\ngit lfs pre-push \"$@\"\n", { mode: 0o755 });
+      const said = flow(lfs, ["init"]);
+      expect(said.code, said.stdout + said.stderr).toBe(1);
+      expect(git(lfs, ["config", "--get", "core.hooksPath"]).code, "still unset").toBe(1);
+      const block = blockOf(said.stdout);
+      expect(block).toContain("Git runs hooks from .git/hooks");
+      expect(block).toContain("Add these two lines to the end of .git/hooks/pre-commit:");
+    } finally {
+      rmSync(lfs, { recursive: true, force: true });
+    }
+  });
+
+  it("a fresh `git init`, whose .git/hooks holds only samples, gets the setting, no block, and 0", () => {
+    const hooks = readdirSync(join(repo, ".git", "hooks"));
+    expect(hooks.length, "git init wrote its samples").toBeGreaterThan(0);
+    expect(hooks.every((name) => name.endsWith(".sample"))).toBe(true);
+    expect(first.code).toBe(0);
+    expect(first.stdout).toContain("+ git config core.hooksPath .githooks");
+    expect(first.stdout).not.toContain(NOT_INSTALLED);
   });
 });
 
