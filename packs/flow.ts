@@ -25,7 +25,59 @@
 // never narrow anything is the dead-scope refusal. A rule re-asking at commit what the compiler
 // already refused at the keystroke is a rule that can only ever agree.
 
-import { banCommands, breadcrumb, command, deletion, definePack, guardrail, protectedPath, session, touch } from "../index.ts";
+import {
+  breadcrumb,
+  command,
+  defineCheck,
+  definePack,
+  deletion,
+  guardrail,
+  programName,
+  protectedPath,
+  session,
+  shellCommands,
+  touch,
+  type Check,
+  type ShellCommand,
+} from "../index.ts";
+
+/** The programs that start flow without being flow: the package runners, and node on the bundle or the bin link. */
+const RUNNERS = new Set(["npx", "pnpx", "bunx", "yarn", "pnpm", "bun", "npm", "node"]);
+
+/**
+ * A word, less its path, that names flow: `flow` itself (`./node_modules/.bin/flow`), the package
+ * at any version (`@jawache/flow@latest`), or the bundle (`dist/flow.mjs`). Compared whole, so
+ * `workflow` and `scripts/workflow.mjs` are not flow.
+ */
+const FLOW = /^flow(?:@.+|\.mjs)?$/;
+
+/**
+ * The command runs `flow uninstall`: its program names flow, or it is a runner and one of its
+ * arguments names flow, and the word after that is `uninstall` — flow's verb is always its first
+ * word. A runner may sit any number of words before flow (`pnpm dlx`, `npm exec --`, node's own
+ * options), so its arguments are searched rather than read at one position.
+ */
+function runsUninstall(c: ShellCommand): boolean {
+  const words = [c.program, ...c.args];
+  const namesFlowThenUninstall = (i: number): boolean => FLOW.test(programName(words[i] ?? "")) && words[i + 1] === "uninstall";
+  return namesFlowThenUninstall(0) || (RUNNERS.has(programName(c.program)) && c.args.some((_, i) => namesFlowThenUninstall(i + 1)));
+}
+
+/**
+ * Refuses `flow uninstall` in every way an agent can start flow, read from the parse, so a commit
+ * message, an echo or a heredoc that names the command is prose about it. A check of its own rather
+ * than `banCommands`, because two of those ways are a path or a version, which an entry in words
+ * compares whole: `node node_modules/@jawache/flow/dist/flow.mjs uninstall`, and
+ * `pnpm dlx @jawache/flow@<any version> uninstall`. A regex under `wholeLine` would read the line
+ * as written, prose included, and refuse a commit message that quotes the node form.
+ */
+const noFlowUninstall = defineCheck(
+  (_opts: Record<string, never>): Check =>
+    (ctx) => {
+      const found = (shellCommands(ctx) ?? []).filter(runsUninstall).map((c) => `\`${c.text}\` runs flow uninstall`);
+      return found.length === 0 ? ctx.ok() : ctx.fail(found.join("\n"));
+    },
+);
 
 /** The one fact this pack cannot know: where this repo keeps the packs its config imports. */
 export interface Home {
@@ -130,22 +182,12 @@ export const flow = definePack("flow", (repo: Home) => {
     noUninstall: guardrail()
       .at(command)
       .description("Refuses `flow uninstall` when an agent runs it. Taking flow off a repo or a machine is the user's call, made in their own terminal.")
-      // Matched from the program name, so a commit message, an echo or a heredoc that names the
-      // command is prose about it. Two ways in, one pattern each: flow on PATH or by path
-      // (`./node_modules/.bin/flow`), and flow started by a runner, which is a package runner
-      // (`npx flow`, `pnpm dlx @jawache/flow@latest`, `npm exec -- flow`, `bun run flow`) or node
-      // on the bundle or the bin link (`node …/dist/flow.mjs`, which is how the registered hooks
-      // call it). A runner may be named by its path too (`/usr/local/bin/npx`). After the runner,
-      // the words up to flow are skipped, and flow must start a path segment, so `workflow` and
-      // `scripts/workflow.mjs` are not flow.
-      .check(
-        banCommands({
-          ban: [
-            "(?:\\S*/)?flow\\s+uninstall\\b",
-            "(?:\\S*/)?(?:npx|pnpx|bunx|yarn|pnpm|bun|npm|node)\\s+(?:\\S+\\s+)*?(?:\\S*/)?flow(?:@\\S+|\\.mjs)?\\s+uninstall\\b",
-          ],
-        }),
-      )
+      // Read from the parse, so prose that names the command passes. Two ways in: flow on PATH or
+      // by path (`./node_modules/.bin/flow`), and flow started by a runner, which is a package
+      // runner (`npx flow`, `pnpm dlx @jawache/flow@latest`, `npm exec -- flow`, `bun run flow`) or
+      // node on the bundle or the bin link (`node …/dist/flow.mjs`, which is how the registered
+      // hooks call it). A runner may be named by its path too (`/usr/local/bin/npx`).
+      .check(noFlowUninstall({}))
       .message(
         "`flow uninstall` removes this repo's guard: the commit gate, `core.hooksPath` and flow's hook registrations, and with `--machine` the hooks every repo on this machine runs. An agent does not take off the guard it works under, so there is no bypass. If flow should come off, say so and ask the user to run `flow uninstall` in their own terminal. If a guardrail is in your way, `override(pack.entry).disabled(\"why\")` inside flow.config.ts is the visible, committed route, and it is the user's call too.",
       )
@@ -158,6 +200,8 @@ export const flow = definePack("flow", (repo: Home) => {
           "cat > note.md <<'EOF'\nflow uninstall --machine\nEOF",
           "node scripts/workflow.mjs uninstall",
           "npx workflow uninstall",
+          'echo "the hooks call node node_modules/@jawache/flow/dist/flow.mjs uninstall"',
+          "npm test -- flow",
         ],
         block: [
           "flow uninstall",
@@ -166,6 +210,7 @@ export const flow = definePack("flow", (repo: Home) => {
           "npx @jawache/flow uninstall --machine",
           "npm exec -- flow uninstall",
           "pnpm dlx @jawache/flow@latest uninstall",
+          "pnpm dlx @jawache/flow@0.3.0 uninstall",
           "bunx flow uninstall",
           "pnpx flow uninstall",
           "yarn flow uninstall",
@@ -175,6 +220,9 @@ export const flow = definePack("flow", (repo: Home) => {
           "./node_modules/.bin/flow uninstall",
           "node node_modules/@jawache/flow/dist/flow.mjs uninstall",
           "node node_modules/.bin/flow uninstall",
+          "node --enable-source-maps dist/flow.mjs uninstall",
+          "./dist/flow.mjs uninstall",
+          "sudo flow uninstall --machine",
           "cd app && flow uninstall",
           "bash -c 'flow uninstall --machine'",
         ],

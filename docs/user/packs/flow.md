@@ -130,20 +130,7 @@ Refuses `flow uninstall` when an agent runs it. Taking flow off a repo or a mach
 - **Refuses at** a shell command is about to run
 - **Watches** not scoped by path
 - **Categories** every session
-- **Check** [`banCommands`](../checks/ban-commands.md)
-
-<details><summary>settings</summary>
-
-```
-{
-  "ban": [
-    "(?:\\S*/)?flow\\s+uninstall\\b",
-    "(?:\\S*/)?(?:npx|pnpx|bunx|yarn|pnpm|bun|npm|node)\\s+(?:\\S+\\s+)*?(?:\\S*/)?flow(?:@\\S+|\\.mjs)?\\s+uninstall\\b"
-  ]
-}
-```
-
-</details>
+- **Check** `noFlowUninstall` *(written in this pack)* — no options
 
 ### Why it exists
 
@@ -172,6 +159,8 @@ flow uninstall --machine
 EOF`
 - running `node scripts/workflow.mjs uninstall`
 - running `npx workflow uninstall`
+- running `echo "the hooks call node node_modules/@jawache/flow/dist/flow.mjs uninstall"`
+- running `npm test -- flow`
 
 **blocks**
 
@@ -181,6 +170,7 @@ EOF`
 - running `npx @jawache/flow uninstall --machine`
 - running `npm exec -- flow uninstall`
 - running `pnpm dlx @jawache/flow@latest uninstall`
+- running `pnpm dlx @jawache/flow@0.3.0 uninstall`
 - running `bunx flow uninstall`
 - running `pnpx flow uninstall`
 - running `yarn flow uninstall`
@@ -190,6 +180,9 @@ EOF`
 - running `./node_modules/.bin/flow uninstall`
 - running `node node_modules/@jawache/flow/dist/flow.mjs uninstall`
 - running `node node_modules/.bin/flow uninstall`
+- running `node --enable-source-maps dist/flow.mjs uninstall`
+- running `./dist/flow.mjs uninstall`
+- running `sudo flow uninstall --machine`
 - running `cd app && flow uninstall`
 - running `bash -c 'flow uninstall --machine'`
 
