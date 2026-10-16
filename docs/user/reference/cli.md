@@ -61,6 +61,12 @@ In that case, `flow init` writes every other file in the table above, does not s
 - **Add flow's two lines to the end of the `pre-commit` hook git runs.** For husky, that file is `.husky/pre-commit`.
 - **Move those hooks into `.githooks/`**, then run `git config core.hooksPath .githooks`.
 
+Git runs a `pre-commit` hook only when the file is executable. The first way changes with the state of that hook:
+
+- **The hook is not there:** the block says to create it with `#!/bin/sh` and flow's two lines, then to run `chmod +x` on it.
+- **The hook calls flow but is not executable:** git skips it, so flow is not installed. The block says to run `chmod +x` on it.
+- **Husky's `.husky/pre-commit`:** it does not need to be executable, because husky's hook in `.husky/_` runs it with `sh`.
+
 In a terminal, the block is printed in bold red, unless the `NO_COLOR` environment variable is set. `flow status` prints the same message as a red line.
 
 Once the `pre-commit` hook git runs calls flow, `flow init` and `flow status` count flow as installed. For husky, flow reads `.husky/pre-commit`.
