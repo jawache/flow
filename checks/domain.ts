@@ -275,8 +275,9 @@ function wordsInLine(banned: CommandInWords, line: string): boolean {
  *
  * `heads` are the commands that record prose, each in words, `"gh pr"`, matched as `banCommands`
  * matches an entry: the same program, less its path, and every argument of the head among the
- * command's, compared whole. A head that is not one command in words refuses to load, as an entry
- * does. `gitSubcommands` names git's own, `commit`, and is read through `gitCommand`: git's options
+ * command's, compared whole. A head's words are found anywhere among the arguments, so a bare word
+ * passed as an option's value counts too: `"gh pr"` refuses `gh run list --branch pr`. A head that
+ * is not one command in words refuses to load, as an entry does. `gitSubcommands` names git's own, `commit`, and is read through `gitCommand`: git's options
  * sit between `git` and its subcommand, so `-C '/a b' commit` is `commit` there, where the
  * containment of `"git commit"` would also take `git log --grep commit`.
  *

@@ -403,6 +403,15 @@ const SITE = ["cl", "aude", "\\.com/", "cl", "aude", "-code"].join("");
 const LINK = ["cl", "aude", ".com/", "cl", "aude", "-code"].join("");
 const ROBOT = "\u{1F916}";
 
+/** The `gh` verbs that record prose: a pull request's and an issue's title, body and comments. */
+const GH_PROSE_VERBS = ["pr", "issue"] as const;
+
+/**
+ * The backtick rule's heads for the same verbs, in words: each run bare, and through `work gh`, the
+ * wrapper a repo driven by work runs it as.
+ */
+const GH_PROSE_HEADS = [...GH_PROSE_VERBS.map((verb) => `gh ${verb}`), ...GH_PROSE_VERBS.map((verb) => `work gh ${verb}`)];
+
 /**
  * The arguments after the verb of a `gh pr` or `gh issue` command, run bare or as `work gh`, the
  * wrapper a repo driven by work runs it as — or null for any other command.
@@ -410,7 +419,7 @@ const ROBOT = "\u{1F916}";
 function ghProseArgs(c: ShellCommand): readonly string[] | null {
   const program = programName(c.program);
   const words = program === "gh" ? c.args : program === "work" && c.args[0] === "gh" ? c.args.slice(1) : null;
-  return words !== null && (words[0] === "pr" || words[0] === "issue") ? words.slice(1) : null;
+  return words !== null && GH_PROSE_VERBS.some((verb) => words[0] === verb) ? words.slice(1) : null;
 }
 
 /**
@@ -851,9 +860,7 @@ export const git = definePack("git", (repo: Release) => {
   noShellSubstitutionInProse: guardrail()
     .at(command)
     .description("A backtick the shell would run in a commit message or a PR or issue body (double-quoted, bare, or in an unquoted heredoc) is live command substitution, not Markdown.")
-    // `gh pr` and `gh issue`, run bare or through `work gh`, the wrapper a repo driven by work runs
-    // it as.
-    .check(substitutionInProse({ heads: ["gh pr", "gh issue", "work gh pr", "work gh issue"], gitSubcommands: ["commit"] }))
+    .check(substitutionInProse({ heads: GH_PROSE_HEADS, gitSubcommands: ["commit"] }))
     .message(SUBSTITUTION_MESSAGE)
     .test({
       pass: [

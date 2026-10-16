@@ -405,6 +405,8 @@ describe("substitutionInProse", () => {
   it("finds every argument of the head among the command's, in any order and past an option", async () => {
     expect(await run(gh, "command", 'gh --repo a/b pr create --body "`date`"')).toContain("`gh pr`");
     expect(await run(gh, "command", 'work --verbose gh issue comment 1 --body "`date`"')).toContain("`work gh issue`");
+    // Anywhere means anywhere: a stray `pr`, the value of an option, counts as the head's word.
+    expect(await run(gh, "command", 'gh run list --branch pr "`date`"')).toContain("`gh pr`");
   });
 
   it("finds a head's words as whole arguments only: a longer word, or a quoted one, is not the word", async () => {
