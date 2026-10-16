@@ -2424,11 +2424,73 @@ describe("planInit — when git already runs other hooks", () => {
   });
 
   it("a repo with a hook in .git/hooks names that folder and its pre-commit", () => {
-    const plan = planInit({ ...bare, ...gitHooks(["pre-push", "post-checkout"]) });
+    const plan = planInit({ ...bare, ...gitHooks(["pre-push", "post-checkout"], "#!/bin/sh\nnpm test\n") });
     expect(plan.hooksPath).toBe(false);
     expect(block(plan)[0]).toContain("Git runs hooks from .git/hooks");
-    expect(block(plan).join("\n")).toContain("the end of .git/hooks/pre-commit:");
+    expect(block(plan).join("\n")).toContain("Add these two lines to the end of .git/hooks/pre-commit:");
     expect(initCode(plan, [])).toBe(1);
+  });
+
+  describe("a pre-commit hook git runs itself, and the execute bit git needs to run it", () => {
+    /** The first fix: the lines from the block's third up to the second fix. */
+    const firstFix = (plan: ReturnType<typeof planInit>): string[] => {
+      const lines = block(plan);
+      return lines.slice(2, lines.findIndex((line) => line.startsWith("  - Or move")));
+    };
+
+    it("Git LFS's hooks and no pre-commit yet: create it as an executable shell script", () => {
+      const plan = planInit({ ...bare, ...gitHooks(["pre-push", "post-checkout"]) });
+      expect(block(plan)[0]).toBe(
+        `${NOT_INSTALLED}. Git runs hooks from .git/hooks, and there is no .git/hooks/pre-commit, so no commit runs flow's gate.`,
+      );
+      expect(firstFix(plan)).toStrictEqual([
+        "  - Create .git/hooks/pre-commit with these three lines, then run `chmod +x .git/hooks/pre-commit` so git runs it:",
+        "      #!/bin/sh",
+        `      ${GATE_LOCAL_LINE}`,
+        `      ${GATE_RUN_LINE}`,
+      ]);
+      expect(block(plan).join("\n"), "the second fix is unchanged").toContain(`move those hooks into ${HOOKS_DIR}/`);
+      expect(initCode(plan, [])).toBe(1);
+    });
+
+    it("followed to the letter, creating it wires it", () => {
+      const created = `${firstFix(planInit({ ...bare, ...gitHooks(["pre-push"]) }))
+        .slice(1)
+        .map((line) => line.trim())
+        .join("\n")}\n`;
+      const plan = planInit({ ...bare, ...gitHooks(["pre-push", "pre-commit"], created, true) });
+      expect(plan.otherHooks?.wired).toBe(true);
+      expect(block(plan)).toStrictEqual([]);
+      expect(initCode(plan, [])).toBe(0);
+    });
+
+    it("a hook that calls flow without the execute bit: not installed, and it says the file must be executable", () => {
+      const plan = planInit({ ...bare, ...gitHooks(["pre-push", "pre-commit"], WIRED, false) });
+      expect(block(plan)[0]).toBe(
+        `${NOT_INSTALLED}. Git runs hooks from .git/hooks, and .git/hooks/pre-commit calls flow but is not executable, so git ignores it and no commit runs flow's gate.`,
+      );
+      expect(firstFix(plan)).toStrictEqual(["  - Make .git/hooks/pre-commit executable, so git runs it: `chmod +x .git/hooks/pre-commit`"]);
+      expect(initLines(plan, []).join("\n"), "never the quiet note that it calls flow").not.toContain("· git runs hooks from");
+      expect(initCode(plan, [])).toBe(1);
+    });
+
+    it("a hook that neither calls flow nor has the execute bit: both, in the one fix", () => {
+      const plan = planInit({ ...bare, ...gitHooks(["pre-commit"], "#!/bin/sh\nnpm test\n", false) });
+      expect(block(plan)[0]).toContain(".git/hooks/pre-commit does not call flow and is not executable, so git ignores it");
+      expect(firstFix(plan)[0]).toBe(
+        "  - Add these two lines to the end of .git/hooks/pre-commit, then run `chmod +x .git/hooks/pre-commit` so git runs it:",
+      );
+    });
+
+    it("husky's .husky/pre-commit, with no execute bit, still counts once it calls flow, and its fix is unchanged", () => {
+      expect(initCode(planInit({ ...bare, ...husky(WIRED) }), [])).toBe(0);
+      for (const preCommit of [null, "npm test\n"])
+        expect(firstFix(planInit({ ...bare, ...husky(preCommit) })), String(preCommit)).toStrictEqual([
+          "  - Add these two lines to the end of .husky/pre-commit:",
+          `      ${GATE_LOCAL_LINE}`,
+          `      ${GATE_RUN_LINE}`,
+        ]);
+    });
   });
 
   it("once the hook git runs calls flow, no block, a quiet note, and 0", () => {
@@ -3296,11 +3358,23 @@ describe("status — does git run the commit gate", () => {
     it("a hook in .git/hooks, with core.hooksPath unset: red, naming that folder and its pre-commit", () => {
       const { fitting, code } = judged({ hooksPath: null, hooksFolder: { ...FRESH_CLONE, files: [...FRESH_CLONE.files, "pre-push"] } });
       expect(fitting?.ok).toBe(false);
-      expect(fitting?.detail).toContain("Git runs hooks from .git/hooks");
-      expect(fitting?.detail).toContain("Add these two lines to the end of .git/hooks/pre-commit:");
+      expect(fitting?.detail).toContain("Git runs hooks from .git/hooks, and there is no .git/hooks/pre-commit");
+      expect(fitting?.detail).toContain("Create .git/hooks/pre-commit with these three lines, then run `chmod +x .git/hooks/pre-commit`");
       expect(code).toBe(1);
     });
 
+    it("a pre-commit in .git/hooks that calls flow without the execute bit: red, saying it must be executable", () => {
+      const lfs: HooksFolder = { dir: ".git/hooks", files: ["pre-push", "pre-commit"], preCommit: PRE_COMMIT, preCommitExecutable: false };
+      const { fitting, code } = judged({ hooksPath: null, hooksFolder: lfs });
+      expect(fitting).toStrictEqual({
+        id: "hooks-path",
+        ok: false,
+        detail: notInstalledLines({ dir: ".git/hooks", preCommit: ".git/hooks/pre-commit", wired: false, fix: "chmod" }).join("\n"),
+      });
+      expect(fitting?.detail).toContain("calls flow but is not executable, so git ignores it");
+      expect(code).toBe(1);
+      expect(judged({ hooksPath: null, hooksFolder: { ...lfs, preCommitExecutable: true } }).fitting?.ok, "and green once it is").toBe(true);
+    });
   });
 
   it("other hooks whose pre-commit calls flow: green, naming the folder and the hook", () => {

@@ -3810,20 +3810,43 @@ export function wiredLine(other: OtherHooks): string {
   return `git runs hooks from ${other.dir}, and ${other.preCommit} calls flow`;
 }
 
+/** Flow's two lines, as the block prints them for a person to copy into a pre-commit hook. */
+const GATE_LINES = [`      ${GATE_LOCAL_LINE}`, `      ${GATE_RUN_LINE}`];
+
 /**
- * The message for other hooks that do not call flow, in the ONE wording init's block and status's
- * line share: the folder git runs hooks from, and the two ways to finish. Init never takes either
- * itself: editing another tool's hook, or moving its hooks, is the person's call.
+ * The message for other hooks that do not run flow, in the ONE wording init's block and status's
+ * line share: the folder git runs hooks from, why its pre-commit hook does not run flow's gate, and
+ * the two ways to finish. The first fix is whatever that hook lacks: flow's two lines, the hook
+ * itself, or the execute bit. Init never takes either fix itself: editing or creating another
+ * tool's hook, or moving its hooks, is the person's call.
  */
 export function notInstalledLines(other: OtherHooks): string[] {
+  const [why, first] = firstFix(other);
   return [
-    `${NOT_INSTALLED}. Git runs hooks from ${other.dir}, and ${other.preCommit} does not call flow, so no commit runs flow's gate.`,
+    `${NOT_INSTALLED}. Git runs hooks from ${other.dir}, and ${why} no commit runs flow's gate.`,
     "Finish the install in one of two ways, then run `flow init` again:",
-    `  - Add these two lines to the end of ${other.preCommit}:`,
-    `      ${GATE_LOCAL_LINE}`,
-    `      ${GATE_RUN_LINE}`,
+    ...first,
     `  - Or move those hooks into ${HOOKS_DIR}/, beside flow's gate, then run \`${SET_HOOKS_PATH}\`.`,
   ];
+}
+
+/** Why the pre-commit hook does not run flow's gate, as the block's first line ends, and the fix. */
+function firstFix(other: OtherHooks): [string, string[]] {
+  const hook = other.preCommit;
+  const chmod = `\`chmod +x ${hook}\``;
+  switch (other.fix) {
+    case "create":
+      return [`there is no ${hook}, so`, [`  - Create ${hook} with these three lines, then run ${chmod} so git runs it:`, "      #!/bin/sh", ...GATE_LINES]];
+    case "chmod":
+      return [`${hook} calls flow but is not executable, so git ignores it and`, [`  - Make ${hook} executable, so git runs it: ${chmod}`]];
+    case "add-and-chmod":
+      return [
+        `${hook} does not call flow and is not executable, so git ignores it and`,
+        [`  - Add these two lines to the end of ${hook}, then run ${chmod} so git runs it:`, ...GATE_LINES],
+      ];
+    default:
+      return [`${hook} does not call flow, so`, [`  - Add these two lines to the end of ${hook}:`, ...GATE_LINES]];
+  }
 }
 
 // ── the scaffold ─────────────────────────────────────────────────────────────
