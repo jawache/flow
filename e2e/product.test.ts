@@ -15,7 +15,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { chmodSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync, existsSync, lstatSync, symlinkSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   PACKAGE,
@@ -915,13 +915,18 @@ describe("a repo whose package.json lists flow", () => {
 // point of the verb: after it, `npm uninstall` leaves nothing behind that fails with `flow: not found`.
 
 describe("flow uninstall", () => {
-  /** git and nothing else on the PATH: a commit that still called flow would fail with `flow: not found`. */
+  /**
+   * git and the system's own tools on the PATH, and no flow: a commit that still called flow would
+   * fail with `flow: not found`. The system folders are there for a hook that needs `sh`, as husky's
+   * stub does.
+   */
   const noFlow = (where: string): Ran => {
-    const gitOnly = runGit(where, ["--exec-path"]).stdout.trim();
-    expect(existsSync(join(gitOnly, "flow")), "the PATH this commit is given has no flow").toBe(false);
+    const noFlowPath = [runGit(where, ["--exec-path"]).stdout.trim(), "/usr/bin", "/bin"];
+    for (const dir of noFlowPath) expect(existsSync(join(dir, "flow")), `the PATH this commit is given has no flow, in ${dir}`).toBe(false);
+    const path = noFlowPath.join(delimiter);
     writeFileSync(join(where, "after.txt"), "committed with flow gone\n");
-    runGit(where, ["add", "after.txt"], { home, path: gitOnly });
-    return runGit(where, ["commit", "-m", "test: flow is gone"], { home, path: gitOnly });
+    runGit(where, ["add", "after.txt"], { home, path });
+    return runGit(where, ["commit", "-m", "test: flow is gone"], { home, path });
   };
 
   it("removes the gate, core.hooksPath, .githooks/, .flow/ and the link from a fresh repo, keeps the config, and a commit then needs no flow", () => {
@@ -1059,6 +1064,98 @@ describe("flow uninstall", () => {
       expect(removed.stdout, "from the top folder, it all goes").toContain("  - core.hooksPath (it was .githooks)");
     } finally {
       rmSync(nested, { recursive: true, force: true });
+    }
+  });
+
+  // ANOTHER FOLDER'S PRE-COMMIT HOOK, such as husky's: `flow init` told the person to add flow's two
+  // lines to it, and never edits it, so neither does uninstall. It names the hook and its lines, and
+  // a person who follows the report commits with flow gone.
+
+  /** The lines the report names under the hook it kept, as it printed them. */
+  const linesToDelete = (stdout: string, preCommit: string): string[] => {
+    const lines = stdout.split("\n");
+    const at = lines.findIndex((line) => line.startsWith(`  · kept ${preCommit} as it is`));
+    expect(at, "the report names the hook").not.toBe(-1);
+    const named: string[] = [];
+    for (const line of lines.slice(at + 1)) {
+      if (!line.startsWith("      ")) break;
+      named.push(line.trim());
+    }
+    return named;
+  };
+
+  it("leaves a husky .husky/pre-commit that calls flow byte for byte, names it and flow's two lines, and following the report commits with flow gone", () => {
+    const husky = huskyRepo("echo husky ran\n");
+    try {
+      const first = flow(husky, ["init"]);
+      const wiredHook = `echo husky ran\n${linesToAdd(first.stdout, ".husky/pre-commit").join("\n")}\n`;
+      writeFileSync(join(husky, ".husky", "pre-commit"), wiredHook);
+      expect(flow(husky, ["init"]).code, "installed through husky").toBe(0);
+
+      const said = flow(husky, ["uninstall"]);
+      expect(said.code, said.stdout + said.stderr).toBe(0);
+      expect(readFileSync(join(husky, ".husky", "pre-commit"), "utf8"), "husky's hook, byte for byte").toBe(wiredHook);
+      expect(git(husky, ["config", "--get", "core.hooksPath"]).stdout.trim(), "husky's setting, as it was").toBe(".husky/_");
+      expect(said.stdout).toContain(
+        "  · kept .husky/pre-commit as it is — flow never edits a hook it did not write, and this one still calls flow. Delete these lines from it yourself, or every commit fails with `flow: not found` once flow is gone:",
+      );
+      const named = linesToDelete(said.stdout, ".husky/pre-commit");
+      expect(named, "the two lines init told them to add").toEqual(linesToAdd(first.stdout, ".husky/pre-commit"));
+      expect(said.stdout.trim().split("\n").at(-1)).toBe(
+        "  next: delete flow's lines from .husky/pre-commit, then `flow uninstall --machine` once no repo on this machine needs flow, then `npm uninstall -g @jawache/flow` — removes the hooks, then the package.",
+      );
+
+      // Skipped, the report is right: husky's hook still calls the flow that is gone.
+      const skipped = noFlow(husky);
+      expect(skipped.code, "a commit before the lines go fails").not.toBe(0);
+      expect(skipped.stderr).toContain("flow: not found");
+
+      // Followed: the named lines out of the hook, and nothing else.
+      const theirs = wiredHook.split("\n").filter((line) => !named.includes(line.trim())).join("\n");
+      writeFileSync(join(husky, ".husky", "pre-commit"), theirs);
+      const committed = noFlow(husky);
+      expect(committed.code, committed.stdout + committed.stderr).toBe(0);
+      expect(committed.stdout + committed.stderr, "husky's own hook still runs").toContain("husky ran");
+    } finally {
+      rmSync(husky, { recursive: true, force: true });
+    }
+  });
+
+  it("says nothing of a husky .husky/pre-commit that does not call flow, and leaves it byte for byte", () => {
+    const husky = huskyRepo("echo husky ran\n");
+    try {
+      expect(flow(husky, ["init"]).code, "not installed: the hook does not call flow").toBe(1);
+      const said = flow(husky, ["uninstall"]);
+      expect(said.code, said.stdout + said.stderr).toBe(0);
+      expect(said.stdout).not.toContain(".husky/pre-commit");
+      expect(said.stdout.trim().split("\n").at(-1)).toBe(
+        "  next: `flow uninstall --machine` once no repo on this machine needs flow, then `npm uninstall -g @jawache/flow` — removes the hooks, then the package.",
+      );
+      expect(readFileSync(join(husky, ".husky", "pre-commit"), "utf8")).toBe("echo husky ran\n");
+      expect(noFlow(husky).code, "a commit then needs no flow").toBe(0);
+    } finally {
+      rmSync(husky, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves a .git/hooks/pre-commit that calls flow byte for byte, and names it and its lines", () => {
+    const lfs = lfsRepo();
+    try {
+      const first = flow(lfs, ["init"]);
+      const hook = join(lfs, ".git", "hooks", "pre-commit");
+      const wiredHook = `${linesToCreate(first.stdout, ".git/hooks/pre-commit").join("\n")}\n`;
+      writeFileSync(hook, wiredHook, { mode: 0o755 });
+      expect(flow(lfs, ["init"]).code, "installed through .git/hooks").toBe(0);
+
+      const said = flow(lfs, ["uninstall"]);
+      expect(said.code, said.stdout + said.stderr).toBe(0);
+      expect(readFileSync(hook, "utf8"), "git's own hook, byte for byte").toBe(wiredHook);
+      expect(linesToDelete(said.stdout, ".git/hooks/pre-commit"), "flow's two lines, not the shebang").toEqual(
+        linesToCreate(first.stdout, ".git/hooks/pre-commit").slice(1),
+      );
+      expect(said.stdout.trim().split("\n").at(-1)).toMatch(/^ {2}next: delete flow's lines from \.git\/hooks\/pre-commit, then /);
+    } finally {
+      rmSync(lfs, { recursive: true, force: true });
     }
   });
 
