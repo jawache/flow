@@ -242,6 +242,29 @@ export const subagentStopPayload = (
   ...over,
 });
 
+/** One record of a session's recording, as `.flow/replay/<session>.jsonl` holds it. */
+export interface TapeRecord {
+  readonly v?: number;
+  readonly session?: string;
+  readonly rail?: string;
+  readonly moment?: string;
+  readonly world?: { readonly exec?: Readonly<Record<string, { readonly code?: number }>> };
+}
+
+/** Every record of a session's recording in `repo`, its header line first. */
+export function tapeRecords(repo: string, session: string): TapeRecord[] {
+  return readFileSync(join(repo, ".flow", "replay", `${session}.jsonl`), "utf8")
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => JSON.parse(line) as TapeRecord);
+}
+
+/** The steps of a session's recording in `repo`, after its header, each as `rail moment`. */
+export const tapeSteps = (repo: string, session: string): string[] =>
+  tapeRecords(repo, session)
+    .slice(1)
+    .map((step) => `${step.rail ?? ""} ${step.moment ?? ""}`.trim());
+
 /**
  * A fixture pack's SOURCE, with its import repointed at whatever the driven repo can resolve.
  *

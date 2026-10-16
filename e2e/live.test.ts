@@ -31,6 +31,8 @@ import {
   shimBin,
   subagentStopPayload,
   subagentTranscripts,
+  tapeRecords,
+  tapeSteps,
   BREAKS,
   flow as runFlow,
   git as runGit,
@@ -1396,17 +1398,15 @@ export default defineConfig([pack(definePack("quiet", { hello: breadcrumb().at(s
     rmSync(taped, { recursive: true, force: true });
   });
 
-  it("puts the turn-end step on the tape", () => {
+  it("puts the hand-back's turn-end steps on the tape, once", () => {
     const prompt = JSON.stringify({ type: "user", message: { content: "do the phase" } });
     const at = subagentTranscripts(join(taped, ".t"), SESSION, "atape1", { parent: [prompt], own: [prompt] });
     const ran = runFlow(taped, ["hook", "subagent-stop"], {}, JSON.stringify(subagentStopPayload(SESSION, "atape1", "Explore", at)));
     expect(ran.code, ran.stderr).toBe(0);
 
-    const tape = readFileSync(join(taped, ".flow", "replay", `${SESSION}.jsonl`), "utf8")
-      .split("\n")
-      .filter((line) => line.trim() !== "")
-      .map((line) => JSON.parse(line) as { rail?: string; moment?: string });
-    expect(tape.map((step) => `${step.rail ?? ""} ${step.moment ?? ""}`.trim())).toContain("guard turn-end");
+    // Both turn-end rails are canonical events, the guardrails and the notes, so a replay against
+    // either kind added later re-runs this hand-back.
+    expect(tapeSteps(taped, SESSION)).toEqual(["guard turn-end", "brief turn-end"]);
   });
 });
 
@@ -1665,14 +1665,9 @@ describe("a recorded session, replayed", () => {
   });
 
   it("records the canonical event stream, harness-blind — no payload, no hook, no path", () => {
-    const text = readFileSync(join(repo, ".flow", "replay", `${SESSION}.jsonl`), "utf8");
-    const steps = text
-      .split("\n")
-      .filter((line) => line.trim() !== "")
-      .map((line) => JSON.parse(line) as { rail?: string; moment?: string; v?: number; session?: string });
-
-    expect(steps[0]).toEqual({ v: 1, session: SESSION });
-    expect(steps.slice(1).map((s) => `${s.rail ?? ""} ${s.moment ?? ""}`.trim())).toEqual([
+    const records = tapeRecords(repo, SESSION);
+    expect(records[0]).toEqual({ v: 1, session: SESSION });
+    expect(tapeSteps(repo, SESSION)).toEqual([
       "brief session",
       "brief touch",
       "brief touch",
@@ -1694,10 +1689,9 @@ describe("a recorded session, replayed", () => {
     // Nothing in the file names Claude Code. That is the standing proof of the seam: the engine
     // could not tell which harness recorded this, which is exactly why a second harness is a
     // second column rather than a second engine.
-    expect(text).not.toMatch(/hook_event_name|tool_input|PreToolUse|SessionStart|\.claude/);
+    expect(readFileSync(join(repo, ".flow", "replay", `${SESSION}.jsonl`), "utf8")).not.toMatch(/hook_event_name|tool_input|PreToolUse|SessionStart|\.claude/);
     // The commit step carries the answer its check got from the missing binary, verbatim.
-    const commitStep = steps[steps.length - 1] as { world?: { exec?: Record<string, { code?: number }> } };
-    expect(commitStep.world?.exec?.["definitely-not-a-real-binary-xyz --check"]?.code).toBe(127);
+    expect(records.at(-1)?.world?.exec?.["definitely-not-a-real-binary-xyz --check"]?.code).toBe(127);
   });
 
   it("replays with no repo and no harness, and the diff against the live log is EMPTY", () => {
