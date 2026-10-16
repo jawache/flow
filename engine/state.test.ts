@@ -46,7 +46,7 @@ afterEach(() => {
 
 /** A fixed clock, so the rows a test reads back are the rows it can write down. */
 const at = new Date("2026-09-04T12:00:00.000Z");
-const ctx = (): LogContext => ({ root, session: "sess-1", branch: "workflow/flow", agent: "main", now: () => at });
+const ctx = (): LogContext => ({ root, session: "sess-1", branch: "workflow/flow", who: { agent: "main" }, now: () => at });
 
 describe("the state directory", () => {
   it("makes itself, and ignores itself and its own ignore file", () => {
@@ -168,8 +168,8 @@ describe("the event log", () => {
 
   it("names the agent on every row after meta, and a subagent's type beside its id", () => {
     appendRows(ctx(), rows);
-    appendRows({ ...ctx(), agent: "a6009b5", agentType: "builder" }, [{ kind: "compaction" }]);
-    appendRows({ ...ctx(), agent: "a1", agentType: undefined }, [{ kind: "compaction" }]);
+    appendRows({ ...ctx(), who: { agent: "a6009b5", agentType: "builder" } }, [{ kind: "compaction" }]);
+    appendRows({ ...ctx(), who: { agent: "a1" } }, [{ kind: "compaction" }]);
     const [meta, ...events] = readRows(root, "sess-1");
     expect(meta, "the meta row is the stream, not an agent's").not.toHaveProperty("agent");
     expect(events.map((r) => [r["agent"], r["agentType"]])).toEqual([
@@ -215,7 +215,7 @@ describe("the event log", () => {
     const blocked = mkdtempSync(join(tmpdir(), "flow-blocked-"));
     mkdirSync(join(blocked, FLOW_DIR), { recursive: true });
     writeFileSync(join(blocked, FLOW_DIR, "log"), "in the way");
-    expect(appendRows({ root: blocked, session: "s", branch: null, agent: "main" }, rows)).toBe(false);
+    expect(appendRows({ root: blocked, session: "s", branch: null, who: { agent: "main" } }, rows)).toBe(false);
     rmSync(blocked, { recursive: true, force: true });
   });
 });
@@ -224,7 +224,7 @@ describe("the commit gate's marker", () => {
   it("attributes a commit to the session AND agent that were just editing this worktree", () => {
     // The agent rides along because identity is stored per session x agent: without it the gate
     // has no state file to look up, and an actor-scoped commit rule is silenced rather than run.
-    expect(writeMarker(root, "sess-1", "agent-7", undefined, "workflow/flow", at)).toBe(true);
+    expect(writeMarker(root, "sess-1", { agent: "agent-7" }, "workflow/flow", at)).toBe(true);
     expect(commitAttribution(root, "workflow/flow", at.getTime() + 60_000)).toStrictEqual({
       session: "sess-1",
       agent: "agent-7",
@@ -232,27 +232,27 @@ describe("the commit gate's marker", () => {
   });
 
   it("carries a subagent's type to the commit, so the gate's rows can name it", () => {
-    writeMarker(root, "sess-1", "a6009b5", "builder", "workflow/flow", at);
+    writeMarker(root, "sess-1", { agent: "a6009b5", agentType: "builder" }, "workflow/flow", at);
     expect(commitAttribution(root, "workflow/flow", at.getTime())).toStrictEqual({
       session: "sess-1",
       agent: "a6009b5",
       agentType: "builder",
     });
-    writeMarker(root, "sess-1", "main", undefined, "workflow/flow", at);
+    writeMarker(root, "sess-1", { agent: "main" }, "workflow/flow", at);
     const marked = JSON.parse(readFileSync(join(root, FLOW_DIR, ".session-workflow-flow"), "utf8")) as object;
     expect(marked, "the session itself leaves no type behind").not.toHaveProperty("agentType");
   });
 
   it("keeps two worktrees apart by branch, so neither mis-attributes the other's commit", () => {
-    writeMarker(root, "on-flow", "main-agent", undefined, "workflow/flow", at);
-    writeMarker(root, "on-main", "main-agent", undefined, "main", at);
+    writeMarker(root, "on-flow", { agent: "main-agent" }, "workflow/flow", at);
+    writeMarker(root, "on-main", { agent: "main-agent" }, "main", at);
     expect(commitAttribution(root, "main", at.getTime()).session).toBe("on-main");
     expect(commitAttribution(root, "workflow/flow", at.getTime()).session).toBe("on-flow");
   });
 
   it("falls back to an unattributed commit when there is no marker, or it has gone stale", () => {
     expect(commitAttribution(root, "main", at.getTime())).toStrictEqual({ session: "commit", agent: null });
-    writeMarker(root, "sess-1", "main", undefined, "main", at);
+    writeMarker(root, "sess-1", { agent: "main" }, "main", at);
     expect(commitAttribution(root, "main", at.getTime() + 5 * 60 * 60 * 1000)).toStrictEqual({
       session: "commit",
       agent: null,
@@ -262,7 +262,7 @@ describe("the commit gate's marker", () => {
   it("drops the marker rather than throwing when it cannot be written", () => {
     const blocked = mkdtempSync(join(tmpdir(), "flow-blocked-"));
     writeFileSync(join(blocked, FLOW_DIR), "in the way");
-    expect(writeMarker(blocked, "s", "main", undefined, null, at)).toBe(false);
+    expect(writeMarker(blocked, "s", { agent: "main" }, null, at)).toBe(false);
     rmSync(blocked, { recursive: true, force: true });
   });
 });
@@ -272,8 +272,8 @@ describe("reading the whole history back", () => {
     expect(sessionIds(root)).toEqual([]);
     expect(readHistory(root)).toEqual([]);
 
-    appendRows({ root, session: "sess-1", branch: null, agent: "main", now: () => at }, [{ kind: "tool", tool: "Read", path: "a.ts" }]);
-    appendRows({ root, session: "commit", branch: null, agent: "commit", now: () => at }, [{ kind: "run", moment: "commit", subjects: 1, rules: [] }]);
+    appendRows({ root, session: "sess-1", branch: null, who: { agent: "main" }, now: () => at }, [{ kind: "tool", tool: "Read", path: "a.ts" }]);
+    appendRows({ root, session: "commit", branch: null, who: { agent: "commit" }, now: () => at }, [{ kind: "run", moment: "commit", subjects: 1, rules: [] }]);
     // A stray file in the log folder is not a stream.
     writeFileSync(join(root, FLOW_DIR, "log", "notes.md"), "x");
 

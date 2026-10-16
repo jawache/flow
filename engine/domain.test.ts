@@ -96,6 +96,7 @@ import {
   readState,
   runRows,
   attribution,
+  commitAgent,
   sanitise,
   spawnedAs,
   statePath,
@@ -109,6 +110,7 @@ import {
   type Notice,
   type Outcome,
   type RowKind,
+  type AgentOf,
   type Attribution,
   type Row,
   type SessionMarker,
@@ -969,6 +971,17 @@ describe("the commit gate's session marker", () => {
       agent: null,
     });
     expect(attribution({ session: "live", agent: 7, ts: fresh.ts }, "commit", now).agent).toBeNull();
+  });
+
+  it("names the agent the gate's rows log as: the marker's, with its type, or commit when nobody can be named", () => {
+    const logged = (marker: SessionMarker | null): AgentOf => commitAgent(attribution(marker, "commit", now));
+    expect(logged({ ...fresh, agentType: "builder" })).toStrictEqual({ agent: "agent-7", agentType: "builder" });
+    expect(logged(fresh)).toStrictEqual({ agent: "agent-7" });
+    expect(logged(null), "no marker").toStrictEqual({ agent: "commit" });
+    expect(logged({ ...fresh, agentType: "builder", ts: "2026-09-04T02:00:00.000Z" }), "a stale marker").toStrictEqual({ agent: "commit" });
+    expect(logged({ session: "live", ts: fresh.ts }), "a fresh marker written before it held the agent").toStrictEqual({ agent: "commit" });
+    // The attribution keeps its null, which is what tells the gate there is no state to load.
+    expect(attribution({ session: "live", ts: fresh.ts }, "commit", now).agent).toBeNull();
   });
 
   it("takes the age as an argument, because a clock inside a decision cannot be tested", () => {

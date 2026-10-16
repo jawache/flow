@@ -46,6 +46,7 @@ import {
   recordingFile,
   recordingHeader,
   statePath,
+  type AgentOf,
   type Attribution,
   type Identity,
   type RecordedStep,
@@ -175,10 +176,8 @@ export interface LogContext {
   readonly session: string;
   /** The branch this worktree has out, for the stream's meta row. The adapter knows it; this does not. */
   readonly branch: string | null;
-  /** The agent every row came from: `main`, a subagent's id, or `commit` for a gate nobody ran. */
-  readonly agent: string;
-  /** The type that subagent was started as, when the host said. Never beside `main` or `commit`. */
-  readonly agentType?: string | undefined;
+  /** The agent every row came from, stamped beside the time. */
+  readonly who: AgentOf;
   /** Injected, because a clock inside a decision is a decision nobody can test. */
   readonly now?: () => Date;
 }
@@ -194,8 +193,7 @@ export interface LogContext {
 export function appendRows(ctx: LogContext, rows: readonly Row[]): boolean {
   try {
     if (rows.length === 0) return true;
-    const { root, session, branch, agent, agentType } = ctx;
-    const who = agentType === undefined ? { agent } : { agent, agentType };
+    const { root, session, branch, who } = ctx;
     const clock = ctx.now ?? ((): Date => new Date());
     const file = logFile(root, session);
     ensureFlowDir(root);
@@ -207,7 +205,7 @@ export function appendRows(ctx: LogContext, rows: readonly Row[]): boolean {
     let seq = seqCache.get(file) ?? nextSeq(tailOf(file));
     let text = "";
     for (const row of rows) {
-      text += `${JSON.stringify({ ts: clock().toISOString(), seq, ...who, ...row })}\n`;
+      text += `${JSON.stringify({ ts: clock().toISOString(), seq, agent: who.agent, agentType: who.agentType, ...row })}\n`;
       seq += 1;
     }
     seqCache.set(file, seq);
@@ -367,15 +365,14 @@ export function loadRecording(file: string): Recording {
 export function writeMarker(
   root: string,
   session: string,
-  agent: string,
-  agentType: string | undefined,
+  who: AgentOf,
   branch: string | null,
   at: Date = new Date(),
 ): boolean {
   try {
     ensureFlowDir(root);
-    const who = agentType === undefined ? { session, agent } : { session, agent, agentType };
-    writeFileSync(markerPath(root, branch), `${JSON.stringify({ ...who, ts: at.toISOString() })}\n`);
+    const marker = { session, agent: who.agent, agentType: who.agentType, ts: at.toISOString() };
+    writeFileSync(markerPath(root, branch), `${JSON.stringify(marker)}\n`);
     return true;
   } catch {
     return false;

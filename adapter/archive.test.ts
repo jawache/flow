@@ -178,7 +178,7 @@ describe("the reading, assembled", () => {
         line({ type: "user", timestamp: "2026-09-04T10:02:00.000Z", message: { content: "no, revert that" } }),
       ],
     });
-    appendRows({ root: repo, session: "one", branch: "main", agent: "main" }, [
+    appendRows({ root: repo, session: "one", branch: "main", who: { agent: "main" } }, [
       { kind: "tool", tool: "Edit", path: "src/a.ts", edit: true },
       { kind: "guardrail", moment: "write", id: "rails.everyone", subject: "src/a.ts", out: "deny" },
     ]);

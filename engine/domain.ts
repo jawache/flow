@@ -858,6 +858,18 @@ export interface SessionMarker {
   readonly ts?: unknown;
 }
 
+/**
+ * The agent one row, marker or call came from: the key its state is stored under, and its type.
+ *
+ * One value rather than two loose ones, because the type means nothing without the id it belongs to.
+ */
+export interface AgentOf {
+  /** `main` for the session itself, a subagent's `agent_id`, or `commit` for a gate nobody ran. */
+  readonly agent: string;
+  /** The type the subagent was started as, when the host said. Never beside `main` or `commit`. */
+  readonly agentType?: string;
+}
+
 /** A commit long after the last edit is not this session's. */
 export const MARKER_MAX_AGE_MS = 4 * 60 * 60 * 1000;
 
@@ -897,6 +909,18 @@ export function attribution(
   return agent !== null && typeof type === "string" && type
     ? { session: marker.session, agent, agentType: type }
     : { session: marker.session, agent };
+}
+
+/**
+ * The agent a commit-gate run's rows name. An agent nobody can name — no marker, a stale one, or
+ * one written before markers held the agent — is `commit`, the word that names the stream such a
+ * commit's rows land in when no session claims it.
+ *
+ * Separate from `attribution`, whose `agent: null` is what tells the gate there is no state to load.
+ */
+export function commitAgent(who: Attribution): AgentOf {
+  if (who.agent === null) return { agent: "commit" };
+  return who.agentType === undefined ? { agent: who.agent } : { agent: who.agent, agentType: who.agentType };
 }
 
 /**

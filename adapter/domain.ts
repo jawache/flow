@@ -61,6 +61,7 @@ import {
   momentsView,
   universe,
   watching,
+  type AgentOf,
   type Block,
   type Bound,
   type Cause,
@@ -1786,14 +1787,6 @@ export function sessionFactsFrom(args: { readonly payload: HookPayload; readonly
     subagent: agent !== "main",
     ...(agentType === undefined ? {} : { agentType }),
   };
-}
-
-/** Which agent one hook message came from: the key its state is stored under, and its type. */
-export interface AgentOf {
-  /** `main` for the session itself, or the subagent's `agent_id`. */
-  readonly agent: string;
-  /** The type the subagent was started as. Never on `main`. */
-  readonly agentType?: string;
 }
 
 /**
