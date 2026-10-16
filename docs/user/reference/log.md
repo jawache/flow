@@ -13,7 +13,7 @@ A session's subagents write to the same file as the session that started them. T
 A `first-touch` breadcrumb that a `builder` subagent was shown when it first read `engine/state.ts`:
 
 ```json
-{"ts":"2026-10-16T12:54:36.044Z","seq":21,"agent":"a6009b558b4c9155c","agentType":"builder","kind":"breadcrumb","moment":"touch","id":"house.layout","cause":"first-touch","subject":"engine/state.ts"}
+{"ts":"2026-10-16T13:32:09.364Z","seq":3,"agent":"a6009b558b4c9155c","agentType":"builder","kind":"breadcrumb","moment":"touch","id":"house.layout","cause":"first-touch","subject":"engine/state.ts"}
 ```
 
 ## The fields on every row
