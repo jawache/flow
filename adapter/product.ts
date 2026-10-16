@@ -9,15 +9,18 @@
 // nothing. What to write given what is already there, and what to SAY given what loaded, are
 // `planInit` and `status` next door in domain.ts, where every branch has a test.
 //
-// WHERE THE SETTINGS LIVE. The host reads `~/.claude/settings.json`, and `CLAUDE_CONFIG_DIR` is its
-// own documented override — honoured here rather than hard-coding a home, because it is also the
-// seam that lets this file be driven over a throwaway directory instead of somebody's real setup.
+// WHERE THE SETTINGS LIVE. A repo whose package.json lists `@jawache/flow` keeps flow's hooks in its
+// own `.claude/settings.json`; every other repo uses the machine-wide file — `settingsFileFor` in
+// domain.ts decides which. The machine-wide file is `~/.claude/settings.json`, and
+// `CLAUDE_CONFIG_DIR` is the host's own documented override — honoured here rather than
+// hard-coding a home, because it is also the seam that lets this file be driven over a throwaway
+// directory instead of somebody's real setup.
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { chmodSync, existsSync, lstatSync, mkdirSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { VERSION } from "../version.ts";
 import { ensureFlowDir, isOff, readRows } from "../engine/state.ts";
@@ -29,8 +32,12 @@ import {
   initLines,
   lastMode,
   literalScopes,
+  listsFlow,
+  PACKAGE_BIN,
+  hostPath,
   pathLines,
   planInit,
+  settingsFileFor,
   status,
   statusCode,
   statusLines,
@@ -49,9 +56,29 @@ export interface VerbResult {
   readonly exitCode: number;
 }
 
-/** The host's settings file — `CLAUDE_CONFIG_DIR` first, because that is the host's own override. */
-function settingsFile(): string {
+/**
+ * The settings file flow's hooks live in for this repo — the repo's own when its package.json lists
+ * flow, else the host's machine-wide file, `CLAUDE_CONFIG_DIR` first because that is the host's own
+ * override. `settingsFileFor` decides; this only reads.
+ */
+function settingsFile(root: string): string {
+  return settingsFileFor(readText(root, "package.json"), machineSettingsPath());
+}
+
+/** The host's machine-wide settings file, `CLAUDE_CONFIG_DIR` first. */
+function machineSettingsPath(): string {
   return join(process.env["CLAUDE_CONFIG_DIR"] || join(homedir(), ".claude"), "settings.json");
+}
+
+/**
+ * The machine-wide file, parsed, when flow's hooks are in the repo's own — the one place a hook
+ * there could run flow a second time — and null when `settingsPath` is the machine-wide file.
+ */
+function machineFile(root: string, settingsPath: string): { path: string; settings: unknown; unreadable: boolean } | null {
+  const machine = machineSettingsPath();
+  if (settingsPath === machine) return null;
+  const read = parsedFile(root, machine);
+  return { path: machine, settings: read.value, unreadable: read.unreadable };
 }
 
 /**
@@ -85,6 +112,16 @@ function packageRoot(): string | null {
 function resolves(root: string): boolean {
   try {
     createRequire(join(root, "noop.js")).resolve("@jawache/flow");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Is there a `flow` this user can run in that folder? What a shell looking it up by name asks. */
+function hasFlow(dir: string): boolean {
+  try {
+    accessSync(join(dir, "flow"), constants.X_OK);
     return true;
   } catch {
     return false;
@@ -130,8 +167,9 @@ function ignoredPaths(root: string, literals: readonly string[]): string[] {
  * file holding a stray comma or a `//` comment gets replaced by five registrations and nothing
  * else — every other key in it belonging to somebody, and no safe merge into bytes nobody parsed.
  *
- * `root` is what a repo-relative path is read against; the host's settings file is absolute and
- * passes straight through, which is the same rule every other read in the package follows.
+ * `root` is what a repo-relative path is read against: a dev dependency's `.claude/settings.json`
+ * is one. The machine-wide settings file is absolute and passes straight through, which is the
+ * same rule every other read in the package follows.
  */
 function parsedFile(root: string, path: string): { readonly value: unknown; readonly unreadable: boolean } {
   const text = readText(root, path);
@@ -168,7 +206,7 @@ function transcriptOf(root: string, session: string, agent: string): string {
 
 /** Everything init found, before it wrote anything. */
 function initFacts(root: string, empty: boolean): InitFacts {
-  const settingsPath = settingsFile();
+  const settingsPath = settingsFile(root);
   const read = parsedFile(root, settingsPath);
   return {
     root,
@@ -181,6 +219,7 @@ function initFacts(root: string, empty: boolean): InitFacts {
     settingsPath,
     settings: read.value,
     settingsUnreadable: read.unreadable,
+    machine: machineFile(root, settingsPath),
     resolves: resolves(root),
     packageRoot: packageRoot(),
   };
@@ -228,11 +267,16 @@ function perform(root: string, plan: InitPlan): string[] {
       symlinkSync(plan.link as string, at, "dir");
     });
 
-  if (plan.settings !== null)
-    attempt(`could not write ${plan.settings.path}`, () => {
-      mkdirSync(dirname(plan.settings?.path ?? ""), { recursive: true });
-      writeFileSync(plan.settings?.path ?? "", `${JSON.stringify(plan.settings?.value, null, 2)}\n`);
+  // Repo-relative for a dev dependency's own file, absolute for the machine-wide one.
+  for (const settings of [plan.settings, plan.machine]) {
+    if (settings === null) continue;
+    const { path, value } = settings;
+    attempt(`could not write ${path}`, () => {
+      const file = resolve(root, path);
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
     });
+  }
 
   // LAST, and after the gate file: `core.hooksPath` is what makes the hook run at all, so pointing
   // git at a directory before the hook is in it would leave a window where a commit runs nothing.
@@ -277,7 +321,7 @@ export async function runStatus(cwd: string, args: readonly string[]): Promise<V
   // could not be loaded — Cannot find module …" — which reads as two faults, not one.
   if (regime.kind === "broken") return { stdout: "", stderr: `${regime.message}\n`, exitCode: 2 };
 
-  const settingsPath = settingsFile();
+  const settingsPath = settingsFile(root);
   const facts: StatusFacts = {
     root,
     version: VERSION,
@@ -289,6 +333,7 @@ export async function runStatus(cwd: string, args: readonly string[]): Promise<V
     hooksPath: hooksPath(root),
     settingsPath,
     settings: parsedFile(root, settingsPath).value,
+    machine: machineFile(root, settingsPath),
     grammars:
       regime.kind === "loaded"
         ? grammarsAt(regime.config.settings, root).map((grammar) => ({
@@ -300,6 +345,11 @@ export async function runStatus(cwd: string, args: readonly string[]): Promise<V
     session: liveSession(root),
     ignored: ignoredPaths(root, literalScopes(regime.kind === "loaded" ? regime.load : null)),
     snapshotInclude: regime.kind === "loaded" ? (regime.config.settings.snapshotInclude ?? []) : [],
+    binary: {
+      listed: listsFlow(readText(root, "package.json")),
+      copy: existsSync(join(root, PACKAGE_BIN)),
+      path: hostPath((process.env["PATH"] ?? "").split(delimiter), root).some(hasFlow),
+    },
   };
 
   // ONE CODE FOR A CONFIG THAT WILL NOT LOAD, however it broke — `statusCode` says why. The branch

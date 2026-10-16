@@ -94,7 +94,7 @@ const SHIPPED: readonly Shipped[] = [
   // as a stranger.
   { pack: "fcis", params: EXAMPLE.fcis, cases: 15, guardrails: 7 },
   { pack: "flow", params: EXAMPLE.flow, cases: 2, guardrails: 1 },
-  { pack: "git", params: EXAMPLE.git, cases: 92, guardrails: 7 },
+  { pack: "git", params: EXAMPLE.git, cases: 110, guardrails: 8 },
   // `recipes` bound, so the entry that only exists when a repo has one is driven here too.
   { pack: "justfile", params: EXAMPLE.justfile, cases: 20, guardrails: 3 },
   { pack: "node", params: undefined, cases: 14, guardrails: 2 },
@@ -238,6 +238,7 @@ const ENTRIES: readonly string[] = [
   "git.conventionalCommitFormat",
   "git.noAiAttributionInCommits",
   "git.noForcePush",
+  "git.noGateSkip",
   "git.noGitDiscard",
   "git.noShellSubstitutionInProse",
   "git.node.noHandEditedVersion",
@@ -280,7 +281,11 @@ const ENTRIES: readonly string[] = [
 // ── the road ─────────────────────────────────────────────────────────────────
 
 let home: string;
-/** A directory holding one `flow` shim, so git's own hook can find the binary under test. */
+/**
+ * A directory holding one `flow` shim, which runs the build under test: the PATH's flow. The repo
+ * init links runs its own node_modules/@jawache/flow first, the same build, so the shim is only the
+ * fallback, and it keeps the machine's own flow out of every run.
+ */
 let bin: string;
 let repo: string;
 let scaffolded: Ran;

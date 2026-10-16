@@ -52,7 +52,7 @@ flow init
 flow status
 ```
 
-Git and Claude Code call `flow` by name, so it must be on your `PATH`. A dev dependency (`npm i -D @jawache/flow`) pins the version in the repo's lockfile, but the hooks still call the `flow` on your `PATH`, so keep the global install too. [How to install flow](./docs/user/how-to/install-flow.md) has the details.
+To guard one repo without a global install, install flow as a dev dependency instead: `npm i -D @jawache/flow`, then `npx flow init`. Git and Claude Code run the repo's copy when it has one, and the global one otherwise. [How to install flow](./docs/user/how-to/install-flow.md) has the details.
 
 `flow init` writes `flow.config.ts`, a git pre-commit hook and flow's hook registrations for Claude Code. `flow status` lists every rule and checks the wiring: green means every rule loads and is in place. Then follow [Getting started](./docs/user/tutorials/getting-started.md), which takes you from an unguarded repo to a refused commit in five minutes.
 
