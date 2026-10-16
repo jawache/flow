@@ -14,7 +14,7 @@ Bans a shell command before it runs. flow parses the command line as bash and sp
 - **Past a wrapper.** A variable assignment such as `FOO=1` in front of the program is skipped. So are `sudo`, `env`, `nohup`, `nice`, `time`, `timeout`, `command`, `exec` and `xargs`, with their own options and arguments. `sudo rm -rf build` and `timeout 5 rm -rf build` are both matched as `rm -rf build`.
 - **Nested commands.** A command inside `$( … )`, backticks or `<( … )` is a command of its own, and is matched. So is each command in the string given to `bash -c`, `sh -c` or `eval`.
 - **Not inside a heredoc.** A heredoc is the lines after a `<<WORD` opener, up to the line that holds only `WORD`, fed to a program on its standard input. Those lines are not matched. So a script fed to `python3`, or a file written with `cat`, is not refused when it includes the words of a banned command.
-- **A heredoc fed to a shell.** The lines of a heredoc read by `bash`, `sh`, `zsh`, `dash`, `ksh` or `eval`, or by a pipeline into one of them, are commands. Each one is matched.
+- **A heredoc fed to a shell.** The lines of a heredoc read by `bash`, `sh`, `zsh`, `dash` or `ksh` are commands. So are the lines of a heredoc piped into one of them or into `eval`, as in `cat <<'EOF' | sh`. Each one is matched.
 - **A here-string fed to a shell.** The text of a `<<<` here-string read by `bash`, `sh`, `zsh`, `dash` or `ksh`, such as `bash <<< 'rm -rf build'`, is commands. Each one is matched.
 - **A here-string.** The text of a `<<<` here-string is the last argument of its command, and is matched.
 - **A line that does not parse.** A line flow cannot parse, such as one with an unclosed quote, is matched whole, as written.
