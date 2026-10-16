@@ -65,11 +65,12 @@ Git runs a `pre-commit` hook only when the file is executable. The first way cha
 
 - **The hook is not there:** the block says to create it with `#!/bin/sh` and flow's two lines, then to run `chmod +x` on it.
 - **The hook calls flow but is not executable:** git skips it, so flow is not installed. The block says to run `chmod +x` on it.
-- **Husky's `.husky/pre-commit`:** it does not need to be executable, because husky's hook in `.husky/_` runs it with `sh`.
+- **The hook does not call flow and is not executable:** the block says to add flow's two lines to the end of it, then to run `chmod +x` on it.
+- **Husky's `.husky/pre-commit`:** it does not need to be executable, because husky's hook in `.husky/_` runs it with `sh`, and the block never says to create it.
 
 In a terminal, the block is printed in bold red, unless the `NO_COLOR` environment variable is set. `flow status` prints the same message as a red line.
 
-Once the `pre-commit` hook git runs calls flow, `flow init` and `flow status` count flow as installed. For husky, flow reads `.husky/pre-commit`.
+Once the `pre-commit` hook git runs calls flow, and is executable when git runs it itself, `flow init` and `flow status` count flow as installed. For husky, flow reads `.husky/pre-commit`.
 
 ## Switches
 
@@ -98,7 +99,7 @@ These commands exit 1:
 - **`flow facts`**, when the record cannot be read at all, such as a repo where no session has ever been recorded.
 - **`flow replay`**, when the recording did not capture something a check reached for, or when `--against` finds a difference.
 - **`flow init`**, when one of its steps fails.
-- **`flow init`**, when git already runs other hooks and the `pre-commit` hook git runs does not call flow, as described under [when git already runs other hooks](#when-git-already-runs-other-hooks).
+- **`flow init`**, when git already runs other hooks and the `pre-commit` hook git runs does not call flow, or is not executable, as described under [when git already runs other hooks](#when-git-already-runs-other-hooks).
 
 A config that does not load makes `flow status` and `flow test` exit 2.
 
