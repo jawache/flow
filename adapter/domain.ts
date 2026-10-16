@@ -4075,6 +4075,8 @@ export interface UninstallFacts {
   readonly gateText: string | null;
   /** `git config core.hooksPath` as it stands. */
   readonly hooksPath: string | null;
+  /** The repo's top folder when the run is in a folder below it, else null. */
+  readonly subfolderOf: string | null;
   /** The names in `.githooks/`, or null when there is no such folder. */
   readonly hooksDir: readonly string[] | null;
   readonly hasFlowDir: boolean;
@@ -4105,8 +4107,13 @@ export interface UninstallPlan {
   readonly gate: { readonly path: string; readonly body: string | null } | null;
   /** The gate that stays still calls flow, in a line flow did not write. */
   readonly gateRunsFlow: boolean;
-  /** Unset `core.hooksPath`: it is `.githooks`, this run found that folder, and nothing else is in it. */
+  /** Unset `core.hooksPath`: it is `.githooks`, the run is at the repo's top folder, and the folder holds no other hook. */
   readonly hooksPath: boolean;
+  /**
+   * `core.hooksPath` is `.githooks` but the run is in a subfolder: the repo's top folder, where
+   * `flow uninstall` removes it, or null.
+   */
+  readonly hooksPathFrom: string | null;
   /** The hooks that keep `core.hooksPath` at `.githooks`, named for the report. */
   readonly hooksKept: readonly string[];
   /** Remove `.githooks/`, which nothing else is in. */
@@ -4139,10 +4146,11 @@ export function planUninstall(facts: UninstallFacts): UninstallPlan {
   const leftText = gate === null ? facts.gateText : gate.delete ? null : gate.body;
   // A hook left in the folder is a hook git should still run, so `core.hooksPath` stays pointed at it.
   const hooksLeft = (facts.hooksDir ?? []).filter((name) => !(gateGone && name === "pre-commit"));
-  // `core.hooksPath` is the whole repo's, so it is flow's to unset only when this run found the
-  // folder it points at: from a subfolder there is no `.githooks/` beside the run, and unsetting it
-  // there would leave the gate in place with nothing pointing git at it.
-  const ownsHooksPath = facts.hooksPath === HOOKS_DIR && facts.hooksDir !== null;
+  // `core.hooksPath` is the whole repo's, and `.githooks/` is in the repo's top folder, so only a run
+  // there unsets it. From a subfolder the run finds no gate, and unsetting the setting would leave
+  // the gate in place with nothing pointing git at it.
+  const flowsHooksPath = facts.hooksPath === HOOKS_DIR;
+  const ownsHooksPath = flowsHooksPath && facts.subfolderOf === null;
   // Bytes nobody parsed are not written, as in `planInit`: the step is reported as failed instead.
   const cleaned = (path: string, settings: unknown): SettingsWithout | null => {
     const { settings: value, removed } = withoutRegistrations(settings);
@@ -4158,6 +4166,7 @@ export function planUninstall(facts: UninstallFacts): UninstallPlan {
     gate: gate === null ? null : { path: GATE_PATH, body: gate.delete ? null : gate.body },
     gateRunsFlow: armsFlow(leftText) || armsOldFlow(leftText),
     hooksPath: ownsHooksPath && hooksLeft.length === 0,
+    hooksPathFrom: flowsHooksPath ? facts.subfolderOf : null,
     hooksKept: ownsHooksPath ? hooksLeft : [],
     hooksDir: facts.hooksDir !== null && hooksLeft.length === 0,
     flowDir: facts.hasFlowDir,
@@ -4208,10 +4217,16 @@ export function uninstallLines(plan: UninstallPlan, failures: readonly string[])
     if (settings) removed.push(`${settings.path} — ${settings.removed.join(" · ")}`);
 
   const lines: string[] =
-    removed.length === 0
-      ? ["flow uninstall — nothing of flow's here to remove."]
-      : ["flow uninstall — removed:", ...removed.map((what) => `  - ${what}`)];
+    removed.length > 0
+      ? ["flow uninstall — removed:", ...removed.map((what) => `  - ${what}`)]
+      : plan.hooksPathFrom === null
+        ? ["flow uninstall — nothing of flow's here to remove."]
+        : ["flow uninstall — removed nothing from this folder."];
 
+  if (plan.hooksPathFrom !== null)
+    lines.push(
+      `  · kept core.hooksPath at ${HOOKS_DIR} — git reads it for the whole repo, and this run is in a subfolder. Run \`flow uninstall\` in ${plan.hooksPathFrom} to remove it with the gate.`,
+    );
   if (plan.hooksKept.length > 0)
     lines.push(`  · kept core.hooksPath at ${HOOKS_DIR} — git still runs the hooks there: ${plan.hooksKept.join(" · ")}.`);
   if (plan.gateRunsFlow)
@@ -4228,9 +4243,11 @@ export function uninstallLines(plan: UninstallPlan, failures: readonly string[])
     );
   for (const failure of failures) lines.push(`  ✗ ${failure}`);
   lines.push(
-    plan.machineHolds === null
-      ? `  next: \`${plan.next}\` — removes the package.`
-      : `  next: \`${MACHINE_RUN}\` once no repo on this machine needs flow, then \`${plan.next}\` — removes the hooks, then the package.`,
+    plan.hooksPathFrom !== null
+      ? `  next: \`flow uninstall\` in ${plan.hooksPathFrom} — removes the gate and core.hooksPath.`
+      : plan.machineHolds === null
+        ? `  next: \`${plan.next}\` — removes the package.`
+        : `  next: \`${MACHINE_RUN}\` once no repo on this machine needs flow, then \`${plan.next}\` — removes the hooks, then the package.`,
   );
   return lines;
 }

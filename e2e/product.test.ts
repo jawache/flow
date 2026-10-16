@@ -733,10 +733,10 @@ describe("flow uninstall", () => {
     }
   });
 
-  // `core.hooksPath` IS THE WHOLE REPO'S, wherever the command is typed. From a subfolder there is
-  // no `.githooks/` beside the run, so the setting stays: unsetting it would leave the gate behind
-  // with nothing pointing git at it, and every commit unguarded.
-  it("run from a subfolder, leaves core.hooksPath and the gate as they were", () => {
+  // `core.hooksPath` IS THE WHOLE REPO'S, wherever the command is typed. Only a run at the repo's
+  // top folder unsets it: from a subfolder it would leave the gate behind with nothing pointing git
+  // at it, and every commit unguarded.
+  it("run from a subfolder, keeps core.hooksPath and the gate, and names the top folder to run it in", () => {
     const nested = newRepo();
     try {
       expect(flow(nested, ["init"]).code).toBe(0);
@@ -745,7 +745,11 @@ describe("flow uninstall", () => {
 
       const said = flow(sub, ["uninstall"]);
       expect(said.code, said.stdout + said.stderr).toBe(0);
-      expect(said.stdout).not.toContain("core.hooksPath");
+      const top = git(nested, ["rev-parse", "--show-toplevel"]).stdout.trim();
+      expect(said.stdout.trim().split("\n")[0]).toBe("flow uninstall — removed nothing from this folder.");
+      expect(said.stdout).toContain(
+        `  · kept core.hooksPath at .githooks — git reads it for the whole repo, and this run is in a subfolder. Run \`flow uninstall\` in ${top} to remove it with the gate.`,
+      );
       expect(git(nested, ["config", "--get", "core.hooksPath"]).stdout.trim(), "the repo's hooks path stays").toBe(".githooks");
       expect(existsSync(join(nested, ".githooks", "pre-commit")), "the gate stays").toBe(true);
 

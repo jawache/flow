@@ -2738,6 +2738,7 @@ const wired: UninstallFacts = {
   hasConfig: true,
   gateText: PRE_COMMIT,
   hooksPath: HOOKS_DIR,
+  subfolderOf: null,
   hooksDir: ["pre-commit"],
   hasFlowDir: true,
   linked: true,
@@ -2928,11 +2929,28 @@ describe("planUninstall — hooks of somebody's own", () => {
     expect(uninstallLines(plan, []).join("\n")).toContain("still runs flow, in a line flow did not write");
   });
 
-  it("leaves core.hooksPath when this run found no .githooks/ — run from a subfolder, the setting is still the whole repo's", () => {
-    const plan = planUninstall({ ...wired, gateText: null, hooksDir: null, hasFlowDir: false, linked: false });
+  it("keeps core.hooksPath when the run is in a subfolder, says so, and names the top folder to run it in", () => {
+    const plan = planUninstall({ ...wired, subfolderOf: "/home/me/repo", gateText: null, hooksDir: null, hasFlowDir: false, linked: false });
     expect(plan.hooksPath).toBe(false);
     expect(plan.hooksDir).toBe(false);
-    expect(uninstallLines(plan, []).join("\n")).not.toContain("core.hooksPath");
+    expect(plan.hooksPathFrom).toBe("/home/me/repo");
+    const said = uninstallLines(plan, []);
+    expect(said[0], "it saw flow's hooks path, so it does not say there is nothing of flow's").toBe("flow uninstall — removed nothing from this folder.");
+    expect(said).toContain(
+      "  · kept core.hooksPath at .githooks — git reads it for the whole repo, and this run is in a subfolder. Run `flow uninstall` in /home/me/repo to remove it with the gate.",
+    );
+    expect(said.at(-1)).toBe("  next: `flow uninstall` in /home/me/repo — removes the gate and core.hooksPath.");
+  });
+
+  it("unsets core.hooksPath at the top folder when .githooks/ is already gone", () => {
+    const plan = planUninstall({ ...wired, gateText: null, hooksDir: null });
+    expect(plan.hooksPath).toBe(true);
+    expect(plan.hooksPathFrom).toBeNull();
+    expect(uninstallLines(plan, [])).toContain("  - core.hooksPath (it was .githooks)");
+  });
+
+  it("names no top folder for a subfolder run when core.hooksPath points somewhere else", () => {
+    expect(planUninstall({ ...wired, subfolderOf: "/home/me/repo", hooksPath: ".husky/_" }).hooksPathFrom).toBeNull();
   });
 
   it("leaves a core.hooksPath that points somewhere else", () => {

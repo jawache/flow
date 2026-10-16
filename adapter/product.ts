@@ -27,6 +27,7 @@ import {
   lstatSync,
   mkdirSync,
   readdirSync,
+  realpathSync,
   rmdirSync,
   rmSync,
   symlinkSync,
@@ -341,6 +342,19 @@ export function runInit(cwd: string, args: readonly string[]): VerbResult {
 
 // ── uninstall ────────────────────────────────────────────────────────────────
 
+/**
+ * The repo's top folder, as git prints it, when `root` is a folder below it; null at the top folder
+ * or outside a repo. Both sides are real paths, so a symlinked temp folder compares equal.
+ */
+function subfolderOf(root: string): string | null {
+  try {
+    const top = execFileSync("git", ["-C", root, "rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return top === "" || realpathSync(top) === realpathSync(root) ? null : top;
+  } catch {
+    return null;
+  }
+}
+
 /** Everything uninstall found, before it removed anything. */
 function uninstallFacts(root: string, machineFlag: boolean): UninstallFacts {
   const manifest = readText(root, "package.json");
@@ -355,6 +369,7 @@ function uninstallFacts(root: string, machineFlag: boolean): UninstallFacts {
     hasConfig: existsSync(join(root, CONFIG_FILE)),
     gateText: readText(root, GATE_PATH),
     hooksPath: hooksPath(root),
+    subfolderOf: subfolderOf(root),
     hooksDir,
     hasFlowDir: existsSync(join(root, FLOW_DIR)),
     linked: lstatSync(join(root, PACKAGE_DIR), { throwIfNoEntry: false })?.isSymbolicLink() ?? false,
