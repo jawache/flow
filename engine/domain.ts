@@ -871,11 +871,18 @@ export interface SessionMarker {
  * One value rather than two loose ones, because the type means nothing without the id it belongs to.
  */
 export interface AgentOf {
-  /** `main` for the session itself, a subagent's `agent_id`, or `commit` for a gate run no agent can be named for. */
+  /** `main` for the session itself, a subagent's `agent_id`, or `commit`: see `UNNAMED_COMMIT`. */
   readonly agent: string;
   /** The type the subagent was started as, when the host said. Never beside `main` or `commit`. */
   readonly agentType?: string;
 }
+
+/**
+ * The agent a commit-gate run's rows name when no agent can be named: no marker, a stale one, or
+ * one written before markers held the agent. `commit` is also the stream such a commit's rows land
+ * in when no session claims it.
+ */
+export const UNNAMED_COMMIT: AgentOf = { agent: "commit" };
 
 /**
  * An agent named by an id and, maybe, a type — the one reading of the pair, wherever it is read

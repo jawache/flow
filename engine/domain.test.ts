@@ -99,6 +99,7 @@ import {
   readState,
   runRows,
   attribution,
+  UNNAMED_COMMIT,
   sanitise,
   spawnedAs,
   statePath,
@@ -114,6 +115,7 @@ import {
   type RowKind,
   type Attribution,
   type Row,
+  type AgentOf,
   type SessionMarker,
   type SessionState,
   type SpawnRecipe,
@@ -988,6 +990,13 @@ describe("the commit gate's session marker", () => {
   it("reads a marker written before the agent field as an unknown actor, not a wrong one", () => {
     expect(attribution({ session: "live", ts: fresh.ts }, "commit", now)).toStrictEqual({ session: "live", who: null });
     expect(attribution({ session: "live", agent: 7, ts: fresh.ts }, "commit", now).who).toBeNull();
+  });
+
+  it("logs a commit no agent can be named for as UNNAMED_COMMIT", () => {
+    const logged = (marker: SessionMarker): AgentOf => attribution(marker, "commit", now).who ?? UNNAMED_COMMIT;
+    expect(logged({ ...fresh, ts: "2026-09-04T02:00:00.000Z" }), "a stale marker").toBe(UNNAMED_COMMIT);
+    expect(logged({ session: "live", ts: fresh.ts }), "a marker without an agent").toBe(UNNAMED_COMMIT);
+    expect(UNNAMED_COMMIT).toStrictEqual({ agent: "commit" });
   });
 
   it("takes the age as an argument, because a clock inside a decision cannot be tested", () => {

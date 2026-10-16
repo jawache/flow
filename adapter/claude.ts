@@ -57,6 +57,7 @@ import {
   guard,
   recorder,
   runRows,
+  UNNAMED_COMMIT,
   type AgentOf,
   type Block,
   type Identity,
@@ -1116,9 +1117,7 @@ export async function runCommit(root: string, scope: CommitScope): Promise<HookR
         world: tape.taken(),
       },
     ]);
-  // An agent nobody can name — no marker, a stale one, or one written before markers held the
-  // agent — is `commit`, the word that names the stream such a commit's rows land in.
-  appendRows({ root, session, branch, who: who ?? { agent: "commit" } }, runRows("commit", outcome, files.length + gone.length));
+  appendRows({ root, session, branch, who: who ?? UNNAMED_COMMIT }, runRows("commit", outcome, files.length + gone.length));
 
   const blocks: Refused[] = outcome.effects
     .filter((effect): effect is Block => effect.do === "block")
