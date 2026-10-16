@@ -61,7 +61,7 @@ flow status
 The output should look like this:
 
 ```
-flow is ON — 4 guardrails · 2 breadcrumbs, every one resolved and able to fire
+flow is ON — 5 guardrails · 2 breadcrumbs, every one resolved and able to fire
   config     …/my-repo/flow.config.ts
   state      …/my-repo/.flow
   session    no live session has marked this worktree yet
@@ -76,6 +76,8 @@ flow is ON — 4 guardrails · 2 breadcrumbs, every one resolved and able to fir
     ✗ flow.noDeleteGuardrails  —  on flow.config.ts .githooks/pre-commit
         That command would delete this repo's guard surface (flow.config.ts binds every rule; the packs it …
   command
+    ✗ flow.noUninstall
+        `flow uninstall` removes this repo's guard: the commit gate, `core.hooksPath` and flow's hook regis…
     ✗ demo.noForcePush
         Force-pushing rewrites history everyone else has. Push a correcting commit, or ask first.
   commit
@@ -147,10 +149,10 @@ Every guardrail carries the inputs it must let through and the inputs it must re
 
 ```
 flow test
-# flow test — 7 cases over 4 guardrails, all green
+# flow test — 23 cases over 5 guardrails, all green
 ```
 
-Notice the count: 7 cases over 4 guardrails, all green.
+Notice the count: 23 cases over 5 guardrails, all green.
 
 ## 7 · Commit the guard
 
