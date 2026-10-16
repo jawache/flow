@@ -4027,9 +4027,10 @@ export function planInit(facts: InitFacts): InitPlan {
  *
  * A setup command that prints "done" is a command nobody can check. Failures are handed in rather
  * than thrown because a PARTIAL init is the interesting case: the config landed, the settings file
- * was read-only, and the person needs to know exactly that.
+ * was read-only, and the person needs to know exactly that. `colour` is `wantsColour`'s answer for
+ * the output this is written to.
  */
-export function initLines(plan: InitPlan, failures: readonly string[]): string[] {
+export function initLines(plan: InitPlan, failures: readonly string[], colour = false): string[] {
   const wrote: string[] = [];
   if (plan.config) wrote.push(plan.config.path);
   if (plan.gate) wrote.push(plan.gate.path);
@@ -4067,10 +4068,25 @@ export function initLines(plan: InitPlan, failures: readonly string[]): string[]
   for (const failure of failures) lines.push(`  ✗ ${failure}`);
   lines.push("  next: `flow status` — what is bound, and what is not wired yet.");
   // LAST, so it is what is left on the screen: a muted `·` note is too quiet for a commit gate git
-  // will never run.
+  // will never run. Bold red in a terminal, each line wrapped on its own so a pager or a terminal
+  // that cuts a line never leaves the colour on.
   const unwired = notInstalled(plan);
-  if (unwired !== null) lines.push("", ...notInstalledLines(unwired));
+  if (unwired !== null) lines.push("", ...notInstalledLines(unwired).map((line) => (colour ? `${BOLD_RED}${line}${RESET}` : line)));
   return lines;
+}
+
+const BOLD_RED = "\u001b[1;31m";
+const RESET = "\u001b[0m";
+
+/**
+ * Does this output get colour? Only in a terminal, and never with `NO_COLOR` set to anything but an
+ * empty string, which is the convention at no-color.org. A pipe, a file and a test harness get the
+ * plain text, so nothing that reads the output has escape codes to strip.
+ */
+export function wantsColour(terminal: boolean, noColor: string | undefined): boolean {
+  // `isTTY` is undefined, not false, on a stream that is not a terminal, whatever its type says.
+  if (!terminal) return false;
+  return noColor === undefined || noColor === "";
 }
 
 /** The other hooks git runs when none of them calls flow, so flow is not installed; else null. */

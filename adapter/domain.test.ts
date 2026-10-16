@@ -164,6 +164,7 @@ import {
   initLines,
   notInstalledLines,
   NOT_INSTALLED,
+  wantsColour,
   otherHooks,
   preCommitOf,
   settingsFileFor,
@@ -2358,6 +2359,34 @@ describe("planInit — when git already runs other hooks", () => {
     expect(block(plan)).toStrictEqual([]);
     expect(initLines(plan, []).join("\n")).toContain("· git runs hooks from .husky/_, and .husky/pre-commit calls flow");
     expect(initCode(plan, [])).toBe(0);
+  });
+
+  describe("in a terminal", () => {
+    const plan = planInit({ ...bare, ...husky(null) });
+    const BOLD_RED = "\u001b[1;31m";
+    const RESET = "\u001b[0m";
+
+    it("the block is bold red, line by line, and nothing else is", () => {
+      const said = initLines(plan, [], true);
+      const at = said.findIndex((line) => line.includes(NOT_INSTALLED));
+      expect(said.slice(at)).toStrictEqual(
+        notInstalledLines({ dir: ".husky/_", preCommit: ".husky/pre-commit", wired: false }).map((line) => `${BOLD_RED}${line}${RESET}`),
+      );
+      expect(said.slice(0, at).join("\n"), "the report above it stays plain").not.toContain("\u001b[");
+    });
+
+    it("is plain when colour is off, and a repo without the block never carries a colour code", () => {
+      expect(initLines(plan, [], false).join("\n")).not.toContain("\u001b[");
+      expect(initLines(planInit(bare), [], true).join("\n")).not.toContain("\u001b[");
+    });
+
+    it("colour is on only in a terminal, and NO_COLOR set to anything but empty turns it off", () => {
+      expect(wantsColour(true, undefined)).toBe(true);
+      expect(wantsColour(false, undefined), "piped, or written to a file").toBe(false);
+      expect(wantsColour(true, "1")).toBe(false);
+      expect(wantsColour(true, "0"), "any value, per no-color.org").toBe(false);
+      expect(wantsColour(true, ""), "an empty NO_COLOR is unset, per no-color.org").toBe(true);
+    });
   });
 
   it("a repo with no other hooks gets exactly what it got before: the setting, no block, 0", () => {

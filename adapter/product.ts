@@ -44,6 +44,7 @@ import {
   statusCode,
   statusLines,
   steerOf,
+  wantsColour,
   type HooksFolder,
   type InitFacts,
   type InitPlan,
@@ -329,7 +330,8 @@ export function runInit(cwd: string, args: readonly string[]): VerbResult {
   const plan = planInit(initFacts(root, args.includes("--empty")));
   const failures = perform(root, plan);
   return {
-    stdout: `${initLines(plan, failures).join("\n")}\n`,
+    // `flow.ts` writes this to the process's own stdout, so that is the terminal asked about.
+    stdout: `${initLines(plan, failures, wantsColour(process.stdout.isTTY, process.env["NO_COLOR"])).join("\n")}\n`,
     stderr: "",
     exitCode: initCode(plan, failures),
   };
