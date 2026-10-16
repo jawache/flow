@@ -156,13 +156,12 @@ export const textBan = defineCheck(
  *
  * One command at a time, so `git push origin main; ls -f` is no force push, and a heredoc's body
  * is text fed to a program, not arguments — unless a shell reads it, when the parse has already
- * made its lines commands of their own.
+ * made its lines commands of their own. A line that does not parse is refused when an entry's words
+ * all appear in it as whole words: a deterrent that cannot read a line errs toward refusing it.
  *
  * `wholeLine: true` is the escape hatch for a pattern that spans two commands on purpose
  * (`curl … | sh`): each entry is then a regex, compiled when the rule loads and tried anywhere in
- * the line as written, less its heredoc bodies. One that does not compile refuses to load. A line
- * that does not parse is refused when an entry's words all appear in it as whole words: a
- * deterrent that cannot read a line errs toward refusing it.
+ * the line as written, less its heredoc bodies. One that does not compile refuses to load.
  *
  * An entry that is not one command in words — a line that does not parse, two commands, a
  * backslash, the mark of a regex written before words, or a wrapper such as `sudo` or a `FOO=1`
@@ -174,22 +173,13 @@ export const textBan = defineCheck(
 export const banCommands = defineCheck(
   (opts: { ban: readonly string[]; wholeLine?: boolean }): Check => {
     if (opts.wholeLine === true) {
-      // Compiled once, at load: a pattern that does not compile is one load fault, not a throw on
-      // every command that runs.
-      const read = opts.ban.map((pattern) => {
-        try {
-          return { pattern, re: new RegExp(pattern) };
-        } catch (error) {
-          return { pattern, fault: `bans /${pattern}/ under \`wholeLine: true\`, which is not a regex: ${(error as Error).message}.` };
-        }
-      });
-      const patterns = read.flatMap((r) => (r.re === undefined ? [] : [{ pattern: r.pattern, re: r.re }]));
+      const { patterns, faults } = compiledPatterns(opts.ban);
       return withFaults((ctx) => {
         const line = ctx.command ?? "";
         const subject = elideHeredocBodies(line) ?? line;
         const hits = patterns.filter((p) => p.re.test(subject));
         return answer(ctx, hits.map((p) => `matches banned /${p.pattern}/`));
-      }, read.flatMap((r) => r.fault ?? []));
+      }, faults);
     }
     const { commands: banned, faults } = commandsInWords(
       opts.ban,
@@ -204,6 +194,26 @@ export const banCommands = defineCheck(
     }, faults);
   },
 );
+
+/**
+ * Each `wholeLine` entry compiled once, when the rule loads, and a load fault for each that is not
+ * a regex: a pattern that does not compile would otherwise throw on every command that runs.
+ */
+function compiledPatterns(entries: readonly string[]): {
+  patterns: readonly { readonly pattern: string; readonly re: RegExp }[];
+  faults: readonly string[];
+} {
+  const patterns: { pattern: string; re: RegExp }[] = [];
+  const faults: string[] = [];
+  for (const pattern of entries) {
+    try {
+      patterns.push({ pattern, re: new RegExp(pattern) });
+    } catch (error) {
+      faults.push(`bans /${pattern}/ under \`wholeLine: true\`, which is not a regex: ${(error as Error).message}.`);
+    }
+  }
+  return { patterns, faults };
+}
 
 /**
  * A command named in words — a `banCommands` entry, a `substitutionInProse` head — as the parse
