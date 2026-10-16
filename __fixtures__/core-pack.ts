@@ -50,7 +50,7 @@ export const core = definePack("core", {
 
   noForcePush: guardrail()
     .at(command)
-    .check(banCommands({ ban: ["git\\s+push[^\\n]*--force"] }))
+    .check(banCommands({ ban: ["git push --force"] }))
     .message("Never force-push — the history is shared.")
     .test({ pass: ["git push origin feature/x"], block: ["git push --force origin main"] }),
 

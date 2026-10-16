@@ -180,7 +180,7 @@ const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
  * A parameters object as the source that would supply it.
  *
  * KEYS ARE QUOTED WHEN THEY HAVE TO BE. The justfile pack's `recipes` map is keyed by a command
- * pattern — `"npx vitest"` — and printed bare it made the one thing this page exists to give a
+ * in words — `"npx vitest"` — and printed bare it made the one thing this page exists to give a
  * reader, a config they can paste, a syntax error. The machine test writes the same text into a
  * real config file now, so a key that needs quoting and does not get it fails a suite rather than
  * sitting on a page.

@@ -78,9 +78,11 @@ A builder owns its phase, not the plan — the verdict, the amendment and the co
 ```
 {
   "ban": [
-    "work\\s+plan\\s+(?:verdict|amend)\\b",
-    "work\\s+(?:save|task)\\b",
-    "work\\s+cost\\s+record\\b"
+    "work plan verdict",
+    "work plan amend",
+    "work save",
+    "work task",
+    "work cost record"
   ]
 }
 ```
@@ -113,6 +115,8 @@ EOF`
 - running `work cost record F7`
 - running `work plan status
 work plan amend F7 --add x`
+- running `/usr/local/bin/work plan verdict F7 --pass --cite x`
+- running `work --verbose plan verdict F7 --pass --cite x`
 
 ## `work.checkersDoNotWrite` — guardrail
 
@@ -153,7 +157,7 @@ The parent records verdicts; a box is ticked by the child that built it, with it
 ```
 {
   "ban": [
-    "work\\s+plan\\s+tick\\b"
+    "work plan tick"
   ]
 }
 ```
@@ -180,6 +184,8 @@ EOF`
 - running `work plan tick F7.B1 --evidence diff:abc`
 - running `work plan status
 work plan tick F7.B1 --evidence diff:abc`
+- running `/usr/local/bin/work plan tick F7.B1 --evidence diff:abc`
+- running `work --verbose plan tick F7.B1 --evidence diff:abc`
 
 ## `work.noAgentInboxItems` — guardrail
 
@@ -195,7 +201,7 @@ The inbox is the human's speccing queue — an agent raises a finding in chat, n
 ```
 {
   "ban": [
-    "work\\s+inbox\\s+new\\b"
+    "work inbox new"
   ]
 }
 ```
@@ -227,6 +233,8 @@ EOF`
 - running `echo hi && work inbox new --summary x`
 - running `echo hi
 work inbox new --summary x`
+- running `/usr/local/bin/work inbox new --summary x`
+- running `work --verbose inbox new --summary x`
 
 ## `work.noShellSubstitutionInProse` — guardrail
 

@@ -3783,7 +3783,7 @@ const MARKER = ["DO", "NOT", "COMMIT"].join("-");
 export const demo = definePack("demo", {
   noForcePush: guardrail()
     .at(command)
-    .check(banCommands({ ban: ["git\\s+push\\b[^\\n]*(--force|(^|\\s)-f(\\s|$))"] }))
+    .check(banCommands({ ban: ["git push --force", "git push -f"] }))
     .message("Force-pushing rewrites history everyone else has. Push a correcting commit, or ask first.")
     .test({ pass: ["git push origin main"], block: ["git push --force origin main"] }),
 

@@ -20,7 +20,7 @@
 // refuses them at the commit, but the rails are not the reason: a check that reads the world
 // directly cannot be driven by a case and cannot be replayed.
 //
-//   PATTERNS      the one regex sweep — textBan · banCommands · substitutionInProse
+//   PATTERNS      the one regex sweep — textBan · a command in words — banCommands · substitutionInProse
 //   PATHS         protectedPath · oneWriter · siblingExists · canonicalFiles
 //   CONTENT       jsonInvariant · symbolsInSibling
 //   THE COMMIT    changeTogether
@@ -81,13 +81,13 @@ function touched(ctx: Ctx): { readonly path: string; readonly content: string } 
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// PATTERNS — the one regex sweep, and the two checks that render it differently
+// PATTERNS — the one regex sweep over text, and the bans on a command
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 //
-// `text-ban` and `command-guard` were two files, two schemas and two tests for one question:
-// which of these patterns match this string, and where. They differ in what they are pointed at
-// and in the sentence they say about a hit, and in nothing else — so the sweep is written once
-// and each check says its own sentence.
+// A regex is for TEXT: a file's contents, a line matched whole. Which command runs is not text —
+// it is a program and its arguments in the parse — so `banCommands` names a command in words and
+// compares it with each command there, and keeps a regex only for `wholeLine`, a pattern across
+// two commands on purpose.
 
 /** One pattern that matched, and the 1-based line it matched on. */
 export interface PatternHit {
@@ -131,56 +131,108 @@ export const textBan = defineCheck(
 /**
  * Ban a dangerous command before it runs.
  *
- * A DETERRENT: the patterns ARE its scope, so matching nothing in a repo is the rule working, not
- * a rule watching the wrong place.
+ * A DETERRENT: the commands it names ARE its scope, so matching nothing in a repo is the rule
+ * working, not a rule watching the wrong place.
  *
- * ONE COMMAND AT A TIME, FROM ITS PROGRAM NAME. Each pattern is tried against the `text` of each
- * command in `ctx.commands` — the program that runs and its arguments, quotes removed — anchored
- * at its start. Matched against the raw line, a verb in one command paired with a target in the
- * next (`git push origin main; ls -f` read as a force push), and a banned command named inside
- * another's quoted argument read as run. A quoted argument keeps its newlines, so a pattern can
- * still span the lines of a commit message, which is why `[\s\S]*` appears in the packs' bans.
+ * EACH ENTRY IS A COMMAND IN WORDS — `"git push --force"` — read by the same parse as the line: a
+ * program, then the arguments that make it dangerous. A command in `ctx.commands` matches when its
+ * program, less its path, is the entry's, and its arguments include every one of the entry's, in
+ * any order. Arguments are compared whole, so `"work task"` is not `work task-list` and a quoted
+ * `'we tick later'` is not the word `tick`; a bundle of short flags counts letter by letter on both
+ * sides, so `"rm -rf"` is `rm -fr` and `rm -r -f`. A regex over a command's text could say none of
+ * that: it read `/usr/local/bin/work plan tick` as no tick and `rm -fr` as no `-rf`.
  *
- * A HEREDOC is text fed to a program, so its body is not matched — unless a shell reads it, when
- * the parse has already made its lines commands of their own. `matchHeredocs: true` matches each
- * command with the text of its OWN heredocs after its arguments: a rule about what a command is
- * fed, the message of `git commit -F - <<'EOF'`, needs it.
+ * One command at a time, so `git push origin main; ls -f` is no force push, and a heredoc's body
+ * is text fed to a program, not arguments — unless a shell reads it, when the parse has already
+ * made its lines commands of their own.
  *
  * `wholeLine: true` is the escape hatch for a pattern that spans two commands on purpose
- * (`curl … | sh`): it is tried anywhere in the line as written, less its heredoc bodies. A line
- * that does not parse is matched whole and as written: a deterrent that cannot read a line errs
- * toward refusing it.
+ * (`curl … | sh`): each entry is then a regex, tried anywhere in the line as written, less its
+ * heredoc bodies. A line that does not parse is refused when an entry's words all appear in it as
+ * whole words: a deterrent that cannot read a line errs toward refusing it.
+ *
+ * An entry that is not one command in words — a line that does not parse, two commands, or a
+ * backslash, the mark of a regex written before words — refuses to load, rather than arming a ban
+ * that matches nothing.
  *
  * docs/user/checks/ban-commands.md is the promise, case by case.
  */
 export const banCommands = defineCheck(
-  (opts: { ban: readonly string[]; matchHeredocs?: boolean; wholeLine?: boolean }): Check =>
-    (ctx) => {
-      const subjects = banSubjects(ctx, opts);
-      const hits = opts.ban.filter((pattern) => {
-        const re = new RegExp(subjects.anchored ? `^(?:${pattern})` : pattern);
-        return subjects.texts.some((text) => re.test(text));
-      });
-      return answer(ctx, hits.map((pattern) => `matches banned /${pattern}/`));
-    },
+  (opts: { ban: readonly string[]; wholeLine?: boolean }): Check => {
+    if (opts.wholeLine === true) {
+      return (ctx) => {
+        const line = ctx.command ?? "";
+        const subject = elideHeredocBodies(line) ?? line;
+        const hits = opts.ban.filter((pattern) => new RegExp(pattern).test(subject));
+        return answer(ctx, hits.map((pattern) => `matches banned /${pattern}/`));
+      };
+    }
+    const banned = opts.ban.flatMap((entry) => bannedCommand(entry) ?? []);
+    const faults = opts.ban
+      .filter((entry) => bannedCommand(entry) === null)
+      .map(
+        (entry) =>
+          `bans \`${entry}\`, which is not one command in words. Name a program and the arguments that make it dangerous, such as "git push --force"; a regex goes under \`wholeLine: true\`.`,
+      );
+    return withFaults((ctx) => {
+      const parsed = shellCommands(ctx);
+      const line = ctx.command ?? "";
+      const hits = banned.filter((b) => (parsed === null ? wordsInLine(b, line) : parsed.some((c) => commandIs(b, c))));
+      return answer(ctx, hits.map((b) => `matches banned \`${b.entry}\``));
+    }, faults);
+  },
 );
 
+/** A `banCommands` entry as the parse reads it: its program without its path, and its arguments as compared. */
+interface BannedCommand {
+  readonly entry: string;
+  readonly program: string;
+  readonly args: readonly string[];
+}
+
+/** The entry parsed as one command, or null when it is not one: no parse, not one command, or a backslash. */
+function bannedCommand(entry: string): BannedCommand | null {
+  if (entry.includes("\\")) return null;
+  const parsed = parseCommandLine(entry);
+  if (parsed?.length !== 1) return null;
+  const [c] = parsed as [ShellCommand];
+  const program = programName(c.program);
+  if (program === "" || c.heredocs.length > 0 || c.substitutions.length > 0 || c.redirects.length > 0) return null;
+  return { entry, program, args: comparedArgs(c.args) };
+}
+
+/** An argument of one `-` and letters, `-rf`: a bundle of short flags, each letter one flag. */
+const SHORT_FLAGS = /^-[A-Za-z]+$/;
+
+/** Arguments as `banCommands` compares them: each whole, except a short-flag bundle, which is one flag per letter. */
+function comparedArgs(args: readonly string[]): string[] {
+  return args.flatMap((a) => (SHORT_FLAGS.test(a) ? Array.from(a.slice(1).matchAll(/[A-Za-z]/g), ([letter]) => `-${letter}`) : [a]));
+}
+
+/** The command runs the banned program, and its arguments include every banned argument. */
+function commandIs(banned: BannedCommand, c: ShellCommand): boolean {
+  if (programName(c.program) !== banned.program) return false;
+  const has = new Set(comparedArgs(c.args));
+  return banned.args.every((a) => has.has(a));
+}
+
 /**
- * What a `banCommands` pattern is tried against: each command's text, anchored at its program
- * name — or, under `wholeLine` or for a line that does not parse, the one line, matched anywhere.
+ * What ends a word in a line that does not parse: whitespace, a quote, a backtick, and the shell's
+ * operators. The line has no parse to ask, so this is the line as written, matched whole.
  */
-function banSubjects(
-  ctx: CommandFacts,
-  opts: { readonly matchHeredocs?: boolean; readonly wholeLine?: boolean },
-): { readonly texts: readonly string[]; readonly anchored: boolean } {
-  const line = ctx.command ?? "";
-  const parsed = shellCommands(ctx);
-  if (parsed === null) return { texts: [line], anchored: false };
-  if (opts.wholeLine === true) {
-    return { texts: [elideHeredocBodies(line) ?? line], anchored: false };
-  }
-  const texts = parsed.map((c) => (opts.matchHeredocs === true ? [c.text, ...c.heredocs.map((h) => h.body)].join("\n") : c.text));
-  return { texts, anchored: true };
+const EDGE = String.raw`\s'"\x60;&|()<>`;
+
+/**
+ * For a line that does not parse: the entry's program, after any path, and each of its arguments
+ * appear in the line as whole words — a short flag inside any bundle of short flags.
+ */
+function wordsInLine(banned: BannedCommand, line: string): boolean {
+  const whole = (word: string): RegExp => new RegExp(`(?:^|[${EDGE}])${word}(?=$|[${EDGE}])`);
+  const words = [
+    whole(`(?:[^${EDGE}]*/)?${escapeRe(banned.program)}`),
+    ...banned.args.map((a) => whole(/^-[A-Za-z]$/.test(a) ? `-[A-Za-z]*${a.slice(1)}[A-Za-z]*` : escapeRe(a))),
+  ];
+  return words.every((re) => re.test(line));
 }
 
 /**
