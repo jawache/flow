@@ -60,7 +60,7 @@ Read `existed` when it is set.
 | `args` | Its arguments, in order, each as the program receives it, with quotes removed |
 | `text` | `program` and `args` joined by single spaces. `banCommands` matches its patterns against this |
 | `heredocs` | Each heredoc the command is fed, as `{ body, quoted }`. `quoted` is `true` for a delimiter in quotes or after a backslash, such as `<<'EOF'`, where the shell runs nothing in the body |
-| `substitutions` | Each `$( … )` or backtick substitution the shell runs while building this command's arguments and unquoted heredocs, as `{ text, backtick }` |
+| `substitutions` | Each `$( … )` or backtick substitution the shell runs while building this command's arguments and unquoted heredocs, as `{ text, backtick, commands, argument }`. `commands` lists the commands it runs, nested ones included, as `ctx.commands` lists them. `argument` is the index in `args` of the argument that is this substitution and nothing else, such as `-m "$(cat <<'EOF' … EOF)"`, and `null` otherwise |
 | `redirects` | Each redirect on the command, as `{ operator, target }`, such as `{ operator: ">", target: "notes.md" }`. A redirect on a group or a loop, such as `{ …; } > out.log`, is listed on each command inside it |
 | `nested` | `true` for a command inside a substitution, a `<( … )`, or a string given to `bash -c`, `sh -c` or `eval` |
 

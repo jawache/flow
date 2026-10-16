@@ -745,6 +745,8 @@ describe("commitMessage from a heredoc in a $( … )", () => {
     expect(messageOf("git commit -m \"$(cat <<'EOF'\nfix: a thing\n\nwhy: x\nEOF\n)\"")).toBe("fix: a thing\n\nwhy: x");
     expect(messageOf('git commit -m "$(cat <<EOF\nfix: a thing\nEOF\n)"')).toBe("fix: a thing");
     expect(messageOf("git commit -m \"$(cat <<'EOF'\nfix: a\nEOF\n)\" -m body")).toBe("fix: a\n\nbody");
+    // git's own options before `commit`, and a wrapper before git: the argument is found all the same.
+    expect(messageOf("sudo git -C '/a b' commit -m \"$(cat <<'EOF'\nfix: a\nEOF\n)\"")).toBe("fix: a");
   });
 
   it("passes any other substitution as written, since what it prints is not on the line", () => {

@@ -415,6 +415,10 @@ export interface ShellHeredoc {
 export interface ShellSubstitution {
   readonly text: string;
   readonly backtick: boolean;
+  /** The commands it runs, nested ones included, as `ctx.commands` lists them. */
+  readonly commands: readonly ShellCommand[];
+  /** The index in its command's `args` of the argument that is this substitution and nothing else, or null. */
+  readonly argument: number | null;
 }
 
 /** One redirect on a command: its operator (`>`, `>>`, `<`, `2>&1`'s `>&` …) and its target word. */
@@ -669,10 +673,22 @@ function shellWord(w: Word): ShellWord {
   return pieces;
 }
 
-/** The command inside a substitution's text, without its `$( … )` or backticks. */
-function substitutionText(text: string): ShellSubstitution {
+/**
+ * One substitution: the command inside its text, without its `$( … )` or backticks, and the
+ * commands the walk read from it. Its argument is set by the command it builds, once that command
+ * knows where its arguments start.
+ */
+function substitution(text: string, body: readonly ShellStep[]): ShellSubstitution {
   const backtick = text.startsWith("`");
-  return { text: (backtick ? text.slice(1, -1) : text.slice(2, -1)).trim(), backtick };
+  return { text: (backtick ? text.slice(1, -1) : text.slice(2, -1)).trim(), backtick, commands: stepCommands(body), argument: null };
+}
+
+/** Is this word one substitution and nothing else — bare, or alone inside double quotes? */
+function wholeSubstitution(w: Word): boolean {
+  const [part, ...rest] = w.parts ?? [];
+  if (part === undefined || rest.length > 0) return false;
+  if (part.type === "CommandExpansion") return true;
+  return part.type === "DoubleQuoted" && part.parts.length === 1 && part.parts[0]?.type === "CommandExpansion";
 }
 
 /**
@@ -740,11 +756,12 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
     if (own) foreign.depth -= 1;
   };
   // A script that runs apart from the line's own shell — a substitution, a `bash -c` string — is
-  // one scope: what it changes stays in it.
-  const scope = (fill: (body: ShellStep[]) => void, out: ShellStep[]): void => {
+  // one scope: what it changes stays in it. The steps it read are returned.
+  const scope = (fill: (body: ShellStep[]) => void, out: ShellStep[]): readonly ShellStep[] => {
     const body: ShellStep[] = [];
     fill(body);
     out.push({ kind: "scope", body });
+    return body;
   };
   const source = (text: string, out: ShellStep[]): void => {
     foreign.depth += 1;
@@ -759,10 +776,12 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
   };
   const wordPart = (part: WordPart, subs: ShellSubstitution[] | null, out: ShellStep[]): void => {
     switch (part.type) {
-      case "CommandExpansion":
-        subs?.push(substitutionText(part.text));
-        scope((body) => { script(part.script, true, body); }, out);
+      case "CommandExpansion": {
+        // Read whether or not a command takes the substitution: `[[ $(rm a) == b ]]` runs it too.
+        const body = scope((steps) => { script(part.script, true, steps); }, out);
+        subs?.push(substitution(part.text, body));
         return;
+      }
       case "ProcessSubstitution":
         scope((body) => { script(part.script, true, body); }, out);
         return;
@@ -826,10 +845,11 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
       case "ArithmeticWord":
         for (const part of e.parts ?? []) wordPart(part, subs, out);
         return;
-      case "ArithmeticCommandExpansion":
-        subs?.push(substitutionText(e.text));
-        scope((body) => { script(e.script, true, body); }, out);
+      case "ArithmeticCommandExpansion": {
+        const body = scope((steps) => { script(e.script, true, steps); }, out);
+        subs?.push(substitution(e.text, body));
         return;
+      }
     }
   };
   const test = (e: TestExpression, out: ShellStep[]): void => {
@@ -979,6 +999,14 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
     const heredocs: ShellHeredoc[] = [];
     const redirects: Gathered[] = [];
     const subs: ShellSubstitution[] = [];
+    // The substitutions that are a whole word, and that word's place in argv.
+    const whole = new Map<ShellSubstitution, number>();
+    const argWord = (w: Word): void => {
+      const from = subs.length;
+      word(w, subs, inner);
+      const [only] = subs.slice(from);
+      if (only !== undefined && subs.length === from + 1 && wholeSubstitution(w)) whole.set(only, argv.length - 1);
+    };
     const inner: ShellStep[] = [];
     for (const p of c.prefix) {
       if (p.type === "Assignment") assignment(p.value, subs, inner);
@@ -987,13 +1015,13 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
     if (c.name !== undefined) {
       argv.push(c.name.value);
       words.push(shellWord(c.name));
-      word(c.name, subs, inner);
+      argWord(c.name);
     }
     for (const s of c.suffix) {
       if (s.type === "Word") {
         argv.push(s.value);
         words.push(shellWord(s));
-        word(s, subs, inner);
+        argWord(s);
       } else if (s.type === "Assignment") {
         const value = s.value.type === "Word" ? s.value.value : `(${s.value.elements.map((e) => e.value).join(" ")})`;
         const head = `${s.name}${s.index === undefined ? "" : `[${s.index.value}]`}${s.append ? "+=" : "="}`;
@@ -1007,7 +1035,12 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
     const at = wrapperWords(argv);
     const [program, ...args] = argv.slice(at);
     if (program !== undefined) {
-      const command = { program, args, text: [program, ...args].join(" "), heredocs, substitutions: subs, redirects: redirects.map(publicRedirect), nested };
+      const argument = (sub: ShellSubstitution): number | null => {
+        const index = (whole.get(sub) ?? -1) - at - 1;
+        return index < 0 ? null : index;
+      };
+      const substitutions = subs.map((sub) => ({ ...sub, argument: argument(sub) }));
+      const command = { program, args, text: [program, ...args].join(" "), heredocs, substitutions, redirects: redirects.map(publicRedirect), nested };
       out.push({ kind: "command", command, words, at, redirects: redirects.map(stepRedirect), before: inner });
     } else {
       // Assignments alone set the shell's variables, once the substitutions in their values have run.

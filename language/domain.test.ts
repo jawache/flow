@@ -532,7 +532,7 @@ describe("parseCommandLine — the six fields", () => {
 
   it("records the substitutions the shell runs, with which spelling, and not the ones it does not", () => {
     const [gh] = parseCommandLine('gh issue comment 1 --body "run `just test` and $(date)"') ?? [];
-    expect(gh?.substitutions).toEqual([
+    expect(gh?.substitutions.map(({ text, backtick }) => ({ text, backtick }))).toEqual([
       { text: "just test", backtick: true },
       { text: "date", backtick: false },
     ]);
@@ -540,7 +540,28 @@ describe("parseCommandLine — the six fields", () => {
     expect(only("gh issue comment 1 --body 'run `just test` first'").substitutions).toEqual([]);
     expect(only("gh pr create --body-file - <<'EOF'\nRun `just test`\nEOF").substitutions).toEqual([]);
     const [cat] = parseCommandLine("cat <<EOF\nRun `just test`\nEOF") ?? [];
-    expect(cat?.substitutions).toEqual([{ text: "just test", backtick: true }]);
+    expect(cat?.substitutions.map((sub) => [sub.text, sub.backtick])).toEqual([["just test", true]]);
+  });
+
+  it("lists the commands each substitution runs, as ctx.commands lists them, nested ones included", () => {
+    const parsed = parseCommandLine('echo "$(git log -1 | head -c `wc -c < f`)"') ?? [];
+    const [echo] = parsed;
+    const [sub] = echo?.substitutions ?? [];
+    expect(sub?.commands.map((c) => c.program)).toEqual(["git", "head", "wc"]);
+    expect(sub?.commands[0], "the same command ctx.commands lists").toBe(parsed[1]);
+    expect(sub?.commands.map((c) => c.nested)).toEqual([true, true, true]);
+  });
+
+  it("records the argument a substitution is the whole of, and no argument for one inside a longer word", () => {
+    const argument = (line: string): (number | null)[] | undefined => parseCommandLine(line)?.[0]?.substitutions.map((sub) => sub.argument);
+    expect(argument('git commit -m "$(cat <<\'EOF\'\nfix: a\nEOF\n)"')).toEqual([2]);
+    expect(argument("echo $(date) `whoami`")).toEqual([0, 1]);
+    expect(argument("sudo -u root echo x $(date)"), "counted from the program, past the wrappers").toEqual([1]);
+    expect(argument('echo "today: $(date)"')).toEqual([null]);
+    expect(argument('echo "$(date)$(whoami)"')).toEqual([null, null]);
+    expect(argument("echo --message=$(date)")).toEqual([null]);
+    expect(argument("$(which ls) -la")).toEqual([null]);
+    expect(argument("cat <<EOF\n$(date)\nEOF")).toEqual([null]);
   });
 });
 
