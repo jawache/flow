@@ -883,7 +883,7 @@ describe("flow uninstall", () => {
     });
   });
 
-  it("lists a step it could not do, still does the others, and answers 1", () => {
+  it("a dev dependency's .claude/settings.json that would not parse is not written, and answers 1", () => {
     const broken = newRepo();
     const machine = settingsHome();
     try {
