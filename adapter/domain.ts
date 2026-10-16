@@ -3742,20 +3742,29 @@ export interface HooksFolder {
   readonly preCommitExecutable: boolean;
 }
 
+/**
+ * What the pre-commit hook git runs lacks before it runs flow's gate: `add` flow's two lines;
+ * `create` the hook, which is not there; `chmod` a hook that calls flow but that git ignores,
+ * because it lacks the execute bit; or `add-and-chmod`, both.
+ */
+export type HookFix = "add" | "create" | "chmod" | "add-and-chmod";
+
 /** Git runs other hooks, and whether the pre-commit hook it runs calls flow. */
 export interface OtherHooks {
   /** The folder git runs hooks from. */
   readonly dir: string;
   /** The pre-commit hook a person edits to call flow. */
   readonly preCommit: string;
-  /** It calls flow's gate already, and git runs it, so flow is installed. */
-  readonly wired: boolean;
-  /**
-   * The first fix, null once wired: `add` flow's two lines; `create` the hook, which is not there;
-   * `chmod` a hook that calls flow but that git ignores, because it lacks the execute bit; or
-   * `add-and-chmod`, both.
-   */
-  readonly fix: "add" | "create" | "chmod" | "add-and-chmod" | null;
+  /** The first fix, or null when that hook calls flow's gate and git runs it: flow is installed. */
+  readonly fix: HookFix | null;
+}
+
+/** Other hooks that do not run flow's gate yet, so flow is not installed. */
+export type UnwiredHooks = OtherHooks & { readonly fix: HookFix };
+
+/** Does git run other hooks without flow's gate among them? */
+export function unwired(other: OtherHooks | null): other is UnwiredHooks {
+  return other !== null && other.fix !== null;
 }
 
 /**
@@ -3796,10 +3805,10 @@ export function otherHooks(hooksPath: string | null, folder: HooksFolder): Other
   // commit scrolls past. That bites only when git runs the file itself. Husky's stub in `.husky/_`
   // runs `.husky/pre-commit` with `sh`, so that file needs no execute bit, and is never created
   // for husky either: its stub skips a hook that is not there.
-  if (preCommit !== posix.join(folder.dir, "pre-commit")) return { dir: folder.dir, preCommit, wired: calls, fix: calls ? null : "add" };
+  if (preCommit !== posix.join(folder.dir, "pre-commit")) return { dir: folder.dir, preCommit, fix: calls ? null : "add" };
   const fix =
     folder.preCommit === null ? "create" : folder.preCommitExecutable ? (calls ? null : "add") : calls ? "chmod" : "add-and-chmod";
-  return { dir: folder.dir, preCommit, wired: fix === null, fix };
+  return { dir: folder.dir, preCommit, fix };
 }
 
 /** The words the block opens with, fixed by the docs, for every reader that looks for them. */
@@ -3820,7 +3829,7 @@ const GATE_LINES = [`      ${GATE_LOCAL_LINE}`, `      ${GATE_RUN_LINE}`];
  * itself, or the execute bit. Init never takes either fix itself: editing or creating another
  * tool's hook, or moving its hooks, is the person's call.
  */
-export function notInstalledLines(other: OtherHooks): string[] {
+export function notInstalledLines(other: UnwiredHooks): string[] {
   const [why, first] = firstFix(other);
   return [
     `${NOT_INSTALLED}. Git runs hooks from ${other.dir}, and ${why} no commit runs flow's gate.`,
@@ -3831,7 +3840,7 @@ export function notInstalledLines(other: OtherHooks): string[] {
 }
 
 /** Why the pre-commit hook does not run flow's gate, as the block's first line ends, and the fix. */
-function firstFix(other: OtherHooks): [string, string[]] {
+function firstFix(other: UnwiredHooks): [string, string[]] {
   const hook = other.preCommit;
   const chmod = `\`chmod +x ${hook}\``;
   switch (other.fix) {
@@ -3844,7 +3853,7 @@ function firstFix(other: OtherHooks): [string, string[]] {
         `${hook} does not call flow and is not executable, so git ignores it and`,
         [`  - Add these two lines to the end of ${hook}, then run ${chmod} so git runs it:`, ...GATE_LINES],
       ];
-    default:
+    case "add":
       return [`${hook} does not call flow, so`, [`  - Add these two lines to the end of ${hook}:`, ...GATE_LINES]];
   }
 }
@@ -4104,11 +4113,11 @@ export function initLines(plan: InitPlan, failures: readonly string[], colour = 
     );
   if (plan.hooksPath) wrote.push(SET_HOOKS_PATH);
 
-  const unwired = notInstalled(plan);
+  const notWired = notInstalled(plan);
   const lines: string[] =
     wrote.length > 0
       ? ["flow init — created:", ...wrote.map((what) => `  + ${what}`)]
-      : unwired === null
+      : notWired === null
         ? ["flow init — already set up here; nothing to do."]
         : ["flow init — nothing new to write here."];
 
@@ -4123,14 +4132,14 @@ export function initLines(plan: InitPlan, failures: readonly string[], colour = 
         `every other key in that file is somebody's, and there is no safe merge into bytes nobody could parse. ` +
         `Fix the JSON (a trailing comma, or a // comment) and run \`flow init\` again. Until then no rail fires.`,
     );
-  if (plan.otherHooks?.wired === true)
+  if (plan.otherHooks !== null && plan.otherHooks.fix === null)
     lines.push(`  · ${wiredLine(plan.otherHooks)}, so core.hooksPath was left as it is.`);
   for (const failure of failures) lines.push(`  ✗ ${failure}`);
   lines.push("  next: `flow status` — what is bound, and what is not wired yet.");
   // LAST, so it is what is left on the screen: a muted `·` note is too quiet for a commit gate git
   // will never run. Bold red in a terminal, each line wrapped on its own so a pager or a terminal
   // that cuts a line never leaves the colour on.
-  if (unwired !== null) lines.push("", ...notInstalledLines(unwired).map((line) => (colour ? `${BOLD_RED}${line}${RESET}` : line)));
+  if (notWired !== null) lines.push("", ...notInstalledLines(notWired).map((line) => (colour ? `${BOLD_RED}${line}${RESET}` : line)));
   return lines;
 }
 
@@ -4149,8 +4158,8 @@ export function wantsColour(terminal: boolean, noColor: string | undefined): boo
 }
 
 /** The other hooks git runs when none of them calls flow, so flow is not installed; else null. */
-function notInstalled(plan: InitPlan): OtherHooks | null {
-  return plan.otherHooks !== null && !plan.otherHooks.wired ? plan.otherHooks : null;
+function notInstalled(plan: InitPlan): UnwiredHooks | null {
+  return unwired(plan.otherHooks) ? plan.otherHooks : null;
 }
 
 /**
@@ -4478,9 +4487,9 @@ function hooksPathFitting(facts: Pick<StatusFacts, "hooksPath" | "hooksFolder">)
       ok: false,
       detail: `core.hooksPath is ${facts.hooksPath ?? "unset"} — run \`${SET_HOOKS_PATH}\`. It is per-clone, so every fresh checkout needs it.`,
     };
-  return other.wired
-    ? { id: "hooks-path", ok: true, detail: wiredLine(other) }
-    : { id: "hooks-path", ok: false, detail: notInstalledLines(other).join("\n") };
+  return unwired(other)
+    ? { id: "hooks-path", ok: false, detail: notInstalledLines(other).join("\n") }
+    : { id: "hooks-path", ok: true, detail: wiredLine(other) };
 }
 
 /**

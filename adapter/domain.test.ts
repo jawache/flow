@@ -2274,7 +2274,6 @@ describe("other hooks — what counts, and the pre-commit hook a person edits", 
     expect(otherHooks(null, folder(["pre-push.sample", "pre-push"]))).toStrictEqual({
       dir: ".git/hooks",
       preCommit: ".git/hooks/pre-commit",
-      wired: false,
       fix: "create",
     });
   });
@@ -2303,8 +2302,8 @@ describe("other hooks — what counts, and the pre-commit hook a person edits", 
   });
 
   it("is wired once the pre-commit hook a person edits calls flow, and a comment naming it does not", () => {
-    expect(otherHooks(".husky/_", folder([], ".husky/_", WIRED))?.wired).toBe(true);
-    expect(otherHooks(".husky/_", folder([], ".husky/_", "#!/bin/sh\n# flow hook commit\nnpm test\n"))?.wired).toBe(false);
+    expect(otherHooks(".husky/_", folder([], ".husky/_", WIRED))?.fix).toBeNull();
+    expect(otherHooks(".husky/_", folder([], ".husky/_", "#!/bin/sh\n# flow hook commit\nnpm test\n"))?.fix).not.toBeNull();
   });
 
   describe("a pre-commit hook git runs itself counts only with the execute bit, as git runs it", () => {
@@ -2312,15 +2311,12 @@ describe("other hooks — what counts, and the pre-commit hook a person edits", 
       otherHooks(null, folder(["pre-push", ...(preCommit === null ? [] : ["pre-commit"])], ".git/hooks", preCommit, executable));
 
     it("calls flow but is not executable: git ignores it, so not wired, and the fix is the execute bit", () => {
-      expect(lfs(WIRED, false)).toStrictEqual({ dir: ".git/hooks", preCommit: ".git/hooks/pre-commit", wired: false, fix: "chmod" });
-      expect(otherHooks("hooks", folder([], "hooks", WIRED, false)), "a core.hooksPath folder's own pre-commit too").toMatchObject({
-        wired: false,
-        fix: "chmod",
-      });
+      expect(lfs(WIRED, false)).toStrictEqual({ dir: ".git/hooks", preCommit: ".git/hooks/pre-commit", fix: "chmod" });
+      expect(otherHooks("hooks", folder([], "hooks", WIRED, false))?.fix, "a core.hooksPath folder's own pre-commit too").toBe("chmod");
     });
 
     it("calls flow and is executable: wired", () => {
-      expect(lfs(WIRED, true)).toStrictEqual({ dir: ".git/hooks", preCommit: ".git/hooks/pre-commit", wired: true, fix: null });
+      expect(lfs(WIRED, true)).toStrictEqual({ dir: ".git/hooks", preCommit: ".git/hooks/pre-commit", fix: null });
     });
 
     it("not there yet: the fix is to create it", () => {
@@ -2336,7 +2332,6 @@ describe("other hooks — what counts, and the pre-commit hook a person edits", 
       expect(otherHooks(".husky/_", folder([], ".husky/_", WIRED, false))).toStrictEqual({
         dir: ".husky/_",
         preCommit: ".husky/pre-commit",
-        wired: true,
         fix: null,
       });
       expect(otherHooks(".husky/_", folder([], ".husky/_", null, false))?.fix, "and is never created: the stub skips a missing hook").toBe("add");
@@ -2353,7 +2348,7 @@ describe("other hooks — what counts, and the pre-commit hook a person edits", 
 
   it("init's plan carries it, and a repo with no other hooks plans none", () => {
     expect(planInit(bare).otherHooks).toBeNull();
-    expect(planInit({ ...bare, ...husky(null) }).otherHooks).toStrictEqual({ dir: ".husky/_", preCommit: ".husky/pre-commit", wired: false, fix: "add" });
+    expect(planInit({ ...bare, ...husky(null) }).otherHooks).toStrictEqual({ dir: ".husky/_", preCommit: ".husky/pre-commit", fix: "add" });
     expect(planInit({ ...bare, ...gitHooks(["pre-push"]) }).otherHooks?.dir).toBe(".git/hooks");
     expect(planInit({ ...bare, ...husky(null), isGit: false }).otherHooks, "outside git there are no hooks to keep").toBeNull();
     expect(planInit({ ...bare, hooksPath: ".husky/_", hooksFolder: null }).otherHooks, "nor when git could not say").toBeNull();
@@ -2382,7 +2377,7 @@ describe("planInit — when git already runs other hooks", () => {
     it("ends with the block: the folder git runs hooks from, and both fixes", () => {
       const said = initLines(plan, []);
       const lines = block(plan);
-      expect(lines, "the block is the end of the output").toStrictEqual(notInstalledLines({ dir: ".husky/_", preCommit: ".husky/pre-commit", wired: false, fix: "add" }));
+      expect(lines, "the block is the end of the output").toStrictEqual(notInstalledLines({ dir: ".husky/_", preCommit: ".husky/pre-commit", fix: "add" }));
       expect(said[said.length - lines.length - 1], "set apart from the report by a blank line").toBe("");
       const text = lines.join("\n");
       expect(text).toContain("Git runs hooks from .husky/_");
@@ -2402,7 +2397,7 @@ describe("planInit — when git already runs other hooks", () => {
       const at = lines.findIndex((line) => line.includes("Add these two lines to the end of .husky/pre-commit:"));
       const added = lines.slice(at + 1, at + 3).map((line) => line.trim());
       const followed = `#!/bin/sh\nnpm test\n${added.join("\n")}\n`;
-      expect(planInit({ ...bare, ...husky(followed) }).otherHooks?.wired).toBe(true);
+      expect(planInit({ ...bare, ...husky(followed) }).otherHooks?.fix).toBeNull();
     });
   });
 
@@ -2459,7 +2454,7 @@ describe("planInit — when git already runs other hooks", () => {
         .map((line) => line.trim())
         .join("\n")}\n`;
       const plan = planInit({ ...bare, ...gitHooks(["pre-push", "pre-commit"], created, true) });
-      expect(plan.otherHooks?.wired).toBe(true);
+      expect(plan.otherHooks?.fix).toBeNull();
       expect(block(plan)).toStrictEqual([]);
       expect(initCode(plan, [])).toBe(0);
     });
@@ -2510,7 +2505,7 @@ describe("planInit — when git already runs other hooks", () => {
       const said = initLines(plan, [], true);
       const at = said.findIndex((line) => line.includes(NOT_INSTALLED));
       expect(said.slice(at)).toStrictEqual(
-        notInstalledLines({ dir: ".husky/_", preCommit: ".husky/pre-commit", wired: false, fix: "add" }).map((line) => `${BOLD_RED}${line}${RESET}`),
+        notInstalledLines({ dir: ".husky/_", preCommit: ".husky/pre-commit", fix: "add" }).map((line) => `${BOLD_RED}${line}${RESET}`),
       );
       expect(said.slice(0, at).join("\n"), "the report above it stays plain").not.toContain("\u001b[");
     });
@@ -3339,7 +3334,7 @@ describe("status — does git run the commit gate", () => {
   describe("other hooks that do not call flow", () => {
     it("husky's: red, in the words of init's block — the folder and both fixes — and exits 1", () => {
       const { s, fitting, line, code } = judged(husky("npm test\n"));
-      const other = { dir: ".husky/_", preCommit: ".husky/pre-commit", wired: false, fix: "add" } as const;
+      const other = { dir: ".husky/_", preCommit: ".husky/pre-commit", fix: "add" } as const;
       expect(fitting).toStrictEqual({ id: "hooks-path", ok: false, detail: notInstalledLines(other).join("\n") });
       expect(line).toBe(`  ✗ hooks-path: ${NOT_INSTALLED}. Git runs hooks from .husky/_, and .husky/pre-commit does not call flow, so no commit runs flow's gate.`);
       const said = statusLines(s).join("\n");
@@ -3369,7 +3364,7 @@ describe("status — does git run the commit gate", () => {
       expect(fitting).toStrictEqual({
         id: "hooks-path",
         ok: false,
-        detail: notInstalledLines({ dir: ".git/hooks", preCommit: ".git/hooks/pre-commit", wired: false, fix: "chmod" }).join("\n"),
+        detail: notInstalledLines({ dir: ".git/hooks", preCommit: ".git/hooks/pre-commit", fix: "chmod" }).join("\n"),
       });
       expect(fitting?.detail).toContain("calls flow but is not executable, so git ignores it");
       expect(code).toBe(1);
