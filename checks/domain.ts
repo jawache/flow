@@ -167,11 +167,12 @@ export const banCommands = defineCheck(
         return answer(ctx, hits.map((pattern) => `matches banned /${pattern}/`));
       };
     }
-    const banned = opts.ban.flatMap((entry) => bannedCommand(entry) ?? []);
-    const faults = opts.ban
-      .filter((entry) => bannedCommand(entry) === null)
+    const read = opts.ban.map((entry) => ({ entry, command: bannedCommand(entry) }));
+    const banned = read.flatMap((r) => r.command ?? []);
+    const faults = read
+      .filter((r) => r.command === null)
       .map(
-        (entry) =>
+        ({ entry }) =>
           `bans \`${entry}\`, which is not one command in words. Name a program and the arguments that make it dangerous, such as "git push --force"; a regex goes under \`wholeLine: true\`.`,
       );
     return withFaults((ctx) => {

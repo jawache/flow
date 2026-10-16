@@ -128,6 +128,9 @@ Commit / PR / issue body contains Claude or Anthropic attribution. Remove it (th
 - running `git -C /repo/worktree commit -m "fix(auth): renew the session"`
 - running `git log --grep "Co-Authored-By: Claude"`
 - running `git commit -m "fix(auth): renew the session" && echo "Co-Authored-By: Claude"`
+- running `gh pr view 1 && echo "Co-Authored-By: Claude"`
+- running `gh api repos/x/y -f body="Co-Authored-By: Claude"`
+- running `work plan note --body "Co-Authored-By: Claude"`
 
 **blocks**
 
@@ -164,6 +167,7 @@ EOF`
 
 Co-Authored-By: Claude <noreply@anthropic.com>"`
 - running `gh pr create --body "Co-Authored-By: Claude"`
+- running `/usr/local/bin/gh pr create --body "Co-Authored-By: Claude"`
 - running `work gh pr create --title x --body "Co-Authored-By: Claude"`
 - running `work gh issue create --title x --body-file - <<'EOF'
 opened with claude.com/claude-code

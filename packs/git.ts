@@ -430,23 +430,27 @@ function ghProseArgs(c: ShellCommand): readonly string[] | null {
  */
 const noAttribution = defineCheck((opts: { message: readonly string[]; prose: readonly string[] }): Check => (ctx) => {
   const parsed = shellCommands(ctx);
-  const given = (args: readonly string[], c: ShellCommand): string => [...args, ...c.heredocs.map((h) => h.body)].join("\n");
-  const line = [ctx.command ?? ""];
-  const commits =
-    parsed === null ? line : gitCommands(ctx).filter((g) => g.subcommand === "commit").map((g) => given(g.args, g.command));
-  const prose =
-    parsed === null
-      ? line
-      : parsed.flatMap((c) => {
-          const args = ghProseArgs(c);
-          return args === null ? [] : [given(args, c)];
-        });
   const matching = (patterns: readonly string[], texts: readonly string[]): string[] =>
     patterns.filter((pattern) => texts.some((text) => new RegExp(pattern).test(text)));
-  const hits = [
-    ...matching(opts.message, commits).map((pattern) => `the commit's message matches /${pattern}/`),
-    ...matching(opts.prose, prose).map((pattern) => `the PR or issue text matches /${pattern}/`),
-  ];
+  // A line that does not parse is one text for both lists, and the lists share patterns: each
+  // pattern that matches is reported once.
+  const hits =
+    parsed === null
+      ? matching([...new Set([...opts.message, ...opts.prose])], [ctx.command ?? ""]).map((pattern) => `the line matches /${pattern}/`)
+      : (() => {
+          const given = (args: readonly string[], c: ShellCommand): string => [...args, ...c.heredocs.map((h) => h.body)].join("\n");
+          const commits = gitCommands(ctx)
+            .filter((g) => g.subcommand === "commit")
+            .map((g) => given(g.args, g.command));
+          const prose = parsed.flatMap((c) => {
+            const args = ghProseArgs(c);
+            return args === null ? [] : [given(args, c)];
+          });
+          return [
+            ...matching(opts.message, commits).map((pattern) => `the commit's message matches /${pattern}/`),
+            ...matching(opts.prose, prose).map((pattern) => `the PR or issue text matches /${pattern}/`),
+          ];
+        })();
   return hits.length === 0 ? ctx.ok() : ctx.fail(hits.join(" · "));
 });
 
@@ -548,6 +552,11 @@ export const git = definePack("git", (repo: Release) => {
         // A search for the trailer, and a note that names it, are no commit.
         `git log --grep "${TRAILER}: ${VENDOR}"`,
         `git commit -m "fix(auth): renew the session" && echo "${TRAILER}: ${VENDOR}"`,
+        // The PR and issue prose is read from `gh pr` and `gh issue` alone: not from another
+        // command on the line, another gh verb, or a work verb other than `work gh`.
+        `gh pr view 1 && echo "${TRAILER}: ${VENDOR}"`,
+        `gh api repos/x/y -f body="${TRAILER}: ${VENDOR}"`,
+        `work plan note --body "${TRAILER}: ${VENDOR}"`,
       ],
       block: [
         // A value with a space in it, and a long option with its value apart: a pattern over the
@@ -565,6 +574,8 @@ export const git = definePack("git", (repo: Release) => {
         `git commit -F - <<'EOF'\nfix(auth): renew the session\n\n${TRAILER}: ${VENDOR}\nEOF`,
         `git commit -m "fix(auth): renew the session\n\n${TRAILER}: ${VENDOR} <noreply@anthropic.com>"`,
         `gh pr create --body "${TRAILER}: ${VENDOR}"`,
+        // …and gh run by its path.
+        `/usr/local/bin/gh pr create --body "${TRAILER}: ${VENDOR}"`,
         // …and through `work gh`, which is how a repo driven by work runs every gh call, on the
         // line or fed as the body on stdin.
         `work gh pr create --title x --body "${TRAILER}: ${VENDOR}"`,
