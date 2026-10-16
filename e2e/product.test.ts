@@ -1,4 +1,4 @@
-// flow/adapter/product.test.ts — `flow init`, `flow status` and `flow uninstall`, end to end,
+// flow/e2e/product.test.ts — `flow init`, `flow status` and `flow uninstall`, end to end,
 // through the BUILT BINARY, over a throwaway repo.
 //
 // It is the sibling of live.test.ts and is written for the same reason: the decisions are proved
