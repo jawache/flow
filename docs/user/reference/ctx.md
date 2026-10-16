@@ -62,7 +62,7 @@ Read `existed` when it is set.
 | `heredocs` | Each heredoc the command is fed, as `{ body, quoted }`. `quoted` is `true` for a delimiter in quotes or after a backslash, such as `<<'EOF'`, where the shell runs nothing in the body |
 | `substitutions` | Each `$( … )` or backtick substitution the shell runs while building this command's arguments and unquoted heredocs, as `{ text, backtick, commands, argument }`. `commands` lists the commands it runs, nested ones included, as `ctx.commands` lists them. `argument` is the index in `args` of the argument that is this substitution and nothing else, such as `-m "$(cat <<'EOF' … EOF)"`, and `null` otherwise |
 | `redirects` | Each redirect on the command, as `{ operator, target }`, such as `{ operator: ">", target: "notes.md" }`. A redirect on a group or a loop, such as `{ …; } > out.log`, is listed on each command inside it |
-| `nested` | `true` for a command inside a substitution, a `<( … )`, or a string given to `bash -c`, `sh -c` or `eval` |
+| `nested` | `true` for a command inside a substitution, a `<( … )`, a string given to `bash -c`, `sh -c` or `eval`, or a here-string a shell reads, such as `bash <<< 'ls'` |
 
 `ctx.commands` is `null` when the line does not parse, for example when a quote never closes. A check reads `null` as "cannot tell", and the stock checks then pass, except `banCommands`, which matches the whole line as written.
 

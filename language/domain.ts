@@ -440,7 +440,7 @@ export interface ShellCommand {
   readonly substitutions: readonly ShellSubstitution[];
   /** Its redirects, and those of every group or loop it sits in. A heredoc or here-string is not one. */
   readonly redirects: readonly ShellRedirect[];
-  /** Inside a substitution, a `<( … )`, a `bash -c` or `eval` string, or a heredoc fed to a shell. */
+  /** Inside a substitution, a `<( … )`, a `bash -c` or `eval` string, or a heredoc or here-string fed to a shell. */
   readonly nested: boolean;
 }
 
@@ -561,7 +561,7 @@ const WRAPPERS: Readonly<
   },
 };
 
-/** The shells whose `-c` string, or whose stdin heredoc, is itself a script the parse reads. */
+/** The shells whose `-c` string, or whose stdin heredoc or here-string, is itself a script the parse reads. */
 const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh"]);
 
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
@@ -1034,7 +1034,8 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
       } else redirection(s, heredocs, redirects, subs, inner);
     }
     // A `<<<` here-string's text is the command's last argument, after every word.
-    if (argv.length > 0) for (const r of [...c.prefix, ...c.suffix]) if (r.type === "HereString" && r.target !== undefined) argv.push(r.target.value);
+    const herestrings = argv.length === 0 ? [] : [...c.prefix, ...c.suffix].flatMap((r) => (r.type === "HereString" && r.target !== undefined ? [r.target.value] : []));
+    argv.push(...herestrings);
     const at = wrapperWords(argv);
     const [program, ...args] = argv.slice(at);
     if (program !== undefined) {
@@ -1059,9 +1060,12 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
     const name = programName(program);
     if (name === "eval") source(args.join(" "), out);
     if (!SHELLS.has(name)) return;
-    const input = shellInput(args);
-    if (input === "stdin") for (const h of heredocs) readAsScript(h, out);
-    else if (input !== null) source(input.string, out);
+    // A shell's input is its own words; a here-string is its stdin, and a script when stdin is read.
+    const input = shellInput(args.slice(0, args.length - herestrings.length));
+    if (input === "stdin") {
+      for (const h of heredocs) readAsScript(h, out);
+      for (const text of herestrings) source(text, out);
+    } else if (input !== null) source(input.string, out);
   };
   const assignment = (value: Word | { readonly elements: readonly Word[] }, subs: ShellSubstitution[], out: ShellStep[]): void => {
     if ("elements" in value) for (const e of value.elements) word(e, subs, out);

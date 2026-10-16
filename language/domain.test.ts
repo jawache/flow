@@ -435,8 +435,16 @@ describe("parseCommandLine — a heredoc piped into a shell, and a here-string",
     const [grep] = parseCommandLine('grep -c x <<< "a b" > out') ?? [];
     expect(grep?.args).toEqual(["-c", "x", "a b"]);
     expect(grep?.text).toBe("grep -c x a b");
-    // A here-string fed to a shell is that argument, not a script the parse reads.
-    expect(programs("bash <<< 'rm -rf x'")).toEqual(["bash"]);
+  });
+
+  it("reads a here-string fed to a shell as that shell's script, as it reads a heredoc", () => {
+    expect(programs("bash <<< 'rm -rf x'")).toEqual(["bash", ">rm"]);
+    expect(programs('sh -s -- a <<< "ls; rm -rf x"')).toEqual(["sh", ">ls", ">rm"]);
+    // A shell given a script file, or a `-c` string, reads its stdin as data.
+    expect(programs("bash run.sh <<< 'rm -rf x'")).toEqual(["bash"]);
+    expect(programs("bash -c 'cat' <<< 'rm -rf x'")).toEqual(["bash", ">cat"]);
+    expect(programs("grep x <<< 'rm -rf x'")).toEqual(["grep"]);
+    expect(programs("bash <<< 'echo \"oops'")).toBeNull();
   });
 });
 

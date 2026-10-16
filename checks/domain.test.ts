@@ -218,6 +218,11 @@ describe("banCommands", () => {
     expect(await run(vitest, "command", "cat <<'EOF' | python3\nnpx vitest run\nEOF")).toBeNull();
   });
 
+  it("a here-string fed to a shell: its text is commands, and each is matched", async () => {
+    expect(await run(vitest, "command", "bash <<< 'ls; npx vitest run'")).toContain("banned");
+    expect(await run(vitest, "command", "python3 - <<< 'npx vitest run'")).toBeNull();
+  });
+
   it("a here-string: its text is the last argument of its command, and is matched", async () => {
     expect(await run(banCommands({ ban: ["grep -c x npx vitest run$"] }), "command", "grep -c x <<< 'npx vitest run'")).toContain("banned");
     expect(await run(vitest, "command", "grep -c x <<< 'npx vitest run'")).toBeNull();

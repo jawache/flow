@@ -34,6 +34,7 @@ flow parses each command line once, with [unbash](https://github.com/webpro-nl/u
 - **Separate commands stay separate.** `git push origin main; ls -f` is two commands, and the `-f` is an argument of `ls`.
 - **A quoted argument is one argument.** In `gh issue create --body "ran npx vitest run"`, the words `npx vitest run` are text passed to `gh`.
 - **Nested commands are in the list.** A command inside `$( … )`, backticks or `<( … )` is a command of its own. So is each command in a string given to `bash -c`, `sh -c` or `eval`.
+- **A here-string fed to a shell is commands.** The text of a here-string read by `bash`, `sh`, `zsh`, `dash` or `ksh`, such as `bash <<< 'rm -rf build'`, is read as nested commands.
 - **A heredoc belongs to its command.** Each heredoc is attached to the command it feeds, with whether its delimiter is quoted. In the body of a quoted heredoc, such as `<<'EOF'`, the shell runs nothing.
 - **The program is the one that runs.** A variable assignment such as `FOO=1`, and a wrapper such as `sudo`, `env` or `timeout 5`, is stepped past. `sudo rm -rf build` has the program `rm`.
 
