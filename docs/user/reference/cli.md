@@ -92,6 +92,7 @@ These commands exit 1:
 - **`flow facts`**, when the record cannot be read at all, such as a repo where no session has ever been recorded.
 - **`flow replay`**, when the recording did not capture something a check reached for, or when `--against` finds a difference.
 - **`flow init`**, when one of its steps fails.
+- **`flow init`**, when git already runs other hooks and the `pre-commit` hook git runs does not call flow, as described under [when git already runs other hooks](#when-git-already-runs-other-hooks).
 
 A config that does not load makes `flow status` and `flow test` exit 2.
 
