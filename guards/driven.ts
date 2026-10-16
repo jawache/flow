@@ -9,7 +9,8 @@
 //
 // `work init --template` copies this file into the repo's guards/ folder, never links it: the
 // import of @jawache/flow resolves from the repo's own node_modules, which a copy under ~/.work has
-// none of.
+// none of. It needs @jawache/flow 0.3.0 or later: it imports the parse's readers (`shellCommands`,
+// `gitCommand`, `programName`), which an older flow does not export, and there the file fails to load.
 
 import {
   banCommands,
@@ -28,10 +29,8 @@ import {
   spawnedAs,
 } from "@jawache/flow";
 
-// The ban is written to hold under both readings of a command line. `work init --template` copies
-// this file into repos whose @jawache/flow may still match the whole line, where a bare `gh` would
-// refuse every `work gh …`; and START opens with `^`, so per-command matching from the program
-// name reads it too.
+// The ban is matched against each command from its program name, and START opens with `^`, so it
+// matches a bare `gh` at the start of a command; the rest of START also reads a `gh` later in a line.
 //
 // Where a shell starts a new command: the start of the line, after a separator, inside $( ) or
 // backticks, after a brace or a keyword, or at the head of a string handed to a shell.
