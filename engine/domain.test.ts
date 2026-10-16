@@ -16,6 +16,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
+  command,
   commit,
   deletion,
   defineCategory,
@@ -28,6 +29,7 @@ import {
   override,
   protectedPath,
   write,
+  type Ctx,
   type LoadResult,
   type Refusal,
   type SessionFacts,
@@ -39,6 +41,7 @@ import {
   cannedWorld,
   GUARDRAIL_MOMENTS,
   isPathMoment,
+  parseCommandLine,
   type CaseWorld,
   type Unanswered,
 } from "../language/domain.ts";
@@ -429,6 +432,31 @@ describe("what an entry is run against", () => {
     });
     expect(blockedIds(outcome)).toEqual(["rails.noForce"]);
     expect(blocks(outcome)[0]?.subject).toBe("git push --force");
+  });
+
+  it("hands a command rail the line parsed as ctx.commands, parsed once for every entry that reads it", async () => {
+    const seen: Ctx["commands"][] = [];
+    const reads = () =>
+      guardrail()
+        .at(command)
+        .check((ctx) => {
+          seen.push(ctx.commands);
+          return ctx.commands?.some((c) => c.program === "rm") ? ctx.fail("rm") : ctx.ok();
+        })
+        .message("x")
+        .test({ pass: ["ls"], block: ["rm x"] });
+    const load = loadConfig(defineConfig([pack(definePack("spy", { one: reads(), two: reads() }))]));
+    await guard({ load, event: { moment: "command", command: "git push origin main; ls -f", wearing: [] }, world: world() });
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).toBe(seen[1]);
+    expect(seen[0]?.map((c) => c.text)).toEqual(["git push origin main", "ls -f"]);
+
+    // A parse the adapter already made rides the event, and is the one every entry reads.
+    seen.length = 0;
+    const made = parseCommandLine("ls");
+    await guard({ load, event: { moment: "command", command: "ls", commands: made, wearing: [] }, world: world() });
+    expect(seen).toEqual([made, made]);
+    expect(seen[0]).toBe(made);
   });
 
   it("hands turn-end the turn's actions, in order", async () => {
@@ -1365,6 +1393,24 @@ describe("replay — a recorded session, run again with no repo and no harness",
     const denied = result.rows.filter((r) => r.kind === "guardrail");
     expect(denied.map((r) => r["id"])).toEqual(["rails.everyone", "rails.explodes", "rails.noForce"]);
     expect(result.unanswered).toEqual([]);
+  });
+
+  it("hands a replayed command the same parse the live rail does, as ctx.commands", async () => {
+    const noBareGh = guardrail()
+      .at(command)
+      .check((ctx) => ((ctx.commands ?? []).some((c) => c.program === "gh") ? ctx.fail("gh") : ctx.ok()))
+      .message("Run gh as work gh.")
+      .test({ pass: ["work gh pr list"], block: ["gh pr list"] });
+    const load = loadConfig(defineConfig([pack(definePack("spy", { noBareGh }))]));
+    const result = await replay({
+      load,
+      settings: {},
+      recording: recording([
+        { rail: "guard", moment: "command", command: "echo 'gh pr list'", wearing: [] },
+        { rail: "guard", moment: "command", command: "ls && sudo gh pr list", wearing: [] },
+      ]),
+    });
+    expect(result.rows.filter((r) => r.kind === "guardrail").map((r) => r["subject"])).toEqual(["ls && sudo gh pr list"]);
   });
 
   it("drives a check that shells out through the recorded answer — no command is ever run", async () => {

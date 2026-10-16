@@ -244,10 +244,21 @@ export const justfile = definePack("justfile", (repo: Catalogue) => {
             // prove the pattern against itself.
             //
             // A HEREDOC BODY IS NOT A USE: a python script that names the command in a string
-            // passes, and the same command on the line after it is still refused.
+            // passes, and the same command on the line after it is still refused. Nor is the
+            // command named inside another command's argument (#4): an echo, or an issue body
+            // that says what a builder ran. Matched from the program name, a chained use is.
             .test({
-              pass: [Object.values(recipes)[0] ?? "just test", `python3 - <<'PY'\nprint("${Object.keys(recipes)[0] ?? "npx vitest run"}")\nPY`],
-              block: [Object.keys(recipes)[0] ?? "npx vitest run", `python3 - <<'PY'\nprint("x")\nPY\n${Object.keys(recipes)[0] ?? "npx vitest run"}`],
+              pass: [
+                Object.values(recipes)[0] ?? "just test",
+                `python3 - <<'PY'\nprint("${Object.keys(recipes)[0] ?? "npx vitest run"}")\nPY`,
+                `echo '${Object.keys(recipes)[0] ?? "npx vitest run"}'`,
+                `gh issue create --body "the builder ran ${Object.keys(recipes)[0] ?? "npx vitest run"} instead"`,
+              ],
+              block: [
+                Object.keys(recipes)[0] ?? "npx vitest run",
+                `python3 - <<'PY'\nprint("x")\nPY\n${Object.keys(recipes)[0] ?? "npx vitest run"}`,
+                `cd app && ${Object.keys(recipes)[0] ?? "npx vitest run"}`,
+              ],
             }),
         }),
   };

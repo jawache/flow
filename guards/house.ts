@@ -200,7 +200,7 @@ export const house = definePack("house", (repo: Terrain) => ({
         "· tools/     the code behind a justfile recipe, and nothing that ships. `pack-pages.ts` renders one page per shipped pack into `docs/user/packs/`, and `--check` refuses a page that has drifted from its pack; `parse.ts` reads what a pack's source says that loading it cannot; `score-bash.ts` scores a Bash path extractor against the hand-labelled corpus in `__fixtures__/bash-corpus/`; `domain.ts` is the pure half all three decide through. tsconfig.build.json excludes the folder, and nothing in the package may import it — `e2e/` may, and does, for the example bindings every page and the machine test share.",
         "Each layer folder holds ONE `domain.ts` plus its `domain.test.ts`, and that file is the layer's whole pure home — there is no `pure/` folder anywhere here, and no `core/` folder either. Both were considered and ruled out: a folder of one-file-per-topic modules is what the old engine had, and it hid which checks were really the same check.",
         "`glob.ts` is the ONE shared file of the PRODUCT, at the package root, because exactly one thing is genuinely shared and one shared thing earns a name rather than a folder.",
-        "`e2e/` is the END-TO-END suites and nothing else, and it is not a pipeline stage either: the three tests that spawn the built binary over a throwaway git repo (product · live · machine) plus `harness.ts`, the one road all three drive — the repo, the binary, the host's CLAUDE_CONFIG_DIR and PATH seams. It ships with nothing (tsconfig.build.json excludes the folder) and nothing in the package may import it. The fixture packs those suites write into a temp repo live in `__fixtures__/`. Every OTHER test file sits beside the code it is about and runs in milliseconds; these three take tens of seconds because they build and spawn.",
+        "`e2e/` is the END-TO-END suites and nothing else, and it is not a pipeline stage either: the three tests that spawn the built binary over a throwaway git repo (product · live · machine) plus `harness.ts`, the one road all three drive — the repo, the binary, the host's CLAUDE_CONFIG_DIR and PATH seams. It ships with nothing (tsconfig.build.json excludes the folder) and nothing in the package may import it. The fixture packs those suites write into a temp repo live in `__fixtures__/`. One fast test lives here too, `bash-corpus.test.ts`, because it scores the adapter's read detection with tools/'s scorer and e2e/ is the one place the fence lets reach both. Every OTHER test file sits beside the code it is about and runs in milliseconds; the three suites take tens of seconds because they build and spawn.",
         "The pipeline runs ONE WAY — language → checks → engine → adapter. A layer may import backwards and never forwards; the fences are in the import-boundaries entry in guards/house.ts, and they are why a recorded session can replay with no harness at all.",
         "A domain file reaches the world ONLY through ctx: no node:fs, no child_process, no process.env. eslint says so on the line, import-boundaries says so at the commit.",
       ].join("\n"),
@@ -225,6 +225,29 @@ export const house = definePack("house", (repo: Terrain) => ({
         "THREE NAMED BLOCKS, as JSDoc tags on that same `definePack` comment, each rendered as its own section on the page: `@install` (what to install before a rule here can pass), `@setup` (what has to exist in the repo — a file, a recipe, a script), `@adopt` (what happens on the first run, and what to fix first). A tag nobody uses renders nothing, and a tag outside the three is not read at all — instructions with no home are what a lead paragraph turns into otherwise.",
         "Everything else stays an ordinary `//` comment: placement notes, the history of a fix, an aside to whoever edits the line next. Those never reach the page, which is what keeps the page readable.",
         "PROSE STRINGS NEVER HAND-WRAP. A string in `.text(…)` or `.message(…)` is one line however long it is — only a model reads it, the wrap is invisible there, and on the page it arrives as a line break through the middle of a sentence. An aligned table or a bulleted list is not a wrap: every line is a complete unit and the line above it finishes. Doc comments are the other way round — a human reads those, so they wrap at the width the rest of the file uses.",
+      ].join("\n"),
+    ),
+
+  /**
+   * Without it, the next rule that needs one fact about a command — its program, a heredoc, a
+   * redirect — gets a regex over the raw line or a splitter of its own, and the false refusals
+   * #17 removed come back one reader at a time: a verb in one command paired with a target in the
+   * next, a banned name read out of a quoted argument, a backtick in a quoted heredoc read as live.
+   * Five hand-written scanners grew that way before the parse replaced them all.
+   */
+  shellParse: breadcrumb()
+    .at(touch)
+    .on("language/domain.ts", "checks/domain.ts", "engine/domain.ts", "adapter/domain.ts", "packs/**", "guards/**")
+    .description("Every reading of a shell command goes through the one parse — never a regex or a splitter over the raw line.")
+    .text(
+      [
+        "EVERY READING OF A SHELL COMMAND GOES THROUGH THE ONE PARSE. `parseCommandLine` in `language/domain.ts` parses the line as bash with `unbash`, once; checks read it as `ctx.commands`, and the adapter's delete, read and recipe detection read the same walk as `parseShellSteps`.",
+        "· A check, a pack or a guard reads `ctx.commands`, or `shellCommands(ctx)` and `gitCommands(ctx)` where an older engine may hand no parse. Match a pattern against one command's `text`, never against `ctx.command`.",
+        "· Never write a second reader: no splitting the line on `;`, `&&`, `|` or a newline, no scanning for where a quote, a `$(` or a heredoc closes, no regex over the raw line to find a program, an argument, a heredoc, a substitution or a redirect.",
+        "· The parse lacks a fact the rule needs? Add it to the parse in `language/domain.ts`, and its row to `docs/user/reference/ctx.md`, so every reader gets it.",
+        "· `ctx.commands` is null when the line does not parse. Read null as \"cannot tell\": stand aside, or match the whole line as written the way `banCommands` does; never fall back to splitting or lexing it yourself.",
+        "· A pattern that spans commands on purpose sets `banCommands`' `wholeLine`, which matches the line less its heredoc bodies, cut by the same parse (`elideHeredocBodies`).",
+        "How the parse works and what it cannot know: `docs/user/explanation/what-the-guard-sees.md` § The parse.",
       ].join("\n"),
     ),
 
@@ -253,6 +276,13 @@ export const house = definePack("house", (repo: Terrain) => ({
           // Spelled as a PATH glob, not as a bare name: the dialect reads a bare name as an npm
           // package and anchors it, which cannot work for a SCOPED package.
           "astgrep-lib": ["**/node_modules/@ast-grep/napi/**"],
+          // THE OTHER PARSER, and it sits in the allowlist for the same reason: `unbash` reads a
+          // shell line as bash, with no dependencies and no I/O, and the parse behind
+          // `ctx.commands` lives in the pure home. Spelled twice: depcruise cannot resolve the
+          // package through its `exports` and reports the edge as the bare name, which `unbash*`
+          // matches the way `path*` matches a builtin; the bare `unbash` is the path under
+          // node_modules, for the day it resolves.
+          "unbash-lib": ["unbash*", "unbash"],
           // THE PACKAGE ROOT — index.ts, flow.ts, glob.ts, errors.ts, version.ts and the three
           // test files beside them. A layer for ONE reason: without it these files belong to no
           // layer at all, so every `from:` rule below skips them and an import of `e2e/` from
@@ -289,10 +319,10 @@ export const house = definePack("house", (repo: Terrain) => ({
           e2e: ["e2e/**"],
         },
         only: {
-          // The pure home reaches pure code, `node:path` and one parser, and nothing else. No
+          // The pure home reaches pure code, `node:path` and two parsers, and nothing else. No
           // disk, no process, no clock — that is what makes a `.test()` case and a replay drive
           // the same code, and it is this package's one load-bearing invariant.
-          pure: ["pure", "node-path", "astgrep-lib"],
+          pure: ["pure", "node-path", "astgrep-lib", "unbash-lib"],
         },
         except: ["type-only"],
         forbid: [
@@ -363,11 +393,28 @@ export const house = definePack("house", (repo: Terrain) => ({
       }),
     )
     .message(
-      "Import crosses a fence the wrong way (see the named check). The pipeline runs ONE WAY — language → checks → engine → adapter; packs/ sits outside it, reaching index.ts only, with nothing reaching back; guards/ and tools/ are consumers of the two public doors and nothing in the package may import either; e2e/ is test-only and nothing may import it, the package root included; and a pure `domain.ts` reaches pure code and node:path, nothing else.",
+      "Import crosses a fence the wrong way (see the named check). The pipeline runs ONE WAY — language → checks → engine → adapter; packs/ sits outside it, reaching index.ts only, with nothing reaching back; guards/ and tools/ are consumers of the two public doors and nothing in the package may import either; e2e/ is test-only and nothing may import it, the package root included; and a pure `domain.ts` reaches pure code, node:path and the two parsers (@ast-grep/napi, unbash), nothing else.",
     )
     .test({
-      pass: [{ staged: ["engine/domain.ts"], world: { exec: { depcruise: { stdout: '{"summary":{"violations":[]}}' } } } }],
+      pass: [
+        { staged: ["engine/domain.ts"], world: { exec: { depcruise: { stdout: '{"summary":{"violations":[]}}' } } } },
+        // The allowlist carries the parser: answered only when the fence's own config names it,
+        // so a pure home that lost `unbash` is a case asking for an answer it was never given.
+        { staged: ["language/domain.ts"], world: { exec: { "^unbash[^/]*$": { stdout: '{"summary":{"violations":[]}}' } } } },
+      ],
       block: [
+        // …and it carries nothing else: a pure file reaching any other package still blocks.
+        {
+          staged: ["language/domain.ts"],
+          world: {
+            exec: {
+              depcruise: {
+                code: 1,
+                stdout: '{"summary":{"violations":[{"rule":{"name":"pure-only"},"from":"language/domain.ts","to":"left-pad"}]}}',
+              },
+            },
+          },
+        },
         {
           staged: ["engine/domain.ts"],
           world: {

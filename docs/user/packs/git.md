@@ -54,7 +54,7 @@ refuse the first few commits while everyone re-learns the format — that is the
 - [`git.noForcePush`](#gitnoforcepush--guardrail) · guardrail · Blocks a force-push — rewriting pushed history is the one loss a stash cannot undo.
 - [`git.noGateSkip`](#gitnogateskip--guardrail) · guardrail · Blocks a commit the commit gate never runs on — --no-verify, -c core.hooksPath=…, commit-tree, update-ref, hash-object -w.
 - [`git.conventionalCommitFormat`](#gitconventionalcommitformat--guardrail) · guardrail · The commit header must speak Conventional Commits v1.0.0 (checked before git commit runs).
-- [`git.noShellSubstitutionInProse`](#gitnoshellsubstitutioninprose--guardrail) · guardrail · A backtick inside a double-quoted argument of a commit or a PR body is live command substitution, not Markdown.
+- [`git.noShellSubstitutionInProse`](#gitnoshellsubstitutioninprose--guardrail) · guardrail · A backtick the shell would run in a commit message or a PR or issue body (double-quoted, bare, or in an unquoted heredoc) is live command substitution, not Markdown.
 - [`git.node.versionIsSemver`](#gitnodeversionissemver--guardrail) · guardrail · The manifest's version is valid SemVer 2.0.0 — the number the computed release writes. See https://semver.org/
 - [`git.node.noHandEditedVersion`](#gitnodenohandeditedversion--guardrail) · guardrail · The version field is written by the release commit, never by hand.
 
@@ -88,20 +88,21 @@ Blocks Claude/Anthropic attribution in commits, PRs and issues.
 - **Refuses at** a shell command is about to run
 - **Watches** not scoped by path
 - **Categories** every session
-- **Check** [`banCommands`](../checks/ban-commands.md)
+- **Check** `noAttribution` *(written in this pack)*
 
 <details><summary>settings</summary>
 
 ```
 {
-  "ban": [
-    "git(?:\\s+-[Cc]\\s+(?:\"[^\"]*\"|'[^']*'|\\S+)|\\s+--[\\w-]+(?:=\\S+)?)*\\s+commit[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(Claude|[Aa]nthropic)",
-    "git(?:\\s+-[Cc]\\s+(?:\"[^\"]*\"|'[^']*'|\\S+)|\\s+--[\\w-]+(?:=\\S+)?)*\\s+commit[\\s\\S]*[Gg]enerated with[\\s\\S]*Claude",
-    "git(?:\\s+-[Cc]\\s+(?:\"[^\"]*\"|'[^']*'|\\S+)|\\s+--[\\w-]+(?:=\\S+)?)*\\s+commit[\\s\\S]*(claude\\.com/claude-code|🤖 Generated)",
-    "gh (pr|issue)[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(Claude|[Aa]nthropic)",
-    "gh (pr|issue)[\\s\\S]*(claude\\.com/claude-code|🤖 Generated)"
+  "message": [
+    "[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(Claude|[Aa]nthropic)",
+    "[Gg]enerated with[\\s\\S]*Claude",
+    "claude\\.com/claude-code|🤖 Generated"
   ],
-  "matchHeredocs": true
+  "prose": [
+    "(?:\\S*/)?(?:work\\s+)?gh\\s+(?:pr|issue)\\b[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(Claude|[Aa]nthropic)",
+    "(?:\\S*/)?(?:work\\s+)?gh\\s+(?:pr|issue)\\b[\\s\\S]*(claude\\.com/claude-code|🤖 Generated)"
+  ]
 }
 ```
 
@@ -125,9 +126,29 @@ Commit / PR / issue body contains Claude or Anthropic attribution. Remove it (th
 
 - running `git commit -m "fix(auth): renew the session"`
 - running `git -C /repo/worktree commit -m "fix(auth): renew the session"`
+- running `git log --grep "Co-Authored-By: Claude"`
+- running `git commit -m "fix(auth): renew the session" && echo "Co-Authored-By: Claude"`
 
 **blocks**
 
+- running `git -C '/a b' commit -m "fix(auth): renew the session
+
+Co-Authored-By: Claude"`
+- running `git -c user.name='A B' commit -m "fix(auth): renew the session
+
+Co-Authored-By: Claude"`
+- running `git --git-dir /x commit -m "fix(auth): renew the session
+
+Co-Authored-By: Claude"`
+- running `git commit -am "fix(auth): renew the session
+
+Co-Authored-By: Claude"`
+- running `git commit -m "$(cat <<'EOF'
+fix(auth): renew the session
+
+Co-Authored-By: Claude
+EOF
+)"`
 - running `git -C /repo/worktree commit -m "fix(auth): renew the session
 
 Co-Authored-By: Claude Opus <noreply@anthropic.com>"`
@@ -143,6 +164,10 @@ EOF`
 
 Co-Authored-By: Claude <noreply@anthropic.com>"`
 - running `gh pr create --body "Co-Authored-By: Claude"`
+- running `work gh pr create --title x --body "Co-Authored-By: Claude"`
+- running `work gh issue create --title x --body-file - <<'EOF'
+opened with claude.com/claude-code
+EOF`
 - running `git commit -m "fix(auth): renew the session
 
 Generated with Claude Code"`
@@ -186,6 +211,11 @@ This git command would discard uncommitted edits with no undo. Use `git stash` i
   - given `git status --porcelain` exits 0 and says `?? other.ts`
 - running `git reset --soft HEAD~1`
 - running `git clean -n`
+- running `cat > notes.md <<'EOF'
+git checkout -- a.ts
+git clean -fd
+EOF`
+- running `echo "never run git reset --hard here"`
 
 **blocks**
 
@@ -208,6 +238,8 @@ This git command would discard uncommitted edits with no undo. Use `git stash` i
 - running `git status
 git checkout -- a.ts`
   - given `git status --porcelain` exits 0 and says `M a.ts`
+- running `bash -c 'git checkout -- a.ts'`
+  - given `git status --porcelain` exits 0 and says `M a.ts`
 - running `git -C ../other checkout -- src/x.ts`
   - given `git -C '../other' status --porcelain` exits 0 and says `M src/x.ts`
 
@@ -218,20 +250,7 @@ Blocks a force-push — rewriting pushed history is the one loss a stash cannot 
 - **Refuses at** a shell command is about to run
 - **Watches** not scoped by path
 - **Categories** every session
-- **Check** [`banCommands`](../checks/ban-commands.md)
-
-<details><summary>settings</summary>
-
-```
-{
-  "ban": [
-    "(?:^|[\\n;&|(]\\s*)\\s*git\\s+push[^\\n]*\\s(--force|-f)(\\s|$)",
-    "(?:^|[\\n;&|(]\\s*)\\s*git\\s+push[^\\n]*--force-with-lease"
-  ]
-}
-```
-
-</details>
+- **Check** `noForcePush` *(written in this pack)* — no options
 
 ### What the agent reads when refused
 
@@ -250,6 +269,15 @@ EOF`
 - running `cat > notes.md <<'EOF'
 git push --force origin main
 EOF`
+- running `git push origin main; ls -f`
+- running `git push origin HEAD; gh api graphql -f query=x`
+- running `git push && gh api -f a=b repos/x/y`
+- running `echo "never git push -f here"`
+- running `git push -o +f origin main`
+- running `git push -of origin main`
+- running `git push -uo +x origin main`
+- running `git push --repo +x origin main`
+- running `git fetch origin +main:main`
 
 **blocks**
 
@@ -259,8 +287,17 @@ git push --force origin main`
 - running `bash <<'EOF'
 git push --force origin main
 EOF`
+- running `bash <<< 'git push --force origin main'`
 - running `git push -f`
+- running `git push -f origin main`
+- running `git push -fu origin main`
 - running `git push --force-with-lease origin main`
+- running `git push --force-with-lease=main:abc123 origin main`
+- running `git push origin +main`
+- running `git push origin -- +HEAD:main`
+- running `git -C /x push --force`
+- running `git --no-pager push -f`
+- running `/usr/bin/git push --force`
 - running `git status && git push --force origin main`
 
 ## `git.noGateSkip` — guardrail
@@ -356,6 +393,26 @@ The type is one of: feat · fix · docs · style · refactor · perf · test · 
 - running `git commit -m "fix(auth): renew session on token refresh"`
 - running `git status`
 - running `git commit -m "feat(cli)!: the config grammar is closed"`
+- running `python3 - <<'EOF'
+print(1)
+EOF
+git commit -F - <<'EOF'
+fix: a thing
+EOF`
+- running `git commit -m "$(cat <<'EOF'
+fix: a thing
+
+why it was needed
+EOF
+)"`
+- running `git commit -m"$(cat <<'EOF'
+fix: a thing
+EOF
+)"`
+- running `git commit --message="$(cat <<'EOF'
+fix: a thing
+EOF
+)"`
 
 **blocks**
 
@@ -364,24 +421,36 @@ The type is one of: feat · fix · docs · style · refactor · perf · test · 
 - running `git commit -m 'tidied things up
 
 feat: the thing I actually did'`
+- running `cat > a.md <<'EOF'
+fix: a thing
+EOF
+git commit -F - <<'EOF'
+tidied things up
+EOF`
+- running `git commit -m "$(cat <<'EOF'
+tidied things up
+EOF
+)"`
 
 ## `git.noShellSubstitutionInProse` — guardrail
 
-A backtick inside a double-quoted argument of a commit or a PR body is live command substitution, not Markdown.
+A backtick the shell would run in a commit message or a PR or issue body (double-quoted, bare, or in an unquoted heredoc) is live command substitution, not Markdown.
 
 - **Refuses at** a shell command is about to run
 - **Watches** not scoped by path
 - **Categories** every session
-- **Check** [`banCommands`](../checks/ban-commands.md)
+- **Check** [`substitutionInProse`](../checks/substitution-in-prose.md)
 
 <details><summary>settings</summary>
 
 ```
 {
-  "ban": [
-    "(?:git\\s+commit\\b[^\\n]*?-{1,2}[a-zA-Z]*m|gh\\s+(?:pr|issue)\\b)[^\"`]*(?:\"(?:(?!<<-?')[^\"])*\"[^\"`]*)*\"(?:(?!<<-?')[^\"])*`"
+  "heads": [
+    "(?:\\S*/)?(?:work\\s+)?gh\\s+(?:pr|issue)\\b"
   ],
-  "matchHeredocs": true
+  "gitSubcommands": [
+    "commit"
+  ]
 }
 ```
 
@@ -390,10 +459,9 @@ A backtick inside a double-quoted argument of a commit or a PR body is live comm
 ### What the agent reads when refused
 
 ```
-You are recording prose through a shell command, and a backtick inside a DOUBLE-quoted argument is not Markdown — the shell RUNS it and splices its output into your text before the command ever sees it.
+You are recording prose through a shell command, and a backtick in a double-quoted argument or an unquoted heredoc is not Markdown — the shell RUNS it and splices its output into your text before the command ever sees it.
 On an append-only record there is no undo: no amend, no redact. And once the binary has argv the splice has already happened, so this is the only moment it can be caught.
-Fix: SINGLE-quote the argument (backticks are literal there), or feed the prose on stdin with a QUOTED heredoc — `git commit -F -` plus `<<'EOF'`, which this rule treats as safe.
-ALREADY single-quoted and still blocked? Then your PROSE carries an unbalanced double quote before the backtick, and the matcher cannot tell that quote from a real open argument. Nothing would splice — this one is the rule's cost, not your mistake. Balance the quote, drop it, or use the heredoc; do not go back to double quotes to make it pass.
+Fix: SINGLE-quote the argument (backticks are literal there), escape each backtick as \` inside the double quotes, or feed the prose on stdin with a QUOTED heredoc — `git commit -F -` plus `<<'EOF'`, which this rule treats as safe.
 ```
 
 ### Proved by
@@ -404,11 +472,30 @@ ALREADY single-quoted and still blocked? Then your PROSE carries an unbalanced d
 fix: a `thing`
 EOF`
 - running `git commit -m 'fix: run `just test` first'`
+- running `git commit -m "$(cat <<'EOF'
+fix: run `just test` first
+EOF
+)"`
+- running `gh pr create --body-file - <<'EOF'
+Run "`just test`" before merging.
+EOF`
+- running `gh issue view 35 --json body --jq .body > body.md
+python3 - <<'EOF'
+new = f"""- **Docs** `work` starts the daemon"""
+EOF`
+- running `gh issue view 1 > old.md
+cat > new.md <<'EOF'
+say "run `just test`"
+EOF`
+- running `gh issue comment 1 --body "run \`just test\` first"`
+- running `gh issue view 10 --json body --jq .body | grep -n "x\\\\\`"`
 
 **blocks**
 
 - running `git commit -m "fix: run `just test` first"`
 - running `gh pr create --body "see `just gate`"`
+- running `gh issue comment 1 --body "run `just test` first"`
+- running `work gh issue comment 1 --body "run `just test` first"`
 - running `git commit -m "fix: a thing
 
 run `just test` first"`
@@ -416,6 +503,11 @@ run `just test` first"`
 fix: run `just test` first
 EOF
 )"`
+- running `git commit -F - <<EOF
+fix: run `just test` first
+EOF`
+- running `git -C '/a b' commit -m "fix: `date`"`
+- running `git --git-dir /x commit -m "fix: `date`"`
 
 ## `git.node.versionIsSemver` — guardrail
 
@@ -493,6 +585,11 @@ The version is computed from the commit history at release time — run `./ci.sh
   - given `git diff HEAD -- 'package.json'` exits 0 and says `- "version": "1.2.2" + "version": "1.2.3"`
 - running `git commit -m "release(flow)!: 2.0.0"`
   - given `git diff HEAD -- 'package.json'` exits 0 and says `- "version": "1.2.2" + "version": "2.0.0"`
+- running `git commit -m "$(cat <<'EOF'
+chore(release): 1.2.3
+EOF
+)"`
+  - given `git diff HEAD -- 'package.json'` exits 0 and says `- "version": "1.2.2" + "version": "1.2.3"`
 - running `git commit -m "chore: add a field"`
   - given `git diff HEAD -- 'package.json'` exits 0 and says `- "version": "1.2.2" + "version": "1.2.2",`
 - running `git commit -m "fix: a thing"`

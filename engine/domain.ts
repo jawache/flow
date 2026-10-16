@@ -32,6 +32,7 @@ import {
   inScope,
   isCategory,
   makeCtx,
+  parseCommandLine,
   refusalText,
   verdict,
   type Scope,
@@ -215,6 +216,8 @@ export interface GuardEvent {
   readonly file?: Ctx["file"];
   /** command: the line about to run. */
   readonly command?: string | undefined;
+  /** command: the line's parse, when the caller already made it. Absent, the engine parses the line. */
+  readonly commands?: Ctx["commands"];
   /** commit: the staged paths. */
   readonly staged?: readonly string[] | undefined;
   /**
@@ -488,6 +491,9 @@ export async function guard({ load, event, world, faults = [], off = false }: Gu
 
   const effects: Effect[] = [];
   const tallies: Tally[] = [];
+  // The line is parsed ONCE per hook, however many entries fire on it, and every ctx carries it:
+  // the adapter's parse rides the event, and a caller that made none has it made here.
+  const parsed = event.command === undefined ? {} : { commands: event.commands === undefined ? parseCommandLine(event.command) : event.commands };
   for (const entry of load.entries) {
     if (entry.spec.kind !== "guardrail" || !fires(entry.spec, event.moment)) continue;
     if (!bindsTo(entry, event.wearing)) {
@@ -507,7 +513,7 @@ export async function guard({ load, event, world, faults = [], off = false }: Gu
     let hits = 0;
     for (const subject of await subjectsOf(entry, event, world)) {
       evaluated += 1;
-      const answer = await ask(check, makeCtx(subject.moment ?? event.moment, { ...subject.facts, actor: event.wearing }, world));
+      const answer = await ask(check, makeCtx(subject.moment ?? event.moment, { ...subject.facts, ...(subject.facts.command === undefined ? {} : parsed), actor: event.wearing }, world));
       if (answer.ok) continue;
       hits += 1;
       effects.push({

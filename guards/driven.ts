@@ -9,37 +9,36 @@
 //
 // `work init --template` copies this file into the repo's guards/ folder, never links it: the
 // import of @jawache/flow resolves from the repo's own node_modules, which a copy under ~/.work has
-// none of.
+// none of. It needs @jawache/flow 0.3.0 or later: it imports the parse's readers (`shellCommands`,
+// `gitCommand`, `programName`), which an older flow does not export, and there the file fails to load.
 
 import {
-  banCommands,
   breadcrumb,
   type Check,
   command,
   definePack,
-  gitInvocations,
+  gitCommand,
   guardrail,
-  quoteArg,
+  programName,
   session,
-  tokenizeCommand,
+  shellCommands,
+  type ShellCommand,
+  type ShellRedirect,
   defineCategory,
   spawnedAs,
 } from "@jawache/flow";
 
-// Where a shell starts a new command: the start of the line, after a separator, inside $( ) or
-// backticks, after a brace or a keyword, or at the head of a string handed to a shell.
-const START = String.raw`(?:^|[\n;&|({\x60]|\$\(|\b(?:ba|z)?sh\s+-c\s+['"]|\beval\s+['"]?)`;
-/** Words that run the word after them as a command, so the program is further on. */
-const PREFIXES = new Set(["command", "exec", "env", "sudo", "nohup", "time", "xargs", "if", "then", "else", "elif", "do", "while", "until", "!"]);
-// What may sit between that start and the program: whitespace, variable assignments, and the
-// PREFIXES (each with its own flags), the same list the checker's word walk skips. An assignment
-// whose value opens a `$(` is not skipped over: START already begins a new command inside it.
-const LEAD =
-  String.raw`\s*(?:[A-Za-z_][A-Za-z0-9_]*=(?!\$\()\S*\s+)*(?:(?:` +
-  [...PREFIXES].map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") +
-  String.raw`)(?:\s+-\S+)*\s+)*`;
-// gh itself, by name or by path, as a whole word.
-const GH = String.raw`(?:\S*/)?gh(?=\s|$|[;&|)\x60'"])`;
+// ── what runs gh ──
+//
+// Each command in the parse whose program is `gh`, by name or by path: the parse has already
+// stepped past `FOO=1`, `sudo`, `env`, `command` and `xargs`, and lists the commands inside
+// `$( … )`, `if`, a pipeline and a `sh -c` string, so a `gh` in any of them is found, and a `gh`
+// in a quoted argument or a heredoc body is not a command. A line that does not parse is not
+// judged: bash refuses to run it, so no `gh` in it runs.
+const bareGh: Check = (ctx) => {
+  const bare = (shellCommands(ctx) ?? []).find((c) => programName(c.program) === "gh");
+  return bare === undefined ? ctx.ok() : ctx.fail(`\`${bare.text}\` runs gh directly`);
+};
 
 // ── what a checker may not run ──
 //
@@ -69,90 +68,37 @@ const GH_WRITES: Readonly<Record<string, ReadonlySet<string>>> = {
   release: new Set(["create", "edit", "delete", "upload"]),
   repo: new Set(["create", "edit", "delete", "fork", "rename", "archive", "sync"]),
 };
-const OPERATORS = new Set([";", "&&", "||", "|", "&", "|&", "\n"]);
-/** A redirect token: `>`, `>>` or `>|`, with an fd or `&` before it, and the target glued on or next. */
-const REDIRECT = /^(?:\d+|&)?>(?:>|\|)?(\S*)$/;
-/** Targets that write no file: an fd duplicate (`>&2`), or a device. */
-const NO_FILE = /^(?:&\d*-?|\/dev\/(?:null|stdout|stderr|tty))\)*$/;
+/** The redirect operators that write their target. `<` reads it; `>&` and `<&` duplicate a descriptor. */
+const WRITES = new Set([">", ">>", ">|", "&>", "&>>", "<>"]);
+/** Targets that are no file: a device. */
+const NO_FILE = /^\/dev\/(?:null|stdout|stderr|tty)$/;
+
+/** Does this redirect write a file? `>&` writes one only when its target is not a descriptor. */
+function writesFile(r: ShellRedirect): boolean {
+  if (NO_FILE.test(r.target)) return false;
+  return WRITES.has(r.operator) || (r.operator === ">&" && !/^(?:\d+|-)$/.test(r.target));
+}
 
 /**
- * The line without its heredoc bodies, which are text fed to a program, not commands. flow has
- * this as `elideHeredocs`, but neither 0.2.1 nor 0.2.3 exports it from `@jawache/flow`, so this is
- * its line-based half: `<<WORD`, `<<'WORD'` and `<<-WORD`, several on a line, inside `$( )` as
- * anywhere else, each body ending at the line that holds only WORD.
+ * What one parsed command writes, or null. The parse has already stepped past the wrappers and
+ * lists every command a `$( )`, a `bash -c` or an `eval` string runs, so each is judged here.
  */
-function withoutHeredocBodies(line: string): string {
-  const kept: string[] = [];
-  const pending: string[] = [];
-  for (const l of line.split("\n")) {
-    if (pending.length > 0) {
-      if (l.trim() === pending[0]) pending.shift();
-      continue;
-    }
-    kept.push(l);
-    for (const m of l.replace(/<<</g, "").matchAll(/<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/g)) pending.push(m[2] ?? "");
-  }
-  return kept.join("\n");
-}
-
-/** Drops what stands before the program: assignments, and prefix words with their flags. */
-function fromProgram(words: readonly string[]): string[] {
-  let i = 0;
-  while (i < words.length) {
-    const w = words[i] ?? "";
-    if (w !== "" && !PREFIXES.has(w) && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w)) break;
-    i++;
-    while (PREFIXES.has(w) && /^-/.test(words[i] ?? "")) i++;
-  }
-  return words.slice(i);
-}
-
-/** The simple commands in a token list, program first. A `$(` or backtick starts a new one. */
-function simpleCommands(tokens: readonly string[]): string[][] {
-  const out: string[][] = [];
-  let cur: string[] = [];
-  const close = (): void => {
-    const c = fromProgram(cur);
-    if (c.length > 0) out.push(c);
-    cur = [];
-  };
-  for (const t of tokens) {
-    if (OPERATORS.has(t)) {
-      close();
-      continue;
-    }
-    const at = Math.max(t.lastIndexOf("$("), t.lastIndexOf("`"));
-    if (at >= 0) {
-      close();
-      cur.push(t.slice(at + (t[at] === "`" ? 1 : 2)));
-      continue;
-    }
-    cur.push((cur.length === 0 ? t.replace(/^[({]+/, "") : t).replace(/\)+$/, ""));
-  }
-  close();
-  return out;
-}
-
-/** What one simple command writes, or null. */
-function writeOf(cmd: readonly string[], depth: number): string | null {
-  const prog = (cmd[0] ?? "").replace(/^.*\//, "");
-  const args = cmd.slice(1);
-  if (["sh", "bash", "zsh"].includes(prog) && args[0] === "-c" && args[1] !== undefined) return depth < 3 ? whatWrites(args[1], depth + 1) : null;
-  if (prog === "eval") return depth < 3 ? whatWrites(args.join(" "), depth + 1) : null;
+function writeOf(cmd: ShellCommand): string | null {
+  const prog = programName(cmd.program);
+  const { args } = cmd;
   if (WRITE_PROGRAMS.has(prog)) return `\`${prog}\` changes files`;
   if (IN_PLACE.has(prog) && args.some((a) => /^-[A-Za-z]*i/.test(a) || a.startsWith("--in-place"))) return `\`${prog} -i\` edits a file in place`;
-  if (prog === "git") {
-    for (const g of gitInvocations(cmd.map(quoteArg).join(" ")) ?? []) {
-      const [first = ""] = g.args;
-      if (
-        (g.subcommand !== null && GIT_WRITES.has(g.subcommand)) ||
-        (g.subcommand === "worktree" && ["add", "remove", "move", "prune"].includes(first)) ||
-        (g.subcommand === "stash" && !["list", "show"].includes(first)) ||
-        (g.subcommand === "tag" && g.args.length > 0 && !["-l", "--list"].includes(first)) ||
-        (g.subcommand === "branch" && g.args.some((a) => /^-[dDmMcCf]$/.test(a) || ["--delete", "--move", "--copy", "--force"].includes(a)))
-      )
-        return `\`git ${g.subcommand}\` changes the branch, the history or the working tree`;
-    }
+  const g = gitCommand(cmd);
+  if (g !== null) {
+    const [first = ""] = g.args;
+    if (
+      (g.subcommand !== null && GIT_WRITES.has(g.subcommand)) ||
+      (g.subcommand === "worktree" && ["add", "remove", "move", "prune"].includes(first)) ||
+      (g.subcommand === "stash" && !["list", "show"].includes(first)) ||
+      (g.subcommand === "tag" && g.args.length > 0 && !["-l", "--list"].includes(first)) ||
+      (g.subcommand === "branch" && g.args.some((a) => /^-[dDmMcCf]$/.test(a) || ["--delete", "--move", "--copy", "--force"].includes(a)))
+    )
+      return `\`git ${g.subcommand}\` changes the branch, the history or the working tree`;
   }
   if (prog === "work" && args[0] === "gh") {
     const [noun = "", verb = ""] = args.slice(1);
@@ -169,24 +115,21 @@ function writeOf(cmd: readonly string[], depth: number): string | null {
   return null;
 }
 
-/** Every way the line writes, each said once; null when it only reads and runs, or cannot be parsed. */
-function whatWrites(line: string, depth = 0): string | null {
-  const tokens = tokenizeCommand(withoutHeredocBodies(line));
-  if (tokens === null) return null; // flow's convention: a line it cannot parse is not judged
+/** Every way the parsed line writes, each said once; null when it only reads and runs. */
+function whatWrites(commands: readonly ShellCommand[]): string | null {
   const found = new Set<string>();
-  tokens.forEach((t, i) => {
-    const m = REDIRECT.exec(t);
-    if (m !== null && !NO_FILE.test(m[1] !== "" ? (m[1] ?? "") : (tokens[i + 1] ?? ""))) found.add("a `>` or `>>` redirect writes a file");
-  });
-  for (const c of simpleCommands(tokens)) {
-    const w = writeOf(c, depth);
+  for (const c of commands) {
+    if (c.redirects.some(writesFile)) found.add("a `>` or `>>` redirect writes a file");
+    const w = writeOf(c);
     if (w !== null) found.add(w);
   }
   return found.size === 0 ? null : [...found].join("; ");
 }
 
 const readAndRun: Check = (ctx) => {
-  const why = whatWrites(ctx.command ?? "");
+  const commands = shellCommands(ctx);
+  if (commands === null) return ctx.ok(); // flow's convention: a line it cannot parse is not judged
+  const why = whatWrites(commands);
   return why === null ? ctx.ok() : ctx.fail(why);
 };
 
@@ -218,7 +161,7 @@ export const driven = definePack("driven", {
    */
   noBareGh: guardrail()
     .at(command)
-    .check(banCommands({ ban: [START + LEAD + GH] }))
+    .check(bareGh)
     .message(
       "Bare `gh` in a repo driven by work. Run the same command as `work gh …`: it runs `gh project …` as you, so the board can be read and moved, and everything else as the GitHub App, so comments and pull requests are the App's and the daemon can tell them from yours. Bare `gh` would post as you.",
     )
@@ -238,6 +181,11 @@ export const driven = definePack("driven", {
         "ls ~/.config/gh",
         "ghq get github.com/me/app",
         "cat > notes.md <<'EOF'\ngh issue list\nEOF",
+        // Named inside another command's argument, gh is prose, not a call.
+        "echo 'gh issue list'",
+        'work gh issue comment 42 --body "ran gh issue list by mistake"',
+        // A line that does not parse is not judged: bash refuses to run it.
+        'gh issue comment 42 --body "unclosed',
       ],
       block: [
         "gh issue list",
@@ -296,6 +244,9 @@ export const driven = definePack("driven", {
         "body=$(cat <<'EOF'\ngit commit -am x > out.md\nEOF\n)\necho \"$body\" | head -1",
         'grep -n "> " notes.md',
         "git log --oneline -3 | xargs -n1 echo",
+        "wc -l < notes.md",
+        "go test ./... 2>&1 >/dev/null | tail -5",
+        "go test 2>&-",
       ],
       block: [
         "echo x > notes.md",
@@ -334,6 +285,13 @@ export const driven = definePack("driven", {
         'eval "rm -rf internal"',
         'n=$(git commit -m "fix (#44)")',
         "work gh api -XPATCH repos/{owner}/{repo}/issues/44",
+        // A group's or a loop's redirect writes for every command inside it.
+        "{ go test ./...; go vet ./...; } > out.log",
+        "while read l; do echo $l; done < in.txt >> out.txt",
+        "go test ./... &> out.log",
+        "echo x >&out.txt",
+        "echo x >| f",
+        "go test &>> f",
       ],
     }),
 });

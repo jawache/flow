@@ -18,16 +18,19 @@ import {
   defineCheck,
   definePack,
   escapeRe,
+  gitCommands,
   gitDirPrefix,
-  gitInvocations,
   guardrail,
   jsonInvariant,
   quoteArg,
   session,
+  shellCommands,
   substitutionInProse,
   SUBSTITUTION_MESSAGE,
   write,
   type Check,
+  type Ctx,
+  type GitCommand,
 } from "../index.ts";
 
 // ── git: the commands that destroy work, and the commits that owe a sentence ──
@@ -60,7 +63,7 @@ function restoreWorktreePaths(args: readonly string[]): string[] {
 }
 
 /**
- * The working-tree paths a command line would discard OUTRIGHT, or [] when it is safe to run.
+ * The working-tree paths a line's git commands would discard OUTRIGHT, or [] when it is safe to run.
  *
  * Deliberately narrow — false negatives beat blocking real work. Every path here is one the
  * command line itself declares: the `--` pathspec form of checkout, the restore forms that touch
@@ -70,11 +73,9 @@ function restoreWorktreePaths(args: readonly string[]): string[] {
  * whether `<thing>` is a path or a branch is a fact about the repo, not about the string, and this
  * function is pure. `checkoutBarePaths` below names the candidates and the check asks git.
  */
-export function discardPaths(command: string): string[] {
-  const invocations = gitInvocations(command);
-  if (!invocations) return [];
+function discardPaths(gits: readonly GitCommand[]): string[] {
   const paths: string[] = [];
-  for (const { subcommand, args } of invocations) {
+  for (const { subcommand, args } of gits) {
     if (subcommand === "checkout") {
       const dd = args.indexOf("--");
       if (dd !== -1) paths.push(...args.slice(dd + 1));
@@ -114,11 +115,9 @@ const CHECKOUT_TAKES_VALUE = new Set(["-b", "-B", "--orphan", "--pathspec-from-f
  * An invocation carrying `--` is skipped: `discardPaths` already has it, and everything before the
  * `--` there is a tree-ish by definition.
  */
-export function checkoutBarePaths(command: string): string[] {
-  const invocations = gitInvocations(command);
-  if (!invocations) return [];
+function checkoutBarePaths(gits: readonly GitCommand[]): string[] {
   const out: string[] = [];
-  for (const { subcommand, args } of invocations) {
+  for (const { subcommand, args } of gits) {
     if (subcommand !== "checkout" || args.includes("--")) continue;
     for (let i = 0; i < args.length; i++) {
       const arg = args[i] as string;
@@ -147,18 +146,20 @@ export function dirtyIn(porcelain: string, includeUntracked: boolean): string[] 
 const noGitDiscard = defineCheck(
   (_opts: Record<string, never>): Check =>
     async (ctx) => {
-      const command = ctx.command ?? "";
-      const cleaning = /(^|[;&|\n]\s*)git\s+clean\b/.test(command);
+      // The git commands the line runs, from the parse: a `git clean` named in a commit message
+      // or written into a heredoc is not one, and a line that does not parse has none.
+      const gits = gitCommands(ctx);
+      const cleaning = gits.some((g) => g.subcommand === "clean");
       // THE COMMAND'S OWN `-C`, copied onto every read, exactly as `commitReason` copies it: a
       // `git -C ~/other-repo checkout -- x` is about THAT repo's tree, and a status read here would
       // answer about files the command was never aimed at — clean ones, so the loss goes through.
-      const git = `git ${gitDirPrefix(command)}`.trimEnd();
-      const targets = discardPaths(command);
+      const git = `git ${gitDirPrefix(ctx)}`.trimEnd();
+      const targets = discardPaths(gits);
       // ASK GIT WHICH OF THEM IS A PATH. A bare `git checkout <thing>` discards the tree when
       // `<thing>` names a path and switches branch when it names a ref, and only the repo knows
       // which — so the candidates go to `ls-files`, whose answer IS the tracked set they match.
       // A branch matches nothing and falls out here; that is what keeps branch switching passing.
-      const candidates = checkoutBarePaths(command);
+      const candidates = checkoutBarePaths(gits);
       if (candidates.length > 0) {
         const tracked = await ctx.exec(`${git} ls-files -- ${candidates.map(quoteArg).join(" ")}`);
         if (tracked.code === 0) targets.push(...tracked.stdout.split("\n").filter((line) => line !== ""));
@@ -225,11 +226,12 @@ function skipsVerify(args: readonly string[]): boolean {
  * Each way a command line writes a commit or a ref the commit gate never runs on, or [] when it
  * writes none: `git commit --no-verify` or `-n`, `-c core.hooksPath=…` before any subcommand, and
  * git's plumbing that writes commits and refs directly (`commit-tree`, `update-ref`,
- * `hash-object -w`).
+ * `hash-object -w`). The git commands are read from the parse, so a `git commit -n` inside a quoted
+ * argument or a heredoc body is not one.
  */
-export function gateSkips(command: string): string[] {
+export function gateSkips(facts: Pick<Ctx, "command" | "commands">): string[] {
   const out: string[] = [];
-  for (const { globals, subcommand, args } of gitInvocations(command) ?? []) {
+  for (const { globals, subcommand, args } of gitCommands(facts)) {
     for (let i = 0; i < globals.length; i++) {
       const global = globals[i] as string;
       const setting = global === "-c" ? (globals[++i] ?? "") : global.startsWith("-c") ? global.slice(2) : global.startsWith("--config-env=") ? global.slice(13) : "";
@@ -247,8 +249,55 @@ export function gateSkips(command: string): string[] {
 const noGateSkip = defineCheck(
   (_opts: Record<string, never>): Check =>
     (ctx) => {
-      const skips = gateSkips(ctx.command ?? "");
+      const skips = gateSkips(ctx);
       return skips.length === 0 ? ctx.ok() : ctx.fail(skips.join("\n"));
+    },
+);
+
+/** `git push`'s options that take the next word as their value, so the value is never read as a flag or a refspec. */
+const PUSH_TAKES_VALUE = new Set(["-o", "--push-option", "--repo", "--receive-pack", "--exec"]);
+
+/**
+ * How this `git push` argument list forces the remote, or null when it does not: `--force`, `-f`
+ * alone or in a bundle such as `-fu`, `--force-with-lease` with or without its value, or a refspec
+ * that starts with `+`.
+ */
+function pushForce(args: readonly string[]): string | null {
+  let refspecs = false; // past `--`, every word is the repository or a refspec
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i] as string;
+    if (refspecs || !arg.startsWith("-")) {
+      if (arg.startsWith("+")) return `the refspec \`${arg}\``;
+      continue;
+    }
+    if (arg === "--") refspecs = true;
+    else if (arg === "--force" || arg === "--force-with-lease" || arg.startsWith("--force-with-lease=")) return `\`${arg}\``;
+    else if (PUSH_TAKES_VALUE.has(arg)) i++;
+    else if (!arg.startsWith("--"))
+      for (const flag of arg.slice(1)) {
+        if (flag === "f") return `\`-f\` in \`${arg}\``;
+        if (flag === "o") {
+          if (arg.endsWith("o")) i++; // `-o` last in the bundle takes the next word; otherwise the rest is its value
+          break;
+        }
+      }
+  }
+  return null;
+}
+
+/**
+ * Refuses a force-push, in every spelling git takes. The pushes are read from the parse, so git's
+ * own options before `push` (`git -C <dir> push`) and git run by its path are pushes, and a push
+ * written in a heredoc body or a quoted argument is not one.
+ */
+const noForcePush = defineCheck(
+  (_opts: Record<string, never>): Check =>
+    (ctx) => {
+      const found = gitCommands(ctx).flatMap(({ subcommand, args }) => {
+        const how = subcommand === "push" ? pushForce(args) : null;
+        return how === null ? [] : [`\`git push\` forces the remote with ${how}`];
+      });
+      return found.length === 0 ? ctx.ok() : ctx.fail(found.join("\n"));
     },
 );
 
@@ -267,7 +316,7 @@ export function isConventional(header: string, types: readonly string[]): boolea
 const conventionalCommit = defineCheck(
   (opts: { types: readonly string[] }): Check =>
     (ctx) => {
-      const message = commitMessage(ctx.command ?? "");
+      const message = commitMessage(ctx);
       if (message === null) return ctx.ok(); // nothing judgeable — an editor commit passes
       return isConventional(message, opts.types)
         ? ctx.ok()
@@ -318,14 +367,14 @@ export function changesVersion(diff: string): boolean {
 const noHandEditedVersion = defineCheck(
   (opts: { versionFile: string; recipe: string }): Check =>
     async (ctx) => {
-      const message = commitMessage(ctx.command ?? "");
+      const message = commitMessage(ctx);
       if (message === null) return ctx.ok();
       if (isReleaseCommit(message)) return ctx.ok(); // the one shape that may write it
       // `git diff HEAD` — staged AND unstaged, because `git commit -a` sweeps the second lot in.
       // Prefixed with the command's own `-C`, the way `commitReason` is: a commit aimed at another
       // repo has to be judged against that repo's diff, or this vetoes it over a version field it
       // cannot see.
-      const git = `git ${gitDirPrefix(ctx.command ?? "")}`.trimEnd();
+      const git = `git ${gitDirPrefix(ctx)}`.trimEnd();
       const diff = await ctx.exec(`${git} diff HEAD -- ${quoteArg(opts.versionFile)}`);
       if (diff.code !== 0) return ctx.ok();
       if (!changesVersion(diff.stdout)) return ctx.ok();
@@ -353,10 +402,35 @@ const SITE = ["cl", "aude", "\\.com/", "cl", "aude", "-code"].join("");
 const LINK = ["cl", "aude", ".com/", "cl", "aude", "-code"].join("");
 const ROBOT = "\u{1F916}";
 
-// `git commit` as a regex source, with any of git's own options between the two words: `-C <dir>`,
-// `-c key=value`, `--git-dir=…`. A builder in a worktree commits as `git -C <worktree> commit`,
-// and a pattern that wanted the two words side by side let every one of those commits through.
-const GIT_COMMIT = String.raw`git(?:\s+-[Cc]\s+(?:"[^"]*"|'[^']*'|\S+)|\s+--[\w-]+(?:=\S+)?)*\s+commit`;
+// `gh pr` or `gh issue`, run bare or through `work gh`, the wrapper a repo driven by work runs it as.
+const GH_PROSE = String.raw`(?:\S*/)?(?:work\s+)?gh\s+(?:pr|issue)\b`;
+
+/**
+ * Refuses attribution in what a `git commit` is given, and in the prose of a `gh` command.
+ *
+ * The commits are read from the parse, through `gitCommands`: git's own options sit between `git`
+ * and `commit` (`git -C <worktree> commit`), and a value with a space in it, `-C '/a b'`, is two
+ * words in a command's text, where a pattern loses it. `message` is matched against each commit's
+ * arguments after `commit`, one per line, and the bodies of the heredocs it is fed: every argument
+ * rather than the `-m` values alone, so `-am`, `-m"…"` and a `"$(cat <<'EOF' … EOF)"` message are
+ * all in view. A line that does not parse is matched whole, as `banCommands` matches it.
+ *
+ * `prose` is `banCommands` with `matchHeredocs`, for the `gh` verbs, each pattern matched from a
+ * command's program name.
+ */
+const noAttribution = defineCheck((opts: { message: readonly string[]; prose: readonly string[] }): Check => {
+  const prose = banCommands({ ban: opts.prose, matchHeredocs: true });
+  return (ctx) => {
+    const given =
+      shellCommands(ctx) === null
+        ? [ctx.command ?? ""]
+        : gitCommands(ctx)
+            .filter((g) => g.subcommand === "commit")
+            .map((g) => [...g.args, ...g.command.heredocs.map((h) => h.body)].join("\n"));
+    const hits = opts.message.filter((pattern) => given.some((text) => new RegExp(pattern).test(text)));
+    return hits.length === 0 ? prose(ctx) : ctx.fail(hits.map((pattern) => `the commit's message matches /${pattern}/`).join(" · "));
+  };
+});
 
 /** What this pack cannot know: which recipe cuts a release, and which file carries the version. */
 export interface Release {
@@ -432,16 +506,16 @@ export const git = definePack("git", (repo: Release) => {
     .at(command)
     .description("Blocks Claude/Anthropic attribution in commits, PRs and issues.")
     .check(
-      banCommands({
-        ban: [
-          `${GIT_COMMIT}[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(${VENDOR}|[Aa]nthropic)`,
-          `${GIT_COMMIT}[\\s\\S]*[Gg]enerated with[\\s\\S]*${VENDOR}`,
-          `${GIT_COMMIT}[\\s\\S]*(${SITE}|🤖 Generated)`,
-          `gh (pr|issue)[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(${VENDOR}|[Aa]nthropic)`,
-          `gh (pr|issue)[\\s\\S]*(${SITE}|🤖 Generated)`,
+      noAttribution({
+        message: [
+          `[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(${VENDOR}|[Aa]nthropic)`,
+          `[Gg]enerated with[\\s\\S]*${VENDOR}`,
+          `${SITE}|🤖 Generated`,
         ],
-        // A message fed on stdin — `git commit -F - <<'EOF'` — is still the commit's message.
-        matchHeredocs: true,
+        prose: [
+          `${GH_PROSE}[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(${VENDOR}|[Aa]nthropic)`,
+          `${GH_PROSE}[\\s\\S]*(${SITE}|🤖 Generated)`,
+        ],
       }),
     )
     .message(
@@ -450,8 +524,22 @@ export const git = definePack("git", (repo: Release) => {
     // EVERY LITERAL ASSEMBLED, the cases included: written whole, a case would carry the shape its
     // own rule bans, and this file's next commit would be refused by it.
     .test({
-      pass: ['git commit -m "fix(auth): renew the session"', 'git -C /repo/worktree commit -m "fix(auth): renew the session"'],
+      pass: [
+        'git commit -m "fix(auth): renew the session"',
+        'git -C /repo/worktree commit -m "fix(auth): renew the session"',
+        // A search for the trailer, and a note that names it, are no commit.
+        `git log --grep "${TRAILER}: ${VENDOR}"`,
+        `git commit -m "fix(auth): renew the session" && echo "${TRAILER}: ${VENDOR}"`,
+      ],
       block: [
+        // A value with a space in it, and a long option with its value apart: a pattern over the
+        // command's text lost the commit in each.
+        `git -C '/a b' commit -m "fix(auth): renew the session\n\n${TRAILER}: ${VENDOR}"`,
+        `git -c user.name='A B' commit -m "fix(auth): renew the session\n\n${TRAILER}: ${VENDOR}"`,
+        `git --git-dir /x commit -m "fix(auth): renew the session\n\n${TRAILER}: ${VENDOR}"`,
+        // The message in a bundle of short flags, and through a heredoc in a substitution.
+        `git commit -am "fix(auth): renew the session\n\n${TRAILER}: ${VENDOR}"`,
+        `git commit -m "$(cat <<'EOF'\nfix(auth): renew the session\n\n${TRAILER}: ${VENDOR}\nEOF\n)"`,
         // git's own options before `commit`: a builder in a worktree, and a one-off config value.
         `git -C /repo/worktree commit -m "fix(auth): renew the session\n\n${TRAILER}: ${VENDOR} Opus <noreply@anthropic.com>"`,
         `git -c commit.gpgsign=false commit -m "fix(auth): renew the session\n\n${TRAILER}: ${VENDOR}"`,
@@ -459,6 +547,10 @@ export const git = definePack("git", (repo: Release) => {
         `git commit -F - <<'EOF'\nfix(auth): renew the session\n\n${TRAILER}: ${VENDOR}\nEOF`,
         `git commit -m "fix(auth): renew the session\n\n${TRAILER}: ${VENDOR} <noreply@anthropic.com>"`,
         `gh pr create --body "${TRAILER}: ${VENDOR}"`,
+        // …and through `work gh`, which is how a repo driven by work runs every gh call, on the
+        // line or fed as the body on stdin.
+        `work gh pr create --title x --body "${TRAILER}: ${VENDOR}"`,
+        `work gh issue create --title x --body-file - <<'EOF'\nopened with ${LINK}\nEOF`,
         // The generated-with line, and the tool's own footer — the site link and the robot emoji
         // beside it. Three of the five patterns had no case at all until this read.
         `git commit -m "fix(auth): renew the session\n\nGenerated with ${VENDOR} Code"`,
@@ -514,6 +606,10 @@ export const git = definePack("git", (repo: Release) => {
         // would have deleted.
         "git reset --soft HEAD~1",
         "git clean -n",
+        // A discard written INTO a file or named in an argument is text, not a git command: the
+        // parse finds no git there, so nothing is asked of the repo.
+        "cat > notes.md <<'EOF'\ngit checkout -- a.ts\ngit clean -fd\nEOF",
+        'echo "never run git reset --hard here"',
       ],
       block: [
         {
@@ -570,6 +666,11 @@ export const git = definePack("git", (repo: Release) => {
           command: "git status\ngit checkout -- a.ts",
           world: { exec: { "git status --porcelain": { stdout: " M a.ts" } } },
         },
+        // A git the line runs inside a string given to a shell is a git command all the same.
+        {
+          command: "bash -c 'git checkout -- a.ts'",
+          world: { exec: { "git status --porcelain": { stdout: " M a.ts" } } },
+        },
         // AIMED AT ANOTHER REPO, and judged there. The recorded world answers only the `-C` form,
         // so a check that read this repo's status instead would reach a question the case never
         // answered and fail saying so — which is what makes this case evidence about the routing
@@ -584,40 +685,52 @@ export const git = definePack("git", (repo: Release) => {
   noForcePush: guardrail()
     .at(command)
     .description("Blocks a force-push — rewriting pushed history is the one loss a stash cannot undo.")
-    // ANCHORED TO A COMMAND POSITION — the start of the line, or just past a shell operator —
-    // exactly as `work.noAgentInboxItems` is. Unanchored, the pattern refuses a script for EDITING
-    // the words, wherever they sit inside a heredoc it is writing, and a rule that cries wolf is
-    // one agents learn to route around.
-    .check(
-      banCommands({
-        ban: [
-          "(?:^|[\\n;&|(]\\s*)\\s*git\\s+push[^\\n]*\\s(--force|-f)(\\s|$)",
-          "(?:^|[\\n;&|(]\\s*)\\s*git\\s+push[^\\n]*--force-with-lease",
-        ],
-      }),
-    )
+    // Read from the parsed git command: the `-f` must be an argument of the push itself, never of
+    // the command after it (`git push origin main; ls -f`), and the words in a note or a heredoc a
+    // script is writing are not a push at all.
+    .check(noForcePush({}))
     .message(
       "Force-push rewrites history that other clones (and every open PR) already have — the one loss no stash can undo. Push a new commit that corrects the old one. A repo whose workflow genuinely rewrites a scratch remote disables this entry in flow.config.ts, visibly.",
     )
     .test({
       pass: [
         "git push origin main",
-        // PROSE THAT MENTIONS THE VERB IS NOT AN INVOCATION. A heredoc writing a note about the
-        // ban carries the words in a BODY line, where no command position is — which is the whole
-        // difference the anchor reads, and the false positive it was added for.
+        // A heredoc's body is text fed to `cat`, so a push written in it is not one, even where a
+        // body line starts with the verb.
         "cat > notes.md <<'EOF'\nnever run git push --force here\nEOF",
-        // …and a heredoc body is not the command line at all, even where a body line starts with the verb.
         "cat > notes.md <<'EOF'\ngit push --force origin main\nEOF",
+        // ONE COMMAND AT A TIME: the flag belongs to the command after the push (#9, #14).
+        "git push origin main; ls -f",
+        "git push origin HEAD; gh api graphql -f query=x",
+        "git push && gh api -f a=b repos/x/y",
+        // …and a push named inside another command's argument is not one.
+        'echo "never git push -f here"',
+        // A value of `-o` is never a flag or a refspec.
+        "git push -o +f origin main",
+        "git push -of origin main",
+        "git push -uo +x origin main",
+        "git push --repo +x origin main",
+        "git fetch origin +main:main",
       ],
       block: [
         "git push --force origin main",
         // A command line spans newlines, and a body a SHELL reads is commands.
         "git status\ngit push --force origin main",
         "bash <<'EOF'\ngit push --force origin main\nEOF",
+        "bash <<< 'git push --force origin main'",
         "git push -f",
+        "git push -f origin main",
+        "git push -fu origin main",
         "git push --force-with-lease origin main",
-        // …and a POSITION is not the start of the string: a real force-push chained behind another
-        // command is still one, which is the half an anchor written as `^` alone would let through.
+        "git push --force-with-lease=main:abc123 origin main",
+        "git push origin +main",
+        "git push origin -- +HEAD:main",
+        // git's own options before `push`, and git run by its path: an agent in a worktree pushes
+        // as `git -C <worktree> push`.
+        "git -C /x push --force",
+        "git --no-pager push -f",
+        "/usr/bin/git push --force",
+        // A force-push chained behind another command is a command of its own.
         "git status && git push --force origin main",
       ],
     }),
@@ -679,6 +792,15 @@ export const git = definePack("git", (repo: Release) => {
         // The BANG, which is what drives the SemVer major — a scope and a `!` together, since that
         // is the shape a breaking change is actually typed in.
         'git commit -m "feat(cli)!: the config grammar is closed"',
+        // THE COMMIT'S OWN HEREDOC is its message, not the first heredoc on the line, which here is
+        // a python script (#9).
+        "python3 - <<'EOF'\nprint(1)\nEOF\ngit commit -F - <<'EOF'\nfix: a thing\nEOF",
+        // A message given as `-m "$(cat <<'EOF' … EOF)"` is the heredoc's body, which is what the
+        // shell passes to git, and the form an agent is taught.
+        "git commit -m \"$(cat <<'EOF'\nfix: a thing\n\nwhy it was needed\nEOF\n)\"",
+        // …and so it is with the value attached to its option, in either spelling.
+        "git commit -m\"$(cat <<'EOF'\nfix: a thing\nEOF\n)\"",
+        "git commit --message=\"$(cat <<'EOF'\nfix: a thing\nEOF\n)\"",
       ],
       block: [
         'git commit -m "fixed the auth thing"',
@@ -689,31 +811,54 @@ export const git = definePack("git", (repo: Release) => {
         // that looks exactly like a header. A check that searched the whole message would pass this
         // and every other well-meaning commit whose subject was never written.
         "git commit -m 'tidied things up\n\nfeat: the thing I actually did'",
+        // …and the other way round: a header-shaped script ahead of the commit lends it nothing.
+        "cat > a.md <<'EOF'\nfix: a thing\nEOF\ngit commit -F - <<'EOF'\ntidied things up\nEOF",
+        // …and the heredoc in a `$( … )` is judged by its body, not passed for its `$(cat` text.
+        "git commit -m \"$(cat <<'EOF'\ntidied things up\nEOF\n)\"",
       ],
     }),
 
-  // The commands in THIS pack that write a permanent record — `git commit -m` and the two `gh`
-  // verbs that open a PR or an issue. The lifecycle's own prose-writing verbs are the same rule in
-  // the `work` pack, and the shared tail is `substitutionInProse`, a core check beside
-  // `banCommands`: a repo that binds only `git` still gets the half every repo has.
+  // The commands in THIS pack that write a permanent record — `git commit` and the `gh pr` and
+  // `gh issue` verbs, run bare or through `work gh`. The lifecycle's own prose-writing verbs are
+  // the same rule in the `work` pack, and the shared check is `substitutionInProse`, a core check
+  // beside `banCommands`: a repo that binds only `git` still gets the half every repo has.
   noShellSubstitutionInProse: guardrail()
     .at(command)
-    .description("A backtick inside a double-quoted argument of a commit or a PR body is live command substitution, not Markdown.")
-    // matchHeredocs: an UNQUOTED heredoc in a `$(…)` is live, and its body is the message.
-    .check(banCommands({ ban: [substitutionInProse(["git\\s+commit\\b[^\\n]*?-{1,2}[a-zA-Z]*m", "gh\\s+(?:pr|issue)\\b"])], matchHeredocs: true }))
+    .description("A backtick the shell would run in a commit message or a PR or issue body (double-quoted, bare, or in an unquoted heredoc) is live command substitution, not Markdown.")
+    .check(substitutionInProse({ heads: [GH_PROSE], gitSubcommands: ["commit"] }))
     .message(SUBSTITUTION_MESSAGE)
     .test({
       pass: [
         "git commit -F - <<'EOF'\nfix: a `thing`\nEOF",
         "git commit -m 'fix: run `just test` first'",
+        // The message fed through a QUOTED heredoc in a `$( … )`, the form an agent is taught.
+        "git commit -m \"$(cat <<'EOF'\nfix: run `just test` first\nEOF\n)\"",
+        // #10: prose on stdin through a quoted heredoc, where the shell runs nothing…
+        "gh pr create --body-file - <<'EOF'\nRun \"`just test`\" before merging.\nEOF",
+        // …and a gh command, then a quoted heredoc that belongs to another command.
+        "gh issue view 35 --json body --jq .body > body.md\npython3 - <<'EOF'\nnew = f\"\"\"- **Docs** `work` starts the daemon\"\"\"\nEOF",
+        "gh issue view 1 > old.md\ncat > new.md <<'EOF'\nsay \"run `just test`\"\nEOF",
+        // #11: an escaped backtick is a literal one, inside the prose or in a grep after it.
+        String.raw`gh issue comment 1 --body "run \`just test\` first"`,
+        String.raw`gh issue view 10 --json body --jq .body | grep -n "x\\\\\`"`,
       ],
       block: [
         'git commit -m "fix: run `just test` first"',
         'gh pr create --body "see `just gate`"',
-        // The one pattern that must span a newline: the backtick sits in the body of the message.
+        // #11: the backtick substitutes, so the comment would record what `just test` prints.
+        'gh issue comment 1 --body "run `just test` first"',
+        // …run through `work gh`, as a repo driven by work runs every gh call.
+        'work gh issue comment 1 --body "run `just test` first"',
+        // The backtick sits in the body of a multi-line message.
         'git commit -m "fix: a thing\n\nrun `just test` first"',
         // A message written in an unquoted heredoc inside the argument: the backtick still runs.
         'git commit -m "$(cat <<EOF\nfix: run `just test` first\nEOF\n)"',
+        // …and an unquoted heredoc fed to the commit on stdin, where the shell runs it too.
+        "git commit -F - <<EOF\nfix: run `just test` first\nEOF",
+        // git's own options before `commit`, read through the parse: a value with a space, and a
+        // long option with its value apart.
+        "git -C '/a b' commit -m \"fix: `date`\"",
+        "git --git-dir /x commit -m \"fix: `date`\"",
       ],
     }),
 
@@ -761,6 +906,11 @@ export const git = definePack("git", (repo: Release) => {
           {
             command: 'git commit -m "release(flow)!: 2.0.0"',
             world: { exec: { [`git diff HEAD -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "2.0.0"' } } },
+          },
+          // A release commit whose message is a heredoc in a `$( … )`: its body is the header.
+          {
+            command: "git commit -m \"$(cat <<'EOF'\nchore(release): 1.2.3\nEOF\n)\"",
+            world: { exec: { [`git diff HEAD -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
           },
           // A metadata edit that rewrites the version LINE without moving its value — adding a key
           // after it puts a comma on the end. Values are compared, never lines, or this would fire

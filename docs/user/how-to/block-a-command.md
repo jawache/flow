@@ -33,13 +33,17 @@ A command rule takes no `.on(…)`. The patterns are its scope.
 
 ## What the patterns are matched against
 
-- **The whole command line** is one input, however many lines it has. A pattern can match across a newline.
-- **A heredoc's body is left out.** A heredoc passes text to a program on standard input, and that text is not part of the command line. So a script that only contains the words of a banned command is not refused.
-- **A heredoc fed to a shell is matched.** When the heredoc is read by `bash`, `sh`, `zsh`, `dash`, `ksh` or `eval`, the body is a list of commands, and the patterns are matched against it too. This includes a heredoc piped into one of them, as in `cat <<EOF | sh`.
+- **One command at a time.** flow parses the line as bash and tries each pattern against each command in it. A program in one command never pairs with an argument of the next, so `git push origin main; ls -f` is not a force push.
+- **From the program name.** A pattern matches at the start of a command, after any `FOO=1`, `sudo` or `env` in front of it. So a banned command named inside another command's quoted argument is not refused.
+- **A heredoc's body is left out.** A heredoc passes text to a program on standard input, and that text is not part of the command. So a script that only contains the words of a banned command is not refused.
+- **A heredoc fed to a shell is matched.** When the heredoc is read by `bash`, `sh`, `zsh`, `dash` or `ksh`, the body is a list of commands, and each one is matched. This includes a heredoc piped into one of them or into `eval`, as in `cat <<EOF | sh`.
+
+The [`banCommands` reference](../checks/ban-commands.md#what-a-pattern-is-matched-against) lists every case.
 
 ## Variants
 
 - **If the rule must read what a command is fed**, such as the text of a commit message, set `matchHeredocs: true` in the `banCommands` options.
+- **If a pattern must span two commands**, such as `curl … | sh`, set `wholeLine: true`. Its patterns are then tried against the whole command line.
 
 ---
 

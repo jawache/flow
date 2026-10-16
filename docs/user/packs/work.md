@@ -61,7 +61,7 @@ only those rungs change files in the worktree.
 - [`work.checkersDoNotWrite`](#workcheckersdonotwrite--guardrail) · guardrail · A verifier and the review lenses sit at a boundary they must not write to.
 - [`work.ticksAreTheChilds`](#workticksarethechilds--guardrail) · guardrail · The parent records verdicts; a box is ticked by the child that built it, with its evidence.
 - [`work.noAgentInboxItems`](#worknoagentinboxitems--guardrail) · guardrail · The inbox is the human's speccing queue — an agent raises a finding in chat, never files one.
-- [`work.noShellSubstitutionInProse`](#worknoshellsubstitutioninprose--guardrail) · guardrail · A backtick inside a double-quoted argument of a work verb that records prose is live command substitution, not Markdown.
+- [`work.noShellSubstitutionInProse`](#worknoshellsubstitutioninprose--guardrail) · guardrail · A backtick the shell would run in a work verb that records prose (double-quoted, bare, or in an unquoted heredoc) is live command substitution, not Markdown.
 - [`work.builderWrites`](#workbuilderwrites--guardrail) · guardrail · Only the named rungs change files in this worktree — a checker or a stray helper hands its finding back.
 
 ## `work.planIsTheParents` — guardrail
@@ -78,9 +78,9 @@ A builder owns its phase, not the plan — the verdict, the amendment and the co
 ```
 {
   "ban": [
-    "(?:^|[\\n;&|(]\\s*)\\s*work\\s+plan\\s+(?:verdict|amend)\\b",
-    "(?:^|[\\n;&|(]\\s*)\\s*work\\s+(?:save|task)\\b",
-    "(?:^|[\\n;&|(]\\s*)\\s*work\\s+cost\\s+record\\b"
+    "work\\s+plan\\s+(?:verdict|amend)\\b",
+    "work\\s+(?:save|task)\\b",
+    "work\\s+cost\\s+record\\b"
   ]
 }
 ```
@@ -153,7 +153,7 @@ The parent records verdicts; a box is ticked by the child that built it, with it
 ```
 {
   "ban": [
-    "(?:^|[\\n;&|(]\\s*)\\s*work\\s+plan\\s+tick\\b"
+    "work\\s+plan\\s+tick\\b"
   ]
 }
 ```
@@ -195,7 +195,7 @@ The inbox is the human's speccing queue — an agent raises a finding in chat, n
 ```
 {
   "ban": [
-    "(?:^|[\\n;&|(]\\s*)\\s*work\\s+inbox\\s+new\\b"
+    "work\\s+inbox\\s+new\\b"
   ]
 }
 ```
@@ -216,6 +216,7 @@ What you have is a finding. Say it in the chat — headline, why it matters, wha
 
 - running `work inbox list`
 - running `echo "the human runs work inbox new themselves" >> note.md`
+- running `git commit -m "docs: the human runs work inbox new themselves"`
 - running `cat > note.md <<'EOF'
 work inbox new --summary x
 EOF`
@@ -229,21 +230,20 @@ work inbox new --summary x`
 
 ## `work.noShellSubstitutionInProse` — guardrail
 
-A backtick inside a double-quoted argument of a work verb that records prose is live command substitution, not Markdown.
+A backtick the shell would run in a work verb that records prose (double-quoted, bare, or in an unquoted heredoc) is live command substitution, not Markdown.
 
 - **Refuses at** a shell command is about to run
 - **Watches** not scoped by path
 - **Categories** every session
-- **Check** [`banCommands`](../checks/ban-commands.md)
+- **Check** [`substitutionInProse`](../checks/substitution-in-prose.md)
 
 <details><summary>settings</summary>
 
 ```
 {
-  "ban": [
-    "(?:work\\s+(?:plan|task|recap|record|spec|complete)\\b)[^\"`]*(?:\"(?:(?!<<-?')[^\"])*\"[^\"`]*)*\"(?:(?!<<-?')[^\"])*`"
-  ],
-  "matchHeredocs": true
+  "heads": [
+    "work\\s+(?:plan|task|recap|record|spec|complete)\\b"
+  ]
 }
 ```
 
@@ -252,10 +252,9 @@ A backtick inside a double-quoted argument of a work verb that records prose is 
 ### What the agent reads when refused
 
 ```
-You are recording prose through a shell command, and a backtick inside a DOUBLE-quoted argument is not Markdown — the shell RUNS it and splices its output into your text before the command ever sees it.
+You are recording prose through a shell command, and a backtick in a double-quoted argument or an unquoted heredoc is not Markdown — the shell RUNS it and splices its output into your text before the command ever sees it.
 On an append-only record there is no undo: no amend, no redact. And once the binary has argv the splice has already happened, so this is the only moment it can be caught.
-Fix: SINGLE-quote the argument (backticks are literal there), or feed the prose on stdin with a QUOTED heredoc — `git commit -F -` plus `<<'EOF'`, which this rule treats as safe.
-ALREADY single-quoted and still blocked? Then your PROSE carries an unbalanced double quote before the backtick, and the matcher cannot tell that quote from a real open argument. Nothing would splice — this one is the rule's cost, not your mistake. Balance the quote, drop it, or use the heredoc; do not go back to double quotes to make it pass.
+Fix: SINGLE-quote the argument (backticks are literal there), escape each backtick as \` inside the double quotes, or feed the prose on stdin with a QUOTED heredoc — `git commit -F -` plus `<<'EOF'`, which this rule treats as safe.
 ```
 
 ### Proved by
@@ -264,6 +263,8 @@ ALREADY single-quoted and still blocked? Then your PROSE carries an unbalanced d
 
 - running `work plan decision 'chose the `chain` builder' --chose x --reverse y`
 - running `work plan status --json`
+- running `work plan decision "chose the \`chain\` builder" --chose x --reverse y`
+- running `work plan status --json; echo `date``
 
 **blocks**
 

@@ -48,6 +48,10 @@ export {
   type Verdict,
   type ExecResult,
   type TurnAction,
+  type ShellCommand,
+  type ShellHeredoc,
+  type ShellRedirect,
+  type ShellSubstitution,
   type Case,
   type CaseWorld,
   type Cases,
@@ -58,9 +62,9 @@ export { defineCategory, type Category, type Classifier, type SessionFacts } fro
 // ── the stock checks, and the command reader they are written against ────────
 //
 // THE LIBRARY IS PART OF THE PROMISE. A pack is just code, and the code it is made of is these:
-// fourteen configured checks that cover what a guard actually asks — a banned shape in a file, a
+// fifteen configured checks that cover what a guard actually asks — a banned shape in a file, a
 // banned command, a protected path, a JSON invariant, an import fence, a gate that runs a tool.
-// A pack that could not reach them would have to re-implement each one, and fourteen private
+// A pack that could not reach them would have to re-implement each one, and fifteen private
 // re-implementations is the string registry this package exists to delete, wearing a new coat.
 //
 // They come through THIS door and never `@jawache/flow/checks`, for the same reason the grammar
@@ -90,40 +94,48 @@ export {
   type RequireEdge,
 } from "./checks/domain.ts";
 
-// The one shared PATTERN, and the sentence that goes with it — the pair `banCommands` above is
-// most often configured with, and the only piece of a rule's content this door carries.
+// The one shared CHECK of a rule's content, and the sentence that goes with it — a backtick the
+// shell would run inside a command that records prose.
 //
 // It is here because TWO PACKS say it: `git` polices `git commit` and the `gh` verbs, `work`
-// polices the lifecycle verbs that write to an append-only journal, and the tail of the expression
-// — an open double quote reaching a backtick, without crossing a quoted heredoc — is identical.
-// Anything two packs share is a core check by the rule F5 settled; the alternative was a shared
-// module beside the packs, which is what this was, and it had grown four unrelated sections around
-// this pair before anyone noticed it had become a bag.
+// polices the lifecycle verbs that write to an append-only journal, and the judgement — a backtick
+// substitution in the command's parse — is identical. Anything two packs share is a core check by
+// the rule F5 settled; the alternative was a shared module beside the packs, which is what this
+// was, and it had grown four unrelated sections around this pair before anyone noticed it had
+// become a bag.
 export { substitutionInProse, SUBSTITUTION_MESSAGE } from "./checks/domain.ts";
 
-// The four readings of a command line a bespoke check needs, and the reason they are public: a
-// repo writing its own command rule otherwise writes its own shell tokeniser, and a tokeniser that
-// does not know a newline separates commands is how `git commit -m "bad"` sails through as line 2
-// of a batch. One parser, proved once, for every rule in every repo.
+// The readings of a command line a bespoke check needs, and the reason they are public: a repo
+// writing its own command rule otherwise writes its own shell tokeniser, and a tokeniser that does
+// not know a newline separates commands is how `git commit -m "bad"` sails through as line 2 of a
+// batch. Every one of them reads the one parse, proved once, for every rule in every repo.
 //
-// `quoteArg` is the fifth, and it is the same argument in the other direction: a check that reads
-// a command usually goes on to BUILD one for `ctx.exec`, and a path interpolated raw is a path
-// whose apostrophe ends the quoting. Written by hand it is a one-liner everybody gets almost
-// right; there is one of them in this package and it is this.
+// `quoteArg` is the same argument in the other direction: a check that reads a command usually
+// goes on to BUILD one for `ctx.exec`, and a path interpolated raw is a path whose apostrophe ends
+// the quoting. Written by hand it is a one-liner everybody gets almost right; there is one of them
+// in this package and it is this.
 //
-// `gitDirPrefix` is the sixth, and it answers the question every command rule that shells out has
-// to ask before it reads anything: WHICH REPO is this command about. A `git -C ~/other-repo commit`
-// judged against this repo's index once vetoed another repo's commit over files it could not see.
+// `gitDirPrefix` answers the question every command rule that shells out has to ask before it
+// reads anything: WHICH REPO is this command about. A `git -C ~/other-repo commit` judged against
+// this repo's index once vetoed another repo's commit over files it could not see.
 // `commitReason` carries the fix; the packs that shell out live outside this package, so the fix
 // has to come through the door with them or each one re-derives it and one of them gets it wrong.
+//
+// `shellCommands` is the door to the parse for a check that may be loaded by an older engine,
+// which hands no `ctx.commands`: it parses the line itself then. `gitCommand` reads one parsed
+// command as git — its own options, its subcommand, its arguments — and `gitCommands` every git
+// command a line runs. `programName` is a command's program without its path, the one way flow
+// reads it.
+export { programName } from "./language/domain.ts";
 export {
   commitMessage,
+  gitCommand,
+  gitCommands,
   gitDirPrefix,
-  gitInvocations,
   givesReason,
   quoteArg,
-  tokenizeCommand,
-  type GitInvocation,
+  shellCommands,
+  type GitCommand,
 } from "./checks/domain.ts";
 
 // The stock way to write a classifier — the engine's, because the ORDER host-written evidence must
