@@ -51,7 +51,7 @@ const HOUSE = (packageRoot: string): string => fixturePack("repo-pack", join(pac
 
 /** What the temp repo's own guard says. A few entries, at least one per rail this suite drives. */
 const CONFIG = (packageRoot: string): string => `
-import { breadcrumb, command, commit, definePack, defineConfig, deletion, guardrail, pack, protectedPath, session, touch, write } from ${JSON.stringify(
+import { breadcrumb, command, commit, definePack, defineConfig, deletion, guardrail, pack, protectedPath, session, touch, turnEnd, write } from ${JSON.stringify(
   join(packageRoot, "index.ts"),
 )};
 import { builder, house } from "./guards/house.ts";
@@ -116,6 +116,13 @@ const demo = definePack("demo", {
     .check((ctx) => ((ctx.staged ?? []).includes("plan.yaml") ? ctx.fail("the plan is the parent's") : ctx.ok()))
     .message("A builder completes its phase — the plan's shape is the parent's.")
     .test({ pass: [{ staged: ["src/a.ts"] }], block: [{ staged: ["plan.yaml"] }] }),
+
+  buildersHandBack: guardrail()
+    .at(turnEnd)
+    .for(builder)
+    .check((ctx) => ((ctx.turn ?? []).some((action) => action.did === "edit" && action.path === "plan.yaml") ? ctx.fail("edited plan.yaml") : ctx.ok()))
+    .message("A builder hands back its phase, not a new plan — put plan.yaml back.")
+    .test({ pass: [{ actions: [] }], block: [{ actions: [{ did: "edit", path: "plan.yaml" }] }] }),
 
   orientation: breadcrumb().at(session).text("This repo is guarded by flow."),
 
@@ -276,7 +283,7 @@ describe("the session and turn rails", () => {
 
 describe("what a broken or empty call does", () => {
   it("passes an empty payload safely, on every rail", () => {
-    for (const event of ["session-start", "pre-tool-use", "post-tool-use", "post-tool-use-failure", "stop", "notification"]) {
+    for (const event of ["session-start", "pre-tool-use", "post-tool-use", "post-tool-use-failure", "stop", "subagent-stop", "notification"]) {
       const answer = run(["hook", event], "");
       expect(answer.code, `${event} on an empty payload`).toBe(0);
       expect(answer.stderr, `${event} said something about nothing`).toBe("");
@@ -1193,6 +1200,93 @@ describe("a subagent's drift and turn, read from its own transcript — never it
   });
 });
 
+describe("a subagent's hand-back, at SubagentStop — the turn-end rules, for the subagent", () => {
+  // The payload as Claude Code sends it when a subagent hands back: its id and type, the PARENT's
+  // transcript_path, and its own beside it. Each case is its own agent id, because who an agent is
+  // is remembered per session × agent.
+  const SESSION = "hand-back";
+  let parent: string;
+  let ids = 0;
+
+  const prompt = (content: string): string => JSON.stringify({ type: "user", message: { content } });
+  const used = (tool: string, input: Record<string, unknown>): string =>
+    JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: tool, input }] } });
+  const wrote = (name: string): string => used("Write", { file_path: join(repo, name), content: "" });
+  /** Four edits and nothing run — what the repo's turn-end rule, bound for everyone, refuses. */
+  const untested = (): string[] => ["a", "b", "c", "d"].map((name) => wrote(`src/${name}.ts`));
+  const lines = (...each: string[]): string => `${each.join("\n")}\n`;
+  const setting = (name: string): string => JSON.stringify({ type: "agent-setting", agentSetting: name, sessionId: SESSION });
+
+  /** Write the parent's transcript and this subagent's own, then hand back as the host would. */
+  const handBack = (type: string, own: readonly string[], over: Record<string, unknown> = {}, parentLines: readonly string[] = [prompt("go")]): Ran => {
+    const id = `ahb${++ids}`;
+    const path = join(repo, ".t", SESSION, "subagents", `agent-${id}.jsonl`);
+    writeFileSync(parent, lines(...parentLines));
+    writeFileSync(path, lines(prompt("do the phase"), ...own));
+    return hook("subagent-stop", {
+      session_id: SESSION,
+      transcript_path: parent,
+      cwd: repo,
+      permission_mode: "default",
+      hook_event_name: "SubagentStop",
+      stop_hook_active: false,
+      agent_id: id,
+      agent_type: type,
+      agent_transcript_path: path,
+      last_assistant_message: "done",
+      ...over,
+    });
+  };
+
+  beforeAll(() => {
+    mkdirSync(join(repo, ".t", SESSION, "subagents"), { recursive: true });
+    parent = join(repo, ".t", `${SESSION}.jsonl`);
+  });
+
+  it("is refused by a rule with no .for(…): exit 2, its message on stderr", () => {
+    const held = handBack("Explore", untested());
+    expect(held.code).toBe(2);
+    expect(held.stderr).toContain("flow — turn held open");
+    expect(held.stderr).toContain("You edited all turn and ran nothing.");
+    expect(held.stdout).toBe("");
+  });
+
+  it("runs a .for(…) rule only for an agent that has one of its categories", () => {
+    const edited = [wrote("plan.yaml")];
+    const builder = handBack("builder", edited);
+    expect(builder.code, "a builder that edited the plan is held").toBe(2);
+    expect(builder.stderr).toContain("A builder hands back its phase, not a new plan");
+    const other = handBack("Explore", edited);
+    expect(other.code, `a subagent that is not a builder is let through: ${other.stderr}`).toBe(0);
+    expect(other.stderr).toBe("");
+  });
+
+  it("runs no rule for an internal agent: an empty type, or the type the session itself runs as", () => {
+    const unnamed = handBack("", untested());
+    expect(unnamed.code, `a session run as no agent: ${unnamed.stderr}`).toBe(0);
+    expect(unnamed.stderr).toBe("");
+    const own = handBack("leader", untested(), {}, [setting("leader"), prompt("go")]);
+    expect(own.code, `a session run --agent leader: ${own.stderr}`).toBe(0);
+    expect(own.stderr).toBe("");
+    const spawned = handBack("builder", untested(), {}, [setting("leader"), prompt("go")]);
+    expect(spawned.code, "a builder that session spawned is still judged").toBe(2);
+  });
+
+  it("reads ctx.turn from the subagent's own transcript, and not its parent's", () => {
+    const ran = handBack("Explore", [used("Bash", { command: "npm test" }), wrote("src/a.ts")], {}, [prompt("go"), ...untested()]);
+    expect(ran.code, `the parent edited all turn, the subagent ran something: ${ran.stderr}`).toBe(0);
+    const edited = handBack("Explore", untested(), {}, [prompt("go"), used("Bash", { command: "npm test" })]);
+    expect(edited.code, "the subagent edited all turn, its parent ran something").toBe(2);
+    expect(edited.stderr).toContain("You edited all turn and ran nothing.");
+  });
+
+  it("holds an agent once: a hand-back with stop_hook_active set is let through", () => {
+    const again = handBack("Explore", untested(), { stop_hook_active: true });
+    expect(again.code, again.stderr).toBe(0);
+    expect(again.stderr).toBe("");
+  });
+});
+
 describe("the off switch", () => {
   it("silences every rail, and writes no telemetry while it is off", () => {
     writeFileSync(join(repo, ".flow", "off"), "");
@@ -1301,6 +1395,22 @@ describe("a config that will not load", () => {
       expect(stop.code, "a held turn cannot hand back to the human who would fix it").toBe(0);
       expect(stop.stderr, "and it is not silent — the turn ends knowing why").toMatch(LOAD_ERROR);
       expect(stop.stderr, "the sentence turn-end is told with, not just any stderr").toContain(FLOW_OFF);
+    });
+  });
+
+  it.each(Object.entries(BREAKS))("reports the fault at SubagentStop and lets the subagent hand back — %s", (_how, breaker) => {
+    withBrokenConfig(breaker, () => {
+      const handBack = hook("subagent-stop", {
+        session_id: "live-stop",
+        hook_event_name: "SubagentStop",
+        agent_id: "abroken",
+        agent_type: "general-purpose",
+        stop_hook_active: false,
+      });
+      expect(handBack.code, "a held subagent cannot hand back to the agent that would fix it").toBe(0);
+      expect(handBack.stderr, "the load error goes to standard error").toMatch(LOAD_ERROR);
+      expect(handBack.stderr).toContain(FLOW_OFF);
+      expect(handBack.stdout).toBe("");
     });
   });
 
@@ -1569,7 +1679,7 @@ describe("flow facts — the record and the conversations, read back", () => {
     expect(read.metrics.headline.blocks).toBeGreaterThan(0);
     expect(read.metrics.span.tools).toBeGreaterThan(0);
     expect(read.metrics.guardrails.find((g) => g.id === "demo.noTodo")?.hits).toBeGreaterThan(0);
-    expect(read.moments.totals).toMatchObject({ guardrails: 7, breadcrumbs: 2 });
+    expect(read.moments.totals).toMatchObject({ guardrails: 8, breadcrumbs: 2 });
     expect(read.terrain.some((n) => n.path === "src")).toBe(true);
   });
 
