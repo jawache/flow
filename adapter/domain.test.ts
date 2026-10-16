@@ -2763,8 +2763,8 @@ describe("planUninstall — a repo flow init set up", () => {
   });
 
   it("reports each removal, the config it kept, and ends with the global package's npm uninstall", () => {
-    const said = uninstallLines(planUninstall({ ...wired, machineFile: { ...wired.machineFile, settings: null } }), []);
-    expect(said).toEqual([
+    const bare = planUninstall({ ...wired, machineFile: { ...wired.machineFile, settings: null } });
+    expect(uninstallLines(bare, [])).toEqual([
       "flow uninstall — removed:",
       `  - ${GATE_PATH}`,
       "  - core.hooksPath (it was .githooks)",
@@ -2774,7 +2774,7 @@ describe("planUninstall — a repo flow init set up", () => {
       "  · kept flow.config.ts and the packs it imports — `flow init` wires this repo again.",
       "  next: `npm uninstall -g @jawache/flow` — removes the package.",
     ]);
-    expect(uninstallCode(plan, [])).toBe(0);
+    expect(uninstallCode(bare, [])).toBe(0);
   });
 
   it("says the machine-wide file still holds flow's hooks, and names --machine beside the report and in its last line", () => {
