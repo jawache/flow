@@ -10,8 +10,8 @@ summary: "every `flow` command, what `flow init` writes, the two switch files, a
 
 | Command | What it does |
 | --- | --- |
-| `flow init [--empty]` | Writes `flow.config.ts`, `.githooks/pre-commit` and `.flow/`, sets `core.hooksPath`, and registers flow's hooks in the Claude Code settings file. `--empty` writes a config that binds no packs. Run it again at any time: it writes only what is missing, and never writes over `flow.config.ts` or `.githooks/pre-commit` once they exist. It does change two things you may have set yourself, listed under [what `flow init` writes](#what-flow-init-writes) |
-| `flow status [--json]` | Lists every bound rule by moment, and checks each fitting: the config, the commit gate, `core.hooksPath`, the hook registrations and the `flow` they run. A fitting that is not in place is a red line with its fix |
+| `flow init [--empty]` | Writes `flow.config.ts`, `.githooks/pre-commit` and `.flow/`, sets `core.hooksPath`, and registers flow's hooks in the Claude Code settings file. `--empty` writes a config that binds no packs. Run it again at any time: it writes only what is missing, and never writes over `flow.config.ts` or `.githooks/pre-commit` once they exist. It does change one thing you may have set yourself, the hook registrations, listed under [what `flow init` writes](#what-flow-init-writes). When git already runs other hooks, it leaves them alone and prints that flow is not installed, as described under [when git already runs other hooks](#when-git-already-runs-other-hooks) |
+| `flow status [--json]` | Lists every bound rule by moment, and checks each fitting: the config, the commit gate, that git runs the commit gate, the hook registrations and the `flow` they run. A fitting that is not in place is a red line with its fix |
 | `flow test [config]` | Runs every bound rule's `.test()` cases. The default config is `flow.config.ts` |
 | `flow facts [options]` | Reports what the log in `.flow/` and the Claude Code transcripts record about this repo. The options are listed under [`flow facts`](#flow-facts) |
 | `flow replay <file> [config] [--against <log>]` | Runs a recorded session through the rules again, with no repo and no Claude Code. `config` is the config to judge it with, `flow.config.ts` by default. `--against` compares the result with a log |
@@ -43,10 +43,25 @@ summary: "every `flow` command, what `flow init` writes, the two switch files, a
 | `.flow/` | flow's state and logs. It holds its own `.gitignore`, so it is never committed and your `.gitignore` is not changed. Each session's log is `.flow/log/<session id>.jsonl`, described in [the session log](./log.md) |
 | `node_modules/@jawache/flow` | A link to the `flow` that is running. Written only when the repo does not install `@jawache/flow` itself |
 | The Claude Code settings file | Six hook registrations: `SessionStart`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Stop` and `SubagentStop`. Each one runs the command `f="$CLAUDE_PROJECT_DIR/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook <event>; exec flow hook <event>`. The file is the repo's `.claude/settings.json` when the repo's `package.json` lists `@jawache/flow`. Otherwise it is `~/.claude/settings.json`, or `$CLAUDE_CONFIG_DIR/settings.json` when that variable is set. A registration an older `flow init` wrote, as the bare `flow hook <event>` or on fewer tools, is rewritten in place to this command and matcher. When the hooks go in the repo's file, a bare `flow hook <event>` in the machine-wide file is rewritten to the same command too, and nothing else in that file changes. When `flow init` adds or rewrites a registration, it writes the whole file back as JSON indented by two spaces. Every key already in the file is kept |
-| `core.hooksPath` | Set to `.githooks`, so git runs the gate. `flow init` sets it whenever it is not already `.githooks`, including when it points somewhere else. It is a setting of one clone, so run `flow init` in every new clone |
+| `core.hooksPath` | Set to `.githooks`, so git runs the gate. `flow init` sets it only when it is unset and `.git/hooks` holds no hooks. It is a setting of one clone, so run `flow init` in every new clone |
 
-> [!WARNING]
-> If `core.hooksPath` already points at another folder, such as `.husky/_`, `flow init` replaces it with `.githooks`. Git then stops running the hooks in the old folder. Move those hooks into `.githooks/` before you run `flow init`.
+### When git already runs other hooks
+
+Git runs hooks from one folder. `flow init` leaves that folder alone when git already runs other hooks from it, and flow is then not installed.
+
+Git already runs other hooks when either of these is true:
+
+- **`core.hooksPath` points at another folder**, such as husky's `.husky/_`.
+- **`.git/hooks` holds a hook**: any file there whose name does not end in `.sample`. Git LFS and lefthook install their hooks there.
+
+In that case, `flow init` writes every other file in the table above, does not set `core.hooksPath`, and exits 1. Its output ends with a block that starts `FLOW IS NOT INSTALLED`. The block names the folder git runs hooks from and gives two ways to finish:
+
+- **Add flow's two lines to the end of the `pre-commit` hook git runs.** For husky, that file is `.husky/pre-commit`.
+- **Move those hooks into `.githooks/`**, then run `git config core.hooksPath .githooks`.
+
+In a terminal, the block is printed in bold red, unless the `NO_COLOR` environment variable is set. `flow status` prints the same message as a red line.
+
+Once the `pre-commit` hook git runs calls flow, `flow init` and `flow status` count flow as installed. For husky, flow reads `.husky/pre-commit`.
 
 Every hook and the commit gate run the repo's own `@jawache/flow` package first, then the `flow` on the `PATH` that git and Claude Code use. They never run a `flow` in the repo's `node_modules/.bin`, because any package can install one there. If neither has it, each hook fails with `flow: not found`, every commit is refused, and `flow status` prints a red `binary` line. [How to install flow](../how-to/install-flow.md) gives the two installs that put `flow` there.
 
