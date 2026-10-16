@@ -102,7 +102,7 @@ Uninstalling the package alone leaves the hooks in place, and they then fail wit
    - **A dev dependency:** the repo's `.claude/settings.json`.
    - **A global install:** `~/.claude/settings.json`, or `$CLAUDE_CONFIG_DIR/settings.json` when that variable is set. This file applies to every repo on the machine, so change it only when no repo needs flow.
 
-   Under `hooks`, remove each entry whose command ends with `flow hook session-start`, `flow hook pre-tool-use`, `flow hook post-tool-use`, `flow hook post-tool-use-failure` or `flow hook stop`.
+   Under `hooks`, remove each entry whose command ends with `flow hook session-start`, `flow hook pre-tool-use`, `flow hook post-tool-use`, `flow hook post-tool-use-failure`, `flow hook stop` or `flow hook subagent-stop`.
 
 4. Remove the package:
 
