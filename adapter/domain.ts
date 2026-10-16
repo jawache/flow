@@ -3851,7 +3851,7 @@ export function notInstalledLines(other: UnwiredHooks): string[] {
  * A path as a person pastes it into a shell: as it is when nothing in it is special to the shell,
  * and single-quoted when something is, such as the space in a worktree under `~/My Projects/`.
  */
-export function asTyped(path: string): string {
+function asTyped(path: string): string {
   return /^[\w@%+=:,./-]+$/.test(path) ? path : quoteArg(path);
 }
 

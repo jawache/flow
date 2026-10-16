@@ -158,7 +158,6 @@ import {
   SET_HOOKS_PATH,
   ADD_THE_GATE_LINE,
   armsFlow,
-  asTyped,
   scaffold,
   planInit,
   initCode,
@@ -2521,17 +2520,14 @@ describe("planInit — when git already runs other hooks", () => {
       );
     });
 
-    it("a path with a space in it, as a worktree's shared .git/hooks can be, is quoted in the chmod to paste", () => {
-      const dir = "/Users/me/My Projects/app/.git/hooks";
-      const plan = planInit({ ...bare, hooksFolder: { dir, files: ["pre-commit"], preCommitText: WIRED, preCommitExecutable: false } });
-      expect(firstFix(plan)).toStrictEqual([`  - Make ${dir}/pre-commit executable, so git runs it: \`chmod +x '${dir}/pre-commit'\``]);
-    });
-
-    it("asTyped leaves a plain path as it is, and single-quotes one the shell would split or expand", () => {
-      expect(asTyped(".git/hooks/pre-commit")).toBe(".git/hooks/pre-commit");
-      expect(asTyped("/main/.git/hooks/pre-commit")).toBe("/main/.git/hooks/pre-commit");
-      expect(asTyped("/a b/pre-commit")).toBe("'/a b/pre-commit'");
-      expect(asTyped("/it's/$HOME/pre-commit")).toBe(`'/it'\\''s/$HOME/pre-commit'`);
+    it("the chmod to paste leaves a plain path as it is, and single-quotes one the shell would split or expand", () => {
+      const chmodOf = (dir: string): string[] =>
+        firstFix(planInit({ ...bare, hooksFolder: { dir, files: ["pre-commit"], preCommitText: WIRED, preCommitExecutable: false } }));
+      const said = (dir: string, typed: string): string[] => [`  - Make ${dir}/pre-commit executable, so git runs it: \`chmod +x ${typed}\``];
+      expect(chmodOf("/main/.git/hooks"), "a worktree's shared folder").toStrictEqual(said("/main/.git/hooks", "/main/.git/hooks/pre-commit"));
+      const spaced = "/Users/me/My Projects/app/.git/hooks";
+      expect(chmodOf(spaced), "a space, as under ~/My Projects/").toStrictEqual(said(spaced, `'${spaced}/pre-commit'`));
+      expect(chmodOf("/it's/$HOME/hooks"), "a quote and a $").toStrictEqual(said("/it's/$HOME/hooks", `'/it'\\''s/$HOME/hooks/pre-commit'`));
     });
 
     it("husky's .husky/pre-commit, with no execute bit, still counts once it calls flow, and its fix is unchanged", () => {
