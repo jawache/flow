@@ -975,10 +975,11 @@ async function judge(args: {
       continue;
     }
 
-    // A REFUSED CALL CARRIES NO NOTES — `toResult` drops them for the refusal — so a note is not
-    // judged here either, or it would be marked shown and stay silent until drift. A blocked `cat`
-    // whose file is next read by the retried command then briefs on the retry, which is the call
-    // that runs. A held TURN is the exception: its note goes to the agent with the refusal.
+    // A REFUSED CALL CARRIES NO NOTES, and this is the one place it is kept from them: a note is not
+    // judged for it, so `toResult` is handed none, and nothing is marked shown to stay silent until
+    // drift. A blocked `cat` whose file is next read by the retried command then briefs on the
+    // retry, which is the call that runs. A held TURN is the exception: its note is judged, and
+    // `toResult` passes it to the agent with the refusal.
     if (blocked.length > 0 && !ridesRefusal(event.moment)) continue;
     steps?.push({
       rail: "brief",
