@@ -417,8 +417,13 @@ export interface ShellSubstitution {
   readonly backtick: boolean;
   /** The commands it runs, nested ones included, as `ctx.commands` lists them. */
   readonly commands: readonly ShellCommand[];
-  /** The index in its command's `args` of the argument that is this substitution and nothing else, or null. */
+  /**
+   * The index in its command's `args` of the argument this substitution ends, when only plain text
+   * comes before it there — `-m "$( … )"`, `-m"$( … )"`, `--message="$( … )"` — or null.
+   */
   readonly argument: number | null;
+  /** That plain text: `""` for an argument that is the substitution alone, `-m` for `-m"$( … )"`. Null with `argument`. */
+  readonly prefix: string | null;
 }
 
 /** One redirect on a command: its operator (`>`, `>>`, `<`, `2>&1`'s `>&` …) and its target word. */
@@ -683,15 +688,24 @@ function shellWord(w: Word): ShellWord {
  */
 function substitution(text: string, body: readonly ShellStep[]): ShellSubstitution {
   const backtick = text.startsWith("`");
-  return { text: (backtick ? text.slice(1, -1) : text.slice(2, -1)).trim(), backtick, commands: stepCommands(body), argument: null };
+  return { text: (backtick ? text.slice(1, -1) : text.slice(2, -1)).trim(), backtick, commands: stepCommands(body), argument: null, prefix: null };
 }
 
-/** Is this word one substitution and nothing else — bare, or alone inside double quotes? */
-function wholeSubstitution(w: Word): boolean {
-  const [part, ...rest] = w.parts ?? [];
-  if (part === undefined || rest.length > 0) return false;
-  if (part.type === "CommandExpansion") return true;
-  return part.type === "DoubleQuoted" && part.parts.length === 1 && part.parts[0]?.type === "CommandExpansion";
+/**
+ * The plain text in front of the substitution a word ends with — `""` when the word is the
+ * substitution alone, bare or in double quotes — or null when the word ends with something else, or
+ * anything but plain text comes before it.
+ */
+function textBefore(w: Word): string | null {
+  const pieces = (w.parts ?? []).flatMap((part): readonly WordPart[] => (part.type === "DoubleQuoted" ? part.parts : [part]));
+  const last = pieces.pop();
+  if (last?.type !== "CommandExpansion") return null;
+  let text = "";
+  for (const piece of pieces) {
+    if (piece.type !== "Literal" && piece.type !== "SingleQuoted" && piece.type !== "AnsiCQuoted") return null;
+    text += piece.value;
+  }
+  return text;
 }
 
 /**
@@ -1002,13 +1016,15 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
     const heredocs: ShellHeredoc[] = [];
     const redirects: Gathered[] = [];
     const subs: ShellSubstitution[] = [];
-    // The substitutions that are a whole word, and that word's place in argv.
-    const whole = new Map<ShellSubstitution, number>();
+    // The substitutions that end a word with only plain text before them: the word's place in
+    // argv, and that text.
+    const ending = new Map<ShellSubstitution, { readonly index: number; readonly prefix: string }>();
     const argWord = (w: Word): void => {
       const from = subs.length;
       word(w, subs, inner);
       const [only] = subs.slice(from);
-      if (only !== undefined && subs.length === from + 1 && wholeSubstitution(w)) whole.set(only, argv.length - 1);
+      const prefix = textBefore(w);
+      if (only !== undefined && subs.length === from + 1 && prefix !== null) ending.set(only, { index: argv.length - 1, prefix });
     };
     const inner: ShellStep[] = [];
     for (const p of c.prefix) {
@@ -1039,11 +1055,13 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
     const at = wrapperWords(argv);
     const [program, ...args] = argv.slice(at);
     if (program !== undefined) {
-      const argument = (sub: ShellSubstitution): number | null => {
-        const index = (whole.get(sub) ?? -1) - at - 1;
-        return index < 0 ? null : index;
+      // Counted from the program's first argument, past the wrappers; the program's own word is none.
+      const placed = (sub: ShellSubstitution): ShellSubstitution => {
+        const end = ending.get(sub);
+        const argument = end === undefined ? -1 : end.index - at - 1;
+        return argument < 0 || end === undefined ? sub : { ...sub, argument, prefix: end.prefix };
       };
-      const substitutions = subs.map((sub) => ({ ...sub, argument: argument(sub) }));
+      const substitutions = subs.map(placed);
       const command = { program, args, text: [program, ...args].join(" "), heredocs, substitutions, redirects: redirects.map(publicRedirect), nested };
       out.push({ kind: "command", command, words, at, redirects: redirects.map(stepRedirect), before: inner });
       // `export A=b`: the parse gives a declaration's arguments as assignments, which set the

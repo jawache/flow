@@ -560,16 +560,22 @@ describe("parseCommandLine — the six fields", () => {
     expect(sub?.commands.map((c) => c.nested)).toEqual([true, true, true]);
   });
 
-  it("records the argument a substitution is the whole of, and no argument for one inside a longer word", () => {
-    const argument = (line: string): (number | null)[] | undefined => parseCommandLine(line)?.[0]?.substitutions.map((sub) => sub.argument);
-    expect(argument('git commit -m "$(cat <<\'EOF\'\nfix: a\nEOF\n)"')).toEqual([2]);
-    expect(argument("echo $(date) `whoami`")).toEqual([0, 1]);
-    expect(argument("sudo -u root echo x $(date)"), "counted from the program, past the wrappers").toEqual([1]);
-    expect(argument('echo "today: $(date)"')).toEqual([null]);
-    expect(argument('echo "$(date)$(whoami)"')).toEqual([null, null]);
-    expect(argument("echo --message=$(date)")).toEqual([null]);
-    expect(argument("$(which ls) -la")).toEqual([null]);
-    expect(argument("cat <<EOF\n$(date)\nEOF")).toEqual([null]);
+  it("records the argument a substitution ends with only plain text before it, and that text", () => {
+    const placed = (line: string): (readonly [number | null, string | null])[] | undefined =>
+      parseCommandLine(line)?.[0]?.substitutions.map((sub) => [sub.argument, sub.prefix] as const);
+    expect(placed('git commit -m "$(cat <<\'EOF\'\nfix: a\nEOF\n)"')).toEqual([[2, ""]]);
+    expect(placed("echo $(date) `whoami`")).toEqual([[0, ""], [1, ""]]);
+    expect(placed("sudo -u root echo x $(date)"), "counted from the program, past the wrappers").toEqual([[1, ""]]);
+    // An option attached in front of it is plain text, quoted or not.
+    expect(placed('git commit -m"$(date)"')).toEqual([[1, "-m"]]);
+    expect(placed("git commit --message=$(date)")).toEqual([[1, "--message="]]);
+    expect(placed('echo "today: $(date)"')).toEqual([[0, "today: "]]);
+    // Something after it, an expansion or a second substitution before it, or no argument at all: none.
+    expect(placed('echo "$(date) today"')).toEqual([[null, null]]);
+    expect(placed('echo "$HOME $(date)"')).toEqual([[null, null]]);
+    expect(placed('echo "$(date)$(whoami)"')).toEqual([[null, null], [null, null]]);
+    expect(placed("$(which ls) -la")).toEqual([[null, null]]);
+    expect(placed("cat <<EOF\n$(date)\nEOF")).toEqual([[null, null]]);
   });
 });
 

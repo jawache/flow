@@ -286,22 +286,17 @@ function pushForce(args: readonly string[]): string | null {
 }
 
 /**
- * Each force-push in the command line, or [] when there is none. The pushes are read from the parse,
- * so git's own options before `push` (`git -C <dir> push`) and git run by its path are pushes, and
- * a push written in a heredoc body or a quoted argument is not one.
+ * Refuses a force-push, in every spelling git takes. The pushes are read from the parse, so git's
+ * own options before `push` (`git -C <dir> push`) and git run by its path are pushes, and a push
+ * written in a heredoc body or a quoted argument is not one.
  */
-function forcePushes(facts: Pick<Ctx, "command" | "commands">): string[] {
-  return gitCommands(facts).flatMap(({ subcommand, args }) => {
-    const how = subcommand === "push" ? pushForce(args) : null;
-    return how === null ? [] : [`\`git push\` forces the remote with ${how}`];
-  });
-}
-
-/** Refuses a force-push, in every spelling git takes. */
 const noForcePush = defineCheck(
   (_opts: Record<string, never>): Check =>
     (ctx) => {
-      const found = forcePushes(ctx);
+      const found = gitCommands(ctx).flatMap(({ subcommand, args }) => {
+        const how = subcommand === "push" ? pushForce(args) : null;
+        return how === null ? [] : [`\`git push\` forces the remote with ${how}`];
+      });
       return found.length === 0 ? ctx.ok() : ctx.fail(found.join("\n"));
     },
 );
@@ -713,6 +708,8 @@ export const git = definePack("git", (repo: Release) => {
         // A value of `-o` is never a flag or a refspec.
         "git push -o +f origin main",
         "git push -of origin main",
+        "git push -uo +x origin main",
+        "git push --repo +x origin main",
         "git fetch origin +main:main",
       ],
       block: [
@@ -801,6 +798,9 @@ export const git = definePack("git", (repo: Release) => {
         // A message given as `-m "$(cat <<'EOF' … EOF)"` is the heredoc's body, which is what the
         // shell passes to git, and the form an agent is taught.
         "git commit -m \"$(cat <<'EOF'\nfix: a thing\n\nwhy it was needed\nEOF\n)\"",
+        // …and so it is with the value attached to its option, in either spelling.
+        "git commit -m\"$(cat <<'EOF'\nfix: a thing\nEOF\n)\"",
+        "git commit --message=\"$(cat <<'EOF'\nfix: a thing\nEOF\n)\"",
       ],
       block: [
         'git commit -m "fixed the auth thing"',

@@ -663,6 +663,8 @@ export interface GitCommand {
   readonly subcommand: string | null;
   /** Everything after the subcommand — its own flags and arguments. */
   readonly args: readonly string[];
+  /** Where `args` starts in `command.args`: `args[i]` is `command.args[argsAt + i]`. */
+  readonly argsAt: number;
   /** The parsed command it was read from: its heredocs are what `git commit -F -` reads. */
   readonly command: ShellCommand;
 }
@@ -682,7 +684,7 @@ export function gitCommand(command: ShellCommand): GitCommand | null {
     else if (a.startsWith("-")) k += 1;
     else break; // the subcommand
   }
-  return { globals: args.slice(0, k), subcommand: args[k] ?? null, args: args.slice(k + 1), command };
+  return { globals: args.slice(0, k), subcommand: args[k] ?? null, args: args.slice(k + 1), argsAt: k + 1, command };
 }
 
 /** Every git command the line runs, in the order the parse lists them; none when it does not parse. */
@@ -691,14 +693,15 @@ export function gitCommands(facts: CommandFacts): GitCommand[] {
 }
 
 /**
- * The commit's argument at `i` as git receives it. An argument that is one substitution running
- * only `cat` on a heredoc — `"$(cat <<'EOF' … EOF)"`, the form an agent is taught — is that
- * heredoc's body, less the trailing newlines a substitution drops. Any other is passed as written.
+ * The message in the commit's argument at `i`, after its `option` (`""` for a value given apart,
+ * `-m` or `--message=` for one attached), as git receives it. A message that is one substitution
+ * running only `cat` on a heredoc — `"$(cat <<'EOF' … EOF)"`, the form an agent is taught — is
+ * that heredoc's body, less the trailing newlines a substitution drops. Any other is passed as written.
  */
-function passedAs(commit: GitCommand, i: number): string {
-  const value = commit.args[i] as string;
-  const at = commit.command.args.length - commit.args.length + i;
-  const commands = commit.command.substitutions.find((s) => s.argument === at)?.commands;
+function passedAs(commit: GitCommand, i: number, option: string): string {
+  const value = (commit.args[i] as string).slice(option.length);
+  const at = commit.argsAt + i;
+  const commands = commit.command.substitutions.find((s) => s.argument === at && s.prefix === option)?.commands;
   const [cat] = commands ?? [];
   if (commands?.length !== 1 || cat?.program !== "cat" || cat.args.length > 0) return value;
   const body = cat.heredocs[cat.heredocs.length - 1]?.body;
@@ -750,14 +753,12 @@ export function commitMessage(facts: CommandFacts): string | null {
     const a = commit.args[i] as string;
     if (a === "-m" || a === "--message") {
       if (i + 1 >= commit.args.length) break; // a trailing `-m` with nothing after it — git would refuse too
-      parts.push(passedAs(commit, i + 1));
+      parts.push(passedAs(commit, i + 1, ""));
       i++; // STEP OVER the value: without this a message that looks like a flag is read twice
       continue;
     }
-    // -mMESSAGE and --message=MESSAGE: an argument with the option in it is no one substitution,
-    // so the value is passed as written.
-    if (a.startsWith("-m") && a !== "-m") parts.push(a.slice(2));
-    else if (a.startsWith("--message=")) parts.push(a.slice("--message=".length));
+    if (a.startsWith("-m") && a !== "-m") parts.push(passedAs(commit, i, "-m")); // -mMESSAGE
+    else if (a.startsWith("--message=")) parts.push(passedAs(commit, i, "--message="));
   }
   if (parts.length) return parts.join("\n\n");
   // No inline message: it may still be on stdin, and ONLY when the commit itself says so. `-F -`

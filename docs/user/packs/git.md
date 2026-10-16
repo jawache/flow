@@ -275,6 +275,8 @@ EOF`
 - running `echo "never git push -f here"`
 - running `git push -o +f origin main`
 - running `git push -of origin main`
+- running `git push -uo +x origin main`
+- running `git push --repo +x origin main`
 - running `git fetch origin +main:main`
 
 **blocks**
@@ -401,6 +403,14 @@ EOF`
 fix: a thing
 
 why it was needed
+EOF
+)"`
+- running `git commit -m"$(cat <<'EOF'
+fix: a thing
+EOF
+)"`
+- running `git commit --message="$(cat <<'EOF'
+fix: a thing
 EOF
 )"`
 
