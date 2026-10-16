@@ -70,7 +70,7 @@ import {
 // Git read from the parse, borrowed rather than copied. Reading `git rm src/x.ts` for the paths it
 // would remove is event ASSEMBLY — the adapter's job — but where git's own options stop and its
 // subcommand starts is a question the checks layer already answers.
-import { firstHeredoc, GIT_VALUE_OPTS, gitCommand, missingGrammarText } from "../checks/domain.ts";
+import { GIT_VALUE_OPTS, gitCommand, gitCommands, missingGrammarText } from "../checks/domain.ts";
 // String algebra only — a Bash read is resolved against the directory the shell was in.
 import { posix } from "node:path";
 // The one glob engine. A coverage question asked with a second matcher is a coverage answer about
@@ -2321,30 +2321,36 @@ function isRecipeHeader(line: string): boolean {
   return head !== "" && /^[@A-Za-z_][\w-]*(\s|$)/.test(head) && !head.includes("=");
 }
 
-/** The tools a repo's justfile actually drives — what a direct invocation would be bypassing. */
+/**
+ * The tools a repo's justfile actually drives — what a direct invocation would be bypassing.
+ *
+ * Each recipe's body is read through the parse as one script, so a loop or an `if` that spans its
+ * lines is read whole; a body that does not parse whole is read line by line, and a line that does
+ * not parse names nothing. Just's own `@` and `-` line prefixes are dropped first.
+ */
 export function recipeTools(justfile: string): string[] {
-  const tools = new Set<string>();
-  let inRecipe = false;
+  const bodies: string[][] = [];
+  let body: string[] | null = null;
   for (const raw of justfile.split("\n")) {
-    if (raw.trim() === "") continue;
-    const indented = /^\s/.test(raw);
     const line = raw.trim();
-    if (line.startsWith("#")) continue;
-    if (!indented) {
-      inRecipe = isRecipeHeader(line);
-      continue; // the header itself is not a command
-    }
-    if (!inRecipe) continue;
-    for (const segment of line.split(/&&|\|\||\||;/)) {
-      const words = segment.trim().split(/\s+/);
+    if (line === "") continue;
+    if (!/^\s/.test(raw)) {
+      // A top-level line opens a recipe, or ends one; the header itself is not a command.
+      body = isRecipeHeader(line) ? [] : null;
+      if (body !== null) bodies.push(body);
+    } else if (body !== null && !line.startsWith("#")) body.push(line.replace(/^[@-]+/, ""));
+  }
+  const tools = new Set<string>();
+  for (const lines of bodies) {
+    const commands = parseCommandLine(lines.join("\n")) ?? lines.flatMap((line) => parseCommandLine(line) ?? []);
+    for (const command of commands) {
       // A LAUNCHER names the tool in its next word, and dropping the line at the launcher is how
       // the ported reader came back empty on this very repo: every recipe here is `npx tsc`,
       // `npx vitest`, `npx eslint`, so `npx` matched the noise list and no tool was ever
       // collected — leaving the bypass section switched off and looking like a clean record.
-      const first = (words[0] ?? "").replace(/^@/, "");
-      const word = first === "npx" ? (words[1] ?? "") : first;
-      if (word === "" || !/^[A-Za-z]/.test(word) || word.includes("/") || NOISE.has(word)) continue;
-      tools.add(word);
+      const tool = toolOf(command);
+      if (command.nested || command.program.includes("/") || !/^[A-Za-z]/.test(tool) || NOISE.has(tool)) continue;
+      tools.add(tool);
     }
   }
   return [...tools];
@@ -2357,22 +2363,30 @@ export interface BashClass {
   readonly commits: boolean;
 }
 
-/** Read one command line against the repo's own recipe tools. HEURISTIC, like everything below. */
+/** The tool a command runs: its program, or the tool `npx` is asked to run. */
+function toolOf(command: ShellCommand): string {
+  const program = posix.basename(command.program);
+  return program === "npx" ? posix.basename(command.args.find((arg) => !arg.startsWith("-")) ?? "") : program;
+}
+
+/**
+ * Read one command line against the repo's own recipe tools, from its parse. A heredoc's body is
+ * text the command is fed, so a file being written that names a tool is not a run of it — while
+ * the line around the heredoc is judged like any other, and so is a body a shell runs. A line that
+ * does not parse is nothing: no recipe, no bypass, no commit.
+ */
 export function classifyBash(command: unknown, tools: readonly string[]): BashClass {
-  const line = strip(command);
-  // A heredoc is authoring, not running — the body is a file being written, and every word in it
-  // would otherwise read as a command.
-  if (firstHeredoc(line) !== null) return { recipes: [], bypasses: [], commits: false };
-  const recipes: string[] = [];
-  for (const match of line.matchAll(/(?:^|\n|;|\||&&|\()\s*just\s+([a-z][\w-]*)/g)) recipes.push(match[1] as string);
-  const bypasses: string[] = [];
-  for (const tool of tools) {
-    const escaped = tool.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const direct = new RegExp(`(?:^|\\n|;|\\||&&|\\(|node_modules/\\.bin/|npx\\s+)\\s*(?:\\./)?${escaped}\\b`);
-    const viaJust = new RegExp(`just\\s+\\S*\\b${escaped}\\b`);
-    if (direct.test(line) && !viaJust.test(line)) bypasses.push(tool);
-  }
-  return { recipes, bypasses, commits: /\bgit\s+commit\b/.test(line) };
+  const commands = parseCommandLine(strip(command)) ?? [];
+  const recipes = commands.flatMap((c) => {
+    const recipe = posix.basename(c.program) === "just" ? c.args[0] : undefined;
+    return recipe !== undefined && /^[a-z][\w-]*$/.test(recipe) ? [recipe] : [];
+  });
+  const ran = new Set(commands.map(toolOf));
+  return {
+    recipes,
+    bypasses: tools.filter((tool) => ran.has(tool)),
+    commits: gitCommands({ commands }).some((git) => git.subcommand === "commit"),
+  };
 }
 
 // ── the reading ────────────────────────────────────────────────────────────

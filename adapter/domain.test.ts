@@ -1205,6 +1205,25 @@ describe("the justfile — a bypass is DERIVED from the repo's own recipes", () 
     expect(recipeTools("")).toEqual([]);
   });
 
+  it("reads a recipe body whole, so a loop over several lines is commands, and an assignment is no tool", () => {
+    const looped = ["check:", "    for f in a b; do \\", "      npx tsc -p $f; \\", "    done", "    FLOW_MACHINE_REPORT=1 npx vitest run", "    @-rm -rf dist"].join("\n");
+    expect(recipeTools(looped).sort()).toEqual(["rm", "tsc", "vitest"]);
+    // A body that does not parse whole is read line by line, and a line that does not parse names nothing.
+    expect(recipeTools(["a:", '    printf "unclosed', "    eslint ."].join("\n"))).toEqual(["eslint"]);
+  });
+
+  it("judges a line that holds a heredoc: the commands around it count, the body it is fed does not", () => {
+    const tools = ["vitest", "eslint"];
+    expect(classifyBash("cat > notes.md <<'EOF'\nnpx vitest run\nEOF\nnpx vitest run", tools)).toEqual({ recipes: [], bypasses: ["vitest"], commits: false });
+    expect(classifyBash("git commit -F - <<'EOF'\nfix: run eslint\nEOF", tools)).toEqual({ recipes: [], bypasses: [], commits: true });
+    expect(classifyBash("python3 - <<'PY'\nimport os\nPY\njust test", tools)).toEqual({ recipes: ["test"], bypasses: [], commits: false });
+    // A body a shell reads is commands, and runs.
+    expect(classifyBash("bash <<'EOF'\neslint .\nEOF", tools).bypasses).toEqual(["eslint"]);
+    // A tool named inside another command's quoted argument is not run.
+    expect(classifyBash('gh issue create --body "ran npx vitest run"', tools).bypasses).toEqual([]);
+    expect(classifyBash('echo "x', tools), "a line that does not parse").toEqual({ recipes: [], bypasses: [], commits: false });
+  });
+
   it("tells a recipe call from going round it, and leaves a heredoc alone", () => {
     const tools = ["vitest", "eslint"];
     expect(classifyBash("just test && just lint", tools)).toEqual({ recipes: ["test", "lint"], bypasses: [], commits: false });
