@@ -1886,7 +1886,7 @@ describe("which modules flow strips and evaluates itself", () => {
   });
 });
 
-/** flow's five registrations, each running the command `as` makes of today's one. */
+/** flow's six registrations, each running the command `as` makes of today's one. */
 const registrationsAs = (as: (command: string) => string): { hooks: Record<string, unknown[]> } => ({
   hooks: Object.fromEntries(
     HOOK_REGISTRATIONS.map((r) => [
@@ -1900,8 +1900,8 @@ const registrationsAs = (as: (command: string) => string): { hooks: Record<strin
 const BARE_SETTINGS = registrationsAs((command) => command.replace(/^.* flow /, "flow "));
 
 describe("the hook registrations flow writes", () => {
-  it("names exactly the events it answers — five, and Notification is not one", () => {
-    expect(HOOK_REGISTRATIONS.map((r) => r.event)).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
+  it("names exactly the events it answers — six, and Notification is not one", () => {
+    expect(HOOK_REGISTRATIONS.map((r) => r.event)).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"]);
     expect(HOOK_REGISTRATIONS.map((r) => r.event)).not.toContain("Notification");
   });
 
@@ -1939,10 +1939,10 @@ describe("the hook registrations flow writes", () => {
   it("adds every event to a settings file that has none, leaving the rest of it alone", () => {
     const before = { permissions: { allow: ["Bash(git:*)"] } };
     const { settings, added } = withRegistrations(before);
-    expect(added).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
+    expect(added).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"]);
     const after = settings as { permissions: unknown; hooks: Record<string, unknown[]> };
     expect(after.permissions, "untouched, byte for byte").toEqual(before.permissions);
-    expect(registeredEvents(settings)).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
+    expect(registeredEvents(settings)).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"]);
     expect(after.hooks["Stop"]).toEqual([{ hooks: [{ type: "command", command: hookCommand("stop") }] }]);
     expect(after.hooks["PreToolUse"]?.[0]).toMatchObject({ matcher: "*" });
   });
@@ -2002,7 +2002,7 @@ describe("the hook registrations flow writes", () => {
     expect(bareHook("work hook stop")).toBeNull();
   });
 
-  // THE MACHINE-WIDE FILE AN OLDER INIT WROTE: five registrations in the old shape. They are flow's,
+  // THE MACHINE-WIDE FILE AN OLDER INIT WROTE: its registrations in the old shape. They are flow's,
   // so status counts them, and init rewrites them where they stand — a new entry beside each would
   // run flow twice for every event.
   it("counts the old shape as flow's, and rewrites it in place to the new command", () => {
@@ -2015,16 +2015,16 @@ describe("the hook registrations flow writes", () => {
         ]),
       ),
     };
-    const five = ["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"];
-    expect(registeredEvents(older), "both shapes are flow's").toEqual(five);
-    expect(bareRegistrations(older)).toEqual(five);
+    const six = ["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"];
+    expect(registeredEvents(older), "both shapes are flow's").toEqual(six);
+    expect(bareRegistrations(older)).toEqual(six);
     expect(status(statusFacts({ settings: older })).fittings.find((f) => f.id === "hooks")?.ok).toBe(true);
 
     const { settings, added } = withRegistrations(older);
-    expect(added).toEqual(five.map((event) => `${event} (now runs the flow in node_modules/@jawache/flow first)`));
+    expect(added).toEqual(six.map((event) => `${event} (now runs the flow in node_modules/@jawache/flow first)`));
     const hooks = (settings as { model: string; hooks: Record<string, { matcher?: string; hooks: { command: string }[] }[]> }).hooks;
     const flows = Object.values(hooks).flatMap((entries) => entries.flatMap((entry) => entry.hooks.map((h) => h.command)).filter(ourHookCommand));
-    expect(flows, "exactly five of flow's, each the new command").toEqual(HOOK_REGISTRATIONS.map((r) => r.command));
+    expect(flows, "exactly six of flow's, each the new command").toEqual(HOOK_REGISTRATIONS.map((r) => r.command));
     expect(hooks["PreToolUse"]?.[0]?.matcher, "the matcher stays").toBe("*");
     expect(JSON.stringify(hooks["Stop"]), "theirs is untouched").toContain("their-tool --report");
     expect((settings as { model: string }).model).toBe("opus");
@@ -2073,19 +2073,45 @@ describe("the hook registrations flow writes", () => {
   });
 
   // An older flow, or a hand, filed a bare command under an event flow does not register today. It
-  // is still flow's, and still finds only the PATH, so it is rewritten and reported like the five.
+  // is still flow's, and still finds only the PATH, so it is rewritten and reported like the six.
   it("rewrites an old-shape command under an event flow does not register, and names that event", () => {
     const older = {
       hooks: {
         ...(withRegistrations({}).settings as { hooks: Record<string, unknown> }).hooks,
-        SubagentStop: [{ hooks: [{ type: "command", command: "flow hook stop" }] }],
+        Notification: [{ hooks: [{ type: "command", command: "flow hook notification" }] }],
       },
     };
     const { settings, added } = withRegistrations(older);
-    expect(added).toEqual(["SubagentStop (now runs the flow in node_modules/@jawache/flow first)"]);
-    expect((settings as { hooks: Record<string, unknown[]> }).hooks["SubagentStop"]).toEqual([
-      { hooks: [{ type: "command", command: hookCommand("stop") }] },
+    expect(added).toEqual(["Notification (now runs the flow in node_modules/@jawache/flow first)"]);
+    expect((settings as { hooks: Record<string, unknown[]> }).hooks["Notification"]).toEqual([
+      { hooks: [{ type: "command", command: hookCommand("notification") }] },
     ]);
+  });
+
+  // THE FILE AN INIT BEFORE 0.3.0 WROTE: five registrations, every one but SubagentStop. Re-running
+  // init adds that one, beside everything already in the file, and rewrites nothing.
+  it("adds SubagentStop to a file holding the other five, and keeps every other key", () => {
+    const today = withRegistrations({}).settings as { hooks: Record<string, unknown> };
+    const five = Object.fromEntries(Object.entries(today.hooks).filter(([event]) => event !== "SubagentStop"));
+    const older = { model: "opus", permissions: { allow: ["Bash(git:*)"] }, hooks: { ...five, Notification: [{ hooks: [{ type: "command", command: "say done" }] }] } };
+    const { settings, added } = withRegistrations(older);
+    expect(added).toEqual(["SubagentStop"]);
+    const after = settings as typeof older & { hooks: Record<string, unknown> };
+    expect(after.hooks["SubagentStop"]).toEqual([{ hooks: [{ type: "command", command: hookCommand("subagent-stop") }] }]);
+    expect({ ...after, hooks: { ...after.hooks, SubagentStop: undefined } }, "nothing else in the file changes").toEqual({
+      ...older,
+      hooks: { ...older.hooks, SubagentStop: undefined },
+    });
+    expect(Object.keys(after.hooks), "added at the end; every key already there keeps its place").toEqual([
+      "SessionStart",
+      "PreToolUse",
+      "PostToolUse",
+      "PostToolUseFailure",
+      "Stop",
+      "Notification",
+      "SubagentStop",
+    ]);
+    expect(withRegistrations(settings).added, "and a second run finds nothing to do").toEqual([]);
   });
 
   it("reads nothing out of a settings file that is not an object", () => {
@@ -2192,7 +2218,7 @@ describe("planInit — a repo that has never heard of flow", () => {
     expect(plan.flowDir).toBe(true);
     expect(plan.link).toBe("/checkout/flow");
     expect(plan.hooksPath).toBe(true);
-    expect(plan.registered).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
+    expect(plan.registered).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"]);
   });
 
   it("reports every write, and nothing it did not do", () => {
@@ -2469,7 +2495,7 @@ describe("planInit — the flags and the edges", () => {
 
   // The near-miss the crossing found, one branch from happening: a real settings.json holding
   // JSONC comments parsed to null, which reads identically to "there is no settings file" — and
-  // the next line builds a NEW object holding five registrations and nothing else.
+  // the next line builds a NEW object holding six registrations and nothing else.
   it("registers NOTHING into a settings file it could not parse, and never writes over it", () => {
     const plan = planInit({ ...bare, settings: null, settingsUnreadable: true });
     expect(plan.settings, "no write is planned against bytes nobody parsed").toBeNull();
@@ -2483,7 +2509,7 @@ describe("planInit — the flags and the edges", () => {
   it("still creates a settings file that is simply ABSENT — the other silence", () => {
     const plan = planInit({ ...bare, settings: null, settingsUnreadable: false });
     expect(plan.settings?.path).toBe("/home/.claude/settings.json");
-    expect(plan.registered.length, "all five events flow registers").toBe(5);
+    expect(plan.registered.length, "all six events flow registers").toBe(6);
   });
 });
 
@@ -2504,7 +2530,7 @@ describe("the machine-wide file, beside a dev dependency's own", () => {
 
   it("rewrites flow's old commands there to today's, and touches nothing else", () => {
     const { settings, rewritten } = withMachineCommandsUpToDate(older);
-    expect(rewritten).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
+    expect(rewritten).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"]);
     const after = settings as typeof older;
     expect(after.theme).toBe("dark");
     expect(after.hooks.PostToolUse, "the command is rewritten, the matcher is left as it was").toEqual([
@@ -2527,9 +2553,9 @@ describe("the machine-wide file, beside a dev dependency's own", () => {
     const facts = { ...bare, settingsPath: ".claude/settings.json", settings: null };
     const plan = planInit({ ...facts, machine: { path: machinePath, settings: older, unreadable: false } });
     expect(plan.machine?.path).toBe(machinePath);
-    expect(plan.machine?.rewritten).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
+    expect(plan.machine?.rewritten).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"]);
     expect(initLines(plan, []).join("\n")).toContain(
-      `+ ${machinePath} — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop (an older flow's command, now the same as .claude/settings.json's, so each hook runs once)`,
+      `+ ${machinePath} — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop · SubagentStop (an older flow's command, now the same as .claude/settings.json's, so each hook runs once)`,
     );
     expect(planInit({ ...facts, machine: { path: machinePath, settings: null, unreadable: true } }).machine).toBeNull();
     expect(planInit({ ...facts, machine: { path: machinePath, settings: { theme: "dark" }, unreadable: false } }).machine).toBeNull();
@@ -2546,7 +2572,7 @@ describe("the machine-wide file, beside a dev dependency's own", () => {
     const { fitting, green } = hooks(older);
     expect(fitting?.ok).toBe(false);
     expect(fitting?.detail).toBe(
-      `${machinePath} also calls flow for SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop the old way, as the bare \`flow hook <event>\`, ` +
+      `${machinePath} also calls flow for SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop · SubagentStop the old way, as the bare \`flow hook <event>\`, ` +
         "so Claude Code runs it beside .claude/settings.json's command and each of those hooks fires twice. Re-run `flow init`, which rewrites it to the same command.",
     );
     expect(green).toBe(false);
@@ -3080,6 +3106,19 @@ describe("status — the snapshot's edges and a registration an older flow wrote
     const both = red({ settings: missing });
     expect(both).toContain("does not call flow for PostToolUseFailure");
     expect(both).toContain("on some tools only");
+  });
+
+  // An init before 0.3.0 wrote every registration but SubagentStop. Status checks it like the rest.
+  it("goes red on a file without SubagentStop, and says re-running init adds it", () => {
+    const today = withRegistrations({}).settings as { hooks: Record<string, unknown> };
+    const five = { hooks: Object.fromEntries(Object.entries(today.hooks).filter(([event]) => event !== "SubagentStop")) };
+    const s = status(statusFacts({ settings: five }));
+    expect(s.fittings.find((f) => f.id === "hooks")?.ok).toBe(false);
+    expect(s.green).toBe(false);
+    expect(red({ settings: five })).toContain("/home/.claude/settings.json does not call flow for SubagentStop — re-run `flow init`.");
+    expect(status(statusFacts()).fittings.find((f) => f.id === "hooks")?.detail, "all six, and it is green").toBe(
+      "/home/.claude/settings.json — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop · SubagentStop",
+    );
   });
 });
 

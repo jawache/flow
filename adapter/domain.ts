@@ -3321,11 +3321,10 @@ export interface Registration {
 /**
  * WHAT `flow init` WRITES, verbatim — and it follows DELIVERS, not HOOK_EVENTS.
  *
- * flow answers seven events and registers five. `SubagentStop` is answered and not yet registered.
- * `Notification` is the other difference and it is deliberate
- * (ruled at F4): flow has no notification moment, so a registration there would spawn a process on
- * every banner to answer nothing — cost with no function, and a line contradicting the honest moment
- * list this file publishes. The day a notification moment earns its way into the grammar, the
+ * flow answers seven events and registers six. `Notification` is the one difference and it is
+ * deliberate (ruled at F4): flow has no notification moment, so a registration there would spawn a
+ * process on every banner to answer nothing — cost with no function, and a line contradicting the
+ * honest moment list this file publishes. The day a notification moment earns its way into the grammar, the
  * registration arrives with it.
  *
  * ONE PER EVENT. Two registrations on one event fire twice, and when they point at different
@@ -3351,6 +3350,7 @@ const REGISTERED: readonly { readonly hook: HookEvent; readonly matcher?: string
   { hook: "post-tool-use", matcher: "*" },
   { hook: "post-tool-use-failure", matcher: "*" },
   { hook: "stop" },
+  { hook: "subagent-stop" },
 ];
 
 /**
@@ -3903,7 +3903,7 @@ function machineRewrite(file: InitFacts["machine"]): InitPlan["machine"] {
 export function planInit(facts: InitFacts): InitPlan {
   // A file we could not read is a file we may not write. `withRegistrations` builds a NEW object
   // from whatever it is handed, so handing it the null an unparseable file produces would emit a
-  // settings file holding flow's five registrations and NOTHING ELSE — permissions, model, theme,
+  // settings file holding flow's six registrations and NOTHING ELSE — permissions, model, theme,
   // every other tool's hooks, gone. There is no safe merge into bytes nobody parsed, so init
   // registers nothing and says which file to fix.
   const registration = facts.settingsUnreadable ? { settings: facts.settings, added: [] } : withRegistrations(facts.settings);
