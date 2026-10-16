@@ -45,6 +45,8 @@ summary: "every `flow` command, what `flow init` writes, the two switch files, a
 | The Claude Code settings file | Six hook registrations: `SessionStart`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Stop` and `SubagentStop`. Each one runs the command `f="$CLAUDE_PROJECT_DIR/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook <event>; exec flow hook <event>`. The file is the repo's `.claude/settings.json` when the repo's `package.json` lists `@jawache/flow`. Otherwise it is `~/.claude/settings.json`, or `$CLAUDE_CONFIG_DIR/settings.json` when that variable is set. A registration an older `flow init` wrote, as the bare `flow hook <event>` or on fewer tools, is rewritten in place to this command and matcher. When the hooks go in the repo's file, a bare `flow hook <event>` in the machine-wide file is rewritten to the same command too, and nothing else in that file changes. When `flow init` adds or rewrites a registration, it writes the whole file back as JSON indented by two spaces. Every key already in the file is kept |
 | `core.hooksPath` | Set to `.githooks`, so git runs the gate. `flow init` sets it only when it is unset and `.git/hooks` holds no hooks. It is a setting of one clone, so run `flow init` in every new clone |
 
+Every hook and the commit gate run the repo's own `@jawache/flow` package first, then the `flow` on the `PATH` that git and Claude Code use. They never run a `flow` in the repo's `node_modules/.bin`, because any package can install one there. If neither has it, each hook fails with `flow: not found`, every commit is refused, and `flow status` prints a red `binary` line. [How to install flow](../how-to/install-flow.md) gives the two installs that put `flow` there.
+
 ### When git already runs other hooks
 
 Git runs hooks from one folder. `flow init` leaves that folder alone when git already runs other hooks from it, and flow is then not installed.
@@ -62,8 +64,6 @@ In that case, `flow init` writes every other file in the table above, does not s
 In a terminal, the block is printed in bold red, unless the `NO_COLOR` environment variable is set. `flow status` prints the same message as a red line.
 
 Once the `pre-commit` hook git runs calls flow, `flow init` and `flow status` count flow as installed. For husky, flow reads `.husky/pre-commit`.
-
-Every hook and the commit gate run the repo's own `@jawache/flow` package first, then the `flow` on the `PATH` that git and Claude Code use. They never run a `flow` in the repo's `node_modules/.bin`, because any package can install one there. If neither has it, each hook fails with `flow: not found`, every commit is refused, and `flow status` prints a red `binary` line. [How to install flow](../how-to/install-flow.md) gives the two installs that put `flow` there.
 
 ## Switches
 
