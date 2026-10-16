@@ -295,9 +295,9 @@ describe("banCommands", () => {
     for (const entry of ["git\\s+push", "rm (-rf|-fr)", "git push; ls", "echo 'oops", "cat > x", ""]) {
       expect(faultsOf(banCommands({ ban: ["curl", entry] })), entry).toStrictEqual([fault(entry)]);
     }
-    // A wrapper the parse steps past is never a command's program: in front, the entry would ban
-    // every use of the program after it, and alone it would ban nothing.
-    for (const entry of ["sudo rm", "env FOO=1 rm", "sudo", "timeout 5 rm -rf", "xargs rm"]) {
+    // A wrapper or an assignment the parse steps past is never a command's program: in front, the
+    // entry would ban every use of the program after it, and a wrapper alone would ban nothing.
+    for (const entry of ["sudo rm", "env FOO=1 rm", "sudo", "timeout 5 rm -rf", "xargs rm", "FOO=1 rm -rf", "A=1 B=2 rm"]) {
       expect(faultsOf(banCommands({ ban: ["curl", entry] })), entry).toStrictEqual([fault(entry)]);
     }
     expect(faultsOf(banCommands({ ban: ["git push --force", "drizzle-kit drop"] }))).toStrictEqual([]);

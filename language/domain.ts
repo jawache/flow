@@ -480,6 +480,8 @@ export type ShellStep =
        */
       readonly words: readonly ShellWord[];
       readonly at: number;
+      /** Whether a `NAME=value` assignment stands in front of it, as its env: `FOO=1 rm`. Not one of its words. */
+      readonly assigned: boolean;
       /** `command.redirects` with each target as written, so a reader expands `< $F` and leaves `< '$F'` alone. */
       readonly redirects: readonly StepRedirect[];
       /** The substitutions that build its words, which run before it does. */
@@ -1068,7 +1070,8 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
       };
       const substitutions = subs.map(placed);
       const command = { program, args, text: [program, ...args].join(" "), heredocs, substitutions, redirects: redirects.map(publicRedirect), nested };
-      out.push({ kind: "command", command, words, at, redirects: redirects.map(stepRedirect), before: inner });
+      const assigned = c.prefix.some((p) => p.type === "Assignment");
+      out.push({ kind: "command", command, words, at, assigned, redirects: redirects.map(stepRedirect), before: inner });
       // `export A=b`: the parse gives a declaration's arguments as assignments, which set the
       // shell's variables once it has run. One that appends or sets an element is not followed.
       for (const s of c.suffix)
