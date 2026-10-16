@@ -172,6 +172,7 @@ import {
   status,
   statusLines,
   type HooksFolder,
+  type Fitting,
   type InitFacts,
   type Status,
   type StatusFacts,
@@ -2854,6 +2855,9 @@ const statusFacts = (over: Partial<StatusFacts> = {}): StatusFacts => ({
   ...over,
 });
 
+/** A fresh clone's hooks folder: `core.hooksPath` unset, and `.git/hooks` holding only git's samples. */
+const FRESH_CLONE: HooksFolder = { dir: ".git/hooks", files: ["pre-commit.sample", "pre-push.sample"], preCommit: null };
+
 /** The gate an older `flow init` wrote: today's, without the line that runs the repo's own package first. */
 const PATH_ONLY_GATE = PRE_COMMIT.replace(`${GATE_LOCAL_LINE}\n`, "");
 
@@ -3198,6 +3202,88 @@ describe("status — the whole answer", () => {
   });
 });
 
+describe("status — does git run the commit gate", () => {
+  const judged = (over: Partial<StatusFacts>) => {
+    const s = status(statusFacts(over));
+    // As printed: a detail of several lines is several lines on the page.
+    const line = statusLines(s).join("\n").split("\n").find((said) => said.includes(" hooks-path: "));
+    return { s, fitting: s.fittings.find((f) => f.id === "hooks-path"), line, code: statusCode(s) };
+  };
+  /** Husky's setup: git runs `.husky/_`, and a person edits `.husky/pre-commit`. */
+  const husky = (preCommit: string | null): Partial<StatusFacts> => ({
+    hooksPath: ".husky/_",
+    hooksFolder: { dir: ".husky/_", files: ["h", "husky.sh", "pre-commit"], preCommit },
+  });
+
+  it("flow's own .githooks is green, as it always read", () => {
+    const { s, line } = judged({});
+    expect(line).toBe(`  ✓ hooks-path: core.hooksPath = ${HOOKS_DIR}`);
+    expect(s.green).toBe(true);
+  });
+
+  it("counts `.githooks/`, `./.githooks` and an absolute path to it as flow's own, as init does", () => {
+    for (const set of [".githooks/", "./.githooks", "/repo/.githooks"]) {
+      const { s, line } = judged({ hooksPath: set, hooksFolder: { dir: hooksDirOf("/repo", set), files: ["pre-commit"], preCommit: PRE_COMMIT } });
+      expect(line, set).toBe(`  ✓ hooks-path: core.hooksPath = ${HOOKS_DIR}`);
+      expect(s.green, set).toBe(true);
+    }
+  });
+
+  describe("other hooks that do not call flow", () => {
+    it("husky's: red, in the words of init's block — the folder and both fixes — and exits 1", () => {
+      const { s, fitting, line, code } = judged(husky("npm test\n"));
+      const other = { dir: ".husky/_", preCommit: ".husky/pre-commit", wired: false };
+      expect(fitting).toStrictEqual({ id: "hooks-path", ok: false, detail: notInstalledLines(other).join("\n") });
+      expect(line).toBe(`  ✗ hooks-path: ${NOT_INSTALLED}. Git runs hooks from .husky/_, so flow left core.hooksPath alone, and no commit runs flow's gate.`);
+      const said = statusLines(s).join("\n");
+      expect(said).toContain("Add these two lines to the end of .husky/pre-commit:");
+      expect(said).toContain(GATE_RUN_LINE);
+      expect(said).toContain(`move those hooks into ${HOOKS_DIR}/`);
+      expect(said).toContain(SET_HOOKS_PATH);
+      expect(s.green).toBe(false);
+      expect(code).toBe(1);
+    });
+
+    it("a hook in .git/hooks, with core.hooksPath unset: red, naming that folder and its pre-commit", () => {
+      const { fitting, code } = judged({ hooksPath: null, hooksFolder: { ...FRESH_CLONE, files: [...FRESH_CLONE.files, "pre-push"] } });
+      expect(fitting?.ok).toBe(false);
+      expect(fitting?.detail).toContain("Git runs hooks from .git/hooks");
+      expect(fitting?.detail).toContain("Add these two lines to the end of .git/hooks/pre-commit:");
+      expect(code).toBe(1);
+    });
+
+    it("hands the same answer over as data, with no colour codes", () => {
+      const json = JSON.stringify(status(statusFacts(husky("npm test\n"))));
+      expect(json).not.toContain("\u001b");
+      const read = JSON.parse(json) as { green: boolean; fittings: Fitting[] };
+      expect(read.green).toBe(false);
+      expect(read.fittings.find((f) => f.id === "hooks-path")?.detail.startsWith(NOT_INSTALLED)).toBe(true);
+    });
+  });
+
+  it("other hooks whose pre-commit calls flow: green, naming the folder and the hook", () => {
+    const { s, line, code } = judged(husky(`#!/bin/sh\nnpm test\n${GATE_LOCAL_LINE}\n${GATE_RUN_LINE}\n`));
+    expect(line).toBe("  ✓ hooks-path: git runs hooks from .husky/_, and .husky/pre-commit calls flow");
+    expect(s.green).toBe(true);
+    expect(code).toBe(0);
+  });
+
+  it("no other hooks and core.hooksPath unset: the red line it always was, with the setting to make", () => {
+    const { fitting } = judged({ hooksPath: null, hooksFolder: FRESH_CLONE });
+    expect(fitting).toStrictEqual({
+      id: "hooks-path",
+      ok: false,
+      detail: `core.hooksPath is unset — run \`${SET_HOOKS_PATH}\`. It is per-clone, so every fresh checkout needs it.`,
+    });
+    expect(fitting?.detail).not.toContain(NOT_INSTALLED);
+  });
+
+  it("when git could not say, reads the setting as typed", () => {
+    expect(judged({ hooksFolder: null }).fitting?.ok).toBe(true);
+    expect(judged({ hooksPath: ".husky/_", hooksFolder: null }).fitting?.detail).toContain(SET_HOOKS_PATH);
+  });
+});
+
 describe("status — the red lines, each carrying its fix", () => {
   const red = (over: Partial<StatusFacts>): string => statusLines(status(statusFacts(over))).join("\n");
 
@@ -3230,7 +3316,7 @@ describe("status — the red lines, each carrying its fix", () => {
   });
 
   it("a hooksPath git was never told about — the one a fresh clone always needs", () => {
-    expect(red({ hooksPath: null })).toContain(SET_HOOKS_PATH);
+    expect(red({ hooksPath: null, hooksFolder: FRESH_CLONE })).toContain(SET_HOOKS_PATH);
   });
 
   it("a host that is not registered to call flow at all", () => {
@@ -3247,7 +3333,7 @@ describe("status — the red lines, each carrying its fix", () => {
   });
 
   it("counts the reds it found, so a caller's exit code and the page agree", () => {
-    const s = status(statusFacts({ gateText: null, hooksPath: null }));
+    const s = status(statusFacts({ gateText: null, hooksPath: null, hooksFolder: FRESH_CLONE }));
     expect(s.green).toBe(false);
     expect(statusLines(s).at(-1)).toContain("2 red lines");
   });

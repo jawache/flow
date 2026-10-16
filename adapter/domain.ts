@@ -4312,14 +4312,7 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
             ? `no ${GATE_PATH} — \`flow init\` arms it. Until then nothing runs at the commit.`
             : `${GATE_PATH} is here but does not call flow — ${ADD_THE_GATE_LINE}.`,
     },
-    {
-      id: "hooks-path",
-      ok: facts.hooksPath === HOOKS_DIR,
-      detail:
-        facts.hooksPath === HOOKS_DIR
-          ? `core.hooksPath = ${HOOKS_DIR}`
-          : `core.hooksPath is ${facts.hooksPath ?? "unset"} — run \`${SET_HOOKS_PATH}\`. It is per-clone, so every fresh checkout needs it.`,
-    },
+    hooksPathFitting(facts),
     // NO GRAMMARS, NO ROW. A repo that declares none has nothing to be told, and a fitting saying so
     // would be a green tick about a feature nobody used.
     ...(facts.grammars.length === 0
@@ -4411,6 +4404,32 @@ export function hostPath(dirs: readonly string[], root: string): string[] {
     const owner = path.slice(0, -bin.length);
     return !(at === owner || at.startsWith(`${owner}/`) || path.includes("/_npx/"));
   });
+}
+
+/**
+ * DOES GIT RUN THE COMMIT GATE? Judged from the folder git resolved, as init judges it, so
+ * `.githooks/`, `./.githooks` and an absolute path to it are all flow's own.
+ *
+ * Git runs ONE folder. Flow's own is green. Another tool's (husky's `.husky/_`, or a hook in
+ * `.git/hooks`) is green once the pre-commit hook git runs calls flow, and otherwise red in the
+ * words of init's block, because it is the same fact: flow is not installed. With no other hooks,
+ * the setting is simply missing, which every fresh clone is.
+ */
+function hooksPathFitting(facts: Pick<StatusFacts, "hooksPath" | "hooksFolder">): Fitting {
+  const folder = facts.hooksFolder;
+  // When git could not say, the setting as typed is all there is to read.
+  if (folder === null ? facts.hooksPath === HOOKS_DIR : folder.dir === HOOKS_DIR)
+    return { id: "hooks-path", ok: true, detail: `core.hooksPath = ${HOOKS_DIR}` };
+  const other = folder === null ? null : otherHooks(facts.hooksPath, folder);
+  if (other === null)
+    return {
+      id: "hooks-path",
+      ok: false,
+      detail: `core.hooksPath is ${facts.hooksPath ?? "unset"} — run \`${SET_HOOKS_PATH}\`. It is per-clone, so every fresh checkout needs it.`,
+    };
+  return other.wired
+    ? { id: "hooks-path", ok: true, detail: `git runs hooks from ${other.dir}, and ${other.preCommit} calls flow` }
+    : { id: "hooks-path", ok: false, detail: notInstalledLines(other).join("\n") };
 }
 
 /**
