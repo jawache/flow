@@ -1909,33 +1909,31 @@ export interface RowDiff {
  */
 export function diffRows(replayed: readonly Row[], live: readonly Row[]): RowDiff[] {
   // A breadcrumb's `subject` is compared only when BOTH rows carry one: a log written before
-  // breadcrumb rows named their file or command has none, and it still has to compare clean. A
-  // guardrail row has always named its subject, so it is part of the key outright.
-  const judgements = (rows: readonly Row[]): { key: string; subject: string | null }[] =>
+  // breadcrumb rows named their file or command has none, and it still has to compare clean. So a
+  // row is its full line, plus a `loose` key without the subject; a guardrail row has always named
+  // its subject, so its loose key is its full line.
+  const judgements = (rows: readonly Row[]): { full: string; loose: string }[] =>
     rows
       .filter((row) => row.kind === "guardrail" || row.kind === "breadcrumb")
-      .map((row) =>
-        row.kind === "guardrail"
-          ? {
-              key: `guardrail ${field(row, "moment") ?? ""} ${field(row, "id") ?? "—"} ${row["out"] as string} ${subjectOf(row) ?? ""}`.trim(),
-              subject: null,
-            }
-          : {
-              key: `breadcrumb ${field(row, "moment") ?? ""} ${field(row, "id") ?? "—"} ${field(row, "cause") ?? ""}`.trim(),
-              subject: field(row, "subject"),
-            },
-      );
-  const text = (j: { key: string; subject: string | null }): string => (j.subject === null ? j.key : `${j.key} ${j.subject}`);
+      .map((row) => {
+        if (row.kind === "guardrail") {
+          const full = `guardrail ${field(row, "moment") ?? ""} ${field(row, "id") ?? "—"} ${row["out"] as string} ${subjectOf(row) ?? ""}`.trim();
+          return { full, loose: full };
+        }
+        const loose = `breadcrumb ${field(row, "moment") ?? ""} ${field(row, "id") ?? "—"} ${field(row, "cause") ?? ""}`.trim();
+        const subject = field(row, "subject");
+        return { full: subject === null ? loose : `${loose} ${subject}`, loose };
+      });
   const mine = judgements(replayed);
   const theirs = judgements(live);
   const out: RowDiff[] = [];
   for (let i = 0; i < Math.max(mine.length, theirs.length); i++) {
     const a = mine[i];
     const b = theirs[i];
-    if (a !== undefined && b !== undefined && a.key === b.key && (a.subject === null || b.subject === null || a.subject === b.subject))
-      continue;
-    if (a !== undefined) out.push({ side: "replay", at: i, row: text(a) });
-    if (b !== undefined) out.push({ side: "live", at: i, row: text(b) });
+    const unnamed = (j: { full: string; loose: string }): boolean => j.full === j.loose;
+    if (a !== undefined && b !== undefined && (a.full === b.full || ((unnamed(a) || unnamed(b)) && a.loose === b.loose))) continue;
+    if (a !== undefined) out.push({ side: "replay", at: i, row: a.full });
+    if (b !== undefined) out.push({ side: "live", at: i, row: b.full });
   }
   return out;
 }
