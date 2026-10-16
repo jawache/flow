@@ -15,7 +15,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { chmodSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync, existsSync, lstatSync, symlinkSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   PACKAGE,
@@ -578,6 +578,27 @@ describe("flow init, when git already runs other hooks", () => {
       expect(flow(lfs, ["init"]).code, "the chmod the block names installs it").toBe(0);
     } finally {
       rmSync(lfs, { recursive: true, force: true });
+    }
+  });
+
+  it("in a git worktree, names the main checkout's .git/hooks by its full path, and answers 1", () => {
+    // A worktree's `.git` is a file, and git runs hooks from the main checkout's shared folder.
+    const main = lfsRepo();
+    const tree = join(mkdtempSync(join(tmpdir(), "flow-wt-")), "tree");
+    try {
+      git(main, ["commit", "-q", "--allow-empty", "-m", "chore: a commit to branch from"]);
+      expect(git(main, ["worktree", "add", "-q", tree]).code).toBe(0);
+      const said = flow(tree, ["init"]);
+      expect(said.code, said.stdout + said.stderr).toBe(1);
+      expect(git(tree, ["config", "--get", "core.hooksPath"]).code, "still unset").toBe(1);
+      const hooks = join(realpathSync(main), ".git", "hooks");
+      const block = blockOf(said.stdout);
+      expect(block).toContain(`Git runs hooks from ${hooks}, and there is no ${hooks}/pre-commit`);
+      expect(block).toContain(`Create ${hooks}/pre-commit with these three lines, then run \`chmod +x ${hooks}/pre-commit\` so git runs it:`);
+      expect(existsSync(join(hooks, "pre-commit")), "init creates nothing in another tool's folder").toBe(false);
+    } finally {
+      rmSync(main, { recursive: true, force: true });
+      rmSync(dirname(tree), { recursive: true, force: true });
     }
   });
 
