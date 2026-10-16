@@ -6,8 +6,8 @@
 // the property `.test()` cases and recorded replay both stand on.
 //
 // ONE FILE, so that what these checks SHARE is visible: `patternHits` is the one matcher,
-// `changedSet` the one changed-file read, `shellCommands` the one door to the parse. A fifteenth check
-// says what it reuses, or it is a sixth copy of something already here.
+// `changedSet` the one changed-file read, `shellCommands` the one door to the parse. There are
+// fifteen checks; a sixteenth says what it reuses, or it is a second copy of something already here.
 //
 // The options are ordinary typed arguments and nothing more: one spelling per key, a list where a
 // list is meant, and the compiler checking both where you type them. There is no runtime schema
@@ -20,8 +20,8 @@
 // refuses them at the commit, but the rails are not the reason: a check that reads the world
 // directly cannot be driven by a case and cannot be replayed.
 //
-//   PATTERNS      the one regex sweep — textBan · banCommands
-//   PATHS         protectedPath · siblingExists · canonicalFiles
+//   PATTERNS      the one regex sweep — textBan · banCommands · substitutionInProse
+//   PATHS         protectedPath · oneWriter · siblingExists · canonicalFiles
 //   CONTENT       jsonInvariant · symbolsInSibling
 //   THE COMMIT    changeTogether
 //   COMMANDS      the parse read as git · commitReason
@@ -155,7 +155,7 @@ export const textBan = defineCheck(
 export const banCommands = defineCheck(
   (opts: { ban: readonly string[]; matchHeredocs?: boolean; wholeLine?: boolean }): Check =>
     (ctx) => {
-      const subjects = banSubjects(ctx.command ?? "", ctx.commands, opts);
+      const subjects = banSubjects(ctx, opts);
       const hits = opts.ban.filter((pattern) => {
         const re = new RegExp(subjects.anchored ? `^(?:${pattern})` : pattern);
         return subjects.texts.some((text) => re.test(text));
@@ -169,11 +169,11 @@ export const banCommands = defineCheck(
  * name — or, under `wholeLine` or for a line that does not parse, the one line, matched anywhere.
  */
 function banSubjects(
-  line: string,
-  commands: Ctx["commands"],
+  ctx: CommandFacts,
   opts: { readonly matchHeredocs?: boolean; readonly wholeLine?: boolean },
 ): { readonly texts: readonly string[]; readonly anchored: boolean } {
-  const parsed = shellCommands({ command: line, commands });
+  const line = ctx.command ?? "";
+  const parsed = shellCommands(ctx);
   if (parsed === null) return { texts: [line], anchored: false };
   if (opts.wholeLine === true) {
     return { texts: [elideHeredocBodies(line) ?? line], anchored: false };
@@ -189,13 +189,15 @@ function banSubjects(
  * `heads` are the commands that record prose, each a regex matched from a command's program name
  * as `banCommands` matches one. `gitSubcommands` names git's own, `commit`, and is read through
  * `gitCommand`: git's options sit between `git` and its subcommand, and a value with a space in it,
- * `-C '/a b'`, is two words in a command's text, where a regex loses it. The verdict reads the parse, never the line: a backtick the shell
- * runs is one the parse lists as the command's substitution — in a double-quoted or bare argument,
- * or in an unquoted heredoc the command is fed. A single-quoted argument, an escaped backtick and a
- * QUOTED heredoc run nothing, so none is refused, and neither is a backtick in another command on
- * the same line. A `$( … )` substitution is the sanctioned way to feed a heredoc into an argument,
- * so it is not refused itself; what it runs is, when that holds a backtick — the unquoted
- * `"$(cat <<EOF … EOF)"` message. A line that does not parse is not judged.
+ * `-C '/a b'`, is two words in a command's text, where a regex loses it.
+ *
+ * The verdict reads the parse, never the line: a backtick the shell runs is one the parse lists as
+ * the command's substitution — in a double-quoted or bare argument, or in an unquoted heredoc the
+ * command is fed. A single-quoted argument, an escaped backtick and a QUOTED heredoc run nothing,
+ * so none is refused, and neither is a backtick in another command on the same line. A `$( … )`
+ * substitution is the sanctioned way to feed a heredoc into an argument, so it is not refused
+ * itself; what it runs is, when that holds a backtick — the unquoted `"$(cat <<EOF … EOF)"`
+ * message. A line that does not parse is not judged.
  *
  * A CORE CHECK because TWO PACKS SHARE IT: `git` polices `git commit` and the `gh` verbs, which
  * every repo binds, and `work` the lifecycle verbs, which only a repo running the work lifecycle
