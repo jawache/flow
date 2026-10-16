@@ -4114,13 +4114,12 @@ export function initLines(plan: InitPlan, failures: readonly string[], colour = 
     );
   if (plan.hooksPath) wrote.push(SET_HOOKS_PATH);
 
-  const notWired = notInstalled(plan);
   const lines: string[] =
     wrote.length > 0
       ? ["flow init — created:", ...wrote.map((what) => `  + ${what}`)]
-      : notWired === null
-        ? ["flow init — already set up here; nothing to do."]
-        : ["flow init — nothing new to write here."];
+      : unwired(plan.otherHooks)
+        ? ["flow init — nothing new to write here."]
+        : ["flow init — already set up here; nothing to do."];
 
   if (plan.notGit) lines.push("  · not a git repo, so no commit gate was armed. Run `git init`, then `flow init` again.");
   if (plan.gateKept)
@@ -4140,7 +4139,7 @@ export function initLines(plan: InitPlan, failures: readonly string[], colour = 
   // LAST, so it is what is left on the screen: a muted `·` note is too quiet for a commit gate git
   // will never run. Bold red in a terminal, each line wrapped on its own so a pager or a terminal
   // that cuts a line never leaves the colour on.
-  if (notWired !== null) lines.push("", ...notInstalledLines(notWired).map((line) => (colour ? `${BOLD_RED}${line}${RESET}` : line)));
+  if (unwired(plan.otherHooks)) lines.push("", ...notInstalledLines(plan.otherHooks).map((line) => (colour ? `${BOLD_RED}${line}${RESET}` : line)));
   return lines;
 }
 
@@ -4157,17 +4156,12 @@ export function wantsColour(terminal: boolean, noColor: string | undefined): boo
   return noColor === undefined || noColor === "";
 }
 
-/** The other hooks git runs when none of them calls flow, so flow is not installed; else null. */
-function notInstalled(plan: InitPlan): UnwiredHooks | null {
-  return unwired(plan.otherHooks) ? plan.otherHooks : null;
-}
-
 /**
  * Init's exit code. 1 when it could not finish, and 1 when flow is not installed: a script chaining
  * `flow init && …` is asking whether the repo is guarded, and a gate git never runs is not.
  */
 export function initCode(plan: InitPlan, failures: readonly string[]): 0 | 1 {
-  return failures.length === 0 && notInstalled(plan) === null ? 0 : 1;
+  return failures.length === 0 && !unwired(plan.otherHooks) ? 0 : 1;
 }
 
 // ── status ───────────────────────────────────────────────────────────────────
