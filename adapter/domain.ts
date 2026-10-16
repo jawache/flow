@@ -3805,7 +3805,8 @@ export function otherHooks(hooksPath: string | null, folder: HooksFolder): Other
   // commit scrolls past. That bites only when git runs the file itself. Husky's stub in `.husky/_`
   // runs `.husky/pre-commit` with `sh`, so that file needs no execute bit, and is never created
   // for husky either: its stub skips a hook that is not there.
-  if (preCommit !== posix.join(folder.dir, "pre-commit")) return { dir: folder.dir, preCommit, fix: calls ? null : "add" };
+  const viaStub = preCommit !== posix.join(folder.dir, "pre-commit");
+  if (viaStub) return { dir: folder.dir, preCommit, fix: calls ? null : "add" };
   const fix =
     folder.preCommitText === null ? "create" : folder.preCommitExecutable ? (calls ? null : "add") : calls ? "chmod" : "add-and-chmod";
   return { dir: folder.dir, preCommit, fix };
