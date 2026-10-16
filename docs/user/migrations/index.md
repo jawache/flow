@@ -33,7 +33,7 @@ steps that index lists. Stop and report if a Verify step fails.
 
 | Version | Released | Upgrades from | Changes needed |
 | --- | --- | --- | --- |
-| [0.3.0](./0.3.0.md) | unreleased | 0.2.3 | Re-run `flow init`. Add the repo-first line to `.githooks/pre-commit`. Give every guardrail a block case. Start each `banCommands` pattern at the program name. Replace `tokenizeCommand` and `gitInvocations` |
+| [0.3.0](./0.3.0.md) | unreleased | 0.2.3 | Re-run `flow init`. Add the repo-first line to `.githooks/pre-commit`. Give every guardrail a block case. Rewrite each `banCommands` entry, `substitutionInProse` head and `justfile` `recipes` key in words. Replace `tokenizeCommand` and `gitInvocations` |
 | [0.2.3](./0.2.3.md) | 2026-10-07 | 0.2.2 | None. Bind the `git` pack if the repo does not, to refuse a commit that credits Claude |
 | [0.2.2](./0.2.2.md) | 2026-10-07 | 0.2.1 | Edit `.githooks/pre-commit`, and any other command that runs `flow commit` |
 | [0.2.1](./0.2.1.md) | 2026-10-02 | 0.2.0 | None |
