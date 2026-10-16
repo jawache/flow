@@ -93,15 +93,19 @@ function machineSettingsPath(): string {
   return join(process.env["CLAUDE_CONFIG_DIR"] || join(homedir(), ".claude"), "settings.json");
 }
 
+/** The machine-wide settings file, read: its path, its JSON (null when there is none), and whether it would not parse. */
+function readMachineFile(root: string): { path: string; settings: unknown; unreadable: boolean } {
+  const path = machineSettingsPath();
+  const read = parsedFile(root, path);
+  return { path, settings: read.value, unreadable: read.unreadable };
+}
+
 /**
  * The machine-wide file, parsed, when flow's hooks are in the repo's own — the one place a hook
  * there could run flow a second time — and null when `settingsPath` is the machine-wide file.
  */
 function machineFile(root: string, settingsPath: string): { path: string; settings: unknown; unreadable: boolean } | null {
-  const machine = machineSettingsPath();
-  if (settingsPath === machine) return null;
-  const read = parsedFile(root, machine);
-  return { path: machine, settings: read.value, unreadable: read.unreadable };
+  return settingsPath === machineSettingsPath() ? null : readMachineFile(root);
 }
 
 /**
@@ -341,8 +345,6 @@ export function runInit(cwd: string, args: readonly string[]): VerbResult {
 function uninstallFacts(root: string, machine: boolean): UninstallFacts {
   const manifest = readText(root, "package.json");
   const settings = parsedFile(root, REPO_SETTINGS);
-  const machinePath = machineSettingsPath();
-  const machineRead = parsedFile(root, machinePath);
   let hooksDir: string[] | null;
   try {
     hooksDir = readdirSync(join(root, HOOKS_DIR));
@@ -360,7 +362,7 @@ function uninstallFacts(root: string, machine: boolean): UninstallFacts {
     settings: settings.value,
     settingsUnreadable: settings.unreadable,
     machine,
-    machineFile: { path: machinePath, settings: machineRead.value, unreadable: machineRead.unreadable },
+    machineFile: readMachineFile(root),
   };
 }
 

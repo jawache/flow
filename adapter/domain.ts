@@ -4148,6 +4148,9 @@ export function planUninstall(facts: UninstallFacts): UninstallPlan {
   const { machineFile } = facts;
   const repoUnreadable = facts.listed && facts.settingsUnreadable;
   const machineUnreadable = facts.machine && machineFile.unreadable;
+  // The one reading of "the machine-wide file holds flow's hooks": what --machine writes, and what a
+  // plain run names.
+  const machineCleaned = machineFile.unreadable ? null : cleaned(machineFile.path, machineFile.settings);
   return {
     gate: gate === null ? null : { path: GATE_PATH, body: gate.delete ? null : gate.body },
     gateRunsFlow: armsFlow(leftText) || armsOldFlow(leftText),
@@ -4157,20 +4160,20 @@ export function planUninstall(facts: UninstallFacts): UninstallPlan {
     flowDir: facts.hasFlowDir,
     link: facts.linked,
     settings: facts.listed && !repoUnreadable ? cleaned(REPO_SETTINGS, facts.settings) : null,
-    machine: facts.machine && !machineUnreadable ? cleaned(machineFile.path, machineFile.settings) : null,
+    machine: facts.machine ? machineCleaned : null,
     unreadable: [...(repoUnreadable ? [REPO_SETTINGS] : []), ...(machineUnreadable ? [machineFile.path] : [])],
-    command: facts.machine ? `flow uninstall ${MACHINE_FLAG}` : "flow uninstall",
+    command: facts.machine ? MACHINE_RUN : "flow uninstall",
     keptConfig: facts.hasConfig,
-    machineHolds:
-      !facts.machine && !facts.listed && !machineFile.unreadable && withoutRegistrations(machineFile.settings).removed.length > 0
-        ? machineFile.path
-        : null,
+    machineHolds: !facts.machine && !facts.listed && machineCleaned !== null ? machineFile.path : null,
     next: facts.listed ? "npm uninstall @jawache/flow" : "npm uninstall -g @jawache/flow",
   };
 }
 
 /** The one argument `flow uninstall` takes: clean the machine-wide settings file too. */
 export const MACHINE_FLAG = "--machine";
+
+/** `flow uninstall --machine`, as the report tells a person to type it. */
+const MACHINE_RUN = `flow uninstall ${MACHINE_FLAG}`;
 
 /** How `flow uninstall` is typed: the usage line a misused verb prints. */
 export const UNINSTALL_USAGE = `usage: flow uninstall [${MACHINE_FLAG}]`;
@@ -4213,9 +4216,8 @@ export function uninstallLines(plan: UninstallPlan, failures: readonly string[])
       `  · ${GATE_PATH} still runs flow, in a line flow did not write. Remove it yourself, or every commit fails with \`flow: not found\` once flow is gone.`,
     );
   if (plan.keptConfig) lines.push(`  · kept ${CONFIG_FILE} and the packs it imports — \`flow init\` wires this repo again.`);
-  const machineRun = `flow uninstall ${MACHINE_FLAG}`;
   if (plan.machineHolds !== null)
-    lines.push(`  · ${plan.machineHolds} still holds flow's hooks, and every repo on this machine runs them — \`${machineRun}\` removes them.`);
+    lines.push(`  · ${plan.machineHolds} still holds flow's hooks, and every repo on this machine runs them — \`${MACHINE_RUN}\` removes them.`);
   for (const path of plan.unreadable)
     lines.push(
       `  ✗ ${path} is not valid JSON, so flow's hooks were NOT removed from it and nothing was written to it. ` +
@@ -4225,7 +4227,7 @@ export function uninstallLines(plan: UninstallPlan, failures: readonly string[])
   lines.push(
     plan.machineHolds === null
       ? `  next: \`${plan.next}\` — removes the package.`
-      : `  next: \`${machineRun}\` once no repo on this machine needs flow, then \`${plan.next}\` — removes the hooks, then the package.`,
+      : `  next: \`${MACHINE_RUN}\` once no repo on this machine needs flow, then \`${plan.next}\` — removes the hooks, then the package.`,
   );
   return lines;
 }
