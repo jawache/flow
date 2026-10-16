@@ -15,7 +15,20 @@
 // binary, over stdin.
 
 import { describe, it, expect } from "vitest";
-import type { TurnAction } from "../index.ts";
+import {
+  breadcrumb,
+  defineConfig,
+  definePack,
+  guardrail,
+  loadConfig,
+  override,
+  pack,
+  session,
+  turnEnd,
+  type LoadedEntry,
+  type LoadResult,
+  type TurnAction,
+} from "../index.ts";
 import { metrics, momentsView, type Block, type Bound, type Row } from "../engine/domain.ts";
 import { missingGrammarText } from "../checks/domain.ts";
 import { parseCommandLine, parseShellSteps } from "../language/domain.ts";
@@ -42,6 +55,10 @@ import {
   relativise,
   ownTranscriptPath,
   sessionFactsFrom,
+  agentSettingOf,
+  nothingBound,
+  ridesRefusal,
+  agentOf,
   toEvent,
   toResult,
   tokensFromTranscript,
@@ -193,26 +210,28 @@ function only(events: readonly AdapterEvent[]): AdapterEvent {
 // WHAT THIS ADAPTER ANSWERS TO
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-describe("the six events, and the moments honestly delivered", () => {
-  it("answers to six events, named by the event and never by the job", () => {
+describe("the seven events, and the moments honestly delivered", () => {
+  it("answers to seven events, named by the event and never by the job", () => {
     expect([...HOOK_EVENTS]).toStrictEqual([
       "session-start",
       "pre-tool-use",
       "post-tool-use",
       "post-tool-use-failure",
       "stop",
+      "subagent-stop",
       "notification",
     ]);
     expect(isHookEvent("pre-tool-use")).toBe(true);
+    expect(isHookEvent("SubagentStop"), "the host's name is not flow's verb").toBe(false);
     expect(isHookEvent("PreToolUse"), "the host's name is not flow's verb").toBe(false);
   });
 
-  it("states what it can supply, and does not claim turn-end briefing", () => {
-    // Stop's decision object carries no context channel, so a note bound at turn-end has nowhere to
-    // be shown. Saying so is the contract; faking it would be the failure.
+  it("states what it can supply, turn-end briefing among it", () => {
+    // The Stop and SubagentStop answers carry `additionalContext`, so a note bound at turn-end is
+    // shown there. Saying what is carried is the contract; faking it would be the failure.
     expect(delivers("guardrail", "turn-end"), "the turn-end GUARDRAIL rail works").toBe(true);
-    expect(delivers("breadcrumb", "turn-end"), "a NOTE bound there has nowhere to be shown").toBe(false);
-    expect(DELIVERS.brief).not.toContain("turn-end");
+    expect(delivers("breadcrumb", "turn-end"), "a NOTE bound there is shown at the hand-back").toBe(true);
+    expect(DELIVERS.brief).toContain("turn-end");
     expect(DELIVERS.guard, "commit is delivered — by the git gate, not by the harness").toContain("commit");
     expect(delivers("breadcrumb", "session")).toBe(true);
     expect(delivers("breadcrumb", "touch")).toBe(true);
@@ -602,6 +621,7 @@ describe("toEvent — one payload, every moment it carries", () => {
     const actions: TurnAction[] = [{ did: "edit", path: "a.ts" }];
     expect(toEvent("stop", { session_id: "s" }, world({}, actions))).toStrictEqual([
       { rail: "guard", moment: "turn-end", turn: actions },
+      { rail: "brief", moment: "turn-end" },
     ]);
     expect(
       toEvent("stop", { stop_hook_active: true }, world({}, actions)),
@@ -747,6 +767,7 @@ describe("toResult — one refusal spelling, one injection spelling", () => {
       exitCode: 0,
     });
     expect(readFault("stop", "unreadable", "EBADF").exitCode).toBe(0);
+    expect(readFault("subagent-stop", "unreadable", "EBADF").exitCode).toBe(0);
     expect(readFault("notification", "unreadable", "EBADF").exitCode).toBe(0);
   });
 });
@@ -842,6 +863,171 @@ describe("the transcript's dialect", () => {
   });
 });
 
+describe("a subagent's hand-back — the turn-end moment at SubagentStop", () => {
+  // The payload as Claude Code 2.1.301 sent it for a real Explore subagent's hand-back, paths
+  // shortened: its id and type, the PARENT's transcript_path, and its own beside it.
+  const parent = "/c/projects/p/s1.jsonl";
+  const handBack: HookPayload = {
+    session_id: "s1",
+    transcript_path: parent,
+    cwd: "/repo",
+    permission_mode: "default",
+    hook_event_name: "SubagentStop",
+    stop_hook_active: false,
+    agent_id: "a1b1bb5ff0fc0ca82",
+    agent_type: "Explore",
+    agent_transcript_path: "/c/projects/p/s1/subagents/agent-a1b1bb5ff0fc0ca82.jsonl",
+    last_assistant_message: "pong",
+  };
+  const actions: TurnAction[] = [{ did: "edit", path: "a.ts" }];
+
+  /** The world, plus the agent the session runs as — and a record of whether it was asked. */
+  const as = (sessionAgent: string | null): EventWorld => {
+    const base = world({}, actions);
+    return {
+      ...base,
+      sessionAgent: () => {
+        asked.push("sessionAgent");
+        return sessionAgent;
+      },
+    };
+  };
+
+  it("is an event flow answers, the host's SubagentStop", () => {
+    expect(isHookEvent("subagent-stop")).toBe(true);
+    expect(JSON.parse(decision("subagent-stop", "x"))).toStrictEqual({
+      hookSpecificOutput: { hookEventName: "SubagentStop", additionalContext: "x" },
+    });
+  });
+
+  it("is the turn-end moment, carrying the turn the subagent took", () => {
+    expect(toEvent("subagent-stop", handBack, as(null))).toStrictEqual([
+      { rail: "guard", moment: "turn-end", turn: actions },
+      { rail: "brief", moment: "turn-end" },
+    ]);
+    expect(asked, "the turn is asked for, and so is the session's own agent").toStrictEqual(["sessionAgent", "turn"]);
+  });
+
+  it("runs no rule for an internal agent — an empty type, or the session's own agent's", () => {
+    expect(toEvent("subagent-stop", { ...handBack, agent_type: "" }, as(null)), "a session run as no agent").toStrictEqual([]);
+    expect(asked, "an empty type costs no transcript read, and no turn").toStrictEqual([]);
+    expect(toEvent("subagent-stop", { ...handBack, agent_type: "leader" }, as("leader")), "a session run --agent leader").toStrictEqual([]);
+    expect(asked, "nothing past the session's agent is read").toStrictEqual(["sessionAgent"]);
+    expect(toEvent("subagent-stop", { ...handBack, agent_type: "builder" }, as("leader")), "a builder spawned by the leader").toHaveLength(2);
+    const { agent_type: _type, ...untyped } = handBack;
+    expect(toEvent("subagent-stop", untyped, as(null)), "no type at all").toStrictEqual([]);
+    const { agent_id: _id, ...anonymous } = handBack;
+    expect(toEvent("subagent-stop", anonymous, as(null)), "no agent id: no own transcript to read").toStrictEqual([]);
+  });
+
+  it("reads the session's own agent from its transcript's agent-setting record, the last one standing", () => {
+    const setting = (name: string): string => JSON.stringify({ type: "agent-setting", agentSetting: name, sessionId: "s1" });
+    const said = JSON.stringify({ type: "user", message: { content: 'an "agent-setting" quoted in a prompt' } });
+    expect(agentSettingOf(`${setting("leader")}\n${said}\n${setting("builder")}\n`)).toBe("builder");
+    expect(agentSettingOf(`${said}\n`), "a prompt quoting the word is not the record").toBeNull();
+    expect(agentSettingOf(""), "a session run as no agent").toBeNull();
+  });
+
+  it("has nothing to run, and so reads nothing, when no entry is bound at turn-end", () => {
+    const entries = (load: LoadResult): readonly LoadedEntry[] => {
+      if (!load.ok) throw new Error(JSON.stringify(load.refusals));
+      return load.entries;
+    };
+    const held = guardrail()
+      .at(turnEnd)
+      .check((ctx) => ((ctx.turn ?? []).length > 0 ? ctx.fail("did something") : ctx.ok()))
+      .message("m")
+      .test({ pass: [{ actions: [] }], block: [{ actions: [{ did: "edit", path: "a.ts" }] }] });
+    const elsewhere = entries(loadConfig(defineConfig([pack(definePack("t", { told: breadcrumb().at(session).text("t") }))])));
+    expect(nothingBound("subagent-stop", elsewhere, false), "a config with no turn-end entry").toBe(true);
+    expect(nothingBound("subagent-stop", entries(loadConfig(defineConfig([pack(definePack("t", { held }))]))), false), "a turn-end guardrail").toBe(false);
+    const told = definePack("t", { told: breadcrumb().at(turnEnd).text("t") });
+    expect(nothingBound("subagent-stop", entries(loadConfig(defineConfig([pack(told)]))), false), "a turn-end breadcrumb").toBe(false);
+    const off = definePack("t", { held });
+    expect(
+      nothingBound("subagent-stop", entries(loadConfig(defineConfig([pack(off), override(off.held).disabled("not here")]))), false),
+      "a disabled one binds nothing",
+    ).toBe(true);
+    expect(nothingBound("stop", elsewhere, false), "only the subagent's hand-back is answered early").toBe(false);
+    expect(nothingBound("subagent-stop", elsewhere, true), "a recording repo keeps every hand-back on its tape").toBe(false);
+  });
+
+  it("holds an agent once: a hand-back already held open is let through, and nothing is read", () => {
+    expect(toEvent("subagent-stop", { ...handBack, stop_hook_active: true }, as(null))).toStrictEqual([]);
+    expect(asked).toStrictEqual([]);
+  });
+
+  it("tells a config that does not load rather than holding the subagent", () => {
+    const fault = "flow: the config will not load — 1 refusal.";
+    const answer = whileBroken(toEvent("subagent-stop", handBack, as(null)), fault);
+    expect(answer.refused).toStrictEqual([]);
+    expect(answer.shown, "no note on the answer").toStrictEqual([]);
+    expect(answer.told, "the shell writes this to stderr and exits 0").toBe(`${fault}\n\n${FLOW_OFF}`);
+  });
+});
+
+describe("a turn-end note — a breadcrumb shown when an agent hands back", () => {
+  // When a note shows — first, then after drift, and for which categories — is the engine's
+  // `brief`, the same at every moment. These pin what the adapter adds: the hand-back asks for its
+  // notes, and they reach the agent on the host's two channels.
+  const recap: Shown = { entry: "t.recap", cause: "first-touch", body: "Write the recap before you hand back." };
+  const subagent: HookPayload = {
+    session_id: "s1",
+    transcript_path: "/c/p/s1.jsonl",
+    hook_event_name: "SubagentStop",
+    stop_hook_active: false,
+    agent_id: "a1",
+    agent_type: "Explore",
+  };
+  const quiet: EventWorld = { root: ROOT, read: () => null, turn: () => [], sessionAgent: () => null };
+  const briefs = (events: readonly AdapterEvent[]): boolean => events.some((event) => event.rail === "brief");
+
+  it("is shown the first time an agent hands back, on the Stop and SubagentStop answers' additionalContext", () => {
+    expect(toEvent("stop", { session_id: "s1" }, quiet), "the main chat's hand-back asks for its notes").toContainEqual({ rail: "brief", moment: "turn-end" });
+    expect(toEvent("subagent-stop", subagent, quiet), "and so does a subagent's").toContainEqual({ rail: "brief", moment: "turn-end" });
+    for (const [hook, name] of [["stop", "Stop"], ["subagent-stop", "SubagentStop"]] as const) {
+      const result = toResult(hook, { refused: [], shown: [recap] });
+      expect(result.exitCode, "a note is not a refusal: the host keeps the agent going for one more turn").toBe(0);
+      expect(result.stderr).toBe("");
+      expect(JSON.parse(result.stdout)).toStrictEqual({
+        hookSpecificOutput: { hookEventName: name, additionalContext: "# breadcrumb: t.recap (first-touch)\nWrite the recap before you hand back." },
+      });
+    }
+  });
+
+  it("shows no note on a hand-back with stop_hook_active set", () => {
+    expect(briefs(toEvent("stop", { session_id: "s1", stop_hook_active: true }, quiet)), "the main chat").toBe(false);
+    expect(briefs(toEvent("subagent-stop", { ...subagent, stop_hook_active: true }, quiet)), "a subagent").toBe(false);
+  });
+
+  it("shows no note to Claude Code's internal agents", () => {
+    expect(briefs(toEvent("subagent-stop", { ...subagent, agent_type: "" }, quiet)), "an empty type").toBe(false);
+    expect(briefs(toEvent("subagent-stop", { ...subagent, agent_type: "leader" }, { ...quiet, sessionAgent: () => "leader" })), "the session's own type").toBe(
+      false,
+    );
+  });
+
+  it("passes a guardrail refusal and a note at the same hand-back to the agent together", () => {
+    expect(ridesRefusal("turn-end"), "a held turn is told its notes").toBe(true);
+    for (const moment of ["session", "touch", "command"] as const) expect(ridesRefusal(moment), `${moment}: a refused call is not`).toBe(false);
+    for (const hook of ["stop", "subagent-stop"] as const) {
+      const held = toResult(hook, { refused: [{ moment: "turn-end", block: block() }], shown: [recap] });
+      expect(held.exitCode, "still held").toBe(2);
+      expect(held.stdout, "exit 2 is read from stderr, so both are there").toBe("");
+      expect(held.stderr).toContain("flow — turn held open");
+      expect(held.stderr).toContain("No TODOs in shipped code.");
+      expect(held.stderr).toContain("# breadcrumb: t.recap (first-touch)\nWrite the recap before you hand back.");
+      expect(held.stderr.indexOf("turn held open"), "the refusal first, then the note").toBeLessThan(held.stderr.indexOf("# breadcrumb"));
+    }
+  });
+
+  it("is not shown while the config will not load: the fault is told, and the turn ends", () => {
+    const answer = whileBroken(toEvent("stop", { session_id: "s1" }, quiet), "broken");
+    expect(answer.shown, "a note would keep the agent working").toStrictEqual([]);
+    expect(answer.told).toBe(`broken\n\n${FLOW_OFF}`);
+  });
+});
+
 describe("who the session is, from what the host wrote", () => {
   // The message Claude Code sends for a subagent's call: its id and type, and the PARENT's path.
   const parent = "/c/projects/p/s1.jsonl";
@@ -854,6 +1040,9 @@ describe("who the session is, from what the host wrote", () => {
 
   it("finds a subagent's own transcript under the parent's, by its agent id", () => {
     expect(ownTranscriptPath(subagent)).toBe("/c/projects/p/s1/subagents/agent-a6009b5.jsonl");
+    // At SubagentStop the host also sends the path itself, and it is the one worked out here.
+    const handBack = { ...subagent, agent_id: "a1b1bb5ff0fc0ca82", agent_transcript_path: "/c/projects/p/s1/subagents/agent-a1b1bb5ff0fc0ca82.jsonl" };
+    expect(ownTranscriptPath(handBack), "the host's agent_transcript_path").toBe(handBack.agent_transcript_path);
     expect(ownTranscriptPath({ session_id: "s1", transcript_path: parent }), "the parent reads its own").toBe(parent);
     expect(ownTranscriptPath({ session_id: "s1", agent_id: "a1" }), "no path sent, none to read").toBeNull();
     expect(ownTranscriptPath({ ...subagent, transcript_path: "/c/projects/p/s1" }), "not a transcript").toBeNull();
@@ -872,6 +1061,14 @@ describe("who the session is, from what the host wrote", () => {
     expect(plain).toStrictEqual({ head: "hello", subagent: false });
     const named = sessionFactsFrom({ payload: { session_id: "s", agent_type: "leader" }, transcript: human("hello") });
     expect(named, "agent_type without agent_id is the top-level session's own").toStrictEqual(plain);
+  });
+
+  it("names the agent a message came from the one way: main, or the subagent's id with its type when sent", () => {
+    expect(agentOf(subagent)).toStrictEqual({ agent: "a6009b5", agentType: "builder" });
+    expect(agentOf({ session_id: "s1", agent_id: "a1" }), "a subagent sent with no type").toStrictEqual({ agent: "a1" });
+    expect(agentOf({ session_id: "s1", agent_id: "a1", agent_type: "" }), "an empty type is none").toStrictEqual({ agent: "a1" });
+    expect(agentOf({ session_id: "s" }), "the session itself").toStrictEqual({ agent: "main" });
+    expect(agentOf({ session_id: "s", agent_type: "leader" }), "a top-level --agent session is still main").toStrictEqual({ agent: "main" });
   });
 
   it("reads the branch out of HEAD's own text, ref or detached", () => {
@@ -1700,7 +1897,20 @@ describe("which modules flow strips and evaluates itself", () => {
   });
 });
 
-/** flow's five registrations, each running the command `as` makes of today's one. */
+/** The events flow registers, in its order. Pinned once, by the test that names exactly what is registered. */
+const REGISTERED_EVENTS = HOOK_REGISTRATIONS.map((r) => r.event);
+
+/** The same, as init and status print a list of them. */
+const LISTED = REGISTERED_EVENTS.join(" · ");
+
+/** The settings file an init before 0.3.0 wrote: every registration today's writes, but SubagentStop. */
+const BEFORE_SUBAGENT_STOP = {
+  hooks: Object.fromEntries(
+    Object.entries((withRegistrations({}).settings as { hooks: Record<string, unknown> }).hooks).filter(([event]) => event !== "SubagentStop"),
+  ),
+};
+
+/** flow's registrations, each running the command `as` makes of today's one. */
 const registrationsAs = (as: (command: string) => string): { hooks: Record<string, unknown[]> } => ({
   hooks: Object.fromEntries(
     HOOK_REGISTRATIONS.map((r) => [
@@ -1714,8 +1924,8 @@ const registrationsAs = (as: (command: string) => string): { hooks: Record<strin
 const BARE_SETTINGS = registrationsAs((command) => command.replace(/^.* flow /, "flow "));
 
 describe("the hook registrations flow writes", () => {
-  it("names exactly the events it answers — five, and Notification is not one", () => {
-    expect(HOOK_REGISTRATIONS.map((r) => r.event)).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
+  it("names exactly the events it answers, and Notification is not one", () => {
+    expect(HOOK_REGISTRATIONS.map((r) => r.event)).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"]);
     expect(HOOK_REGISTRATIONS.map((r) => r.event)).not.toContain("Notification");
   });
 
@@ -1753,10 +1963,10 @@ describe("the hook registrations flow writes", () => {
   it("adds every event to a settings file that has none, leaving the rest of it alone", () => {
     const before = { permissions: { allow: ["Bash(git:*)"] } };
     const { settings, added } = withRegistrations(before);
-    expect(added).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
+    expect(added).toEqual(REGISTERED_EVENTS);
     const after = settings as { permissions: unknown; hooks: Record<string, unknown[]> };
     expect(after.permissions, "untouched, byte for byte").toEqual(before.permissions);
-    expect(registeredEvents(settings)).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
+    expect(registeredEvents(settings)).toEqual(REGISTERED_EVENTS);
     expect(after.hooks["Stop"]).toEqual([{ hooks: [{ type: "command", command: hookCommand("stop") }] }]);
     expect(after.hooks["PreToolUse"]?.[0]).toMatchObject({ matcher: "*" });
   });
@@ -1816,7 +2026,7 @@ describe("the hook registrations flow writes", () => {
     expect(bareHook("work hook stop")).toBeNull();
   });
 
-  // THE MACHINE-WIDE FILE AN OLDER INIT WROTE: five registrations in the old shape. They are flow's,
+  // THE MACHINE-WIDE FILE AN OLDER INIT WROTE: its registrations in the old shape. They are flow's,
   // so status counts them, and init rewrites them where they stand — a new entry beside each would
   // run flow twice for every event.
   it("counts the old shape as flow's, and rewrites it in place to the new command", () => {
@@ -1829,16 +2039,15 @@ describe("the hook registrations flow writes", () => {
         ]),
       ),
     };
-    const five = ["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"];
-    expect(registeredEvents(older), "both shapes are flow's").toEqual(five);
-    expect(bareRegistrations(older)).toEqual(five);
+    expect(registeredEvents(older), "both shapes are flow's").toEqual(REGISTERED_EVENTS);
+    expect(bareRegistrations(older)).toEqual(REGISTERED_EVENTS);
     expect(status(statusFacts({ settings: older })).fittings.find((f) => f.id === "hooks")?.ok).toBe(true);
 
     const { settings, added } = withRegistrations(older);
-    expect(added).toEqual(five.map((event) => `${event} (now runs the flow in node_modules/@jawache/flow first)`));
+    expect(added).toEqual(REGISTERED_EVENTS.map((event) => `${event} (now runs the flow in node_modules/@jawache/flow first)`));
     const hooks = (settings as { model: string; hooks: Record<string, { matcher?: string; hooks: { command: string }[] }[]> }).hooks;
     const flows = Object.values(hooks).flatMap((entries) => entries.flatMap((entry) => entry.hooks.map((h) => h.command)).filter(ourHookCommand));
-    expect(flows, "exactly five of flow's, each the new command").toEqual(HOOK_REGISTRATIONS.map((r) => r.command));
+    expect(flows, "exactly flow's, each the new command").toEqual(HOOK_REGISTRATIONS.map((r) => r.command));
     expect(hooks["PreToolUse"]?.[0]?.matcher, "the matcher stays").toBe("*");
     expect(JSON.stringify(hooks["Stop"]), "theirs is untouched").toContain("their-tool --report");
     expect((settings as { model: string }).model).toBe("opus");
@@ -1887,19 +2096,43 @@ describe("the hook registrations flow writes", () => {
   });
 
   // An older flow, or a hand, filed a bare command under an event flow does not register today. It
-  // is still flow's, and still finds only the PATH, so it is rewritten and reported like the five.
+  // is still flow's, and still finds only the PATH, so it is rewritten and reported like the rest.
   it("rewrites an old-shape command under an event flow does not register, and names that event", () => {
     const older = {
       hooks: {
         ...(withRegistrations({}).settings as { hooks: Record<string, unknown> }).hooks,
-        SubagentStop: [{ hooks: [{ type: "command", command: "flow hook stop" }] }],
+        Notification: [{ hooks: [{ type: "command", command: "flow hook notification" }] }],
       },
     };
     const { settings, added } = withRegistrations(older);
-    expect(added).toEqual(["SubagentStop (now runs the flow in node_modules/@jawache/flow first)"]);
-    expect((settings as { hooks: Record<string, unknown[]> }).hooks["SubagentStop"]).toEqual([
-      { hooks: [{ type: "command", command: hookCommand("stop") }] },
+    expect(added).toEqual(["Notification (now runs the flow in node_modules/@jawache/flow first)"]);
+    expect((settings as { hooks: Record<string, unknown[]> }).hooks["Notification"]).toEqual([
+      { hooks: [{ type: "command", command: hookCommand("notification") }] },
     ]);
+  });
+
+  // THE FILE AN INIT BEFORE 0.3.0 WROTE: every registration but SubagentStop. Re-running init adds
+  // that one, beside everything already in the file, and rewrites nothing.
+  it("adds SubagentStop to a file holding every other registration, and keeps every other key", () => {
+    const older = { model: "opus", permissions: { allow: ["Bash(git:*)"] }, hooks: { ...BEFORE_SUBAGENT_STOP.hooks, Notification: [{ hooks: [{ type: "command", command: "say done" }] }] } };
+    const { settings, added } = withRegistrations(older);
+    expect(added).toEqual(["SubagentStop"]);
+    const after = settings as typeof older & { hooks: Record<string, unknown> };
+    expect(after.hooks["SubagentStop"]).toEqual([{ hooks: [{ type: "command", command: hookCommand("subagent-stop") }] }]);
+    expect({ ...after, hooks: { ...after.hooks, SubagentStop: undefined } }, "nothing else in the file changes").toEqual({
+      ...older,
+      hooks: { ...older.hooks, SubagentStop: undefined },
+    });
+    expect(Object.keys(after.hooks), "added at the end; every key already there keeps its place").toEqual([
+      "SessionStart",
+      "PreToolUse",
+      "PostToolUse",
+      "PostToolUseFailure",
+      "Stop",
+      "Notification",
+      "SubagentStop",
+    ]);
+    expect(withRegistrations(settings).added, "and a second run finds nothing to do").toEqual([]);
   });
 
   it("reads nothing out of a settings file that is not an object", () => {
@@ -2006,7 +2239,7 @@ describe("planInit — a repo that has never heard of flow", () => {
     expect(plan.flowDir).toBe(true);
     expect(plan.link).toBe("/checkout/flow");
     expect(plan.hooksPath).toBe(true);
-    expect(plan.registered).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
+    expect(plan.registered).toEqual(REGISTERED_EVENTS);
   });
 
   it("reports every write, and nothing it did not do", () => {
@@ -2283,7 +2516,7 @@ describe("planInit — the flags and the edges", () => {
 
   // The near-miss the crossing found, one branch from happening: a real settings.json holding
   // JSONC comments parsed to null, which reads identically to "there is no settings file" — and
-  // the next line builds a NEW object holding five registrations and nothing else.
+  // the next line builds a NEW object holding flow's registrations and nothing else.
   it("registers NOTHING into a settings file it could not parse, and never writes over it", () => {
     const plan = planInit({ ...bare, settings: null, settingsUnreadable: true });
     expect(plan.settings, "no write is planned against bytes nobody parsed").toBeNull();
@@ -2297,7 +2530,7 @@ describe("planInit — the flags and the edges", () => {
   it("still creates a settings file that is simply ABSENT — the other silence", () => {
     const plan = planInit({ ...bare, settings: null, settingsUnreadable: false });
     expect(plan.settings?.path).toBe("/home/.claude/settings.json");
-    expect(plan.registered.length, "all five events flow registers").toBe(5);
+    expect(plan.registered, "every event flow registers").toEqual(REGISTERED_EVENTS);
   });
 });
 
@@ -2318,7 +2551,7 @@ describe("the machine-wide file, beside a dev dependency's own", () => {
 
   it("rewrites flow's old commands there to today's, and touches nothing else", () => {
     const { settings, rewritten } = withMachineCommandsUpToDate(older);
-    expect(rewritten).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
+    expect(rewritten).toEqual(REGISTERED_EVENTS);
     const after = settings as typeof older;
     expect(after.theme).toBe("dark");
     expect(after.hooks.PostToolUse, "the command is rewritten, the matcher is left as it was").toEqual([
@@ -2341,9 +2574,9 @@ describe("the machine-wide file, beside a dev dependency's own", () => {
     const facts = { ...bare, settingsPath: ".claude/settings.json", settings: null };
     const plan = planInit({ ...facts, machine: { path: machinePath, settings: older, unreadable: false } });
     expect(plan.machine?.path).toBe(machinePath);
-    expect(plan.machine?.rewritten).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
+    expect(plan.machine?.rewritten).toEqual(REGISTERED_EVENTS);
     expect(initLines(plan, []).join("\n")).toContain(
-      `+ ${machinePath} — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop (an older flow's command, now the same as .claude/settings.json's, so each hook runs once)`,
+      `+ ${machinePath} — ${LISTED} (an older flow's command, now the same as .claude/settings.json's, so each hook runs once)`,
     );
     expect(planInit({ ...facts, machine: { path: machinePath, settings: null, unreadable: true } }).machine).toBeNull();
     expect(planInit({ ...facts, machine: { path: machinePath, settings: { theme: "dark" }, unreadable: false } }).machine).toBeNull();
@@ -2360,7 +2593,7 @@ describe("the machine-wide file, beside a dev dependency's own", () => {
     const { fitting, green } = hooks(older);
     expect(fitting?.ok).toBe(false);
     expect(fitting?.detail).toBe(
-      `${machinePath} also calls flow for SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop the old way, as the bare \`flow hook <event>\`, ` +
+      `${machinePath} also calls flow for ${LISTED} the old way, as the bare \`flow hook <event>\`, ` +
         "so Claude Code runs it beside .claude/settings.json's command and each of those hooks fires twice. Re-run `flow init`, which rewrites it to the same command.",
     );
     expect(green).toBe(false);
@@ -2724,21 +2957,32 @@ describe("status — the whole answer", () => {
   });
 
   it("names an entry bound at a moment this adapter cannot deliver — the dark rail", () => {
+    // Claude Code delivers every moment the grammar has, so the dark entry is one the grammar would
+    // refuse: a guardrail at `session`, handed to status as loaded.
     const s = status({
       ...statusFacts(),
-      load: { ok: true, entries: [loaded("demo.late", noteAtTurnEnd)] },
+      load: { ok: true, entries: [loaded("demo.early", { kind: "guardrail", at: ["session"], message: "no" })] },
     });
-    expect(s.dark).toEqual(["demo.late"]);
-    expect(s.green, "a note that can never be shown is a red line").toBe(false);
+    expect(s.dark).toEqual(["demo.early"]);
+    expect(s.green, "a rule that can never fire is a red line").toBe(false);
     expect(statusLines(s).join("\n")).toContain("nothing delivers");
   });
 
-  it("keeps the turn-end GUARDRAIL out of that list — the rail works, only the note is dark", () => {
+  it("lists a turn-end breadcrumb as one that fires, with no red line — beside the turn-end guardrail", () => {
     const s = status({
       ...statusFacts(),
-      load: { ok: true, entries: [loaded("demo.ran", { kind: "guardrail", at: ["turn-end"], message: "no" })] },
+      load: {
+        ok: true,
+        entries: [loaded("demo.late", noteAtTurnEnd), loaded("demo.ran", { kind: "guardrail", at: ["turn-end"], message: "no" })],
+      },
     });
     expect(s.dark).toEqual([]);
+    expect(s.green, "a note shown at the hand-back is in force").toBe(true);
+    const page = statusLines(s).join("\n");
+    expect(page).not.toContain("nothing delivers");
+    expect(page, "listed as a note").toContain("🍞 demo.late");
+    const atTurnEnd = s.moments.moments.find((row) => row.moment === "turn-end")?.entries.map((entry) => entry.id);
+    expect(atTurnEnd, "under the moment it fires at").toContain("demo.late");
   });
 
   it("says the session's own categories when a live session marked this worktree", () => {
@@ -2883,6 +3127,34 @@ describe("status — the snapshot's edges and a registration an older flow wrote
     const both = red({ settings: missing });
     expect(both).toContain("does not call flow for PostToolUseFailure");
     expect(both).toContain("on some tools only");
+  });
+
+  // An init before 0.3.0 wrote every registration but SubagentStop. Status checks it like the rest.
+  it("goes red on a file without SubagentStop, and says re-running init adds it", () => {
+    const s = status(statusFacts({ settings: BEFORE_SUBAGENT_STOP }));
+    expect(s.fittings.find((f) => f.id === "hooks")?.ok).toBe(false);
+    expect(s.green).toBe(false);
+    expect(red({ settings: BEFORE_SUBAGENT_STOP })).toContain("/home/.claude/settings.json does not call flow for SubagentStop — re-run `flow init`.");
+    expect(status(statusFacts()).fittings.find((f) => f.id === "hooks")?.detail, "every one, and it is green").toBe(
+      `/home/.claude/settings.json — ${LISTED}`,
+    );
+  });
+
+  // Each event carries its own rails, so a missing one costs those and no others: a file without
+  // SubagentStop still guards every tool call and the main chat's hand-back.
+  it("names only the rails of the missing events as not firing", () => {
+    const only = status(statusFacts({ settings: BEFORE_SUBAGENT_STOP })).fittings.find((f) => f.id === "hooks")?.detail;
+    expect(only).toBe(
+      "/home/.claude/settings.json does not call flow for SubagentStop — re-run `flow init`. Until it does, no turn-end rule runs when a subagent hands back.",
+    );
+    const hooks = { ...BEFORE_SUBAGENT_STOP.hooks, PreToolUse: undefined };
+    expect(status(statusFacts({ settings: { hooks } })).fittings.find((f) => f.id === "hooks")?.detail).toBe(
+      "/home/.claude/settings.json does not call flow for PreToolUse · SubagentStop — re-run `flow init`. " +
+        "Until it does, no rule judges a tool call before it runs; no turn-end rule runs when a subagent hands back.",
+    );
+    const none = status(statusFacts({ settings: {} })).fittings.find((f) => f.id === "hooks")?.detail ?? "";
+    for (const registration of HOOK_REGISTRATIONS) expect(none, "a file with none names every cost").toContain(registration.event);
+    expect(none).toContain("no note is shown when a session starts; no rule judges a tool call before it runs;");
   });
 });
 
