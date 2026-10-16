@@ -5,7 +5,7 @@
 // Every judgement it prints was made in a domain file that could not have done any of those things
 // — which is the same seam the adapter sits on for the live hooks.
 //
-// SEVEN VERBS, in three halves.
+// EIGHT VERBS, in three halves.
 //
 //   THE LIVE HALF, invoked by something else rather than by a person:
 //     flow hook <event>    what the harness's registrations call, payload on stdin
@@ -19,6 +19,7 @@
 //
 //   THE SETUP, typed once:
 //     flow init [--empty]  scaffold a config, arm the gate, register the hooks
+//     flow uninstall       remove what init wrote, but the config, before the package goes
 //
 // Anything else refuses, loudly, rather than doing nothing quietly.
 //
@@ -44,7 +45,7 @@ import {
   snip,
   type HookResult,
 } from "./adapter/domain.ts";
-import { runInit, runStatus, type VerbResult } from "./adapter/product.ts";
+import { runInit, runStatus, runUninstall, type VerbResult } from "./adapter/product.ts";
 import { diffRows, replay, type Row } from "./engine/domain.ts";
 import { loadRecording, readRowsFile } from "./engine/state.ts";
 
@@ -305,10 +306,11 @@ if (argv.includes("--version") || argv.includes("-v")) {
   // The name an older pre-commit hook calls. Kept so those commits still run the gate;
   // `flow status` tells the repo to update the hook, and the file list it passes is ignored.
   perform(await commitEntry(rest, process.cwd(), true));
-} else if (verb === "init" || verb === "status") {
-  // The product surface. Both answer with the same three edges every other verb does, which is why
-  // neither of them writes to a stream or picks an exit code of its own.
-  const answer: VerbResult = verb === "init" ? runInit(process.cwd(), rest) : await runStatus(process.cwd(), rest);
+} else if (verb === "init" || verb === "status" || verb === "uninstall") {
+  // The product surface. Each answers with the same three edges every other verb does, which is why
+  // none of them writes to a stream or picks an exit code of its own.
+  const answer: VerbResult =
+    verb === "init" ? runInit(process.cwd(), rest) : verb === "uninstall" ? runUninstall(process.cwd()) : await runStatus(process.cwd(), rest);
   if (answer.stdout) process.stdout.write(answer.stdout);
   if (answer.stderr) process.stderr.write(answer.stderr);
   process.exitCode = answer.exitCode;
@@ -326,6 +328,7 @@ if (argv.includes("--version") || argv.includes("-v")) {
       `flow ${VERSION}`,
       "",
       "  flow init [--empty]    scaffold flow.config.ts, arm the git gate, register the hooks",
+      "  flow uninstall         remove what flow init wrote here, but flow.config.ts — before npm uninstall",
       "  flow status [--json]   what is bound here, at which moments — and what is not wired yet",
       "  flow test [config]     run every bound entry's cases (default: flow.config.ts)",
       `  flow hook <event>      a harness hook, payload on stdin — ${HOOK_EVENTS.join(" · ")}`,
