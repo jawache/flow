@@ -29,6 +29,7 @@ import {
   pack,
   override,
   protectedPath,
+  touch,
   turnEnd,
   write,
   type Ctx,
@@ -795,6 +796,14 @@ describe("a breadcrumb across one session", () => {
     const ended = brief({ load: wrapUp, event: { moment: "turn-end", tokens: 0, wearing: [] }, marks: {}, settings: {} });
     expect(noticeIds(ended)).toEqual(["ends.wrapUp"]);
     expect(ended.notices[0]?.subject).toBeUndefined();
+  });
+
+  it("gives a touch with no file a note with no subject, rather than an empty one", () => {
+    const anywhere = loadConfig(defineConfig([pack(definePack("touches", { anyFile: breadcrumb().at(touch).text("Mind the layout.") }))]));
+    const shown = brief({ load: anywhere, event: { moment: "touch", tokens: 0, wearing: [] }, marks: {}, settings: {} });
+    expect(noticeIds(shown)).toEqual(["touches.anyFile"]);
+    expect(shown.notices[0]?.cause).toBe("first-touch");
+    expect(shown.notices[0]?.subject).toBeUndefined();
   });
 
   it("degrades to a NOTICE when the config will not load — the one exception to fail-loud", () => {
