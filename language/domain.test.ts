@@ -748,6 +748,10 @@ describe("parseShellSteps — the same parse, in the order the shell runs it", (
     if (quoted?.kind !== "command") throw new Error("no command step");
     expect(quoted.words.map(written)).toEqual(["cat", "$HOME/a", "$F", "{~}/b", "~/c", "{G}", "{H}", "{?}", "{?}", "{?}"]);
     expect(quoted.redirects.map((r) => `${r.operator} ${written(r.target)}`)).toEqual(["< $I"]);
+    // A `${…}` is a variable only with no prefix, index or operation, and only for a name.
+    const [braced] = parseShellSteps("cat ${A} ${!B} ${#C} ${D[0]} ${1} $@ $_x") ?? [];
+    if (braced?.kind !== "command") throw new Error("no command step");
+    expect(braced.words.map(written)).toEqual(["cat", "{A}", "{?}", "{?}", "{?}", "{?}", "{?}", "{_x}"]);
   });
 
   it("lists the commands ctx.commands holds, in the order they appear, a group's redirects on each", () => {

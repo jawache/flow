@@ -38,10 +38,12 @@ import { parse as parseBash } from "unbash";
 import type {
   ArithmeticExpression,
   CommandNode,
+  ParameterExpansionPart,
   ParameterOperation,
   ParsedScript,
   PipelineNode,
   Redirection,
+  SimpleExpansionPart,
   Statement,
   TestExpression,
   Word,
@@ -611,11 +613,22 @@ function shellInput(args: readonly string[]): { readonly string: string } | "std
   return c ? null : "stdin";
 }
 
-/** One expansion as a piece: a plain `$NAME` or `${NAME}` is a variable, anything else unknown. */
-function expansionPiece(text: string): ShellWordPiece {
-  const name = /^\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})$/.exec(text);
-  const found = name?.[1] ?? name?.[2];
-  return found === undefined ? { kind: "unknown" } : { kind: "variable", name: found };
+/** A shell variable's name, as `NAME=` sets it: not a special parameter such as `$1`, `$@` or `$?`. */
+const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * One expansion as a piece: a plain `$NAME` or `${NAME}` is a variable, anything else unknown. A
+ * `${…}` is read from unbash's own fields — no `!` or `#` prefix, no index, no operation — and a
+ * bare `$NAME`, which unbash gives as text alone, from its text.
+ */
+function expansionPiece(part: SimpleExpansionPart | ParameterExpansionPart): ShellWordPiece {
+  const name =
+    part.type === "ParameterExpansion"
+      ? part.prefix === undefined && part.index === undefined && part.operation === undefined
+        ? part.parameter
+        : ""
+      : part.text.slice(1);
+  return VARIABLE_NAME.test(name) ? { kind: "variable", name } : { kind: "unknown" };
 }
 
 /** A part of a word, or of a double-quoted run, as pieces. */
@@ -630,7 +643,7 @@ function wordPieces(part: WordPart): ShellWordPiece[] {
       return part.parts.flatMap(wordPieces);
     case "SimpleExpansion":
     case "ParameterExpansion":
-      return [expansionPiece(part.text)];
+      return [expansionPiece(part)];
     case "ExtendedGlob":
     case "BraceExpansion":
       return [{ kind: "text", text: part.text }];
