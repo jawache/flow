@@ -29,6 +29,8 @@ import {
   newRepo,
   pre,
   shimBin,
+  subagentStopPayload,
+  subagentTranscripts,
   BREAKS,
   flow as runFlow,
   git as runGit,
@@ -519,13 +521,10 @@ describe("the commit gate", () => {
     expect(gate("plan.yaml").code, "nobody has been classified yet").toBe(0);
 
     // The message Claude Code sends for a subagent's call: its id and type, and the parent's path.
-    mkdirSync(join(repo, ".t", "live-b", "subagents"), { recursive: true });
-    const parent = join(repo, ".t", "live-b.jsonl");
-    writeFileSync(parent, JSON.stringify({ type: "user", message: { content: "run it" } }) + "\n");
-    writeFileSync(
-      join(repo, ".t", "live-b", "subagents", "agent-b1.jsonl"),
-      JSON.stringify({ type: "user", message: { content: "Follow `/work build`" } }) + "\n",
-    );
+    const { parent } = subagentTranscripts(join(repo, ".t"), "live-b", "b1", {
+      parent: [JSON.stringify({ type: "user", message: { content: "run it" } })],
+      own: [JSON.stringify({ type: "user", message: { content: "Follow `/work build`" } })],
+    });
     const asBuilder = hook("pre-tool-use", {
       session_id: "live-b",
       agent_id: "b1",
@@ -746,10 +745,10 @@ export default defineConfig([pack(demo), pack(work, { writers: ["builder", "pare
    * sits under the parent's, at `<parent>/subagents/agent-<id>.jsonl`.
    */
   function spawned(agent: string, agentType: string, brief = "work on it"): Record<string, unknown> {
-    mkdirSync(join(tree, ".t", "f5", "subagents"), { recursive: true });
-    const parent = join(tree, ".t", "f5.jsonl");
-    writeFileSync(parent, `${JSON.stringify({ type: "user", message: { content: "run it" } })}\n`);
-    writeFileSync(join(tree, ".t", "f5", "subagents", `agent-${agent}.jsonl`), `${JSON.stringify({ type: "user", message: { content: brief } })}\n`);
+    const { parent } = subagentTranscripts(join(tree, ".t"), "f5", agent, {
+      parent: [JSON.stringify({ type: "user", message: { content: "run it" } })],
+      own: [JSON.stringify({ type: "user", message: { content: brief } })],
+    });
     return { session_id: "f5", agent_id: agent, agent_type: agentType, transcript_path: parent };
   }
   const PARENT = { session_id: "f5" };
@@ -1167,9 +1166,7 @@ describe("a subagent's drift and turn, read from its own transcript — never it
   const read = (): Ran => called(asSubagent({ tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } }));
 
   beforeAll(() => {
-    mkdirSync(join(repo, ".t", SESSION, "subagents"), { recursive: true });
-    parent = join(repo, ".t", `${SESSION}.jsonl`);
-    own = join(repo, ".t", SESSION, "subagents", `agent-${AGENT}.jsonl`);
+    ({ parent, own } = subagentTranscripts(join(repo, ".t"), SESSION, AGENT));
   });
 
   it("measures drift on the subagent's own context, so a note comes back when IT has moved on", () => {
@@ -1205,7 +1202,6 @@ describe("a subagent's hand-back, at SubagentStop — the turn-end rules, for th
   // transcript_path, and its own beside it. Each case is its own agent id, because who an agent is
   // is remembered per session × agent.
   const SESSION = "hand-back";
-  let parent: string;
   let ids = 0;
 
   const prompt = (content: string): string => JSON.stringify({ type: "user", message: { content } });
@@ -1214,34 +1210,14 @@ describe("a subagent's hand-back, at SubagentStop — the turn-end rules, for th
   const wrote = (name: string): string => used("Write", { file_path: join(repo, name), content: "" });
   /** Four edits and nothing run — what the repo's turn-end rule, bound for everyone, refuses. */
   const untested = (): string[] => ["a", "b", "c", "d"].map((name) => wrote(`src/${name}.ts`));
-  const lines = (...each: string[]): string => `${each.join("\n")}\n`;
   const setting = (name: string): string => JSON.stringify({ type: "agent-setting", agentSetting: name, sessionId: SESSION });
 
   /** Write the parent's transcript and this subagent's own, then hand back as the host would. */
   const handBack = (type: string, own: readonly string[], over: Record<string, unknown> = {}, parentLines: readonly string[] = [prompt("go")]): Ran => {
     const id = `ahb${++ids}`;
-    const path = join(repo, ".t", SESSION, "subagents", `agent-${id}.jsonl`);
-    writeFileSync(parent, lines(...parentLines));
-    writeFileSync(path, lines(prompt("do the phase"), ...own));
-    return hook("subagent-stop", {
-      session_id: SESSION,
-      transcript_path: parent,
-      cwd: repo,
-      permission_mode: "default",
-      hook_event_name: "SubagentStop",
-      stop_hook_active: false,
-      agent_id: id,
-      agent_type: type,
-      agent_transcript_path: path,
-      last_assistant_message: "done",
-      ...over,
-    });
+    const at = subagentTranscripts(join(repo, ".t"), SESSION, id, { parent: parentLines, own: [prompt("do the phase"), ...own] });
+    return hook("subagent-stop", subagentStopPayload(SESSION, id, type, at, { cwd: repo, permission_mode: "default", last_assistant_message: "done", ...over }));
   };
-
-  beforeAll(() => {
-    mkdirSync(join(repo, ".t", SESSION, "subagents"), { recursive: true });
-    parent = join(repo, ".t", `${SESSION}.jsonl`);
-  });
 
   it("is refused by a rule with no .for(…): exit 2, its message on stderr", () => {
     const held = handBack("Explore", untested());
@@ -1309,25 +1285,10 @@ describe("a turn-end note, shown when an agent hands back — at Stop and Subage
   };
   /** A subagent of that session hands back, its own transcript written first under the parent's. */
   const subagentStop = (session: string, id: string, own: readonly string[]): Ran => {
-    const parent = join(notes, ".t", `${session}.jsonl`);
-    const path = join(notes, ".t", session, "subagents", `agent-${id}.jsonl`);
-    mkdirSync(join(notes, ".t", session, "subagents"), { recursive: true });
-    if (!existsSync(parent)) writeFileSync(parent, lines(prompt("go")));
-    writeFileSync(path, lines(prompt("do the phase"), ...own));
-    return runFlow(
-      notes,
-      ["hook", "subagent-stop"],
-      {},
-      JSON.stringify({
-        session_id: session,
-        transcript_path: parent,
-        hook_event_name: "SubagentStop",
-        stop_hook_active: false,
-        agent_id: id,
-        agent_type: "Explore",
-        agent_transcript_path: path,
-      }),
-    );
+    // The parent's turn is kept when the main chat of this session already wrote one.
+    const at = subagentTranscripts(join(notes, ".t"), session, id, { own: [prompt("do the phase"), ...own] });
+    if (!existsSync(at.parent)) writeFileSync(at.parent, lines(prompt("go")));
+    return runFlow(notes, ["hook", "subagent-stop"], {}, JSON.stringify(subagentStopPayload(session, id, "Explore", at)));
   };
   /** The context a note is shown in, the whole JSON answer read back. */
   const context = (ran: Ran): unknown => (ran.stdout === "" ? null : JSON.parse(ran.stdout));

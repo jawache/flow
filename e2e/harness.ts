@@ -36,7 +36,7 @@
 //                       run that must find no `flow` there at all (`Rig.path`).
 
 import { spawn, spawnSync } from "node:child_process";
-import { copyFileSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -193,6 +193,53 @@ export const pre = (tool: string, input: Record<string, unknown>, session = "t-1
   hook_event_name: "PreToolUse",
   tool_name: tool,
   tool_input: input,
+});
+
+/** A subagent's two transcripts: its parent's, which the host names `transcript_path`, and its own. */
+export interface Transcripts {
+  readonly parent: string;
+  readonly own: string;
+}
+
+/**
+ * A subagent's transcripts, laid out as Claude Code writes them: the parent's at
+ * `<dir>/<session>.jsonl`, and the subagent's own under it, at
+ * `<dir>/<session>/subagents/agent-<agent>.jsonl`. Each file given its lines (one JSON record each)
+ * is written; one given none is left as it is, so a test can write it later, or keep the parent's
+ * turn it already wrote.
+ */
+export function subagentTranscripts(
+  dir: string,
+  session: string,
+  agent: string,
+  lines: { readonly parent?: readonly string[]; readonly own?: readonly string[] } = {},
+): Transcripts {
+  const at = { parent: join(dir, `${session}.jsonl`), own: join(dir, session, "subagents", `agent-${agent}.jsonl`) };
+  mkdirSync(join(dir, session, "subagents"), { recursive: true });
+  if (lines.parent !== undefined) writeFileSync(at.parent, `${lines.parent.join("\n")}\n`);
+  if (lines.own !== undefined) writeFileSync(at.own, `${lines.own.join("\n")}\n`);
+  return at;
+}
+
+/**
+ * A SubagentStop payload, as the host writes it when a subagent hands back: its id and type, the
+ * PARENT's transcript as `transcript_path`, and its own beside it. `over` adds or replaces fields.
+ */
+export const subagentStopPayload = (
+  session: string,
+  agent: string,
+  agentType: string,
+  at: Transcripts,
+  over: Record<string, unknown> = {},
+): Record<string, unknown> => ({
+  session_id: session,
+  transcript_path: at.parent,
+  hook_event_name: "SubagentStop",
+  stop_hook_active: false,
+  agent_id: agent,
+  agent_type: agentType,
+  agent_transcript_path: at.own,
+  ...over,
 });
 
 /**

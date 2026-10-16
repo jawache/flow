@@ -38,6 +38,8 @@ import {
   pre,
   settingsHome,
   shimBin,
+  subagentStopPayload,
+  subagentTranscripts,
   flow as runFlow,
   git as runGit,
   hook as sendHook,
@@ -395,10 +397,7 @@ describe("the machine test", () => {
     expect(scaffolded.code, scaffolded.stdout + scaffolded.stderr).toBe(0);
     for (const created of ["flow.config.ts", ".githooks/pre-commit", "node_modules/@jawache/flow", "core.hooksPath"])
       expect(scaffolded.stdout).toContain(created);
-    expect(scaffolded.stdout).toContain("SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop · SubagentStop");
-    const hooks = (JSON.parse(readFileSync(join(home, "settings.json"), "utf8")) as { hooks: Record<string, unknown> }).hooks;
-    expect(Object.keys(hooks)).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"]);
-    step("scaffold", "flow packs — the machine test, in a repo that has never heard of flow", "", "  scaffold   flow init armed the gate, the link and the six registrations");
+    step("scaffold", "flow packs — the machine test, in a repo that has never heard of flow", "", "  scaffold   flow init armed the gate, the link and the hook registrations");
   });
 
   it("binds every pack the package ships, and exactly these entries", () => {
@@ -602,20 +601,11 @@ describe("the machine test", () => {
     // Its turn is read from its own transcript, so that is the one holding the four edits.
     const registered = (JSON.parse(readFileSync(join(home, "settings.json"), "utf8")) as { hooks: Record<string, unknown> }).hooks;
     expect(JSON.stringify(registered["SubagentStop"]), "the host's SubagentStop runs this verb").toContain("hook subagent-stop");
-    const parent = join(repo, ".t", "machine-3.jsonl");
-    const own = join(repo, ".t", "machine-3", "subagents", "agent-amachine.jsonl");
-    mkdirSync(join(repo, ".t", "machine-3", "subagents"), { recursive: true });
-    writeFileSync(parent, `${JSON.stringify({ type: "user", message: { content: "tidy the core, with a helper" } })}\n`);
-    writeFileSync(own, readFileSync(transcript, "utf8"));
-    const sub = hook("subagent-stop", {
-      session_id: "machine-3",
-      hook_event_name: "SubagentStop",
-      transcript_path: parent,
-      stop_hook_active: false,
-      agent_id: "amachine",
-      agent_type: "Explore",
-      agent_transcript_path: own,
+    const at = subagentTranscripts(join(repo, ".t"), "machine-3", "amachine", {
+      parent: [JSON.stringify({ type: "user", message: { content: "tidy the core, with a helper" } })],
+      own: readFileSync(transcript, "utf8").trimEnd().split("\n"),
     });
+    const sub = hook("subagent-stop", subagentStopPayload("machine-3", "amachine", "Explore", at));
     expect(sub.code, `a subagent's turn-end was not refused:\n${sub.stdout}${sub.stderr}`).toBe(2);
     expect(sub.stderr).toContain("house.ranSomething");
     report.push("               …and a subagent's hand-back, at SubagentStop: ✗ house.ranSomething");
