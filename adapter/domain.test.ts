@@ -1216,6 +1216,9 @@ describe("the justfile — a bypass is DERIVED from the repo's own recipes", () 
     const tools = ["vitest", "eslint"];
     expect(classifyBash("just test && just lint", tools)).toEqual({ recipes: ["test", "lint"], bypasses: [], commits: false });
     expect(classifyBash("npx vitest run", tools)).toEqual({ recipes: [], bypasses: ["vitest"], commits: false });
+    // A tool run by its path is the tool.
+    expect(classifyBash("node_modules/.bin/vitest run", tools)).toEqual({ recipes: [], bypasses: ["vitest"], commits: false });
+    expect(classifyBash("./node_modules/.bin/eslint .", tools)).toEqual({ recipes: [], bypasses: ["eslint"], commits: false });
     expect(classifyBash("just test-vitest", tools)).toEqual({ recipes: ["test-vitest"], bypasses: [], commits: false });
     expect(classifyBash("git commit -m x", tools).commits).toBe(true);
     // Authoring a file whose body mentions a tool is not running that tool.
