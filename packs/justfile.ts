@@ -91,13 +91,13 @@ export interface Catalogue {
   readonly tools?: string;
 
   /**
-   * Commands this repo has a recipe for, as a map from the command's pattern to the recipe that
+   * Commands this repo has a recipe for, as a map from the command, in words, to the recipe that
    * replaces it — `{ "npm run build": "just build" }`.
    *
    * OPTIONAL, and with no map there is no entry at all: which raw command a repo has wrapped is a
    * fact only that repo has, and a rule with an empty list would be one more armed entry matching
-   * nothing. The patterns are regular expressions over the command line, so `npx vitest\\b` is a
-   * pattern and `npx vitest` is one too.
+   * nothing. Each key is a command as `banCommands` names one: a program and its arguments, so
+   * `"npx vitest"` refuses `npx vitest run` and `npx --yes vitest`, and passes `npx vitest-preview`.
    *
    * The catalogue's whole promise is that the recipe is the thing to reach for; a breadcrumb says
    * so once a session, and this refuses the raw command by name for the ones that matter.
@@ -236,7 +236,7 @@ export const justfile = definePack("justfile", (repo: Catalogue) => {
             .message(
               [
                 "This repo has a recipe for that command — use it. The catalogue is the tooling you can reach for with confidence, and a raw command run beside it is the one nobody sees, nobody documents and nobody can change in one place.",
-                ...Object.entries(recipes).map(([pattern, recipe]) => `· \`${pattern}\` → \`${recipe}\``),
+                ...Object.entries(recipes).map(([raw, recipe]) => `· \`${raw}\` → \`${recipe}\``),
               ].join("\n"),
             )
             // The first pair of the repo's own map, driven both ways: the recipe passes, the raw

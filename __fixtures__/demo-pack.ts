@@ -16,15 +16,15 @@ import {
   command,
   session,
   touch,
+  programName,
   type Check,
 } from "../index.ts";
 
 /** A configured check: options in, a check out. Nothing but ctx reaches the world. */
-export const banCommands = defineCheck((opts: { patterns: readonly string[] }): Check => {
+export const banCommands = defineCheck((opts: { program: string; args: readonly string[] }): Check => {
   return (ctx) => {
-    const line = ctx.command ?? "";
-    const hit = opts.patterns.find((p) => new RegExp(p).test(line));
-    return hit === undefined ? ctx.ok() : ctx.fail(`matches \`${hit}\``);
+    const hit = (ctx.commands ?? []).find((c) => programName(c.program) === opts.program && opts.args.every((a) => c.args.includes(a)));
+    return hit === undefined ? ctx.ok() : ctx.fail(`\`${hit.text}\` is banned`);
   };
 });
 
@@ -55,7 +55,7 @@ export const house = definePack("house", {
 
   noPushToMain: guardrail()
     .at(command)
-    .check(banCommands({ patterns: ["git push[^\\n]*\\bmain\\b"] }))
+    .check(banCommands({ program: "git", args: ["push", "main"] }))
     .message("Pushing to main is Asim-controlled — push your branch instead.")
     .test({ pass: ["git push origin feature/x"], block: ["git push origin main"] }),
 

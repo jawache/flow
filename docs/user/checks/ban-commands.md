@@ -4,35 +4,49 @@ summary: "reads: command line · fires at: command"
 
 # `banCommands`
 
-Bans a shell command before it runs. flow parses the command line as bash and splits it into simple commands, each one program and its arguments. Each pattern is tried against each command on its own, from the command's program name. A command rule takes no `.on(…)`, because its patterns are its scope. A rule whose patterns match nothing in a repo is not misconfigured.
+Bans a shell command before it runs. You name each banned command in plain words, such as `"git push --force"`: a program and the arguments that make it dangerous. flow parses the command line as bash, and refuses a command whose program is the banned program and whose arguments include every banned argument. A command rule takes no `.on(…)`, because its commands are its scope. A rule whose commands appear nowhere in a repo is not misconfigured.
 
-## What a pattern is matched against
+## How a command is matched
 
-- **One command at a time.** `git push origin main; ls -f` is two commands: `git push origin main` and `ls -f`. A pattern for a force push matches neither, because the `-f` is an argument of `ls`.
-- **From the program name.** A pattern matches only at the start of a command. The pattern `npx vitest run` refuses `npx vitest run --watch` and `cd app && npx vitest run`. It does not refuse `echo 'npx vitest run'`, or `gh issue create --body "ran npx vitest run"`, where the words are an argument.
-- **With quotes removed.** Each argument is matched as the program receives it: `git commit -m "fix: x"` is matched as `git commit -m fix: x`. A quoted argument keeps its newlines, so a pattern can match across the lines of a commit message.
-- **Past a wrapper.** A variable assignment such as `FOO=1` in front of the program is skipped. So are `sudo`, `env`, `nohup`, `nice`, `time`, `timeout`, `command`, `exec` and `xargs`, with their own options and arguments. `sudo rm -rf build` and `timeout 5 rm -rf build` are both matched as `rm -rf build`.
+flow parses the command line with [unbash](https://github.com/webpro-nl/unbash), a bash parser, into a list of commands, each one program and its arguments. [The parse](../explanation/what-the-guard-sees.md#the-parse-what-a-command-is) explains how. Each entry in `ban` goes through the same parser: the first word is the program, and the words after it are its arguments. A command matches the entry when both of these hold:
+
+- **The program is the same.** The program's path is ignored on both sides, so `/usr/local/bin/work plan tick` has the program `work`.
+- **Every argument of the entry is among the command's arguments.** Order and position do not matter, and other arguments may come before, between and after them. So `"work plan tick"` matches `work plan tick F7.B1` and `work --verbose plan A B tick`.
+
+Each argument is compared whole:
+
+- **A word is one argument.** `"work task"` does not match `work task-list`, and `"npx vitest"` does not match `npx vitest-preview`.
+- **A quoted argument is one argument.** `"work plan tick"` does not match `work plan decision 'we tick later'`, because `we tick later` is one argument, not the word `tick`.
+- **A bundle of short flags counts letter by letter.** An argument of one `-` and letters, such as `-rf`, is the flags `-r` and `-f`, on both sides. So `"rm -rf"` matches `rm -rf build`, `rm -fr build` and `rm -r -f build`. A long flag such as `--force` is one argument.
+
+An entry with no arguments, such as `"curl"`, matches every command that runs that program.
+
+## Which commands are matched
+
+- **One command at a time.** `git push origin main; ls -f` is two commands: `git push origin main` and `ls -f`. `"git push -f"` matches neither, because the `-f` is an argument of `ls`.
+- **The program that runs, not the words around it.** `echo 'npx vitest run'` and `gh issue create --body "ran npx vitest run"` are not refused by `"npx vitest"`. Their programs are `echo` and `gh`, and the words are an argument.
+- **Past a wrapper.** A variable assignment such as `FOO=1` in front of the program is skipped. So are `sudo`, `env`, `nohup`, `nice`, `time`, `timeout`, `command`, `exec` and `xargs`, with their own options and arguments. `sudo rm -rf build` and `timeout 5 rm -rf build` both have the program `rm`.
 - **Nested commands.** A command inside `$( … )`, backticks or `<( … )` is a command of its own, and is matched. So is each command in the string given to `bash -c`, `sh -c` or `eval`.
-- **Not inside a heredoc.** A heredoc is the lines after a `<<WORD` opener, up to the line that holds only `WORD`, fed to a program on its standard input. Those lines are not matched. So a script fed to `python3`, or a file written with `cat`, is not refused when it includes the words of a banned command.
+- **Not inside a heredoc.** A heredoc is the lines after a `<<WORD` opener, up to the line that holds only `WORD`, fed to a program on its standard input. Those lines are not commands. So a script fed to `python3`, or a file written with `cat`, is not refused when it includes the words of a banned command.
 - **A heredoc fed to a shell.** The lines of a heredoc read by `bash`, `sh`, `zsh`, `dash` or `ksh` are commands. So are the lines of a heredoc piped into one of them or into `eval`, as in `cat <<'EOF' | sh`. Each one is matched.
 - **A here-string fed to a shell.** The text of a `<<<` here-string read by `bash`, `sh`, `zsh`, `dash` or `ksh`, such as `bash <<< 'rm -rf build'`, is commands. Each one is matched.
-- **A here-string.** The text of a `<<<` here-string is the last argument of its command, and is matched.
-- **A line that does not parse.** A line flow cannot parse, such as one with an unclosed quote, is matched whole, as written.
+- **A line that does not parse.** A line flow cannot parse, such as one with an unclosed quote, is refused when the entry's program and every one of its arguments appear in the line as whole words.
+
+A flag that takes a value attached to it, such as `-mfix`, counts letter by letter like any bundle: `-m`, `-f`, `-i`, `-x`. A rule that must tell a flag from its value, as the `git` pack's rules do, is a check of its own that reads [`ctx.commands`](../reference/ctx.md#ctxcommands). [How to write your own check](../how-to/write-your-own-check.md) gives the steps.
 
 ## Options
 
 | Key | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `ban` | list of regex | yes | each pattern is tried against each command in the line, from its program name, as described above. Any pattern that matches refuses the command |
-| `matchHeredocs` | boolean | no | set `true` to match each command together with the text of its own heredocs, added after its arguments. A rule about what a command is fed, such as a commit message given with `git commit -F - <<'EOF'`, needs it |
-| `wholeLine` | boolean | no | set `true` to try each pattern against the whole command line as written, less its heredoc bodies. A pattern then matches anywhere in the line. Use it for a pattern that spans two commands on purpose, such as `curl … \| sh` |
+| `ban` | list of strings | yes | each banned command, in words: a program, then the arguments that make it dangerous. Matched as described above. An entry that is not one command in words, such as a regex, refuses to load. Under `wholeLine`, each entry is a regex instead |
+| `wholeLine` | boolean | no | set `true` to try each entry as a regex against the whole command line as written, less its heredoc bodies. A pattern then matches anywhere in the line. Use it for a pattern that spans two commands on purpose, such as `curl … \| sh`. An entry that is not a valid regex, such as `curl(`, refuses to load |
 
 ## Example
 
 ```
 noDbReset: guardrail()
   .at(command)
-  .check(banCommands({ ban: ["drizzle-kit\\s+drop", "wrangler\\s+d1\\s+delete"] }))
+  .check(banCommands({ ban: ["drizzle-kit drop", "wrangler d1 delete"] }))
   .message("Destructive DB command — this goes through a release script, never by hand.")
   .test({ pass: ["drizzle-kit generate"], block: ["drizzle-kit drop"] }),
 ```

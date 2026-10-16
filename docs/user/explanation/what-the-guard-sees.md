@@ -27,7 +27,10 @@ flow reads a tool call's input in two cases, each to act earlier than the diff c
 
 The snapshot records what a command changed. The parse reads what a command is, before it runs. They are flow's two mechanisms, and every guardrail on a shell command uses one or both.
 
-flow reads shell as code, never as text. A regex over the raw line cannot tell one command from the next, or a command from the same words inside a quoted argument. So nothing in flow decides what a command does by matching the raw line.
+flow reads shell as code, never as text. A regex over a command cannot tell one command from the next, a command from the same words inside a quoted argument, or `task` from `task-list`. So no rule in flow decides which command it is looking at with a regex:
+
+- **A command rule names a command in words.** `"git push --force"` is the program `git` and the arguments `push` and `--force`, and flow compares them with each command in the parse, one whole argument at a time.
+- **A regex is for text.** A commit message, a pull request body or a file's contents is text, and a rule about it may match a regex against it.
 
 flow parses each command line once, with [unbash](https://github.com/webpro-nl/unbash), a bash parser. The parse is a list of simple commands, each one program and its arguments as the program receives them:
 
@@ -41,13 +44,13 @@ flow parses each command line once, with [unbash](https://github.com/webpro-nl/u
 
 Every rule that judges a shell command before it runs reads this one parse:
 
-- **The command rules.** [`banCommands`](../checks/ban-commands.md) matches each command in the parse, and a check of your own reads it as [`ctx.commands`](../reference/ctx.md#ctxcommands).
+- **The command rules.** [`banCommands`](../checks/ban-commands.md) compares the program and arguments it names with each command in the parse, and a check of your own reads it as [`ctx.commands`](../reference/ctx.md#ctxcommands).
 - **The git safety rail.** It reads which `git` commands the line runs, and which repo each one is aimed at.
 - **Deletes.** The files that `rm`, `git rm` and `mv` remove are read from their commands' arguments, and judged before the command runs.
 - **Reads.** The files that `cat`, `head`, `sed -n`, `grep` and the other readers name are read from their commands' arguments, to show their breadcrumbs.
 - **Recipes.** A command whose program the repo has a recipe for is counted as going round the recipe.
 
-The parse holds only what is written on the line. It does not include what `python3 script.py` or a `just` recipe writes, or the value a variable holds when the command runs. That is why the snapshot, not the parse, is the record of what a command changed. A line flow cannot parse, such as one with an unclosed quote, has no parse. `ctx.commands` is then `null`, and `banCommands` matches the line whole, as written.
+The parse holds only what is written on the line. It does not include what `python3 script.py` or a `just` recipe writes, or the value a variable holds when the command runs. That is why the snapshot, not the parse, is the record of what a command changed. A line flow cannot parse, such as one with an unclosed quote, has no parse. `ctx.commands` is then `null`, and `banCommands` refuses the line when the program and every argument it names appear in it as whole words.
 
 ## The order within a shell command
 

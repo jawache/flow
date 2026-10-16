@@ -155,124 +155,191 @@ describe("a command case's ctx", () => {
 });
 
 describe("banCommands", () => {
-  it("passes a safe command and blocks a banned one", async () => {
-    const check = banCommands({ ban: ["git\\s+checkout\\s+--", "git\\s+reset\\s+--hard"] });
-    expect(await run(check, "command", "git status")).toBeNull();
-    expect(await run(check, "command", "git checkout -- src/x.ts")).toContain("banned");
+  /** Whether `entry` refuses `line`, each way round: true is refused, false is passed. */
+  const refuses = async (entry: string, line: string): Promise<boolean> => (await run(banCommands({ ban: [entry] }), "command", line)) !== null;
+  /** Every line, expected one way. */
+  const each = async (entry: string, lines: readonly string[], refused: boolean): Promise<void> => {
+    for (const line of lines) expect(await refuses(entry, line), `${entry} · ${line}`).toBe(refused);
+  };
+
+  it("names the banned command in words, as the README shows", async () => {
+    const forcePush = banCommands({ ban: ["git push --force", "git push -f"] });
+    expect(await run(forcePush, "command", "git push origin main")).toBeNull();
+    expect(await run(forcePush, "command", "git push --force origin main")).toBe("matches banned `git push --force`");
   });
 
-  it("reports every pattern that matched, not just the first", async () => {
-    const check = banCommands({ ban: ["rm -rf /", "rm -rf /tmp"] });
-    const detail = await run(check, "command", "rm -rf / ; rm -rf /tmp");
-    expect(detail?.split(" · ")).toHaveLength(2);
+  it("reports every entry that matched, not just the first", async () => {
+    const detail = await run(banCommands({ ban: ["rm -rf /", "rm -rf /tmp"] }), "command", "rm -rf / ; rm -rf /tmp");
+    expect(detail?.split(" · ")).toStrictEqual(["matches banned `rm -rf /`", "matches banned `rm -rf /tmp`"]);
   });
 
-  // ── one case per bullet of docs/user/checks/ban-commands.md § What a pattern is matched against ──
+  // ── docs/user/checks/ban-commands.md § How a command is matched, and the how-to's ──
 
-  const forcePush = banCommands({ ban: ["git\\s+push\\b[^\\n]*\\s(--force|-f)(\\s|$)"] });
-  const vitest = banCommands({ ban: ["npx vitest run"] });
-  const trailer = ["Co", "Authored", "By"].join("-");
+  it("the same program, without its path on either side", async () => {
+    await each("work plan tick", ["/usr/local/bin/work plan tick", "work plan tick F7.B1"], true);
+    await each("drizzle-kit drop", ["/usr/local/bin/drizzle-kit drop"], true);
+    await each("/usr/local/bin/drizzle-kit drop", ["drizzle-kit drop"], true);
+    await each("work plan tick", ["worker plan tick", "/usr/local/bin/work-plan tick"], false);
+  });
+
+  it("every argument of the entry, in any order and anywhere among the command's", async () => {
+    await each("work plan tick", ["work --verbose plan A B tick", "/usr/local/bin/work --verbose plan A B tick", "work tick plan"], true);
+    await each("drizzle-kit drop", ["drizzle-kit --verbose drop"], true);
+    await each("work plan tick", ["work plan status", "work tick"], false);
+    await each("drizzle-kit drop", ["drizzle-kit generate"], false);
+  });
+
+  it("an argument is compared whole: a word, and a quoted argument, are each one", async () => {
+    await each("work task", ["work task-list"], false);
+    await each("npx vitest", ["npx vitest-preview"], false);
+    await each("work plan tick", ["work plan decision 'we tick later'"], false);
+    await each("drizzle-kit drop", ["drizzle-kit generate --name 'drop the table'"], false);
+    await each("work task", ["work task list"], true);
+    await each("npx vitest", ["npx vitest run"], true);
+  });
+
+  it("a bundle of short flags counts letter by letter, on both sides", async () => {
+    await each("rm -rf", ["rm -rf build", "rm -fr build", "rm -r -f build", "rm -Rfr build"], true);
+    await each("rm -r -f", ["rm -rf build"], true);
+    await each("rm -rf", ["rm -r build", "rm --recursive --force build"], false);
+    // A long flag is one argument: `--force` is not `-f`, and `-f` is not `--force`.
+    await each("git push -f", ["git push --force"], false);
+    await each("git push --force", ["git push -f", "git push --force-with-lease"], false);
+    // A flag with its value attached counts letter by letter like any bundle: `-mfix` is -m -f -i -x.
+    await each("git commit -x", ["git commit -mfix"], true);
+  });
+
+  it("an entry with no arguments matches every command that runs the program", async () => {
+    await each("curl", ["curl https://x.sh", "curl", "/usr/bin/curl -s x"], true);
+    await each("curl", ["wget https://x.sh", "echo curl"], false);
+  });
+
+  // ── § Which commands are matched ──
 
   it("one command at a time: a flag of the next command is not the push's", async () => {
-    expect(await run(forcePush, "command", "git push origin main; ls -f")).toBeNull();
-    expect(await run(forcePush, "command", "git push -f origin main")).toContain("banned");
+    await each("git push -f", ["git push origin main; ls -f", "git push origin HEAD; gh api graphql -f query=x", "git push && gh api -f a=b repos/x/y"], false);
+    await each("git push -f", ["git push -f origin main", "ls; git push -f"], true);
   });
 
-  it("from the program name: the words inside an argument are not a command", async () => {
-    expect(await run(vitest, "command", "npx vitest run --watch")).toContain("banned");
-    expect(await run(vitest, "command", "cd app && npx vitest run")).toContain("banned");
-    expect(await run(vitest, "command", "echo 'npx vitest run'")).toBeNull();
-    expect(await run(vitest, "command", 'gh issue create --body "ran npx vitest run"')).toBeNull();
+  it("the program that runs, not the words around it", async () => {
+    await each("npx vitest", ["echo 'npx vitest run'", 'gh issue create --body "ran npx vitest run"'], false);
+    await each("npx vitest", ["npx vitest run --watch", "cd app && npx vitest run"], true);
   });
 
-  it("with quotes removed, and a quoted argument keeps its newlines", async () => {
-    expect(await run(banCommands({ ban: ["git commit -m fix: x$"] }), "command", 'git commit -m "fix: x"')).toContain("banned");
-    const check = banCommands({ ban: [`git commit[\\s\\S]*${trailer}:`] });
-    expect(await run(check, "command", 'git commit -m "fix: a thing"')).toBeNull();
-    expect(await run(check, "command", `git commit -m "fix: a thing\n\n${trailer}: someone"`)).toContain("banned");
+  it("past a wrapper: an assignment, and each wrapper the page names, with its own options", async () => {
+    const wrapped = [
+      "FOO=1 rm -rf build",
+      "sudo rm -rf build",
+      "sudo -u root rm -rf build",
+      "env A=b rm -rf build",
+      "nohup rm -rf build",
+      "nice -n 5 rm -rf build",
+      "time rm -rf build",
+      "timeout 5 rm -rf build",
+      "command rm -rf build",
+      "exec rm -rf build",
+      "xargs rm -rf",
+      "env A=b nohup rm -rf build",
+    ];
+    await each("rm -rf", wrapped, true);
   });
 
-  it("past a wrapper: an assignment, sudo, env and timeout are stepped over", async () => {
-    const check = banCommands({ ban: ["rm -rf build"] });
-    for (const line of ["sudo rm -rf build", "timeout 5 rm -rf build", "FOO=1 rm -rf build", "env A=b nohup rm -rf build"]) {
-      expect(await run(check, "command", line), line).toContain("banned");
-    }
-  });
-
-  it("nested commands: a substitution, a process substitution, and a string given to a shell or eval", async () => {
-    for (const line of ["echo $(npx vitest run)", "echo `npx vitest run`", "diff <(npx vitest run) b", "bash -c 'npx vitest run'", "sh -c 'ls; npx vitest run'", "eval 'npx vitest run'"]) {
-      expect(await run(vitest, "command", line), line).toContain("banned");
-    }
+  it("nested commands: a substitution, backticks, a process substitution, and a string given to a shell or eval", async () => {
+    const nested = ["echo $(npx vitest run)", "echo `npx vitest run`", "diff <(npx vitest run) b", "bash -c 'npx vitest run'", "sh -c 'ls; npx vitest run'", "eval 'npx vitest run'"];
+    await each("npx vitest", nested, true);
   });
 
   it("not inside a heredoc: a script or a file that names the command is not refused", async () => {
-    expect(await run(vitest, "command", "python3 - <<'PY'\nprint('npx vitest run')\nPY")).toBeNull();
-    expect(await run(vitest, "command", "cat > a.md <<EOF\nnpx vitest run\nEOF")).toBeNull();
-    expect(await run(vitest, "command", "python3 - <<'PY'\nprint('x')\nPY\nnpx vitest run")).toContain("banned");
+    await each("npx vitest", ["python3 - <<'PY'\nprint('npx vitest run')\nPY", "cat > a.md <<EOF\nnpx vitest run\nEOF"], false);
+    await each("npx vitest", ["python3 - <<'PY'\nprint('x')\nPY\nnpx vitest run"], true);
   });
 
-  it("a heredoc fed to a shell: its lines are commands, and each is matched", async () => {
-    expect(await run(vitest, "command", "bash <<'EOF'\nls\nnpx vitest run\nEOF")).toContain("banned");
-    // …and a pipeline into one, whose earlier stage feeds it the heredoc.
-    expect(await run(vitest, "command", "cat <<'EOF' | sh\nnpx vitest run\nEOF")).toContain("banned");
-    expect(await run(vitest, "command", "cat <<'EOF' | python3\nnpx vitest run\nEOF")).toBeNull();
+  it("a heredoc fed to a shell, directly or piped, holds commands, and each is matched", async () => {
+    const shells = ["bash", "sh", "zsh", "dash", "ksh"].map((shell) => `${shell} <<'EOF'\nls\nnpx vitest run\nEOF`);
+    await each("npx vitest", [...shells, "cat <<EOF | sh\nnpx vitest run\nEOF", "cat <<'EOF' | sh\nnpx vitest run\nEOF"], true);
+    await each("npx vitest", ["cat <<'EOF' | python3\nnpx vitest run\nEOF"], false);
   });
 
-  it("a here-string fed to a shell: its text is commands, and each is matched", async () => {
-    expect(await run(vitest, "command", "bash <<< 'ls; npx vitest run'")).toContain("banned");
-    expect(await run(vitest, "command", "python3 - <<< 'npx vitest run'")).toBeNull();
+  it("a here-string fed to a shell is commands; fed to anything else it is the command's last argument", async () => {
+    await each("rm -rf", ["bash <<< 'rm -rf build'"], true);
+    await each("npx vitest", ["bash <<< 'ls; npx vitest run'"], true);
+    await each("npx vitest", ["python3 - <<< 'npx vitest run'", "grep -c x <<< 'npx vitest run'"], false);
+    await each("grep 'npx vitest run'", ["grep -c x <<< 'npx vitest run'"], true);
   });
 
-  it("a here-string: its text is the last argument of its command, and is matched", async () => {
-    expect(await run(banCommands({ ban: ["grep -c x npx vitest run$"] }), "command", "grep -c x <<< 'npx vitest run'")).toContain("banned");
-    expect(await run(vitest, "command", "grep -c x <<< 'npx vitest run'")).toBeNull();
+  it("a line that does not parse: refused when the program and every argument appear in it as whole words", async () => {
+    await each("npx vitest", ['echo "oops; npx vitest run', "npx 'vitest run"], true);
+    await each("npx vitest", ['echo "oops; ls', 'echo "oops; npx vitest-preview', 'echo "oops; npxx vitest'], false);
+    await each("work plan tick", ["/usr/local/bin/work plan tick 'x"], true);
+    // Short flags still count letter by letter, inside any bundle.
+    await each("rm -rf", ['rm -fr "build', 'rm -r -f "build'], true);
+    await each("rm -rf", ['rm -r "build'], false);
   });
 
-  it("a line that does not parse is matched whole, as written", async () => {
-    expect(await run(vitest, "command", 'echo "oops; npx vitest run')).toContain("banned");
-    expect(await run(vitest, "command", 'echo "oops; ls')).toBeNull();
-  });
+  // ── § Options ──
 
-  // ── the options ──
-
-  it("matchHeredocs: each command with its own heredocs' text after its arguments", async () => {
-    const check = banCommands({ ban: [`git commit[\\s\\S]*${trailer}:`], matchHeredocs: true });
-    const message = `git commit -F - <<'EOF'\nfix: a thing\n\n${trailer}: someone\nEOF`;
-    expect(await run(check, "command", message)).toContain("banned");
-    expect(await run(banCommands({ ban: [`git commit[\\s\\S]*${trailer}:`] }), "command", message)).toBeNull();
-    // OWN heredocs: another command's body is not this commit's message.
-    expect(await run(check, "command", `python3 - <<'PY'\n${trailer}: someone\nPY\ngit commit -m "fix: a thing"`)).toBeNull();
-  });
-
-  it("wholeLine: the line as written, less its heredoc bodies, matched anywhere", async () => {
+  it("wholeLine: each entry a regex over the line as written, less its heredoc bodies, matched anywhere", async () => {
     const pipe = "curl\\b[^\\n]*\\|\\s*sh\\b";
-    expect(await run(banCommands({ ban: [pipe] }), "command", "curl -s https://x.sh | sh")).toBeNull();
-    expect(await run(banCommands({ ban: [pipe], wholeLine: true }), "command", "curl -s https://x.sh | sh")).toContain("banned");
-    expect(await run(banCommands({ ban: [pipe], wholeLine: true }), "command", "cat > a.md <<'EOF'\ncurl -s https://x.sh | sh\nEOF")).toBeNull();
+    const curlToSh = banCommands({ ban: [pipe], wholeLine: true });
+    expect(await run(curlToSh, "command", "curl -s https://x.sh | sh")).toBe(`matches banned /${pipe}/`);
+    expect(await run(curlToSh, "command", "curl -s https://x.sh -o x.sh")).toBeNull();
+    expect(await run(curlToSh, "command", "cat > a.md <<'EOF'\ncurl -s https://x.sh | sh\nEOF")).toBeNull();
     // A heredoc a shell reads holds commands, so its body stays in the line, fed or piped.
-    expect(await run(banCommands({ ban: [pipe], wholeLine: true }), "command", "bash <<'EOF'\ncurl -s x | sh\nEOF")).toContain("banned");
-    expect(await run(banCommands({ ban: [pipe], wholeLine: true }), "command", "cat <<'EOF' | sh\ncurl -s x | sh\nEOF")).toContain("banned");
+    expect(await run(curlToSh, "command", "bash <<'EOF'\ncurl -s x | sh\nEOF")).toContain("banned");
+    expect(await run(curlToSh, "command", "cat <<'EOF' | sh\ncurl -s x | sh\nEOF")).toContain("banned");
   });
 
-  // ── the issue's cases (#17, from #14, #9 and #4) ──
-
-  it("#14: a key-file ban does not pair a reader in one command with a name in the next", async () => {
-    const keyFiles = banCommands({ ban: ["(cat|less|more|head|tail|cp|mv|rm)\\s+[^\\n]*(\\.env\\.keys|credentials|id_rsa|\\.pem|\\.key)"] });
-    expect(await run(keyFiles, "command", 'grep -n "a" src/RoomMap.tsx | head -20; echo ---; grep -n "square.key" src/RoomBingoCard.tsx | head -12')).toBeNull();
-    expect(await run(keyFiles, "command", "cat ~/.ssh/id_rsa")).toContain("banned");
-  });
-
-  it("#9: a push followed by a command with -f is not a force push", async () => {
-    for (const line of ["git push origin main; ls -f", "git push origin HEAD; gh api graphql -f query=x", "git push && gh api -f a=b repos/x/y"]) {
-      expect(await run(forcePush, "command", line), line).toBeNull();
+  it("refuses to load an entry that is not one command in words, and names it", () => {
+    const fault = (entry: string): string =>
+      `bans \`${entry}\`, which is not one command in words. Name a program and the arguments that make it dangerous, such as "git push --force"; a regex goes under \`wholeLine: true\`.`;
+    for (const entry of ["git\\s+push", "rm (-rf|-fr)", "git push; ls", "echo 'oops", "cat > x", ""]) {
+      expect(faultsOf(banCommands({ ban: ["curl", entry] })), entry).toStrictEqual([fault(entry)]);
     }
-    expect(await run(forcePush, "command", "git push -f origin main")).toContain("banned");
+    // A wrapper or an assignment the parse steps past is never a command's program: in front, the
+    // entry would ban every use of the program after it, and a wrapper alone would ban nothing.
+    for (const entry of ["sudo rm", "env FOO=1 rm", "sudo", "timeout 5 rm -rf", "xargs rm", "FOO=1 rm -rf", "A=1 B=2 rm"]) {
+      expect(faultsOf(banCommands({ ban: ["curl", entry] })), entry).toStrictEqual([fault(entry)]);
+    }
+    expect(faultsOf(banCommands({ ban: ["git push --force", "drizzle-kit drop"] }))).toStrictEqual([]);
+    expect(faultsOf(banCommands({ ban: ["curl\\b[^\\n]*\\|\\s*sh\\b"], wholeLine: true }))).toStrictEqual([]);
+  });
+
+  it("wholeLine: refuses to load a regex that does not compile, and judges commands by the rest", async () => {
+    const broken = banCommands({ ban: ["curl(", "rm\\s+-rf"], wholeLine: true });
+    expect(faultsOf(broken)).toStrictEqual([
+      "bans /curl(/ under `wholeLine: true`, which is not a regex: Invalid regular expression: /curl(/: Unterminated group.",
+    ]);
+    expect(await run(broken, "command", "ls")).toBeNull();
+    expect(await run(broken, "command", "rm -rf build")).toBe("matches banned /rm\\s+-rf/");
+  });
+
+  // ── § Example ──
+
+  it("the page's example: drizzle-kit drop and wrangler d1 delete, and not drizzle-kit generate", async () => {
+    const noDbReset = banCommands({ ban: ["drizzle-kit drop", "wrangler d1 delete"] });
+    expect(await run(noDbReset, "command", "drizzle-kit generate")).toBeNull();
+    expect(await run(noDbReset, "command", "drizzle-kit drop")).toBe("matches banned `drizzle-kit drop`");
+    expect(await run(noDbReset, "command", "npx wrangler d1 delete prod")).toBeNull();
+    expect(await run(noDbReset, "command", "wrangler d1 delete prod")).toBe("matches banned `wrangler d1 delete`");
+  });
+
+  // ── the issue's cases (#17, from #14, #9 and #4, and #93) ──
+
+  it("#14: a reader in one command is not paired with a name in the next", async () => {
+    await each("head square.key", ['grep -n "a" src/RoomMap.tsx | head -20; echo ---; grep -n "square.key" src/RoomBingoCard.tsx | head -12'], false);
+    await each("cat id_rsa", ["cat id_rsa"], true);
   });
 
   it("#4: a banned command named in prose is not run", async () => {
-    expect(await run(vitest, "command", 'gh issue create --body "the builder ran npx vitest run instead of just test"')).toBeNull();
-    expect(await run(vitest, "command", "echo 'npx vitest run'")).toBeNull();
-    expect(await run(vitest, "command", "npx vitest run")).toContain("banned");
+    await each("npx vitest", ['gh issue create --body "the builder ran npx vitest run instead of just test"', "echo 'npx vitest run'"], false);
+    await each("npx vitest", ["npx vitest run"], true);
+  });
+
+  it("#93: the four commands a regex over the text got wrong", async () => {
+    await each("work plan tick", ["/usr/local/bin/work plan tick x"], true);
+    await each("work task", ["work task-list"], false);
+    await each("npx vitest", ["npx vitest-preview"], false);
+    await each("rm -rf", ["rm -fr build"], true);
   });
 });
 
@@ -280,7 +347,7 @@ describe("banCommands", () => {
 // `.test({ pass, block })` cases, among them the issue's #10 and #11; these are the check itself,
 // on a head of its own, one shell rule per case.
 describe("substitutionInProse", () => {
-  const check = substitutionInProse({ heads: ["say\\b"] });
+  const check = substitutionInProse({ heads: ["say"] });
   const caught = async (command: string): Promise<string | null> => run(check, "command", command);
 
   it("refuses a backtick the shell runs in the command's argument, and names the head and what it runs", async () => {
@@ -325,10 +392,46 @@ describe("substitutionInProse", () => {
   });
 
   it("takes several heads, so two packs share one check without either copying it", async () => {
-    const both = substitutionInProse({ heads: ["git\\s+commit\\b", "work\\s+plan\\b"] });
+    const both = substitutionInProse({ heads: ["git commit", "work plan"] });
     expect(await run(both, "command", 'git commit -m "a `date`"')).not.toBeNull();
     expect(await run(both, "command", 'work plan decision "a `date`"')).not.toBeNull();
     expect(await run(both, "command", 'gh pr create --body "a `date`"')).toBeNull();
+  });
+
+  // ── heads in words, matched as banCommands matches an entry ──
+
+  const gh = substitutionInProse({ heads: ["gh pr", "gh issue", "work gh issue"] });
+
+  it("matches a head by its program without its path, and names the head in words", async () => {
+    expect(await run(gh, "command", '/usr/local/bin/gh pr create --body "see `just gate`"')).toBe(
+      "`gh pr` would run `just gate` and record its output in place of the backticks",
+    );
+    expect(await run(gh, "command", './bin/gh issue comment 1 --body "`date`"')).toContain("`gh issue`");
+    expect(await run(gh, "command", 'work gh issue comment 1 --body "`date`"')).toContain("`work gh issue`");
+    expect(await run(gh, "command", 'ghx pr create --body "`date`"'), "another program is not the head's").toBeNull();
+  });
+
+  it("finds every argument of the head among the command's, in any order and past an option", async () => {
+    expect(await run(gh, "command", 'gh --repo a/b pr create --body "`date`"')).toContain("`gh pr`");
+    expect(await run(gh, "command", 'work --verbose gh issue comment 1 --body "`date`"')).toContain("`work gh issue`");
+    // Anywhere means anywhere: a stray `pr`, the value of an option, counts as the head's word.
+    expect(await run(gh, "command", 'gh run list --branch pr "`date`"')).toContain("`gh pr`");
+  });
+
+  it("finds a head's words as whole arguments only: a longer word, or a quoted one, is not the word", async () => {
+    expect(await run(gh, "command", 'gh prs list --search "`date`"')).toBeNull();
+    expect(await run(gh, "command", 'gh api repos --jq "pr `date`"')).toBeNull();
+    expect(await run(gh, "command", 'gh issue-list "`date`"')).toBeNull();
+    expect(await run(gh, "command", 'work gh-issue "`date`"')).toBeNull();
+  });
+
+  it("refuses to load a head that is not one command in words, and names it", () => {
+    const fault = (head: string): string =>
+      `names the head \`${head}\`, which is not one command in words. Name a program and the arguments that make it record prose, such as "gh pr".`;
+    for (const head of ["gh\\s+(?:pr|issue)\\b", "work\\s+plan", "gh pr; ls", "sudo gh pr", "FOO=1 gh pr", "cat > x", ""]) {
+      expect(faultsOf(substitutionInProse({ heads: ["gh pr", head] })), head).toStrictEqual([fault(head)]);
+    }
+    expect(faultsOf(substitutionInProse({ heads: ["gh pr", "work gh issue"], gitSubcommands: ["commit"] }))).toStrictEqual([]);
   });
 
   it("says the mechanism, the absence of an undo and the fix — the sentence both packs print", () => {
