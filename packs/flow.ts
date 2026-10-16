@@ -2,7 +2,7 @@
 //
 // AND THEY ARE THE `flow` PACK NOW, not `guard`, which is a rename worth its churn: every entry in
 // every pack here is a guardrail or a breadcrumb, so `guard.` as a prefix said nothing that was not
-// already true of `git.` and `tdd.`. What these three are actually about is FLOW — the config file,
+// already true of `git.` and `tdd.`. What these four are actually about is FLOW — the config file,
 // the packs it imports, the gate that runs them — and `flow.noDeleteGuardrails` names the thing
 // being protected where `guard.noDeleteGuardrails` named the category it belongs to.
 //
@@ -11,7 +11,7 @@
 // have — a nudge that never fires and a delete refusal that protects nothing, both counted as
 // armed. That is the exact failure flow exists to make impossible.
 //
-// THREE ENTRIES, and the count is the pack's definition rather than a coincidence: this is flow's
+// FOUR ENTRIES, and the count is the pack's definition rather than a coincidence: this is flow's
 // self-protection and nothing else. Two entries that used to sit here left when the packs moved
 // into the package, because neither was about the guard — `noAgentInboxItems` is the work
 // lifecycle's and is in `work`, and the prose-substitution rule's `git commit` / `gh` head is in
@@ -25,7 +25,77 @@
 // never narrow anything is the dead-scope refusal. A rule re-asking at commit what the compiler
 // already refused at the keystroke is a rule that can only ever agree.
 
-import { breadcrumb, deletion, definePack, guardrail, protectedPath, session, touch } from "../index.ts";
+import {
+  breadcrumb,
+  command,
+  defineCheck,
+  definePack,
+  deletion,
+  guardrail,
+  programName,
+  protectedPath,
+  session,
+  shellCommands,
+  touch,
+  type Check,
+  type ShellCommand,
+} from "../index.ts";
+
+/** The programs that start flow without being flow: the package runners, and node on the bundle or the bin link. */
+const RUNNERS = new Set(["npx", "pnpx", "bunx", "yarn", "pnpm", "bun", "npm", "node"]);
+
+/**
+ * A word, less its path, that names flow: `flow` itself (`./node_modules/.bin/flow`), the package
+ * at any version (`@jawache/flow@latest`), or the bundle (`dist/flow.mjs`). Compared whole, so
+ * `workflow` and `scripts/workflow.mjs` are not flow.
+ */
+const FLOW = /^flow(?:@.+|\.mjs)?$/;
+
+/**
+ * The command runs `flow uninstall`: its program names flow, or it is a runner and one of its
+ * arguments names flow, and the word after that is `uninstall` — flow's verb is always its first
+ * word. A runner may sit any number of words before flow (`pnpm dlx`, `npm exec --`, node's own
+ * options), so its arguments are searched rather than read at one position.
+ */
+function runsUninstall(c: ShellCommand): boolean {
+  const words = [c.program, ...c.args];
+  const namesFlowThenUninstall = (i: number): boolean => FLOW.test(programName(words[i] ?? "")) && words[i + 1] === "uninstall";
+  return namesFlowThenUninstall(0) || (RUNNERS.has(programName(c.program)) && c.args.some((_, i) => namesFlowThenUninstall(i + 1)));
+}
+
+/** What ends a word in a line that does not parse, as `banCommands` reads one: whitespace, a quote, a backtick and the shell's operators. */
+const EDGE = String.raw`\s'"\x60;&|()<>`;
+
+/** The word, whole, anywhere in a line that does not parse. */
+const wholeWord = (word: string): RegExp => new RegExp(`(?:^|[${EDGE}])${word}(?=$|[${EDGE}])`);
+
+/** For a line that does not parse: a word naming flow, after any path, and the word `uninstall`, each whole. */
+const UNPARSED = [wholeWord(`(?:[^${EDGE}]*/)?flow(?:@[^${EDGE}]+|\\.mjs)?`), wholeWord("uninstall")];
+
+/**
+ * Refuses `flow uninstall` in every way an agent can start flow, read from the parse, so a commit
+ * message, an echo or a heredoc that names the command is prose about it. A check of its own rather
+ * than `banCommands`, because two of those ways are a path or a version, which an entry in words
+ * compares whole: `node node_modules/@jawache/flow/dist/flow.mjs uninstall`, and
+ * `pnpm dlx @jawache/flow@<any version> uninstall`. A regex under `wholeLine` would read the line
+ * as written, prose included, and refuse a commit message that quotes the node form.
+ *
+ * A line that does not parse is refused when it names flow and `uninstall` as whole words, as
+ * `banCommands` refuses one: bash runs every complete command before a later syntax error, so
+ * `flow uninstall` on a line above an unmatched `)` still runs.
+ */
+const noFlowUninstall = defineCheck(
+  (_opts: Record<string, never>): Check =>
+    (ctx) => {
+      const parsed = shellCommands(ctx);
+      if (parsed === null) {
+        const line = ctx.command ?? "";
+        return UNPARSED.every((re) => re.test(line)) ? ctx.fail("the line does not parse, and names flow and `uninstall` as whole words") : ctx.ok();
+      }
+      const found = parsed.filter(runsUninstall).map((c) => `\`${c.text}\` runs flow uninstall`);
+      return found.length === 0 ? ctx.ok() : ctx.fail(found.join("\n"));
+    },
+);
 
 /** The one fact this pack cannot know: where this repo keeps the packs its config imports. */
 export interface Home {
@@ -59,8 +129,9 @@ export interface Home {
 /**
  * flow's own orientation and self-protection, as a pack any repo binds.
  *
- * Every guarded repo wants these three: a note saying what is steering you, a nudge when you edit
- * the steering itself, and a refusal when a command would delete it.
+ * Every guarded repo wants these four: a note saying what is steering you, a nudge when you edit
+ * the steering itself, a refusal when a command would delete it, and a refusal when an agent runs
+ * `flow uninstall`, which removes the guard without deleting a file the delete refusal watches.
  *
  * @setup A `flow.config.ts` at the repo root and a folder for the packs the repo writes itself —
  * whatever it is called, named here as the `packs` parameter. `flow init` writes both.
@@ -118,5 +189,58 @@ export const flow = definePack("flow", (repo: Home) => {
         "That command would delete this repo's guard surface (flow.config.ts binds every rule; the packs it imports are where this repo writes its own; .githooks/pre-commit is what runs them at the gate). Deleting any of them is the same attack. There is no bypass — `override(pack.entry).disabled(\"why\")` inside flow.config.ts is the visible, committed route.",
       )
       .test({ block: [{ path: "flow.config.ts", content: "" }, { path: ".githooks/pre-commit", content: "" }] }),
+
+    /**
+     * Without it, an agent that hit a guardrail could take the whole guard off with one command.
+     * `flow uninstall` removes the commit gate, unsets `core.hooksPath` and removes flow's hook
+     * registrations from inside its own process, so no shell command deletes a file that
+     * `noDeleteGuardrails` watches, and that refusal never fires. A person in their own terminal
+     * has no hooks in front of them, so this refusal never reaches them.
+     */
+    noUninstall: guardrail()
+      .at(command)
+      .description("Refuses `flow uninstall` when an agent runs it. Taking flow off a repo or a machine is the user's call, made in their own terminal.")
+      .check(noFlowUninstall({}))
+      .message(
+        "`flow uninstall` removes this repo's guard: the commit gate, `core.hooksPath` and flow's hook registrations, and with `--machine` the hooks every repo on this machine runs. An agent does not take off the guard it works under, so there is no bypass. If flow should come off, say so and ask the user to run `flow uninstall` in their own terminal. If a guardrail is in your way, `override(pack.entry).disabled(\"why\")` inside flow.config.ts is the visible, committed route, and it is the user's call too.",
+      )
+      .test({
+        pass: [
+          "flow status",
+          "flow init",
+          "npx flow test",
+          'git commit -m "docs: flow uninstall leaves flow.config.ts in place"',
+          "cat > note.md <<'EOF'\nflow uninstall --machine\nEOF",
+          "node scripts/workflow.mjs uninstall",
+          "npx workflow uninstall",
+          'echo "the hooks call node node_modules/@jawache/flow/dist/flow.mjs uninstall"',
+          'git commit -m "node node_modules/@jawache/flow/dist/flow.mjs uninstall"',
+          "npm test -- flow",
+        ],
+        block: [
+          "flow uninstall",
+          "flow uninstall --machine",
+          "npx flow uninstall",
+          "npx @jawache/flow uninstall --machine",
+          "npm exec -- flow uninstall",
+          "pnpm dlx @jawache/flow@latest uninstall",
+          "pnpm dlx @jawache/flow@0.3.0 uninstall",
+          "bunx flow uninstall",
+          "pnpx flow uninstall",
+          "yarn flow uninstall",
+          "bun run flow uninstall",
+          "/usr/local/bin/npx flow uninstall",
+          "/opt/homebrew/bin/node node_modules/.bin/flow uninstall",
+          "./node_modules/.bin/flow uninstall",
+          "node node_modules/@jawache/flow/dist/flow.mjs uninstall",
+          "node node_modules/.bin/flow uninstall",
+          "node --enable-source-maps dist/flow.mjs uninstall",
+          "./dist/flow.mjs uninstall",
+          "sudo flow uninstall --machine",
+          "cd app && flow uninstall",
+          "bash -c 'flow uninstall --machine'",
+          "flow uninstall\n)",
+        ],
+      }),
   };
 });

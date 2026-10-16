@@ -2711,9 +2711,9 @@ export function mergeNarratives(each: readonly { session: string; read: Narrativ
 
 /**
  * The repo's own Claude Code settings file, relative to the repo root: guarded here, and where
- * `settingsFileFor` registers a dev dependency's hooks.
+ * `settingsFileFor` registers a dev dependency's hooks, and `flow uninstall` takes them out.
  */
-const REPO_SETTINGS = ".claude/settings.json";
+export const REPO_SETTINGS = ".claude/settings.json";
 
 /**
  * The HOST's half of the guard: where the hooks that invoke any of it are registered.
@@ -3625,6 +3625,43 @@ export function withRegistrations(settings: unknown): { settings: unknown; added
   return { settings: { ...base, hooks }, added };
 }
 
+/**
+ * A settings file with flow's registrations taken out — a NEW object, and the reverse of
+ * `withRegistrations`.
+ *
+ * On the events flow registers, each hook whose command is flow's (`ourHookCommand`, so an older
+ * flow's bare `flow hook <event>` goes too) is removed; an entry left with no hook goes, an event left
+ * with no entry goes, and a `hooks` key left empty goes. Every other key, event and hook is kept as
+ * it was. `removed` names the events, in registration order, empty when there was nothing of flow's.
+ */
+export function withoutRegistrations(settings: unknown): { settings: unknown; removed: string[] } {
+  const arrays = hookArrays(settings);
+  const removed = HOOK_REGISTRATIONS.map((r) => r.event).filter((event) => (arrays[event] ?? []).some(isOurs));
+  if (removed.length === 0) return { settings, removed: [] };
+
+  const held = settings as Record<string, unknown>;
+  const ours = new Set(removed);
+  const hooks: Record<string, unknown> = {};
+  for (const [event, value] of Object.entries(held["hooks"] as Record<string, unknown>)) {
+    if (!ours.has(event)) {
+      hooks[event] = value;
+      continue;
+    }
+    const left = (value as unknown[]).flatMap((entry) => {
+      if (!isOurs(entry)) return [entry];
+      const shared = entry as Record<string, unknown> & { hooks: unknown[] };
+      const kept = shared.hooks.filter((inner) => {
+        const command = commandOf(inner);
+        return command === null || !ourHookCommand(command);
+      });
+      return kept.length === 0 ? [] : [{ ...shared, hooks: kept }];
+    });
+    if (left.length > 0) hooks[event] = left;
+  }
+  const rest = Object.fromEntries(Object.entries(held).filter(([key]) => key !== "hooks"));
+  return { settings: Object.keys(hooks).length === 0 ? rest : { ...held, hooks }, removed };
+}
+
 // ── the git gate ─────────────────────────────────────────────────────────────
 
 /**
@@ -3707,6 +3744,52 @@ export function armsFlow(text: string | null): boolean {
 /** Does it call the gate's OLD verb, `flow commit` — a gate that runs, and misses deletions? */
 export function armsOldFlow(text: string | null): boolean {
   return text !== null && /(^|[\s"'/\\])flow\s+commit\b/m.test(hookCommands(text));
+}
+
+/**
+ * THE GATE'S LINES AS EARLIER RELEASES WROTE THEM, so `flow uninstall` recognises a repo an older
+ * flow set up. Up to 0.2.1 the gate listed the staged files and handed them to `flow commit`, and a
+ * kept hook was told to add `flow commit $(git diff --cached --name-only)`; 0.2.2 and 0.2.3 wrote
+ * `GATE_RUN_LINE` alone, and told a kept hook to add `flow hook commit`.
+ */
+const OLD_GATE_SETUP = ["staged=$(git diff --cached --name-only --diff-filter=ACMR)", '[ -z "$staged" ] && exit 0'];
+const OLD_GATE_RUNS = ["exec flow commit $staged", "flow commit $(git diff --cached --name-only)", "flow hook commit"];
+
+/** The lines of a gate that run flow, today's and every older release's: what uninstall takes out of a hook it keeps. */
+const GATE_RUNS: ReadonlySet<string> = new Set([GATE_LOCAL_LINE, GATE_RUN_LINE, ...OLD_GATE_RUNS]);
+
+/** Every command line a `flow init` has written into the gate: a hook of these and comments alone is flow's whole file. */
+const GATE_WRITTEN: ReadonlySet<string> = new Set([...GATE_RUNS, ...OLD_GATE_SETUP]);
+
+/**
+ * The pre-commit hook with flow taken out: `delete` when every command in it is one a `flow init`
+ * wrote, the hook less the lines that run flow when it holds commands of its own, and null when no
+ * line of it is flow's. A line is flow's only when it is, trimmed, exactly one flow wrote: a line
+ * somebody spelled themselves is theirs to remove.
+ */
+export function gateWithoutFlow(text: string | null): { readonly delete: true } | { readonly delete: false; readonly body: string } | null {
+  if (text === null) return null;
+  const lines = text.split("\n");
+  const commands = lines.map((line) => line.trim()).filter((line) => line !== "" && !line.startsWith("#"));
+  if (!commands.some((line) => GATE_RUNS.has(line))) return null;
+  if (commands.every((line) => GATE_WRITTEN.has(line))) return { delete: true };
+  const kept = lines.filter((line) => !GATE_RUNS.has(line.trim()));
+  while (kept.length > 0 && (kept.at(-1) as string).trim() === "") kept.pop();
+  return { delete: false, body: `${kept.join("\n")}\n` };
+}
+
+/**
+ * The lines of a hook that call flow, trimmed, in order: each line a `flow init` wrote into a gate
+ * or told a person to add, today's and every older release's, and any other line that runs
+ * `flow hook commit` or `flow commit`. Comments call nothing. What uninstall names for a person to
+ * delete from a hook that is not flow's to edit.
+ */
+export function flowLinesOf(text: string | null): string[] {
+  if (text === null) return [];
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => GATE_RUNS.has(line) || armsFlow(line) || armsOldFlow(line));
 }
 
 /** What the gate judges: the staged changes, or the whole tree as if all of it were staged. */
@@ -4187,6 +4270,230 @@ export function wantsColour(terminal: boolean, noColor: string | undefined): boo
  */
 export function initCode(plan: InitPlan, failures: readonly string[]): 0 | 1 {
   return failures.length === 0 && !unwired(plan.otherHooks) && !plan.hooksUnknown ? 0 : 1;
+}
+
+// ── uninstall ────────────────────────────────────────────────────────────────
+//
+// THE REVERSE OF INIT, split the same way: the shell stats the repo, `planUninstall` decides what
+// goes, the shell removes it, and `uninstallLines` says what went. "Flow's" means exactly what a
+// `flow init` writes, read through the same constants it writes with, so the two cannot drift: a
+// line, a hook or a registration somebody wrote themselves is never removed. `flow.config.ts` and
+// its packs stay, because they are the person's own work and `flow init` wires them again.
+//
+// The machine-wide settings file is every repo's, so it is written only when `--machine` asks: a
+// plain run in one repo must not unguard every other repo on the machine.
+
+/** What the shell found before anything was removed. Every one is a stat, not a judgement. */
+export interface UninstallFacts {
+  readonly hasConfig: boolean;
+  /** The gate as it stands, or null when there is none. */
+  readonly gateText: string | null;
+  /** `git config core.hooksPath` as it stands. */
+  readonly hooksPath: string | null;
+  /** The repo's top folder when the run is in a folder below it, else null. */
+  readonly subfolderOf: string | null;
+  /** The names in `.githooks/`, or null when there is no such folder. */
+  readonly hooksDir: readonly string[] | null;
+  /**
+   * The folder git runs hooks from, read at the repo's top folder as init and status read it, or
+   * null outside git or when git could not say.
+   */
+  readonly hooksFolder: HooksFolder | null;
+  readonly hasFlowDir: boolean;
+  /** `node_modules/@jawache/flow` is a symlink: the link `flow init` makes. A real folder is an install. */
+  readonly linked: boolean;
+  /** Does the repo's `package.json` list `@jawache/flow`? Then flow's hooks are in the repo's own settings file. */
+  readonly listed: boolean;
+  /** The repo's `.claude/settings.json`, parsed; null when there is none. */
+  readonly settings: unknown;
+  /** …it is there and would not parse. */
+  readonly settingsUnreadable: boolean;
+  /** `--machine` was given: the machine-wide settings file is flow's to clean too. */
+  readonly machineFlag: boolean;
+  /** The machine-wide settings file: its absolute path, its JSON (null when there is none), and whether it would not parse. */
+  readonly machineFile: { readonly path: string; readonly settings: unknown; readonly unreadable: boolean };
+}
+
+/** A settings file with flow's registrations taken out: where it is, what to write, and the events that went. */
+export interface SettingsWithout {
+  readonly path: string;
+  readonly value: unknown;
+  readonly removed: readonly string[];
+}
+
+/** Everything `flow uninstall` will do, decided before a byte is removed. */
+export interface UninstallPlan {
+  /** The gate: deleted, rewritten without flow's lines, or null when nothing in it is flow's. */
+  readonly gate: { readonly path: string; readonly body: string | null } | null;
+  /**
+   * A pre-commit hook that still calls flow after the run, in lines flow did not write there: that
+   * hook, as the report names it, and those lines, for a person to delete before `npm uninstall`.
+   * The hook git runs from another folder, such as husky's `.husky/pre-commit`, which uninstall
+   * never edits, as `flow init` never does; else what is left of `.githooks/pre-commit`. Null when
+   * neither calls flow.
+   */
+  readonly hookCallsFlow: { readonly path: string; readonly lines: readonly string[] } | null;
+  /** Unset `core.hooksPath`: it is `.githooks`, the run is at the repo's top folder, and the folder holds no other hook. */
+  readonly hooksPath: boolean;
+  /**
+   * `core.hooksPath` is `.githooks` but the run is in a subfolder: the repo's top folder, where
+   * `flow uninstall` removes it, or null.
+   */
+  readonly hooksPathFrom: string | null;
+  /** The hooks that keep `core.hooksPath` at `.githooks`, named for the report. */
+  readonly hooksKept: readonly string[];
+  /** Remove `.githooks/`, which nothing else is in. */
+  readonly hooksDir: boolean;
+  readonly flowDir: boolean;
+  readonly link: boolean;
+  /** The repo's settings file without flow's registrations, or null when it holds none. */
+  readonly settings: SettingsWithout | null;
+  /** With `--machine`: the machine-wide settings file without flow's registrations, or null when it holds none. */
+  readonly machine: SettingsWithout | null;
+  /** The settings files flow's to clean that would not parse: nothing written to them, each said out loud. */
+  readonly unreadable: readonly string[];
+  /** How this run was typed, so a failure's report says what to run again. */
+  readonly command: string;
+  readonly keptConfig: boolean;
+  /**
+   * The machine-wide file this repo's hooks are in still holds them, because `--machine` was not
+   * given: its path, said beside the report and in its last line, or null. Without it, a plain run
+   * reports success while every Claude Code session on the machine still calls `flow`.
+   */
+  readonly machineHolds: string | null;
+  /** The command that removes the package, the report's last line. */
+  readonly next: string;
+}
+
+/** What uninstall will remove from this repo. Pure: every branch reads a fact the shell already gathered. */
+export function planUninstall(facts: UninstallFacts): UninstallPlan {
+  const gate = gateWithoutFlow(facts.gateText);
+  const gateGone = gate?.delete === true;
+  const leftText = gate === null ? facts.gateText : gate.delete ? null : gate.body;
+  // A hook left in the folder is a hook git should still run, so `core.hooksPath` stays pointed at it.
+  const hooksLeft = (facts.hooksDir ?? []).filter((name) => !(gateGone && name === "pre-commit"));
+  // `core.hooksPath` is the whole repo's, and `.githooks/` is in the repo's top folder, so only a run
+  // there unsets it. From a subfolder the run finds no gate, and unsetting the setting would leave
+  // the gate in place with nothing pointing git at it.
+  const flowsHooksPath = facts.hooksPath === HOOKS_DIR;
+  const ownsHooksPath = flowsHooksPath && facts.subfolderOf === null;
+  // Bytes nobody parsed are not written, as in `planInit`: the step is reported as failed instead.
+  const cleaned = (path: string, settings: unknown): SettingsWithout | null => {
+    const { settings: value, removed } = withoutRegistrations(settings);
+    return removed.length === 0 ? null : { path, value, removed };
+  };
+  const { machineFile } = facts;
+  const repoUnreadable = facts.listed && facts.settingsUnreadable;
+  const machineUnreadable = facts.machineFlag && machineFile.unreadable;
+  // The one reading of "the machine-wide file holds flow's hooks": what --machine writes, and what a
+  // plain run names.
+  const machineCleaned = machineFile.unreadable ? null : cleaned(machineFile.path, machineFile.settings);
+  // The one reading of "git runs other hooks" that init and status use. The folder is read at the
+  // top folder, so a run in a subfolder names that hook by its full path.
+  // That folder's hook first: when git runs it, it is the one a commit fails in.
+  const { hooksFolder, subfolderOf } = facts;
+  let hookCallsFlow: UninstallPlan["hookCallsFlow"] = null;
+  if (hooksFolder !== null) {
+    const other = otherHooks(facts.hooksPath, hooksFolder);
+    const lines = flowLinesOf(hooksFolder.preCommitText);
+    if (other !== null && lines.length > 0)
+      hookCallsFlow = { path: subfolderOf === null ? other.preCommit : posix.resolve(subfolderOf, other.preCommit), lines };
+  }
+  const gateLines = flowLinesOf(leftText);
+  if (hookCallsFlow === null && gateLines.length > 0) hookCallsFlow = { path: GATE_PATH, lines: gateLines };
+  return {
+    gate: gate === null ? null : { path: GATE_PATH, body: gate.delete ? null : gate.body },
+    hookCallsFlow,
+    hooksPath: ownsHooksPath && hooksLeft.length === 0,
+    hooksPathFrom: flowsHooksPath ? facts.subfolderOf : null,
+    hooksKept: ownsHooksPath ? hooksLeft : [],
+    hooksDir: facts.hooksDir !== null && hooksLeft.length === 0,
+    flowDir: facts.hasFlowDir,
+    link: facts.linked,
+    settings: facts.listed && !repoUnreadable ? cleaned(REPO_SETTINGS, facts.settings) : null,
+    machine: facts.machineFlag ? machineCleaned : null,
+    unreadable: [...(repoUnreadable ? [REPO_SETTINGS] : []), ...(machineUnreadable ? [machineFile.path] : [])],
+    command: facts.machineFlag ? MACHINE_RUN : "flow uninstall",
+    keptConfig: facts.hasConfig,
+    machineHolds: !facts.machineFlag && !facts.listed && machineCleaned !== null ? machineFile.path : null,
+    next: facts.listed ? "npm uninstall @jawache/flow" : "npm uninstall -g @jawache/flow",
+  };
+}
+
+/** The one argument `flow uninstall` takes: clean the machine-wide settings file too. */
+export const MACHINE_FLAG = "--machine";
+
+/** `flow uninstall --machine`, as the report tells a person to type it. */
+const MACHINE_RUN = `flow uninstall ${MACHINE_FLAG}`;
+
+/** How `flow uninstall` is typed: the usage line a misused verb prints. */
+const UNINSTALL_USAGE = `usage: flow uninstall [${MACHINE_FLAG}]`;
+
+/**
+ * `flow uninstall`'s arguments, read: null when they are fine, else the refusal to print. An argument
+ * it does not know is refused rather than ignored, because this verb deletes files and a `--dry-run`
+ * or a `--help` that went ahead would delete them too.
+ */
+export function uninstallRefusal(args: readonly string[]): string | null {
+  const unknown = args.find((arg) => arg !== MACHINE_FLAG);
+  return unknown === undefined ? null : `flow uninstall — unknown argument \`${unknown}\`; nothing was removed.\n${UNINSTALL_USAGE}`;
+}
+
+/** A step that could not be done answers 1, whether the shell hit it or the plan did. */
+export function uninstallCode(plan: UninstallPlan, failures: readonly string[]): 0 | 1 {
+  return failures.length === 0 && plan.unreadable.length === 0 ? 0 : 1;
+}
+
+/** The report: every removal named, what was kept and why, each failure, and the command to run next. */
+export function uninstallLines(plan: UninstallPlan, failures: readonly string[]): string[] {
+  const removed: string[] = [];
+  if (plan.gate) removed.push(plan.gate.body === null ? plan.gate.path : `flow's lines from ${plan.gate.path} — the rest of the hook is kept`);
+  if (plan.hooksPath) removed.push(`core.hooksPath (it was ${HOOKS_DIR})`);
+  if (plan.hooksDir) removed.push(`${HOOKS_DIR}/`);
+  if (plan.flowDir) removed.push(`${FLOW_DIR}/ — flow's state and logs`);
+  if (plan.link) removed.push(`${PACKAGE_DIR} — the link \`flow init\` made`);
+  for (const settings of [plan.settings, plan.machine])
+    if (settings) removed.push(`${settings.path} — ${settings.removed.join(" · ")}`);
+
+  const lines: string[] =
+    removed.length > 0
+      ? ["flow uninstall — removed:", ...removed.map((what) => `  - ${what}`)]
+      : plan.hooksPathFrom === null
+        ? ["flow uninstall — nothing of flow's here to remove."]
+        : ["flow uninstall — removed nothing from this folder."];
+
+  if (plan.hooksPathFrom !== null)
+    lines.push(
+      `  · kept core.hooksPath at ${HOOKS_DIR} — git reads it for the whole repo, and this run is in a subfolder. Run \`flow uninstall\` in ${plan.hooksPathFrom} to remove it with the gate.`,
+    );
+  if (plan.hooksKept.length > 0)
+    lines.push(`  · kept core.hooksPath at ${HOOKS_DIR} — git still runs the hooks there: ${plan.hooksKept.join(" · ")}.`);
+  const kept = plan.hookCallsFlow;
+  if (kept !== null)
+    lines.push(
+      `  · ${kept.path} still calls flow, and flow takes out only the lines it wrote there itself. ` +
+        `Delete ${kept.lines.length === 1 ? "this line" : "these lines"} from it yourself, or every commit fails with \`flow: not found\` once flow is gone:`,
+      ...kept.lines.map((line) => `      ${line}`),
+    );
+  if (plan.keptConfig) lines.push(`  · kept ${CONFIG_FILE} and the packs it imports — \`flow init\` wires this repo again.`);
+  if (plan.machineHolds !== null)
+    lines.push(`  · ${plan.machineHolds} still holds flow's hooks, and every repo on this machine runs them — \`${MACHINE_RUN}\` removes them.`);
+  for (const path of plan.unreadable)
+    lines.push(
+      `  ✗ ${path} is not valid JSON, so flow's hooks were NOT removed from it and nothing was written to it. ` +
+        `Fix the JSON (a trailing comma, or a // comment) and run \`${plan.command}\` again.`,
+    );
+  for (const failure of failures) lines.push(`  ✗ ${failure}`);
+  // The hook's lines go first: `npm uninstall` before them leaves every commit failing.
+  const first = kept === null ? "" : `delete flow's lines from ${kept.path}, then `;
+  lines.push(
+    plan.hooksPathFrom !== null
+      ? `  next: \`flow uninstall\` in ${plan.hooksPathFrom} — removes the gate and core.hooksPath.`
+      : plan.machineHolds === null
+        ? `  next: ${first}\`${plan.next}\` — removes the package.`
+        : `  next: ${first}\`${MACHINE_RUN}\` once no repo on this machine needs flow, then \`${plan.next}\` — removes the hooks, then the package.`,
+  );
+  return lines;
 }
 
 // ── status ───────────────────────────────────────────────────────────────────

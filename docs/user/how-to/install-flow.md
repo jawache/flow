@@ -1,5 +1,5 @@
 ---
-summary: "install flow as a dev dependency or globally, wire it into a repo with `flow init`, and remove it again"
+summary: "install flow as a dev dependency or globally, wire it into a repo with `flow init`, and remove it with `flow uninstall`"
 ---
 
 # How to install flow
@@ -88,9 +88,41 @@ With a dev dependency, type each `flow` command in this guide as `npx flow`.
 
 ## Uninstall
 
-Uninstalling the package alone leaves the hooks in place, and they then fail with `flow: not found`. Remove the wiring first.
+Run `flow uninstall` before you remove the package. Uninstalling the package alone leaves the hooks in place, and they then fail with `flow: not found`. npm cannot clean up for you: npm 7 and later run no script when a package is uninstalled.
 
-1. In each repo that uses flow, stop git calling the gate:
+> [!IMPORTANT]
+> Run `flow uninstall` in your own terminal. The flow pack refuses it when an agent runs it, because it removes the guard.
+
+1. In each repo that uses flow, remove its wiring:
+
+   ```
+   flow uninstall
+   ```
+
+   It removes the commit gate, `core.hooksPath` and `.flow/`, and, for a dev dependency, flow's hooks in the repo's `.claude/settings.json`. It leaves `flow.config.ts` and the packs it imports, so `flow init` can put the guard back. It prints each thing it removed. Each one is listed in [the command reference](../reference/cli.md#what-flow-uninstall-removes).
+
+   **If git runs another folder's hooks**, such as husky's, `flow uninstall` leaves that folder's `pre-commit` hook as it is. When the hook still calls flow, the output names the file, such as `.husky/pre-commit`, and flow's lines in it. Delete those lines yourself before you remove the package. Otherwise every commit fails with `flow: not found`.
+
+2. If you installed flow globally, and no repo on the machine needs it any more, remove its hooks from the machine-wide settings file:
+
+   ```
+   flow uninstall --machine
+   ```
+
+   The machine-wide file is `~/.claude/settings.json`, or `$CLAUDE_CONFIG_DIR/settings.json` when that variable is set. Every repo on the machine reads it, so every repo stops running flow's hooks.
+
+3. Remove the package. `flow uninstall` prints this command as its last line:
+
+   - **A dev dependency:** `npm uninstall @jawache/flow`, in the repo.
+   - **A global install:** `npm uninstall -g @jawache/flow`.
+
+4. If you no longer want them, delete `flow.config.ts` and the packs it imports, and commit.
+
+### If flow is already gone
+
+If you uninstalled the package first, `flow uninstall` is not there to run. Remove the wiring by hand:
+
+1. In each repo that used flow, stop git calling the gate:
 
    ```
    git config --unset core.hooksPath
@@ -99,19 +131,19 @@ Uninstalling the package alone leaves the hooks in place, and they then fail wit
 
    If the repo kept other hooks in `.githooks/`, delete only `pre-commit`, and set `core.hooksPath` back to the folder those hooks need.
 
-2. Delete `flow.config.ts`, the packs it imports and `.flow/` from the repo, if you no longer want them.
+   **If git runs another folder's hooks**, such as husky's, leave `core.hooksPath` as it is and delete only `.githooks/pre-commit`. Then delete flow's lines from that folder's `pre-commit` hook, such as `.husky/pre-commit`. These are the two lines `flow init` told you to add:
 
-3. Open the Claude Code settings file that holds flow's hooks:
+   ```
+   f="$PWD/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook commit
+   exec flow hook commit
+   ```
+
+2. Open the Claude Code settings file that holds flow's hooks:
 
    - **A dev dependency:** the repo's `.claude/settings.json`.
-   - **A global install:** `~/.claude/settings.json`, or `$CLAUDE_CONFIG_DIR/settings.json` when that variable is set. This file applies to every repo on the machine, so change it only when no repo needs flow.
+   - **A global install:** `~/.claude/settings.json`, or `$CLAUDE_CONFIG_DIR/settings.json` when that variable is set.
 
    Under `hooks`, remove each entry whose command ends with `flow hook session-start`, `flow hook pre-tool-use`, `flow hook post-tool-use`, `flow hook post-tool-use-failure`, `flow hook stop` or `flow hook subagent-stop`.
-
-4. Remove the package:
-
-   - **A dev dependency:** `npm uninstall @jawache/flow`, in the repo.
-   - **A global install:** `npm uninstall -g @jawache/flow`.
 
 ---
 

@@ -2,8 +2,8 @@
 // the two edges a harness really talks to.
 //
 // It is not product and ships with nothing (tsconfig.build.json excludes this whole folder, beside
-// the fixtures). Its three callers need the SAME one: `product.test.ts` drives `flow init` and
-// `flow status`, `live.test.ts` drives the live rails, and `machine.test.ts` drives every shipped
+// the fixtures). Its three callers need the SAME one: `product.test.ts` drives `flow init`,
+// `flow status` and `flow uninstall`, `live.test.ts` drives the live rails, and `machine.test.ts` drives every shipped
 // pack at once — and all three had grown their own copy of this: a `Ran` triple, a spawn wrapper
 // with the host-settings override and a shim on PATH, a `git init` with an identity, an esbuild
 // pre-build. Three copies of one road is three ways for it to drift, and it had already started —

@@ -1,13 +1,14 @@
-// flow/adapter/product.ts — the shell behind the two verbs a PERSON types: `flow init` and
-// `flow status`.
+// flow/adapter/product.ts — the shell behind the verbs a PERSON types: `flow init`, `flow status`
+// and `flow uninstall`.
 //
 // It is the sibling of claude.ts, which is the shell behind the two the HARNESS invokes, and it is
 // split from it for the reason the whole package is split: what a hook does on every tool call and
 // what a person does once at setup have nothing in common but the words they share.
 //
 // It reaches the world — disk, git, the host's settings file, node's own resolver — and decides
-// nothing. What to write given what is already there, and what to SAY given what loaded, are
-// `planInit` and `status` next door in domain.ts, where every branch has a test.
+// nothing. What to write given what is already there, what to remove, and what to SAY given what
+// loaded, are `planInit`, `planUninstall` and `status` next door in domain.ts, where every branch
+// has a test.
 //
 // WHERE THE SETTINGS LIVE. A repo whose package.json lists `@jawache/flow` keeps flow's hooks in its
 // own `.claude/settings.json`; every other repo uses the machine-wide file — `settingsFileFor` in
@@ -18,7 +19,21 @@
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, readdirSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  accessSync,
+  chmodSync,
+  constants,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  realpathSync,
+  rmdirSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,6 +51,13 @@ import {
   literalScopes,
   listsFlow,
   PACKAGE_BIN,
+  PACKAGE_DIR,
+  planUninstall,
+  REPO_SETTINGS,
+  uninstallCode,
+  uninstallLines,
+  uninstallRefusal,
+  MACHINE_FLAG,
   hostPath,
   pathLines,
   planInit,
@@ -50,6 +72,8 @@ import {
   type InitFacts,
   type InitPlan,
   type StatusFacts,
+  type UninstallFacts,
+  type UninstallPlan,
 } from "./domain.ts";
 import { grammarsAt, loadRegime, readText, wearer } from "./claude.ts";
 import { readStore, readTranscript } from "./archive.ts";
@@ -75,15 +99,19 @@ function machineSettingsPath(): string {
   return join(process.env["CLAUDE_CONFIG_DIR"] || join(homedir(), ".claude"), "settings.json");
 }
 
+/** The machine-wide settings file, read: its path, its JSON (null when there is none), and whether it would not parse. */
+function readMachineFile(root: string): { path: string; settings: unknown; unreadable: boolean } {
+  const path = machineSettingsPath();
+  const read = parsedFile(root, path);
+  return { path, settings: read.value, unreadable: read.unreadable };
+}
+
 /**
  * The machine-wide file, parsed, when flow's hooks are in the repo's own — the one place a hook
  * there could run flow a second time — and null when `settingsPath` is the machine-wide file.
  */
 function machineFile(root: string, settingsPath: string): { path: string; settings: unknown; unreadable: boolean } | null {
-  const machine = machineSettingsPath();
-  if (settingsPath === machine) return null;
-  const read = parsedFile(root, machine);
-  return { path: machine, settings: read.value, unreadable: read.unreadable };
+  return settingsPath === machineSettingsPath() ? null : readMachineFile(root);
 }
 
 /**
@@ -265,11 +293,10 @@ function initFacts(root: string, empty: boolean): InitFacts {
 }
 
 /**
- * The plan, performed. Every step is best-effort and every failure is COLLECTED rather than thrown:
- * a partial setup is the interesting case, and a person needs the list of what did land beside the
- * one thing that did not.
+ * A run of best-effort steps: `attempt` runs one, and a step that throws is COLLECTED in `failures`
+ * as "what: why" rather than ending the run. Init and uninstall both carry out their plans this way.
  */
-function perform(root: string, plan: InitPlan): string[] {
+function steps(): { readonly failures: string[]; readonly attempt: (what: string, act: () => void) => void } {
   const failures: string[] = [];
   const attempt = (what: string, act: () => void): void => {
     try {
@@ -278,6 +305,16 @@ function perform(root: string, plan: InitPlan): string[] {
       failures.push(`${what}: ${(error as Error).message}`);
     }
   };
+  return { failures, attempt };
+}
+
+/**
+ * The plan, performed. Every step is best-effort and every failure is COLLECTED rather than thrown:
+ * a partial setup is the interesting case, and a person needs the list of what did land beside the
+ * one thing that did not.
+ */
+function perform(root: string, plan: InitPlan): string[] {
+  const { failures, attempt } = steps();
 
   for (const write of [plan.config, plan.gate]) {
     if (write === null) continue;
@@ -339,6 +376,123 @@ export function runInit(cwd: string, args: readonly string[]): VerbResult {
     stderr: "",
     exitCode: initCode(plan, failures),
   };
+}
+
+// ── uninstall ────────────────────────────────────────────────────────────────
+
+/**
+ * The repo's top folder, as git prints it, when `root` is a folder below it; null at the top folder
+ * or outside a repo. Both sides are real paths, so a symlinked temp folder compares equal.
+ */
+function subfolderOf(root: string): string | null {
+  try {
+    const top = execFileSync("git", ["-C", root, "rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return top === "" || realpathSync(top) === realpathSync(root) ? null : top;
+  } catch {
+    return null;
+  }
+}
+
+/** Everything uninstall found, before it removed anything. */
+function uninstallFacts(root: string, machineFlag: boolean): UninstallFacts {
+  const manifest = readText(root, "package.json");
+  const settings = parsedFile(root, REPO_SETTINGS);
+  const top = subfolderOf(root);
+  let hooksDir: string[] | null;
+  try {
+    hooksDir = readdirSync(join(root, HOOKS_DIR));
+  } catch {
+    hooksDir = null;
+  }
+  return {
+    hasConfig: existsSync(join(root, CONFIG_FILE)),
+    gateText: readText(root, GATE_PATH),
+    hooksPath: hooksPath(root),
+    subfolderOf: top,
+    hooksDir,
+    // At the top folder: from a subfolder, git names flow's own `.githooks` by a path init does not.
+    hooksFolder: hooksFolder(top ?? root),
+    hasFlowDir: existsSync(join(root, FLOW_DIR)),
+    linked: lstatSync(join(root, PACKAGE_DIR), { throwIfNoEntry: false })?.isSymbolicLink() ?? false,
+    listed: listsFlow(manifest),
+    settings: settings.value,
+    settingsUnreadable: settings.unreadable,
+    machineFlag,
+    machineFile: readMachineFile(root),
+  };
+}
+
+/** Remove a folder only when it is empty, and say nothing when it is not: it holds somebody's files. */
+function removeIfEmpty(dir: string): void {
+  try {
+    rmdirSync(dir);
+  } catch {
+    /* not empty, or not there: either way it is not flow's to remove */
+  }
+}
+
+/**
+ * The plan, carried out: the gate first, then the hooks path that points git at it, then the
+ * folders, the link and the settings files. Every step is attempted, and every failure is COLLECTED
+ * rather than thrown, so a person reads what did go beside the one thing that did not.
+ */
+function performUninstall(root: string, plan: UninstallPlan): string[] {
+  const { failures, attempt } = steps();
+
+  const { gate } = plan;
+  if (gate !== null)
+    attempt(`could not ${gate.body === null ? "delete" : "rewrite"} ${gate.path}`, () => {
+      const file = join(root, gate.path);
+      if (gate.body === null) unlinkSync(file);
+      else writeFileSync(file, gate.body);
+    });
+
+  if (plan.hooksPath)
+    attempt("could not unset core.hooksPath", () =>
+      execFileSync("git", ["-C", root, "config", "--unset", "core.hooksPath"], { stdio: "ignore" }),
+    );
+
+  // rmdir, never a recursive remove: a file that turned up since the plan was made stops it.
+  if (plan.hooksDir)
+    attempt(`could not delete ${HOOKS_DIR}/`, () => {
+      rmdirSync(join(root, HOOKS_DIR));
+    });
+
+  if (plan.flowDir)
+    attempt(`could not delete ${FLOW_DIR}/`, () => {
+      rmSync(join(root, FLOW_DIR), { recursive: true, force: true });
+    });
+
+  if (plan.link)
+    attempt(`could not delete ${PACKAGE_DIR}`, () => {
+      unlinkSync(join(root, PACKAGE_DIR));
+      // The folders init made to hold the link go with it, when nothing else is in them.
+      removeIfEmpty(join(root, "node_modules", "@jawache"));
+      removeIfEmpty(join(root, "node_modules"));
+    });
+
+  // Repo-relative for a dev dependency's own file, absolute for the machine-wide one.
+  for (const settings of [plan.settings, plan.machine]) {
+    if (settings === null) continue;
+    attempt(`could not write ${settings.path}`, () => {
+      writeFileSync(resolve(root, settings.path), `${JSON.stringify(settings.value, null, 2)}\n`);
+    });
+  }
+
+  return failures;
+}
+
+/**
+ * `flow uninstall [--machine]` — remove what `flow init` wrote in this repo, but the config, and say
+ * exactly what went. `--machine` takes flow's hooks out of the machine-wide settings file too.
+ */
+export function runUninstall(cwd: string, args: readonly string[]): VerbResult {
+  const refusal = uninstallRefusal(args);
+  if (refusal !== null) return { stdout: "", stderr: `${refusal}\n`, exitCode: 2 };
+  const root = resolve(cwd);
+  const plan = planUninstall(uninstallFacts(root, args.includes(MACHINE_FLAG)));
+  const failures = performUninstall(root, plan);
+  return { stdout: `${uninstallLines(plan, failures).join("\n")}\n`, stderr: "", exitCode: uninstallCode(plan, failures) };
 }
 
 // ── status ───────────────────────────────────────────────────────────────────

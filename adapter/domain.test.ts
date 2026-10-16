@@ -162,6 +162,16 @@ import {
   planInit,
   initCode,
   initLines,
+  planUninstall,
+  uninstallLines,
+  uninstallCode,
+  uninstallRefusal,
+  MACHINE_FLAG,
+  gateWithoutFlow,
+  flowLinesOf,
+  withoutRegistrations,
+  REPO_SETTINGS,
+  type UninstallFacts,
   notInstalledLines,
   NOT_INSTALLED,
   HOOKS_UNKNOWN,
@@ -3015,6 +3025,411 @@ const FRESH_CLONE: HooksFolder = { dir: ".git/hooks", files: ["pre-commit.sample
 
 /** The gate an older `flow init` wrote: today's, without the line that runs the repo's own package first. */
 const PATH_ONLY_GATE = PRE_COMMIT.replace(`${GATE_LOCAL_LINE}\n`, "");
+
+// ── uninstall ────────────────────────────────────────────────────────────────
+
+describe("withoutRegistrations — flow's hooks taken out of a settings file", () => {
+  const theirs = { type: "command", command: "lint-on-stop" };
+
+  it("removes flow's six registrations, and the hooks key with them when nothing else is in it", () => {
+    const { settings, removed } = withoutRegistrations(withRegistrations({ theme: "dark" }).settings);
+    expect(removed).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"]);
+    expect(settings).toEqual({ theme: "dark" });
+  });
+
+  it("keeps every other key, event, entry and hook, and an entry flow shares keeps the rest of its hooks", () => {
+    const registered = withRegistrations({ permissions: { allow: ["Bash(ls:*)"] } }).settings as { hooks: Record<string, unknown[]> };
+    const shared = { hooks: [{ type: "command", command: hookCommand("stop") }, theirs] };
+    const mixed = {
+      ...registered,
+      hooks: {
+        ...registered.hooks,
+        Stop: [shared, { hooks: [theirs] }],
+        Notification: [{ hooks: [{ type: "command", command: "say done" }] }],
+      },
+    };
+    const before = structuredClone(mixed);
+    const { settings, removed } = withoutRegistrations(mixed);
+    expect(removed).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"]);
+    expect(settings).toEqual({
+      permissions: { allow: ["Bash(ls:*)"] },
+      hooks: { Stop: [{ hooks: [theirs] }, { hooks: [theirs] }], Notification: mixed.hooks.Notification },
+    });
+    expect(mixed, "a new object; the one handed in is not changed").toEqual(before);
+  });
+
+  it("removes an older flow's bare command too, and has nothing to do in a file with none of flow's", () => {
+    expect(withoutRegistrations(BARE_SETTINGS).settings).toEqual({});
+    expect(withoutRegistrations({ theme: "dark" })).toEqual({ settings: { theme: "dark" }, removed: [] });
+    expect(withoutRegistrations(null).removed).toEqual([]);
+  });
+});
+
+describe("gateWithoutFlow — the commit gate with flow's lines taken out", () => {
+  it("deletes the gate today's flow writes, and the gates earlier releases wrote", () => {
+    expect(gateWithoutFlow(PRE_COMMIT)).toEqual({ delete: true });
+    expect(gateWithoutFlow(PATH_ONLY_GATE), "0.2.2's gate").toEqual({ delete: true });
+    expect(gateWithoutFlow(OLD_GATE), "the gate before `flow hook commit`").toEqual({ delete: true });
+  });
+
+  it("takes flow's lines out of a hook of somebody's own, and keeps the rest of it", () => {
+    const theirs = "#!/bin/sh\n# run the tests first\nnpm test || exit 1\n";
+    expect(gateWithoutFlow(`${theirs}${GATE_LOCAL_LINE}\n${GATE_RUN_LINE}\n`)).toEqual({ delete: false, body: theirs });
+    expect(gateWithoutFlow(`${theirs}flow hook commit\n\n`), "0.2.2's advice").toEqual({ delete: false, body: theirs });
+    expect(gateWithoutFlow(`${theirs}flow commit $(git diff --cached --name-only)\n`), "0.1's advice").toEqual({
+      delete: false,
+      body: theirs,
+    });
+  });
+
+  it("leaves a hook with no line of flow's, and a line somebody spelled their own way", () => {
+    expect(gateWithoutFlow(null)).toBeNull();
+    expect(gateWithoutFlow("#!/bin/sh\nnpm test\n")).toBeNull();
+    expect(gateWithoutFlow("#!/bin/sh\n# exec flow hook commit\n"), "a comment runs nothing").toBeNull();
+    expect(gateWithoutFlow("#!/bin/sh\nnpx flow hook commit\n")).toBeNull();
+  });
+});
+
+/** The machine-wide settings file, absolute, as the shell hands it over. */
+const MACHINE_SETTINGS = "/home/me/.claude/settings.json";
+
+/**
+ * A repo `flow init` set up with a global flow: the gate, the hooks path, the state directory and the
+ * link, and flow's hooks in the machine-wide file beside a key of the person's own.
+ */
+const wired: UninstallFacts = {
+  hasConfig: true,
+  gateText: PRE_COMMIT,
+  hooksPath: HOOKS_DIR,
+  subfolderOf: null,
+  hooksDir: ["pre-commit"],
+  hooksFolder: { dir: HOOKS_DIR, files: ["pre-commit"], preCommitText: PRE_COMMIT, preCommitExecutable: true },
+  hasFlowDir: true,
+  linked: true,
+  listed: false,
+  settings: null,
+  settingsUnreadable: false,
+  machineFlag: false,
+  machineFile: { path: MACHINE_SETTINGS, settings: withRegistrations({ theme: "dark" }).settings, unreadable: false },
+};
+
+describe("planUninstall — a repo flow init set up", () => {
+  const plan = planUninstall(wired);
+
+  it("removes the gate, the hooks path, the folder, the state directory and the link, and keeps the config", () => {
+    expect(plan.gate).toEqual({ path: GATE_PATH, body: null });
+    expect(plan.hooksPath).toBe(true);
+    expect(plan.hooksDir).toBe(true);
+    expect(plan.flowDir).toBe(true);
+    expect(plan.link).toBe(true);
+    expect(plan.settings, "a global install's hooks are in the machine-wide file, which plain uninstall leaves").toBeNull();
+    expect(plan.keptConfig).toBe(true);
+  });
+
+  it("reports each removal, the config it kept, and ends with the global package's npm uninstall", () => {
+    const bare = planUninstall({ ...wired, machineFile: { ...wired.machineFile, settings: null } });
+    expect(uninstallLines(bare, [])).toEqual([
+      "flow uninstall — removed:",
+      `  - ${GATE_PATH}`,
+      "  - core.hooksPath (it was .githooks)",
+      "  - .githooks/",
+      "  - .flow/ — flow's state and logs",
+      "  - node_modules/@jawache/flow — the link `flow init` made",
+      "  · kept flow.config.ts and the packs it imports — `flow init` wires this repo again.",
+      "  next: `npm uninstall -g @jawache/flow` — removes the package.",
+    ]);
+    expect(uninstallCode(bare, [])).toBe(0);
+  });
+
+  it("says the machine-wide file still holds flow's hooks, and names --machine beside the report and in its last line", () => {
+    expect(plan.machineHolds).toBe(MACHINE_SETTINGS);
+    expect(uninstallLines(plan, []).slice(-2)).toEqual([
+      `  · ${MACHINE_SETTINGS} still holds flow's hooks, and every repo on this machine runs them — \`flow uninstall --machine\` removes them.`,
+      "  next: `flow uninstall --machine` once no repo on this machine needs flow, then `npm uninstall -g @jawache/flow` — removes the hooks, then the package.",
+    ]);
+    expect(uninstallCode(plan, []), "a hint, not a failure").toBe(0);
+  });
+
+  it("says nothing of the machine-wide file when --machine cleans it, when it holds none of flow's, when it will not parse, or when the hooks are the repo's own", () => {
+    expect(planUninstall({ ...wired, machineFlag: true }).machineHolds).toBeNull();
+    expect(planUninstall({ ...wired, machineFile: { ...wired.machineFile, settings: { theme: "dark" } } }).machineHolds).toBeNull();
+    expect(planUninstall({ ...wired, machineFile: { ...wired.machineFile, settings: null, unreadable: true } }).machineHolds).toBeNull();
+    expect(planUninstall({ ...wired, listed: true }).machineHolds, "a dev dependency's hooks are in the repo's own file").toBeNull();
+    expect(uninstallLines(planUninstall({ ...wired, machineFlag: true }), []).at(-1)).toBe("  next: `npm uninstall -g @jawache/flow` — removes the package.");
+  });
+
+  it("says there is nothing to remove in a repo flow never touched", () => {
+    const none = planUninstall({ ...wired, hasConfig: false, gateText: null, hooksPath: null, hooksDir: null, hasFlowDir: false, linked: false });
+    expect(uninstallLines(none, [])[0]).toBe("flow uninstall — nothing of flow's here to remove.");
+  });
+
+  it("lists a step that failed, and answers 1", () => {
+    const plan = planUninstall(wired);
+    const said = uninstallLines(plan, [`could not delete ${GATE_PATH}: EACCES`]);
+    expect(said.at(-2)).toBe(`  ✗ could not delete ${GATE_PATH}: EACCES`);
+    expect(said.at(-1)).toContain("next:");
+    expect(uninstallCode(plan, ["x"])).toBe(1);
+  });
+});
+
+describe("planUninstall — a dev dependency", () => {
+  const listed = { ...wired, linked: false, listed: true, settings: withRegistrations({ permissions: { allow: [] } }).settings };
+
+  it("takes flow's hooks out of the repo's own settings file, and ends with the repo's npm uninstall", () => {
+    const plan = planUninstall(listed);
+    expect(plan.settings?.path).toBe(REPO_SETTINGS);
+    expect(plan.settings?.value).toEqual({ permissions: { allow: [] } });
+    expect(plan.link, "an installed package is npm's to remove").toBe(false);
+    const said = uninstallLines(plan, []).join("\n");
+    expect(said).toContain("  - .claude/settings.json — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop · SubagentStop");
+    expect(said).toContain("next: `npm uninstall @jawache/flow`");
+  });
+
+  it("writes nothing to a settings file that would not parse, says so, and answers 1", () => {
+    const plan = planUninstall({ ...listed, settings: null, settingsUnreadable: true });
+    expect(plan.settings).toBeNull();
+    expect(plan.unreadable).toEqual([REPO_SETTINGS]);
+    expect(uninstallLines(plan, []).join("\n")).toContain(".claude/settings.json is not valid JSON");
+    expect(uninstallLines(plan, []).join("\n")).toContain("run `flow uninstall` again.");
+    expect(uninstallCode(plan, [])).toBe(1);
+  });
+
+  it("leaves a repo settings file alone when the repo does not list flow", () => {
+    expect(planUninstall({ ...wired, settings: withRegistrations({}).settings }).settings).toBeNull();
+  });
+});
+
+describe("planUninstall — the machine-wide settings file", () => {
+  const theirs = { hooks: [{ type: "command", command: "say done" }] };
+  const machineWith = (settings: unknown, unreadable = false): UninstallFacts => ({
+    ...wired,
+    machineFlag: true,
+    machineFile: { path: MACHINE_SETTINGS, settings, unreadable },
+  });
+
+  it("is left as it was without --machine, for a global install and a dev dependency alike", () => {
+    expect(planUninstall(wired).machine).toBeNull();
+    const listed = { ...wired, listed: true, settings: withRegistrations({}).settings };
+    expect(planUninstall(listed).machine).toBeNull();
+    expect(uninstallLines(planUninstall(wired), []).join("\n")).not.toContain(`  - ${MACHINE_SETTINGS}`);
+  });
+
+  it("with --machine, loses flow's registrations and keeps every other key and hook", () => {
+    const registered = withRegistrations({ theme: "dark", hooks: { Stop: [theirs] } }).settings;
+    const plan = planUninstall(machineWith(registered));
+    expect(plan.machine).toEqual({
+      path: MACHINE_SETTINGS,
+      value: { theme: "dark", hooks: { Stop: [theirs] } },
+      removed: ["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"],
+    });
+    expect(uninstallLines(plan, []).join("\n")).toContain(
+      `  - ${MACHINE_SETTINGS} — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop · SubagentStop`,
+    );
+    expect(uninstallCode(plan, [])).toBe(0);
+  });
+
+  it("with --machine, cleans both files for a dev dependency", () => {
+    const plan = planUninstall({ ...machineWith(withRegistrations({}).settings), listed: true, settings: withRegistrations({}).settings });
+    expect(plan.settings?.path).toBe(REPO_SETTINGS);
+    expect(plan.machine?.path).toBe(MACHINE_SETTINGS);
+  });
+
+  it("with --machine, has nothing to do in a machine-wide file with none of flow's, or none at all", () => {
+    expect(planUninstall(machineWith({ theme: "dark" })).machine).toBeNull();
+    expect(planUninstall(machineWith(null)).machine).toBeNull();
+  });
+
+  it("with --machine, writes nothing to a machine-wide file that would not parse, says so with the command to run again, and answers 1", () => {
+    const plan = planUninstall(machineWith(null, true));
+    expect(plan.machine).toBeNull();
+    expect(plan.unreadable).toEqual([MACHINE_SETTINGS]);
+    const said = uninstallLines(plan, []).join("\n");
+    expect(said).toContain(`  ✗ ${MACHINE_SETTINGS} is not valid JSON`);
+    expect(said).toContain(`run \`flow uninstall ${MACHINE_FLAG}\` again.`);
+    expect(uninstallCode(plan, [])).toBe(1);
+  });
+
+  it("with --machine, lists both files when neither will parse, and each line says to run --machine again", () => {
+    const plan = planUninstall({ ...machineWith(null, true), listed: true, settings: null, settingsUnreadable: true });
+    expect(plan.settings).toBeNull();
+    expect(plan.machine).toBeNull();
+    expect(plan.unreadable).toEqual([REPO_SETTINGS, MACHINE_SETTINGS]);
+    const failed = uninstallLines(plan, []).filter((line) => line.startsWith("  ✗ "));
+    expect(failed.map((line) => line.split(" is not valid JSON")[0])).toEqual([`  ✗ ${REPO_SETTINGS}`, `  ✗ ${MACHINE_SETTINGS}`]);
+    for (const line of failed) expect(line).toContain(`run \`flow uninstall ${MACHINE_FLAG}\` again.`);
+    expect(uninstallCode(plan, [])).toBe(1);
+  });
+
+  it("without --machine, an unreadable machine-wide file is none of its business", () => {
+    const plan = planUninstall({ ...wired, machineFile: { path: MACHINE_SETTINGS, settings: null, unreadable: true } });
+    expect(plan.unreadable).toEqual([]);
+    expect(uninstallCode(plan, [])).toBe(0);
+  });
+});
+
+describe("planUninstall — hooks of somebody's own", () => {
+  it("keeps core.hooksPath and the folder while another hook is in it, and names that hook", () => {
+    const plan = planUninstall({ ...wired, hooksDir: ["commit-msg", "pre-commit"] });
+    expect(plan.gate?.body).toBeNull();
+    expect(plan.hooksPath).toBe(false);
+    expect(plan.hooksDir).toBe(false);
+    expect(uninstallLines(plan, []).join("\n")).toContain("kept core.hooksPath at .githooks — git still runs the hooks there: commit-msg.");
+  });
+
+  it("keeps a gate with lines of its own, rewritten, and the hooks path that runs it", () => {
+    const plan = planUninstall({ ...wired, gateText: `#!/bin/sh\nnpm test\n${GATE_LOCAL_LINE}\n${GATE_RUN_LINE}\n` });
+    expect(plan.gate).toEqual({ path: GATE_PATH, body: "#!/bin/sh\nnpm test\n" });
+    expect(plan.hooksPath).toBe(false);
+    expect(plan.hookCallsFlow, "nothing left calls flow").toBeNull();
+    const said = uninstallLines(plan, []).join("\n");
+    expect(said).toContain(`  - flow's lines from ${GATE_PATH} — the rest of the hook is kept`);
+    expect(said).toContain("git still runs the hooks there: pre-commit.");
+  });
+
+  it("names a gate line flow did not write that still calls flow, and puts deleting it first in the next line", () => {
+    const plan = planUninstall({ ...wired, gateText: "#!/bin/sh\nnpm test\nnpx flow hook commit\n", machineFile: { ...wired.machineFile, settings: null } });
+    expect(plan.gate).toBeNull();
+    expect(plan.hookCallsFlow).toEqual({ path: GATE_PATH, lines: ["npx flow hook commit"] });
+    const said = uninstallLines(plan, []);
+    expect(said).toContain(
+      `  · ${GATE_PATH} still calls flow, and flow takes out only the lines it wrote there itself. Delete this line from it yourself, or every commit fails with \`flow: not found\` once flow is gone:`,
+    );
+    expect(said).toContain("      npx flow hook commit");
+    expect(said.at(-1)).toBe(`  next: delete flow's lines from ${GATE_PATH}, then \`npm uninstall -g @jawache/flow\` — removes the package.`);
+  });
+
+  it("keeps core.hooksPath when the run is in a subfolder, says so, and names the top folder to run it in", () => {
+    const plan = planUninstall({ ...wired, subfolderOf: "/home/me/repo", gateText: null, hooksDir: null, hasFlowDir: false, linked: false });
+    expect(plan.hooksPath).toBe(false);
+    expect(plan.hooksDir).toBe(false);
+    expect(plan.hooksPathFrom).toBe("/home/me/repo");
+    const said = uninstallLines(plan, []);
+    expect(said[0], "it saw flow's hooks path, so it does not say there is nothing of flow's").toBe("flow uninstall — removed nothing from this folder.");
+    expect(said).toContain(
+      "  · kept core.hooksPath at .githooks — git reads it for the whole repo, and this run is in a subfolder. Run `flow uninstall` in /home/me/repo to remove it with the gate.",
+    );
+    expect(said.at(-1)).toBe("  next: `flow uninstall` in /home/me/repo — removes the gate and core.hooksPath.");
+  });
+
+  it("unsets core.hooksPath at the top folder when .githooks/ is already gone", () => {
+    const plan = planUninstall({ ...wired, gateText: null, hooksDir: null });
+    expect(plan.hooksPath).toBe(true);
+    expect(plan.hooksPathFrom).toBeNull();
+    expect(uninstallLines(plan, [])).toContain("  - core.hooksPath (it was .githooks)");
+  });
+
+  it("names no top folder for a subfolder run when core.hooksPath points somewhere else", () => {
+    expect(planUninstall({ ...wired, subfolderOf: "/home/me/repo", hooksPath: ".husky/_" }).hooksPathFrom).toBeNull();
+  });
+
+  it("leaves a core.hooksPath that points somewhere else", () => {
+    const plan = planUninstall({ ...wired, hooksPath: ".husky/_" });
+    expect(plan.hooksPath).toBe(false);
+    expect(plan.hooksKept).toEqual([]);
+    expect(plan.hooksDir, "the folder flow wrote still goes").toBe(true);
+  });
+});
+
+// ── another folder's pre-commit hook ──
+//
+// Git runs husky's hooks, or a hook in `.git/hooks`, and the pre-commit hook a person edits for it
+// was told by `flow init` to call flow. Uninstall never edits that hook: it names it and its lines.
+
+/** The two lines `flow init` tells a person to add to a hook it does not write. */
+const FLOWS_TWO = `${GATE_LOCAL_LINE}\n${GATE_RUN_LINE}\n`;
+
+/** A husky repo after `flow init`: git runs `.husky/_`, whose stub runs `.husky/pre-commit`. */
+const huskyRepo = (preCommitText: string): UninstallFacts => ({
+  ...wired,
+  hooksPath: ".husky/_",
+  hooksFolder: { dir: ".husky/_", files: ["pre-commit"], preCommitText, preCommitExecutable: false },
+});
+
+describe("flowLinesOf — a hook's lines that call flow", () => {
+  it("names flow's two lines, today's and an older release's, trimmed, and nothing of the hook's own", () => {
+    expect(flowLinesOf(`npm test\n  ${GATE_LOCAL_LINE}\n${GATE_RUN_LINE}\n`)).toEqual([GATE_LOCAL_LINE, GATE_RUN_LINE]);
+    expect(flowLinesOf("npm test\nflow commit $(git diff --cached --name-only)\n")).toEqual(["flow commit $(git diff --cached --name-only)"]);
+    expect(flowLinesOf("npx flow hook commit\n"), "a line somebody spelled their own way still calls flow").toEqual(["npx flow hook commit"]);
+  });
+
+  it("names none in a hook that does not call flow, a comment, or no hook", () => {
+    expect(flowLinesOf("npm test\n# exec flow hook commit\n")).toEqual([]);
+    expect(flowLinesOf("echo workflow hook committed\n")).toEqual([]);
+    expect(flowLinesOf(null)).toEqual([]);
+  });
+});
+
+describe("planUninstall — another folder's pre-commit hook that calls flow", () => {
+  it("leaves the hook as it is, names it and flow's two lines, and says to delete them before npm uninstall", () => {
+    const plan = planUninstall({ ...huskyRepo(`npm test\n${FLOWS_TWO}`), machineFile: { ...wired.machineFile, settings: null } });
+    expect(plan.hookCallsFlow).toEqual({ path: ".husky/pre-commit", lines: [GATE_LOCAL_LINE, GATE_RUN_LINE] });
+    expect(plan.gate, "the .githooks gate init wrote beside it still goes").toEqual({ path: GATE_PATH, body: null });
+    const said = uninstallLines(plan, []);
+    const at = said.findIndex((line) => line.startsWith("  · .husky/pre-commit still calls flow"));
+    expect(said.slice(at, at + 3)).toEqual([
+      "  · .husky/pre-commit still calls flow, and flow takes out only the lines it wrote there itself. " +
+        "Delete these lines from it yourself, or every commit fails with `flow: not found` once flow is gone:",
+      `      ${GATE_LOCAL_LINE}`,
+      `      ${GATE_RUN_LINE}`,
+    ]);
+    expect(said.at(-1)).toBe("  next: delete flow's lines from .husky/pre-commit, then `npm uninstall -g @jawache/flow` — removes the package.");
+    expect(uninstallCode(plan, []), "a step for the person, not a failure").toBe(0);
+  });
+
+  it("puts the hook's lines first in a next line that also names --machine", () => {
+    expect(uninstallLines(planUninstall(huskyRepo(FLOWS_TWO)), []).at(-1)).toBe(
+      "  next: delete flow's lines from .husky/pre-commit, then `flow uninstall --machine` once no repo on this machine needs flow, then `npm uninstall -g @jawache/flow` — removes the hooks, then the package.",
+    );
+  });
+
+  it("names a .git/hooks/pre-commit that calls flow, with the one line it holds", () => {
+    const plan = planUninstall({
+      ...wired,
+      hooksPath: null,
+      hooksFolder: { dir: ".git/hooks", files: ["pre-commit", "pre-push"], preCommitText: `#!/bin/sh\n${GATE_RUN_LINE}\n`, preCommitExecutable: true },
+    });
+    expect(plan.hookCallsFlow).toEqual({ path: ".git/hooks/pre-commit", lines: [GATE_RUN_LINE] });
+    expect(uninstallLines(plan, []).join("\n")).toContain("Delete this line from it yourself");
+  });
+
+  it("names the hook by its full path when the run is in a subfolder", () => {
+    expect(planUninstall({ ...huskyRepo(FLOWS_TWO), subfolderOf: "/home/me/repo" }).hookCallsFlow?.path).toBe("/home/me/repo/.husky/pre-commit");
+  });
+
+  it("says nothing of a hook that does not call flow, and the next line is the npm uninstall alone", () => {
+    const plan = planUninstall({ ...huskyRepo("npm test\n"), machineFile: { ...wired.machineFile, settings: null } });
+    expect(plan.hookCallsFlow).toBeNull();
+    const said = uninstallLines(plan, []);
+    expect(said.join("\n")).not.toContain(".husky/pre-commit");
+    expect(said.at(-1)).toBe("  next: `npm uninstall -g @jawache/flow` — removes the package.");
+  });
+
+  it("says nothing of flow's own .githooks gate, nor of a folder git could not name", () => {
+    expect(planUninstall(wired).hookCallsFlow).toBeNull();
+    expect(planUninstall({ ...huskyRepo(FLOWS_TWO), hooksFolder: null }).hookCallsFlow).toBeNull();
+  });
+
+  it("names the hook git runs over a .githooks gate that also still calls flow", () => {
+    const both = planUninstall({ ...huskyRepo(FLOWS_TWO), gateText: "#!/bin/sh\nnpx flow hook commit\n" });
+    expect(both.hookCallsFlow?.path).toBe(".husky/pre-commit");
+  });
+});
+
+describe("uninstallRefusal — the arguments flow uninstall takes", () => {
+  it("takes none, or --machine", () => {
+    expect(uninstallRefusal([])).toBeNull();
+    expect(uninstallRefusal([MACHINE_FLAG])).toBeNull();
+  });
+
+  it("refuses an argument it does not know, rather than going ahead without it, and ends with the usage line", () => {
+    for (const args of [["--dry-run"], ["--help"], ["now"], [MACHINE_FLAG, "--help"]]) {
+      const word = args.at(-1) ?? "";
+      const said = uninstallRefusal(args);
+      expect(said).toContain(`unknown argument \`${word}\`; nothing was removed.`);
+      expect(said?.split("\n").at(-1)).toBe("usage: flow uninstall [--machine]");
+    }
+  });
+});
 
 describe("the binary fitting — can the hooks and the gate find flow", () => {
   const binary = (modules: boolean, path: boolean, over: Partial<StatusFacts> = {}) => {

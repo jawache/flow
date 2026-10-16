@@ -1,5 +1,5 @@
-// flow/adapter/product.test.ts — `flow init` and `flow status`, end to end, through the BUILT
-// BINARY, over a throwaway repo.
+// flow/e2e/product.test.ts — `flow init`, `flow status` and `flow uninstall`, end to end,
+// through the BUILT BINARY, over a throwaway repo.
 //
 // It is the sibling of live.test.ts and is written for the same reason: the decisions are proved
 // next door as functions, and what this file proves is the WIRING — that the scaffold init writes is
@@ -15,7 +15,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { chmodSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync, existsSync, lstatSync, symlinkSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   PACKAGE,
@@ -904,6 +904,406 @@ describe("a repo whose package.json lists flow", () => {
       expect(red.code).toBe(1);
     } finally {
       for (const dir of [listed, machine]) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ── flow uninstall ───────────────────────────────────────────────────────────
+//
+// THE REVERSE OF INIT, through the built binary: each case runs `flow init` over a throwaway repo,
+// then `flow uninstall`, then a commit with no `flow` on the PATH. That last commit is the whole
+// point of the verb: after it, `npm uninstall` leaves nothing behind that fails with `flow: not found`.
+
+describe("flow uninstall", () => {
+  /**
+   * git and the system's own tools on the PATH, and no flow: a commit that still called flow would
+   * fail with `flow: not found`. The system folders are there for a hook that needs `sh`, as husky's
+   * stub does.
+   */
+  const noFlow = (where: string): Ran => {
+    const noFlowPath = [runGit(where, ["--exec-path"]).stdout.trim(), "/usr/bin", "/bin"];
+    for (const dir of noFlowPath) expect(existsSync(join(dir, "flow")), `the PATH this commit is given has no flow, in ${dir}`).toBe(false);
+    const path = noFlowPath.join(delimiter);
+    writeFileSync(join(where, "after.txt"), "committed with flow gone\n");
+    runGit(where, ["add", "after.txt"], { home, path });
+    return runGit(where, ["commit", "-m", "test: flow is gone"], { home, path });
+  };
+
+  it("removes the gate, core.hooksPath, .githooks/, .flow/ and the link from a fresh repo, keeps the config, and a commit then needs no flow", () => {
+    const fresh = newRepo();
+    try {
+      expect(flow(fresh, ["init"]).code).toBe(0);
+      const said = flow(fresh, ["uninstall"]);
+      expect(said.code, said.stdout + said.stderr).toBe(0);
+      expect(said.stdout.trim().split("\n")).toEqual([
+        "flow uninstall — removed:",
+        "  - .githooks/pre-commit",
+        "  - core.hooksPath (it was .githooks)",
+        "  - .githooks/",
+        "  - .flow/ — flow's state and logs",
+        "  - node_modules/@jawache/flow — the link `flow init` made",
+        "  · kept flow.config.ts and the packs it imports — `flow init` wires this repo again.",
+        `  · ${join(home, "settings.json")} still holds flow's hooks, and every repo on this machine runs them — \`flow uninstall --machine\` removes them.`,
+        "  next: `flow uninstall --machine` once no repo on this machine needs flow, then `npm uninstall -g @jawache/flow` — removes the hooks, then the package.",
+      ]);
+      expect(git(fresh, ["config", "--get", "core.hooksPath"]).stdout, "core.hooksPath is unset").toBe("");
+      for (const gone of [".githooks", ".flow", "node_modules"]) expect(existsSync(join(fresh, gone)), `${gone} is gone`).toBe(false);
+      expect(existsSync(join(fresh, "flow.config.ts")), "the config stays").toBe(true);
+
+      const committed = noFlow(fresh);
+      expect(committed.code, committed.stdout + committed.stderr).toBe(0);
+      expect(flow(fresh, ["uninstall"]).stdout, "a second run").toContain("nothing of flow's here to remove");
+    } finally {
+      rmSync(fresh, { recursive: true, force: true });
+    }
+  });
+
+  it("takes flow's hooks out of a dev dependency's .claude/settings.json, keeps its other keys, and names the repo's npm uninstall", () => {
+    const listed = newRepo();
+    const machine = settingsHome();
+    try {
+      const pkg = { name: "consumer", version: "1.0.0", devDependencies: { "@jawache/flow": "*" } };
+      writeFileSync(join(listed, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
+      mkdirSync(join(listed, ".claude"), { recursive: true });
+      const theirs = { hooks: [{ type: "command", command: "say done" }] };
+      writeFileSync(
+        join(listed, ".claude", "settings.json"),
+        `${JSON.stringify({ permissions: { allow: ["Bash(ls:*)"] }, hooks: { Stop: [theirs] } }, null, 2)}\n`,
+      );
+      expect(flow(listed, ["init"], machine).code).toBe(0);
+
+      const said = flow(listed, ["uninstall"], machine);
+      expect(said.code, said.stdout + said.stderr).toBe(0);
+      expect(said.stdout).toContain("  - .claude/settings.json — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop · SubagentStop");
+      expect(said.stdout.trim().split("\n").at(-1)).toBe("  next: `npm uninstall @jawache/flow` — removes the package.");
+      const after = JSON.parse(readFileSync(join(listed, ".claude", "settings.json"), "utf8")) as Record<string, unknown>;
+      expect(after, "flow's six are gone, the empty events with them, and every other key and hook stays").toEqual({
+        permissions: { allow: ["Bash(ls:*)"] },
+        hooks: { Stop: [theirs] },
+      });
+
+      const committed = noFlow(listed);
+      expect(committed.code, committed.stdout + committed.stderr).toBe(0);
+    } finally {
+      for (const dir of [listed, machine]) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("takes only flow's two lines out of a gate somebody wrote, and keeps core.hooksPath for it", () => {
+    const theirs = newRepo();
+    try {
+      const own = "#!/bin/sh\n# my own checks\necho mine-ran\n";
+      mkdirSync(join(theirs, ".githooks"), { recursive: true });
+      writeFileSync(join(theirs, ".githooks", "pre-commit"), own, { mode: 0o755 });
+      expect(flow(theirs, ["init"]).code).toBe(0);
+      // What init's report tells them to do: add the two lines to the end of it.
+      writeFileSync(
+        join(theirs, ".githooks", "pre-commit"),
+        `${own}f="$PWD/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook commit\nexec flow hook commit\n`,
+      );
+
+      const said = flow(theirs, ["uninstall"]);
+      expect(said.code, said.stdout + said.stderr).toBe(0);
+      expect(said.stdout).toContain("  - flow's lines from .githooks/pre-commit — the rest of the hook is kept");
+      expect(said.stdout).toContain("  · kept core.hooksPath at .githooks — git still runs the hooks there: pre-commit.");
+      expect(readFileSync(join(theirs, ".githooks", "pre-commit"), "utf8"), "their hook, as they wrote it").toBe(own);
+      expect(git(theirs, ["config", "--get", "core.hooksPath"]).stdout.trim()).toBe(".githooks");
+
+      const committed = noFlow(theirs);
+      expect(committed.code, committed.stdout + committed.stderr).toBe(0);
+      expect(committed.stdout + committed.stderr, "git still runs their hook").toContain("mine-ran");
+    } finally {
+      rmSync(theirs, { recursive: true, force: true });
+    }
+  });
+
+  it("deletes flow's gate but keeps core.hooksPath and .githooks/ while the folder holds another hook", () => {
+    const shared = newRepo();
+    try {
+      mkdirSync(join(shared, ".githooks"), { recursive: true });
+      writeFileSync(join(shared, ".githooks", "commit-msg"), "#!/bin/sh\necho msg-hook-ran\n", { mode: 0o755 });
+      expect(flow(shared, ["init"]).code).toBe(0);
+
+      const said = flow(shared, ["uninstall"]);
+      expect(said.code, said.stdout + said.stderr).toBe(0);
+      expect(said.stdout).toContain("  - .githooks/pre-commit");
+      expect(said.stdout).toContain("  · kept core.hooksPath at .githooks — git still runs the hooks there: commit-msg.");
+      expect(existsSync(join(shared, ".githooks", "pre-commit"))).toBe(false);
+      expect(existsSync(join(shared, ".githooks", "commit-msg"))).toBe(true);
+      expect(git(shared, ["config", "--get", "core.hooksPath"]).stdout.trim()).toBe(".githooks");
+
+      const committed = noFlow(shared);
+      expect(committed.code, committed.stdout + committed.stderr).toBe(0);
+      expect(committed.stdout + committed.stderr, "git still runs the other hook").toContain("msg-hook-ran");
+    } finally {
+      rmSync(shared, { recursive: true, force: true });
+    }
+  });
+
+  // `core.hooksPath` IS THE WHOLE REPO'S, wherever the command is typed. Only a run at the repo's
+  // top folder unsets it: from a subfolder it would leave the gate behind with nothing pointing git
+  // at it, and every commit unguarded.
+  it("run from a subfolder, keeps core.hooksPath and the gate, and names the top folder to run it in", () => {
+    const nested = newRepo();
+    try {
+      expect(flow(nested, ["init"]).code).toBe(0);
+      const sub = join(nested, "sub");
+      mkdirSync(sub);
+
+      const said = flow(sub, ["uninstall"]);
+      expect(said.code, said.stdout + said.stderr).toBe(0);
+      const top = git(nested, ["rev-parse", "--show-toplevel"]).stdout.trim();
+      expect(said.stdout.trim().split("\n")[0]).toBe("flow uninstall — removed nothing from this folder.");
+      expect(said.stdout).toContain(
+        `  · kept core.hooksPath at .githooks — git reads it for the whole repo, and this run is in a subfolder. Run \`flow uninstall\` in ${top} to remove it with the gate.`,
+      );
+      expect(said.stdout, "the hooks folder is read at the top folder, so flow's own gate is not taken for another tool's hook").not.toContain(
+        "still calls flow",
+      );
+      expect(git(nested, ["config", "--get", "core.hooksPath"]).stdout.trim(), "the repo's hooks path stays").toBe(".githooks");
+      expect(existsSync(join(nested, ".githooks", "pre-commit")), "the gate stays").toBe(true);
+
+      const removed = flow(nested, ["uninstall"]);
+      expect(removed.stdout, "from the top folder, it all goes").toContain("  - core.hooksPath (it was .githooks)");
+    } finally {
+      rmSync(nested, { recursive: true, force: true });
+    }
+  });
+
+  // ANOTHER FOLDER'S PRE-COMMIT HOOK, such as husky's: `flow init` told the person to add flow's two
+  // lines to it, and never edits it, so neither does uninstall. It names the hook and its lines, and
+  // a person who follows the report commits with flow gone.
+
+  /** The lines the report names under the hook it kept, as it printed them. */
+  const linesToDelete = (stdout: string, preCommit: string): string[] => {
+    const lines = stdout.split("\n");
+    const at = lines.findIndex((line) => line.startsWith(`  · ${preCommit} still calls flow`));
+    expect(at, "the report names the hook").not.toBe(-1);
+    const named: string[] = [];
+    for (const line of lines.slice(at + 1)) {
+      if (!line.startsWith("      ")) break;
+      named.push(line.trim());
+    }
+    return named;
+  };
+
+  it("leaves a husky .husky/pre-commit that calls flow byte for byte, names it and flow's two lines, and following the report commits with flow gone", () => {
+    const husky = huskyRepo("echo husky ran\n");
+    try {
+      const first = flow(husky, ["init"]);
+      const wiredHook = `echo husky ran\n${linesToAdd(first.stdout, ".husky/pre-commit").join("\n")}\n`;
+      writeFileSync(join(husky, ".husky", "pre-commit"), wiredHook);
+      expect(flow(husky, ["init"]).code, "installed through husky").toBe(0);
+
+      const said = flow(husky, ["uninstall"]);
+      expect(said.code, said.stdout + said.stderr).toBe(0);
+      expect(readFileSync(join(husky, ".husky", "pre-commit"), "utf8"), "husky's hook, byte for byte").toBe(wiredHook);
+      expect(git(husky, ["config", "--get", "core.hooksPath"]).stdout.trim(), "husky's setting, as it was").toBe(".husky/_");
+      const named = linesToDelete(said.stdout, ".husky/pre-commit");
+      expect(named, "the two lines init told them to add").toEqual(linesToAdd(first.stdout, ".husky/pre-commit"));
+      expect(said.stdout.trim().split("\n").at(-1)).toBe(
+        "  next: delete flow's lines from .husky/pre-commit, then `flow uninstall --machine` once no repo on this machine needs flow, then `npm uninstall -g @jawache/flow` — removes the hooks, then the package.",
+      );
+
+      // Skipped, the report is right: husky's hook still calls the flow that is gone.
+      const skipped = noFlow(husky);
+      expect(skipped.code, "a commit before the lines go fails").not.toBe(0);
+      expect(skipped.stderr).toContain("flow: not found");
+
+      // Followed: the named lines out of the hook, and nothing else.
+      const theirs = wiredHook.split("\n").filter((line) => !named.includes(line.trim())).join("\n");
+      writeFileSync(join(husky, ".husky", "pre-commit"), theirs);
+      const committed = noFlow(husky);
+      expect(committed.code, committed.stdout + committed.stderr).toBe(0);
+      expect(committed.stdout + committed.stderr, "husky's own hook still runs").toContain("husky ran");
+    } finally {
+      rmSync(husky, { recursive: true, force: true });
+    }
+  });
+
+  it("says nothing of a husky .husky/pre-commit that does not call flow, and leaves it byte for byte", () => {
+    const husky = huskyRepo("echo husky ran\n");
+    try {
+      expect(flow(husky, ["init"]).code, "not installed: the hook does not call flow").toBe(1);
+      const said = flow(husky, ["uninstall"]);
+      expect(said.code, said.stdout + said.stderr).toBe(0);
+      expect(said.stdout).not.toContain(".husky/pre-commit");
+      expect(said.stdout.trim().split("\n").at(-1)).toBe(
+        "  next: `flow uninstall --machine` once no repo on this machine needs flow, then `npm uninstall -g @jawache/flow` — removes the hooks, then the package.",
+      );
+      expect(readFileSync(join(husky, ".husky", "pre-commit"), "utf8")).toBe("echo husky ran\n");
+      expect(noFlow(husky).code, "a commit then needs no flow").toBe(0);
+    } finally {
+      rmSync(husky, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves a .git/hooks/pre-commit that calls flow byte for byte, and names it and its lines", () => {
+    const lfs = lfsRepo();
+    try {
+      const first = flow(lfs, ["init"]);
+      const hook = join(lfs, ".git", "hooks", "pre-commit");
+      const wiredHook = `${linesToCreate(first.stdout, ".git/hooks/pre-commit").join("\n")}\n`;
+      writeFileSync(hook, wiredHook, { mode: 0o755 });
+      expect(flow(lfs, ["init"]).code, "installed through .git/hooks").toBe(0);
+
+      const said = flow(lfs, ["uninstall"]);
+      expect(said.code, said.stdout + said.stderr).toBe(0);
+      expect(readFileSync(hook, "utf8"), "git's own hook, byte for byte").toBe(wiredHook);
+      expect(linesToDelete(said.stdout, ".git/hooks/pre-commit"), "flow's two lines, not the shebang").toEqual(
+        linesToCreate(first.stdout, ".git/hooks/pre-commit").slice(1),
+      );
+      expect(said.stdout.trim().split("\n").at(-1)).toMatch(/^ {2}next: delete flow's lines from \.git\/hooks\/pre-commit, then /);
+    } finally {
+      rmSync(lfs, { recursive: true, force: true });
+    }
+  });
+
+  // THE SHELL'S OWN FAILURE PATH: a removal the disk refuses. Root deletes through any mode, so the
+  // case cannot be staged there.
+  it.skipIf(process.getuid?.() === 0)("lists a removal the disk refused, names it, still removes the rest, and answers 1", () => {
+    const locked = newRepo();
+    const hooksDir = join(locked, ".githooks");
+    try {
+      expect(flow(locked, ["init"]).code).toBe(0);
+      chmodSync(hooksDir, 0o555);
+
+      const said = flow(locked, ["uninstall"]);
+      expect(said.code, said.stdout + said.stderr).toBe(1);
+      expect(said.stdout).toMatch(/^ {2}✗ could not delete \.githooks\/pre-commit: /m);
+      expect(existsSync(join(hooksDir, "pre-commit")), "the gate the disk would not let go").toBe(true);
+      expect(existsSync(join(locked, ".flow")), "the other steps still ran").toBe(false);
+    } finally {
+      chmodSync(hooksDir, 0o755);
+      rmSync(locked, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses an argument it does not know with exit 2 and the usage line, and removes nothing", () => {
+    const wired = newRepo();
+    try {
+      expect(flow(wired, ["init"]).code).toBe(0);
+      const said = flow(wired, ["uninstall", "--dry-run"]);
+      expect(said.code).toBe(2);
+      expect(said.stderr).toBe("flow uninstall — unknown argument `--dry-run`; nothing was removed.\nusage: flow uninstall [--machine]\n");
+      expect(said.stdout).toBe("");
+      for (const kept of [".githooks/pre-commit", ".flow"]) expect(existsSync(join(wired, kept)), `${kept} is still there`).toBe(true);
+    } finally {
+      rmSync(wired, { recursive: true, force: true });
+    }
+  });
+
+  // THE MACHINE-WIDE FILE: every repo on the machine reads it, so only `--machine` writes it. Each
+  // case points CLAUDE_CONFIG_DIR at its own throwaway folder, holding a hook of the user's own
+  // beside the six flow init registers there.
+  describe("--machine", () => {
+    const theirs = { hooks: [{ type: "command", command: "say done" }] };
+    const own = { permissions: { allow: ["Bash(ls:*)"] }, hooks: { Stop: [theirs] } };
+    /** A throwaway machine-wide folder whose settings file holds the user's own hook, and then flow's. */
+    const machineWithFlow = (): { machine: string; file: string } => {
+      const machine = settingsHome();
+      const file = join(machine, "settings.json");
+      writeFileSync(file, `${JSON.stringify(own, null, 2)}\n`);
+      const global = newRepo();
+      try {
+        expect(flow(global, ["init"], machine).code).toBe(0);
+      } finally {
+        rmSync(global, { recursive: true, force: true });
+      }
+      expect(Object.keys((JSON.parse(readFileSync(file, "utf8")) as { hooks: object }).hooks).sort(), "flow's six are in it").toEqual([...REGISTERED].sort());
+      return { machine, file };
+    };
+
+    it("a global install: a plain run leaves the machine-wide file byte for byte and names --machine; --machine then takes flow's six out and keeps the user's hook", () => {
+      const global = newRepo();
+      const { machine, file } = machineWithFlow();
+      try {
+        expect(flow(global, ["init"], machine).code).toBe(0);
+        const before = readFileSync(file, "utf8");
+
+        const plain = flow(global, ["uninstall"], machine);
+        expect(plain.code, plain.stdout + plain.stderr).toBe(0);
+        expect(readFileSync(file, "utf8"), "without --machine, the machine-wide file is unchanged").toBe(before);
+        expect(plain.stdout).toContain(`  · ${file} still holds flow's hooks, and every repo on this machine runs them — \`flow uninstall --machine\` removes them.`);
+        expect(plain.stdout.trim().split("\n").at(-1)).toBe(
+          "  next: `flow uninstall --machine` once no repo on this machine needs flow, then `npm uninstall -g @jawache/flow` — removes the hooks, then the package.",
+        );
+
+        const said = flow(global, ["uninstall", "--machine"], machine);
+        expect(said.code, said.stdout + said.stderr).toBe(0);
+        expect(said.stdout).toContain(`  - ${file} — ${LISTED}`);
+        expect(said.stdout.trim().split("\n").at(-1)).toBe("  next: `npm uninstall -g @jawache/flow` — removes the package.");
+        expect(JSON.parse(readFileSync(file, "utf8")), "flow's six are gone, and the user's hook and keys stay").toEqual(own);
+        expect(flow(global, ["uninstall", "--machine"], machine).stdout, "a second run").toContain("nothing of flow's here to remove");
+      } finally {
+        for (const dir of [global, machine]) rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("a dev dependency: a plain run leaves the machine-wide file byte for byte and says nothing of it; --machine cleans it beside the repo's own", () => {
+      const listed = newRepo();
+      const { machine, file } = machineWithFlow();
+      try {
+        const pkg = { name: "consumer", version: "1.0.0", devDependencies: { "@jawache/flow": "*" } };
+        writeFileSync(join(listed, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
+        expect(flow(listed, ["init"], machine).code).toBe(0);
+        const before = readFileSync(file, "utf8");
+
+        const plain = flow(listed, ["uninstall"], machine);
+        expect(plain.code, plain.stdout + plain.stderr).toBe(0);
+        expect(readFileSync(file, "utf8"), "without --machine, the machine-wide file is unchanged").toBe(before);
+        expect(plain.stdout).not.toContain(file);
+
+        expect(flow(listed, ["init"], machine).code).toBe(0);
+        const said = flow(listed, ["uninstall", "--machine"], machine);
+        expect(said.code, said.stdout + said.stderr).toBe(0);
+        expect(said.stdout).toContain(`  - .claude/settings.json — ${LISTED}`);
+        expect(said.stdout).toContain(`  - ${file} — ${LISTED}`);
+        expect(JSON.parse(readFileSync(file, "utf8")), "flow's six are gone, and the user's hook and keys stay").toEqual(own);
+      } finally {
+        for (const dir of [listed, machine]) rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("writes nothing to a machine-wide file that would not parse, says so, and answers 1", () => {
+      const global = newRepo();
+      const machine = settingsHome();
+      const file = join(machine, "settings.json");
+      try {
+        expect(flow(global, ["init"], machine).code).toBe(0);
+        const unparseable = `${readFileSync(file, "utf8")}// a comment\n`;
+        writeFileSync(file, unparseable);
+
+        const said = flow(global, ["uninstall", "--machine"], machine);
+        expect(said.code).toBe(1);
+        expect(said.stdout).toContain(`  ✗ ${file} is not valid JSON`);
+        expect(said.stdout).toContain("run `flow uninstall --machine` again.");
+        expect(said.stdout, "the repo's own steps still ran").toContain("  - .githooks/pre-commit");
+        expect(readFileSync(file, "utf8"), "the file nobody could parse is not written").toBe(unparseable);
+      } finally {
+        for (const dir of [global, machine]) rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it("a dev dependency's .claude/settings.json that would not parse is not written, and answers 1", () => {
+    const broken = newRepo();
+    const machine = settingsHome();
+    try {
+      const pkg = { name: "consumer", version: "1.0.0", devDependencies: { "@jawache/flow": "*" } };
+      writeFileSync(join(broken, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
+      expect(flow(broken, ["init"], machine).code).toBe(0);
+      const unparseable = `${readFileSync(join(broken, ".claude", "settings.json"), "utf8")}// a comment\n`;
+      writeFileSync(join(broken, ".claude", "settings.json"), unparseable);
+
+      const said = flow(broken, ["uninstall"], machine);
+      expect(said.code).toBe(1);
+      expect(said.stdout).toContain("✗ .claude/settings.json is not valid JSON");
+      expect(said.stdout, "the other steps still ran").toContain("  - .githooks/pre-commit");
+      expect(existsSync(join(broken, ".flow"))).toBe(false);
+      expect(readFileSync(join(broken, ".claude", "settings.json"), "utf8"), "the file nobody could parse is not written").toBe(unparseable);
+    } finally {
+      for (const dir of [broken, machine]) rmSync(dir, { recursive: true, force: true });
     }
   });
 });

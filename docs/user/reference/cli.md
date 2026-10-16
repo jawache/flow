@@ -1,16 +1,17 @@
 ---
-summary: "every `flow` command, what `flow init` writes, the two switch files, and the exit codes"
+summary: "every `flow` command, what `flow init` writes and `flow uninstall` removes, the two switch files, and the exit codes"
 ---
 
 # The flow command
 
-`flow` is one binary. You type `flow init`, `flow status` and `flow test`, and Claude Code and git call `flow hook` for you.
+`flow` is one binary. You type `flow init`, `flow status`, `flow test` and `flow uninstall`, and Claude Code and git call `flow hook` for you.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
 | `flow init [--empty]` | Writes `flow.config.ts`, `.githooks/pre-commit` and `.flow/`, sets `core.hooksPath`, and registers flow's hooks in the Claude Code settings file. `--empty` writes a config that binds no packs. Run it again at any time: it writes only what is missing, and never writes over `flow.config.ts` or `.githooks/pre-commit` once they exist. It does change one thing you may have set yourself, the hook registrations, listed under [what `flow init` writes](#what-flow-init-writes). When git already runs other hooks, it leaves them alone and prints that flow is not installed, as described under [when git already runs other hooks](#when-git-already-runs-other-hooks) |
+| `flow uninstall [--machine]` | Removes what `flow init` wrote in this repo, except `flow.config.ts`. `--machine` also removes flow's hooks from the machine-wide Claude Code settings file. Prints each thing it removed, then the `npm uninstall` command to run next. Each removal is listed under [what `flow uninstall` removes](#what-flow-uninstall-removes). The flow pack refuses it when an agent runs it |
 | `flow status [--json]` | Lists every bound rule by moment, and checks each fitting: the config, the commit gate, that git runs the commit gate, the hook registrations and the `flow` they run. A fitting that is not in place is a red line with its fix |
 | `flow test [config]` | Runs every bound rule's `.test()` cases. The default config is `flow.config.ts` |
 | `flow facts [options]` | Reports what the log in `.flow/` and the Claude Code transcripts record about this repo. The options are listed under [`flow facts`](#flow-facts) |
@@ -72,6 +73,23 @@ In a terminal, the block is printed in bold red, unless the `NO_COLOR` environme
 
 Once the `pre-commit` hook git runs calls flow, and is executable when git runs it itself, `flow init` and `flow status` count flow as installed. For husky, flow reads `.husky/pre-commit`.
 
+## What `flow uninstall` removes
+
+| Path | What happens to it |
+| --- | --- |
+| `.githooks/pre-commit` | Deleted when it holds only comments and the lines `flow init` writes. Otherwise the lines that run flow are removed, and the rest of the script is kept |
+| The `pre-commit` hook git runs, when it is not `.githooks/pre-commit` | Left as it is. When it still calls flow, such as `.husky/pre-commit` holding flow's two lines, the report names the file and the lines to delete by hand, and says to delete them before `npm uninstall` |
+| `core.hooksPath` | Unset when it is `.githooks` and the folder holds no other hook. `.githooks/` is then deleted if it is empty. When the folder holds another hook, `core.hooksPath` stays `.githooks` |
+| `.flow/` | Deleted, with its logs, recordings and switch files |
+| `node_modules/@jawache/flow` | Deleted when it is a link, which `flow init` writes when the repo does not install `@jawache/flow` itself |
+| The repo's `.claude/settings.json` | When the repo's `package.json` lists `@jawache/flow`: each hook entry whose command ends with `flow hook <event>` is removed, for the six events `flow init` registers. An event left with no entry is removed. Every other key in the file is kept |
+| The machine-wide settings file | With `--machine` only: the same entries are removed from `~/.claude/settings.json`, or from `$CLAUDE_CONFIG_DIR/settings.json` when that variable is set |
+
+`flow uninstall` leaves `flow.config.ts` and the packs it imports. Run `flow init` to wire the repo again.
+
+> [!WARNING]
+> Every repo on the machine reads the machine-wide settings file. After `flow uninstall --machine`, flow's hooks run in no repo that relies on a global install, and an agent there is no longer guarded.
+
 ## Switches
 
 | File | While it exists |
@@ -84,7 +102,7 @@ Once the `pre-commit` hook git runs calls flow, and is executable when git runs 
 | Code | Meaning |
 | --- | --- |
 | `0` | passed — nothing was refused, and every fitting is in place |
-| `1` | **the report is no** — `flow status` found a fitting missing, `flow test` found a case that fails, or `flow facts`, `flow replay` or `flow init` could not finish, as listed below |
+| `1` | **the report is no** — `flow status` found a fitting missing, `flow test` found a case that fails, or `flow facts`, `flow replay`, `flow init` or `flow uninstall` could not finish, as listed below |
 | `2` | **refused** — a rule blocked, or the config would not load, or a top-level verb was misused |
 
 A hook has two codes: 0 lets the action go ahead, and 2 refuses it and shows standard error to the agent.
@@ -100,6 +118,7 @@ These commands exit 1:
 - **`flow replay`**, when the recording did not capture something a check reached for, or when `--against` finds a difference.
 - **`flow init`**, when one of its steps fails.
 - **`flow init`**, when git already runs other hooks and the `pre-commit` hook git runs does not call flow, or is not executable, as described under [when git already runs other hooks](#when-git-already-runs-other-hooks).
+- **`flow uninstall`**, when one of its steps fails. It still carries out the other steps, and lists the one that failed.
 
 A config that does not load makes `flow status` and `flow test` exit 2.
 
