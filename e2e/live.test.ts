@@ -1586,14 +1586,14 @@ describe("flow facts — the record and the conversations, read back", () => {
   });
 });
 
-describe("every row names the agent it came from (#15)", () => {
+describe("every row names the agent it came from, and a breadcrumb row what was touched (#15)", () => {
   // A worktree of its own, so the marker the commit gate reads is the one these calls leave and
   // nothing the suite above wrote. The config is the least that makes every kind of row: a session
-  // note, an area note, and one rule at write and at commit.
+  // note, an area note, a command note, and one rule at write and at commit.
   let tree: string;
   let ids = 0;
   const AGENTS_CONFIG = (packageRoot: string): string => `
-import { breadcrumb, commit, definePack, defineConfig, guardrail, pack, session, touch, write } from ${JSON.stringify(join(packageRoot, "index.ts"))};
+import { breadcrumb, command, commit, definePack, defineConfig, guardrail, pack, session, touch, write } from ${JSON.stringify(join(packageRoot, "index.ts"))};
 
 const demo = definePack("demo", {
   noTodo: guardrail()
@@ -1607,6 +1607,7 @@ const demo = definePack("demo", {
     }),
   orientation: breadcrumb().at(session).text("This repo is guarded by flow."),
   area: breadcrumb().at(touch).on("src/**").text("src/ is the product."),
+  history: breadcrumb().at(command).on("git log*").text("The journal owns the past."),
 });
 
 export default defineConfig([pack(demo)]);
@@ -1643,7 +1644,9 @@ export default defineConfig([pack(demo)]);
     call({}, "Read", { file_path: join(tree, "src/a.ts") });
     // A subagent whose message carries no type.
     call(UNTYPED, "Read", { file_path: join(tree, "src/a.ts") });
-    // A builder: a command that reads the area by name and writes a TODO the rule refuses.
+    // A builder: a command a note matches, then one that reads the area by name and writes a TODO
+    // the rule refuses.
+    call(BUILDER, "Bash", { command: "git log --oneline -1" });
     const refused = call(BUILDER, "Bash", { command: "cat src/a.ts && echo '// TODO' > src/b.ts" }, "cat src/a.ts && echo '// TODO' > src/b.ts");
     expect(refused.code, "the write is refused, so the builder has a guardrail row").toBe(2);
     // The builder's call was the last one, so the commit is the builder's.
@@ -1691,75 +1694,27 @@ export default defineConfig([pack(demo)]);
     }
   });
 
+  /** The breadcrumb row one agent was shown for one entry. */
+  const crumb = (agent: string, id: string): Record<string, unknown> | undefined =>
+    from(agent).find((row) => row["kind"] === "breadcrumb" && row["id"] === id);
+
+  it("names the file whose first touch showed an area note, repo-relative", () => {
+    expect(crumb("main", "demo.area")).toMatchObject({ cause: "first-touch", subject: "src/a.ts" });
+  });
+
+  it("names the command line that showed a command note", () => {
+    expect(crumb("a6009b558b4c9155c", "demo.history")).toMatchObject({ moment: "command", cause: "first-touch", subject: "git log --oneline -1" });
+  });
+
+  it("writes no subject on a session note's row, which fired on no touch", () => {
+    const greeting = crumb("main", "demo.orientation");
+    expect(greeting).toMatchObject({ moment: "session", cause: "session" });
+    expect(greeting).not.toHaveProperty("subject");
+  });
+
   it("leaves the meta row as it was: no agent, no agentType, and v 1", () => {
     const [meta] = rows(tree, "agents");
     expect(Object.keys(meta ?? {}).sort()).toEqual(["branch", "kind", "session", "started", "v", "worktree"]);
     expect(meta).toMatchObject({ kind: "meta", v: 1, session: "agents" });
-  });
-});
-
-describe("a breadcrumb row names what was touched (#15)", () => {
-  // A repo of its own, so every note here is shown for the first time by the calls below. A session
-  // note, an area note and a command note: one of each cause a touch can and cannot carry.
-  let tree: string;
-  let ids = 0;
-  const NOTES_CONFIG = (packageRoot: string): string => `
-import { breadcrumb, command, definePack, defineConfig, pack, session, touch } from ${JSON.stringify(join(packageRoot, "index.ts"))};
-
-const demo = definePack("demo", {
-  orientation: breadcrumb().at(session).text("This repo is guarded by flow."),
-  area: breadcrumb().at(touch).on("src/**").text("src/ is the product."),
-  history: breadcrumb().at(command).on("git log*").text("The journal owns the past."),
-});
-
-export default defineConfig([pack(demo)]);
-`;
-  const BUILDER = { agent_id: "a6009b558b4c9155c", agent_type: "builder" };
-  const send = (event: string, payload: unknown): Ran => runFlow(tree, ["hook", event], {}, JSON.stringify(payload));
-  /** One tool call from the builder, both halves. */
-  function call(tool: string, input: Record<string, unknown>): void {
-    const payload = { session_id: "notes", ...BUILDER, tool_name: tool, tool_input: input, tool_use_id: `toolu_notes_${++ids}`, cwd: tree };
-    expect(send("pre-tool-use", payload).code).toBe(0);
-    expect(send("post-tool-use", payload).code).toBe(0);
-  }
-
-  beforeAll(() => {
-    tree = newRepo("flow-notes-");
-    writeFileSync(join(tree, "flow.config.ts"), NOTES_CONFIG(PACKAGE));
-    mkdirSync(join(tree, "src"), { recursive: true });
-    writeFileSync(join(tree, "src", "a.ts"), "export const a = 1;\n");
-
-    expect(send("session-start", { session_id: "notes", source: "startup" }).code).toBe(0);
-    call("Read", { file_path: join(tree, "src/a.ts") });
-    call("Bash", { command: "git log --oneline -1" });
-  });
-  afterAll(() => {
-    rmSync(tree, { recursive: true, force: true });
-  });
-
-  const crumbs = (): Record<string, unknown>[] => rows(tree, "notes").filter((row) => row["kind"] === "breadcrumb");
-  const crumb = (id: string): Record<string, unknown> | undefined => crumbs().find((row) => row["id"] === id);
-
-  it("names the file whose first touch showed an area note, repo-relative", () => {
-    expect(crumb("demo.area")).toMatchObject({
-      agent: "a6009b558b4c9155c",
-      agentType: "builder",
-      kind: "breadcrumb",
-      moment: "touch",
-      id: "demo.area",
-      cause: "first-touch",
-      subject: "src/a.ts",
-    });
-  });
-
-  it("names the command line that showed a command note", () => {
-    expect(crumb("demo.history")).toMatchObject({ moment: "command", cause: "first-touch", subject: "git log --oneline -1" });
-  });
-
-  it("writes no subject on a session note's row, which fired on no touch", () => {
-    const greeting = crumb("demo.orientation");
-    expect(greeting).toMatchObject({ agent: "main", moment: "session", cause: "session" });
-    expect(greeting).not.toHaveProperty("subject");
-    expect(crumbs().map((row) => row["id"]).sort()).toEqual(["demo.area", "demo.history", "demo.orientation"]);
   });
 });
