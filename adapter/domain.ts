@@ -4145,6 +4145,8 @@ export interface StatusFacts {
   readonly load: LoadResult | null;
   readonly gateText: string | null;
   readonly hooksPath: string | null;
+  /** The folder git runs hooks from, read as init reads it, or null outside git or when git could not say. */
+  readonly hooksFolder: HooksFolder | null;
   readonly settingsPath: string;
   readonly settings: unknown;
   /**

@@ -365,6 +365,7 @@ export async function runStatus(cwd: string, args: readonly string[]): Promise<V
     load: regime.kind === "loaded" ? regime.load : null,
     gateText: readText(root, GATE_PATH),
     hooksPath: hooksPath(root),
+    hooksFolder: hooksFolder(root),
     settingsPath,
     settings: parsedFile(root, settingsPath).value,
     machine: machineFile(root, settingsPath),

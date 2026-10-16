@@ -2842,6 +2842,7 @@ const statusFacts = (over: Partial<StatusFacts> = {}): StatusFacts => ({
   load: { ok: true, entries: [] },
   gateText: PRE_COMMIT,
   hooksPath: HOOKS_DIR,
+  hooksFolder: { dir: HOOKS_DIR, files: ["pre-commit"], preCommit: PRE_COMMIT },
   settingsPath: "/home/.claude/settings.json",
   settings: withRegistrations({}).settings,
   machine: null,
