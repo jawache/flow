@@ -3774,6 +3774,25 @@ export function otherHooks(hooksPath: string | null, folder: HooksFolder | null)
   return { dir: folder.dir, preCommit: preCommitOf(folder.dir), wired: armsFlow(folder.preCommit) };
 }
 
+/** The words the block opens with, fixed by the docs, for every reader that looks for them. */
+export const NOT_INSTALLED = "FLOW IS NOT INSTALLED";
+
+/**
+ * The message for other hooks that do not call flow, in the ONE wording init's block and status's
+ * line share: the folder git runs hooks from, and the two ways to finish. Init never takes either
+ * itself: editing another tool's hook, or moving its hooks, is the person's call.
+ */
+export function notInstalledLines(other: OtherHooks): string[] {
+  return [
+    `${NOT_INSTALLED}. Git runs hooks from ${other.dir}, so flow left core.hooksPath alone, and no commit runs flow's gate.`,
+    "Finish the install in one of two ways, then run `flow init` again:",
+    `  - Add these two lines to the end of ${other.preCommit}:`,
+    `      ${GATE_LOCAL_LINE}`,
+    `      ${GATE_RUN_LINE}`,
+    `  - Or move those hooks into ${HOOKS_DIR}/, beside flow's gate, then run \`${SET_HOOKS_PATH}\`.`,
+  ];
+}
+
 // ── the scaffold ─────────────────────────────────────────────────────────────
 
 /** The config `flow init --empty` leaves: the wiring, with no opinions. */
@@ -3992,8 +4011,9 @@ export function planInit(facts: InitFacts): InitPlan {
     flowDir: !facts.hasFlowDir,
     link: facts.resolves ? null : facts.packageRoot,
     // Per CLONE, not per repo: `core.hooksPath` is not committed, so a fresh clone and every
-    // worktree needs it set again. That is why init is the command a new checkout runs.
-    hooksPath: facts.isGit && facts.hooksPath !== HOOKS_DIR,
+    // worktree needs it set again. That is why init is the command a new checkout runs. NEVER over
+    // other hooks: git runs one folder, and pointing it at ours turns theirs off without a word.
+    hooksPath: facts.isGit && facts.hooksPath !== HOOKS_DIR && other === null,
     otherHooks: other,
     settings: registration.added.length === 0 ? null : { path: facts.settingsPath, value: registration.settings },
     registered: registration.added,
@@ -4042,9 +4062,28 @@ export function initLines(plan: InitPlan, failures: readonly string[]): string[]
         `every other key in that file is somebody's, and there is no safe merge into bytes nobody could parse. ` +
         `Fix the JSON (a trailing comma, or a // comment) and run \`flow init\` again. Until then no rail fires.`,
     );
+  if (plan.otherHooks?.wired === true)
+    lines.push(`  · git runs hooks from ${plan.otherHooks.dir}, and ${plan.otherHooks.preCommit} calls flow, so core.hooksPath was left as it is.`);
   for (const failure of failures) lines.push(`  ✗ ${failure}`);
   lines.push("  next: `flow status` — what is bound, and what is not wired yet.");
+  // LAST, so it is what is left on the screen: a muted `·` note is too quiet for a commit gate git
+  // will never run.
+  const unwired = notInstalled(plan);
+  if (unwired !== null) lines.push("", ...notInstalledLines(unwired));
   return lines;
+}
+
+/** The other hooks git runs when none of them calls flow, so flow is not installed; else null. */
+function notInstalled(plan: InitPlan): OtherHooks | null {
+  return plan.otherHooks !== null && !plan.otherHooks.wired ? plan.otherHooks : null;
+}
+
+/**
+ * Init's exit code. 1 when it could not finish, and 1 when flow is not installed: a script chaining
+ * `flow init && …` is asking whether the repo is guarded, and a gate git never runs is not.
+ */
+export function initCode(plan: InitPlan, failures: readonly string[]): 0 | 1 {
+  return failures.length === 0 && notInstalled(plan) === null ? 0 : 1;
 }
 
 // ── status ───────────────────────────────────────────────────────────────────

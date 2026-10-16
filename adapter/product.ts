@@ -29,6 +29,7 @@ import {
   CONFIG_FILE,
   GATE_PATH,
   HOOKS_DIR,
+  initCode,
   initLines,
   lastMode,
   literalScopes,
@@ -330,9 +331,7 @@ export function runInit(cwd: string, args: readonly string[]): VerbResult {
   return {
     stdout: `${initLines(plan, failures).join("\n")}\n`,
     stderr: "",
-    // A setup command that could not finish must not answer 0 — a script chaining `flow init && …`
-    // is asking exactly the question the failures answer.
-    exitCode: failures.length === 0 ? 0 : 1,
+    exitCode: initCode(plan, failures),
   };
 }
 

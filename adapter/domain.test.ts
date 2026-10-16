@@ -160,7 +160,10 @@ import {
   armsFlow,
   scaffold,
   planInit,
+  initCode,
   initLines,
+  notInstalledLines,
+  NOT_INSTALLED,
   otherHooks,
   preCommitOf,
   settingsFileFor,
@@ -2295,6 +2298,75 @@ describe("other hooks — what counts, and the pre-commit hook a person edits", 
     expect(planInit({ ...bare, ...husky(null) }).otherHooks).toStrictEqual({ dir: ".husky/_", preCommit: ".husky/pre-commit", wired: false });
     expect(planInit({ ...bare, ...gitHooks(["pre-push"]) }).otherHooks?.dir).toBe(".git/hooks");
     expect(planInit({ ...bare, ...husky(null), isGit: false }).otherHooks, "outside git there are no hooks to keep").toBeNull();
+  });
+});
+
+describe("planInit — when git already runs other hooks", () => {
+  const block = (plan: ReturnType<typeof planInit>): string[] => {
+    const said = initLines(plan, []);
+    const at = said.findIndex((line) => line.startsWith(NOT_INSTALLED));
+    return at === -1 ? [] : said.slice(at);
+  };
+
+  describe("a husky repo whose .husky/pre-commit does not call flow", () => {
+    const plan = planInit({ ...bare, ...husky("#!/bin/sh\nnpm test\n") });
+
+    it("leaves core.hooksPath alone, and still writes every other file", () => {
+      expect(plan.hooksPath).toBe(false);
+      expect(plan.config?.path).toBe("flow.config.ts");
+      expect(plan.gate?.path, "the second fix moves hooks in beside this gate").toBe(GATE_PATH);
+      expect(plan.flowDir).toBe(true);
+      expect(plan.registered).toEqual(REGISTERED_EVENTS);
+      expect(initLines(plan, []).join("\n")).not.toContain(`+ ${SET_HOOKS_PATH}`);
+    });
+
+    it("ends with the block: the folder git runs hooks from, and both fixes", () => {
+      const said = initLines(plan, []);
+      const lines = block(plan);
+      expect(lines, "the block is the end of the output").toStrictEqual(notInstalledLines({ dir: ".husky/_", preCommit: ".husky/pre-commit", wired: false }));
+      expect(said[said.length - lines.length - 1], "set apart from the report by a blank line").toBe("");
+      const text = lines.join("\n");
+      expect(text).toContain("Git runs hooks from .husky/_");
+      expect(text).toContain("Add these two lines to the end of .husky/pre-commit:");
+      expect(text).toContain(GATE_LOCAL_LINE);
+      expect(text).toContain(GATE_RUN_LINE);
+      expect(text).toContain(`move those hooks into ${HOOKS_DIR}/`);
+      expect(text).toContain(SET_HOOKS_PATH);
+    });
+
+    it("answers 1, whatever else landed", () => {
+      expect(initCode(plan, [])).toBe(1);
+    });
+
+    it("followed to the letter, the first fix wires it", () => {
+      const followed = `#!/bin/sh\nnpm test\n${GATE_LOCAL_LINE}\n${GATE_RUN_LINE}\n`;
+      expect(planInit({ ...bare, ...husky(followed) }).otherHooks?.wired).toBe(true);
+    });
+  });
+
+  it("a repo with a hook in .git/hooks names that folder and its pre-commit", () => {
+    const plan = planInit({ ...bare, ...gitHooks(["pre-push", "post-checkout"]) });
+    expect(plan.hooksPath).toBe(false);
+    expect(block(plan)[0]).toContain("Git runs hooks from .git/hooks");
+    expect(block(plan).join("\n")).toContain("the end of .git/hooks/pre-commit:");
+    expect(initCode(plan, [])).toBe(1);
+  });
+
+  it("once the hook git runs calls flow, no block, a quiet note, and 0", () => {
+    const plan = planInit({ ...bare, ...husky(WIRED) });
+    expect(plan.hooksPath, "still never set over husky's").toBe(false);
+    expect(block(plan)).toStrictEqual([]);
+    expect(initLines(plan, []).join("\n")).toContain("· git runs hooks from .husky/_, and .husky/pre-commit calls flow");
+    expect(initCode(plan, [])).toBe(0);
+  });
+
+  it("a repo with no other hooks gets exactly what it got before: the setting, no block, 0", () => {
+    const plan = planInit(bare);
+    expect(plan.hooksPath).toBe(true);
+    expect(block(plan)).toStrictEqual([]);
+    expect(initLines(plan, []).join("\n")).not.toContain("git runs hooks from");
+    expect(initCode(plan, [])).toBe(0);
+    expect(initCode(plan, ["could not write .githooks/pre-commit: EACCES"]), "a failure is still a 1").toBe(1);
   });
 });
 
