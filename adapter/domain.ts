@@ -4087,7 +4087,7 @@ export interface UninstallFacts {
   /** …it is there and would not parse. */
   readonly settingsUnreadable: boolean;
   /** `--machine` was given: the machine-wide settings file is flow's to clean too. */
-  readonly machine: boolean;
+  readonly machineFlag: boolean;
   /** The machine-wide settings file: its absolute path, its JSON (null when there is none), and whether it would not parse. */
   readonly machineFile: { readonly path: string; readonly settings: unknown; readonly unreadable: boolean };
 }
@@ -4150,7 +4150,7 @@ export function planUninstall(facts: UninstallFacts): UninstallPlan {
   };
   const { machineFile } = facts;
   const repoUnreadable = facts.listed && facts.settingsUnreadable;
-  const machineUnreadable = facts.machine && machineFile.unreadable;
+  const machineUnreadable = facts.machineFlag && machineFile.unreadable;
   // The one reading of "the machine-wide file holds flow's hooks": what --machine writes, and what a
   // plain run names.
   const machineCleaned = machineFile.unreadable ? null : cleaned(machineFile.path, machineFile.settings);
@@ -4163,11 +4163,11 @@ export function planUninstall(facts: UninstallFacts): UninstallPlan {
     flowDir: facts.hasFlowDir,
     link: facts.linked,
     settings: facts.listed && !repoUnreadable ? cleaned(REPO_SETTINGS, facts.settings) : null,
-    machine: facts.machine ? machineCleaned : null,
+    machine: facts.machineFlag ? machineCleaned : null,
     unreadable: [...(repoUnreadable ? [REPO_SETTINGS] : []), ...(machineUnreadable ? [machineFile.path] : [])],
-    command: facts.machine ? MACHINE_RUN : "flow uninstall",
+    command: facts.machineFlag ? MACHINE_RUN : "flow uninstall",
     keptConfig: facts.hasConfig,
-    machineHolds: !facts.machine && !facts.listed && machineCleaned !== null ? machineFile.path : null,
+    machineHolds: !facts.machineFlag && !facts.listed && machineCleaned !== null ? machineFile.path : null,
     next: facts.listed ? "npm uninstall @jawache/flow" : "npm uninstall -g @jawache/flow",
   };
 }

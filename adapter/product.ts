@@ -342,7 +342,7 @@ export function runInit(cwd: string, args: readonly string[]): VerbResult {
 // ── uninstall ────────────────────────────────────────────────────────────────
 
 /** Everything uninstall found, before it removed anything. */
-function uninstallFacts(root: string, machine: boolean): UninstallFacts {
+function uninstallFacts(root: string, machineFlag: boolean): UninstallFacts {
   const manifest = readText(root, "package.json");
   const settings = parsedFile(root, REPO_SETTINGS);
   let hooksDir: string[] | null;
@@ -361,7 +361,7 @@ function uninstallFacts(root: string, machine: boolean): UninstallFacts {
     listed: listsFlow(manifest),
     settings: settings.value,
     settingsUnreadable: settings.unreadable,
-    machine,
+    machineFlag,
     machineFile: readMachineFile(root),
   };
 }

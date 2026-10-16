@@ -2744,7 +2744,7 @@ const wired: UninstallFacts = {
   listed: false,
   settings: null,
   settingsUnreadable: false,
-  machine: false,
+  machineFlag: false,
   machineFile: { path: MACHINE_SETTINGS, settings: withRegistrations({ theme: "dark" }).settings, unreadable: false },
 };
 
@@ -2786,11 +2786,11 @@ describe("planUninstall — a repo flow init set up", () => {
   });
 
   it("says nothing of the machine-wide file when --machine cleans it, when it holds none of flow's, when it will not parse, or when the hooks are the repo's own", () => {
-    expect(planUninstall({ ...wired, machine: true }).machineHolds).toBeNull();
+    expect(planUninstall({ ...wired, machineFlag: true }).machineHolds).toBeNull();
     expect(planUninstall({ ...wired, machineFile: { ...wired.machineFile, settings: { theme: "dark" } } }).machineHolds).toBeNull();
     expect(planUninstall({ ...wired, machineFile: { ...wired.machineFile, settings: null, unreadable: true } }).machineHolds).toBeNull();
     expect(planUninstall({ ...wired, listed: true }).machineHolds, "a dev dependency's hooks are in the repo's own file").toBeNull();
-    expect(uninstallLines(planUninstall({ ...wired, machine: true }), []).at(-1)).toBe("  next: `npm uninstall -g @jawache/flow` — removes the package.");
+    expect(uninstallLines(planUninstall({ ...wired, machineFlag: true }), []).at(-1)).toBe("  next: `npm uninstall -g @jawache/flow` — removes the package.");
   });
 
   it("says there is nothing to remove in a repo flow never touched", () => {
@@ -2838,7 +2838,7 @@ describe("planUninstall — the machine-wide settings file", () => {
   const theirs = { hooks: [{ type: "command", command: "say done" }] };
   const machineWith = (settings: unknown, unreadable = false): UninstallFacts => ({
     ...wired,
-    machine: true,
+    machineFlag: true,
     machineFile: { path: MACHINE_SETTINGS, settings, unreadable },
   });
 
