@@ -99,7 +99,6 @@ import {
   readState,
   runRows,
   attribution,
-  commitAgent,
   sanitise,
   spawnedAs,
   statePath,
@@ -113,7 +112,6 @@ import {
   type Notice,
   type Outcome,
   type RowKind,
-  type AgentOf,
   type Attribution,
   type Row,
   type SessionMarker,
@@ -955,27 +953,26 @@ describe("a session × agent's own state", () => {
 describe("the commit gate's session marker", () => {
   const now = Date.parse("2026-09-04T12:00:00.000Z");
   const fresh: SessionMarker = { session: "live", agent: "agent-7", ts: "2026-09-04T11:59:00.000Z" };
-  const none: Attribution = { session: "commit", agent: null };
+  const none: Attribution = { session: "commit", who: null };
 
   it("attributes a commit to the session AND the agent that was just editing", () => {
     // The agent is what makes an actor-scoped commit rule possible: identity is stored per
     // session × agent, so the session id alone cannot find who was working.
-    expect(attribution(fresh, "commit", now)).toStrictEqual({ session: "live", agent: "agent-7" });
+    expect(attribution(fresh, "commit", now)).toStrictEqual({ session: "live", who: { agent: "agent-7" } });
   });
 
   it("carries the agent's type with the agent, and never a type without one", () => {
     expect(attribution({ ...fresh, agentType: "builder" }, "commit", now)).toStrictEqual({
       session: "live",
-      agent: "agent-7",
-      agentType: "builder",
+      who: { agent: "agent-7", agentType: "builder" },
     });
     expect(attribution({ ...fresh, agentType: "" }, "commit", now), "an empty type is none").toStrictEqual({
       session: "live",
-      agent: "agent-7",
+      who: { agent: "agent-7" },
     });
     expect(attribution({ session: "live", agentType: "builder", ts: fresh.ts }, "commit", now)).toStrictEqual({
       session: "live",
-      agent: null,
+      who: null,
     });
     expect(attribution({ ...fresh, agentType: "builder", ts: "2026-09-04T02:00:00.000Z" }, "commit", now)).toStrictEqual(none);
   });
@@ -989,22 +986,8 @@ describe("the commit gate's session marker", () => {
   });
 
   it("reads a marker written before the agent field as an unknown actor, not a wrong one", () => {
-    expect(attribution({ session: "live", ts: fresh.ts }, "commit", now)).toStrictEqual({
-      session: "live",
-      agent: null,
-    });
-    expect(attribution({ session: "live", agent: 7, ts: fresh.ts }, "commit", now).agent).toBeNull();
-  });
-
-  it("names the agent the gate's rows log as: the marker's, with its type, or commit when nobody can be named", () => {
-    const logged = (marker: SessionMarker | null): AgentOf => commitAgent(attribution(marker, "commit", now));
-    expect(logged({ ...fresh, agentType: "builder" })).toStrictEqual({ agent: "agent-7", agentType: "builder" });
-    expect(logged(fresh)).toStrictEqual({ agent: "agent-7" });
-    expect(logged(null), "no marker").toStrictEqual({ agent: "commit" });
-    expect(logged({ ...fresh, agentType: "builder", ts: "2026-09-04T02:00:00.000Z" }), "a stale marker").toStrictEqual({ agent: "commit" });
-    expect(logged({ session: "live", ts: fresh.ts }), "a fresh marker written before it held the agent").toStrictEqual({ agent: "commit" });
-    // The attribution keeps its null, which is what tells the gate there is no state to load.
-    expect(attribution({ session: "live", ts: fresh.ts }, "commit", now).agent).toBeNull();
+    expect(attribution({ session: "live", ts: fresh.ts }, "commit", now)).toStrictEqual({ session: "live", who: null });
+    expect(attribution({ session: "live", agent: 7, ts: fresh.ts }, "commit", now).who).toBeNull();
   });
 
   it("takes the age as an argument, because a clock inside a decision cannot be tested", () => {

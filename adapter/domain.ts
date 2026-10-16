@@ -59,6 +59,7 @@ import {
   formatBlock,
   insideRepo,
   momentsView,
+  namedAgent,
   universe,
   watching,
   type AgentOf,
@@ -1797,10 +1798,7 @@ export function sessionFactsFrom(args: { readonly payload: HookPayload; readonly
  * session started with `--agent`, and that session is still the parent.
  */
 export function agentOf(payload: HookPayload): AgentOf {
-  const id = payload.agent_id;
-  if (typeof id !== "string" || id === "") return { agent: "main" };
-  const type = payload.agent_type;
-  return typeof type === "string" && type !== "" ? { agent: id, agentType: type } : { agent: id };
+  return namedAgent(payload.agent_id, payload.agent_type) ?? { agent: "main" };
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════

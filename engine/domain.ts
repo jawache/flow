@@ -877,6 +877,18 @@ export interface AgentOf {
   readonly agentType?: string;
 }
 
+/**
+ * An agent named by an id and, maybe, a type — the one reading of the pair, wherever it is read
+ * from: a hook message's `agent_id` and `agent_type`, or a marker's `agent` and `agentType`.
+ *
+ * Null when the id is not a non-empty string, and the type counts only beside such an id, because a
+ * type means nothing without the agent it belongs to.
+ */
+export function namedAgent(id: unknown, type: unknown): AgentOf | null {
+  if (typeof id !== "string" || id === "") return null;
+  return typeof type === "string" && type !== "" ? { agent: id, agentType: type } : { agent: id };
+}
+
 /** A commit long after the last edit is not this session's. */
 export const MARKER_MAX_AGE_MS = 4 * 60 * 60 * 1000;
 
@@ -884,9 +896,7 @@ export const MARKER_MAX_AGE_MS = 4 * 60 * 60 * 1000;
 export interface Attribution {
   readonly session: string;
   /** Null when the marker named no agent — an old marker, or a run with nobody to attribute to. */
-  readonly agent: string | null;
-  /** The type that agent was started as, when the marker holds one. Only ever beside an agent. */
-  readonly agentType?: string;
+  readonly who: AgentOf | null;
 }
 
 /**
@@ -907,27 +917,11 @@ export function attribution(
   nowMs: number,
   maxAgeMs: number = MARKER_MAX_AGE_MS,
 ): Attribution {
-  const none: Attribution = { session: fallback, agent: null };
+  const none: Attribution = { session: fallback, who: null };
   if (!marker || typeof marker.session !== "string" || !marker.session) return none;
   const at = Date.parse(String(marker.ts));
   if (!Number.isFinite(at) || Math.abs(nowMs - at) > maxAgeMs) return none;
-  const agent = typeof marker.agent === "string" && marker.agent ? marker.agent : null;
-  const type = marker.agentType;
-  return agent !== null && typeof type === "string" && type
-    ? { session: marker.session, agent, agentType: type }
-    : { session: marker.session, agent };
-}
-
-/**
- * The agent a commit-gate run's rows name. An agent nobody can name — no marker, a stale one, or
- * one written before markers held the agent — is `commit`, the word that names the stream such a
- * commit's rows land in when no session claims it.
- *
- * Separate from `attribution`, whose `agent: null` is what tells the gate there is no state to load.
- */
-export function commitAgent(who: Attribution): AgentOf {
-  if (who.agent === null) return { agent: "commit" };
-  return who.agentType === undefined ? { agent: who.agent } : { agent: who.agent, agentType: who.agentType };
+  return { session: marker.session, who: namedAgent(marker.agent, marker.agentType) };
 }
 
 /**

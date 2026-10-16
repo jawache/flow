@@ -57,7 +57,6 @@ import {
   guard,
   recorder,
   runRows,
-  commitAgent,
   type AgentOf,
   type Block,
   type Identity,
@@ -242,28 +241,19 @@ export function currentBranch(root: string): string | null {
  * who is here — and a rule that fires at the gate for a wearer status never showed is the exact
  * surprise the marker exists to prevent.
  *
- * `agent` is null when the marker is missing, stale or malformed, and then the wearer wears NOTHING
+ * `who` is null when the marker is missing, stale or malformed, and then the wearer wears NOTHING
  * rather than a guess: there is no transcript and no hook message out here, so the stored verdict is
  * the only truthful answer there can be.
  */
 export function wearer(root: string): {
   readonly branch: string | null;
   readonly session: string;
-  readonly agent: string | null;
-  /** The agent the gate's rows name: the marker's, or `commit` when it names none. */
-  readonly who: AgentOf;
+  readonly who: AgentOf | null;
   readonly wearing: readonly string[];
 } {
   const branch = currentBranch(root);
-  const attributed = commitAttribution(root, branch);
-  const { session, agent } = attributed;
-  return {
-    branch,
-    session,
-    agent,
-    who: commitAgent(attributed),
-    wearing: agent === null ? [] : (loadState(root, session, agent).categories ?? []),
-  };
+  const { session, who } = commitAttribution(root, branch);
+  return { branch, session, who, wearing: who === null ? [] : (loadState(root, session, who.agent).categories ?? []) };
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -1126,7 +1116,9 @@ export async function runCommit(root: string, scope: CommitScope): Promise<HookR
         world: tape.taken(),
       },
     ]);
-  appendRows({ root, session, branch, who }, runRows("commit", outcome, files.length + gone.length));
+  // An agent nobody can name — no marker, a stale one, or one written before markers held the
+  // agent — is `commit`, the word that names the stream such a commit's rows land in.
+  appendRows({ root, session, branch, who: who ?? { agent: "commit" } }, runRows("commit", outcome, files.length + gone.length));
 
   const blocks: Refused[] = outcome.effects
     .filter((effect): effect is Block => effect.do === "block")

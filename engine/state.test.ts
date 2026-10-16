@@ -227,7 +227,7 @@ describe("the commit gate's marker", () => {
     expect(writeMarker(root, "sess-1", { agent: "agent-7" }, "workflow/flow", at)).toBe(true);
     expect(commitAttribution(root, "workflow/flow", at.getTime() + 60_000)).toStrictEqual({
       session: "sess-1",
-      agent: "agent-7",
+      who: { agent: "agent-7" },
     });
   });
 
@@ -235,8 +235,7 @@ describe("the commit gate's marker", () => {
     writeMarker(root, "sess-1", { agent: "a6009b5", agentType: "builder" }, "workflow/flow", at);
     expect(commitAttribution(root, "workflow/flow", at.getTime())).toStrictEqual({
       session: "sess-1",
-      agent: "a6009b5",
-      agentType: "builder",
+      who: { agent: "a6009b5", agentType: "builder" },
     });
     writeMarker(root, "sess-1", { agent: "main" }, "workflow/flow", at);
     const marked = JSON.parse(readFileSync(join(root, FLOW_DIR, ".session-workflow-flow"), "utf8")) as object;
@@ -251,11 +250,11 @@ describe("the commit gate's marker", () => {
   });
 
   it("falls back to an unattributed commit when there is no marker, or it has gone stale", () => {
-    expect(commitAttribution(root, "main", at.getTime())).toStrictEqual({ session: "commit", agent: null });
+    expect(commitAttribution(root, "main", at.getTime())).toStrictEqual({ session: "commit", who: null });
     writeMarker(root, "sess-1", { agent: "main" }, "main", at);
     expect(commitAttribution(root, "main", at.getTime() + 5 * 60 * 60 * 1000)).toStrictEqual({
       session: "commit",
-      agent: null,
+      who: null,
     });
   });
 
