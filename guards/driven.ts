@@ -13,7 +13,6 @@
 // `gitCommand`, `programName`), which an older flow does not export, and there the file fails to load.
 
 import {
-  banCommands,
   breadcrumb,
   type Check,
   command,
@@ -29,23 +28,17 @@ import {
   spawnedAs,
 } from "@jawache/flow";
 
-// The ban is matched against each command from its program name, and START opens with `^`, so it
-// matches a bare `gh` at the start of a command; the rest of START also reads a `gh` later in a line.
+// ── what runs gh ──
 //
-// Where a shell starts a new command: the start of the line, after a separator, inside $( ) or
-// backticks, after a brace or a keyword, or at the head of a string handed to a shell.
-const START = String.raw`(?:^|[\n;&|({\x60]|\$\(|\b(?:ba|z)?sh\s+-c\s+['"]|\beval\s+['"]?)`;
-/** Words that run the word after them as a command, so the program is further on. */
-const PREFIXES = new Set(["command", "exec", "env", "sudo", "nohup", "time", "xargs", "if", "then", "else", "elif", "do", "while", "until", "!"]);
-// What may sit between that start and the program: whitespace, variable assignments, and the
-// PREFIXES (each with its own flags). An assignment whose value opens a `$(` is not skipped over:
-// START already begins a new command inside it.
-const LEAD =
-  String.raw`\s*(?:[A-Za-z_][A-Za-z0-9_]*=(?!\$\()\S*\s+)*(?:(?:` +
-  [...PREFIXES].map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") +
-  String.raw`)(?:\s+-\S+)*\s+)*`;
-// gh itself, by name or by path, as a whole word.
-const GH = String.raw`(?:\S*/)?gh(?=\s|$|[;&|)\x60'"])`;
+// Each command in the parse whose program is `gh`, by name or by path: the parse has already
+// stepped past `FOO=1`, `sudo`, `env`, `command` and `xargs`, and lists the commands inside
+// `$( … )`, `if`, a pipeline and a `sh -c` string, so a `gh` in any of them is found, and a `gh`
+// in a quoted argument or a heredoc body is not a command. A line that does not parse is not
+// judged: bash refuses to run it, so no `gh` in it runs.
+const bareGh: Check = (ctx) => {
+  const bare = (shellCommands(ctx) ?? []).find((c) => programName(c.program) === "gh");
+  return bare === undefined ? ctx.ok() : ctx.fail(`\`${bare.text}\` runs gh directly`);
+};
 
 // ── what a checker may not run ──
 //
@@ -168,7 +161,7 @@ export const driven = definePack("driven", {
    */
   noBareGh: guardrail()
     .at(command)
-    .check(banCommands({ ban: [START + LEAD + GH] }))
+    .check(bareGh)
     .message(
       "Bare `gh` in a repo driven by work. Run the same command as `work gh …`: it runs `gh project …` as you, so the board can be read and moved, and everything else as the GitHub App, so comments and pull requests are the App's and the daemon can tell them from yours. Bare `gh` would post as you.",
     )
@@ -191,6 +184,8 @@ export const driven = definePack("driven", {
         // Named inside another command's argument, gh is prose, not a call.
         "echo 'gh issue list'",
         'work gh issue comment 42 --body "ran gh issue list by mistake"',
+        // A line that does not parse is not judged: bash refuses to run it.
+        'gh issue comment 42 --body "unclosed',
       ],
       block: [
         "gh issue list",
