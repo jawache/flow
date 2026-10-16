@@ -46,7 +46,7 @@ With a dev dependency, type each `flow` command in this guide as `npx flow`.
    flow init            # writes flow.config.ts, .githooks/pre-commit, .flow/, and the hook registrations
    ```
 
-   `flow init` writes a demo `flow.config.ts`, arms the commit gate, and registers flow's five hooks with Claude Code. Each file it writes is listed in [the command reference](../reference/cli.md).
+   `flow init` writes a demo `flow.config.ts`, arms the commit gate, and registers flow's six hooks with Claude Code. Each file it writes is listed in [the command reference](../reference/cli.md).
 
    Where the hooks are registered depends on the install:
 
