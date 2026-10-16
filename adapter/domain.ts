@@ -3737,7 +3737,7 @@ export interface HooksFolder {
   /** The name of every file in it, `.sample` files included: which of them count is decided here. */
   readonly files: readonly string[];
   /** The text of the pre-commit hook a person edits for that folder (`preCommitOf(dir)`), or null. */
-  readonly preCommit: string | null;
+  readonly preCommitText: string | null;
   /** That file has the execute bit this user needs to run it. False when there is no file. */
   readonly preCommitExecutable: boolean;
 }
@@ -3800,14 +3800,14 @@ export function otherHooks(hooksPath: string | null, folder: HooksFolder): Other
   if (folder.dir === HOOKS_DIR) return null;
   if (hooksPath === null && folder.files.every((name) => name.endsWith(".sample"))) return null;
   const preCommit = preCommitOf(folder.dir);
-  const calls = armsFlow(folder.preCommit);
+  const calls = armsFlow(folder.preCommitText);
   // Git runs a hook only when it has the execute bit, and ignores it otherwise with a warning a
   // commit scrolls past. That bites only when git runs the file itself. Husky's stub in `.husky/_`
   // runs `.husky/pre-commit` with `sh`, so that file needs no execute bit, and is never created
   // for husky either: its stub skips a hook that is not there.
   if (preCommit !== posix.join(folder.dir, "pre-commit")) return { dir: folder.dir, preCommit, fix: calls ? null : "add" };
   const fix =
-    folder.preCommit === null ? "create" : folder.preCommitExecutable ? (calls ? null : "add") : calls ? "chmod" : "add-and-chmod";
+    folder.preCommitText === null ? "create" : folder.preCommitExecutable ? (calls ? null : "add") : calls ? "chmod" : "add-and-chmod";
   return { dir: folder.dir, preCommit, fix };
 }
 

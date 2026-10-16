@@ -2231,7 +2231,7 @@ const bare: InitFacts = {
   gateText: null,
   hasFlowDir: false,
   hooksPath: null,
-  hooksFolder: { dir: ".git/hooks", files: ["pre-commit.sample", "pre-push.sample"], preCommit: null, preCommitExecutable: false },
+  hooksFolder: { dir: ".git/hooks", files: ["pre-commit.sample", "pre-push.sample"], preCommitText: null, preCommitExecutable: false },
   settingsPath: "/home/.claude/settings.json",
   settings: {},
   settingsUnreadable: false,
@@ -2247,21 +2247,21 @@ const WIRED = `#!/bin/sh\nnpm test\n${GATE_LOCAL_LINE}\n${GATE_RUN_LINE}\n`;
  * A repo husky set up: git runs `.husky/_`, and a person edits `.husky/pre-commit`, which husky's
  * stub runs with `sh`, so it carries no execute bit here.
  */
-const husky = (preCommit: string | null): Partial<InitFacts> => ({
+const husky = (preCommitText: string | null): Partial<InitFacts> => ({
   hooksPath: ".husky/_",
-  hooksFolder: { dir: ".husky/_", files: ["h", "husky.sh", "pre-commit", "pre-push"], preCommit, preCommitExecutable: false },
+  hooksFolder: { dir: ".husky/_", files: ["h", "husky.sh", "pre-commit", "pre-push"], preCommitText, preCommitExecutable: false },
 });
 
 /** A repo with a hook of its own in `.git/hooks`, which git runs while `core.hooksPath` is unset. */
-const gitHooks = (files: readonly string[], preCommit: string | null = null, preCommitExecutable = preCommit !== null): Partial<InitFacts> => ({
-  hooksFolder: { dir: ".git/hooks", files: ["pre-commit.sample", ...files], preCommit, preCommitExecutable },
+const gitHooks = (files: readonly string[], preCommitText: string | null = null, preCommitExecutable = preCommitText !== null): Partial<InitFacts> => ({
+  hooksFolder: { dir: ".git/hooks", files: ["pre-commit.sample", ...files], preCommitText, preCommitExecutable },
 });
 
 describe("other hooks — what counts, and the pre-commit hook a person edits", () => {
-  const folder = (files: readonly string[], dir = ".git/hooks", preCommit: string | null = null, preCommitExecutable = preCommit !== null): HooksFolder => ({
+  const folder = (files: readonly string[], dir = ".git/hooks", preCommitText: string | null = null, preCommitExecutable = preCommitText !== null): HooksFolder => ({
     dir,
     files,
-    preCommit,
+    preCommitText,
     preCommitExecutable,
   });
 
@@ -2563,7 +2563,7 @@ describe("planInit — the second run", () => {
     gateText: PRE_COMMIT,
     hasFlowDir: true,
     hooksPath: HOOKS_DIR,
-    hooksFolder: { dir: HOOKS_DIR, files: ["pre-commit"], preCommit: PRE_COMMIT, preCommitExecutable: true },
+    hooksFolder: { dir: HOOKS_DIR, files: ["pre-commit"], preCommitText: PRE_COMMIT, preCommitExecutable: true },
     resolves: true,
     settings: withRegistrations({}).settings,
   });
@@ -2945,7 +2945,7 @@ const statusFacts = (over: Partial<StatusFacts> = {}): StatusFacts => ({
   load: { ok: true, entries: [] },
   gateText: PRE_COMMIT,
   hooksPath: HOOKS_DIR,
-  hooksFolder: { dir: HOOKS_DIR, files: ["pre-commit"], preCommit: PRE_COMMIT, preCommitExecutable: true },
+  hooksFolder: { dir: HOOKS_DIR, files: ["pre-commit"], preCommitText: PRE_COMMIT, preCommitExecutable: true },
   settingsPath: "/home/.claude/settings.json",
   settings: withRegistrations({}).settings,
   machine: null,
@@ -2958,7 +2958,7 @@ const statusFacts = (over: Partial<StatusFacts> = {}): StatusFacts => ({
 });
 
 /** A fresh clone's hooks folder: `core.hooksPath` unset, and `.git/hooks` holding only git's samples. */
-const FRESH_CLONE: HooksFolder = { dir: ".git/hooks", files: ["pre-commit.sample", "pre-push.sample"], preCommit: null, preCommitExecutable: false };
+const FRESH_CLONE: HooksFolder = { dir: ".git/hooks", files: ["pre-commit.sample", "pre-push.sample"], preCommitText: null, preCommitExecutable: false };
 
 /** The gate an older `flow init` wrote: today's, without the line that runs the repo's own package first. */
 const PATH_ONLY_GATE = PRE_COMMIT.replace(`${GATE_LOCAL_LINE}\n`, "");
@@ -3312,9 +3312,9 @@ describe("status — does git run the commit gate", () => {
     return { s, fitting: s.fittings.find((f) => f.id === "hooks-path"), line, code: statusCode(s) };
   };
   /** Husky's setup: git runs `.husky/_`, and a person edits `.husky/pre-commit`. */
-  const husky = (preCommit: string | null): Partial<StatusFacts> => ({
+  const husky = (preCommitText: string | null): Partial<StatusFacts> => ({
     hooksPath: ".husky/_",
-    hooksFolder: { dir: ".husky/_", files: ["h", "husky.sh", "pre-commit"], preCommit, preCommitExecutable: false },
+    hooksFolder: { dir: ".husky/_", files: ["h", "husky.sh", "pre-commit"], preCommitText, preCommitExecutable: false },
   });
 
   it("flow's own .githooks is green, as it always read", () => {
@@ -3325,7 +3325,7 @@ describe("status — does git run the commit gate", () => {
 
   it("counts `.githooks/`, `./.githooks` and an absolute path to it as flow's own, as init does", () => {
     for (const set of [".githooks/", "./.githooks", "/repo/.githooks"]) {
-      const { s, line } = judged({ hooksPath: set, hooksFolder: { dir: hooksDirOf("/repo", set), files: ["pre-commit"], preCommit: PRE_COMMIT, preCommitExecutable: true } });
+      const { s, line } = judged({ hooksPath: set, hooksFolder: { dir: hooksDirOf("/repo", set), files: ["pre-commit"], preCommitText: PRE_COMMIT, preCommitExecutable: true } });
       expect(line, set).toBe(`  ✓ hooks-path: core.hooksPath = ${HOOKS_DIR}`);
       expect(s.green, set).toBe(true);
     }
@@ -3359,7 +3359,7 @@ describe("status — does git run the commit gate", () => {
     });
 
     it("a pre-commit in .git/hooks that calls flow without the execute bit: red, saying it must be executable", () => {
-      const lfs: HooksFolder = { dir: ".git/hooks", files: ["pre-push", "pre-commit"], preCommit: PRE_COMMIT, preCommitExecutable: false };
+      const lfs: HooksFolder = { dir: ".git/hooks", files: ["pre-push", "pre-commit"], preCommitText: PRE_COMMIT, preCommitExecutable: false };
       const { fitting, code } = judged({ hooksPath: null, hooksFolder: lfs });
       expect(fitting).toStrictEqual({
         id: "hooks-path",

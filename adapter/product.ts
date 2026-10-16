@@ -172,7 +172,7 @@ function hooksFolder(root: string): HooksFolder | null {
     /* no folder there yet: git runs nothing from it */
   }
   const preCommit = preCommitOf(dir);
-  return { dir, files, preCommit: readText(root, preCommit), preCommitExecutable: executable(resolve(root, preCommit)) };
+  return { dir, files, preCommitText: readText(root, preCommit), preCommitExecutable: executable(resolve(root, preCommit)) };
 }
 
 /**
