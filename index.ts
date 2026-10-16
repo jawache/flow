@@ -50,6 +50,7 @@ export {
   type TurnAction,
   type ShellCommand,
   type ShellHeredoc,
+  type ShellRedirect,
   type ShellSubstitution,
   type Case,
   type CaseWorld,

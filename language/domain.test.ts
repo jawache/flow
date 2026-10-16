@@ -470,8 +470,34 @@ describe("parseCommandLine — the six fields", () => {
       text: "gh issue create --body ran npx vitest run a b c d",
       heredocs: [],
       substitutions: [],
+      redirects: [],
       nested: false,
     });
+  });
+
+  it("lists each redirect on its command, as operator and target, and a heredoc or here-string as none", () => {
+    expect(only("go test ./... > out.log 2>&1").redirects).toEqual([
+      { operator: ">", target: "out.log" },
+      { operator: ">&", target: "1" },
+    ]);
+    expect(only("cat <<'EOF' >> README.md\nmore\nEOF").redirects).toEqual([{ operator: ">>", target: "README.md" }]);
+    expect(only("wc -l < in.txt").redirects).toEqual([{ operator: "<", target: "in.txt" }]);
+    expect(only("cat <<< x").redirects).toEqual([]);
+    expect(only('grep -rn "a > b" docs').redirects, "a > inside quotes is an argument").toEqual([]);
+  });
+
+  it("lists a group's or a loop's redirects on each command inside it, and not on a command in a substitution", () => {
+    const group = parseCommandLine("{ echo a; echo $(date); } > out.log") ?? [];
+    expect(group.map((c) => [c.program, c.redirects])).toEqual([
+      ["echo", [{ operator: ">", target: "out.log" }]],
+      ["echo", [{ operator: ">", target: "out.log" }]],
+      ["date", []],
+    ]);
+    const loop = parseCommandLine("while read l; do echo $l; done < in.txt > out.txt") ?? [];
+    expect(loop.map((c) => c.redirects.map((r) => r.target))).toEqual([
+      ["in.txt", "out.txt"],
+      ["in.txt", "out.txt"],
+    ]);
   });
 
   it("hands an assignment given as an argument over as the program receives it", () => {

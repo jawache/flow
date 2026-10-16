@@ -415,6 +415,12 @@ export interface ShellSubstitution {
   readonly backtick: boolean;
 }
 
+/** One redirect on a command: its operator (`>`, `>>`, `<`, `2>&1`'s `>&` …) and its target word. */
+export interface ShellRedirect {
+  readonly operator: string;
+  readonly target: string;
+}
+
 /** One simple command in a parsed line — the fields docs/user/reference/ctx.md promises. */
 export interface ShellCommand {
   /** The program that runs, after any `FOO=1` assignment and any wrapper. */
@@ -426,6 +432,8 @@ export interface ShellCommand {
   readonly heredocs: readonly ShellHeredoc[];
   /** What the shell runs while building this command's arguments and unquoted heredocs. */
   readonly substitutions: readonly ShellSubstitution[];
+  /** Its redirects, and those of every group or loop it sits in. A heredoc or here-string is not one. */
+  readonly redirects: readonly ShellRedirect[];
   /** Inside a substitution, a `<( … )`, a `bash -c` or `eval` string, or a heredoc fed to a shell. */
   readonly nested: boolean;
 }
@@ -679,10 +687,17 @@ function walkLine(line: string): { readonly commands: ShellCommand[]; readonly b
         return;
     }
   };
-  // A redirection's target or body. A heredoc is recorded for its command; an unquoted one's body
-  // is expanded by the shell, so its substitutions are that command's too.
-  const redirection = (r: Redirection, heredocs: ShellHeredoc[] | null, subs: ShellSubstitution[] | null, out: ShellCommand[]): void => {
+  // A redirection's target or body. A redirect is recorded for its command, and a heredoc too; an
+  // unquoted heredoc's body is expanded by the shell, so its substitutions are that command's too.
+  const redirection = (
+    r: Redirection,
+    heredocs: ShellHeredoc[] | null,
+    redirects: ShellRedirect[],
+    subs: ShellSubstitution[] | null,
+    out: ShellCommand[],
+  ): void => {
     if (r.type !== "HereDoc") {
+      if (r.type === "Redirect") redirects.push({ operator: r.operator, target: r.target?.value ?? "" });
       word(r.target, subs, out);
       return;
     }
@@ -711,10 +726,15 @@ function walkLine(line: string): { readonly commands: ShellCommand[]; readonly b
       case "Command":
         simple(n, nested, out);
         return;
-      case "Redirected":
-        node(n.command, nested, out);
-        for (const r of n.redirects) redirection(r, null, null, out);
+      case "Redirected": {
+        // A group's or a loop's redirects apply to every command inside it, so each one lists them.
+        const inside: ShellCommand[] = [];
+        const redirects: ShellRedirect[] = [];
+        node(n.command, nested, inside);
+        for (const r of n.redirects) redirection(r, null, redirects, null, inside);
+        out.push(...inside.map((c) => (c.nested === nested ? { ...c, redirects: [...c.redirects, ...redirects] } : c)));
         return;
+      }
       case "CompoundList":
         for (const statement of n.commands) node(statement, nested, out);
         return;
@@ -781,11 +801,12 @@ function walkLine(line: string): { readonly commands: ShellCommand[]; readonly b
   const simple = (c: BashCommand, nested: boolean, out: ShellCommand[]): void => {
     const argv: string[] = [];
     const heredocs: ShellHeredoc[] = [];
+    const redirects: ShellRedirect[] = [];
     const subs: ShellSubstitution[] = [];
     const inner: ShellCommand[] = [];
     for (const p of c.prefix) {
       if (p.type === "Assignment") assignment(p.value, subs, inner);
-      else redirection(p, heredocs, subs, inner);
+      else redirection(p, heredocs, redirects, subs, inner);
     }
     if (c.name !== undefined) {
       argv.push(c.name.value);
@@ -799,13 +820,13 @@ function walkLine(line: string): { readonly commands: ShellCommand[]; readonly b
         const value = s.value.type === "Word" ? s.value.value : `(${s.value.elements.map((e) => e.value).join(" ")})`;
         argv.push(`${s.name}${s.index === undefined ? "" : `[${s.index.value}]`}${s.append ? "+=" : "="}${value}`);
         assignment(s.value, subs, inner);
-      } else redirection(s, heredocs, subs, inner);
+      } else redirection(s, heredocs, redirects, subs, inner);
     }
     // A `<<<` here-string's text is the command's last argument, after every word.
     if (argv.length > 0) for (const r of [...c.prefix, ...c.suffix]) if (r.type === "HereString" && r.target !== undefined) argv.push(r.target.value);
     const [program, ...args] = stepWrappers(argv);
     if (program !== undefined) {
-      out.push({ program, args, text: [program, ...args].join(" "), heredocs, substitutions: subs, nested });
+      out.push({ program, args, text: [program, ...args].join(" "), heredocs, substitutions: subs, redirects, nested });
     }
     out.push(...inner);
     if (program === undefined) return;
