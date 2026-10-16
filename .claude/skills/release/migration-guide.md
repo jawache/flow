@@ -1,24 +1,13 @@
----
-name: migration-guide
-description: Use when writing a release's migration guide under docs/user/migrations/, before `just release`, when `just release` or the house pack refuses because a version has no migration guide, or on "write the migration guide". The fixed shape of the page, and how to find what changed since the last release.
----
-
 # Writing a migration guide
 
 A migration guide is a how-to guide with a fixed shape. `docs/user/migrations/<version>.md` says what a repo that uses flow must change to upgrade to `<version>` from the release before it.
 
-Write the page with `/work docs`: its layout and sentence rules apply here as on any page. This skill adds only the shape and where to look.
+Write the page with `/work docs`: its layout and sentence rules apply here as on any page. This file adds only the shape and where to look. The release steps around it are in [SKILL.md](./SKILL.md).
 
 ## Who reads it
 
 - **The reader** is usually an agent in another repo, pointed at the page and told to migrate.
 - **Every step** must be one it can detect, apply and check without reading flow's source.
-
-## When it is needed
-
-- **`just release`** refuses until the page for the version it would cut exists. `just release-dry` prints that version.
-- **The house pack** refuses a commit whose `package.json` version has no page.
-- **The index:** add the page to the table in `docs/user/migrations/index.md`.
 
 ## Find what changed
 

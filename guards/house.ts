@@ -528,7 +528,7 @@ export const house = definePack("house", (repo: Terrain) => ({
       return (await ctx.fs.exists(guide)) ? ctx.ok() : ctx.fail(`package.json is at ${version}, and ${guide} does not exist`);
     })
     .message(
-      "This version has no migration guide. Write docs/user/migrations/<version>.md — what a repo that uses flow must change to upgrade to it, as numbered steps an agent can follow, in the format .claude/skills/migration-guide/SKILL.md gives — link it from docs/user/migrations/index.md, and stage it with this commit. `just release` asks the same before it writes anything.",
+      "This version has no migration guide. Write docs/user/migrations/<version>.md — what a repo that uses flow must change to upgrade to it, as numbered steps an agent can follow, in the format .claude/skills/release/migration-guide.md gives — link it from docs/user/migrations/index.md, and stage it with this commit. `just release` asks the same before it writes anything.",
     )
     .test({
       pass: [
