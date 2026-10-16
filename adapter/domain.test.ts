@@ -20,6 +20,7 @@ import { join, posix } from "node:path";
 import type { TurnAction } from "../index.ts";
 import { metrics, momentsView, type Block, type Bound, type Row } from "../engine/domain.ts";
 import { missingGrammarText } from "../checks/domain.ts";
+import { parseCommandLine, parseShellSteps } from "../language/domain.ts";
 import { matchAny } from "../glob.ts";
 import {
   ALLOW,
@@ -280,28 +281,45 @@ describe("the would-be file, rebuilt in memory before disk", () => {
 
 describe("a Bash line's delete targets", () => {
   it("reads rm, git rm, and the SOURCE side of mv and git mv", () => {
-    expect(deleteTargets("rm -rf secret/a.ts b.ts")).toStrictEqual(["secret/a.ts", "b.ts"]);
-    expect(deleteTargets("git rm secret/a.ts")).toStrictEqual(["secret/a.ts"]);
-    expect(deleteTargets("mv secret/a.ts elsewhere/a.ts")).toStrictEqual(["secret/a.ts"]);
-    expect(deleteTargets("git mv secret/a.ts elsewhere/a.ts"), "git mv was the old blind spot").toStrictEqual([
+    expect(deleteTargets(parseCommandLine("rm -rf secret/a.ts b.ts"))).toStrictEqual(["secret/a.ts", "b.ts"]);
+    expect(deleteTargets(parseCommandLine("git rm secret/a.ts"))).toStrictEqual(["secret/a.ts"]);
+    expect(deleteTargets(parseCommandLine("mv secret/a.ts elsewhere/a.ts"))).toStrictEqual(["secret/a.ts"]);
+    expect(deleteTargets(parseCommandLine("git mv secret/a.ts elsewhere/a.ts")), "git mv was the old blind spot").toStrictEqual([
       "secret/a.ts",
     ]);
   });
 
   it("reads every sub-command of a chained line, and no others", () => {
-    expect(deleteTargets("just build && rm dist/a.js")).toStrictEqual(["dist/a.js"]);
-    expect(deleteTargets("echo 'rm a.ts'"), "a quoted mention is not a command").toStrictEqual([]);
-    expect(deleteTargets("git commit -m 'rm the thing'")).toStrictEqual([]);
+    expect(deleteTargets(parseCommandLine("just build && rm dist/a.js"))).toStrictEqual(["dist/a.js"]);
+    expect(deleteTargets(parseCommandLine("echo 'rm a.ts'")), "a quoted mention is not a command").toStrictEqual([]);
+    expect(deleteTargets(parseCommandLine("git commit -m 'rm the thing'"))).toStrictEqual([]);
   });
 
   it("stands aside on a line it cannot tokenise, rather than guessing", () => {
     // null from the tokeniser means "I cannot tell". A guard that guesses at a line it could not
     // parse is worse than one that stands aside — and the command rail still sees the raw line.
-    expect(deleteTargets("rm 'unclosed")).toStrictEqual([]);
+    expect(deleteTargets(parseCommandLine("rm 'unclosed"))).toStrictEqual([]);
   });
 
   it("does not read a rename with only a destination as a removal", () => {
-    expect(deleteTargets("mv onlyone")).toStrictEqual([]);
+    expect(deleteTargets(parseCommandLine("mv onlyone"))).toStrictEqual([]);
+  });
+
+  it("reads the removers' own arguments in the parse, never a heredoc body or another command's quoted argument", () => {
+    // A file written from a heredoc that names an `rm`, and a script fed to python on stdin.
+    expect(deleteTargets(parseCommandLine("cat > notes.md <<'EOF'\nrm secret/a.ts\nEOF"))).toStrictEqual([]);
+    expect(deleteTargets(parseCommandLine("python3 - <<'PY'\nimport os; os.system('rm secret/a.ts')\nPY"))).toStrictEqual([]);
+    expect(deleteTargets(parseCommandLine('gh issue comment 1 --body "then rm secret/a.ts and git rm b.ts"'))).toStrictEqual([]);
+    // …while an rm that RUNS is read wherever it sits: a substitution, a string given to a shell,
+    // a heredoc a shell reads, and past a wrapper.
+    expect(deleteTargets(parseCommandLine('echo "$(rm a.ts)"; bash -c "rm b.ts"; sudo rm c.ts'))).toStrictEqual(["a.ts", "b.ts", "c.ts"]);
+    expect(deleteTargets(parseCommandLine("bash <<'EOF'\nrm a.ts\nEOF"))).toStrictEqual(["a.ts"]);
+  });
+
+  it("reads git's own options before its subcommand, and a file after `--` that looks like a flag", () => {
+    expect(deleteTargets(parseCommandLine("git -c core.x=y rm --cached a.ts"))).toStrictEqual(["a.ts"]);
+    expect(deleteTargets(parseCommandLine("rm -- -weird.ts"))).toStrictEqual(["-weird.ts"]);
+    expect(deleteTargets(null), "a line that does not parse").toStrictEqual([]);
   });
 });
 
@@ -310,7 +328,7 @@ describe("a Bash line's delete targets", () => {
 describe("bashReads — the files a Bash command reads, before it runs", () => {
   const HOME = "/home/me";
   const at = (command: string, cwd = ROOT, home: string | undefined = HOME): { reads: readonly string[]; searched: readonly string[] } =>
-    bashReads(command, { cwd, root: ROOT, home });
+    bashReads(parseShellSteps(command), { cwd, root: ROOT, home });
   const reads = (command: string, cwd = ROOT): readonly string[] => at(command, cwd).reads;
   const searched = (command: string, cwd = ROOT): readonly string[] => at(command, cwd).searched;
 
@@ -342,7 +360,7 @@ describe("bashReads — the files a Bash command reads, before it runs", () => {
   it("keeps a search apart from a read — its operands may be directories", () => {
     expect(at("rg -n TODO src docs")).toStrictEqual({ reads: [], searched: ["src", "docs"] });
     expect(at("grep -rn TODO src")).toStrictEqual({ reads: [], searched: ["src"] });
-    expect(at("find src -name '*.ts' -o ( -name x ) ! -path y")).toStrictEqual({ reads: [], searched: ["src"] });
+    expect(at("find src -name '*.ts' -o \\( -name x \\) ! -path y")).toStrictEqual({ reads: [], searched: ["src"] });
     expect(at("ls -la docs && du -sh lib && tree -L 2 pkg")).toStrictEqual({ reads: [], searched: ["docs", "lib", "pkg"] });
   });
 
@@ -356,7 +374,7 @@ describe("bashReads — the files a Bash command reads, before it runs", () => {
   });
 
   it("stops find's paths at its expression", () => {
-    expect(searched("find src lib ( -name x )")).toStrictEqual(["src", "lib"]);
+    expect(searched("find src lib \\( -name x \\)")).toStrictEqual(["src", "lib"]);
     expect(searched("find src ! -name x")).toStrictEqual(["src"]);
   });
 
@@ -380,12 +398,21 @@ describe("bashReads — the files a Bash command reads, before it runs", () => {
     expect(reads("cat <<-EOF\n\tcat inside.ts\n\tEOF\ncat after.ts")).toStrictEqual(["after.ts"]);
     // A body that never closes runs to the end of the line, and names nothing.
     expect(reads("cat <<EOF\ncat inside.ts")).toStrictEqual([]);
-    // A `<<` with no delimiter after it is not a heredoc.
-    expect(reads("cat a.ts <<")).toStrictEqual(["a.ts"]);
+    // A `<<` with no delimiter after it does not parse, and names nothing.
+    expect(reads("cat a.ts <<")).toStrictEqual([]);
     // …but a body a SHELL reads is commands, and what they read is read.
     expect(reads("bash <<'EOF'\ncat inside.ts\nEOF\ncat after.ts")).toStrictEqual(["inside.ts", "after.ts"]);
     // A heredoc inside a `$(…)` is skipped there too, apostrophes and all.
     expect(reads("echo \"$(cat <<'EOF'\ndon't cat x.ts\nEOF\n)\"; cat after.ts")).toStrictEqual(["after.ts"]);
+  });
+
+  it("never reads a path in a heredoc body, or in a quoted argument of a command that is not a reader", () => {
+    expect(at("cat > notes.md <<'EOF'\ncat src/a.ts\ngrep -r x src\nEOF")).toStrictEqual({ reads: [], searched: [] });
+    expect(at("git commit -F - <<'EOF'\nfix: read src/a.ts\nEOF")).toStrictEqual({ reads: [], searched: [] });
+    expect(at("gh pr create --body 'see `cat src/a.ts` and src/b.ts'")).toStrictEqual({ reads: [], searched: [] });
+    // …but a backtick inside DOUBLE quotes runs, and what it runs reads.
+    expect(at('gh pr create --body "see `cat src/a.ts`"')).toStrictEqual({ reads: ["src/a.ts"], searched: [] });
+    expect(at("echo 'cat src/a.ts' | tee /dev/null")).toStrictEqual({ reads: [], searched: [] });
   });
 
   it("does not read a quoted operator as a separator, or a quoted word as a command", () => {
@@ -424,8 +451,8 @@ describe("bashReads — the files a Bash command reads, before it runs", () => {
     expect(reads("for f in a.ts b.ts; do head -c 3 $f; done")).toStrictEqual(["a.ts", "b.ts"]);
     expect(reads("for f in a.ts $(ls); do\n  cat $f\ndone")).toStrictEqual(["a.ts"]);
     expect(reads("for f; do cat $f; done; cat z.ts")).toStrictEqual(["z.ts"]);
-    // Unclosed, the loop still ends with the line.
-    expect(reads("for f in a.ts; do cat $f")).toStrictEqual(["a.ts"]);
+    // Unclosed, the loop does not parse, and names nothing.
+    expect(reads("for f in a.ts; do cat $f")).toStrictEqual([]);
   });
 
   it("reads what a `$(…)`, a backquote or a `<(…)` runs, without guessing at what it prints", () => {
@@ -433,14 +460,15 @@ describe("bashReads — the files a Bash command reads, before it runs", () => {
     expect(reads("echo `cat a.ts` \"$(cat b.ts)\" \"`cat c.ts`\"")).toStrictEqual(["a.ts", "b.ts", "c.ts"]);
     expect(reads("diff <(sort a.txt) >(cat) <(sort b.txt)")).toStrictEqual(["a.txt", "b.txt"]);
     expect(reads('echo "$(printf "%s" "x")"; cat a.ts')).toStrictEqual(["a.ts"]);
-    expect(reads("echo $(echo (nested) 'q)' \\)); cat a.ts")).toStrictEqual(["a.ts"]);
+    expect(reads("echo $(echo \\(nested\\) 'q)' \\)); cat a.ts")).toStrictEqual(["a.ts"]);
   });
 
   it("peels the wrappers off the command they run", () => {
     expect(searched("timeout -s KILL 60 rg x src")).toStrictEqual(["src"]);
     expect(reads("env -u X A=1 cat a.ts")).toStrictEqual(["a.ts"]);
     expect(reads("nice -n 5 nohup time cat a.ts")).toStrictEqual(["a.ts"]);
-    expect(reads("xargs -a list.txt -n 1 grep -l x")).toStrictEqual(["list.txt"]);
+    // The parse steps past xargs to the program it runs, so the list it reads is not read here.
+    expect(reads("xargs -a list.txt -n 1 grep -l x src/a.ts")).toStrictEqual(["src/a.ts"]);
     expect(reads("command -v cat a.ts")).toStrictEqual([]);
     expect(reads("command cat a.ts")).toStrictEqual(["a.ts"]);
     expect(reads("timeout 5")).toStrictEqual([]);
@@ -489,7 +517,7 @@ describe("bashReads — the files a Bash command reads, before it runs", () => {
     let found = 0;
     let labelled = 0;
     for (const entry of corpus) {
-      const got = bashReads(entry.command, { cwd: entry.cwd, root: "", home: "/Users/jawache" });
+      const got = bashReads(parseShellSteps(entry.command), { cwd: entry.cwd, root: "", home: "/Users/jawache" });
       const named = new Set([...got.reads, ...got.searched].map((p) => `/${p}`));
       const want = new Set(entry.reads.map((p) => posix.resolve(entry.cwd, p)));
       labelled += want.size;
@@ -510,7 +538,7 @@ describe("bashReads — the files a Bash command reads, before it runs", () => {
     expect(reads("{ cat a.ts; } 2>&1 | head; ! cat b.ts")).toStrictEqual(["a.ts", "b.ts"]);
     expect(reads("f() { cat a.ts; }; f")).toStrictEqual(["a.ts"]);
     expect(reads("case $x in a) cat a.ts;; esac; cat b.ts")).toStrictEqual(["a.ts", "b.ts"]);
-    expect(reads("done; cat a.ts) ; (cat b.ts")).toStrictEqual(["a.ts", "b.ts"]);
+    expect(reads("done; cat a.ts) ; (cat b.ts"), "a line that does not parse").toStrictEqual([]);
     expect(reads("cat a.ts & cat b.ts || cat c.ts |& cat")).toStrictEqual(["a.ts", "b.ts", "c.ts"]);
   });
 });
