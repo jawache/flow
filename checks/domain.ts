@@ -567,7 +567,8 @@ function boundAt(node: SgNode, field: string): SgNode[] {
  *
  * An `export const` is read as every name it binds: each declarator of `export const a = 1, b = 2`,
  * and each name a destructuring pattern binds. A declarator with a type annotation is left out,
- * destructured or not.
+ * destructured or not, and so is an ambient `export declare const`: the declaration sits under an
+ * `ambient_declaration`, not directly under the export, so it is never matched.
  *
  * A real parser rather than a regex, because `export const x = …` inside a string or a comment is
  * exactly the false positive that teaches people to ignore a rule. Parsing is not reaching the
@@ -592,7 +593,7 @@ export async function exportedNames(content: string): Promise<string[]> {
     },
   });
   for (const d of declarators) {
-    if (d.field("value") !== null && d.field("type") === null) named.push(...boundAt(d, "name"));
+    if (d.field("type") === null) named.push(...boundAt(d, "name"));
   }
   const found = named.map((n) => ({ at: n.range().start.index, name: n.text() }));
   return [...new Set(found.sort((a, b) => a.at - b.at).map((f) => f.name))];
