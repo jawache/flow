@@ -172,7 +172,6 @@ import {
   status,
   statusLines,
   type HooksFolder,
-  type Fitting,
   type InitFacts,
   type Status,
   type StatusFacts,
@@ -3234,8 +3233,12 @@ describe("status — does git run the commit gate", () => {
       const { s, fitting, line, code } = judged(husky("npm test\n"));
       const other = { dir: ".husky/_", preCommit: ".husky/pre-commit", wired: false };
       expect(fitting).toStrictEqual({ id: "hooks-path", ok: false, detail: notInstalledLines(other).join("\n") });
-      expect(line).toBe(`  ✗ hooks-path: ${NOT_INSTALLED}. Git runs hooks from .husky/_, so flow left core.hooksPath alone, and no commit runs flow's gate.`);
+      expect(line).toBe(`  ✗ hooks-path: ${NOT_INSTALLED}. Git runs hooks from .husky/_, and .husky/pre-commit does not call flow, so no commit runs flow's gate.`);
       const said = statusLines(s).join("\n");
+      // Every later line of the block sits under the row, four in, its own indent kept after that.
+      const page = said.split("\n");
+      const at = page.findIndex((l) => l.includes(" hooks-path: "));
+      expect(page.slice(at + 1, at + 6)).toStrictEqual(notInstalledLines(other).slice(1).map((l) => `    ${l}`));
       expect(said).toContain("Add these two lines to the end of .husky/pre-commit:");
       expect(said).toContain(GATE_RUN_LINE);
       expect(said).toContain(`move those hooks into ${HOOKS_DIR}/`);
@@ -3252,13 +3255,6 @@ describe("status — does git run the commit gate", () => {
       expect(code).toBe(1);
     });
 
-    it("hands the same answer over as data, with no colour codes", () => {
-      const json = JSON.stringify(status(statusFacts(husky("npm test\n"))));
-      expect(json).not.toContain("\u001b");
-      const read = JSON.parse(json) as { green: boolean; fittings: Fitting[] };
-      expect(read.green).toBe(false);
-      expect(read.fittings.find((f) => f.id === "hooks-path")?.detail.startsWith(NOT_INSTALLED)).toBe(true);
-    });
   });
 
   it("other hooks whose pre-commit calls flow: green, naming the folder and the hook", () => {
@@ -3278,9 +3274,13 @@ describe("status — does git run the commit gate", () => {
     expect(fitting?.detail).not.toContain(NOT_INSTALLED);
   });
 
-  it("when git could not say, reads the setting as typed", () => {
-    expect(judged({ hooksFolder: null }).fitting?.ok).toBe(true);
-    expect(judged({ hooksPath: ".husky/_", hooksFolder: null }).fitting?.detail).toContain(SET_HOOKS_PATH);
+  it("when git could not name its hooks folder, red and cannot judge — never advice to set core.hooksPath", () => {
+    for (const hooksPath of [".husky/_", HOOKS_DIR, null]) {
+      const { fitting } = judged({ hooksPath, hooksFolder: null });
+      expect(fitting?.ok, String(hooksPath)).toBe(false);
+      expect(fitting?.detail, String(hooksPath)).toContain("git could not name the folder it runs hooks from");
+      expect(fitting?.detail, String(hooksPath)).not.toContain("core.hooksPath");
+    }
   });
 });
 

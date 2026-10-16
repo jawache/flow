@@ -3788,6 +3788,11 @@ export function otherHooks(hooksPath: string | null, folder: HooksFolder): Other
 /** The words the block opens with, fixed by the docs, for every reader that looks for them. */
 export const NOT_INSTALLED = "FLOW IS NOT INSTALLED";
 
+/** Other hooks whose pre-commit calls flow, in the ONE wording init's note and status's line share. */
+export function wiredLine(other: OtherHooks): string {
+  return `git runs hooks from ${other.dir}, and ${other.preCommit} calls flow`;
+}
+
 /**
  * The message for other hooks that do not call flow, in the ONE wording init's block and status's
  * line share: the folder git runs hooks from, and the two ways to finish. Init never takes either
@@ -3795,7 +3800,7 @@ export const NOT_INSTALLED = "FLOW IS NOT INSTALLED";
  */
 export function notInstalledLines(other: OtherHooks): string[] {
   return [
-    `${NOT_INSTALLED}. Git runs hooks from ${other.dir}, so flow left core.hooksPath alone, and no commit runs flow's gate.`,
+    `${NOT_INSTALLED}. Git runs hooks from ${other.dir}, and ${other.preCommit} does not call flow, so no commit runs flow's gate.`,
     "Finish the install in one of two ways, then run `flow init` again:",
     `  - Add these two lines to the end of ${other.preCommit}:`,
     `      ${GATE_LOCAL_LINE}`,
@@ -4079,7 +4084,7 @@ export function initLines(plan: InitPlan, failures: readonly string[], colour = 
         `Fix the JSON (a trailing comma, or a // comment) and run \`flow init\` again. Until then no rail fires.`,
     );
   if (plan.otherHooks?.wired === true)
-    lines.push(`  · git runs hooks from ${plan.otherHooks.dir}, and ${plan.otherHooks.preCommit} calls flow, so core.hooksPath was left as it is.`);
+    lines.push(`  · ${wiredLine(plan.otherHooks)}, so core.hooksPath was left as it is.`);
   for (const failure of failures) lines.push(`  ✗ ${failure}`);
   lines.push("  next: `flow status` — what is bound, and what is not wired yet.");
   // LAST, so it is what is left on the screen: a muted `·` note is too quiet for a commit gate git
@@ -4417,10 +4422,16 @@ export function hostPath(dirs: readonly string[], root: string): string[] {
  */
 function hooksPathFitting(facts: Pick<StatusFacts, "hooksPath" | "hooksFolder">): Fitting {
   const folder = facts.hooksFolder;
-  // When git could not say, the setting as typed is all there is to read.
-  if (folder === null ? facts.hooksPath === HOOKS_DIR : folder.dir === HOOKS_DIR)
-    return { id: "hooks-path", ok: true, detail: `core.hooksPath = ${HOOKS_DIR}` };
-  const other = folder === null ? null : otherHooks(facts.hooksPath, folder);
+  // CANNOT JUDGE, so no advice. The setting as typed says nothing about what is in the folder, and
+  // telling a husky repo to set `core.hooksPath` is the very advice that turns husky off.
+  if (folder === null)
+    return {
+      id: "hooks-path",
+      ok: false,
+      detail: "git could not name the folder it runs hooks from, so flow cannot tell whether a commit runs its gate. Run `git rev-parse --git-path hooks` here to see why.",
+    };
+  if (folder.dir === HOOKS_DIR) return { id: "hooks-path", ok: true, detail: `core.hooksPath = ${HOOKS_DIR}` };
+  const other = otherHooks(facts.hooksPath, folder);
   if (other === null)
     return {
       id: "hooks-path",
@@ -4428,7 +4439,7 @@ function hooksPathFitting(facts: Pick<StatusFacts, "hooksPath" | "hooksFolder">)
       detail: `core.hooksPath is ${facts.hooksPath ?? "unset"} — run \`${SET_HOOKS_PATH}\`. It is per-clone, so every fresh checkout needs it.`,
     };
   return other.wired
-    ? { id: "hooks-path", ok: true, detail: `git runs hooks from ${other.dir}, and ${other.preCommit} calls flow` }
+    ? { id: "hooks-path", ok: true, detail: wiredLine(other) }
     : { id: "hooks-path", ok: false, detail: notInstalledLines(other).join("\n") };
 }
 
@@ -4603,7 +4614,9 @@ export function statusLines(s: Status): string[] {
     for (const entry of entries) lines.push(...entryLines(entry));
   }
 
-  for (const fitting of s.fittings) lines.push(`  ${fitting.ok ? "✓" : "✗"} ${fitting.id}: ${fitting.detail}`);
+  // A detail of several lines keeps its later lines UNDER its row, so they never read as rows of their own.
+  for (const fitting of s.fittings)
+    lines.push(`  ${fitting.ok ? "✓" : "✗"} ${fitting.id}: ${fitting.detail.split("\n").join(`\n${DETAIL_INDENT}`)}`);
   for (const refusal of s.refusals) lines.push(`  ✗ ${refusal.code}: ${refusal.detail}`);
   for (const id of s.dark)
     lines.push(
@@ -4617,6 +4630,9 @@ export function statusLines(s: Status): string[] {
   );
   return lines;
 }
+
+/** Where a fitting's later lines start: under its id, past the `  ✗ ` of its row. */
+const DETAIL_INDENT = "    ";
 
 const count = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
 
