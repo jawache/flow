@@ -567,6 +567,11 @@ describe("exportedNames", () => {
     expect(names).toEqual(["p", "r", "s", "u", "w", "z"]);
   });
 
+  it("never reads a const inside an exported function's body as an export", async () => {
+    const names = await exportedNames("export function f(){ const inner = 1; }\nexport const g = () => { const [h] = a; };");
+    expect(names).toEqual(["f", "g"]);
+  });
+
   it("leaves out an export const with a type annotation, destructured or not, and an export let", async () => {
     const names = await exportedNames("export const a: number = 1;\nexport const { b }: T = o;\nexport let c = 1;\nexport const d = 2;");
     expect(names).toEqual(["d"]);
