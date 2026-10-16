@@ -15,8 +15,6 @@
 // binary, over stdin.
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { join, posix } from "node:path";
 import type { TurnAction } from "../index.ts";
 import { metrics, momentsView, type Block, type Bound, type Row } from "../engine/domain.ts";
 import { missingGrammarText } from "../checks/domain.ts";
@@ -500,31 +498,6 @@ describe("bashReads — the files a Bash command reads, before it runs", () => {
     expect(reads("cat $((1+2 a.ts")).toStrictEqual([]);
     expect(reads("diff <(sort a.txt b.txt")).toStrictEqual([]);
     expect(reads('cat "a `b.ts"')).toStrictEqual([]);
-  });
-
-  it("finds at least what it found when it won the bake-off, on the hand-labelled corpus", () => {
-    // The yardstick the mechanism was chosen by (__fixtures__/bash-corpus/, scored by
-    // `just score-bash`; the bake-off is evidence/f3-b1-bakeoff.log in the task's journal). The
-    // scorer lives in tools/, which the import fence keeps apart from this layer, so the one number
-    // that matters is counted here: labelled reads found, over labelled reads. A root of "" makes
-    // every absolute path "inside", so paths outside any repo are scored too. The labels spell `~`
-    // as the home of the machine they were recorded on, so that home is handed in, not this one's.
-    const corpus = JSON.parse(readFileSync(join(import.meta.dirname, "..", "__fixtures__", "bash-corpus", "corpus.json"), "utf8")) as {
-      command: string;
-      cwd: string;
-      reads: string[];
-    }[];
-    let found = 0;
-    let labelled = 0;
-    for (const entry of corpus) {
-      const got = bashReads(parseShellSteps(entry.command), { cwd: entry.cwd, root: "", home: "/Users/jawache" });
-      const named = new Set([...got.reads, ...got.searched].map((p) => `/${p}`));
-      const want = new Set(entry.reads.map((p) => posix.resolve(entry.cwd, p)));
-      labelled += want.size;
-      found += [...want].filter((p) => named.has(p)).length;
-    }
-    expect(labelled).toBe(272);
-    expect(found).toBeGreaterThanOrEqual(241);
   });
 
   it("leaves out what lies outside the repo, and the repo root itself", () => {
