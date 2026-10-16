@@ -44,6 +44,8 @@ import {
   CONFIG_FILE,
   GATE_PATH,
   HOOKS_DIR,
+  hooksDirOf,
+  initCode,
   initLines,
   lastMode,
   literalScopes,
@@ -59,11 +61,14 @@ import {
   hostPath,
   pathLines,
   planInit,
+  preCommitOf,
   settingsFileFor,
   status,
   statusCode,
   statusLines,
   steerOf,
+  wantsColour,
+  type HooksFolder,
   type InitFacts,
   type InitPlan,
   type StatusFacts,
@@ -146,10 +151,13 @@ function resolves(root: string): boolean {
   }
 }
 
-/** Is there a `flow` this user can run in that folder? What a shell looking it up by name asks. */
-function hasFlow(dir: string): boolean {
+/**
+ * Can this user run the file at that path? What git asks before it runs a hook, and what a shell
+ * looking `flow` up by name asks of each folder on the PATH.
+ */
+function executable(path: string): boolean {
   try {
-    accessSync(join(dir, "flow"), constants.X_OK);
+    accessSync(path, constants.X_OK);
     return true;
   } catch {
     return false;
@@ -164,6 +172,35 @@ function hooksPath(root: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * The folder git runs hooks from, what is in it, and the pre-commit hook a person edits for it.
+ *
+ * `git rev-parse --git-path hooks` is git's own answer: `core.hooksPath` when it is set, with `~`
+ * expanded, and `.git/hooks` when it is not. That is the shared git directory in a worktree, whose
+ * `.git` is a file. `hooksDirOf` spells it the way a person would type it. Null when git cannot say.
+ */
+function hooksFolder(root: string): HooksFolder | null {
+  let said: string;
+  try {
+    said = execFileSync("git", ["-C", root, "rev-parse", "--git-path", "hooks"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    return null;
+  }
+  if (said === "") return null;
+  const dir = hooksDirOf(root, said);
+  const at = resolve(root, dir);
+  let files: string[] = [];
+  try {
+    files = readdirSync(at, { withFileTypes: true })
+      .filter((entry) => !entry.isDirectory())
+      .map((entry) => entry.name);
+  } catch {
+    /* no folder there yet: git runs nothing from it */
+  }
+  const preCommit = preCommitOf(dir);
+  return { dir, files, preCommitText: readText(root, preCommit), preCommitExecutable: executable(resolve(root, preCommit)) };
 }
 
 /**
@@ -245,6 +282,7 @@ function initFacts(root: string, empty: boolean): InitFacts {
     gateText: readText(root, GATE_PATH),
     hasFlowDir: existsSync(join(root, FLOW_DIR)),
     hooksPath: hooksPath(root),
+    hooksFolder: hooksFolder(root),
     settingsPath,
     settings: read.value,
     settingsUnreadable: read.unreadable,
@@ -332,11 +370,11 @@ export function runInit(cwd: string, args: readonly string[]): VerbResult {
   const plan = planInit(initFacts(root, args.includes("--empty")));
   const failures = perform(root, plan);
   return {
-    stdout: `${initLines(plan, failures).join("\n")}\n`,
+    // `flow.ts` writes this to the process's own stdout, so that is the terminal asked about.
+    // `isTTY` is undefined, not false, on a stream that is not a terminal, whatever its type says.
+    stdout: `${initLines(plan, failures, wantsColour(process.stdout.isTTY, process.env["NO_COLOR"])).join("\n")}\n`,
     stderr: "",
-    // A setup command that could not finish must not answer 0 — a script chaining `flow init && …`
-    // is asking exactly the question the failures answer.
-    exitCode: failures.length === 0 ? 0 : 1,
+    exitCode: initCode(plan, failures),
   };
 }
 
@@ -483,6 +521,7 @@ export async function runStatus(cwd: string, args: readonly string[]): Promise<V
     load: regime.kind === "loaded" ? regime.load : null,
     gateText: readText(root, GATE_PATH),
     hooksPath: hooksPath(root),
+    hooksFolder: hooksFolder(root),
     settingsPath,
     settings: parsedFile(root, settingsPath).value,
     machine: machineFile(root, settingsPath),
@@ -500,7 +539,7 @@ export async function runStatus(cwd: string, args: readonly string[]): Promise<V
     binary: {
       listed: listsFlow(readText(root, "package.json")),
       copy: existsSync(join(root, PACKAGE_BIN)),
-      path: hostPath((process.env["PATH"] ?? "").split(delimiter), root).some(hasFlow),
+      path: hostPath((process.env["PATH"] ?? "").split(delimiter), root).some((dir) => executable(join(dir, "flow"))),
     },
   };
 

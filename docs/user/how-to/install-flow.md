@@ -77,7 +77,11 @@ With a dev dependency, type each `flow` command in this guide as `npx flow`.
   exec flow hook commit
   ```
 
-- **If `core.hooksPath` already points at another folder**, such as `.husky/_`, move those hooks into `.githooks/` first. `flow init` sets `core.hooksPath` to `.githooks`, and git then stops running the hooks in the old folder.
+- **If git already runs other hooks**, such as husky's, `flow init` leaves them alone and prints `FLOW IS NOT INSTALLED`. Finish the install in one of two ways, then run `flow init` again:
+  - **With husky**, add the two lines from the previous variant to the end of `.husky/pre-commit`.
+  - **Otherwise**, move those hooks into `.githooks/`, then run `git config core.hooksPath .githooks`.
+
+  [When git already runs other hooks](../reference/cli.md#when-git-already-runs-other-hooks) lists what `flow init` counts as other hooks.
 - **If you cloned a repo that already uses flow**, run `flow init` in the clone. `core.hooksPath` is a setting of one clone, so each clone needs it. If the repo has flow as a dev dependency, run `npm install` first.
 - **If you want to work on flow itself**, clone it and run `just install`, then `just link`. That puts your checkout on your `PATH` in place of the global install.
 - **If you want flow off in one repo for a while**, create `.flow/off`. Every rule in that repo is off until you delete it.
