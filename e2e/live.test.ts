@@ -1287,6 +1287,118 @@ describe("a subagent's hand-back, at SubagentStop — the turn-end rules, for th
   });
 });
 
+describe("a turn-end note, shown when an agent hands back — at Stop and SubagentStop", () => {
+  // A repo of its own, because a turn-end note in the suite's shared config would ride every other
+  // hand-back above. One note, one turn-end rule, and a drift of 50,000 tokens.
+  let notes: string;
+  let ids = 0;
+  const NOTE = "# breadcrumb: notes.recap (first-touch)\nWrite the recap before you hand back.";
+
+  const usage = (tokens: number): string =>
+    JSON.stringify({ type: "assistant", message: { usage: { input_tokens: 10, cache_read_input_tokens: tokens } } });
+  const prompt = (content: string): string => JSON.stringify({ type: "user", message: { content } });
+  const wrote = (name: string): string =>
+    JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: "Write", input: { file_path: join(notes, name), content: "" } }] } });
+  const lines = (...each: string[]): string => `${each.join("\n")}\n`;
+
+  /** The main chat hands back, its transcript written first: a fresh session unless one is named. */
+  const stop = (own: readonly string[], over: Record<string, unknown> = {}, session = `note-${++ids}`): Ran => {
+    const path = join(notes, ".t", `${session}.jsonl`);
+    writeFileSync(path, lines(prompt("go"), ...own));
+    return runFlow(notes, ["hook", "stop"], {}, JSON.stringify({ session_id: session, transcript_path: path, hook_event_name: "Stop", stop_hook_active: false, ...over }));
+  };
+  /** The context a note is shown in, the whole JSON answer read back. */
+  const context = (ran: Ran): unknown => (ran.stdout === "" ? null : JSON.parse(ran.stdout));
+  const told = (event: string, note: string): unknown => ({ hookSpecificOutput: { hookEventName: event, additionalContext: note } });
+
+  beforeAll(() => {
+    notes = newRepo("flow-turn-note-");
+    mkdirSync(join(notes, ".t"), { recursive: true });
+    writeFileSync(
+      join(notes, "flow.config.ts"),
+      `import { breadcrumb, defineConfig, definePack, guardrail, pack, turnEnd } from ${JSON.stringify(join(PACKAGE, "index.ts"))};
+
+const notes = definePack("notes", {
+  recap: breadcrumb().at(turnEnd).text("Write the recap before you hand back."),
+
+  ranSomething: guardrail()
+    .at(turnEnd)
+    .check((ctx) => ((ctx.turn ?? []).length > 3 ? ctx.fail("four edits, nothing run") : ctx.ok()))
+    .message("You edited all turn and ran nothing. Run the suite before you hand back.")
+    .test({ pass: [{ actions: [] }], block: [{ actions: ["a", "b", "c", "d"].map((path) => ({ did: "edit" as const, path })) }] }),
+});
+
+export default defineConfig([pack(notes)], { driftTokens: 50_000 });
+`,
+    );
+  });
+
+  afterAll(() => {
+    rmSync(notes, { recursive: true, force: true });
+  });
+
+  it("is shown the first time an agent hands back, as additionalContext on the Stop and SubagentStop answers", () => {
+    const main = stop([usage(1_000)]);
+    expect(main.code, main.stderr).toBe(0);
+    expect(main.stderr).toBe("");
+    expect(context(main), "the main chat").toStrictEqual(told("Stop", NOTE));
+
+    const session = `note-${++ids}`;
+    const parent = join(notes, ".t", `${session}.jsonl`);
+    const own = join(notes, ".t", session, "subagents", "agent-asub1.jsonl");
+    mkdirSync(join(notes, ".t", session, "subagents"), { recursive: true });
+    writeFileSync(parent, lines(prompt("go")));
+    writeFileSync(own, lines(prompt("do the phase"), usage(1_000)));
+    const sub = runFlow(
+      notes,
+      ["hook", "subagent-stop"],
+      {},
+      JSON.stringify({
+        session_id: session,
+        transcript_path: parent,
+        hook_event_name: "SubagentStop",
+        stop_hook_active: false,
+        agent_id: "asub1",
+        agent_type: "Explore",
+        agent_transcript_path: own,
+      }),
+    );
+    expect(sub.code, sub.stderr).toBe(0);
+    expect(context(sub), "a subagent").toStrictEqual(told("SubagentStop", NOTE));
+  });
+
+  it("is shown again once the context has grown by driftTokens, and not before", () => {
+    const session = `note-${++ids}`;
+    expect(context(stop([usage(1_000)], {}, session)), "the first showing").toStrictEqual(told("Stop", NOTE));
+    const soon = stop([usage(50_999)], {}, session);
+    expect(soon.code).toBe(0);
+    expect(soon.stdout, "49,999 tokens on: not yet").toBe("");
+    expect(context(stop([usage(51_000)], {}, session)), "50,000 tokens on").toStrictEqual(
+      told("Stop", "# breadcrumb: notes.recap (drift)\nWrite the recap before you hand back."),
+    );
+  });
+
+  it("shows no note on a hand-back with stop_hook_active set, and so leaves it to show at the next", () => {
+    const session = `note-${++ids}`;
+    const held = stop([usage(1_000)], { stop_hook_active: true }, session);
+    expect(held.code).toBe(0);
+    expect(held.stdout).toBe("");
+    expect(held.stderr).toBe("");
+    expect(context(stop([usage(1_000)], {}, session)), "not marked shown").toStrictEqual(told("Stop", NOTE));
+  });
+
+  it("passes a refusal and a note at the same hand-back to the agent together", () => {
+    const session = `note-${++ids}`;
+    const held = stop([usage(1_000), wrote("a.ts"), wrote("b.ts"), wrote("c.ts"), wrote("d.ts")], {}, session);
+    expect(held.code).toBe(2);
+    expect(held.stdout).toBe("");
+    expect(held.stderr).toContain("flow — turn held open");
+    expect(held.stderr).toContain("You edited all turn and ran nothing.");
+    expect(held.stderr, "the note rides the refusal").toContain(NOTE);
+    expect(stop([usage(1_000)], {}, session).stdout, "and it was shown, so the next hand-back is quiet").toBe("");
+  });
+});
+
 describe("the off switch", () => {
   it("silences every rail, and writes no telemetry while it is off", () => {
     writeFileSync(join(repo, ".flow", "off"), "");
