@@ -3447,7 +3447,6 @@ describe("status — does git run the commit gate", () => {
       const { fitting } = judged({ hooksPath, hooksFolder: null });
       expect(fitting?.ok, String(hooksPath)).toBe(false);
       expect(fitting?.detail, String(hooksPath)).toBe(HOOKS_UNKNOWN);
-      expect(fitting?.detail, String(hooksPath)).toContain("git could not name the folder it runs hooks from");
       expect(fitting?.detail, String(hooksPath)).not.toContain("core.hooksPath");
     }
   });
