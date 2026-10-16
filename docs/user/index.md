@@ -43,7 +43,7 @@ For you if flow already runs and you have one task to finish: each guide gives t
 
 For you when you need an exact command, verb, moment or field: each page describes one part of flow.
 
-- [The flow command](./reference/cli.md): every `flow` command, what `flow init` writes, the two switch files and the exit codes.
+- [The flow command](./reference/cli.md): every `flow` command, what `flow init` writes and `flow uninstall` removes, the two switch files and the exit codes.
 - [The config](./reference/config.md): `flow.config.ts`, its settings, every verb of a guardrail and a breadcrumb, cases, categories, and what the loader refuses.
 - [Moments](./reference/moments.md): the seven moments a rule runs at, and when each one happens.
 - [The ctx a check reads](./reference/ctx.md): the contract a check is written to, and every field of `ctx` at each moment.
