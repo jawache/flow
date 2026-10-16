@@ -74,7 +74,6 @@ import {
   textBan,
   unansweredText,
   unreferenced,
-  GIT_VALUE_OPTS,
   type CanonOptions,
   type ChangeGroup,
   type Dialect,
@@ -762,7 +761,6 @@ describe("gitCommand", () => {
     const [g] = git("git -C /repo commit -m x");
     expect([g?.globals, g?.subcommand, g?.args]).toEqual([["-C", "/repo"], "commit", ["-m", "x"]]);
     expect(git("git commit -C HEAD")[0]?.globals, "`commit -C HEAD` reuses a message, it names no directory").toEqual([]);
-    expect(GIT_VALUE_OPTS.has("-C"), "…while `git -C dir` is git's own option, and takes its value").toBe(true);
     expect(git("git --version")[0]?.subcommand).toBeNull();
   });
 
