@@ -42,6 +42,7 @@ import {
   type BreadcrumbMoment,
   type Ctx,
   type EntrySpec,
+  type LoadedEntry,
   type ExecResult,
   type GuardrailMoment,
   type LoadResult,
@@ -55,12 +56,15 @@ import {
 } from "../language/domain.ts";
 import {
   covers,
+  fires,
   FLOW_DIR,
   formatBlock,
   insideRepo,
   momentsView,
+  namedAgent,
   universe,
   watching,
+  type AgentOf,
   type Block,
   type Bound,
   type Cause,
@@ -178,6 +182,7 @@ export const HOOK_EVENTS = [
   "post-tool-use",
   "post-tool-use-failure",
   "stop",
+  "subagent-stop",
   "notification",
 ] as const;
 export type HookEvent = (typeof HOOK_EVENTS)[number];
@@ -193,6 +198,7 @@ const HOST_EVENT: Record<HookEvent, string> = {
   "post-tool-use": "PostToolUse",
   "post-tool-use-failure": "PostToolUseFailure",
   stop: "Stop",
+  "subagent-stop": "SubagentStop",
   notification: "Notification",
 };
 
@@ -204,27 +210,41 @@ const HOST_EVENT: Record<HookEvent, string> = {
  *
  *   · `commit` is delivered, but not by the harness — git's pre-commit hook calls `flow hook
  *     commit`, which is why every harness gets the gates for free and why it is in this list at all.
- *   · turn-end BRIEFING is not delivered. Stop's decision object carries no context channel, so a
- *     `breadcrumb().at(turnEnd)` has nowhere to be shown; the guardrail rail at that moment works
- *     perfectly. Reporting an entry that goes dark is `flow status`'s job (F6).
+ *   · turn-end BRIEFING is delivered, on the `Stop` and `SubagentStop` answers'
+ *     `additionalContext`: the host labels it hook feedback rather than an error, and the agent
+ *     takes one more turn to read it. A refusal at the same hand-back carries the note beside it
+ *     (`toResult`), so the agent is held and told at once rather than held, then told on the next.
  *   · command BRIEFING is delivered, on the same PreToolUse answer the command guardrails use: when
  *     nothing blocks, the hook's `additionalContext` carries the note, and when something does, the
  *     refusal wins — which is the right order, since a blocked command is not about to run. The
  *     files a Bash command reads ride that same answer as touches (`bashReads`), so an area's note
  *     arrives before the output does.
  *
- * It is two lists rather than one because "turn-end" is a word in both vocabularies and the answer
- * differs between them — a single flat list could only lie about one of them.
+ * It is two lists rather than one because a moment is delivered for a KIND of entry: `command` and
+ * `turn-end` are words in both vocabularies, and another harness may carry one rail there and not
+ * the other — a single flat list could only lie about one of them.
  */
 export const DELIVERS = {
   guard: ["write", "delete", "command", "commit", "turn-end"] as readonly GuardrailMoment[],
-  brief: ["session", "touch", "command"] as readonly BreadcrumbMoment[],
+  brief: ["session", "touch", "command", "turn-end"] as readonly BreadcrumbMoment[],
 };
 
+/**
+ * Does a note at this moment ride a refusal, rather than wait for the call that runs?
+ *
+ * Before a call, a refusal means the call never runs, so a note about it is held back until the
+ * retry that does — and is not marked shown, or it would stay silent until drift. A held turn is
+ * different: the agent is about to act on the refusal anyway, and the note is about that same
+ * turn, so both go to it together.
+ */
+export function ridesRefusal(moment: BreadcrumbMoment): boolean {
+  return moment === "turn-end";
+}
+
 // `delivers` — the reader of the two lists — lives with `flow status`, its only caller, at the foot
-// of this file. It takes the entry's KIND as well as the moment, and it has to: `turn-end` is a word
-// in both vocabularies, so a reader that took the moment alone would answer "delivered" for a
-// breadcrumb bound there, which is the single lie these two lists exist to prevent.
+// of this file. It takes the entry's KIND as well as the moment, and it has to: a moment that is a
+// word in both vocabularies may be delivered for one kind only, and a reader that took the moment
+// alone would answer "delivered" for the other, which is the single lie these two lists prevent.
 
 /**
  * Whatever the host put there, as a string — a payload field is JSON and may be anything.
@@ -285,8 +305,14 @@ export interface EventWorld {
   readonly root: string;
   /** A file as it stands right now, or null when it is not there — an Edit is a diff against it. */
   readonly read: (path: string) => string | null;
-  /** What the actor did this turn. Only `stop` asks, so only `stop` pays for it. */
+  /** What the actor did this turn. Only the two turn-end rails ask, so only they pay for it. */
   readonly turn?: (() => readonly TurnAction[]) | undefined;
+  /**
+   * The agent the SESSION itself runs as (`--agent`, or the `agent` setting), or null when it runs
+   * as none. Only `subagent-stop` asks, and only of a payload that names an agent type, because it
+   * costs the parent's transcript: it is how an internal agent's hand-back is told from a subagent's.
+   */
+  readonly sessionAgent?: (() => string | null) | undefined;
   /** The home directory, for a Bash read through `~`. Absent, such a path is simply not named. */
   readonly home?: string | undefined;
   /**
@@ -835,10 +861,19 @@ export function toEvent(hook: HookEvent, payload: HookPayload, world: EventWorld
     }
 
     case "stop":
+    case "subagent-stop":
       // The host's OWN loop-breaker, honoured: a stop hook already held this turn open once and the
       // agent carried on, so blocking again is how a session gets wedged inside its own rule.
       if (payload.stop_hook_active === true) return [];
-      return [{ rail: "guard", moment: "turn-end", turn: world.turn?.() ?? [] }];
+      // A HAND-BACK NOBODY SPAWNED. The host's own agents send SubagentStop too; they run no rule.
+      if (hook === "subagent-stop" && internalAgent(payload, world.sessionAgent ?? (() => null))) return [];
+      // The turn is the one this agent took: the shell reads it from the agent's own transcript,
+      // a subagent's own under its parent's, never the parent's. The guard event comes first, as on
+      // every rail, and the note rides the same answer — beside a refusal too (`ridesRefusal`).
+      return [
+        { rail: "guard", moment: "turn-end", turn: world.turn?.() ?? [] },
+        { rail: "brief", moment: "turn-end" },
+      ];
 
     case "notification":
       // Registered, and it carries no flow moment: `Notification` says the human is wanted, which
@@ -846,6 +881,43 @@ export function toEvent(hook: HookEvent, payload: HookPayload, world: EventWorld
       // registration is answered deliberately rather than falling through an unknown-event path.
       return [];
   }
+}
+
+/**
+ * Is this SubagentStop an internal agent's — one the host runs for its own features (prompt
+ * suggestions, `/btw` side questions) rather than a subagent the session spawned?
+ *
+ * The host's hooks reference says how to tell: such a payload's `agent_type` is the agent name the
+ * session itself runs as, or empty when it runs as none. A subagent the session spawned always
+ * carries its own type (`general-purpose` when none was asked for), so an empty one is never a
+ * spawn. A payload with no `agent_id` is treated the same way: it names no agent whose own
+ * transcript could be read, and the one it would fall back to is the parent's.
+ *
+ * `sessionAgent` is a function because it costs the parent's transcript, and it is asked only when
+ * the payload names a type. A spawned subagent of the very type the session runs as is
+ * indistinguishable from an internal agent by this rule, and is let through with them.
+ */
+function internalAgent(payload: HookPayload, sessionAgent: () => string | null): boolean {
+  if (text(payload.agent_id) === "") return true;
+  const type = text(payload.agent_type);
+  if (type === "") return true;
+  return type === sessionAgent();
+}
+
+/**
+ * Does this hook have nothing to run for this config — so the shell can answer before it reads a
+ * thing?
+ *
+ * A subagent's hand-back costs the parent's transcript (whose agent the session runs as) and the
+ * subagent's own (its turn), and it comes at every hand-back of every subagent. A config that binds
+ * no entry at turn-end, guardrail or breadcrumb, has nothing either read could feed, so neither is
+ * made. A disabled entry binds nothing.
+ *
+ * A repo that is RECORDING never answers early: the tape is for replaying a session against rules
+ * written later, so it keeps every hand-back whatever is bound today.
+ */
+export function nothingBound(hook: HookEvent, entries: readonly LoadedEntry[], recording: boolean): boolean {
+  return !recording && hook === "subagent-stop" && !entries.some((entry) => fires(entry.spec, "turn-end"));
 }
 
 /** What a post-tool-use call was about, repo-relative: a path, or nothing this rail can steer on. */
@@ -1358,7 +1430,8 @@ export const FLOW_OFF = `flow is OFF until ${CONFIG_FILE} loads: every write, de
  *
  * TURN-END IS TOLD, NOT REFUSED. Holding a turn open on a broken config prevents nothing — the
  * commit gate stays shut — while it does stop the agent handing back to the one person who can fix
- * it. So the fault is reported and the turn ends.
+ * it. So the fault is reported and the turn ends. Not as a note either: a turn-end note keeps the
+ * agent working for one more turn, which is the same hold by a softer name.
  *
  * THE ENGINE HAS ITS OWN PAIR OF `!load.ok` BRANCHES — `guard()` blocks with the fault, `brief()`
  * notices it — and they are NOT this rule written twice. They answer a different question: "there
@@ -1371,19 +1444,19 @@ export interface Outage extends Answer {
   /**
    * The sentence turn-end is TOLD with, or null when no turn ended here.
    *
-   * It is not `shown`: the Stop rail has no context channel to inject prose into, which is what
-   * `DELIVERS` already says, so the shell writes this one to stderr and answers 0.
+   * It is not `shown`: a note at turn-end keeps the agent working for one more turn, and this
+   * sentence is for the human the turn hands back to, so the shell writes it to stderr and answers 0.
    */
   readonly told: string | null;
 }
 
 /**
  * Does this event's answer carry the load error? A session start, and a write, delete or command
- * not yet run. Not a touch, not a change the after-call rail observed, and not turn-end, which is
- * told on stderr instead.
+ * not yet run. Not a touch, not a change the after-call rail observed, and not turn-end, on either
+ * rail, which is told on stderr instead.
  */
 function carriesTheNotice(event: AdapterEvent): boolean {
-  if (event.rail === "brief") return event.moment !== "touch";
+  if (event.rail === "brief") return event.moment !== "touch" && event.moment !== "turn-end";
   return event.moment !== "turn-end" && event.observed !== true;
 }
 
@@ -1436,12 +1509,17 @@ export function briefBlock(shown: readonly Shown[]): string {
  * moment. Exit 2 is the host's documented refusal channel and the model reads stderr on all three
  * rails, so flow has one refusal and one place to look when it fails to arrive.
  *
- * Injection stays the decision object, because there is no other channel for it.
+ * Injection stays the decision object, because there is no other channel for it — with one
+ * exception. Notes beside a refusal go on stderr after it: the host reads that stderr as the
+ * agent's next instruction, and its hooks reference says no JSON field on stdout can override an
+ * exit 2, so stderr is the one place both are sure to arrive. Only a held turn has any: before a
+ * call, the shell judges no notes once something refused (`ridesRefusal`).
  */
 export function toResult(hook: HookEvent, answer: Answer): HookResult {
   const refusal = refused(answer.refused, answer.undone);
-  if (refusal !== null) return refusal;
   const prose = briefBlock(answer.shown);
+  if (refusal !== null)
+    return prose === "" ? refusal : { ...refusal, stderr: `${refusal.stderr}\n${prose}\n` };
   if (prose === "") return ALLOW;
   return { stdout: decision(hook, prose), stderr: "", exitCode: 0 };
 }
@@ -1780,16 +1858,23 @@ export function branchFromHead(head: string): string | null {
  * `transcript` is this agent's own transcript, a subagent's included, and its head is the brief.
  */
 export function sessionFactsFrom(args: { readonly payload: HookPayload; readonly transcript: string | null }): SessionFacts {
-  const spawned = typeof args.payload.agent_id === "string" && args.payload.agent_id !== "";
-  // Read only beside an `agent_id`: the host also sends `agent_type` on a top-level session started
-  // with `--agent`, and that session is still the parent.
-  const type = args.payload.agent_type;
-  const agentType = spawned && typeof type === "string" && type !== "" ? type : undefined;
+  const { agent, agentType } = agentOf(args.payload);
   return {
     head: args.transcript === null ? "" : briefHead(args.transcript),
-    subagent: spawned,
+    subagent: agent !== "main",
     ...(agentType === undefined ? {} : { agentType }),
   };
+}
+
+/**
+ * Which agent one hook message came from — the one reading of it, for its state, its classification
+ * and its log rows alike.
+ *
+ * The type is read only beside an `agent_id`: the host also sends `agent_type` on a top-level
+ * session started with `--agent`, and that session is still the parent.
+ */
+export function agentOf(payload: HookPayload): AgentOf {
+  return namedAgent(payload.agent_id, payload.agent_type) ?? { agent: "main" };
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -2959,6 +3044,25 @@ export function steerOf(jsonl: string): Steer | null {
   return null;
 }
 
+/**
+ * The agent a session runs as (`--agent`, or the `agent` setting), from its own transcript — or
+ * null when it runs as none.
+ *
+ * The host writes it as an `agent-setting` record, again as the session goes on. Read from the END,
+ * and only lines that name the record are parsed, as `steerOf` does: the answer is one record.
+ */
+export function agentSettingOf(jsonl: string): string | null {
+  const raw = jsonl.split("\n");
+  for (let i = raw.length - 1; i >= 0; i--) {
+    const line = raw[i] as string;
+    if (!line.includes('"agent-setting"')) continue;
+    const parsed = parseLine(line);
+    if (parsed?.kind !== "agent-setting") continue;
+    return text(parsed.record["agentSetting"]) || null;
+  }
+  return null;
+}
+
 /** The permission mode the last recorded call was made under, or null when no row states one. */
 export function lastMode(rows: readonly Row[]): string | null {
   for (let i = rows.length - 1; i >= 0; i--) {
@@ -3229,10 +3333,10 @@ export interface Registration {
 /**
  * WHAT `flow init` WRITES, verbatim — and it follows DELIVERS, not HOOK_EVENTS.
  *
- * flow answers six events and registers five. `Notification` is the difference and it is deliberate
- * (ruled at F4): flow has no notification moment, so a registration there would spawn a process on
- * every banner to answer nothing — cost with no function, and a line contradicting the honest moment
- * list this file publishes. The day a notification moment earns its way into the grammar, the
+ * flow answers seven events and registers six. `Notification` is the one difference and it is
+ * deliberate (ruled at F4): flow has no notification moment, so a registration there would spawn a
+ * process on every banner to answer nothing — cost with no function, and a line contradicting the
+ * honest moment list this file publishes. The day a notification moment earns its way into the grammar, the
  * registration arrives with it.
  *
  * ONE PER EVENT. Two registrations on one event fire twice, and when they point at different
@@ -3251,13 +3355,18 @@ export interface Registration {
  * read off `HOST_EVENT`, the one place that mapping is stated. Written out by hand, this list would
  * be a second spelling of it — and the day an event is renamed, the half that still compiled would
  * register a command nothing answers.
+ *
+ * `unregistered` is what goes unjudged while that one registration is missing — what `flow status`
+ * says beside the fix. Each event costs its own rails and no others, so a file missing one names
+ * that one's cost, not the whole guard's.
  */
-const REGISTERED: readonly { readonly hook: HookEvent; readonly matcher?: string }[] = [
-  { hook: "session-start", matcher: "startup|resume|clear|compact" },
-  { hook: "pre-tool-use", matcher: "*" },
-  { hook: "post-tool-use", matcher: "*" },
-  { hook: "post-tool-use-failure", matcher: "*" },
-  { hook: "stop" },
+const REGISTERED: readonly { readonly hook: HookEvent; readonly matcher?: string; readonly unregistered: string }[] = [
+  { hook: "session-start", matcher: "startup|resume|clear|compact", unregistered: "no note is shown when a session starts" },
+  { hook: "pre-tool-use", matcher: "*", unregistered: "no rule judges a tool call before it runs" },
+  { hook: "post-tool-use", matcher: "*", unregistered: "no rule judges what a tool call changed" },
+  { hook: "post-tool-use-failure", matcher: "*", unregistered: "no rule judges what a failed tool call changed" },
+  { hook: "stop", unregistered: "no turn-end rule runs when the main chat hands back" },
+  { hook: "subagent-stop", unregistered: "no turn-end rule runs when a subagent hands back" },
 ];
 
 /**
@@ -3810,7 +3919,7 @@ function machineRewrite(file: InitFacts["machine"]): InitPlan["machine"] {
 export function planInit(facts: InitFacts): InitPlan {
   // A file we could not read is a file we may not write. `withRegistrations` builds a NEW object
   // from whatever it is handed, so handing it the null an unparseable file produces would emit a
-  // settings file holding flow's five registrations and NOTHING ELSE — permissions, model, theme,
+  // settings file holding flow's six registrations and NOTHING ELSE — permissions, model, theme,
   // every other tool's hooks, gone. There is no safe merge into bytes nobody parsed, so init
   // registers nothing and says which file to fix.
   const registration = facts.settingsUnreadable ? { settings: facts.settings, added: [] } : withRegistrations(facts.settings);
@@ -4048,7 +4157,7 @@ export interface Status {
 
 function fittingsOf(facts: StatusFacts): Fitting[] {
   const registered = registeredEvents(facts.settings);
-  const missing = HOOK_REGISTRATIONS.filter((r) => !registered.includes(r.event)).map((r) => r.event);
+  const unregistered = REGISTERED.filter(({ hook }) => !registered.includes(HOST_EVENT[hook]));
   const stale = staleRegistrations(facts.settings);
   const twice = facts.machine === null ? { bare: [], theirs: [] } : machineDiffers(facts.settings, facts.machine.settings);
   const once = twice.bare.length === 0 && twice.theirs.length === 0;
@@ -4099,14 +4208,14 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
         ]),
     {
       id: "hooks",
-      ok: missing.length === 0 && stale.length === 0 && once,
+      ok: unregistered.length === 0 && stale.length === 0 && once,
       detail:
-        missing.length === 0 && stale.length === 0 && once
+        unregistered.length === 0 && stale.length === 0 && once
           ? `${facts.settingsPath} — ${registered.join(" · ")}`
           : [
-              missing.length === 0
+              unregistered.length === 0
                 ? ""
-                : `${facts.settingsPath} does not call flow for ${missing.join(" · ")} — re-run \`flow init\`. No live rail fires until it does.`,
+                : `${facts.settingsPath} does not call flow for ${unregistered.map((r) => HOST_EVENT[r.hook]).join(" · ")} — re-run \`flow init\`. Until it does, ${unregistered.map((r) => r.unregistered).join("; ")}.`,
               stale.length === 0
                 ? ""
                 : `${facts.settingsPath} calls flow for ${stale.join(" · ")} on some tools only — an older flow registered ${stale.length === 1 ? "it" : "them"} that way, and a change another tool makes is not judged after it lands. Re-run \`flow init\` to widen ${stale.length === 1 ? "it" : "them"}.`,

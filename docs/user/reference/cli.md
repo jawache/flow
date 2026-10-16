@@ -40,9 +40,9 @@ summary: "every `flow` command, what `flow init` writes, the two switch files, a
 | --- | --- |
 | `flow.config.ts` | The config: the `flow` pack, which protects the guard itself, and a demo pack you can read in one screen. With `--empty`, a config that binds nothing |
 | `.githooks/pre-commit` | The commit gate: a shell script of comments that runs the repo's own `node_modules/@jawache/flow/dist/flow.mjs` with `node` when that file is there, then ends with `exec flow hook commit`. Not written when a file is already at that path |
-| `.flow/` | flow's state and logs. It holds its own `.gitignore`, so it is never committed and your `.gitignore` is not changed |
+| `.flow/` | flow's state and logs. It holds its own `.gitignore`, so it is never committed and your `.gitignore` is not changed. Each session's log is `.flow/log/<session id>.jsonl`, described in [the session log](./log.md) |
 | `node_modules/@jawache/flow` | A link to the `flow` that is running. Written only when the repo does not install `@jawache/flow` itself |
-| The Claude Code settings file | Five hook registrations: `SessionStart`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure` and `Stop`. Each one runs the command `f="$CLAUDE_PROJECT_DIR/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook <event>; exec flow hook <event>`. The file is the repo's `.claude/settings.json` when the repo's `package.json` lists `@jawache/flow`. Otherwise it is `~/.claude/settings.json`, or `$CLAUDE_CONFIG_DIR/settings.json` when that variable is set. A registration an older `flow init` wrote, as the bare `flow hook <event>` or on fewer tools, is rewritten in place to this command and matcher. When the hooks go in the repo's file, a bare `flow hook <event>` in the machine-wide file is rewritten to the same command too, and nothing else in that file changes. When `flow init` adds or rewrites a registration, it writes the whole file back as JSON indented by two spaces. Every key already in the file is kept |
+| The Claude Code settings file | Six hook registrations: `SessionStart`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Stop` and `SubagentStop`. Each one runs the command `f="$CLAUDE_PROJECT_DIR/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook <event>; exec flow hook <event>`. The file is the repo's `.claude/settings.json` when the repo's `package.json` lists `@jawache/flow`. Otherwise it is `~/.claude/settings.json`, or `$CLAUDE_CONFIG_DIR/settings.json` when that variable is set. A registration an older `flow init` wrote, as the bare `flow hook <event>` or on fewer tools, is rewritten in place to this command and matcher. When the hooks go in the repo's file, a bare `flow hook <event>` in the machine-wide file is rewritten to the same command too, and nothing else in that file changes. When `flow init` adds or rewrites a registration, it writes the whole file back as JSON indented by two spaces. Every key already in the file is kept |
 | `core.hooksPath` | Set to `.githooks`, so git runs the gate. `flow init` sets it whenever it is not already `.githooks`, including when it points somewhere else. It is a setting of one clone, so run `flow init` in every new clone |
 
 > [!WARNING]
@@ -68,7 +68,7 @@ Every hook and the commit gate run the repo's own `@jawache/flow` package first,
 A hook has two codes: 0 lets the action go ahead, and 2 refuses it and shows standard error to the agent.
 
 - **A blocked action** exits 2, from every hook and from the commit gate.
-- **A config that does not load** exits 2 from the commit gate only. Every hook exits 0: `pre-tool-use` and `session-start` pass the load error to the agent as a note, and `stop` writes it to standard error and lets the turn end.
+- **A config that does not load** exits 2 from the commit gate only. Every hook exits 0: `pre-tool-use` and `session-start` pass the load error to the agent as a note, and `stop` and `subagent-stop` write it to standard error and let the turn end.
 
 These commands exit 1:
 

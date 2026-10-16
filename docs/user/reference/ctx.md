@@ -33,7 +33,7 @@ A check declares no moments, no schema and no `kind`. The entry's `.at(…)` set
 | `ctx.command` | The shell command line, at the command moment |
 | `ctx.commands` | The command line parsed as bash, at the command moment: one entry per simple command, or `null` when the line does not parse. See [ctx.commands](#ctxcommands) |
 | `ctx.staged` | The staged paths, at the commit moment, in every call that moment makes |
-| `ctx.turn` | The turn's actions (edits and runs), at turn-end |
+| `ctx.turn` | The turn's actions (edits and runs), at turn-end. For a subagent, they are that subagent's own actions |
 | `ctx.actor` | The category names that match the session making this change. Each name comes from evidence the host wrote about that session, never from a claim the session made about itself. The stock `oneWriter` check reads this field |
 | `ctx.moment` | Which moment this is, to branch on |
 | `ctx.fs` · `ctx.exec` · `ctx.git` | The effects: read a file, run a command, query git. They are the only way a check reaches beyond its facts |

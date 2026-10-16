@@ -164,7 +164,7 @@ function ignoredPaths(root: string, literals: readonly string[]): string[] {
  *
  * The two silences are different and both callers need them apart: ABSENT is a file init may
  * create, UNREADABLE is a file init must not touch. Returning one null for both is how a settings
- * file holding a stray comma or a `//` comment gets replaced by five registrations and nothing
+ * file holding a stray comma or a `//` comment gets replaced by flow's registrations and nothing
  * else — every other key in it belonging to somebody, and no safe merge into bytes nobody parsed.
  *
  * `root` is what a repo-relative path is read against: a dev dependency's `.claude/settings.json`
@@ -186,10 +186,11 @@ function parsedFile(root: string, path: string): { readonly value: unknown; read
  * marker the write rail leaves, and the mode its last call recorded.
  */
 function liveSession(root: string): StatusFacts["session"] {
-  const { session, agent, wearing } = wearer(root);
+  const { session, who, wearing } = wearer(root);
   // `wearer` answers with the attribution's fallback when the marker is missing, stale or malformed,
   // and that fallback is not a session: reporting it would name a chat that never existed.
-  if (agent === null) return null;
+  if (who === null) return null;
+  const { agent } = who;
   const mode = lastMode(readRows(root, session));
   return { id: session, agent, wearing, mode, steer: mode === "auto" ? steerOf(transcriptOf(root, session, agent)) : null };
 }
