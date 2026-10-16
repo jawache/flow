@@ -164,7 +164,7 @@ function ignoredPaths(root: string, literals: readonly string[]): string[] {
  *
  * The two silences are different and both callers need them apart: ABSENT is a file init may
  * create, UNREADABLE is a file init must not touch. Returning one null for both is how a settings
- * file holding a stray comma or a `//` comment gets replaced by five registrations and nothing
+ * file holding a stray comma or a `//` comment gets replaced by flow's registrations and nothing
  * else — every other key in it belonging to somebody, and no safe merge into bytes nobody parsed.
  *
  * `root` is what a repo-relative path is read against: a dev dependency's `.claude/settings.json`

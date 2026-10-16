@@ -113,6 +113,9 @@ import {
   writeRows,
   mismatchRow,
   turnActions,
+  agentSettingOf,
+  nothingBound,
+  ridesRefusal,
   whileBroken,
   included,
   authored,
@@ -672,6 +675,8 @@ interface Session {
   readonly transcript: () => string | null;
   readonly tokens: () => number;
   readonly turn: () => readonly TurnAction[];
+  /** The agent the session itself runs as, from the parent's transcript; null when it runs as none. */
+  readonly sessionAgent: () => string | null;
 }
 
 /** Ask once, remember the answer. A hook is one short-lived process, so this lives and dies with it. */
@@ -706,6 +711,12 @@ function sessionOf(payload: HookPayload, root: string): Session {
       const text = transcript();
       return text === null ? [] : turnActions(text, root);
     }),
+    // The PARENT's transcript, `transcript_path` as sent: the session's own agent is its record.
+    sessionAgent: once((): string | null => {
+      const sent = typeof payload.transcript_path === "string" ? payload.transcript_path : "";
+      const text = sent === "" ? null : readText(root, sent);
+      return text === null ? null : agentSettingOf(text);
+    }),
   };
 }
 
@@ -729,7 +740,14 @@ function identityOf(session: Session, payload: HookPayload, categories: readonly
 
 /** The world a payload is read against — disk, and the turn, asked only if the moment needs them. */
 function eventWorld(root: string, session: Session, changes?: readonly Change[]): EventWorld {
-  return { root, read: (path: string) => readText(root, path), turn: session.turn, home: homedir(), changes };
+  return {
+    root,
+    read: (path: string) => readText(root, path),
+    turn: session.turn,
+    sessionAgent: session.sessionAgent,
+    home: homedir(),
+    changes,
+  };
 }
 
 /** A note's prose: inline, or the repo file it named. The shell resolves it; a pure home cannot. */
@@ -803,14 +821,22 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
     if (afterCall) finish();
     const result = toResult(hook, answer);
     // TURN-END IS TOLD RATHER THAN HELD. `whileBroken` says why; this is the only place that can
-    // write it, because the Stop rail has no context channel and `toResult` speaks only the two the
-    // host reads. Exit 0 — the turn ends, and the sentence goes where a human and the log see it.
+    // write it, because a note on the hand-back rails would keep the agent working, and `toResult`
+    // speaks only the two the host reads. Exit 0 — the turn ends, and the sentence goes where a
+    // human and the log see it.
     return snapshotted(answer.told === null ? result : { ...result, stderr: `${answer.told}\n` });
   };
   if (regime.kind === "broken") return outage(regime.message);
 
   const { load, config } = regime;
   if (!load.ok) return outage(refusalText(load.refusals));
+  // RECORDING is a second, independent stream and it is deliberately not gated on `off`: turning
+  // the guard off to reproduce something and finding the recorder off with it is the one moment
+  // this seam exists for. It is gated on the switch alone, and on nothing else.
+  const taping = isRecording(root);
+  // NOTHING BOUND HERE, NOTHING READ: a hand-back with no turn-end entry to run is answered before
+  // either transcript is opened, unless it is being recorded.
+  if (nothingBound(hook, load.entries, taping)) return ALLOW;
 
   // THE DELTA, on the after-call rails: what this call changed in the tree, from the snapshot the
   // PreToolUse rail took. A call flow could not see is REPORTED and goes no further — nothing is
@@ -870,11 +896,7 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
     if (mismatch !== null) rows.push(mismatch);
   }
 
-  // RECORDING is a second, independent stream and it is deliberately not gated on `off`: turning
-  // the guard off to reproduce something and finding the recorder off with it is the one moment
-  // this seam exists for. It is gated on the switch alone, and on nothing else.
   const steps: RecordedStep[] = [];
-  const taping = isRecording(root);
 
   const answer = await judge({ events, session, load, settings: config.settings, identity, off, hook, payload, rows, steps: taping ? steps : null });
   if (!off) appendRows({ root, session: session.id, branch: session.branch, who: session.who }, rows);
@@ -957,11 +979,12 @@ async function judge(args: {
       continue;
     }
 
-    // A REFUSED ANSWER CARRIES NO NOTES — `toResult` drops them for the refusal — so a note is not
-    // judged here either, or it would be marked shown and stay silent until drift. A blocked `cat`
-    // whose file is next read by the retried command then briefs on the retry, which is the call
-    // that runs.
-    if (blocked.length > 0) continue;
+    // A REFUSED CALL CARRIES NO NOTES, and this is the one place it is kept from them: a note is not
+    // judged for it, so `toResult` is handed none, and nothing is marked shown to stay silent until
+    // drift. A blocked `cat` whose file is next read by the retried command then briefs on the
+    // retry, which is the call that runs. A held TURN is the exception: its note is judged, and
+    // `toResult` passes it to the agent with the refusal.
+    if (blocked.length > 0 && !ridesRefusal(event.moment)) continue;
     steps?.push({
       rail: "brief",
       moment: event.moment,

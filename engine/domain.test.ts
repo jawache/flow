@@ -791,6 +791,14 @@ describe("a breadcrumb across one session", () => {
     expect(again.notices).toEqual([]);
   });
 
+  it("shows a turn-end note first-touch, with no path to narrow it", () => {
+    const handBack = loadConfig(defineConfig([pack(definePack("t", { recap: breadcrumb().at(turnEnd).text("Write the recap.") }))]));
+    const first = brief({ load: handBack, event: { moment: "turn-end", tokens: 1_000, wearing: [] }, marks: {}, settings: {} });
+    expect(noticeIds(first), "a hand-back names no path, and nothing narrows the note away").toEqual(["t.recap"]);
+    expect(first.notices[0]?.cause).toBe("first-touch");
+    expect(first.marks).toEqual({ "t.recap": 1_000 });
+  });
+
   it("gives a turn-end note no subject, because the event carries no file or command", () => {
     const wrapUp = loadConfig(defineConfig([pack(definePack("ends", { wrapUp: breadcrumb().at(turnEnd).text("Commit before you stop.") }))]));
     const ended = brief({ load: wrapUp, event: { moment: "turn-end", tokens: 0, wearing: [] }, marks: {}, settings: {} });
