@@ -28,7 +28,7 @@ These run nothing, so they pass:
 
 | Key | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `heads` | list of strings | yes | the commands that record prose, each in words: a program, then the arguments that make it record prose. Each is matched against each command in the line, as `banCommands` matches an entry |
+| `heads` | list of strings | yes | the commands that record prose, each in words: a program, then the arguments that make it record prose. Each is matched against each command in the line, as `banCommands` matches an entry. A head that is not one command in words, such as a regex, refuses to load |
 | `gitSubcommands` | list of strings | no | the git subcommands that record prose, such as `commit`. A git command whose subcommand is in the list is checked, whatever options come before the subcommand |
 
 ## Example
