@@ -476,6 +476,9 @@ describe("bashReads — the files a Bash command reads, before it runs", () => {
     expect(reads("nice -n 5 nohup time cat a.ts")).toStrictEqual(["a.ts"]);
     expect(reads("xargs -a list.txt -n 1 grep -l x")).toStrictEqual(["list.txt"]);
     expect(reads("xargs --arg-file list.txt grep -l x src/a.ts")).toStrictEqual(["list.txt", "src/a.ts"]);
+    expect(reads("xargs --arg-file=list.txt grep x")).toStrictEqual(["list.txt"]);
+    expect(reads("xargs -alist.txt grep x")).toStrictEqual(["list.txt"]);
+    expect(reads("exec -a name xargs grep x"), "exec's -a names the process, it is not xargs's list").toStrictEqual([]);
     expect(reads("command -v cat a.ts")).toStrictEqual([]);
     expect(reads("command cat a.ts")).toStrictEqual(["a.ts"]);
     expect(reads("timeout 5")).toStrictEqual([]);

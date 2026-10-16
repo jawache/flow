@@ -657,11 +657,21 @@ function assignmentIn(word: ShellWord): { readonly name: string; readonly value:
   return { name: m[1] as string, value: [{ kind: "text", text: head.text.slice(m[0].length) }, ...rest] };
 }
 
-/** The list file `xargs -a FILE` or `--arg-file FILE` reads, from the wrappers the parse stepped past. */
+/**
+ * The list file `xargs` reads — `-a FILE`, `-aFILE`, `--arg-file FILE` or `--arg-file=FILE` — from
+ * the wrappers the parse stepped past. Only xargs's own options count, the words between the last
+ * `xargs` and the program: an `exec -a NAME` in front of it names a process, not a file.
+ */
 function xargsList(wrappers: readonly (string | null)[]): string | null {
-  const at = wrappers.findIndex((word) => word === "-a" || word === "--arg-file");
-  const named = at === -1 ? undefined : wrappers[at + 1];
-  return wrappers.some((word) => word !== null && posix.basename(word) === "xargs") && typeof named === "string" ? named : null;
+  const from = wrappers.findLastIndex((word) => word !== null && posix.basename(word) === "xargs");
+  if (from === -1) return null;
+  const own = wrappers.slice(from + 1);
+  for (const [i, word] of own.entries()) {
+    if (word === "-a" || word === "--arg-file") return own[i + 1] ?? null;
+    if (word?.startsWith("--arg-file=") === true) return word.slice("--arg-file=".length) || null;
+    if (word?.startsWith("-a") === true && !word.startsWith("--")) return word.slice(2);
+  }
+  return null;
 }
 
 /**
