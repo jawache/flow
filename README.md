@@ -24,9 +24,9 @@ This rule is in the demo config `flow init` writes:
 ```ts
 noForcePush: guardrail()
   .at(command)
-  .check(banCommands({ ban: ["git\\s+push\\b[^\\n]*(--force|(^|\\s)-f(\\s|$))"] }))
+  .check(banCommands({ ban: ["git push --force", "git push -f", "git push --force-with-lease"] }))
   .message("Force-pushing rewrites history everyone else has. Push a correcting commit, or ask first.")
-  .test({ pass: ["git push origin main"], block: ["git push --force origin main"] }),
+  .test({ pass: ["git push origin main"], block: ["git push --force origin main", "git push --force-with-lease origin main"] }),
 ```
 
 `.at(command)` says when the rule runs: before every shell command. `.check(…)` is what it checks, `.message(…)` is what the agent is told, and `.test(…)` lists the cases `flow test` runs. When an agent tries `git push --force origin main`, the command does not run, and the agent is shown:
@@ -36,7 +36,7 @@ flow — command blocked before it ran:
 
 ✗ demo.noForcePush · git push --force origin main
   Force-pushing rewrites history everyone else has. Push a correcting commit, or ask first.
-    matches banned /git\s+push\b[^\n]*(--force|(^|\s)-f(\s|$))/
+    matches banned `git push --force`
 
 Adjust the command, then retry.
 ```

@@ -129,11 +129,7 @@ export const work = definePack("work", (repo: Rungs = {}) => ({
     .description("A builder owns its phase, not the plan — the verdict, the amendment and the cost record are the parent's.")
     .check(
       banCommands({
-        ban: [
-          "work\\s+plan\\s+(?:verdict|amend)\\b",
-          "work\\s+(?:save|task)\\b",
-          "work\\s+cost\\s+record\\b",
-        ],
+        ban: ["work plan verdict", "work plan amend", "work save", "work task", "work cost record"],
       }),
     )
     .message(
@@ -151,7 +147,15 @@ export const work = definePack("work", (repo: Rungs = {}) => ({
         // A note that spells the command out, in a heredoc, is not running it.
         "cat > note.md <<'EOF'\nwork plan verdict F7 --pass --cite x\nEOF",
       ],
-      block: ["work plan verdict F7 --pass --cite x", "work save", "work cost record F7", "work plan status\nwork plan amend F7 --add x"],
+      block: [
+        "work plan verdict F7 --pass --cite x",
+        "work save",
+        "work cost record F7",
+        "work plan status\nwork plan amend F7 --add x",
+        // The program by its path, and an option in front of its words: the command is still `work plan verdict`.
+        "/usr/local/bin/work plan verdict F7 --pass --cite x",
+        "work --verbose plan verdict F7 --pass --cite x",
+      ],
     }),
 
   checkersDoNotWrite: guardrail()
@@ -168,13 +172,19 @@ export const work = definePack("work", (repo: Rungs = {}) => ({
     .at(command)
     .for(parent)
     .description("The parent records verdicts; a box is ticked by the child that built it, with its evidence.")
-    .check(banCommands({ ban: ["work\\s+plan\\s+tick\\b"] }))
+    .check(banCommands({ ban: ["work plan tick"] }))
     .message(
       "A box is ticked by the rung that built it. You are supervising: you did not do the work, so you cannot supply the evidence, and a tick whose proof came from reading a report is exactly the provenance the journal exists to prevent. If a child left a box unticked, that is the finding — record the verdict on it.",
     )
     .test({
       pass: ["work plan verdict F7 --pass --cite x", "cat > note.md <<'EOF'\nwork plan tick F7.B1 --evidence diff:abc\nEOF"],
-      block: ["work plan tick F7.B1 --evidence diff:abc", "work plan status\nwork plan tick F7.B1 --evidence diff:abc"],
+      block: [
+        "work plan tick F7.B1 --evidence diff:abc",
+        "work plan status\nwork plan tick F7.B1 --evidence diff:abc",
+        // The program by its path, and an option in front of its words.
+        "/usr/local/bin/work plan tick F7.B1 --evidence diff:abc",
+        "work --verbose plan tick F7.B1 --evidence diff:abc",
+      ],
     }),
 
   // ── the two rules about the commands that write the journal ──
@@ -182,9 +192,9 @@ export const work = definePack("work", (repo: Rungs = {}) => ({
   noAgentInboxItems: guardrail()
     .at(command)
     .description("The inbox is the human's speccing queue — an agent raises a finding in chat, never files one.")
-    // Matched from a command's program name, so prose that merely mentions the verb — an echo, a
-    // heredoc being written — is not an invocation.
-    .check(banCommands({ ban: ["work\\s+inbox\\s+new\\b"] }))
+    // Matched against the program that runs and its arguments, so prose that merely mentions the
+    // verb — an echo, a heredoc being written — is not an invocation.
+    .check(banCommands({ ban: ["work inbox new"] }))
     .message(
       [
         "`work inbox new` is the human's own door, and this command rail is only ever crossed by an agent — a person typing in a terminal has no hooks in front of them. So the fact that this fired means an agent is filing.",
@@ -200,7 +210,14 @@ export const work = definePack("work", (repo: Rungs = {}) => ({
         'git commit -m "docs: the human runs work inbox new themselves"',
         "cat > note.md <<'EOF'\nwork inbox new --summary x\nEOF",
       ],
-      block: ['work inbox new --summary "a thing"', "echo hi && work inbox new --summary x", "echo hi\nwork inbox new --summary x"],
+      block: [
+        'work inbox new --summary "a thing"',
+        "echo hi && work inbox new --summary x",
+        "echo hi\nwork inbox new --summary x",
+        // The program by its path, and an option in front of its words.
+        "/usr/local/bin/work inbox new --summary x",
+        "work --verbose inbox new --summary x",
+      ],
     }),
 
   // The lifecycle's half of the prose-substitution rule; `git`'s half covers `git commit` and the
@@ -209,7 +226,7 @@ export const work = definePack("work", (repo: Rungs = {}) => ({
   noShellSubstitutionInProse: guardrail()
     .at(command)
     .description("A backtick the shell would run in a work verb that records prose (double-quoted, bare, or in an unquoted heredoc) is live command substitution, not Markdown.")
-    .check(substitutionInProse({ heads: ["work\\s+(?:plan|task|recap|record|spec|complete)\\b"] }))
+    .check(substitutionInProse({ heads: ["work plan", "work task", "work recap", "work record", "work spec", "work complete"] }))
     .message(SUBSTITUTION_MESSAGE)
     .test({
       pass: [
@@ -218,11 +235,15 @@ export const work = definePack("work", (repo: Rungs = {}) => ({
         // An escaped backtick is literal, and a backtick in the next command is not this one's.
         String.raw`work plan decision "chose the \`chain\` builder" --chose x --reverse y`,
         "work plan status --json; echo `date`",
+        // A verb's words are whole arguments: `task-list` is not `task`.
+        'work task-list "`date`"',
       ],
       block: [
         'work plan decision "chose the `chain` builder" --chose x --reverse y',
         'work plan decision "chose the builder\n\nbecause `chain` reads better" --chose x --reverse y',
         'work plan decision "$(cat <<EOF\nchose the `chain` builder\nEOF\n)" --chose x --reverse y',
+        // work run by its path is still work.
+        '/usr/local/bin/work plan decision "chose the `chain` builder" --chose x --reverse y',
       ],
     }),
   // ── ONE WRITER, when the repo names its writers ──

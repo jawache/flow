@@ -3935,9 +3935,9 @@ const MARKER = ["DO", "NOT", "COMMIT"].join("-");
 export const demo = definePack("demo", {
   noForcePush: guardrail()
     .at(command)
-    .check(banCommands({ ban: ["git\\s+push\\b[^\\n]*(--force|(^|\\s)-f(\\s|$))"] }))
+    .check(banCommands({ ban: ["git push --force", "git push -f", "git push --force-with-lease"] }))
     .message("Force-pushing rewrites history everyone else has. Push a correcting commit, or ask first.")
-    .test({ pass: ["git push origin main"], block: ["git push --force origin main"] }),
+    .test({ pass: ["git push origin main"], block: ["git push --force origin main", "git push --force-with-lease origin main"] }),
 
   // No .on() here, and that is the sentence rather than an omission: an entry that names no paths is
   // about THE COMMIT, so it is asked once and handed the whole staged set. (Name paths with .on()

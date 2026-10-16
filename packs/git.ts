@@ -10,7 +10,6 @@
 // the entry is called, and a pack's shape is what a reader navigates it by.
 
 import {
-  banCommands,
   breadcrumb,
   command,
   commit,
@@ -22,6 +21,7 @@ import {
   gitDirPrefix,
   guardrail,
   jsonInvariant,
+  programName,
   quoteArg,
   session,
   shellCommands,
@@ -31,6 +31,7 @@ import {
   type Check,
   type Ctx,
   type GitCommand,
+  type ShellCommand,
 } from "../index.ts";
 
 // ── git: the commands that destroy work, and the commits that owe a sentence ──
@@ -402,34 +403,65 @@ const SITE = ["cl", "aude", "\\.com/", "cl", "aude", "-code"].join("");
 const LINK = ["cl", "aude", ".com/", "cl", "aude", "-code"].join("");
 const ROBOT = "\u{1F916}";
 
-// `gh pr` or `gh issue`, run bare or through `work gh`, the wrapper a repo driven by work runs it as.
-const GH_PROSE = String.raw`(?:\S*/)?(?:work\s+)?gh\s+(?:pr|issue)\b`;
+/**
+ * The commands that record prose, a pull request's and an issue's title, body and comments, in
+ * words: each run bare, and through `work gh`, the wrapper a repo driven by work runs it as. The
+ * backtick rule names them as its heads, and the attribution rule reads the same commands through
+ * `isGhProse`.
+ */
+const GH_PROSE_HEADS = ["gh pr", "gh issue", "work gh pr", "work gh issue"];
+
+/** Each of `GH_PROSE_HEADS` as its program and the words after it, split once. */
+const GH_PROSE_WORDS = GH_PROSE_HEADS.map((head) => {
+  const [program = "", ...words] = head.split(" ");
+  return { program, words };
+});
 
 /**
- * Refuses attribution in what a `git commit` is given, and in the prose of a `gh` command.
- *
- * The commits are read from the parse, through `gitCommands`: git's own options sit between `git`
- * and `commit` (`git -C <worktree> commit`), and a value with a space in it, `-C '/a b'`, is two
- * words in a command's text, where a pattern loses it. `message` is matched against each commit's
- * arguments after `commit`, one per line, and the bodies of the heredocs it is fed: every argument
- * rather than the `-m` values alone, so `-am`, `-m"…"` and a `"$(cat <<'EOF' … EOF)"` message are
- * all in view. A line that does not parse is matched whole, as `banCommands` matches it.
- *
- * `prose` is `banCommands` with `matchHeredocs`, for the `gh` verbs, each pattern matched from a
- * command's program name.
+ * The command is one of `GH_PROSE_HEADS`, matched as the backtick rule matches a head: the same
+ * program, less its path, and every word of the head among its arguments, compared whole. An option
+ * before the verb leaves it a head, so `gh --repo a/b pr create` and `work --verbose gh pr create`
+ * are both read.
  */
-const noAttribution = defineCheck((opts: { message: readonly string[]; prose: readonly string[] }): Check => {
-  const prose = banCommands({ ban: opts.prose, matchHeredocs: true });
-  return (ctx) => {
-    const given =
-      shellCommands(ctx) === null
-        ? [ctx.command ?? ""]
-        : gitCommands(ctx)
+function isGhProse(c: ShellCommand): boolean {
+  const program = programName(c.program);
+  return GH_PROSE_WORDS.some((head) => program === head.program && head.words.every((word) => c.args.includes(word)));
+}
+
+/**
+ * Refuses attribution in what a `git commit` is given, and in the prose of a `gh pr` or `gh issue`.
+ *
+ * Both are read from the parse, never from a command's text. The commits come through
+ * `gitCommands`: git's own options sit between `git` and `commit` (`git -C <worktree> commit`), and
+ * a value with a space in it, `-C '/a b'`, is two words in a command's text, where a pattern loses
+ * it. `message` is matched against each commit's arguments after `commit`, one per line, and the
+ * bodies of the heredocs it is fed: every argument rather than the `-m` values alone, so `-am`,
+ * `-m"…"` and a `"$(cat <<'EOF' … EOF)"` message are all in view. `prose` is matched the same way
+ * against every argument of a `gh pr` or `gh issue` command, found as the backtick rule finds it,
+ * and its heredocs' bodies, so a `--body-file -` fed on stdin is in view too. A line that does not
+ * parse is matched whole.
+ */
+const noAttribution = defineCheck((opts: { message: readonly string[]; prose: readonly string[] }): Check => (ctx) => {
+  const parsed = shellCommands(ctx);
+  const matching = (patterns: readonly string[], texts: readonly string[]): string[] =>
+    patterns.filter((pattern) => texts.some((text) => new RegExp(pattern).test(text)));
+  // A line that does not parse is one text for both lists, and the lists share patterns: each
+  // pattern that matches is reported once.
+  const hits =
+    parsed === null
+      ? matching([...new Set([...opts.message, ...opts.prose])], [ctx.command ?? ""]).map((pattern) => `the line matches /${pattern}/`)
+      : (() => {
+          const given = (args: readonly string[], c: ShellCommand): string => [...args, ...c.heredocs.map((h) => h.body)].join("\n");
+          const commits = gitCommands(ctx)
             .filter((g) => g.subcommand === "commit")
-            .map((g) => [...g.args, ...g.command.heredocs.map((h) => h.body)].join("\n"));
-    const hits = opts.message.filter((pattern) => given.some((text) => new RegExp(pattern).test(text)));
-    return hits.length === 0 ? prose(ctx) : ctx.fail(hits.map((pattern) => `the commit's message matches /${pattern}/`).join(" · "));
-  };
+            .map((g) => given(g.args, g.command));
+          const prose = parsed.filter(isGhProse).map((c) => given(c.args, c));
+          return [
+            ...matching(opts.message, commits).map((pattern) => `the commit's message matches /${pattern}/`),
+            ...matching(opts.prose, prose).map((pattern) => `the PR or issue text matches /${pattern}/`),
+          ];
+        })();
+  return hits.length === 0 ? ctx.ok() : ctx.fail(hits.join(" · "));
 });
 
 /** What this pack cannot know: which recipe cuts a release, and which file carries the version. */
@@ -513,8 +545,8 @@ export const git = definePack("git", (repo: Release) => {
           `${SITE}|🤖 Generated`,
         ],
         prose: [
-          `${GH_PROSE}[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(${VENDOR}|[Aa]nthropic)`,
-          `${GH_PROSE}[\\s\\S]*(${SITE}|🤖 Generated)`,
+          `[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(${VENDOR}|[Aa]nthropic)`,
+          `${SITE}|🤖 Generated`,
         ],
       }),
     )
@@ -530,6 +562,11 @@ export const git = definePack("git", (repo: Release) => {
         // A search for the trailer, and a note that names it, are no commit.
         `git log --grep "${TRAILER}: ${VENDOR}"`,
         `git commit -m "fix(auth): renew the session" && echo "${TRAILER}: ${VENDOR}"`,
+        // The PR and issue prose is read from `gh pr` and `gh issue` alone: not from another
+        // command on the line, another gh verb, or a work verb other than `work gh`.
+        `gh pr view 1 && echo "${TRAILER}: ${VENDOR}"`,
+        `gh api repos/x/y -f body="${TRAILER}: ${VENDOR}"`,
+        `work plan note --body "${TRAILER}: ${VENDOR}"`,
       ],
       block: [
         // A value with a space in it, and a long option with its value apart: a pattern over the
@@ -543,14 +580,20 @@ export const git = definePack("git", (repo: Release) => {
         // git's own options before `commit`: a builder in a worktree, and a one-off config value.
         `git -C /repo/worktree commit -m "fix(auth): renew the session\n\n${TRAILER}: ${VENDOR} Opus <noreply@anthropic.com>"`,
         `git -c commit.gpgsign=false commit -m "fix(auth): renew the session\n\n${TRAILER}: ${VENDOR}"`,
-        // The message given on stdin, through a heredoc: matchHeredocs is what keeps it in view.
+        // The message given on stdin, through a heredoc: the heredoc's body is read with the arguments.
         `git commit -F - <<'EOF'\nfix(auth): renew the session\n\n${TRAILER}: ${VENDOR}\nEOF`,
         `git commit -m "fix(auth): renew the session\n\n${TRAILER}: ${VENDOR} <noreply@anthropic.com>"`,
         `gh pr create --body "${TRAILER}: ${VENDOR}"`,
+        // …and gh run by its path.
+        `/usr/local/bin/gh pr create --body "${TRAILER}: ${VENDOR}"`,
         // …and through `work gh`, which is how a repo driven by work runs every gh call, on the
         // line or fed as the body on stdin.
         `work gh pr create --title x --body "${TRAILER}: ${VENDOR}"`,
         `work gh issue create --title x --body-file - <<'EOF'\nopened with ${LINK}\nEOF`,
+        // …and with an option before the verb, bare or through `work`: the backtick rule finds the
+        // verb anywhere among the arguments, and this rule finds the same commands.
+        `gh --repo a/b pr create --body "${TRAILER}: ${VENDOR}"`,
+        `work --verbose gh pr create --body "${TRAILER}: ${VENDOR}"`,
         // The generated-with line, and the tool's own footer — the site link and the robot emoji
         // beside it. Three of the five patterns had no case at all until this read.
         `git commit -m "fix(auth): renew the session\n\nGenerated with ${VENDOR} Code"`,
@@ -825,7 +868,7 @@ export const git = definePack("git", (repo: Release) => {
   noShellSubstitutionInProse: guardrail()
     .at(command)
     .description("A backtick the shell would run in a commit message or a PR or issue body (double-quoted, bare, or in an unquoted heredoc) is live command substitution, not Markdown.")
-    .check(substitutionInProse({ heads: [GH_PROSE], gitSubcommands: ["commit"] }))
+    .check(substitutionInProse({ heads: GH_PROSE_HEADS, gitSubcommands: ["commit"] }))
     .message(SUBSTITUTION_MESSAGE)
     .test({
       pass: [
@@ -849,6 +892,8 @@ export const git = definePack("git", (repo: Release) => {
         'gh issue comment 1 --body "run `just test` first"',
         // …run through `work gh`, as a repo driven by work runs every gh call.
         'work gh issue comment 1 --body "run `just test` first"',
+        // gh run by its path is still gh.
+        '/opt/homebrew/bin/gh pr create --body "see `just gate`"',
         // The backtick sits in the body of a multi-line message.
         'git commit -m "fix: a thing\n\nrun `just test` first"',
         // A message written in an unquoted heredoc inside the argument: the backtick still runs.

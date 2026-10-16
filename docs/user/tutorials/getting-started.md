@@ -134,12 +134,12 @@ flow — command blocked before it ran:
 
 ✗ demo.noForcePush · git push --force origin main
   Force-pushing rewrites history everyone else has. Push a correcting commit, or ask first.
-    matches banned /git\s+push\b[^\n]*(--force|(^|\s)-f(\s|$))/
+    matches banned `git push --force`
 
 Adjust the command, then retry.
 ```
 
-Notice that the refusal quotes the command and the pattern it matched.
+Notice that the refusal quotes the command, and the banned command it matched.
 
 ## 6 · Run every rule's own cases
 
@@ -147,10 +147,10 @@ Every guardrail carries the inputs it must let through and the inputs it must re
 
 ```
 flow test
-# flow test — 7 cases over 4 guardrails, all green
+# flow test — 8 cases over 4 guardrails, all green
 ```
 
-Notice the count: 7 cases over 4 guardrails, all green.
+Notice the count: 8 cases over 4 guardrails, all green.
 
 ## 7 · Commit the guard
 

@@ -513,7 +513,7 @@ describe("the stranger's binding", () => {
     expect(bindLine("fcis", { files: ["core/**/*.ts"], homes: [] })).toBe('pack(fcis, { files: ["core/**/*.ts"], homes: [] })');
   });
 
-  // The justfile pack's `recipes` map is keyed by a command pattern. Printed bare, the one thing
+  // The justfile pack's `recipes` map is keyed by a command in words. Printed bare, the one thing
   // the page exists to hand a reader — a config to paste — was a syntax error.
   it("quotes a key that is not an identifier, and leaves one that is alone", () => {
     expect(literal({ recipes: { "npx vitest": "./ci.sh test" } })).toBe('{ recipes: { "npx vitest": "./ci.sh test" } }');
