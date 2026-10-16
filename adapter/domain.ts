@@ -42,6 +42,7 @@ import {
   type BreadcrumbMoment,
   type Ctx,
   type EntrySpec,
+  type LoadedEntry,
   type ExecResult,
   type GuardrailMoment,
   type LoadResult,
@@ -55,6 +56,7 @@ import {
 } from "../language/domain.ts";
 import {
   covers,
+  fires,
   FLOW_DIR,
   formatBlock,
   insideRepo,
@@ -875,11 +877,24 @@ export function toEvent(hook: HookEvent, payload: HookPayload, world: EventWorld
  * the payload names a type. A spawned subagent of the very type the session runs as is
  * indistinguishable from an internal agent by this rule, and is let through with them.
  */
-export function internalAgent(payload: HookPayload, sessionAgent: () => string | null): boolean {
+function internalAgent(payload: HookPayload, sessionAgent: () => string | null): boolean {
   if (text(payload.agent_id) === "") return true;
   const type = text(payload.agent_type);
   if (type === "") return true;
   return type === sessionAgent();
+}
+
+/**
+ * Does this hook have nothing to run for this config — so the shell can answer before it reads a
+ * thing?
+ *
+ * A subagent's hand-back costs the parent's transcript (whose agent the session runs as) and the
+ * subagent's own (its turn), and it comes at every hand-back of every subagent. A config that binds
+ * no entry at turn-end, guardrail or breadcrumb, has nothing either read could feed, so neither is
+ * made. A disabled entry binds nothing.
+ */
+export function nothingBound(hook: HookEvent, entries: readonly LoadedEntry[]): boolean {
+  return hook === "subagent-stop" && !entries.some((entry) => fires(entry.spec, "turn-end"));
 }
 
 /** What a post-tool-use call was about, repo-relative: a path, or nothing this rail can steer on. */

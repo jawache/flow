@@ -111,6 +111,7 @@ import {
   mismatchRow,
   turnActions,
   agentSettingOf,
+  nothingBound,
   whileBroken,
   included,
   authored,
@@ -823,6 +824,9 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
 
   const { load, config } = regime;
   if (!load.ok) return outage(refusalText(load.refusals));
+  // NOTHING BOUND HERE, NOTHING READ: a hand-back with no turn-end entry to run is answered before
+  // either transcript is opened.
+  if (nothingBound(hook, load.entries)) return ALLOW;
 
   // THE DELTA, on the after-call rails: what this call changed in the tree, from the snapshot the
   // PreToolUse rail took. A call flow could not see is REPORTED and goes no further — nothing is

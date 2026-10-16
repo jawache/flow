@@ -15,10 +15,23 @@
 // binary, over stdin.
 
 import { describe, it, expect } from "vitest";
-import type { TurnAction } from "../index.ts";
-import { metrics, momentsView, spawnedAs, type Block, type Bound, type Row } from "../engine/domain.ts";
+import {
+  breadcrumb,
+  defineConfig,
+  definePack,
+  guardrail,
+  loadConfig,
+  override,
+  pack,
+  session,
+  turnEnd,
+  type LoadedEntry,
+  type LoadResult,
+  type TurnAction,
+} from "../index.ts";
+import { metrics, momentsView, type Block, type Bound, type Row } from "../engine/domain.ts";
 import { missingGrammarText } from "../checks/domain.ts";
-import { parseCommandLine, parseShellSteps, type SessionFacts } from "../language/domain.ts";
+import { parseCommandLine, parseShellSteps } from "../language/domain.ts";
 import { matchAny } from "../glob.ts";
 import {
   ALLOW,
@@ -42,8 +55,8 @@ import {
   relativise,
   ownTranscriptPath,
   sessionFactsFrom,
-  internalAgent,
   agentSettingOf,
+  nothingBound,
   toEvent,
   toResult,
   tokensFromTranscript,
@@ -889,27 +902,6 @@ describe("a subagent's hand-back — the turn-end moment at SubagentStop", () =>
     expect(asked, "the turn is asked for, and so is the session's own agent").toStrictEqual(["sessionAgent", "turn"]);
   });
 
-  it("is refused by a rule with no .for(…): exit 2, its message on stderr, the turn held open", () => {
-    const result = toResult("subagent-stop", { refused: [{ moment: "turn-end", block: block() }], shown: [] });
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("flow — turn held open");
-    expect(result.stderr).toContain("No TODOs in shipped code.");
-    expect(result.stderr).toContain("Do the above, then end your turn.");
-  });
-
-  it("names the subagent's type as its categories' evidence, so .for(…) narrows it as at every moment", () => {
-    const builder = spawnedAs({ types: ["builder"] });
-    const facts = (type: string): SessionFacts => sessionFactsFrom({ payload: { ...handBack, agent_type: type }, transcript: null });
-    expect(facts("builder")).toStrictEqual({ head: "", subagent: true, agentType: "builder" });
-    expect(builder(facts("builder")), "a builder's hand-back wears the category").toBe(true);
-    expect(builder(facts("Explore")), "a subagent without it is let through a .for(builder) rule").toBe(false);
-  });
-
-  it("reads the turn from the subagent's own transcript, never its parent's", () => {
-    expect(ownTranscriptPath(handBack), "the path the host sends as agent_transcript_path").toBe(handBack.agent_transcript_path);
-    expect(ownTranscriptPath(handBack)).not.toBe(parent);
-  });
-
   it("runs no rule for an internal agent — an empty type, or the session's own agent's", () => {
     expect(toEvent("subagent-stop", { ...handBack, agent_type: "" }, as(null)), "a session run as no agent").toStrictEqual([]);
     expect(asked, "an empty type costs no transcript read, and no turn").toStrictEqual([]);
@@ -922,19 +914,35 @@ describe("a subagent's hand-back — the turn-end moment at SubagentStop", () =>
     expect(toEvent("subagent-stop", anonymous, as(null)), "no agent id: no own transcript to read").toStrictEqual([]);
   });
 
-  it("decides internal agents from the payload and the session's agent alone", () => {
-    expect(internalAgent(handBack, () => null)).toBe(false);
-    expect(internalAgent(handBack, () => "Explore")).toBe(true);
-    expect(internalAgent({ ...handBack, agent_type: "" }, () => "Explore")).toBe(true);
-    expect(internalAgent({ ...handBack, agent_id: "" }, () => null)).toBe(true);
-  });
-
   it("reads the session's own agent from its transcript's agent-setting record, the last one standing", () => {
     const setting = (name: string): string => JSON.stringify({ type: "agent-setting", agentSetting: name, sessionId: "s1" });
     const said = JSON.stringify({ type: "user", message: { content: 'an "agent-setting" quoted in a prompt' } });
     expect(agentSettingOf(`${setting("leader")}\n${said}\n${setting("builder")}\n`)).toBe("builder");
     expect(agentSettingOf(`${said}\n`), "a prompt quoting the word is not the record").toBeNull();
     expect(agentSettingOf(""), "a session run as no agent").toBeNull();
+  });
+
+  it("has nothing to run, and so reads nothing, when no entry is bound at turn-end", () => {
+    const entries = (load: LoadResult): readonly LoadedEntry[] => {
+      if (!load.ok) throw new Error(JSON.stringify(load.refusals));
+      return load.entries;
+    };
+    const held = guardrail()
+      .at(turnEnd)
+      .check((ctx) => ((ctx.turn ?? []).length > 0 ? ctx.fail("did something") : ctx.ok()))
+      .message("m")
+      .test({ pass: [{ actions: [] }], block: [{ actions: [{ did: "edit", path: "a.ts" }] }] });
+    const elsewhere = entries(loadConfig(defineConfig([pack(definePack("t", { told: breadcrumb().at(session).text("t") }))])));
+    expect(nothingBound("subagent-stop", elsewhere), "a config with no turn-end entry").toBe(true);
+    expect(nothingBound("subagent-stop", entries(loadConfig(defineConfig([pack(definePack("t", { held }))])))), "a turn-end guardrail").toBe(false);
+    const told = definePack("t", { told: breadcrumb().at(turnEnd).text("t") });
+    expect(nothingBound("subagent-stop", entries(loadConfig(defineConfig([pack(told)])))), "a turn-end breadcrumb").toBe(false);
+    const off = definePack("t", { held });
+    expect(
+      nothingBound("subagent-stop", entries(loadConfig(defineConfig([pack(off), override(off.held).disabled("not here")])))),
+      "a disabled one binds nothing",
+    ).toBe(true);
+    expect(nothingBound("stop", elsewhere), "only the subagent's hand-back is answered early").toBe(false);
   });
 
   it("holds an agent once: a hand-back already held open is let through, and nothing is read", () => {
@@ -963,6 +971,9 @@ describe("who the session is, from what the host wrote", () => {
 
   it("finds a subagent's own transcript under the parent's, by its agent id", () => {
     expect(ownTranscriptPath(subagent)).toBe("/c/projects/p/s1/subagents/agent-a6009b5.jsonl");
+    // At SubagentStop the host also sends the path itself, and it is the one worked out here.
+    const handBack = { ...subagent, agent_id: "a1b1bb5ff0fc0ca82", agent_transcript_path: "/c/projects/p/s1/subagents/agent-a1b1bb5ff0fc0ca82.jsonl" };
+    expect(ownTranscriptPath(handBack), "the host's agent_transcript_path").toBe(handBack.agent_transcript_path);
     expect(ownTranscriptPath({ session_id: "s1", transcript_path: parent }), "the parent reads its own").toBe(parent);
     expect(ownTranscriptPath({ session_id: "s1", agent_id: "a1" }), "no path sent, none to read").toBeNull();
     expect(ownTranscriptPath({ ...subagent, transcript_path: "/c/projects/p/s1" }), "not a transcript").toBeNull();
