@@ -1365,7 +1365,7 @@ export interface Layer {
 }
 
 export interface Dialect {
-  /** What to cruise. A GLOB, because a bare directory makes depcruise cruise zero modules. */
+  /** What to cruise: a directory or a glob. `src` and `src/**` cruise the same modules. */
   readonly scan: string;
   /** Each layer, as globs — a bare list, or `{ path, not }` when it has holes in it. */
   readonly layers: Readonly<Record<string, readonly string[] | Layer>>;
@@ -1377,8 +1377,6 @@ export interface Dialect {
   readonly require?: readonly RequireEdge[];
   /** Carve-outs — `type-only` above all, since a type import is erased at compile time. */
   readonly except?: readonly string[];
-  /** Informational rules that never block. `sdp` = the Stable Dependencies Principle. */
-  readonly warn?: readonly string[];
   /** dependency-cruiser's own options, passed through. */
   readonly options?: Readonly<Record<string, unknown>>;
 }
@@ -1483,7 +1481,9 @@ export function compileDialect(rule: Dialect): NativeConfig {
     });
   }
 
-  // ── forbid: edges between layers, plain circular, orphans, cyclesBetween.
+  // ── forbid: edges between layers, plain circular, orphans, cyclesBetween. Every one of them
+  //    refuses the commit: depcruiseHits reads no severity, so `warn` here is only dependency-cruiser's
+  //    label for the rule, never a softer outcome.
   for (const f of rule.forbid ?? []) {
     if (f === "circular") {
       forbidden.push({
@@ -1538,19 +1538,6 @@ export function compileDialect(rule: Dialect): NativeConfig {
       module: { path: globToRe(r.in) },
       to: { path: globToRe(r.import) },
     });
-  }
-
-  // ── warn: informational only.
-  for (const w of rule.warn ?? []) {
-    if (w === "sdp") {
-      forbidden.push({
-        name: "sdp",
-        severity: "warn",
-        comment: "depends on a more-unstable module (Stable Dependencies Principle)",
-        from: {},
-        to: { moreUnstable: true },
-      });
-    }
   }
 
   // options: resolve TS/JS imports to real module paths (so a fence's `to` matches a resolved file,
@@ -1687,6 +1674,22 @@ export function holesInAnOnlyList(opts: Dialect): string[] {
 }
 
 /**
+ * A `warn` option — refused, because it is gone and its rule would silently go with it.
+ *
+ * `warn: ["sdp"]` compiled a Stable Dependencies rule that nothing bound, and it is removed with no
+ * replacement. The type no longer has the key, so a literal config fails to compile; but options
+ * built in a variable carry it past the compiler, and dropped quietly the rule would report armed
+ * and fence nothing. It is read off the raw object because the type cannot name it.
+ */
+export function removedWarnOption(opts: Dialect): string[] {
+  if (!Object.hasOwn(opts, "warn")) return [];
+  return [
+    `binds a depcruise \`warn\` option, which no longer exists and has no replacement: its \`sdp\` rule is ` +
+      `removed. Delete the \`warn\` key.`,
+  ];
+}
+
+/**
  * The generic import-fence runner.
  *
  * A whole-graph check: bind it at commit or turn-end, never per keystroke. It orchestrates and
@@ -1697,7 +1700,7 @@ export const depcruise = defineCheck((opts: Dialect): Check => {
   const run: Check = async (ctx) => answer(ctx, depcruiseHits(await ctx.exec(depcruiseCommand(opts))), "\n");
   // The options are judged when the check is BUILT, and a fault refuses the load rather than
   // waiting for a commit: a fence that cannot match is worse than no fence, because it reports.
-  return withFaults(run, [...nonGlobLayers(opts.layers), ...holesInAnOnlyList(opts)]);
+  return withFaults(run, [...nonGlobLayers(opts.layers), ...holesInAnOnlyList(opts), ...removedWarnOption(opts)]);
 });
 
 // ── ast-grep: ban or require a code SHAPE, parsed rather than matched ────────────────────────

@@ -16,7 +16,6 @@ Import fences over the real dependency graph, compiled to [dependency-cruiser](h
 | `only` | map | no | fail-closed allowlist: a layer may reach ONLY these layers |
 | `require` | list | no | an inverted fence: modules in a path MUST import a target |
 | `except` | list | no | only `"type-only"` is read; any other string is ignored. It exempts type-only imports from the fences. The check runs dependency-cruiser with `tsPreCompilationDeps: false`, so a type-only import is never an edge in the first place, and `except` changes nothing unless `options` sets `tsPreCompilationDeps` to `true` |
-| `warn` | list | no | only `"sdp"` is read: a rule against depending on a more unstable module (the Stable Dependencies Principle). It is compiled at severity `warn`, and a `warn` violation refuses the commit like any other violation |
 | `options` | object | no | dependency-cruiser's own options, merged over the check's defaults |
 
 ## The `forbid` forms
