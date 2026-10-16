@@ -2763,7 +2763,7 @@ describe("planUninstall — a repo flow init set up", () => {
   });
 
   it("reports each removal, the config it kept, and ends with the global package's npm uninstall", () => {
-    const said = uninstallLines(plan, []);
+    const said = uninstallLines(planUninstall({ ...wired, machineFile: { ...wired.machineFile, settings: null } }), []);
     expect(said).toEqual([
       "flow uninstall — removed:",
       `  - ${GATE_PATH}`,
@@ -2775,6 +2775,23 @@ describe("planUninstall — a repo flow init set up", () => {
       "  next: `npm uninstall -g @jawache/flow` — removes the package.",
     ]);
     expect(uninstallCode(plan, [])).toBe(0);
+  });
+
+  it("says the machine-wide file still holds flow's hooks, and names --machine beside the report and in its last line", () => {
+    expect(plan.machineHolds).toBe(MACHINE_SETTINGS);
+    expect(uninstallLines(plan, []).slice(-2)).toEqual([
+      `  · ${MACHINE_SETTINGS} still holds flow's hooks, and every repo on this machine runs them — \`flow uninstall --machine\` removes them.`,
+      "  next: `flow uninstall --machine` once no repo on this machine needs flow, then `npm uninstall -g @jawache/flow` — removes the hooks, then the package.",
+    ]);
+    expect(uninstallCode(plan, []), "a hint, not a failure").toBe(0);
+  });
+
+  it("says nothing of the machine-wide file when --machine cleans it, when it holds none of flow's, when it will not parse, or when the hooks are the repo's own", () => {
+    expect(planUninstall({ ...wired, machine: true }).machineHolds).toBeNull();
+    expect(planUninstall({ ...wired, machineFile: { ...wired.machineFile, settings: { theme: "dark" } } }).machineHolds).toBeNull();
+    expect(planUninstall({ ...wired, machineFile: { ...wired.machineFile, settings: null, unreadable: true } }).machineHolds).toBeNull();
+    expect(planUninstall({ ...wired, listed: true }).machineHolds, "a dev dependency's hooks are in the repo's own file").toBeNull();
+    expect(uninstallLines(planUninstall({ ...wired, machine: true }), []).at(-1)).toBe("  next: `npm uninstall -g @jawache/flow` — removes the package.");
   });
 
   it("says there is nothing to remove in a repo flow never touched", () => {

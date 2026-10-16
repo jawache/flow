@@ -636,7 +636,8 @@ describe("flow uninstall", () => {
         "  - .flow/ — flow's state and logs",
         "  - node_modules/@jawache/flow — the link `flow init` made",
         "  · kept flow.config.ts and the packs it imports — `flow init` wires this repo again.",
-        "  next: `npm uninstall -g @jawache/flow` — removes the package.",
+        `  · ${join(home, "settings.json")} still holds flow's hooks, and every repo on this machine runs them — \`flow uninstall --machine\` removes them.`,
+        "  next: `flow uninstall --machine` once no repo on this machine needs flow, then `npm uninstall -g @jawache/flow` — removes the hooks, then the package.",
       ]);
       expect(git(fresh, ["config", "--get", "core.hooksPath"]).stdout, "core.hooksPath is unset").toBe("");
       for (const gone of [".githooks", ".flow", "node_modules"]) expect(existsSync(join(fresh, gone)), `${gone} is gone`).toBe(false);

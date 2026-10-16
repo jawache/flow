@@ -4122,6 +4122,12 @@ export interface UninstallPlan {
   /** How this run was typed, so a failure's report says what to run again. */
   readonly command: string;
   readonly keptConfig: boolean;
+  /**
+   * The machine-wide file this repo's hooks are in still holds them, because `--machine` was not
+   * given: its path, said beside the report and in its last line, or null. Without it, a plain run
+   * reports success while every Claude Code session on the machine still calls `flow`.
+   */
+  readonly machineHolds: string | null;
   /** The command that removes the package, the report's last line. */
   readonly next: string;
 }
@@ -4155,6 +4161,10 @@ export function planUninstall(facts: UninstallFacts): UninstallPlan {
     unreadable: [...(repoUnreadable ? [REPO_SETTINGS] : []), ...(machineUnreadable ? [machineFile.path] : [])],
     command: facts.machine ? `flow uninstall ${MACHINE_FLAG}` : "flow uninstall",
     keptConfig: facts.hasConfig,
+    machineHolds:
+      !facts.machine && !facts.listed && !machineFile.unreadable && withoutRegistrations(machineFile.settings).removed.length > 0
+        ? machineFile.path
+        : null,
     next: facts.listed ? "npm uninstall @jawache/flow" : "npm uninstall -g @jawache/flow",
   };
 }
@@ -4203,13 +4213,20 @@ export function uninstallLines(plan: UninstallPlan, failures: readonly string[])
       `  · ${GATE_PATH} still runs flow, in a line flow did not write. Remove it yourself, or every commit fails with \`flow: not found\` once flow is gone.`,
     );
   if (plan.keptConfig) lines.push(`  · kept ${CONFIG_FILE} and the packs it imports — \`flow init\` wires this repo again.`);
+  const machineRun = `flow uninstall ${MACHINE_FLAG}`;
+  if (plan.machineHolds !== null)
+    lines.push(`  · ${plan.machineHolds} still holds flow's hooks, and every repo on this machine runs them — \`${machineRun}\` removes them.`);
   for (const path of plan.unreadable)
     lines.push(
       `  ✗ ${path} is not valid JSON, so flow's hooks were NOT removed from it and nothing was written to it. ` +
         `Fix the JSON (a trailing comma, or a // comment) and run \`${plan.command}\` again.`,
     );
   for (const failure of failures) lines.push(`  ✗ ${failure}`);
-  lines.push(`  next: \`${plan.next}\` — removes the package.`);
+  lines.push(
+    plan.machineHolds === null
+      ? `  next: \`${plan.next}\` — removes the package.`
+      : `  next: \`${machineRun}\` once no repo on this machine needs flow, then \`${plan.next}\` — removes the hooks, then the package.`,
+  );
   return lines;
 }
 
