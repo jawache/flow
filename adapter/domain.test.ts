@@ -443,6 +443,15 @@ describe("bashReads — the files a Bash command reads, before it runs", () => {
     expect(at("cat ~/a.ts $HOME/b.ts", ROOT, "/repo/home").reads).toStrictEqual(["home/a.ts", "home/b.ts"]);
     expect(reads("cat ~/a.ts")).toStrictEqual([]);
     expect(reads("cat cost$ a.ts")).toStrictEqual(["cost$", "a.ts"]);
+    // Quoted or escaped, a `$` or a `~` is text the program is given as is, never expanded: what
+    // is read is a file of that literal name, never the home or the variable's value.
+    expect(at("cat '$HOME/x.ts'", ROOT, "/repo/home").reads).toStrictEqual(["$HOME/x.ts"]);
+    expect(at("cat \\$HOME/x.ts", ROOT, "/repo/home").reads).toStrictEqual(["$HOME/x.ts"]);
+    expect(at("cat '~/x.ts'", ROOT, "/repo/home").reads).toStrictEqual(["~/x.ts"]);
+    expect(reads("F=a.ts; cat '$F'")).toStrictEqual(["$F"]);
+    expect(reads("F='$G'; G=a.ts; cat $F")).toStrictEqual(["$G"]);
+    expect(reads("for f in '$D'; do cat $f; done; cat < '$F'")).toStrictEqual(["$D", "$F"]);
+    expect(reads('F=a.ts; cat "$F" < "$F"')).toStrictEqual(["a.ts"]);
   });
 
   it("runs a for loop's body once per value", () => {
@@ -465,8 +474,8 @@ describe("bashReads — the files a Bash command reads, before it runs", () => {
     expect(searched("timeout -s KILL 60 rg x src")).toStrictEqual(["src"]);
     expect(reads("env -u X A=1 cat a.ts")).toStrictEqual(["a.ts"]);
     expect(reads("nice -n 5 nohup time cat a.ts")).toStrictEqual(["a.ts"]);
-    // The parse steps past xargs to the program it runs, so the list it reads is not read here.
-    expect(reads("xargs -a list.txt -n 1 grep -l x src/a.ts")).toStrictEqual(["src/a.ts"]);
+    expect(reads("xargs -a list.txt -n 1 grep -l x")).toStrictEqual(["list.txt"]);
+    expect(reads("xargs --arg-file list.txt grep -l x src/a.ts")).toStrictEqual(["list.txt", "src/a.ts"]);
     expect(reads("command -v cat a.ts")).toStrictEqual([]);
     expect(reads("command cat a.ts")).toStrictEqual(["a.ts"]);
     expect(reads("timeout 5")).toStrictEqual([]);

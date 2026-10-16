@@ -40,6 +40,7 @@ import {
   isPathMoment,
   parseShellSteps,
   type ShellStep,
+  type ShellWord,
   stepCommands,
   isSentence,
   loadConfig,
@@ -695,16 +696,19 @@ describe("parseCommandLine — nested commands", () => {
 });
 
 describe("parseShellSteps — the same parse, in the order the shell runs it", () => {
-  // Each step as a short string, so a test reads like the line it parses.
+  // A word as written, with each piece the shell expands marked, so `'$F'` reads apart from `$F`.
+  const written = (word: ShellWord): string =>
+    word.map((p) => (p.kind === "text" ? p.text : p.kind === "variable" ? `{${p.name}}` : p.kind === "tilde" ? "{~}" : "{?}")).join("");
+  // Each step as a short string, in the order the shell runs it: a command's substitutions first.
   const shape = (steps: readonly ShellStep[]): unknown[] =>
-    steps.map((step) =>
+    steps.flatMap((step) =>
       step.kind === "command"
-        ? `${step.command.text}${step.hereStrings > 0 ? ` <<<${step.hereStrings}` : ""}`
+        ? [...shape(step.before), step.command.text]
         : step.kind === "assign"
-          ? `${step.name}=${step.value}`
+          ? [`${step.name}=${written(step.value)}`]
           : step.kind === "scope"
-            ? { scope: shape(step.body) }
-            : { for: step.name, in: step.values, do: shape(step.body) },
+            ? [{ scope: shape(step.body) }]
+            : [{ for: step.name, in: step.values.map(written), do: shape(step.body) }],
     );
   const steps = (line: string): unknown[] | null => {
     const parsed = parseShellSteps(line);
@@ -713,13 +717,15 @@ describe("parseShellSteps — the same parse, in the order the shell runs it", (
 
   it("lists a bare assignment as a step, and an assignment in front of a command as nothing", () => {
     expect(steps("F=src/a.ts; cat $F")).toEqual(["F=src/a.ts", "cat $F"]);
+    expect(steps("F=$HOME/'$x'")).toEqual(["F={HOME}/$x"]);
     expect(steps("X=1 cat a.ts")).toEqual(["cat a.ts"]);
-    expect(steps("F=$(pick)")).toEqual([{ scope: ["pick"] }, "F=$(pick)"]);
+    expect(steps("F=$(pick)")).toEqual([{ scope: ["pick"] }, "F={?}"]);
   });
 
   it("puts a subshell, a substitution and a string given to a shell in a scope of their own", () => {
     expect(steps("(cd src; cat a.ts); cat b.ts")).toEqual([{ scope: ["cd src", "cat a.ts"] }, "cat b.ts"]);
-    expect(steps("echo $(cat a.ts)")).toEqual(["echo $(cat a.ts)", { scope: ["cat a.ts"] }]);
+    // A substitution runs before the command whose word it builds.
+    expect(steps("echo $(cat a.ts)")).toEqual([{ scope: ["cat a.ts"] }, "echo $(cat a.ts)"]);
     expect(steps("bash -c 'cd x && cat a.ts'")).toEqual(["bash -c cd x && cat a.ts", { scope: ["cd x", "cat a.ts"] }]);
     // A brace group runs in the line's own shell, so it is no scope.
     expect(steps("{ cd src; cat a.ts; }")).toEqual(["cd src", "cat a.ts"]);
@@ -727,15 +733,38 @@ describe("parseShellSteps — the same parse, in the order the shell runs it", (
 
   it("gives a for loop its name, its values and its body", () => {
     expect(steps("for f in a.ts b.ts; do cat $f; done")).toEqual([{ for: "f", in: ["a.ts", "b.ts"], do: ["cat $f"] }]);
+    expect(steps("for f in $D/a '$D/b'; do cat $f; done")).toEqual([{ for: "f", in: ["{D}/a", "$D/b"], do: ["cat $f"] }]);
     expect(steps("for f; do cat $f; done")).toEqual([{ for: "f", in: [], do: ["cat $f"] }]);
   });
 
-  it("counts a command's here-strings, which are its last arguments", () => {
-    expect(steps("grep x <<< 'some text'")).toEqual(["grep x some text <<<1"]);
+  it("keeps each word as written, a here-string out of them, and the wrappers stepped past before the program", () => {
+    const [step] = parseShellSteps("xargs -a list.txt grep x <<< 'some text'") ?? [];
+    if (step?.kind !== "command") throw new Error("no command step");
+    expect(step.command.args).toEqual(["x", "some text"]);
+    expect(step.words.map(written)).toEqual(["xargs", "-a", "list.txt", "grep", "x"]);
+    expect(step.at).toBe(3);
+    // Quoted and escaped text is text; only an unquoted `~` and an unquoted `$NAME` expand.
+    const [quoted] = parseShellSteps("cat '$HOME/a' \\$F ~/b '~/c' \"$G\" ${H} ${X:-y} $1 $(ls) < '$I'") ?? [];
+    if (quoted?.kind !== "command") throw new Error("no command step");
+    expect(quoted.words.map(written)).toEqual(["cat", "$HOME/a", "$F", "{~}/b", "~/c", "{G}", "{H}", "{?}", "{?}", "{?}"]);
+    expect(quoted.targets.map(written)).toEqual(["$I"]);
   });
 
-  it("holds exactly the commands ctx.commands holds, in the same order", () => {
-    for (const line of ["(cd a; cat b) | sh", "for f in a; do echo $(cat $f); done > out", "F=1; echo `ls` <(sort a)", "cat <<'EOF' | bash\nls\nEOF"]) {
+  it("lists the commands ctx.commands holds, in the order they appear, a group's redirects on each", () => {
+    // [text, redirects, nested] for each command, against fixed output.
+    const listed = (line: string): unknown =>
+      stepCommands(parseShellSteps(line) ?? []).map((c) => [c.text, c.redirects.map((r) => `${r.operator} ${r.target}`), c.nested]);
+    expect(listed("(cd a; cat b) | sh")).toEqual([["cd a", [], false], ["cat b", [], false], ["sh", [], false]]);
+    expect(listed("for f in a; do echo $(cat $f); done > out")).toEqual([["echo $(cat $f)", ["> out"], false], ["cat $f", [], true]]);
+    expect(listed("F=1; echo `ls` <(sort a)")).toEqual([["echo `ls` <(sort a)", [], false], ["ls", [], true], ["sort a", [], true]]);
+    expect(listed("cat <<'EOF' | bash\nls\nEOF")).toEqual([["cat", [], false], ["bash", [], false], ["ls", [], true]]);
+    expect(listed("coproc cat a < in")).toEqual([["cat a", ["< in"], false]]);
+    expect(listed("{ cat a; ls $(pwd); } 2>&1 >> log")).toEqual([
+      ["cat a", [">& 1", ">> log"], false],
+      ["ls $(pwd)", [">& 1", ">> log"], false],
+      ["pwd", [], true],
+    ]);
+    for (const line of ["(cd a; cat b) | sh", "for f in a; do echo $(cat $f); done > out", "{ cat a; ls $(pwd); } 2>&1 >> log"]) {
       expect(stepCommands(parseShellSteps(line) ?? [])).toEqual(parseCommandLine(line));
     }
   });

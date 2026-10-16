@@ -49,6 +49,7 @@ import {
   type SessionFacts,
   type ShellCommand,
   type ShellStep,
+  type ShellWord,
   type TurnAction,
 } from "../language/domain.ts";
 import {
@@ -359,10 +360,10 @@ export function wouldBeFile(
 }
 
 /** The programs, and the git subcommands, that remove a file — and whether their LAST argument is a destination instead. */
-const REMOVERS: Readonly<Record<string, { readonly renames: boolean }>> = {
-  rm: { renames: false },
-  mv: { renames: true },
-};
+const REMOVERS: ReadonlyMap<string, { readonly renames: boolean }> = new Map([
+  ["rm", { renames: false }],
+  ["mv", { renames: true }],
+]);
 
 /**
  * The paths a Bash line would remove — `rm`, `git rm`, and the SOURCE side of `mv` / `git mv` —
@@ -381,7 +382,7 @@ export function deleteTargets(commands: readonly ShellCommand[] | null): string[
   const out: string[] = [];
   for (const command of commands ?? []) {
     const git = gitCommand(command);
-    const remover = git === null ? REMOVERS[posix.basename(command.program)] : git.subcommand === null ? undefined : REMOVERS[git.subcommand];
+    const remover = git === null ? REMOVERS.get(posix.basename(command.program)) : git.subcommand === null ? undefined : REMOVERS.get(git.subcommand);
     if (remover === undefined) continue;
     const args = git === null ? command.args : git.args;
     const dash = args.indexOf("--");
@@ -520,9 +521,8 @@ function argvReads(argv: readonly Arg[]): ArgvReads {
   const searched: string[] = [];
   // The parse has already stepped past the wrappers (`timeout 60 rg …`, `env X=1 cat f`), so the
   // program is at the front.
-  const words = argv;
-  const name = words[0] === undefined || words[0] === null ? "" : posix.basename(words[0]);
-  const args = words.slice(1);
+  const name = argv[0] === undefined || argv[0] === null ? "" : posix.basename(argv[0]);
+  const args = argv.slice(1);
   if (name === "git") return gitReads(args, reads);
   if (name === "ffmpeg") {
     args.forEach((arg, i) => {
@@ -632,30 +632,36 @@ export interface BashReads {
 const DECLARERS = new Set(["export", "local", "declare", "readonly", "typeset"]);
 
 /**
- * One word of the parse as the shell would expand it, from what the line itself holds: a leading
- * `~`, `$HOME`, and a variable the line assigned. Null when only running the line could tell — an
- * unknown or special variable, a `${…}` with an operation in it, or a substitution or a `<( … )`,
- * whose commands are read as steps of their own.
+ * One word of the parse as the shell would expand it, from what the line itself holds: an unquoted
+ * leading `~`, `$HOME`, and a variable the line assigned. Quoted or escaped text is passed as is,
+ * so `'$F'` stays `$F`. Null when only running the line could tell — an unknown or special
+ * variable, a `${…}` with an operation in it, or a substitution, whose commands are read as steps
+ * of their own.
  */
-function expandWord(word: string, vars: ReadonlyMap<string, string>, home: string | undefined): string | null {
-  if (/`|\$\(|[<>]\(/.test(word)) return null;
-  // An object, not a `let`: the replacer below clears it from inside a closure, which narrowing cannot see.
-  const settled = { known: true };
-  const value = (name: string): string => {
-    const found = name === "HOME" ? home : vars.get(name);
-    if (found === undefined) settled.known = false;
-    return found ?? "";
-  };
-  const tilde = word === "~" || word.startsWith("~/") ? value("HOME") + word.slice(1) : word;
-  const out = tilde.replace(/\$(?:\{([^}]*)\}|([A-Za-z_]\w*)|[0-9@*#?$!-])/g, (_all, braced: string | undefined, bare: string | undefined) => {
-    const name = braced ?? bare;
-    if (name === undefined || !/^[A-Za-z_]\w*$/.test(name)) {
-      settled.known = false;
-      return "";
-    }
-    return value(name);
-  });
-  return settled.known ? out : null;
+function expandWord(word: ShellWord, vars: ReadonlyMap<string, string>, home: string | undefined): string | null {
+  let out = "";
+  for (const piece of word) {
+    const value =
+      piece.kind === "text" ? piece.text : piece.kind === "tilde" ? home : piece.kind === "variable" ? (piece.name === "HOME" ? home : vars.get(piece.name)) : undefined;
+    if (value === undefined) return null;
+    out += value;
+  }
+  return out;
+}
+
+/** `NAME=` at the head of a word, split off: the name, and the value as written. */
+function assignmentIn(word: ShellWord): { readonly name: string; readonly value: ShellWord } | null {
+  const [head, ...rest] = word;
+  const m = head?.kind === "text" ? /^([A-Za-z_]\w*)=/.exec(head.text) : null;
+  if (m === null || head?.kind !== "text") return null;
+  return { name: m[1] as string, value: [{ kind: "text", text: head.text.slice(m[0].length) }, ...rest] };
+}
+
+/** The list file `xargs -a FILE` or `--arg-file FILE` reads, from the wrappers the parse stepped past. */
+function xargsList(wrappers: readonly (string | null)[]): string | null {
+  const at = wrappers.findIndex((word) => word === "-a" || word === "--arg-file");
+  const named = at === -1 ? undefined : wrappers[at + 1];
+  return wrappers.some((word) => word !== null && posix.basename(word) === "xargs") && typeof named === "string" ? named : null;
 }
 
 /**
@@ -673,28 +679,30 @@ export function bashReads(steps: readonly ShellStep[] | null, where: BashWhere):
     const rel = path !== null && path.startsWith(`${where.root}/`) ? path.slice(where.root.length + 1) : null;
     if (rel !== null && !list.includes(rel)) list.push(rel);
   };
-  const assign = (name: string, value: string, scope: ShellScope): void => {
+  const assign = (name: string, value: ShellWord, scope: ShellScope): void => {
     const expanded = expandWord(value, scope.vars, where.home);
     if (expanded === null) scope.vars.delete(name);
     else scope.vars.set(name, expanded);
   };
-  const run = (command: ShellCommand, hereStrings: number, scope: ShellScope): void => {
-    for (const { operator, target } of command.redirects) {
-      if (operator !== "<" && operator !== "<>") continue;
-      const path = expandWord(target, scope.vars, where.home);
+  const run = (step: Extract<ShellStep, { kind: "command" }>, scope: ShellScope): void => {
+    step.command.redirects.forEach(({ operator }, i) => {
+      if (operator !== "<" && operator !== "<>") return;
+      const path = expandWord(step.targets[i] ?? [], scope.vars, where.home);
       add(reads, path === null ? null : at(path, scope.cwd));
-    }
-    const name = command.program;
+    });
+    const expand = (word: ShellWord): string | null => expandWord(word, scope.vars, where.home);
+    const list = xargsList(step.words.slice(0, step.at).map(expand));
+    if (list !== null) add(reads, at(list, scope.cwd));
+    const name = step.command.program;
+    const words = step.words.slice(step.at + 1);
     if (DECLARERS.has(name)) {
-      for (const arg of command.args) {
-        const m = /^([A-Za-z_]\w*)=/.exec(arg);
-        if (m !== null) assign(m[1] as string, arg.slice(m[0].length), scope);
+      for (const word of words) {
+        const found = assignmentIn(word);
+        if (found !== null) assign(found.name, found.value, scope);
       }
       return;
     }
-    // A here-string's text is what the command reads on stdin, not an argument naming a file.
-    const words = command.args.slice(0, command.args.length - hereStrings);
-    const argv = [name, ...words].map((word) => expandWord(word, scope.vars, where.home));
+    const argv = [expand(step.words[step.at] ?? []), ...words.map(expand)];
     if (name === "cd" || name === "pushd") {
       const target = argv.slice(1).find((arg) => !isOption(arg));
       const next = target === undefined ? (where.home ?? null) : target === null ? null : target === "-" ? scope.old : at(target, scope.cwd);
@@ -709,7 +717,11 @@ export function bashReads(steps: readonly ShellStep[] | null, where: BashWhere):
   };
   const walk = (body: readonly ShellStep[], scope: ShellScope): void => {
     for (const step of body) {
-      if (step.kind === "command") run(step.command, step.hereStrings, scope);
+      if (step.kind === "command") {
+        // The substitutions that build its words run first, each in a scope of its own.
+        walk(step.before, scope);
+        run(step, scope);
+      }
       else if (step.kind === "assign") assign(step.name, step.value, scope);
       else if (step.kind === "scope") walk(step.body, { cwd: scope.cwd, old: scope.old, vars: new Map(scope.vars) });
       else {

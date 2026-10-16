@@ -439,33 +439,73 @@ export interface ShellCommand {
 }
 
 /**
+ * One piece of a word as the line writes it: text the shell passes as is (quoted, escaped or plain),
+ * a variable it expands (`$NAME`, `${NAME}`), a leading unquoted `~`, or something only running
+ * the line could tell — a substitution, a special parameter, a `${…}` with an operation in it.
+ */
+export type ShellWordPiece =
+  | { readonly kind: "text"; readonly text: string }
+  | { readonly kind: "variable"; readonly name: string }
+  | { readonly kind: "tilde" }
+  | { readonly kind: "unknown" };
+
+/** A word as the line writes it, piece by piece, so a reader expands `$F` and leaves `'$F'` alone. */
+export type ShellWord = readonly ShellWordPiece[];
+
+/**
  * THE SAME PARSE, IN THE ORDER IT RUNS — for a reader that follows the line the way the shell does:
  * where a `cd` leaves it, what a variable the line set holds, what a `for` loop's body is given.
- * Not on ctx, and not public: `ctx.commands` is exactly these steps' commands, in order
- * (`stepCommands`), so the two can never disagree about what a line runs.
+ * Not on ctx, and not public: `ctx.commands` is exactly these steps' commands (`stepCommands`), so
+ * the two can never disagree about what a line runs.
  */
 export type ShellStep =
-  /** One command. `hereStrings` counts its last arguments that are `<<<` texts, which it reads on stdin rather than is given. */
-  | { readonly kind: "command"; readonly command: ShellCommand; readonly hereStrings: number }
+  | {
+      readonly kind: "command";
+      readonly command: ShellCommand;
+      /**
+       * Its words as written — wrappers first, no here-string — and where the program starts among
+       * them: `words.slice(0, at)` are the wrappers stepped past (`xargs -a list …`), and the rest
+       * are the program and the arguments it is given. A here-string's text is stdin, not a word.
+       */
+      readonly words: readonly ShellWord[];
+      readonly at: number;
+      /** Each of `command.redirects`' targets as written, in the same order. */
+      readonly targets: readonly ShellWord[];
+      /** The substitutions that build its words, which run before it does. */
+      readonly before: readonly ShellStep[];
+    }
   /** `NAME=value` on its own, which sets a shell variable. In front of a command it is that command's env, and not a step. */
-  | { readonly kind: "assign"; readonly name: string; readonly value: string }
+  | { readonly kind: "assign"; readonly name: string; readonly value: ShellWord }
   /** A subshell, a substitution, or a script handed to another shell: a `cd` or a variable set inside stays inside. */
   | { readonly kind: "scope"; readonly body: readonly ShellStep[] }
   /** `for name in values; do body; done`: the body runs once per value. `values` is empty when the line lists none. */
-  | { readonly kind: "for"; readonly name: string; readonly values: readonly string[]; readonly body: readonly ShellStep[] };
+  | { readonly kind: "for"; readonly name: string; readonly values: readonly ShellWord[]; readonly body: readonly ShellStep[] };
 
-/** Every command in the steps, nested ones included, in the order the parse found them. */
+/**
+ * Every command in the steps, nested ones included, in the order they appear in the line: a
+ * command before the commands its own substitutions run, which is the order `ctx.commands` keeps.
+ */
 export function stepCommands(steps: readonly ShellStep[]): ShellCommand[] {
-  return steps.flatMap((step) => (step.kind === "command" ? [step.command] : step.kind === "assign" ? [] : stepCommands(step.body)));
+  return steps.flatMap((step) =>
+    step.kind === "command" ? [step.command, ...stepCommands(step.before)] : step.kind === "assign" ? [] : stepCommands(step.body),
+  );
+}
+
+/** Redirects as they are gathered: the public pair, and each target as written, in step. */
+interface Redirects {
+  readonly list: ShellRedirect[];
+  readonly targets: ShellWord[];
 }
 
 /** The steps with a group's or a loop's redirects added to each command at its own level, however deep in a subshell or a loop. */
-function withRedirects(steps: readonly ShellStep[], nested: boolean, redirects: readonly ShellRedirect[]): ShellStep[] {
+function withRedirects(steps: readonly ShellStep[], nested: boolean, redirects: Redirects): ShellStep[] {
   return steps.map((step): ShellStep => {
     if (step.kind === "assign") return step;
     if (step.kind === "command") {
       const c = step.command;
-      return c.nested === nested ? { ...step, command: { ...c, redirects: [...c.redirects, ...redirects] } } : step;
+      const before = withRedirects(step.before, nested, redirects);
+      if (c.nested !== nested) return { ...step, before };
+      return { ...step, before, command: { ...c, redirects: [...c.redirects, ...redirects.list] }, targets: [...step.targets, ...redirects.targets] };
     }
     return { ...step, body: withRedirects(step.body, nested, redirects) };
   });
@@ -500,12 +540,15 @@ const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
 const basename = (program: string): string => program.slice(program.lastIndexOf("/") + 1);
 
-/** Step past every wrapper at the head of an argv. A wrapper with nothing after it stays the program. */
-function stepWrappers(argv: readonly string[]): readonly string[] {
+/**
+ * How many words at the head of an argv are wrappers, their options and their operands — where the
+ * program that runs starts. A wrapper with nothing after it stays the program.
+ */
+function wrapperWords(argv: readonly string[]): number {
   let rest = argv;
   for (;;) {
     const spec = WRAPPERS[basename(rest[0] ?? "")];
-    if (spec === undefined) return rest;
+    if (spec === undefined) return argv.length - rest.length;
     const flags: string[] = [];
     let at = rest.length; // where the program is: past every flag, value and assignment
     let value = false; // the word before was a flag that takes this one as its value
@@ -524,7 +567,7 @@ function stepWrappers(argv: readonly string[]): readonly string[] {
       }
     }
     at += spec.operands ?? 0;
-    if (spec.lookup?.some((flag) => flags.includes(flag)) || at >= rest.length) return rest;
+    if (spec.lookup?.some((flag) => flags.includes(flag)) || at >= rest.length) return argv.length - rest.length;
     rest = rest.slice(at);
   }
 }
@@ -547,6 +590,45 @@ function shellInput(args: readonly string[]): { readonly string: string } | "std
     else return c ? { string: arg } : s ? "stdin" : null;
   }
   return c ? null : "stdin";
+}
+
+/** One expansion as a piece: a plain `$NAME` or `${NAME}` is a variable, anything else unknown. */
+function expansionPiece(text: string): ShellWordPiece {
+  const name = /^\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})$/.exec(text);
+  const found = name?.[1] ?? name?.[2];
+  return found === undefined ? { kind: "unknown" } : { kind: "variable", name: found };
+}
+
+/** A part of a word, or of a double-quoted run, as pieces. */
+function wordPieces(part: WordPart): ShellWordPiece[] {
+  switch (part.type) {
+    case "Literal":
+    case "SingleQuoted":
+    case "AnsiCQuoted":
+      return [{ kind: "text", text: part.value }];
+    case "DoubleQuoted":
+    case "LocaleString":
+      return part.parts.flatMap(wordPieces);
+    case "SimpleExpansion":
+    case "ParameterExpansion":
+      return [expansionPiece(part.text)];
+    case "ExtendedGlob":
+    case "BraceExpansion":
+      return [{ kind: "text", text: part.text }];
+    default:
+      return [{ kind: "unknown" }];
+  }
+}
+
+/** A word as pieces. A leading `~` is the home directory only when it is unquoted, and only as `~` or `~/…`. */
+function shellWord(w: Word): ShellWord {
+  const pieces: ShellWordPiece[] = w.parts === undefined ? [{ kind: "text", text: w.value }] : w.parts.flatMap(wordPieces);
+  const [first] = pieces;
+  const unquoted = w.parts === undefined || w.parts[0]?.type === "Literal";
+  if (unquoted && first?.kind === "text" && (first.text === "~" || first.text.startsWith("~/")) && w.text.startsWith("~")) {
+    return [{ kind: "tilde" }, { kind: "text", text: first.text.slice(1) }, ...pieces.slice(1)];
+  }
+  return pieces;
 }
 
 /** The command inside a substitution's text, without its `$( … )` or backticks. */
@@ -738,12 +820,15 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
   const redirection = (
     r: Redirection,
     heredocs: ShellHeredoc[] | null,
-    redirects: ShellRedirect[],
+    redirects: Redirects,
     subs: ShellSubstitution[] | null,
     out: ShellStep[],
   ): void => {
     if (r.type !== "HereDoc") {
-      if (r.type === "Redirect") redirects.push({ operator: r.operator, target: r.target?.value ?? "" });
+      if (r.type === "Redirect") {
+        redirects.list.push({ operator: r.operator, target: r.target?.value ?? "" });
+        redirects.targets.push(r.target === undefined ? [] : shellWord(r.target));
+      }
       word(r.target, subs, out);
       return;
     }
@@ -775,7 +860,7 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
       case "Redirected": {
         // A group's or a loop's redirects apply to every command inside it, so each one lists them.
         const inside: ShellStep[] = [];
-        const redirects: ShellRedirect[] = [];
+        const redirects: Redirects = { list: [], targets: [] };
         node(n.command, nested, inside);
         for (const r of n.redirects) redirection(r, null, redirects, null, inside);
         out.push(...withRedirects(inside, nested, redirects));
@@ -807,7 +892,7 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
         for (const w of n.wordlist ?? []) word(w, null, out);
         const body: ShellStep[] = [];
         node(n.body, nested, body);
-        out.push({ kind: "for", name: n.name.value, values: (n.wordlist ?? []).map((w) => w.value), body });
+        out.push({ kind: "for", name: n.name.value, values: (n.wordlist ?? []).map(shellWord), body });
         return;
       }
       case "Select":
@@ -854,8 +939,9 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
   // it, and — after it, in the order they appear — every command nested inside it.
   const simple = (c: BashCommand, nested: boolean, out: ShellStep[]): void => {
     const argv: string[] = [];
+    const words: ShellWord[] = [];
     const heredocs: ShellHeredoc[] = [];
-    const redirects: ShellRedirect[] = [];
+    const redirects: Redirects = { list: [], targets: [] };
     const subs: ShellSubstitution[] = [];
     const inner: ShellStep[] = [];
     for (const p of c.prefix) {
@@ -864,30 +950,33 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
     }
     if (c.name !== undefined) {
       argv.push(c.name.value);
+      words.push(shellWord(c.name));
       word(c.name, subs, inner);
     }
     for (const s of c.suffix) {
       if (s.type === "Word") {
         argv.push(s.value);
+        words.push(shellWord(s));
         word(s, subs, inner);
       } else if (s.type === "Assignment") {
         const value = s.value.type === "Word" ? s.value.value : `(${s.value.elements.map((e) => e.value).join(" ")})`;
-        argv.push(`${s.name}${s.index === undefined ? "" : `[${s.index.value}]`}${s.append ? "+=" : "="}${value}`);
+        const head = `${s.name}${s.index === undefined ? "" : `[${s.index.value}]`}${s.append ? "+=" : "="}`;
+        argv.push(`${head}${value}`);
+        words.push([{ kind: "text", text: head }, ...(s.value.type === "Word" ? shellWord(s.value) : [{ kind: "unknown" } as const])]);
         assignment(s.value, subs, inner);
       } else redirection(s, heredocs, redirects, subs, inner);
     }
     // A `<<<` here-string's text is the command's last argument, after every word.
-    const words = argv.length;
     if (argv.length > 0) for (const r of [...c.prefix, ...c.suffix]) if (r.type === "HereString" && r.target !== undefined) argv.push(r.target.value);
-    const [program, ...args] = stepWrappers(argv);
+    const at = wrapperWords(argv);
+    const [program, ...args] = argv.slice(at);
     if (program !== undefined) {
-      const command = { program, args, text: [program, ...args].join(" "), heredocs, substitutions: subs, redirects, nested };
-      out.push({ kind: "command", command, hereStrings: argv.length - words });
-    }
-    out.push(...inner);
-    if (program === undefined) {
-      // Assignments alone set the shell's variables, once their values are built.
-      for (const p of c.prefix) if (p.type === "Assignment" && p.value.type === "Word") out.push({ kind: "assign", name: p.name, value: p.value.value });
+      const command = { program, args, text: [program, ...args].join(" "), heredocs, substitutions: subs, redirects: redirects.list, nested };
+      out.push({ kind: "command", command, words, at, targets: redirects.targets, before: inner });
+    } else {
+      // Assignments alone set the shell's variables, once the substitutions in their values have run.
+      out.push(...inner);
+      for (const p of c.prefix) if (p.type === "Assignment" && p.value.type === "Word") out.push({ kind: "assign", name: p.name, value: shellWord(p.value) });
       return;
     }
     const name = basename(program);
