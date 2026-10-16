@@ -1657,9 +1657,9 @@ export default defineConfig([pack(demo)]);
     rmSync(tree, { recursive: true, force: true });
   });
 
-  /** `agent`, `agentType` and `kind` of every row after meta, from one agent. */
-  const from = (session: string, agent: string): Record<string, unknown>[] =>
-    rows(tree, session).filter((row) => row["kind"] !== "meta" && row["agent"] === agent);
+  /** Every row after meta in this suite's session log, whole, that came from one agent. */
+  const from = (agent: string): Record<string, unknown>[] =>
+    rows(tree, "agents").filter((row) => row["kind"] !== "meta" && row["agent"] === agent);
   const kinds = (list: Record<string, unknown>[]): string[] => [...new Set(list.map((row) => row["kind"] as string))].sort();
 
   it("names the agent on every row after meta: main for the session, the agent_id for a subagent", () => {
@@ -1667,14 +1667,14 @@ export default defineConfig([pack(demo)]);
     expect(all.length).toBeGreaterThan(0);
     for (const row of all) expect(typeof row["agent"], JSON.stringify(row)).toBe("string");
     expect(new Set(all.map((row) => row["agent"]))).toEqual(new Set(["main", "a77untyped", "a6009b558b4c9155c"]));
-    expect(kinds(from("agents", "main"))).toEqual(["breadcrumb", "run", "tool"]);
-    expect(kinds(from("agents", "a6009b558b4c9155c"))).toEqual(["breadcrumb", "guardrail", "read", "run", "tool", "write"]);
+    expect(kinds(from("main"))).toEqual(["breadcrumb", "run", "tool"]);
+    expect(kinds(from("a6009b558b4c9155c"))).toEqual(["breadcrumb", "guardrail", "read", "run", "tool", "write"]);
   });
 
   it("puts agentType only on a subagent's rows, and only when its message sent the type", () => {
-    for (const row of from("agents", "a6009b558b4c9155c")) expect(row["agentType"], JSON.stringify(row)).toBe("builder");
-    for (const row of [...from("agents", "main"), ...from("agents", "a77untyped")]) expect(row, JSON.stringify(row)).not.toHaveProperty("agentType");
-    expect(from("agents", "a77untyped").length).toBeGreaterThan(0);
+    for (const row of from("a6009b558b4c9155c")) expect(row["agentType"], JSON.stringify(row)).toBe("builder");
+    for (const row of [...from("main"), ...from("a77untyped")]) expect(row, JSON.stringify(row)).not.toHaveProperty("agentType");
+    expect(from("a77untyped").length).toBeGreaterThan(0);
   });
 
   it("names the agent whose call last ran on the commit gate's rows, or commit when there was none", () => {
