@@ -3738,6 +3738,8 @@ export interface HooksFolder {
   readonly files: readonly string[];
   /** The text of the pre-commit hook a person edits for that folder (`preCommitOf(dir)`), or null. */
   readonly preCommit: string | null;
+  /** That file has the execute bit this user needs to run it. False when there is no file. */
+  readonly preCommitExecutable: boolean;
 }
 
 /** Git runs other hooks, and whether the pre-commit hook it runs calls flow. */
@@ -3746,8 +3748,14 @@ export interface OtherHooks {
   readonly dir: string;
   /** The pre-commit hook a person edits to call flow. */
   readonly preCommit: string;
-  /** It calls flow's gate already, so flow is installed. */
+  /** It calls flow's gate already, and git runs it, so flow is installed. */
   readonly wired: boolean;
+  /**
+   * The first fix, null once wired: `add` flow's two lines; `create` the hook, which is not there;
+   * `chmod` a hook that calls flow but that git ignores, because it lacks the execute bit; or
+   * `add-and-chmod`, both.
+   */
+  readonly fix: "add" | "create" | "chmod" | "add-and-chmod" | null;
 }
 
 /**
@@ -3782,7 +3790,16 @@ export function otherHooks(hooksPath: string | null, folder: HooksFolder): Other
   // path to it are all flow's own.
   if (folder.dir === HOOKS_DIR) return null;
   if (hooksPath === null && folder.files.every((name) => name.endsWith(".sample"))) return null;
-  return { dir: folder.dir, preCommit: preCommitOf(folder.dir), wired: armsFlow(folder.preCommit) };
+  const preCommit = preCommitOf(folder.dir);
+  const calls = armsFlow(folder.preCommit);
+  // Git runs a hook only when it has the execute bit, and ignores it otherwise with a warning a
+  // commit scrolls past. That bites only when git runs the file itself. Husky's stub in `.husky/_`
+  // runs `.husky/pre-commit` with `sh`, so that file needs no execute bit, and is never created
+  // for husky either: its stub skips a hook that is not there.
+  if (preCommit !== posix.join(folder.dir, "pre-commit")) return { dir: folder.dir, preCommit, wired: calls, fix: calls ? null : "add" };
+  const fix =
+    folder.preCommit === null ? "create" : folder.preCommitExecutable ? (calls ? null : "add") : calls ? "chmod" : "add-and-chmod";
+  return { dir: folder.dir, preCommit, wired: fix === null, fix };
 }
 
 /** The words the block opens with, fixed by the docs, for every reader that looks for them. */

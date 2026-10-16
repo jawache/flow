@@ -125,8 +125,13 @@ function resolves(root: string): boolean {
 
 /** Is there a `flow` this user can run in that folder? What a shell looking it up by name asks. */
 function hasFlow(dir: string): boolean {
+  return executable(join(dir, "flow"));
+}
+
+/** Can this user run the file at that path? What git asks before it runs a hook. */
+function executable(path: string): boolean {
   try {
-    accessSync(join(dir, "flow"), constants.X_OK);
+    accessSync(path, constants.X_OK);
     return true;
   } catch {
     return false;
@@ -168,7 +173,8 @@ function hooksFolder(root: string): HooksFolder | null {
   } catch {
     /* no folder there yet: git runs nothing from it */
   }
-  return { dir, files, preCommit: readText(root, preCommitOf(dir)) };
+  const preCommit = preCommitOf(dir);
+  return { dir, files, preCommit: readText(root, preCommit), preCommitExecutable: executable(resolve(root, preCommit)) };
 }
 
 /**
