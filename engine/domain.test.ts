@@ -938,6 +938,23 @@ describe("the commit gate's session marker", () => {
     expect(attribution(fresh, "commit", now)).toStrictEqual({ session: "live", agent: "agent-7" });
   });
 
+  it("carries the agent's type with the agent, and never a type without one", () => {
+    expect(attribution({ ...fresh, agentType: "builder" }, "commit", now)).toStrictEqual({
+      session: "live",
+      agent: "agent-7",
+      agentType: "builder",
+    });
+    expect(attribution({ ...fresh, agentType: "" }, "commit", now), "an empty type is none").toStrictEqual({
+      session: "live",
+      agent: "agent-7",
+    });
+    expect(attribution({ session: "live", agentType: "builder", ts: fresh.ts }, "commit", now)).toStrictEqual({
+      session: "live",
+      agent: null,
+    });
+    expect(attribution({ ...fresh, agentType: "builder", ts: "2026-09-04T02:00:00.000Z" }, "commit", now)).toStrictEqual(none);
+  });
+
   it("falls back rather than mis-pinning a commit to a session that ended hours ago", () => {
     expect(attribution({ session: "old", ts: "2026-09-04T02:00:00.000Z" }, "commit", now)).toStrictEqual(none);
     expect(attribution({ session: "future", ts: "2027-01-01T00:00:00.000Z" }, "commit", now)).toStrictEqual(none);

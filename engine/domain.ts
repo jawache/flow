@@ -853,6 +853,8 @@ export interface SessionMarker {
    * delete. Absent on a marker written before this field existed, which reads as "unknown actor".
    */
   readonly agent?: unknown;
+  /** The type that agent was started as, for the commit gate's log rows. Absent on `main`. */
+  readonly agentType?: unknown;
   readonly ts?: unknown;
 }
 
@@ -864,6 +866,8 @@ export interface Attribution {
   readonly session: string;
   /** Null when the marker named no agent — an old marker, or a run with nobody to attribute to. */
   readonly agent: string | null;
+  /** The type that agent was started as, when the marker holds one. Only ever beside an agent. */
+  readonly agentType?: string;
 }
 
 /**
@@ -888,7 +892,11 @@ export function attribution(
   if (!marker || typeof marker.session !== "string" || !marker.session) return none;
   const at = Date.parse(String(marker.ts));
   if (!Number.isFinite(at) || Math.abs(nowMs - at) > maxAgeMs) return none;
-  return { session: marker.session, agent: typeof marker.agent === "string" && marker.agent ? marker.agent : null };
+  const agent = typeof marker.agent === "string" && marker.agent ? marker.agent : null;
+  const type = marker.agentType;
+  return agent !== null && typeof type === "string" && type
+    ? { session: marker.session, agent, agentType: type }
+    : { session: marker.session, agent };
 }
 
 /**

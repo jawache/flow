@@ -368,19 +368,21 @@ export function writeMarker(
   root: string,
   session: string,
   agent: string,
+  agentType: string | undefined,
   branch: string | null,
   at: Date = new Date(),
 ): boolean {
   try {
     ensureFlowDir(root);
-    writeFileSync(markerPath(root, branch), `${JSON.stringify({ session, agent, ts: at.toISOString() })}\n`);
+    const who = agentType === undefined ? { session, agent } : { session, agent, agentType };
+    writeFileSync(markerPath(root, branch), `${JSON.stringify({ ...who, ts: at.toISOString() })}\n`);
     return true;
   } catch {
     return false;
   }
 }
 
-/** Who this worktree's commit belongs to — the fresh marker's session × agent, or `commit`. */
+/** Who this worktree's commit belongs to — the fresh marker's session × agent and its type, or `commit`. */
 export function commitAttribution(root: string, branch: string | null, nowMs: number = Date.now()): Attribution {
   let marker: unknown = null;
   try {

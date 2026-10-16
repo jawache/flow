@@ -248,11 +248,12 @@ export function wearer(root: string): {
   readonly branch: string | null;
   readonly session: string;
   readonly agent: string | null;
+  readonly agentType: string | undefined;
   readonly wearing: readonly string[];
 } {
   const branch = currentBranch(root);
-  const { session, agent } = commitAttribution(root, branch);
-  return { branch, session, agent, wearing: agent === null ? [] : (loadState(root, session, agent).categories ?? []) };
+  const { session, agent, agentType } = commitAttribution(root, branch);
+  return { branch, session, agent, agentType, wearing: agent === null ? [] : (loadState(root, session, agent).categories ?? []) };
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -764,7 +765,7 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
   // session, so this is the only way a later `git commit` can attribute its refusals to the chat
   // that caused them. Best-effort by construction — `writeMarker` answers a boolean.
   if (hook === "pre-tool-use" && !off && session.id !== "unknown")
-    writeMarker(root, session.id, session.agent, session.branch);
+    writeMarker(root, session.id, session.agent, session.agentType, session.branch);
 
   const key = callKey(payload);
   const tool = typeof payload.tool_name === "string" ? payload.tool_name : "";
@@ -1089,7 +1090,7 @@ export async function runCommit(root: string, scope: CommitScope): Promise<HookR
   // empty or not, through `guard()`'s own `!load.ok` branch.
   if (load.ok && files.length === 0 && deleted.length === 0) return ALLOW;
 
-  const { branch, session, agent, wearing } = wearer(root);
+  const { branch, session, agent, agentType, wearing } = wearer(root);
   // The gate is where the expensive checks live — a suite, a type-check, a whole dependency
   // cruise — so it is also where a recording is worth the most: replaying a refused commit is the
   // one thing you cannot do by re-running it, because the working tree has moved on since.
@@ -1120,7 +1121,7 @@ export async function runCommit(root: string, scope: CommitScope): Promise<HookR
     ]);
   // An agent nobody can name — no fresh marker, or one written before markers held the agent — is
   // `commit`, the same word that names the stream such a commit's rows land in.
-  appendRows({ root, session, branch, agent: agent ?? "commit" }, runRows("commit", outcome, files.length + gone.length));
+  appendRows({ root, session, branch, agent: agent ?? "commit", agentType }, runRows("commit", outcome, files.length + gone.length));
 
   const blocks: Refused[] = outcome.effects
     .filter((effect): effect is Block => effect.do === "block")
