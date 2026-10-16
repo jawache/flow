@@ -47,6 +47,7 @@ For you when you need an exact command, verb, moment or field: each page describ
 - [The config](./reference/config.md): `flow.config.ts`, its settings, every verb of a guardrail and a breadcrumb, cases, categories, and what the loader refuses.
 - [Moments](./reference/moments.md): the seven moments a rule runs at, and when each one happens.
 - [The ctx a check reads](./reference/ctx.md): the contract a check is written to, and every field of `ctx` at each moment.
+- [The session log](./reference/log.md): the log flow writes for each session, and every field of each kind of row.
 - [Vocabulary](./reference/vocabulary.md): every term these pages use.
 
 ### The shipped packs — one page each
