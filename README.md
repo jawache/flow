@@ -24,7 +24,7 @@ This rule is in the demo config `flow init` writes:
 ```ts
 noForcePush: guardrail()
   .at(command)
-  .check(banCommands({ ban: ["git push --force", "git push -f", "git push --force-with-lease", "git push --force-if-includes"] }))
+  .check(banCommands({ ban: ["git push --force", "git push -f", "git push --force-with-lease"] }))
   .message("Force-pushing rewrites history everyone else has. Push a correcting commit, or ask first.")
   .test({ pass: ["git push origin main"], block: ["git push --force origin main", "git push --force-with-lease origin main"] }),
 ```
