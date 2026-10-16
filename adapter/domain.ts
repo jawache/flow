@@ -76,7 +76,7 @@ import {
 // Git read from the parse, borrowed rather than copied. Reading `git rm src/x.ts` for the paths it
 // would remove is event ASSEMBLY — the adapter's job — but where git's own options stop and its
 // subcommand starts is a question the checks layer already answers.
-import { GIT_VALUE_OPTS, gitCommand, gitCommands, missingGrammarText } from "../checks/domain.ts";
+import { GIT_VALUE_OPTS, gitCommand, gitCommands, missingGrammarText, quoteArg } from "../checks/domain.ts";
 // String algebra only — a Bash read is resolved against the directory the shell was in.
 import { posix } from "node:path";
 // The one glob engine. A coverage question asked with a second matcher is a coverage answer about
@@ -3840,10 +3840,18 @@ export function notInstalledLines(other: UnwiredHooks): string[] {
   ];
 }
 
+/**
+ * A path as a person pastes it into a shell: as it is when nothing in it is special to the shell,
+ * and single-quoted when something is, such as the space in a worktree under `~/My Projects/`.
+ */
+export function asTyped(path: string): string {
+  return /^[\w@%+=:,./-]+$/.test(path) ? path : quoteArg(path);
+}
+
 /** Why the pre-commit hook does not run flow's gate, as the block's first line ends, and the fix. */
 function firstFix(other: UnwiredHooks): [string, string[]] {
   const hook = other.preCommit;
-  const chmod = `\`chmod +x ${hook}\``;
+  const chmod = `\`chmod +x ${asTyped(hook)}\``;
   switch (other.fix) {
     case "create":
       return [`there is no ${hook}, so`, [`  - Create ${hook} with these three lines, then run ${chmod} so git runs it:`, "      #!/bin/sh", ...GATE_LINES]];
