@@ -1364,8 +1364,8 @@ describe("the depcruise dialect", () => {
     const faults = faultsOf(depcruise(options));
     expect(faults).toHaveLength(1);
     expect(faults[0]).toContain("`warn`");
-    expect(faults[0]).toContain('`forbid: ["sdp"]`');
-    expect(faultsOf(depcruise({ scan: "src/**", layers: {}, forbid: ["sdp"] }))).toEqual([]);
+    expect(faults[0]).toContain("Delete the `warn` key");
+    expect(faultsOf(depcruise({ scan: "src/**", layers: {} }))).toEqual([]);
   });
 
   it("compiles forbid edges, transitive and plain, with the fence's own why", () => {
@@ -1399,19 +1399,6 @@ describe("the depcruise dialect", () => {
     expect(config.forbidden[2]?.to?.["pathNot"]).toBe("$1/");
     const unnamed = compileDialect({ scan: "s", layers: { f: ["src/*"] }, forbid: [{ cyclesBetween: "f" }] });
     expect(unnamed.forbidden[0]?.comment).toBe("f must not import sideways");
-  });
-
-  it("compiles forbid: sdp into a rule against importing a less stable module", () => {
-    const config = compileDialect({ scan: "s", layers: {}, forbid: ["sdp"] });
-    expect(config.forbidden).toEqual([
-      {
-        name: "sdp",
-        severity: "warn",
-        comment: "depends on a more-unstable module (Stable Dependencies Principle)",
-        from: {},
-        to: { moreUnstable: true },
-      },
-    ]);
   });
 
   it("compiles require: into an inverted rule", () => {
@@ -1473,9 +1460,9 @@ describe("depcruiseHits", () => {
 
   it("a violation at severity warn is a hit like any other, though the tool exits 0 for it", () => {
     const stdout = JSON.stringify({
-      summary: { violations: [{ rule: { name: "sdp", severity: "warn" }, from: "src/core.ts", to: "src/app.ts" }] },
+      summary: { violations: [{ rule: { name: "no-orphans", severity: "warn" }, from: "src/core.ts", to: "src/app.ts" }] },
     });
-    expect(depcruiseHits({ stdout, stderr: "", code: 0 })).toEqual(["sdp: src/core.ts → src/app.ts"]);
+    expect(depcruiseHits({ stdout, stderr: "", code: 0 })).toEqual(["no-orphans: src/core.ts → src/app.ts"]);
   });
 
   it("unparseable output is a REAL failure when the tool failed, and silence when it did not", () => {

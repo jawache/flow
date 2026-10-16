@@ -1301,7 +1301,7 @@ export interface Dialect {
   /** Fail-closed allowlist: a layer may reach ONLY these layers. */
   readonly only?: Readonly<Record<string, readonly string[]>>;
   /** Forbidden edges, each carrying the `why` its violation prints. */
-  readonly forbid?: readonly (ForbidEdge | "circular" | "orphans" | "sdp")[];
+  readonly forbid?: readonly (ForbidEdge | "circular" | "orphans")[];
   /** An inverted fence: modules in a path MUST import a target. */
   readonly require?: readonly RequireEdge[];
   /** Carve-outs — `type-only` above all, since a type import is erased at compile time. */
@@ -1410,7 +1410,7 @@ export function compileDialect(rule: Dialect): NativeConfig {
     });
   }
 
-  // ── forbid: edges between layers, plain circular, orphans, sdp, cyclesBetween. Every one of them
+  // ── forbid: edges between layers, plain circular, orphans, cyclesBetween. Every one of them
   //    refuses the commit: depcruiseHits reads no severity, so `warn` here is only dependency-cruiser's
   //    label for the rule, never a softer outcome.
   for (const f of rule.forbid ?? []) {
@@ -1429,15 +1429,6 @@ export function compileDialect(rule: Dialect): NativeConfig {
         comment: "unreferenced module",
         from: { orphan: true, pathNot: "node_modules|\\.d\\.ts$" },
         to: {},
-      });
-    } else if (f === "sdp") {
-      // The Stable Dependencies Principle: depend only on modules at least as stable as yourself.
-      forbidden.push({
-        name: "sdp",
-        severity: "warn",
-        comment: "depends on a more-unstable module (Stable Dependencies Principle)",
-        from: {},
-        to: { moreUnstable: true },
       });
     } else if (f.cyclesBetween !== undefined) {
       // A feature importing a DIFFERENT feature (sideways). Capture the feature folder from the
@@ -1614,16 +1605,16 @@ export function holesInAnOnlyList(opts: Dialect): string[] {
 /**
  * A `warn` option — refused, because it is gone and its rule would silently go with it.
  *
- * `warn: ["sdp"]` was the old spelling of `forbid: ["sdp"]`. The type no longer has the key, so a
- * literal config fails to compile; but options built in a variable carry it past the compiler, and
- * the compiler is all that would have said so. Dropped quietly, the Stable Dependencies fence would
- * report armed and fence nothing. It is read off the raw object because the type cannot name it.
+ * `warn: ["sdp"]` compiled a Stable Dependencies rule that nothing bound, and it is removed with no
+ * replacement. The type no longer has the key, so a literal config fails to compile; but options
+ * built in a variable carry it past the compiler, and dropped quietly the rule would report armed
+ * and fence nothing. It is read off the raw object because the type cannot name it.
  */
 export function removedWarnOption(opts: Dialect): string[] {
   if (!Object.hasOwn(opts, "warn")) return [];
   return [
-    `binds a depcruise \`warn\` option, which no longer exists: its rules would be silently dropped. ` +
-      `Write \`forbid: ["sdp"]\` for the Stable Dependencies rule; every depcruise rule refuses the commit.`,
+    `binds a depcruise \`warn\` option, which no longer exists and has no replacement: its \`sdp\` rule is ` +
+      `removed. Delete the \`warn\` key.`,
   ];
 }
 

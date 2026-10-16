@@ -27,7 +27,6 @@ Import fences over the real dependency graph, compiled to [dependency-cruiser](h
 | `{ cyclesBetween, why? }` | an import from one feature folder into a sibling feature folder, inside the named layer. The feature folder is the last `*` of the layer's first glob |
 | `"circular"` | any dependency cycle |
 | `"orphans"` | a module nothing imports, other than `.d.ts` files. It is compiled at severity `warn`, and it refuses the commit like any other violation |
-| `"sdp"` | an import of a module that is less stable than the importing module (the Stable Dependencies Principle). It is compiled at severity `warn`, and it refuses the commit like any other violation |
 
 ## A layer with holes in it
 
