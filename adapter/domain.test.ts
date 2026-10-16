@@ -16,9 +16,9 @@
 
 import { describe, it, expect } from "vitest";
 import type { TurnAction } from "../index.ts";
-import { metrics, momentsView, type Block, type Bound, type Row } from "../engine/domain.ts";
+import { metrics, momentsView, spawnedAs, type Block, type Bound, type Row } from "../engine/domain.ts";
 import { missingGrammarText } from "../checks/domain.ts";
-import { parseCommandLine, parseShellSteps } from "../language/domain.ts";
+import { parseCommandLine, parseShellSteps, type SessionFacts } from "../language/domain.ts";
 import { matchAny } from "../glob.ts";
 import {
   ALLOW,
@@ -42,6 +42,8 @@ import {
   relativise,
   ownTranscriptPath,
   sessionFactsFrom,
+  internalAgent,
+  agentSettingOf,
   toEvent,
   toResult,
   tokensFromTranscript,
@@ -193,17 +195,19 @@ function only(events: readonly AdapterEvent[]): AdapterEvent {
 // WHAT THIS ADAPTER ANSWERS TO
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-describe("the six events, and the moments honestly delivered", () => {
-  it("answers to six events, named by the event and never by the job", () => {
+describe("the seven events, and the moments honestly delivered", () => {
+  it("answers to seven events, named by the event and never by the job", () => {
     expect([...HOOK_EVENTS]).toStrictEqual([
       "session-start",
       "pre-tool-use",
       "post-tool-use",
       "post-tool-use-failure",
       "stop",
+      "subagent-stop",
       "notification",
     ]);
     expect(isHookEvent("pre-tool-use")).toBe(true);
+    expect(isHookEvent("SubagentStop"), "the host's name is not flow's verb").toBe(false);
     expect(isHookEvent("PreToolUse"), "the host's name is not flow's verb").toBe(false);
   });
 
@@ -747,6 +751,7 @@ describe("toResult — one refusal spelling, one injection spelling", () => {
       exitCode: 0,
     });
     expect(readFault("stop", "unreadable", "EBADF").exitCode).toBe(0);
+    expect(readFault("subagent-stop", "unreadable", "EBADF").exitCode).toBe(0);
     expect(readFault("notification", "unreadable", "EBADF").exitCode).toBe(0);
   });
 });
@@ -839,6 +844,110 @@ describe("the transcript's dialect", () => {
     expect(briefHead(jsonl)).toBe("Follow `/work build`. The repo is …");
     expect(briefHead(jsonl, 6)).toBe("Follow");
     expect(briefHead("")).toBe("");
+  });
+});
+
+describe("a subagent's hand-back — the turn-end moment at SubagentStop", () => {
+  // The payload as Claude Code 2.1.301 sent it for a real Explore subagent's hand-back, paths
+  // shortened: its id and type, the PARENT's transcript_path, and its own beside it.
+  const parent = "/c/projects/p/s1.jsonl";
+  const handBack: HookPayload = {
+    session_id: "s1",
+    transcript_path: parent,
+    cwd: "/repo",
+    permission_mode: "default",
+    hook_event_name: "SubagentStop",
+    stop_hook_active: false,
+    agent_id: "a1b1bb5ff0fc0ca82",
+    agent_type: "Explore",
+    agent_transcript_path: "/c/projects/p/s1/subagents/agent-a1b1bb5ff0fc0ca82.jsonl",
+    last_assistant_message: "pong",
+  };
+  const actions: TurnAction[] = [{ did: "edit", path: "a.ts" }];
+
+  /** The world, plus the agent the session runs as — and a record of whether it was asked. */
+  const as = (sessionAgent: string | null): EventWorld => {
+    const base = world({}, actions);
+    return {
+      ...base,
+      sessionAgent: () => {
+        asked.push("sessionAgent");
+        return sessionAgent;
+      },
+    };
+  };
+
+  it("is an event flow answers, the host's SubagentStop", () => {
+    expect(isHookEvent("subagent-stop")).toBe(true);
+    expect(JSON.parse(decision("subagent-stop", "x"))).toStrictEqual({
+      hookSpecificOutput: { hookEventName: "SubagentStop", additionalContext: "x" },
+    });
+  });
+
+  it("is the turn-end moment, carrying the turn the subagent took", () => {
+    expect(toEvent("subagent-stop", handBack, as(null))).toStrictEqual([{ rail: "guard", moment: "turn-end", turn: actions }]);
+    expect(asked, "the turn is asked for, and so is the session's own agent").toStrictEqual(["sessionAgent", "turn"]);
+  });
+
+  it("is refused by a rule with no .for(…): exit 2, its message on stderr, the turn held open", () => {
+    const result = toResult("subagent-stop", { refused: [{ moment: "turn-end", block: block() }], shown: [] });
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("flow — turn held open");
+    expect(result.stderr).toContain("No TODOs in shipped code.");
+    expect(result.stderr).toContain("Do the above, then end your turn.");
+  });
+
+  it("names the subagent's type as its categories' evidence, so .for(…) narrows it as at every moment", () => {
+    const builder = spawnedAs({ types: ["builder"] });
+    const facts = (type: string): SessionFacts => sessionFactsFrom({ payload: { ...handBack, agent_type: type }, transcript: null });
+    expect(facts("builder")).toStrictEqual({ head: "", subagent: true, agentType: "builder" });
+    expect(builder(facts("builder")), "a builder's hand-back wears the category").toBe(true);
+    expect(builder(facts("Explore")), "a subagent without it is let through a .for(builder) rule").toBe(false);
+  });
+
+  it("reads the turn from the subagent's own transcript, never its parent's", () => {
+    expect(ownTranscriptPath(handBack), "the path the host sends as agent_transcript_path").toBe(handBack.agent_transcript_path);
+    expect(ownTranscriptPath(handBack)).not.toBe(parent);
+  });
+
+  it("runs no rule for an internal agent — an empty type, or the session's own agent's", () => {
+    expect(toEvent("subagent-stop", { ...handBack, agent_type: "" }, as(null)), "a session run as no agent").toStrictEqual([]);
+    expect(asked, "an empty type costs no transcript read, and no turn").toStrictEqual([]);
+    expect(toEvent("subagent-stop", { ...handBack, agent_type: "leader" }, as("leader")), "a session run --agent leader").toStrictEqual([]);
+    expect(asked, "nothing past the session's agent is read").toStrictEqual(["sessionAgent"]);
+    expect(toEvent("subagent-stop", { ...handBack, agent_type: "builder" }, as("leader")), "a builder spawned by the leader").toHaveLength(1);
+    const { agent_type: _type, ...untyped } = handBack;
+    expect(toEvent("subagent-stop", untyped, as(null)), "no type at all").toStrictEqual([]);
+    const { agent_id: _id, ...anonymous } = handBack;
+    expect(toEvent("subagent-stop", anonymous, as(null)), "no agent id: no own transcript to read").toStrictEqual([]);
+  });
+
+  it("decides internal agents from the payload and the session's agent alone", () => {
+    expect(internalAgent(handBack, () => null)).toBe(false);
+    expect(internalAgent(handBack, () => "Explore")).toBe(true);
+    expect(internalAgent({ ...handBack, agent_type: "" }, () => "Explore")).toBe(true);
+    expect(internalAgent({ ...handBack, agent_id: "" }, () => null)).toBe(true);
+  });
+
+  it("reads the session's own agent from its transcript's agent-setting record, the last one standing", () => {
+    const setting = (name: string): string => JSON.stringify({ type: "agent-setting", agentSetting: name, sessionId: "s1" });
+    const said = JSON.stringify({ type: "user", message: { content: 'an "agent-setting" quoted in a prompt' } });
+    expect(agentSettingOf(`${setting("leader")}\n${said}\n${setting("builder")}\n`)).toBe("builder");
+    expect(agentSettingOf(`${said}\n`), "a prompt quoting the word is not the record").toBeNull();
+    expect(agentSettingOf(""), "a session run as no agent").toBeNull();
+  });
+
+  it("holds an agent once: a hand-back already held open is let through, and nothing is read", () => {
+    expect(toEvent("subagent-stop", { ...handBack, stop_hook_active: true }, as(null))).toStrictEqual([]);
+    expect(asked).toStrictEqual([]);
+  });
+
+  it("tells a config that does not load rather than holding the subagent", () => {
+    const fault = "flow: the config will not load — 1 refusal.";
+    const answer = whileBroken(toEvent("subagent-stop", handBack, as(null)), fault);
+    expect(answer.refused).toStrictEqual([]);
+    expect(answer.shown, "no note on the answer").toStrictEqual([]);
+    expect(answer.told, "the shell writes this to stderr and exits 0").toBe(`${fault}\n\n${FLOW_OFF}`);
   });
 });
 

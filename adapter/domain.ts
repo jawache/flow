@@ -178,6 +178,7 @@ export const HOOK_EVENTS = [
   "post-tool-use",
   "post-tool-use-failure",
   "stop",
+  "subagent-stop",
   "notification",
 ] as const;
 export type HookEvent = (typeof HOOK_EVENTS)[number];
@@ -193,6 +194,7 @@ const HOST_EVENT: Record<HookEvent, string> = {
   "post-tool-use": "PostToolUse",
   "post-tool-use-failure": "PostToolUseFailure",
   stop: "Stop",
+  "subagent-stop": "SubagentStop",
   notification: "Notification",
 };
 
@@ -285,8 +287,14 @@ export interface EventWorld {
   readonly root: string;
   /** A file as it stands right now, or null when it is not there — an Edit is a diff against it. */
   readonly read: (path: string) => string | null;
-  /** What the actor did this turn. Only `stop` asks, so only `stop` pays for it. */
+  /** What the actor did this turn. Only the two turn-end rails ask, so only they pay for it. */
   readonly turn?: (() => readonly TurnAction[]) | undefined;
+  /**
+   * The agent the SESSION itself runs as (`--agent`, or the `agent` setting), or null when it runs
+   * as none. Only `subagent-stop` asks, and only of a payload that names an agent type, because it
+   * costs the parent's transcript: it is how an internal agent's hand-back is told from a subagent's.
+   */
+  readonly sessionAgent?: (() => string | null) | undefined;
   /** The home directory, for a Bash read through `~`. Absent, such a path is simply not named. */
   readonly home?: string | undefined;
   /**
@@ -835,9 +843,14 @@ export function toEvent(hook: HookEvent, payload: HookPayload, world: EventWorld
     }
 
     case "stop":
+    case "subagent-stop":
       // The host's OWN loop-breaker, honoured: a stop hook already held this turn open once and the
       // agent carried on, so blocking again is how a session gets wedged inside its own rule.
       if (payload.stop_hook_active === true) return [];
+      // A HAND-BACK NOBODY SPAWNED. The host's own agents send SubagentStop too; they run no rule.
+      if (hook === "subagent-stop" && internalAgent(payload, world.sessionAgent ?? (() => null))) return [];
+      // The turn is the one this agent took: the shell reads it from the agent's own transcript,
+      // a subagent's own under its parent's, never the parent's.
       return [{ rail: "guard", moment: "turn-end", turn: world.turn?.() ?? [] }];
 
     case "notification":
@@ -846,6 +859,27 @@ export function toEvent(hook: HookEvent, payload: HookPayload, world: EventWorld
       // registration is answered deliberately rather than falling through an unknown-event path.
       return [];
   }
+}
+
+/**
+ * Is this SubagentStop an internal agent's — one the host runs for its own features (prompt
+ * suggestions, `/btw` side questions) rather than a subagent the session spawned?
+ *
+ * The host's hooks reference says how to tell: such a payload's `agent_type` is the agent name the
+ * session itself runs as, or empty when it runs as none. A subagent the session spawned always
+ * carries its own type (`general-purpose` when none was asked for), so an empty one is never a
+ * spawn. A payload with no `agent_id` is treated the same way: it names no agent whose own
+ * transcript could be read, and the one it would fall back to is the parent's.
+ *
+ * `sessionAgent` is a function because it costs the parent's transcript, and it is asked only when
+ * the payload names a type. A spawned subagent of the very type the session runs as is
+ * indistinguishable from an internal agent by this rule, and is let through with them.
+ */
+export function internalAgent(payload: HookPayload, sessionAgent: () => string | null): boolean {
+  if (text(payload.agent_id) === "") return true;
+  const type = text(payload.agent_type);
+  if (type === "") return true;
+  return type === sessionAgent();
 }
 
 /** What a post-tool-use call was about, repo-relative: a path, or nothing this rail can steer on. */
@@ -2955,6 +2989,25 @@ export function steerOf(jsonl: string): Steer | null {
     if (type !== "auto_mode" || attachment === undefined) continue;
     const variant = attachment["bashFirstSteer"];
     return { shellFirst: attachment["bashFirst"] === true, variant: typeof variant === "string" && variant !== "" ? variant : null };
+  }
+  return null;
+}
+
+/**
+ * The agent a session runs as (`--agent`, or the `agent` setting), from its own transcript — or
+ * null when it runs as none.
+ *
+ * The host writes it as an `agent-setting` record, again as the session goes on. Read from the END,
+ * and only lines that name the record are parsed, as `steerOf` does: the answer is one record.
+ */
+export function agentSettingOf(jsonl: string): string | null {
+  const raw = jsonl.split("\n");
+  for (let i = raw.length - 1; i >= 0; i--) {
+    const line = raw[i] as string;
+    if (!line.includes('"agent-setting"')) continue;
+    const parsed = parseLine(line);
+    if (parsed?.kind !== "agent-setting") continue;
+    return text(parsed.record["agentSetting"]) || null;
   }
   return null;
 }

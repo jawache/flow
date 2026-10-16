@@ -110,6 +110,7 @@ import {
   writeRows,
   mismatchRow,
   turnActions,
+  agentSettingOf,
   whileBroken,
   included,
   authored,
@@ -668,6 +669,8 @@ interface Session {
   readonly transcript: () => string | null;
   readonly tokens: () => number;
   readonly turn: () => readonly TurnAction[];
+  /** The agent the session itself runs as, from the parent's transcript; null when it runs as none. */
+  readonly sessionAgent: () => string | null;
 }
 
 /** Ask once, remember the answer. A hook is one short-lived process, so this lives and dies with it. */
@@ -702,6 +705,12 @@ function sessionOf(payload: HookPayload, root: string): Session {
       const text = transcript();
       return text === null ? [] : turnActions(text, root);
     }),
+    // The PARENT's transcript, `transcript_path` as sent: the session's own agent is its record.
+    sessionAgent: once((): string | null => {
+      const sent = typeof payload.transcript_path === "string" ? payload.transcript_path : "";
+      const text = sent === "" ? null : readText(root, sent);
+      return text === null ? null : agentSettingOf(text);
+    }),
   };
 }
 
@@ -725,7 +734,14 @@ function identityOf(session: Session, payload: HookPayload, categories: readonly
 
 /** The world a payload is read against — disk, and the turn, asked only if the moment needs them. */
 function eventWorld(root: string, session: Session, changes?: readonly Change[]): EventWorld {
-  return { root, read: (path: string) => readText(root, path), turn: session.turn, home: homedir(), changes };
+  return {
+    root,
+    read: (path: string) => readText(root, path),
+    turn: session.turn,
+    sessionAgent: session.sessionAgent,
+    home: homedir(),
+    changes,
+  };
 }
 
 /** A note's prose: inline, or the repo file it named. The shell resolves it; a pure home cannot. */
