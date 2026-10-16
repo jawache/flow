@@ -4179,7 +4179,7 @@ export const MACHINE_FLAG = "--machine";
 const MACHINE_RUN = `flow uninstall ${MACHINE_FLAG}`;
 
 /** How `flow uninstall` is typed: the usage line a misused verb prints. */
-export const UNINSTALL_USAGE = `usage: flow uninstall [${MACHINE_FLAG}]`;
+const UNINSTALL_USAGE = `usage: flow uninstall [${MACHINE_FLAG}]`;
 
 /**
  * `flow uninstall`'s arguments, read: null when they are fine, else the refusal to print. An argument

@@ -165,7 +165,6 @@ import {
   uninstallLines,
   uninstallCode,
   uninstallRefusal,
-  UNINSTALL_USAGE,
   MACHINE_FLAG,
   gateWithoutFlow,
   withoutRegistrations,
@@ -2798,6 +2797,14 @@ describe("planUninstall — a repo flow init set up", () => {
     const none = planUninstall({ ...wired, hasConfig: false, gateText: null, hooksPath: null, hooksDir: null, hasFlowDir: false, linked: false });
     expect(uninstallLines(none, [])[0]).toBe("flow uninstall — nothing of flow's here to remove.");
   });
+
+  it("lists a step that failed, and answers 1", () => {
+    const plan = planUninstall(wired);
+    const said = uninstallLines(plan, [`could not delete ${GATE_PATH}: EACCES`]);
+    expect(said.at(-2)).toBe(`  ✗ could not delete ${GATE_PATH}: EACCES`);
+    expect(said.at(-1)).toContain("next:");
+    expect(uninstallCode(plan, ["x"])).toBe(1);
+  });
 });
 
 describe("planUninstall — a dev dependency", () => {
@@ -2893,12 +2900,6 @@ describe("planUninstall — the machine-wide settings file", () => {
     expect(plan.unreadable).toEqual([]);
     expect(uninstallCode(plan, [])).toBe(0);
   });
-
-  it("takes --machine, and still refuses anything beside it", () => {
-    expect(uninstallRefusal([MACHINE_FLAG])).toBeNull();
-    expect(uninstallRefusal([MACHINE_FLAG, "--help"])).toContain("unknown argument `--help`");
-    expect(UNINSTALL_USAGE).toBe("usage: flow uninstall [--machine]");
-  });
 });
 
 describe("planUninstall — hooks of somebody's own", () => {
@@ -2940,22 +2941,21 @@ describe("planUninstall — hooks of somebody's own", () => {
     expect(plan.hooksKept).toEqual([]);
     expect(plan.hooksDir, "the folder flow wrote still goes").toBe(true);
   });
+});
 
-  it("refuses an argument it does not know, rather than going ahead without it", () => {
+describe("uninstallRefusal — the arguments flow uninstall takes", () => {
+  it("takes none, or --machine", () => {
     expect(uninstallRefusal([])).toBeNull();
-    for (const word of ["--dry-run", "--help", "now"]) {
-      const said = uninstallRefusal([word]);
-      expect(said).toContain(`unknown argument \`${word}\`; nothing was removed.`);
-      expect(said?.split("\n").at(-1)).toBe(UNINSTALL_USAGE);
-    }
+    expect(uninstallRefusal([MACHINE_FLAG])).toBeNull();
   });
 
-  it("lists a step that failed, and answers 1", () => {
-    const plan = planUninstall(wired);
-    const said = uninstallLines(plan, [`could not delete ${GATE_PATH}: EACCES`]);
-    expect(said.at(-2)).toBe(`  ✗ could not delete ${GATE_PATH}: EACCES`);
-    expect(said.at(-1)).toContain("next:");
-    expect(uninstallCode(plan, ["x"])).toBe(1);
+  it("refuses an argument it does not know, rather than going ahead without it, and ends with the usage line", () => {
+    for (const args of [["--dry-run"], ["--help"], ["now"], [MACHINE_FLAG, "--help"]]) {
+      const word = args.at(-1) ?? "";
+      const said = uninstallRefusal(args);
+      expect(said).toContain(`unknown argument \`${word}\`; nothing was removed.`);
+      expect(said?.split("\n").at(-1)).toBe("usage: flow uninstall [--machine]");
+    }
   });
 });
 
