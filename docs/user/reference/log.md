@@ -74,7 +74,7 @@ The first line of the file. It has no `ts`, `seq`, `agent` or `agentType`.
 | --- | --- |
 | `tool` | The tool's name, such as `Read`, `Edit`, `Bash` or `Grep` |
 | `path` | The file the call names in `file_path` or `notebook_path`, relative to the repo |
-| `edit` | `true` when the tool changes the file it names, such as `Edit` or `Write`. Only beside `path` |
+| `edit` | `true` when the tool changes the file it names, such as `Edit` or `Write`, and `false` when it does not, such as `Read`. Only beside `path` |
 | `command` | The command line, for a `Bash` call |
 | `pattern` | The search pattern, for a call such as `Grep` or `Glob` |
 | `scope` | The `path` the search runs in, relative to the repo, when the call names one |
