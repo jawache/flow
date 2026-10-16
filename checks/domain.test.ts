@@ -304,6 +304,15 @@ describe("banCommands", () => {
     expect(faultsOf(banCommands({ ban: ["curl\\b[^\\n]*\\|\\s*sh\\b"], wholeLine: true }))).toStrictEqual([]);
   });
 
+  it("wholeLine: refuses to load a regex that does not compile, and judges commands by the rest", async () => {
+    const broken = banCommands({ ban: ["curl(", "rm\\s+-rf"], wholeLine: true });
+    expect(faultsOf(broken)).toStrictEqual([
+      "bans /curl(/ under `wholeLine: true`, which is not a regex: Invalid regular expression: /curl(/: Unterminated group.",
+    ]);
+    expect(await run(broken, "command", "ls")).toBeNull();
+    expect(await run(broken, "command", "rm -rf build")).toBe("matches banned /rm\\s+-rf/");
+  });
+
   // ── § Example ──
 
   it("the page's example: drizzle-kit drop and wrangler d1 delete, and not drizzle-kit generate", async () => {

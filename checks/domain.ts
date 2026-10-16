@@ -159,9 +159,10 @@ export const textBan = defineCheck(
  * made its lines commands of their own.
  *
  * `wholeLine: true` is the escape hatch for a pattern that spans two commands on purpose
- * (`curl … | sh`): each entry is then a regex, tried anywhere in the line as written, less its
- * heredoc bodies. A line that does not parse is refused when an entry's words all appear in it as
- * whole words: a deterrent that cannot read a line errs toward refusing it.
+ * (`curl … | sh`): each entry is then a regex, compiled when the rule loads and tried anywhere in
+ * the line as written, less its heredoc bodies. One that does not compile refuses to load. A line
+ * that does not parse is refused when an entry's words all appear in it as whole words: a
+ * deterrent that cannot read a line errs toward refusing it.
  *
  * An entry that is not one command in words — a line that does not parse, two commands, a
  * backslash, the mark of a regex written before words, or a wrapper such as `sudo` or a `FOO=1`
@@ -173,12 +174,22 @@ export const textBan = defineCheck(
 export const banCommands = defineCheck(
   (opts: { ban: readonly string[]; wholeLine?: boolean }): Check => {
     if (opts.wholeLine === true) {
-      return (ctx) => {
+      // Compiled once, at load: a pattern that does not compile is one load fault, not a throw on
+      // every command that runs.
+      const read = opts.ban.map((pattern) => {
+        try {
+          return { pattern, re: new RegExp(pattern) };
+        } catch (error) {
+          return { pattern, fault: `bans /${pattern}/ under \`wholeLine: true\`, which is not a regex: ${(error as Error).message}.` };
+        }
+      });
+      const patterns = read.flatMap((r) => (r.re === undefined ? [] : [{ pattern: r.pattern, re: r.re }]));
+      return withFaults((ctx) => {
         const line = ctx.command ?? "";
         const subject = elideHeredocBodies(line) ?? line;
-        const hits = opts.ban.filter((pattern) => new RegExp(pattern).test(subject));
-        return answer(ctx, hits.map((pattern) => `matches banned /${pattern}/`));
-      };
+        const hits = patterns.filter((p) => p.re.test(subject));
+        return answer(ctx, hits.map((p) => `matches banned /${p.pattern}/`));
+      }, read.flatMap((r) => r.fault ?? []));
     }
     const { commands: banned, faults } = commandsInWords(
       opts.ban,
