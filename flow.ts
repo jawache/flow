@@ -309,8 +309,10 @@ if (argv.includes("--version") || argv.includes("-v")) {
 } else if (verb === "init" || verb === "status" || verb === "uninstall") {
   // The product surface. Each answers with the same three edges every other verb does, which is why
   // none of them writes to a stream or picks an exit code of its own.
-  const answer: VerbResult =
-    verb === "init" ? runInit(process.cwd(), rest) : verb === "uninstall" ? runUninstall(process.cwd()) : await runStatus(process.cwd(), rest);
+  let answer: VerbResult;
+  if (verb === "init") answer = runInit(process.cwd(), rest);
+  else if (verb === "uninstall") answer = runUninstall(process.cwd(), rest);
+  else answer = await runStatus(process.cwd(), rest);
   if (answer.stdout) process.stdout.write(answer.stdout);
   if (answer.stderr) process.stderr.write(answer.stderr);
   process.exitCode = answer.exitCode;

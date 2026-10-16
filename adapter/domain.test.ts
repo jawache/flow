@@ -147,6 +147,8 @@ import {
   planUninstall,
   uninstallLines,
   uninstallCode,
+  uninstallRefusal,
+  UNINSTALL_USAGE,
   gateWithoutFlow,
   withoutRegistrations,
   REPO_SETTINGS,
@@ -2434,7 +2436,7 @@ describe("withoutRegistrations — flow's hooks taken out of a settings file", (
   const theirs = { type: "command", command: "lint-on-stop" };
 
   it("removes flow's five registrations, and the hooks key with them when nothing else is in it", () => {
-    const { settings, removed } = withoutRegistrations({ ...(withRegistrations({ theme: "dark" }).settings as object) });
+    const { settings, removed } = withoutRegistrations(withRegistrations({ theme: "dark" }).settings);
     expect(removed).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
     expect(settings).toEqual({ theme: "dark" });
   });
@@ -2450,13 +2452,14 @@ describe("withoutRegistrations — flow's hooks taken out of a settings file", (
         Notification: [{ hooks: [{ type: "command", command: "say done" }] }],
       },
     };
+    const before = structuredClone(mixed);
     const { settings, removed } = withoutRegistrations(mixed);
     expect(removed).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
     expect(settings).toEqual({
       permissions: { allow: ["Bash(ls:*)"] },
       hooks: { Stop: [{ hooks: [theirs] }, { hooks: [theirs] }], Notification: mixed.hooks.Notification },
     });
-    expect(mixed.hooks.Stop[0], "a new object; the one handed in is not changed").toBe(shared);
+    expect(mixed, "a new object; the one handed in is not changed").toEqual(before);
   });
 
   it("removes an older flow's bare command too, and has nothing to do in a file with none of flow's", () => {
@@ -2595,6 +2598,15 @@ describe("planUninstall — hooks of somebody's own", () => {
     expect(plan.hooksPath).toBe(false);
     expect(plan.hooksKept).toEqual([]);
     expect(plan.hooksDir, "the folder flow wrote still goes").toBe(true);
+  });
+
+  it("refuses an argument it does not know, rather than going ahead without it", () => {
+    expect(uninstallRefusal([])).toBeNull();
+    for (const word of ["--dry-run", "--help", "now"]) {
+      const said = uninstallRefusal([word]);
+      expect(said).toContain(`unknown argument \`${word}\`; nothing was removed.`);
+      expect(said?.split("\n").at(-1)).toBe(UNINSTALL_USAGE);
+    }
   });
 
   it("lists a step that failed, and answers 1", () => {

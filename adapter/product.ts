@@ -53,6 +53,7 @@ import {
   REPO_SETTINGS,
   uninstallCode,
   uninstallLines,
+  uninstallRefusal,
   hostPath,
   pathLines,
   planInit,
@@ -247,11 +248,10 @@ function initFacts(root: string, empty: boolean): InitFacts {
 }
 
 /**
- * The plan, performed. Every step is best-effort and every failure is COLLECTED rather than thrown:
- * a partial setup is the interesting case, and a person needs the list of what did land beside the
- * one thing that did not.
+ * A run of best-effort steps: `attempt` runs one, and a step that throws is COLLECTED in `failures`
+ * as "what: why" rather than ending the run. Init and uninstall both carry out their plans this way.
  */
-function perform(root: string, plan: InitPlan): string[] {
+function steps(): { readonly failures: string[]; readonly attempt: (what: string, act: () => void) => void } {
   const failures: string[] = [];
   const attempt = (what: string, act: () => void): void => {
     try {
@@ -260,6 +260,16 @@ function perform(root: string, plan: InitPlan): string[] {
       failures.push(`${what}: ${(error as Error).message}`);
     }
   };
+  return { failures, attempt };
+}
+
+/**
+ * The plan, performed. Every step is best-effort and every failure is COLLECTED rather than thrown:
+ * a partial setup is the interesting case, and a person needs the list of what did land beside the
+ * one thing that did not.
+ */
+function perform(root: string, plan: InitPlan): string[] {
+  const { failures, attempt } = steps();
 
   for (const write of [plan.config, plan.gate]) {
     if (write === null) continue;
@@ -363,14 +373,7 @@ function removeIfEmpty(dir: string): void {
  * person reads what did go beside the one thing that did not.
  */
 function performUninstall(root: string, plan: UninstallPlan): string[] {
-  const failures: string[] = [];
-  const attempt = (what: string, act: () => void): void => {
-    try {
-      act();
-    } catch (error) {
-      failures.push(`${what}: ${(error as Error).message}`);
-    }
-  };
+  const { failures, attempt } = steps();
 
   const { gate, settings } = plan;
   if (gate !== null)
@@ -413,7 +416,9 @@ function performUninstall(root: string, plan: UninstallPlan): string[] {
 }
 
 /** `flow uninstall` — remove what `flow init` wrote in this repo, but the config, and say exactly what went. */
-export function runUninstall(cwd: string): VerbResult {
+export function runUninstall(cwd: string, args: readonly string[]): VerbResult {
+  const refusal = uninstallRefusal(args);
+  if (refusal !== null) return { stdout: "", stderr: `${refusal}\n`, exitCode: 2 };
   const root = resolve(cwd);
   const plan = planUninstall(uninstallFacts(root));
   const failures = performUninstall(root, plan);

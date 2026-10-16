@@ -3531,25 +3531,24 @@ export function withoutRegistrations(settings: unknown): { settings: unknown; re
   if (removed.length === 0) return { settings, removed: [] };
 
   const held = settings as Record<string, unknown>;
-  const cleaned = new Map<string, unknown[]>();
-  for (const event of removed)
-    cleaned.set(
-      event,
-      (arrays[event] ?? []).flatMap((entry) => {
-        if (!isOurs(entry)) return [entry];
-        const ours = entry as Record<string, unknown> & { hooks: unknown[] };
-        const kept = ours.hooks.filter((inner) => {
-          const command = commandOf(inner);
-          return command === null || !ourHookCommand(command);
-        });
-        return kept.length === 0 ? [] : [{ ...ours, hooks: kept }];
-      }),
-    );
-  const hooks = Object.fromEntries(
-    Object.entries(held["hooks"] as Record<string, unknown>)
-      .map(([event, value]): [string, unknown] => [event, cleaned.get(event) ?? value])
-      .filter(([event]) => cleaned.get(event)?.length !== 0),
-  );
+  const ours = new Set(removed);
+  const hooks: Record<string, unknown> = {};
+  for (const [event, value] of Object.entries(held["hooks"] as Record<string, unknown>)) {
+    if (!ours.has(event)) {
+      hooks[event] = value;
+      continue;
+    }
+    const left = (value as unknown[]).flatMap((entry) => {
+      if (!isOurs(entry)) return [entry];
+      const shared = entry as Record<string, unknown> & { hooks: unknown[] };
+      const kept = shared.hooks.filter((inner) => {
+        const command = commandOf(inner);
+        return command === null || !ourHookCommand(command);
+      });
+      return kept.length === 0 ? [] : [{ ...shared, hooks: kept }];
+    });
+    if (left.length > 0) hooks[event] = left;
+  }
   const rest = Object.fromEntries(Object.entries(held).filter(([key]) => key !== "hooks"));
   return { settings: Object.keys(hooks).length === 0 ? rest : { ...held, hooks }, removed };
 }
@@ -4026,6 +4025,19 @@ export function planUninstall(facts: UninstallFacts): UninstallPlan {
     keptConfig: facts.hasConfig,
     next: facts.listed ? "npm uninstall @jawache/flow" : "npm uninstall -g @jawache/flow",
   };
+}
+
+/** How `flow uninstall` is typed: the usage line a misused verb prints. */
+export const UNINSTALL_USAGE = "usage: flow uninstall";
+
+/**
+ * `flow uninstall`'s arguments, read: null when they are fine, else the refusal to print. An argument
+ * it does not know is refused rather than ignored, because this verb deletes files and a `--dry-run`
+ * or a `--help` that went ahead would delete them too.
+ */
+export function uninstallRefusal(args: readonly string[]): string | null {
+  const unknown = args[0];
+  return unknown === undefined ? null : `flow uninstall — unknown argument \`${unknown}\`; nothing was removed.\n${UNINSTALL_USAGE}`;
 }
 
 /** A step that could not be done answers 1, whether the shell hit it or the plan did. */
