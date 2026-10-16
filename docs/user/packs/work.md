@@ -250,7 +250,12 @@ A backtick the shell would run in a work verb that records prose (double-quoted,
 ```
 {
   "heads": [
-    "work\\s+(?:plan|task|recap|record|spec|complete)\\b"
+    "work plan",
+    "work task",
+    "work recap",
+    "work record",
+    "work spec",
+    "work complete"
   ]
 }
 ```
@@ -273,6 +278,7 @@ Fix: SINGLE-quote the argument (backticks are literal there), escape each backti
 - running `work plan status --json`
 - running `work plan decision "chose the \`chain\` builder" --chose x --reverse y`
 - running `work plan status --json; echo `date``
+- running `work task-list "`date`"`
 
 **blocks**
 
@@ -284,6 +290,7 @@ because `chain` reads better" --chose x --reverse y`
 chose the `chain` builder
 EOF
 )" --chose x --reverse y`
+- running `/usr/local/bin/work plan decision "chose the `chain` builder" --chose x --reverse y`
 
 ## `work.builderWrites` — guardrail
 

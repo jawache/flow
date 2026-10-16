@@ -403,9 +403,6 @@ const SITE = ["cl", "aude", "\\.com/", "cl", "aude", "-code"].join("");
 const LINK = ["cl", "aude", ".com/", "cl", "aude", "-code"].join("");
 const ROBOT = "\u{1F916}";
 
-// `gh pr` or `gh issue`, run bare or through `work gh`, the wrapper a repo driven by work runs it as.
-const GH_PROSE = String.raw`(?:\S*/)?(?:work\s+)?gh\s+(?:pr|issue)\b`;
-
 /**
  * The arguments after the verb of a `gh pr` or `gh issue` command, run bare or as `work gh`, the
  * wrapper a repo driven by work runs it as — or null for any other command.
@@ -854,7 +851,9 @@ export const git = definePack("git", (repo: Release) => {
   noShellSubstitutionInProse: guardrail()
     .at(command)
     .description("A backtick the shell would run in a commit message or a PR or issue body (double-quoted, bare, or in an unquoted heredoc) is live command substitution, not Markdown.")
-    .check(substitutionInProse({ heads: [GH_PROSE], gitSubcommands: ["commit"] }))
+    // `gh pr` and `gh issue`, run bare or through `work gh`, the wrapper a repo driven by work runs
+    // it as.
+    .check(substitutionInProse({ heads: ["gh pr", "gh issue", "work gh pr", "work gh issue"], gitSubcommands: ["commit"] }))
     .message(SUBSTITUTION_MESSAGE)
     .test({
       pass: [
@@ -878,6 +877,8 @@ export const git = definePack("git", (repo: Release) => {
         'gh issue comment 1 --body "run `just test` first"',
         // …run through `work gh`, as a repo driven by work runs every gh call.
         'work gh issue comment 1 --body "run `just test` first"',
+        // gh run by its path is still gh.
+        '/opt/homebrew/bin/gh pr create --body "see `just gate`"',
         // The backtick sits in the body of a multi-line message.
         'git commit -m "fix: a thing\n\nrun `just test` first"',
         // A message written in an unquoted heredoc inside the argument: the backtick still runs.

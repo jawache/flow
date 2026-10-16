@@ -56,7 +56,7 @@ export const core = definePack("core", {
 
   noBacktickInProse: guardrail()
     .at(command)
-    .check(substitutionInProse({ heads: ["gh\\s+(?:pr|issue)\\b"], gitSubcommands: ["commit"] }))
+    .check(substitutionInProse({ heads: ["gh pr", "gh issue"], gitSubcommands: ["commit"] }))
     .message("A backtick in a double-quoted body runs as a command — single-quote it, or use a quoted heredoc.")
     .test({ pass: ["gh issue comment 1 --body 'run `just test` first'"], block: ['gh issue comment 1 --body "run `just test` first"'] }),
 

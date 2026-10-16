@@ -450,7 +450,10 @@ A backtick the shell would run in a commit message or a PR or issue body (double
 ```
 {
   "heads": [
-    "(?:\\S*/)?(?:work\\s+)?gh\\s+(?:pr|issue)\\b"
+    "gh pr",
+    "gh issue",
+    "work gh pr",
+    "work gh issue"
   ],
   "gitSubcommands": [
     "commit"
@@ -500,6 +503,7 @@ EOF`
 - running `gh pr create --body "see `just gate`"`
 - running `gh issue comment 1 --body "run `just test` first"`
 - running `work gh issue comment 1 --body "run `just test` first"`
+- running `/opt/homebrew/bin/gh pr create --body "see `just gate`"`
 - running `git commit -m "fix: a thing
 
 run `just test` first"`

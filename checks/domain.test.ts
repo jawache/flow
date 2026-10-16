@@ -338,7 +338,7 @@ describe("banCommands", () => {
 // `.test({ pass, block })` cases, among them the issue's #10 and #11; these are the check itself,
 // on a head of its own, one shell rule per case.
 describe("substitutionInProse", () => {
-  const check = substitutionInProse({ heads: ["say\\b"] });
+  const check = substitutionInProse({ heads: ["say"] });
   const caught = async (command: string): Promise<string | null> => run(check, "command", command);
 
   it("refuses a backtick the shell runs in the command's argument, and names the head and what it runs", async () => {
@@ -383,10 +383,44 @@ describe("substitutionInProse", () => {
   });
 
   it("takes several heads, so two packs share one check without either copying it", async () => {
-    const both = substitutionInProse({ heads: ["git\\s+commit\\b", "work\\s+plan\\b"] });
+    const both = substitutionInProse({ heads: ["git commit", "work plan"] });
     expect(await run(both, "command", 'git commit -m "a `date`"')).not.toBeNull();
     expect(await run(both, "command", 'work plan decision "a `date`"')).not.toBeNull();
     expect(await run(both, "command", 'gh pr create --body "a `date`"')).toBeNull();
+  });
+
+  // ── heads in words, matched as banCommands matches an entry ──
+
+  const gh = substitutionInProse({ heads: ["gh pr", "gh issue", "work gh issue"] });
+
+  it("matches a head by its program without its path, and names the head in words", async () => {
+    expect(await run(gh, "command", '/usr/local/bin/gh pr create --body "see `just gate`"')).toBe(
+      "`gh pr` would run `just gate` and record its output in place of the backticks",
+    );
+    expect(await run(gh, "command", './bin/gh issue comment 1 --body "`date`"')).toContain("`gh issue`");
+    expect(await run(gh, "command", 'work gh issue comment 1 --body "`date`"')).toContain("`work gh issue`");
+    expect(await run(gh, "command", 'ghx pr create --body "`date`"'), "another program is not the head's").toBeNull();
+  });
+
+  it("finds every argument of the head among the command's, in any order and past an option", async () => {
+    expect(await run(gh, "command", 'gh --repo a/b pr create --body "`date`"')).toContain("`gh pr`");
+    expect(await run(gh, "command", 'work --verbose gh issue comment 1 --body "`date`"')).toContain("`work gh issue`");
+  });
+
+  it("finds a head's words as whole arguments only: a longer word, or a quoted one, is not the word", async () => {
+    expect(await run(gh, "command", 'gh prs list --search "`date`"')).toBeNull();
+    expect(await run(gh, "command", 'gh api repos --jq "pr `date`"')).toBeNull();
+    expect(await run(gh, "command", 'gh issue-list "`date`"')).toBeNull();
+    expect(await run(gh, "command", 'work gh-issue "`date`"')).toBeNull();
+  });
+
+  it("refuses to load a head that is not one command in words, and names it", () => {
+    const fault = (head: string): string =>
+      `names the head \`${head}\`, which is not one command in words. Name a program and the arguments that make it record prose, such as "gh pr".`;
+    for (const head of ["gh\\s+(?:pr|issue)\\b", "work\\s+plan", "gh pr; ls", "sudo gh pr", "FOO=1 gh pr", "cat > x", ""]) {
+      expect(faultsOf(substitutionInProse({ heads: ["gh pr", head] })), head).toStrictEqual([fault(head)]);
+    }
+    expect(faultsOf(substitutionInProse({ heads: ["gh pr", "work gh issue"], gitSubcommands: ["commit"] }))).toStrictEqual([]);
   });
 
   it("says the mechanism, the absence of an undo and the fix — the sentence both packs print", () => {

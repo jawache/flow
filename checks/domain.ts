@@ -97,9 +97,9 @@ function touched(ctx: Ctx): { readonly path: string; readonly content: string } 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 //
 // A regex is for TEXT: a file's contents, a line matched whole. Which command runs is not text —
-// it is a program and its arguments in the parse — so `banCommands` names a command in words and
-// compares it with each command there, and keeps a regex only for `wholeLine`, a pattern across
-// two commands on purpose.
+// it is a program and its arguments in the parse — so `banCommands` and the heads of
+// `substitutionInProse` name a command in words and compare it with each command there, and a
+// regex stays only for `wholeLine`, a pattern across two commands on purpose.
 
 /** One pattern that matched, and the 1-based line it matched on. */
 export interface PatternHit {
@@ -180,14 +180,11 @@ export const banCommands = defineCheck(
         return answer(ctx, hits.map((pattern) => `matches banned /${pattern}/`));
       };
     }
-    const read = opts.ban.map((entry) => ({ entry, command: bannedCommand(entry) }));
-    const banned = read.flatMap((r) => r.command ?? []);
-    const faults = read
-      .filter((r) => r.command === null)
-      .map(
-        ({ entry }) =>
-          `bans \`${entry}\`, which is not one command in words. Name a program and the arguments that make it dangerous, such as "git push --force"; a regex goes under \`wholeLine: true\`.`,
-      );
+    const { commands: banned, faults } = commandsInWords(
+      opts.ban,
+      (entry) =>
+        `bans \`${entry}\`, which is not one command in words. Name a program and the arguments that make it dangerous, such as "git push --force"; a regex goes under \`wholeLine: true\`.`,
+    );
     return withFaults((ctx) => {
       const parsed = shellCommands(ctx);
       const line = ctx.command ?? "";
@@ -197,11 +194,29 @@ export const banCommands = defineCheck(
   },
 );
 
-/** A `banCommands` entry as the parse reads it: its program without its path, and its arguments as compared. */
-interface BannedCommand {
+/**
+ * A command named in words — a `banCommands` entry, a `substitutionInProse` head — as the parse
+ * reads it: its program without its path, and its arguments as compared.
+ */
+interface CommandInWords {
   readonly entry: string;
   readonly program: string;
   readonly args: readonly string[];
+}
+
+/**
+ * Each entry read as a command in words, and a load fault, worded by `fault`, for each that is not
+ * one: the two checks that name a command in words read their entries the one way.
+ */
+function commandsInWords(
+  entries: readonly string[],
+  fault: (entry: string) => string,
+): { commands: readonly CommandInWords[]; faults: readonly string[] } {
+  const read = entries.map((entry) => ({ entry, command: commandInWords(entry) }));
+  return {
+    commands: read.flatMap((r) => r.command ?? []),
+    faults: read.filter((r) => r.command === null).map((r) => fault(r.entry)),
+  };
 }
 
 /**
@@ -209,7 +224,7 @@ interface BannedCommand {
  * backslash, a wrapper, or an assignment in front. The parse steps past both to the program that
  * runs, so `"sudo rm"` would ban every `rm`, `"FOO=1 rm"` too, and `"sudo"` alone nothing at all.
  */
-function bannedCommand(entry: string): BannedCommand | null {
+function commandInWords(entry: string): CommandInWords | null {
   if (entry.includes("\\")) return null;
   const steps = parseShellSteps(entry);
   const [step] = steps ?? [];
@@ -223,16 +238,16 @@ function bannedCommand(entry: string): BannedCommand | null {
 /** An argument of one `-` and letters, `-rf`: a bundle of short flags, each letter one flag. */
 const SHORT_FLAGS = /^-[A-Za-z]+$/;
 
-/** Arguments as `banCommands` compares them: each whole, except a short-flag bundle, which is one flag per letter. */
+/** Arguments as a command in words compares them: each whole, except a short-flag bundle, which is one flag per letter. */
 function comparedArgs(args: readonly string[]): string[] {
   return args.flatMap((a) => (SHORT_FLAGS.test(a) ? Array.from(a.slice(1).matchAll(/[A-Za-z]/g), ([letter]) => `-${letter}`) : [a]));
 }
 
-/** The command runs the banned program, and its arguments include every banned argument. */
-function commandIs(banned: BannedCommand, c: ShellCommand): boolean {
-  if (programName(c.program) !== banned.program) return false;
+/** The command runs the named program, and its arguments include every argument named. */
+function commandIs(words: CommandInWords, c: ShellCommand): boolean {
+  if (programName(c.program) !== words.program) return false;
   const has = new Set(comparedArgs(c.args));
-  return banned.args.every((a) => has.has(a));
+  return words.args.every((a) => has.has(a));
 }
 
 /**
@@ -245,7 +260,7 @@ const EDGE = String.raw`\s'"\x60;&|()<>`;
  * For a line that does not parse: the entry's program, after any path, and each of its arguments
  * appear in the line as whole words — a short flag inside any bundle of short flags.
  */
-function wordsInLine(banned: BannedCommand, line: string): boolean {
+function wordsInLine(banned: CommandInWords, line: string): boolean {
   const whole = (word: string): RegExp => new RegExp(`(?:^|[${EDGE}])${word}(?=$|[${EDGE}])`);
   const words = [
     whole(`(?:[^${EDGE}]*/)?${escapeRe(banned.program)}`),
@@ -258,10 +273,12 @@ function wordsInLine(banned: BannedCommand, line: string): boolean {
  * Refuse a command that records permanent prose when the shell would run a BACKTICK substitution
  * while building it — a commit message, a PR or issue body, a journal entry.
  *
- * `heads` are the commands that record prose, each a regex matched from a command's program name
- * as `banCommands` matches one. `gitSubcommands` names git's own, `commit`, and is read through
- * `gitCommand`: git's options sit between `git` and its subcommand, and a value with a space in it,
- * `-C '/a b'`, is two words in a command's text, where a regex loses it.
+ * `heads` are the commands that record prose, each in words, `"gh pr"`, matched as `banCommands`
+ * matches an entry: the same program, less its path, and every argument of the head among the
+ * command's, compared whole. A head that is not one command in words refuses to load, as an entry
+ * does. `gitSubcommands` names git's own, `commit`, and is read through `gitCommand`: git's options
+ * sit between `git` and its subcommand, so `-C '/a b' commit` is `commit` there, where the
+ * containment of `"git commit"` would also take `git log --grep commit`.
  *
  * The verdict reads the parse, never the line: a backtick the shell runs is one the parse lists as
  * the command's substitution — in a double-quoted or bare argument, or in an unquoted heredoc the
@@ -277,18 +294,22 @@ function wordsInLine(banned: BannedCommand, line: string): boolean {
  * while both still read as armed.
  */
 export const substitutionInProse = defineCheck(
-  (opts: { heads: readonly string[]; gitSubcommands?: readonly string[] }): Check =>
-    (ctx) => {
-      const heads = opts.heads.map((head) => new RegExp(`^(?:${head})`));
+  (opts: { heads: readonly string[]; gitSubcommands?: readonly string[] }): Check => {
+    const { commands: heads, faults } = commandsInWords(
+      opts.heads,
+      (head) =>
+        `names the head \`${head}\`, which is not one command in words. Name a program and the arguments that make it record prose, such as "gh pr".`,
+    );
+    return withFaults((ctx) => {
       const hits = (shellCommands(ctx) ?? []).flatMap((c) => {
         const sub = gitCommand(c)?.subcommand;
-        const head =
-          sub != null && opts.gitSubcommands?.includes(sub) === true ? `git ${sub}` : heads.map((re) => re.exec(c.text)?.[0]).find((m) => m !== undefined);
+        const head = sub != null && opts.gitSubcommands?.includes(sub) === true ? `git ${sub}` : heads.find((h) => commandIs(h, c))?.entry;
         if (head === undefined) return [];
         return backticksRun(c.substitutions).map((run) => `\`${head}\` would run \`${run}\` and record its output in place of the backticks`);
       });
       return answer(ctx, hits);
-    },
+    }, faults);
+  },
 );
 
 /**

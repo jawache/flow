@@ -226,7 +226,7 @@ export const work = definePack("work", (repo: Rungs = {}) => ({
   noShellSubstitutionInProse: guardrail()
     .at(command)
     .description("A backtick the shell would run in a work verb that records prose (double-quoted, bare, or in an unquoted heredoc) is live command substitution, not Markdown.")
-    .check(substitutionInProse({ heads: ["work\\s+(?:plan|task|recap|record|spec|complete)\\b"] }))
+    .check(substitutionInProse({ heads: ["work plan", "work task", "work recap", "work record", "work spec", "work complete"] }))
     .message(SUBSTITUTION_MESSAGE)
     .test({
       pass: [
@@ -235,11 +235,15 @@ export const work = definePack("work", (repo: Rungs = {}) => ({
         // An escaped backtick is literal, and a backtick in the next command is not this one's.
         String.raw`work plan decision "chose the \`chain\` builder" --chose x --reverse y`,
         "work plan status --json; echo `date`",
+        // A verb's words are whole arguments: `task-list` is not `task`.
+        'work task-list "`date`"',
       ],
       block: [
         'work plan decision "chose the `chain` builder" --chose x --reverse y',
         'work plan decision "chose the builder\n\nbecause `chain` reads better" --chose x --reverse y',
         'work plan decision "$(cat <<EOF\nchose the `chain` builder\nEOF\n)" --chose x --reverse y',
+        // work run by its path is still work.
+        '/usr/local/bin/work plan decision "chose the `chain` builder" --chose x --reverse y',
       ],
     }),
   // ── ONE WRITER, when the repo names its writers ──
