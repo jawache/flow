@@ -161,9 +161,12 @@ import {
   scaffold,
   planInit,
   initLines,
+  otherHooks,
+  preCommitOf,
   settingsFileFor,
   status,
   statusLines,
+  type HooksFolder,
   type InitFacts,
   type Status,
   type StatusFacts,
@@ -2222,6 +2225,7 @@ const bare: InitFacts = {
   gateText: null,
   hasFlowDir: false,
   hooksPath: null,
+  hooksFolder: { dir: ".git/hooks", files: ["pre-commit.sample", "pre-push.sample"], preCommit: null },
   settingsPath: "/home/.claude/settings.json",
   settings: {},
   settingsUnreadable: false,
@@ -2229,6 +2233,70 @@ const bare: InitFacts = {
   resolves: false,
   packageRoot: "/checkout/flow",
 };
+
+/** Flow's two lines at the end of somebody's pre-commit hook: what the block asks a person to add. */
+const WIRED = `#!/bin/sh\nnpm test\n${GATE_LOCAL_LINE}\n${GATE_RUN_LINE}\n`;
+
+/** A repo husky set up: git runs `.husky/_`, and a person edits `.husky/pre-commit`. */
+const husky = (preCommit: string | null): Partial<InitFacts> => ({
+  hooksPath: ".husky/_",
+  hooksFolder: { dir: ".husky/_", files: ["h", "husky.sh", "pre-commit", "pre-push"], preCommit },
+});
+
+/** A repo with a hook of its own in `.git/hooks`, which git runs while `core.hooksPath` is unset. */
+const gitHooks = (files: readonly string[], preCommit: string | null = null): Partial<InitFacts> => ({
+  hooksFolder: { dir: ".git/hooks", files: ["pre-commit.sample", ...files], preCommit },
+});
+
+describe("other hooks — what counts, and the pre-commit hook a person edits", () => {
+  const folder = (files: readonly string[], dir = ".git/hooks", preCommit: string | null = null): HooksFolder => ({ dir, files, preCommit });
+
+  it("a fresh `git init` has only sample hooks, and they do not count", () => {
+    expect(otherHooks(null, folder(["pre-commit.sample", "pre-push.sample", "update.sample"]))).toBeNull();
+    expect(otherHooks(null, folder([])), "nor does an empty or missing folder").toBeNull();
+  });
+
+  it("any other file in .git/hooks counts, not only a pre-commit: Git LFS installs pre-push", () => {
+    expect(otherHooks(null, folder(["pre-push.sample", "pre-push"]))).toStrictEqual({
+      dir: ".git/hooks",
+      preCommit: ".git/hooks/pre-commit",
+      wired: false,
+    });
+  });
+
+  it("a core.hooksPath anywhere but .githooks counts, whatever is in it", () => {
+    expect(otherHooks(".husky/_", folder([], ".husky/_"))?.dir).toBe(".husky/_");
+    expect(otherHooks("hooks", folder([], "hooks"))?.preCommit).toBe("hooks/pre-commit");
+  });
+
+  it("flow's own .githooks is not other hooks, whatever .git/hooks holds", () => {
+    expect(otherHooks(HOOKS_DIR, folder(["pre-commit"], HOOKS_DIR))).toBeNull();
+  });
+
+  it("outside git, or when git could not say, there is nothing to read", () => {
+    expect(otherHooks(".husky/_", null)).toBeNull();
+  });
+
+  it("is wired once the pre-commit hook a person edits calls flow, and a comment naming it does not", () => {
+    expect(otherHooks(".husky/_", folder([], ".husky/_", WIRED))?.wired).toBe(true);
+    expect(otherHooks(".husky/_", folder([], ".husky/_", "#!/bin/sh\n# flow hook commit\nnpm test\n"))?.wired).toBe(false);
+  });
+
+  it("husky's stub folder `.husky/_` maps to `.husky/pre-commit`; any other folder to its own", () => {
+    expect(preCommitOf(".husky/_")).toBe(".husky/pre-commit");
+    expect(preCommitOf(".husky/_/")).toBe(".husky/pre-commit");
+    expect(preCommitOf(".husky"), "husky 5 to 8 pointed git at .husky itself").toBe(".husky/pre-commit");
+    expect(preCommitOf(".git/hooks")).toBe(".git/hooks/pre-commit");
+    expect(preCommitOf("/main/.git/hooks"), "a worktree's shared folder is absolute").toBe("/main/.git/hooks/pre-commit");
+  });
+
+  it("init's plan carries it, and a repo with no other hooks plans none", () => {
+    expect(planInit(bare).otherHooks).toBeNull();
+    expect(planInit({ ...bare, ...husky(null) }).otherHooks).toStrictEqual({ dir: ".husky/_", preCommit: ".husky/pre-commit", wired: false });
+    expect(planInit({ ...bare, ...gitHooks(["pre-push"]) }).otherHooks?.dir).toBe(".git/hooks");
+    expect(planInit({ ...bare, ...husky(null), isGit: false }).otherHooks, "outside git there are no hooks to keep").toBeNull();
+  });
+});
 
 describe("planInit — a repo that has never heard of flow", () => {
   const plan = planInit(bare);

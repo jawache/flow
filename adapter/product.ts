@@ -18,9 +18,9 @@
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, readdirSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { VERSION } from "../version.ts";
 import { ensureFlowDir, isOff, readRows } from "../engine/state.ts";
@@ -37,11 +37,13 @@ import {
   hostPath,
   pathLines,
   planInit,
+  preCommitOf,
   settingsFileFor,
   status,
   statusCode,
   statusLines,
   steerOf,
+  type HooksFolder,
   type InitFacts,
   type InitPlan,
   type StatusFacts,
@@ -139,6 +141,36 @@ function hooksPath(root: string): string | null {
 }
 
 /**
+ * The folder git runs hooks from, what is in it, and the pre-commit hook a person edits for it.
+ *
+ * `git rev-parse --git-path hooks` is git's own answer: `core.hooksPath` when it is set, with `~`
+ * expanded, and `.git/hooks` when it is not. That is the shared git directory in a worktree, whose
+ * `.git` is a file. Repo-relative when the folder is inside the repo, so the report reads the way a
+ * person would type it. Null when git cannot say.
+ */
+function hooksFolder(root: string): HooksFolder | null {
+  let said: string;
+  try {
+    said = execFileSync("git", ["-C", root, "rev-parse", "--git-path", "hooks"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    return null;
+  }
+  if (said === "") return null;
+  const at = resolve(root, said);
+  const inside = relative(root, at);
+  const dir = inside !== "" && inside !== ".." && !inside.startsWith(`..${sep}`) && !isAbsolute(inside) ? inside : at;
+  let files: string[] = [];
+  try {
+    files = readdirSync(at, { withFileTypes: true })
+      .filter((entry) => !entry.isDirectory())
+      .map((entry) => entry.name);
+  } catch {
+    /* no folder there yet: git runs nothing from it */
+  }
+  return { dir, files, preCommit: readText(root, preCommitOf(dir)) };
+}
+
+/**
  * What git ignores in this repo — the edge of the snapshot, which is git's view of the tree.
  *
  * Two questions, both answered one path per line: the ignored paths that exist (a whole ignored
@@ -217,6 +249,7 @@ function initFacts(root: string, empty: boolean): InitFacts {
     gateText: readText(root, GATE_PATH),
     hasFlowDir: existsSync(join(root, FLOW_DIR)),
     hooksPath: hooksPath(root),
+    hooksFolder: hooksFolder(root),
     settingsPath,
     settings: read.value,
     settingsUnreadable: read.unreadable,

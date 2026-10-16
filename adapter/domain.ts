@@ -3722,6 +3722,58 @@ export function commitScope(args: readonly string[], legacy: boolean): CommitSco
   return args.length === 1 && args[0] === "--all" ? "all" : null;
 }
 
+// ── other hooks ──────────────────────────────────────────────────────────────
+//
+// Git runs hooks from ONE folder: `core.hooksPath` when it is set, `.git/hooks` when it is not. A
+// repo whose git already runs hooks from somewhere else (husky's `.husky/_`, or Git LFS and
+// lefthook in `.git/hooks`) would lose every one of them the moment init pointed git at
+// `.githooks`, with nothing said. So init never does: it detects the other setup, leaves it alone,
+// and says that flow is not installed until the pre-commit hook git runs calls flow.
+
+/** The folder git runs hooks from, as the shell found it. One reading, for init and status alike. */
+export interface HooksFolder {
+  /** As git names it (`git rev-parse --git-path hooks`), repo-relative when it is inside the repo. */
+  readonly dir: string;
+  /** The name of every file in it, `.sample` files included: which of them count is decided here. */
+  readonly files: readonly string[];
+  /** The text of the pre-commit hook a person edits for that folder (`preCommitOf(dir)`), or null. */
+  readonly preCommit: string | null;
+}
+
+/** Git runs other hooks, and whether the pre-commit hook it runs calls flow. */
+export interface OtherHooks {
+  /** The folder git runs hooks from. */
+  readonly dir: string;
+  /** The pre-commit hook a person edits to call flow. */
+  readonly preCommit: string;
+  /** It calls flow's gate already, so flow is installed. */
+  readonly wired: boolean;
+}
+
+/**
+ * The pre-commit hook a person edits for this hooks folder.
+ *
+ * Usually the folder's own `pre-commit`. Husky is the exception: it points git at `.husky/_`, a
+ * folder of stubs it rewrites on every install, and each stub runs the hook of the same name one
+ * folder up, so the file a person edits is `.husky/pre-commit`. Any folder named `_` is read that way.
+ */
+export function preCommitOf(dir: string): string {
+  const folder = dir.replace(/\/+$/, "");
+  return posix.basename(folder) === "_" ? posix.join(posix.dirname(folder), "pre-commit") : posix.join(folder, "pre-commit");
+}
+
+/**
+ * Does git run hooks other than flow's here? Null when it does not: `core.hooksPath` is flow's own
+ * folder, or it is unset and `.git/hooks` holds nothing but git's own `.sample` files. A
+ * `core.hooksPath` anywhere else counts whatever is in it, and any other file in `.git/hooks` counts,
+ * not only a `pre-commit`: Git LFS installs `pre-push` and `post-checkout` there.
+ */
+export function otherHooks(hooksPath: string | null, folder: HooksFolder | null): OtherHooks | null {
+  if (folder === null || hooksPath === HOOKS_DIR) return null;
+  if (hooksPath === null && folder.files.every((name) => name.endsWith(".sample"))) return null;
+  return { dir: folder.dir, preCommit: preCommitOf(folder.dir), wired: armsFlow(folder.preCommit) };
+}
+
 // ── the scaffold ─────────────────────────────────────────────────────────────
 
 /** The config `flow init --empty` leaves: the wiring, with no opinions. */
@@ -3841,6 +3893,8 @@ export interface InitFacts {
   readonly hasFlowDir: boolean;
   /** `git config core.hooksPath` as it stands. */
   readonly hooksPath: string | null;
+  /** The folder git runs hooks from, or null outside git or when git could not say. */
+  readonly hooksFolder: HooksFolder | null;
   /** The settings file flow's hooks go in: the repo's own, repo-relative, or the machine-wide one. */
   readonly settingsPath: string;
   /** That file, parsed. */
@@ -3891,7 +3945,10 @@ export interface InitPlan {
   readonly flowDir: boolean;
   /** The package to link into `node_modules/@jawache/flow`, or null when flow already resolves. */
   readonly link: string | null;
+  /** Point git at `.githooks`: a git repo whose git runs no other hooks, and not already there. */
   readonly hooksPath: boolean;
+  /** Git runs other hooks, so `core.hooksPath` is left alone. Flow is not installed unless it is wired. */
+  readonly otherHooks: OtherHooks | null;
   /** The rewritten settings, or null when they already call flow — or could not be read. */
   readonly settings: { readonly path: string; readonly value: unknown } | null;
   readonly registered: readonly string[];
@@ -3923,6 +3980,7 @@ export function planInit(facts: InitFacts): InitPlan {
   // every other tool's hooks, gone. There is no safe merge into bytes nobody parsed, so init
   // registers nothing and says which file to fix.
   const registration = facts.settingsUnreadable ? { settings: facts.settings, added: [] } : withRegistrations(facts.settings);
+  const other = facts.isGit ? otherHooks(facts.hooksPath, facts.hooksFolder) : null;
   return {
     config: facts.hasConfig ? null : { path: CONFIG_FILE, body: scaffold(facts.empty) },
     // NEVER over a hook that is already there. This is a scaffold, and a repo whose gate runs its
@@ -3936,6 +3994,7 @@ export function planInit(facts: InitFacts): InitPlan {
     // Per CLONE, not per repo: `core.hooksPath` is not committed, so a fresh clone and every
     // worktree needs it set again. That is why init is the command a new checkout runs.
     hooksPath: facts.isGit && facts.hooksPath !== HOOKS_DIR,
+    otherHooks: other,
     settings: registration.added.length === 0 ? null : { path: facts.settingsPath, value: registration.settings },
     registered: registration.added,
     machine: machineRewrite(facts.machine),
