@@ -3516,6 +3516,44 @@ export function withRegistrations(settings: unknown): { settings: unknown; added
   return { settings: { ...base, hooks }, added };
 }
 
+/**
+ * A settings file with flow's registrations taken out — a NEW object, and the reverse of
+ * `withRegistrations`.
+ *
+ * On the five events flow registers, each hook whose command is flow's (`ourHookCommand`, so an older
+ * flow's bare `flow hook <event>` goes too) is removed; an entry left with no hook goes, an event left
+ * with no entry goes, and a `hooks` key left empty goes. Every other key, event and hook is kept as
+ * it was. `removed` names the events, in registration order, empty when there was nothing of flow's.
+ */
+export function withoutRegistrations(settings: unknown): { settings: unknown; removed: string[] } {
+  const arrays = hookArrays(settings);
+  const removed = HOOK_REGISTRATIONS.map((r) => r.event).filter((event) => (arrays[event] ?? []).some(isOurs));
+  if (removed.length === 0) return { settings, removed: [] };
+
+  const held = settings as Record<string, unknown>;
+  const cleaned = new Map<string, unknown[]>();
+  for (const event of removed)
+    cleaned.set(
+      event,
+      (arrays[event] ?? []).flatMap((entry) => {
+        if (!isOurs(entry)) return [entry];
+        const ours = entry as Record<string, unknown> & { hooks: unknown[] };
+        const kept = ours.hooks.filter((inner) => {
+          const command = commandOf(inner);
+          return command === null || !ourHookCommand(command);
+        });
+        return kept.length === 0 ? [] : [{ ...ours, hooks: kept }];
+      }),
+    );
+  const hooks = Object.fromEntries(
+    Object.entries(held["hooks"] as Record<string, unknown>)
+      .map(([event, value]): [string, unknown] => [event, cleaned.get(event) ?? value])
+      .filter(([event]) => cleaned.get(event)?.length !== 0),
+  );
+  const rest = Object.fromEntries(Object.entries(held).filter(([key]) => key !== "hooks"));
+  return { settings: Object.keys(hooks).length === 0 ? rest : { ...held, hooks }, removed };
+}
+
 // ── the git gate ─────────────────────────────────────────────────────────────
 
 /**
@@ -3598,6 +3636,38 @@ export function armsFlow(text: string | null): boolean {
 /** Does it call the gate's OLD verb, `flow commit` — a gate that runs, and misses deletions? */
 export function armsOldFlow(text: string | null): boolean {
   return text !== null && /(^|[\s"'/\\])flow\s+commit\b/m.test(hookCommands(text));
+}
+
+/**
+ * THE GATE'S LINES AS EARLIER RELEASES WROTE THEM, so `flow uninstall` recognises a repo an older
+ * flow set up. Up to 0.2.1 the gate listed the staged files and handed them to `flow commit`, and a
+ * kept hook was told to add `flow commit $(git diff --cached --name-only)`; 0.2.2 and 0.2.3 wrote
+ * `GATE_RUN_LINE` alone, and told a kept hook to add `flow hook commit`.
+ */
+const OLD_GATE_SETUP = ["staged=$(git diff --cached --name-only --diff-filter=ACMR)", '[ -z "$staged" ] && exit 0'];
+const OLD_GATE_RUNS = ["exec flow commit $staged", "flow commit $(git diff --cached --name-only)", "flow hook commit"];
+
+/** The lines of a gate that run flow, today's and every older release's: what uninstall takes out of a hook it keeps. */
+const GATE_RUNS: ReadonlySet<string> = new Set([GATE_LOCAL_LINE, GATE_RUN_LINE, ...OLD_GATE_RUNS]);
+
+/** Every command line a `flow init` has written into the gate: a hook of these and comments alone is flow's whole file. */
+const GATE_WRITTEN: ReadonlySet<string> = new Set([...GATE_RUNS, ...OLD_GATE_SETUP]);
+
+/**
+ * The pre-commit hook with flow taken out: `delete` when every command in it is one a `flow init`
+ * wrote, the hook less the lines that run flow when it holds commands of its own, and null when no
+ * line of it is flow's. A line is flow's only when it is, trimmed, exactly one flow wrote: a line
+ * somebody spelled themselves is theirs to remove.
+ */
+export function gateWithoutFlow(text: string | null): { readonly delete: true } | { readonly delete: false; readonly body: string } | null {
+  if (text === null) return null;
+  const lines = text.split("\n");
+  const commands = lines.map((line) => line.trim()).filter((line) => line !== "" && !line.startsWith("#"));
+  if (!commands.some((line) => GATE_RUNS.has(line))) return null;
+  if (commands.every((line) => GATE_WRITTEN.has(line))) return { delete: true };
+  const kept = lines.filter((line) => !GATE_RUNS.has(line.trim()));
+  while (kept.length > 0 && (kept.at(-1) as string).trim() === "") kept.pop();
+  return { delete: false, body: `${kept.join("\n")}\n` };
 }
 
 /** What the gate judges: the staged changes, or the whole tree as if all of it were staged. */
@@ -3876,6 +3946,122 @@ export function initLines(plan: InitPlan, failures: readonly string[]): string[]
     );
   for (const failure of failures) lines.push(`  ✗ ${failure}`);
   lines.push("  next: `flow status` — what is bound, and what is not wired yet.");
+  return lines;
+}
+
+// ── uninstall ────────────────────────────────────────────────────────────────
+//
+// THE REVERSE OF INIT, split the same way: the shell stats the repo, `planUninstall` decides what
+// goes, the shell removes it, and `uninstallLines` says what went. "Flow's" means exactly what a
+// `flow init` writes, read through the same constants it writes with, so the two cannot drift: a
+// line, a hook or a registration somebody wrote themselves is never removed. `flow.config.ts` and
+// its packs stay, because they are the person's own work and `flow init` wires them again.
+
+/** What the shell found before anything was removed. Every one is a stat, not a judgement. */
+export interface UninstallFacts {
+  readonly hasConfig: boolean;
+  /** The gate as it stands, or null when there is none. */
+  readonly gateText: string | null;
+  /** `git config core.hooksPath` as it stands. */
+  readonly hooksPath: string | null;
+  /** The names in `.githooks/`, or null when there is no such folder. */
+  readonly hooksDir: readonly string[] | null;
+  readonly hasFlowDir: boolean;
+  /** `node_modules/@jawache/flow` is a symlink: the link `flow init` makes. A real folder is an install. */
+  readonly linked: boolean;
+  /** Does the repo's `package.json` list `@jawache/flow`? Then flow's hooks are in the repo's own settings file. */
+  readonly listed: boolean;
+  /** The repo's `.claude/settings.json`, parsed; null when there is none. */
+  readonly settings: unknown;
+  /** …it is there and would not parse. */
+  readonly settingsUnreadable: boolean;
+}
+
+/** Everything `flow uninstall` will do, decided before a byte is removed. */
+export interface UninstallPlan {
+  /** The gate: deleted, rewritten without flow's lines, or null when nothing in it is flow's. */
+  readonly gate: { readonly path: string; readonly body: string | null } | null;
+  /** The gate that stays still calls flow, in a line flow did not write. */
+  readonly gateRunsFlow: boolean;
+  /** Unset `core.hooksPath`: it is `.githooks`, and nothing else is in the folder. */
+  readonly hooksPath: boolean;
+  /** The hooks that keep `core.hooksPath` at `.githooks`, named for the report. */
+  readonly hooksKept: readonly string[];
+  /** Remove `.githooks/`, which nothing else is in. */
+  readonly hooksDir: boolean;
+  readonly flowDir: boolean;
+  readonly link: boolean;
+  /** The repo's settings file without flow's registrations, or null when it holds none. */
+  readonly settings: { readonly path: string; readonly value: unknown; readonly removed: readonly string[] } | null;
+  /** The repo's settings file is flow's to clean and would not parse: nothing written, said out loud. */
+  readonly settingsUnreadable: string | null;
+  readonly keptConfig: boolean;
+  /** The command that removes the package, the report's last line. */
+  readonly next: string;
+}
+
+/** What uninstall will remove from this repo. Pure: every branch reads a fact the shell already gathered. */
+export function planUninstall(facts: UninstallFacts): UninstallPlan {
+  const gate = gateWithoutFlow(facts.gateText);
+  const gateGone = gate?.delete === true;
+  const leftText = gate === null ? facts.gateText : gate.delete ? null : gate.body;
+  // A hook left in the folder is a hook git should still run, so `core.hooksPath` stays pointed at it.
+  const hooksLeft = (facts.hooksDir ?? []).filter((name) => !(gateGone && name === "pre-commit"));
+  const ownsHooksPath = facts.hooksPath === HOOKS_DIR;
+  // Bytes nobody parsed are not written, as in `planInit`: the step is reported as failed instead.
+  const registrations = facts.listed && !facts.settingsUnreadable ? withoutRegistrations(facts.settings) : null;
+  return {
+    gate: gate === null ? null : { path: GATE_PATH, body: gate.delete ? null : gate.body },
+    gateRunsFlow: armsFlow(leftText) || armsOldFlow(leftText),
+    hooksPath: ownsHooksPath && hooksLeft.length === 0,
+    hooksKept: ownsHooksPath ? hooksLeft : [],
+    hooksDir: facts.hooksDir !== null && hooksLeft.length === 0,
+    flowDir: facts.hasFlowDir,
+    link: facts.linked,
+    settings:
+      registrations === null || registrations.removed.length === 0
+        ? null
+        : { path: REPO_SETTINGS, value: registrations.settings, removed: registrations.removed },
+    settingsUnreadable: facts.listed && facts.settingsUnreadable ? REPO_SETTINGS : null,
+    keptConfig: facts.hasConfig,
+    next: facts.listed ? "npm uninstall @jawache/flow" : "npm uninstall -g @jawache/flow",
+  };
+}
+
+/** A step that could not be done answers 1, whether the shell hit it or the plan did. */
+export function uninstallCode(plan: UninstallPlan, failures: readonly string[]): 0 | 1 {
+  return failures.length === 0 && plan.settingsUnreadable === null ? 0 : 1;
+}
+
+/** The report: every removal named, what was kept and why, each failure, and the command to run next. */
+export function uninstallLines(plan: UninstallPlan, failures: readonly string[]): string[] {
+  const removed: string[] = [];
+  if (plan.gate) removed.push(plan.gate.body === null ? plan.gate.path : `flow's lines from ${plan.gate.path} — the rest of the hook is kept`);
+  if (plan.hooksPath) removed.push(`core.hooksPath (it was ${HOOKS_DIR})`);
+  if (plan.hooksDir) removed.push(`${HOOKS_DIR}/`);
+  if (plan.flowDir) removed.push(`${FLOW_DIR}/ — flow's state and logs`);
+  if (plan.link) removed.push(`${PACKAGE_DIR} — the link \`flow init\` made`);
+  if (plan.settings) removed.push(`${plan.settings.path} — ${plan.settings.removed.join(" · ")}`);
+
+  const lines: string[] =
+    removed.length === 0
+      ? ["flow uninstall — nothing of flow's here to remove."]
+      : ["flow uninstall — removed:", ...removed.map((what) => `  - ${what}`)];
+
+  if (plan.hooksKept.length > 0)
+    lines.push(`  · kept core.hooksPath at ${HOOKS_DIR} — git still runs the hooks there: ${plan.hooksKept.join(" · ")}.`);
+  if (plan.gateRunsFlow)
+    lines.push(
+      `  · ${GATE_PATH} still runs flow, in a line flow did not write. Remove it yourself, or every commit fails with \`flow: not found\` once flow is gone.`,
+    );
+  if (plan.keptConfig) lines.push(`  · kept ${CONFIG_FILE} and the packs it imports — \`flow init\` wires this repo again.`);
+  if (plan.settingsUnreadable !== null)
+    lines.push(
+      `  ✗ ${plan.settingsUnreadable} is not valid JSON, so flow's hooks were NOT removed from it and nothing was written to it. ` +
+        "Fix the JSON (a trailing comma, or a // comment) and run `flow uninstall` again.",
+    );
+  for (const failure of failures) lines.push(`  ✗ ${failure}`);
+  lines.push(`  next: \`${plan.next}\` — removes the package.`);
   return lines;
 }
 

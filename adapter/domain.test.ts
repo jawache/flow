@@ -144,6 +144,12 @@ import {
   scaffold,
   planInit,
   initLines,
+  planUninstall,
+  uninstallLines,
+  uninstallCode,
+  gateWithoutFlow,
+  withoutRegistrations,
+  type UninstallFacts,
   settingsFileFor,
   status,
   statusLines,
@@ -2420,6 +2426,184 @@ const statusFacts = (over: Partial<StatusFacts> = {}): StatusFacts => ({
 
 /** The gate an older `flow init` wrote: today's, without the line that runs the repo's own package first. */
 const PATH_ONLY_GATE = PRE_COMMIT.replace(`${GATE_LOCAL_LINE}\n`, "");
+
+// ── uninstall ────────────────────────────────────────────────────────────────
+
+describe("withoutRegistrations — flow's hooks taken out of a settings file", () => {
+  const theirs = { type: "command", command: "lint-on-stop" };
+
+  it("removes flow's five registrations, and the hooks key with them when nothing else is in it", () => {
+    const { settings, removed } = withoutRegistrations({ ...(withRegistrations({ theme: "dark" }).settings as object) });
+    expect(removed).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
+    expect(settings).toEqual({ theme: "dark" });
+  });
+
+  it("keeps every other key, event, entry and hook, and an entry flow shares keeps the rest of its hooks", () => {
+    const registered = withRegistrations({ permissions: { allow: ["Bash(ls:*)"] } }).settings as { hooks: Record<string, unknown[]> };
+    const shared = { hooks: [{ type: "command", command: hookCommand("stop") }, theirs] };
+    const mixed = {
+      ...registered,
+      hooks: {
+        ...registered.hooks,
+        Stop: [shared, { hooks: [theirs] }],
+        Notification: [{ hooks: [{ type: "command", command: "say done" }] }],
+      },
+    };
+    const { settings, removed } = withoutRegistrations(mixed);
+    expect(removed).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
+    expect(settings).toEqual({
+      permissions: { allow: ["Bash(ls:*)"] },
+      hooks: { Stop: [{ hooks: [theirs] }, { hooks: [theirs] }], Notification: mixed.hooks.Notification },
+    });
+    expect(mixed.hooks.Stop[0], "a new object; the one handed in is not changed").toBe(shared);
+  });
+
+  it("removes an older flow's bare command too, and has nothing to do in a file with none of flow's", () => {
+    expect(withoutRegistrations(BARE_SETTINGS).settings).toEqual({});
+    expect(withoutRegistrations({ theme: "dark" })).toEqual({ settings: { theme: "dark" }, removed: [] });
+    expect(withoutRegistrations(null).removed).toEqual([]);
+  });
+});
+
+describe("gateWithoutFlow — the commit gate with flow's lines taken out", () => {
+  it("deletes the gate today's flow writes, and the gates earlier releases wrote", () => {
+    expect(gateWithoutFlow(PRE_COMMIT)).toEqual({ delete: true });
+    expect(gateWithoutFlow(PATH_ONLY_GATE), "0.2.2's gate").toEqual({ delete: true });
+    expect(gateWithoutFlow(OLD_GATE), "the gate before `flow hook commit`").toEqual({ delete: true });
+  });
+
+  it("takes flow's lines out of a hook of somebody's own, and keeps the rest of it", () => {
+    const theirs = "#!/bin/sh\n# run the tests first\nnpm test || exit 1\n";
+    expect(gateWithoutFlow(`${theirs}${GATE_LOCAL_LINE}\n${GATE_RUN_LINE}\n`)).toEqual({ delete: false, body: theirs });
+    expect(gateWithoutFlow(`${theirs}flow hook commit\n\n`), "0.2.2's advice").toEqual({ delete: false, body: theirs });
+    expect(gateWithoutFlow(`${theirs}flow commit $(git diff --cached --name-only)\n`), "0.1's advice").toEqual({
+      delete: false,
+      body: theirs,
+    });
+  });
+
+  it("leaves a hook with no line of flow's, and a line somebody spelled their own way", () => {
+    expect(gateWithoutFlow(null)).toBeNull();
+    expect(gateWithoutFlow("#!/bin/sh\nnpm test\n")).toBeNull();
+    expect(gateWithoutFlow("#!/bin/sh\n# exec flow hook commit\n"), "a comment runs nothing").toBeNull();
+    expect(gateWithoutFlow("#!/bin/sh\nnpx flow hook commit\n")).toBeNull();
+  });
+});
+
+/** A repo `flow init` set up with a global flow: the gate, the hooks path, the state directory and the link. */
+const wired: UninstallFacts = {
+  hasConfig: true,
+  gateText: PRE_COMMIT,
+  hooksPath: HOOKS_DIR,
+  hooksDir: ["pre-commit"],
+  hasFlowDir: true,
+  linked: true,
+  listed: false,
+  settings: null,
+  settingsUnreadable: false,
+};
+
+describe("planUninstall — a repo flow init set up", () => {
+  const plan = planUninstall(wired);
+
+  it("removes the gate, the hooks path, the folder, the state directory and the link, and keeps the config", () => {
+    expect(plan.gate).toEqual({ path: GATE_PATH, body: null });
+    expect(plan.hooksPath).toBe(true);
+    expect(plan.hooksDir).toBe(true);
+    expect(plan.flowDir).toBe(true);
+    expect(plan.link).toBe(true);
+    expect(plan.settings, "a global install's hooks are in the machine-wide file, which plain uninstall leaves").toBeNull();
+    expect(plan.keptConfig).toBe(true);
+  });
+
+  it("reports each removal, the config it kept, and ends with the global package's npm uninstall", () => {
+    const said = uninstallLines(plan, []);
+    expect(said).toEqual([
+      "flow uninstall — removed:",
+      `  - ${GATE_PATH}`,
+      "  - core.hooksPath (it was .githooks)",
+      "  - .githooks/",
+      "  - .flow/ — flow's state and logs",
+      "  - node_modules/@jawache/flow — the link `flow init` made",
+      "  · kept flow.config.ts and the packs it imports — `flow init` wires this repo again.",
+      "  next: `npm uninstall -g @jawache/flow` — removes the package.",
+    ]);
+    expect(uninstallCode(plan, [])).toBe(0);
+  });
+
+  it("says there is nothing to remove in a repo flow never touched", () => {
+    const none = planUninstall({ ...wired, hasConfig: false, gateText: null, hooksPath: null, hooksDir: null, hasFlowDir: false, linked: false });
+    expect(uninstallLines(none, [])[0]).toBe("flow uninstall — nothing of flow's here to remove.");
+  });
+});
+
+describe("planUninstall — a dev dependency", () => {
+  const listed = { ...wired, linked: false, listed: true, settings: withRegistrations({ permissions: { allow: [] } }).settings };
+
+  it("takes flow's hooks out of the repo's own settings file, and ends with the repo's npm uninstall", () => {
+    const plan = planUninstall(listed);
+    expect(plan.settings?.path).toBe(".claude/settings.json");
+    expect(plan.settings?.value).toEqual({ permissions: { allow: [] } });
+    expect(plan.link, "an installed package is npm's to remove").toBe(false);
+    const said = uninstallLines(plan, []).join("\n");
+    expect(said).toContain("  - .claude/settings.json — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop");
+    expect(said).toContain("next: `npm uninstall @jawache/flow`");
+  });
+
+  it("writes nothing to a settings file that would not parse, says so, and answers 1", () => {
+    const plan = planUninstall({ ...listed, settings: null, settingsUnreadable: true });
+    expect(plan.settings).toBeNull();
+    expect(plan.settingsUnreadable).toBe(".claude/settings.json");
+    expect(uninstallLines(plan, []).join("\n")).toContain(".claude/settings.json is not valid JSON");
+    expect(uninstallCode(plan, [])).toBe(1);
+  });
+
+  it("leaves a repo settings file alone when the repo does not list flow", () => {
+    expect(planUninstall({ ...wired, settings: withRegistrations({}).settings }).settings).toBeNull();
+  });
+});
+
+describe("planUninstall — hooks of somebody's own", () => {
+  it("keeps core.hooksPath and the folder while another hook is in it, and names that hook", () => {
+    const plan = planUninstall({ ...wired, hooksDir: ["commit-msg", "pre-commit"] });
+    expect(plan.gate?.body).toBeNull();
+    expect(plan.hooksPath).toBe(false);
+    expect(plan.hooksDir).toBe(false);
+    expect(uninstallLines(plan, []).join("\n")).toContain("kept core.hooksPath at .githooks — git still runs the hooks there: commit-msg.");
+  });
+
+  it("keeps a gate with lines of its own, rewritten, and the hooks path that runs it", () => {
+    const plan = planUninstall({ ...wired, gateText: `#!/bin/sh\nnpm test\n${GATE_LOCAL_LINE}\n${GATE_RUN_LINE}\n` });
+    expect(plan.gate).toEqual({ path: GATE_PATH, body: "#!/bin/sh\nnpm test\n" });
+    expect(plan.hooksPath).toBe(false);
+    expect(plan.gateRunsFlow).toBe(false);
+    const said = uninstallLines(plan, []).join("\n");
+    expect(said).toContain(`  - flow's lines from ${GATE_PATH} — the rest of the hook is kept`);
+    expect(said).toContain("git still runs the hooks there: pre-commit.");
+  });
+
+  it("says when what is left still runs flow in a line flow did not write", () => {
+    const plan = planUninstall({ ...wired, gateText: "#!/bin/sh\nnpx flow hook commit\n" });
+    expect(plan.gate).toBeNull();
+    expect(plan.gateRunsFlow).toBe(true);
+    expect(uninstallLines(plan, []).join("\n")).toContain("still runs flow, in a line flow did not write");
+  });
+
+  it("leaves a core.hooksPath that points somewhere else", () => {
+    const plan = planUninstall({ ...wired, hooksPath: ".husky/_" });
+    expect(plan.hooksPath).toBe(false);
+    expect(plan.hooksKept).toEqual([]);
+    expect(plan.hooksDir, "the folder flow wrote still goes").toBe(true);
+  });
+
+  it("lists a step that failed, and answers 1", () => {
+    const plan = planUninstall(wired);
+    const said = uninstallLines(plan, [`could not delete ${GATE_PATH}: EACCES`]);
+    expect(said.at(-2)).toBe(`  ✗ could not delete ${GATE_PATH}: EACCES`);
+    expect(said.at(-1)).toContain("next:");
+    expect(uninstallCode(plan, ["x"])).toBe(1);
+  });
+});
 
 describe("the binary fitting — can the hooks and the gate find flow", () => {
   const binary = (modules: boolean, path: boolean, over: Partial<StatusFacts> = {}) => {
