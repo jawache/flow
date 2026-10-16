@@ -14,7 +14,7 @@
 // driven for real instead of mocked — the seam is the product's, not the suite's.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync, lstatSync, symlinkSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync, lstatSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -699,6 +699,40 @@ describe("flow uninstall", () => {
       expect(committed.stdout + committed.stderr, "git still runs the other hook").toContain("msg-hook-ran");
     } finally {
       rmSync(shared, { recursive: true, force: true });
+    }
+  });
+
+  // THE SHELL'S OWN FAILURE PATH: a removal the disk refuses. Root deletes through any mode, so the
+  // case cannot be staged there.
+  it.skipIf(process.getuid?.() === 0)("lists a removal the disk refused, names it, still removes the rest, and answers 1", () => {
+    const locked = newRepo();
+    const hooksDir = join(locked, ".githooks");
+    try {
+      expect(flow(locked, ["init"]).code).toBe(0);
+      chmodSync(hooksDir, 0o555);
+
+      const said = flow(locked, ["uninstall"]);
+      expect(said.code, said.stdout + said.stderr).toBe(1);
+      expect(said.stdout).toMatch(/^ {2}✗ could not delete \.githooks\/pre-commit: /m);
+      expect(existsSync(join(hooksDir, "pre-commit")), "the gate the disk would not let go").toBe(true);
+      expect(existsSync(join(locked, ".flow")), "the other steps still ran").toBe(false);
+    } finally {
+      chmodSync(hooksDir, 0o755);
+      rmSync(locked, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses an argument it does not know with exit 2 and the usage line, and removes nothing", () => {
+    const wired = newRepo();
+    try {
+      expect(flow(wired, ["init"]).code).toBe(0);
+      const said = flow(wired, ["uninstall", "--dry-run"]);
+      expect(said.code).toBe(2);
+      expect(said.stderr).toBe("flow uninstall — unknown argument `--dry-run`; nothing was removed.\nusage: flow uninstall\n");
+      expect(said.stdout).toBe("");
+      for (const kept of [".githooks/pre-commit", ".flow"]) expect(existsSync(join(wired, kept)), `${kept} is still there`).toBe(true);
+    } finally {
+      rmSync(wired, { recursive: true, force: true });
     }
   });
 
