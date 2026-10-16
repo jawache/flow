@@ -293,8 +293,8 @@ describe("a Bash line's delete targets", () => {
     expect(deleteTargets(parseCommandLine("git commit -m 'rm the thing'"))).toStrictEqual([]);
   });
 
-  it("stands aside on a line it cannot tokenise, rather than guessing", () => {
-    // null from the tokeniser means "I cannot tell". A guard that guesses at a line it could not
+  it("stands aside on a line it cannot parse, rather than guessing", () => {
+    // null from the parse means "I cannot tell". A guard that guesses at a line it could not
     // parse is worse than one that stands aside — and the command rail still sees the raw line.
     expect(deleteTargets(parseCommandLine("rm 'unclosed"))).toStrictEqual([]);
   });

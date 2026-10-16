@@ -34,14 +34,11 @@ import {
   changedSet,
   commitMessage,
   commitReason,
-  closeParen,
   compileDialect,
   layerGlobs,
   depcruise,
   depcruiseCommand,
   depcruiseHits,
-  dquoteEnd,
-  elideHeredocs,
   entryToMatcher,
   execPasses,
   exportedNames,
@@ -49,7 +46,6 @@ import {
   gitCommand,
   gitCommands,
   gitDirPrefix,
-  gitInvocations,
   givesReason,
   globToRe,
   judgeCanonical,
@@ -76,7 +72,6 @@ import {
   SUBSTITUTION_MESSAGE,
   symbolsInSibling,
   textBan,
-  tokenizeCommand,
   unansweredText,
   unreferenced,
   GIT_VALUE_OPTS,
@@ -85,7 +80,6 @@ import {
   type Dialect,
   type ForbidEdge,
   type GitCommand,
-  type GitInvocation,
   type JsonAssert,
   type Matcher,
   type NativeConfig,
@@ -628,61 +622,6 @@ describe("lonelyChanges", () => {
 // COMMANDS
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-describe("tokenizeCommand", () => {
-  it("respects quotes, so a message mentioning a command is not a second command", () => {
-    expect(tokenizeCommand(`git commit -m "git push origin main"`)).toEqual([
-      "git",
-      "commit",
-      "-m",
-      "git push origin main",
-    ]);
-  });
-
-  it("emits operators, including a newline, as their own tokens", () => {
-    expect(tokenizeCommand("a && b\nc")).toEqual(["a", "&&", "b", "\n", "c"]);
-    expect(tokenizeCommand("a | b")).toEqual(["a", "|", "b"]);
-    expect(tokenizeCommand("a ; b")).toEqual(["a", ";", "b"]);
-  });
-
-  it("unwraps a backslash escape and a double-quoted escape", () => {
-    expect(tokenizeCommand("echo a\\ b")).toEqual(["echo", "a b"]);
-    expect(tokenizeCommand(`echo "a\\"b"`)).toEqual(["echo", 'a"b']);
-  });
-
-  it("an unclosed quote is null — cannot tell, so do not judge", () => {
-    expect(tokenizeCommand(`git commit -m "unclosed`)).toBeNull();
-    expect(tokenizeCommand(`git commit -m 'unclosed`)).toBeNull();
-  });
-});
-
-describe("gitInvocations", () => {
-  it("splits git's own options from the subcommand and its arguments", () => {
-    const invocations = gitInvocations("git -C /repo commit -m x") as GitInvocation[];
-    expect(invocations).toHaveLength(1);
-    expect(invocations[0]).toEqual({ globals: ["-C", "/repo"], subcommand: "commit", args: ["-m", "x"] });
-  });
-
-  it("`git commit -C HEAD` is a commit, not a command aimed at a directory named HEAD", () => {
-    const invocations = gitInvocations("git commit -C HEAD") as GitInvocation[];
-    expect(invocations[0]?.globals).toEqual([]);
-    expect(invocations[0]?.subcommand).toBe("commit");
-    expect(GIT_VALUE_OPTS.has("-C")).toBe(true);
-  });
-
-  it("only a git at a COMMAND position starts an invocation", () => {
-    expect(gitInvocations(`echo "git commit"`)).toEqual([]);
-    expect(gitInvocations("ls && git status")).toHaveLength(1);
-  });
-
-  it("an invocation with no subcommand at all is still reported", () => {
-    expect(gitInvocations("git --version")?.[0]?.subcommand).toBeNull();
-  });
-
-  it("null on an unparseable line", () => {
-    expect(gitInvocations(`git commit -m "unclosed`)).toBeNull();
-  });
-});
-
 /** The two command readers, handed a line the way a ctx built by hand hands one: no parse yet. */
 const prefixOf = (command: string): string => gitDirPrefix({ command });
 const messageOf = (command: string): string | null => commitMessage({ command });
@@ -823,6 +762,7 @@ describe("gitCommand", () => {
     const [g] = git("git -C /repo commit -m x");
     expect([g?.globals, g?.subcommand, g?.args]).toEqual([["-C", "/repo"], "commit", ["-m", "x"]]);
     expect(git("git commit -C HEAD")[0]?.globals, "`commit -C HEAD` reuses a message, it names no directory").toEqual([]);
+    expect(GIT_VALUE_OPTS.has("-C"), "…while `git -C dir` is git's own option, and takes its value").toBe(true);
     expect(git("git --version")[0]?.subcommand).toBeNull();
   });
 
@@ -849,93 +789,6 @@ describe("shellCommands", () => {
     expect(shellCommands({ command: "rm -rf x", commands })).toBe(commands);
     expect(shellCommands({ command: "rm -rf x", commands: null })).toBeNull();
     expect(shellCommands({ command: "rm -rf x" })?.map((c) => c.program)).toEqual(["rm"]);
-  });
-});
-
-// What a command ban matches: the line with every heredoc body gone, and nothing else touched.
-describe("elideHeredocs", () => {
-  it("drops a body and keeps its terminator line, quoted and unquoted delimiters alike, and every other newline", () => {
-    expect(elideHeredocs("python3 - <<'PY'\nprint('just test')\nPY\njust test")).toBe("python3 - <<'PY'\nPY\njust test");
-    expect(elideHeredocs("cat > a.md <<EOF\nnpx vitest run\nEOF\nls")).toBe("cat > a.md <<EOF\nEOF\nls");
-    expect(elideHeredocs('cat <<"EOF"\nx\nEOF')).toBe('cat <<"EOF"\nEOF');
-    expect(elideHeredocs("cat <<\\EOF\nx\nEOF")).toBe("cat <<\\EOF\nEOF");
-    expect(elideHeredocs("cat <<-EOF\n\tx\n\tEOF\nls")).toBe("cat <<-EOF\n\tEOF\nls");
-    expect(elideHeredocs('git commit -m "subject\n\nbody"')).toBe('git commit -m "subject\n\nbody"');
-  });
-
-  it("drops each of several bodies in order, and a body that never closes runs to the end", () => {
-    expect(elideHeredocs("cat <<A <<B\na\nA\nb\nB\nls")).toBe("cat <<A <<B\nA\nB\nls");
-    expect(elideHeredocs("cat <<A; cat <<B\na\nA\nb\nB")).toBe("cat <<A; cat <<B\nA\nB");
-    expect(elideHeredocs("cat <<EOF\nnever closed\nls")).toBe("cat <<EOF\n");
-    // The delimiter must stand alone on its line: indented or trailing text is still body.
-    expect(elideHeredocs("cat <<EOF\n EOF\nEOF x\nEOF\nls")).toBe("cat <<EOF\nEOF\nls");
-  });
-
-  it("keeps a body a shell reads, since it is commands — directly, behind a wrapper, or down a pipe", () => {
-    const keep = ["bash <<'EOF'\ngit push --force\nEOF", "sh -s <<EOF\nx\nEOF", "sudo -E bash <<EOF\nx\nEOF", "X=1 /bin/zsh <<EOF\nx\nEOF", "cat <<EOF | bash\nx\nEOF", "eval <<EOF\nx\nEOF"];
-    for (const command of keep) expect(elideHeredocs(command)).toBe(command);
-    // …and the pipe ends where the pipeline does.
-    expect(elideHeredocs("bash -c x; cat <<EOF\nx\nEOF")).toBe("bash -c x; cat <<EOF\nEOF");
-    expect(elideHeredocs("echo | bash && cat <<EOF\nx\nEOF")).toBe("echo | bash && cat <<EOF\nEOF");
-    // A shell named as an ARGUMENT is not the program reading the body.
-    expect(elideHeredocs("cat bash <<EOF\nx\nEOF")).toBe("cat bash <<EOF\nEOF");
-    expect(elideHeredocs("if true; then cat <<EOF\nx\nEOF\nfi")).toBe("if true; then cat <<EOF\nEOF\nfi");
-  });
-
-  it("drops a heredoc wherever it sits — inside a quoted argument, a `$(…)`, a backquote or a `<(…)`", () => {
-    expect(elideHeredocs(`git commit -m "$(cat <<'EOF'\nfix: don't (ever) do it\nEOF\n)"`)).toBe(`git commit -m "$(cat <<'EOF'\nEOF\n)"`);
-    expect(elideHeredocs("echo $(cat <<EOF\nx\nEOF\n) after")).toBe("echo $(cat <<EOF\nEOF\n) after");
-    expect(elideHeredocs('echo "`cat <<EOF\nx\nEOF\n`" `cat <<EOF\ny\nEOF\n`')).toBe('echo "`cat <<EOF\nEOF\n`" `cat <<EOF\nEOF\n`');
-    expect(elideHeredocs("diff <(cat <<EOF\nx\nEOF\n) b")).toBe("diff <(cat <<EOF\nEOF\n) b");
-    // …and a nested one sits between the outer bodies, in order.
-    expect(elideHeredocs('cat <<A "$(cat <<B\nb\nB\n)"\na\nA\nls')).toBe('cat <<A "$(cat <<B\nB\n)"\nA\nls');
-    // A shell reading a nested heredoc still keeps it, and arithmetic in a quote is not a command.
-    const kept = 'echo "$(bash <<EOF\nx\nEOF\n)" "$((1<<2))" "`x`"';
-    expect(elideHeredocs(kept)).toBe(kept);
-  });
-
-  it("finds no heredoc in a here-string, a quoted `<<`, a comment, an arithmetic shift or a process substitution", () => {
-    const none = [
-      "grep x <<< 'text'\nls",
-      "echo '<<EOF'\nls",
-      'echo "a <<EOF"\nls',
-      "echo a\\<<EOF\nls",
-      "ls # <<EOF\nls",
-      "echo $((1<<2))\nls",
-      "diff <(sort a) >(cat)\nls",
-      "echo `x <<EOF`\nls",
-      "cat a.ts <<",
-      "cat <<''\nls",
-      "cat a.ts 2>&1 >> log\nls",
-    ];
-    for (const command of none) expect(elideHeredocs(command)).toBe(command);
-  });
-
-  it("returns what it cannot read as written, so a ban still sees all of it", () => {
-    for (const command of ["cat 'unclosed <<EOF\nx\nEOF", "cat <<EOF $(unclosed\nx\nEOF", "diff <(sort a\n<<EOF", "cat `x <<EOF\nx\nEOF", "echo $((1\n"]) {
-      expect(elideHeredocs(command)).toBe(command);
-    }
-    // A body already passed is still dropped: only the rest from the unreadable word is kept.
-    expect(elideHeredocs("cat <<EOF\nx\nEOF\necho 'open")).toBe("cat <<EOF\nEOF\necho 'open");
-  });
-
-  it("reads a line continuation and a word glued to its quotes as the one word they are", () => {
-    expect(elideHeredocs("b\\\nash <<EOF\nx\nEOF")).toBe("b\\\nash <<EOF\nx\nEOF");
-    expect(elideHeredocs("cat \\\n  <<EOF\nx\nEOF")).toBe("cat \\\n  <<EOF\nEOF");
-    expect(elideHeredocs("'bash' <<EOF\nx\nEOF")).toBe("'bash' <<EOF\nx\nEOF");
-  });
-});
-
-describe("the shared quote scanners", () => {
-  it("closes a double quote past a `$(…)` that holds one, and a `$(…)` past a heredoc that holds a `)`", () => {
-    const s = `"$(printf "%s" x)" rest`;
-    expect(dquoteEnd(s, 1)).toBe(s.indexOf(" rest") - 1);
-    const sub = "$(cat <<'EOF'\n) don't\nEOF\n) after";
-    expect(closeParen(sub, 2)).toBe(sub.indexOf(" after") - 1);
-    expect(closeParen("$(echo $((1<<2)) <<< x)", 2)).toBe(22);
-    expect(closeParen("$(echo $((1", 2)).toBe(-1);
-    expect(closeParen('$(echo "open', 2)).toBe(-1);
-    expect(dquoteEnd('"$(open', 1)).toBe(-1);
   });
 });
 
