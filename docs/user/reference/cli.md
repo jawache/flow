@@ -42,7 +42,7 @@ summary: "every `flow` command, what `flow init` writes, the two switch files, a
 | `.githooks/pre-commit` | The commit gate: a shell script of comments that ends with `exec flow hook commit`. Not written when a file is already at that path |
 | `.flow/` | flow's state and logs. It holds its own `.gitignore`, so it is never committed and your `.gitignore` is not changed |
 | `node_modules/@jawache/flow` | A link to the `flow` that is running. Written only when the repo does not install `@jawache/flow` itself |
-| The Claude Code settings file | Five hook registrations: `SessionStart`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure` and `Stop`. Each one runs the command `flow hook <event>`. The file is `~/.claude/settings.json`, or `$CLAUDE_CONFIG_DIR/settings.json` when that variable is set. When `flow init` adds a registration, it writes the whole file back as JSON indented by two spaces. Every key already in the file is kept |
+| The Claude Code settings file | Six hook registrations: `SessionStart`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Stop` and `SubagentStop`. Each one runs the command `flow hook <event>`. The file is `~/.claude/settings.json`, or `$CLAUDE_CONFIG_DIR/settings.json` when that variable is set. When `flow init` adds a registration, it writes the whole file back as JSON indented by two spaces. Every key already in the file is kept |
 | `core.hooksPath` | Set to `.githooks`, so git runs the gate. `flow init` sets it whenever it is not already `.githooks`, including when it points somewhere else. It is a setting of one clone, so run `flow init` in every new clone |
 
 > [!WARNING]

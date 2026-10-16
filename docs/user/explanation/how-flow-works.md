@@ -68,7 +68,7 @@ A pack that needs a fact about the repo declares it as a mandatory typed paramet
 
 ## Moments
 
-A guardrail runs at one or more **moments**: `write`, `command`, `delete`, `commit` and `turn-end`. A breadcrumb is shown at `session`, `touch` or `command`. The grammar also accepts `turn-end` for a breadcrumb, but Claude Code gives flow no way to show a note there, so such a breadcrumb is never shown. [The moments reference](../reference/moments.md) lists when each one runs.
+A guardrail runs at one or more **moments**: `write`, `command`, `delete`, `commit` and `turn-end`. A breadcrumb is shown at `session`, `touch`, `command` or `turn-end`. Turn-end is any agent handing back, the main agent or a subagent. [The moments reference](../reference/moments.md) lists when each one runs.
 
 The commit moment comes from git's own pre-commit hook, not from any harness. The hook runs `flow hook commit`, and flow reads the staged changes from git: the files the commit adds, changes and deletes. Because git runs the hook, every harness gets the commit gate, and so does a person committing in a terminal. To git, a rename is a deletion of the old path plus an add of the new one.
 

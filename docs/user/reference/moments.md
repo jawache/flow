@@ -4,7 +4,7 @@ summary: "the seven moments a rule runs at, and how each is delivered"
 
 # Moments
 
-A moment is when a rule runs. A guardrail runs at one or more moments, set with `.at(…)`. A breadcrumb may be set at four: `session`, `touch`, `command` and `turn-end`. The Claude Code adapter shows a breadcrumb at the first three, and never at `turn-end`.
+A moment is when a rule runs. A guardrail runs at one or more moments, set with `.at(…)`. A breadcrumb may be set at four: `session`, `touch`, `command` and `turn-end`. The Claude Code adapter shows a breadcrumb at all four.
 
 ## The moments
 
@@ -18,7 +18,7 @@ Moments are imported symbols: `session · touch · write · command · deletion 
 | `command` | command | either | Before a shell command runs. A guardrail refuses it. A breadcrumb is shown as a note before it runs, scoped by `.on(…)` to the commands it is about, and again after drift, as at `touch` |
 | `deletion` | delete | guardrail | A file is removed. When an `rm` command would remove it, the rule runs before that command runs. When anything else removes it, the rule runs the moment the file is gone, and a refusal writes the file back |
 | `commit` | commit | guardrail | The git pre-commit gate, over the staged changes. It runs for commits people make too. A rule bound at both `deletion` and `commit`, with paths in `.on(…)`, also runs on each file the commit deletes, as a delete |
-| `turnEnd` | turn-end | guardrail (a breadcrumb loads, and is never shown) | Claude Code's `Stop` hook: the agent hands back. flow registers `Stop` only, not `SubagentStop` |
+| `turnEnd` | turn-end | either | An agent hands back: Claude Code's `Stop` hook for the main agent, and its `SubagentStop` hook for a subagent. A guardrail holds the turn open. A breadcrumb is shown as a note. See [the turn-end moment](#the-turn-end-moment) |
 
 `deletion` and `turnEnd` are spelled that way because `delete` is a reserved word. The moment is still called "delete".
 
@@ -33,6 +33,16 @@ Git's own pre-commit hook delivers the commit moment, not the harness. The hook 
 - **A rule with no `.on(…)`** is called once, with the whole staged set in `ctx.staged`.
 - **A rule with `.on(…)`** is called once per staged file in scope, with that file in `ctx.file`.
 - **A file the commit deletes** goes only to a rule bound at both `deletion` and `commit`, with paths in `.on(…)`.
+
+## The turn-end moment
+
+Every hand-back is a turn-end: the main agent's, and each subagent's. The same rules run at both. To limit a rule to the main chat, bind it with `.for(…)` to a category only the main chat has, as [rules bound to who](../explanation/rules-bound-to-who.md) shows.
+
+- **A guardrail** holds the turn open with its message. The agent acts on it, then hands back again.
+- **A breadcrumb** is shown as a note. The agent takes one more turn to read it, then hands back again.
+- **When a note shows:** the first time, and again once the context size has grown by `driftTokens` since the last showing, as at `touch`.
+- **A hand-back that a stop hook already held open** shows no note. A note never holds a turn open twice in a row.
+- **A guardrail and a note at the same hand-back** are passed to the agent together.
 
 ## Scope at the command moment
 

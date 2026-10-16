@@ -89,7 +89,7 @@ A breadcrumb is a note shown to the agent. It has no rail to block with, so it h
 
 | Verb | Value | Meaning |
 | --- | --- | --- |
-| `.at(…moments)` | `session · touch · command · turn-end` | **Mandatory.** When the note shows. A `turn-end` breadcrumb loads, but the Claude Code adapter never shows it, and `flow status` marks it as one that never shows |
+| `.at(…moments)` | `session · touch · command · turn-end` | **Mandatory.** When the note shows. Each time a `turn-end` note shows, the agent takes one more turn to read it. See [the turn-end moment](./moments.md#the-turn-end-moment) |
 | `.on(…globs)` | globs | What the note is about: the files whose touch shows it, or, at `command`, the command lines it is about (`"npm install*"`) |
 | `.ignore(…globs)` | globs | Carve-outs from `.on(…)` |
 | `.for(…categories)` | categories | Binds the note to actors. Only a session that has at least one of the categories is shown it |
