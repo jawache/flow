@@ -1256,13 +1256,11 @@ export interface Dialect {
   /** Fail-closed allowlist: a layer may reach ONLY these layers. */
   readonly only?: Readonly<Record<string, readonly string[]>>;
   /** Forbidden edges, each carrying the `why` its violation prints. */
-  readonly forbid?: readonly (ForbidEdge | "circular" | "orphans")[];
+  readonly forbid?: readonly (ForbidEdge | "circular" | "orphans" | "sdp")[];
   /** An inverted fence: modules in a path MUST import a target. */
   readonly require?: readonly RequireEdge[];
   /** Carve-outs — `type-only` above all, since a type import is erased at compile time. */
   readonly except?: readonly string[];
-  /** Informational rules that never block. `sdp` = the Stable Dependencies Principle. */
-  readonly warn?: readonly string[];
   /** dependency-cruiser's own options, passed through. */
   readonly options?: Readonly<Record<string, unknown>>;
 }
@@ -1367,7 +1365,9 @@ export function compileDialect(rule: Dialect): NativeConfig {
     });
   }
 
-  // ── forbid: edges between layers, plain circular, orphans, cyclesBetween.
+  // ── forbid: edges between layers, plain circular, orphans, sdp, cyclesBetween. Every one of them
+  //    refuses the commit: depcruiseHits reads no severity, so `warn` here is only dependency-cruiser's
+  //    label for the rule, never a softer outcome.
   for (const f of rule.forbid ?? []) {
     if (f === "circular") {
       forbidden.push({
@@ -1384,6 +1384,15 @@ export function compileDialect(rule: Dialect): NativeConfig {
         comment: "unreferenced module",
         from: { orphan: true, pathNot: "node_modules|\\.d\\.ts$" },
         to: {},
+      });
+    } else if (f === "sdp") {
+      // The Stable Dependencies Principle: depend only on modules at least as stable as yourself.
+      forbidden.push({
+        name: "sdp",
+        severity: "warn",
+        comment: "depends on a more-unstable module (Stable Dependencies Principle)",
+        from: {},
+        to: { moreUnstable: true },
       });
     } else if (f.cyclesBetween !== undefined) {
       // A feature importing a DIFFERENT feature (sideways). Capture the feature folder from the
@@ -1422,19 +1431,6 @@ export function compileDialect(rule: Dialect): NativeConfig {
       module: { path: globToRe(r.in) },
       to: { path: globToRe(r.import) },
     });
-  }
-
-  // ── warn: informational only.
-  for (const w of rule.warn ?? []) {
-    if (w === "sdp") {
-      forbidden.push({
-        name: "sdp",
-        severity: "warn",
-        comment: "depends on a more-unstable module (Stable Dependencies Principle)",
-        from: {},
-        to: { moreUnstable: true },
-      });
-    }
   }
 
   // options: resolve TS/JS imports to real module paths (so a fence's `to` matches a resolved file,

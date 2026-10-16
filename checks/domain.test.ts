@@ -1324,13 +1324,24 @@ describe("the depcruise dialect", () => {
     expect(unnamed.forbidden[0]?.comment).toBe("f must not import sideways");
   });
 
-  it("compiles require: into an inverted rule, and warn: into a non-blocking one", () => {
+  it("compiles forbid: sdp into a rule against importing a less stable module", () => {
+    const config = compileDialect({ scan: "s", layers: {}, forbid: ["sdp"] });
+    expect(config.forbidden).toEqual([
+      {
+        name: "sdp",
+        severity: "warn",
+        comment: "depends on a more-unstable module (Stable Dependencies Principle)",
+        from: {},
+        to: { moreUnstable: true },
+      },
+    ]);
+  });
+
+  it("compiles require: into an inverted rule", () => {
     const req: RequireEdge[] = [{ in: "src/**", import: "src/telemetry.ts", why: "everything reports" }];
-    const config = compileDialect({ scan: "s", layers: {}, require: req, warn: ["sdp", "unknown"] });
+    const config = compileDialect({ scan: "s", layers: {}, require: req });
     expect(config.required[0]?.name).toBe("must-import-src/telemetry.ts");
     expect(config.required[0]?.comment).toBe("everything reports");
-    expect(config.forbidden.map((r) => r.name)).toEqual(["sdp"]);
-    expect(config.forbidden[0]?.severity).toBe("warn");
     const bare = compileDialect({ scan: "s", layers: {}, require: [{ in: "a/**", import: "b.ts" }] });
     expect(bare.required[0]?.comment).toBe("modules in a/** must import b.ts");
   });
@@ -1381,6 +1392,13 @@ describe("depcruiseHits", () => {
     const stdout = JSON.stringify({ summary: { violations: [{ from: "a.ts", to: "b.ts" }] } });
     expect(depcruiseHits({ stdout, stderr: "", code: 1 })).toEqual(["fence: a.ts → b.ts"]);
     expect(depcruiseHits({ stdout: JSON.stringify({ summary: {} }), stderr: "", code: 0 })).toEqual([]);
+  });
+
+  it("a violation at severity warn is a hit like any other, though the tool exits 0 for it", () => {
+    const stdout = JSON.stringify({
+      summary: { violations: [{ rule: { name: "sdp", severity: "warn" }, from: "src/core.ts", to: "src/app.ts" }] },
+    });
+    expect(depcruiseHits({ stdout, stderr: "", code: 0 })).toEqual(["sdp: src/core.ts → src/app.ts"]);
   });
 
   it("unparseable output is a REAL failure when the tool failed, and silence when it did not", () => {
