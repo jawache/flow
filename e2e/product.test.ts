@@ -55,6 +55,12 @@ const newRepo = (): string => freshRepo("flow-init-");
 const settings = (): Record<string, unknown> =>
   JSON.parse(readFileSync(join(home, "settings.json"), "utf8")) as Record<string, unknown>;
 
+/** The events flow init registers, in the order it writes and prints them. */
+const REGISTERED = ["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"];
+
+/** The same, as init and status print them. */
+const LISTED = REGISTERED.join(" · ");
+
 let repo: string;
 let first: Ran;
 
@@ -91,11 +97,13 @@ describe("flow init — a repo that has never heard of flow", () => {
     expect(git(repo, ["config", "--get", "core.hooksPath"]).stdout.trim()).toBe(".githooks");
   });
 
-  it("registers the five events flow answers, and not Notification", () => {
+  it("registers the events flow answers, and not Notification", () => {
     const hooks = settings()["hooks"] as Record<string, unknown>;
-    expect(Object.keys(hooks).sort()).toEqual(["PostToolUse", "PostToolUseFailure", "PreToolUse", "SessionStart", "Stop"]);
+    expect(first.stdout).toContain(LISTED);
+    expect(Object.keys(hooks)).toEqual(REGISTERED);
     expect(JSON.stringify(hooks["PostToolUse"]), "every tool can change the tree").toContain('"matcher":"*"');
     expect(JSON.stringify(hooks)).toContain("flow hook stop");
+    expect(JSON.stringify(hooks["SubagentStop"]), "a subagent's hand-back is its own event").toContain("flow hook subagent-stop");
     expect(Object.keys(hooks)).not.toContain("Notification");
   });
 
@@ -343,6 +351,28 @@ describe("flow init, run again", () => {
     }
   });
 
+  // THE FILE AN INIT BEFORE 0.3.0 WROTE: every registration but SubagentStop. Status names the one
+  // missing, and init adds it.
+  it("goes red on a file without SubagentStop, and adds it when init runs again", () => {
+    const older = settingsHome();
+    try {
+      const current = settings() as { hooks: Record<string, unknown> };
+      const { SubagentStop: _dropped, ...rest } = current.hooks;
+      writeFileSync(join(older, "settings.json"), JSON.stringify({ hooks: rest }));
+
+      const red = flow(repo, ["status"], older);
+      expect(red.code).toBe(1);
+      expect(red.stdout).toContain(`✗ hooks: ${join(older, "settings.json")} does not call flow for SubagentStop — re-run \`flow init\`.`);
+
+      const again = flow(repo, ["init"], older);
+      expect(again.code, again.stdout + again.stderr).toBe(0);
+      expect(again.stdout).toContain(`+ ${join(older, "settings.json")} — SubagentStop\n`);
+      expect(flow(repo, ["status"], older).code).toBe(0);
+    } finally {
+      rmSync(older, { recursive: true, force: true });
+    }
+  });
+
   it("replaces a dangling @jawache/flow link, which is one way nothing resolves", () => {
     const stale = newRepo();
     try {
@@ -487,10 +517,10 @@ describe("a repo whose package.json lists flow", () => {
 
       const init = flow(listed, ["init"], machine);
       expect(init.code, init.stdout + init.stderr).toBe(0);
-      expect(init.stdout).toContain("+ .claude/settings.json — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop");
+      expect(init.stdout).toContain(`+ .claude/settings.json — ${LISTED}`);
 
       const written = JSON.parse(readFileSync(join(listed, ".claude", "settings.json"), "utf8")) as Record<string, unknown>;
-      expect(Object.keys(written["hooks"] as object)).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
+      expect(Object.keys(written["hooks"] as object)).toEqual(REGISTERED);
       expect(readFileSync(join(machine, "settings.json"), "utf8"), "the machine-wide file, byte for byte").toBe(machineBefore);
     } finally {
       for (const dir of [listed, machine]) rmSync(dir, { recursive: true, force: true });
@@ -510,15 +540,15 @@ describe("a repo whose package.json lists flow", () => {
 
       const init = flow(listed, ["init"], machine);
       expect(init.code, init.stdout + init.stderr).toBe(0);
-      expect(init.stdout).toContain("+ .claude/settings.json — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop");
+      expect(init.stdout).toContain(`+ .claude/settings.json — ${LISTED}`);
 
       const written = JSON.parse(readFileSync(join(listed, ".claude", "settings.json"), "utf8")) as Record<string, unknown>;
       expect(written["permissions"], "the key already in the repo's file is kept").toEqual({ allow: ["Bash(ls:*)"] });
-      expect(Object.keys(written["hooks"] as object)).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
+      expect(Object.keys(written["hooks"] as object)).toEqual(REGISTERED);
       expect(readFileSync(join(machine, "settings.json"), "utf8"), "the machine-wide file, byte for byte").toBe(machineBefore);
 
       const said = flow(listed, ["status"], machine);
-      expect(said.stdout).toContain("✓ hooks: .claude/settings.json — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop");
+      expect(said.stdout).toContain(`✓ hooks: .claude/settings.json — ${LISTED}`);
       expect(said.code, said.stdout).toBe(0);
     } finally {
       for (const dir of [listed, machine]) rmSync(dir, { recursive: true, force: true });
@@ -636,10 +666,10 @@ describe("flow uninstall", () => {
 
       const said = flow(listed, ["uninstall"], machine);
       expect(said.code, said.stdout + said.stderr).toBe(0);
-      expect(said.stdout).toContain("  - .claude/settings.json — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop");
+      expect(said.stdout).toContain("  - .claude/settings.json — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop · SubagentStop");
       expect(said.stdout.trim().split("\n").at(-1)).toBe("  next: `npm uninstall @jawache/flow` — removes the package.");
       const after = JSON.parse(readFileSync(join(listed, ".claude", "settings.json"), "utf8")) as Record<string, unknown>;
-      expect(after, "flow's five are gone, the empty events with them, and every other key and hook stays").toEqual({
+      expect(after, "flow's six are gone, the empty events with them, and every other key and hook stays").toEqual({
         permissions: { allow: ["Bash(ls:*)"] },
         hooks: { Stop: [theirs] },
       });
