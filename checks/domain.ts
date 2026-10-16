@@ -166,8 +166,8 @@ export const textBan = defineCheck(
  *
  * An entry that is not one command in words — a line that does not parse, two commands, a
  * backslash, the mark of a regex written before words, or a wrapper such as `sudo` or a `FOO=1`
- * assignment in front —
- * refuses to load, rather than arming a ban that matches nothing, or every use of its program.
+ * assignment in front — refuses to load, rather than arming a ban that matches nothing, or every
+ * use of its program.
  *
  * docs/user/checks/ban-commands.md is the promise, case by case.
  */
@@ -288,9 +288,10 @@ function wordsInLine(banned: CommandInWords, line: string): boolean {
  * matches an entry: the same program, less its path, and every argument of the head among the
  * command's, compared whole. A head's words are found anywhere among the arguments, so a bare word
  * passed as an option's value counts too: `"gh pr"` refuses `gh run list --branch pr`. A head that
- * is not one command in words refuses to load, as an entry does. `gitSubcommands` names git's own, `commit`, and is read through `gitCommand`: git's options
- * sit between `git` and its subcommand, so `-C '/a b' commit` is `commit` there, where the
- * containment of `"git commit"` would also take `git log --grep commit`.
+ * is not one command in words refuses to load, as an entry does. `gitSubcommands` names git's own,
+ * `commit`, and is read through `gitCommand`: git's options sit between `git` and its subcommand,
+ * so `-C '/a b' commit` is `commit` there, where the containment of `"git commit"` would also take
+ * `git log --grep commit`.
  *
  * The verdict reads the parse, never the line: a backtick the shell runs is one the parse lists as
  * the command's substitution — in a double-quoted or bare argument, or in an unquoted heredoc the
