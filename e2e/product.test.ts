@@ -516,6 +516,101 @@ describe("flow init, when git already runs other hooks", () => {
   });
 });
 
+/** Status's hooks-path line as printed, with the lines its detail runs on to, up to the next fitting. */
+const hooksPathOf = (stdout: string): string => {
+  const at = stdout.search(/[✓✗] hooks-path: /);
+  expect(at, "status prints a hooks-path line").not.toBe(-1);
+  const next = stdout.slice(at).search(/\n {2}[✓✗] /);
+  return stdout.slice(at, next === -1 ? undefined : at + next).trim();
+};
+
+describe("flow status, when git already runs other hooks", () => {
+  type Read = { green: boolean; fittings: { id: string; ok: boolean; detail: string }[] };
+
+  it("a husky repo whose .husky/pre-commit does not call flow: red, init's words, exit 1, and the same as data", () => {
+    const husky = huskyRepo("npm test\n");
+    try {
+      expect(flow(husky, ["init"]).code).toBe(1);
+      const said = flow(husky, ["status"]);
+      expect(said.code, said.stdout + said.stderr).toBe(1);
+      const line = hooksPathOf(said.stdout);
+      expect(line).toMatch(/^✗ hooks-path: FLOW IS NOT INSTALLED\. Git runs hooks from \.husky\/_/);
+      expect(line).toContain("Add these two lines to the end of .husky/pre-commit:");
+      expect(line).toContain("exec flow hook commit");
+      expect(line).toContain("git config core.hooksPath .githooks");
+
+      const json = flow(husky, ["status", "--json"]);
+      expect(json.code).toBe(1);
+      expect(json.stdout, "no colour codes in the data").not.toContain("\u001b");
+      const read = JSON.parse(json.stdout) as Read;
+      expect(read.green).toBe(false);
+      const fitting = read.fittings.find((f) => f.id === "hooks-path");
+      expect(fitting?.ok).toBe(false);
+      expect(fitting?.detail.startsWith(`${NOT_INSTALLED}. Git runs hooks from .husky/_`)).toBe(true);
+    } finally {
+      rmSync(husky, { recursive: true, force: true });
+    }
+  });
+
+  it("a husky repo whose .husky/pre-commit calls flow: green, and exit 0", () => {
+    const husky = huskyRepo("npm test\n");
+    try {
+      const first = flow(husky, ["init"]);
+      writeFileSync(join(husky, ".husky", "pre-commit"), `npm test\n${linesToAdd(first.stdout, ".husky/pre-commit").join("\n")}\n`);
+      const said = flow(husky, ["status"]);
+      expect(said.code, said.stdout + said.stderr).toBe(0);
+      expect(hooksPathOf(said.stdout)).toBe("✓ hooks-path: git runs hooks from .husky/_, and .husky/pre-commit calls flow");
+      expect(said.stdout).not.toContain(NOT_INSTALLED);
+    } finally {
+      rmSync(husky, { recursive: true, force: true });
+    }
+  });
+
+  it("a hook in .git/hooks: red, naming that folder, and exit 1", () => {
+    const lfs = newRepo();
+    try {
+      writeFileSync(join(lfs, ".git", "hooks", "pre-push"), '#!/bin/sh\ngit lfs pre-push "$@"\n', { mode: 0o755 });
+      expect(flow(lfs, ["init"]).code).toBe(1);
+      const said = flow(lfs, ["status"]);
+      expect(said.code, said.stdout + said.stderr).toBe(1);
+      const line = hooksPathOf(said.stdout);
+      expect(line).toContain(`✗ hooks-path: ${NOT_INSTALLED}. Git runs hooks from .git/hooks`);
+      expect(line).toContain("Add these two lines to the end of .git/hooks/pre-commit:");
+    } finally {
+      rmSync(lfs, { recursive: true, force: true });
+    }
+  });
+
+  it("core.hooksPath spelled `.githooks/`, `./.githooks` or as an absolute path is flow's own: green", () => {
+    const spelled = newRepo();
+    try {
+      expect(flow(spelled, ["init"]).code).toBe(0);
+      for (const set of [".githooks/", "./.githooks", join(realpathSync(spelled), ".githooks")]) {
+        git(spelled, ["config", "core.hooksPath", set]);
+        const said = flow(spelled, ["status"]);
+        expect(said.code, `${set}\n${said.stdout}`).toBe(0);
+        expect(hooksPathOf(said.stdout), set).toBe("✓ hooks-path: core.hooksPath = .githooks");
+      }
+    } finally {
+      rmSync(spelled, { recursive: true, force: true });
+    }
+  });
+
+  it("no other hooks and core.hooksPath unset: the red line it always was", () => {
+    const bare = newRepo();
+    try {
+      const said = flow(bare, ["status"]);
+      expect(said.code).toBe(1);
+      expect(hooksPathOf(said.stdout)).toBe(
+        "✗ hooks-path: core.hooksPath is unset — run `git config core.hooksPath .githooks`. It is per-clone, so every fresh checkout needs it.",
+      );
+      expect(said.stdout).not.toContain(NOT_INSTALLED);
+    } finally {
+      rmSync(bare, { recursive: true, force: true });
+    }
+  });
+});
+
 // ── the README's example ─────────────────────────────────────────────────────
 //
 // A front page is a promise about what you will see, and a hand-copied one starts drifting the first
