@@ -106,6 +106,8 @@ import {
   callKey,
   deltaFault,
   included,
+  authored,
+  nulPaths,
   literalScopes,
   preJudged,
   reversal,
@@ -2729,5 +2731,33 @@ describe("snapshotInclude — where git looks, and what it keeps", () => {
 
   it("keeps the listed paths a glob matches, through the one glob engine", () => {
     expect(included(["config/a.local.json", "config/cache.bin", ""], ["config/*.local.json"])).toEqual(["config/a.local.json"]);
+  });
+
+  it("leaves out of the diff each changed path that matches HEAD after the call, and keeps every other", () => {
+    // git diff-tree --name-status -z, in git's order: two files on disk, one gone.
+    const diff = "A\0migrations/002.sql\0M\0src/a.ts\0A\0src/legacy.ts\0";
+    // src/a.ts still differs from HEAD after the call (the agent's edit); the other two now agree with it.
+    expect(authored(diff, ["src/a.ts", "notes.md"], ["src/a.ts"])).toEqual(["src/a.ts"]);
+    expect(authored(diff, [], []), "a call that leaves the tree equal to HEAD authored nothing").toEqual([]);
+    expect(authored(diff, null, null), "no HEAD the repo had before the call — none yet, or one the call made: every change is the agent's").toEqual([
+      "migrations/002.sql",
+      "src/a.ts",
+      "src/legacy.ts",
+    ]);
+  });
+
+  it("leaves out a removal only when HEAD held the file before the call and does not hold it after", () => {
+    const diff = "D\0migrations/002.sql\0D\0.env\0D\0notes.md\0";
+    // Before the call HEAD held 002.sql (so it differs from the tree it is gone from); after, nothing
+    // holds any of the three. .env and notes.md are in neither commit: the agent removed them.
+    expect(authored(diff, [], ["migrations/002.sql"])).toEqual([".env", "notes.md"]);
+    expect(authored(diff, [], null), "no HEAD before the call: nothing was git's to remove").toEqual(["migrations/002.sql", ".env", "notes.md"]);
+    // HEAD still holds 002.sql after the call, so the removal differs from it, whatever HEAD held before.
+    expect(authored(diff, ["migrations/002.sql"], ["migrations/002.sql"])).toEqual(["migrations/002.sql", ".env", "notes.md"]);
+  });
+
+  it("reads git's -z answer as paths, with no quoting and no empty tail", () => {
+    expect(nulPaths("src/a b.ts\0src/\"q\".ts\0")).toEqual(["src/a b.ts", 'src/"q".ts']);
+    expect(nulPaths("")).toEqual([]);
   });
 });

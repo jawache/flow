@@ -14,6 +14,8 @@ Before each tool call, flow records the content of every file in the working tre
 - **Each file the call removed** is passed to the delete rules.
 - **Each breadcrumb whose globs match a changed path** is shown to the agent.
 
+A file git put in place is left out of all three. That is a file that matches HEAD after the call, or one the call removed that HEAD held before the call and does not hold after it. Either counts only when HEAD after the call is a commit the repo already has. See [Files git puts in place](#files-git-puts-in-place).
+
 Which rules a change is passed to depends on the change on disk, not on the command that made it. So a heredoc, `sed -i`, a Python script, a `just` recipe, an MCP tool and a subagent all reach the rules by the same route. That leaves one mechanism to understand, and no second one to reach for when a change arrives some new way.
 
 flow reads a tool call's input in three cases, each to act earlier than the diff can:
@@ -60,6 +62,25 @@ How much of a call a refusal undoes is a choice, set by `revert` in the config's
 - **`revert: "all"`** writes back every file the call changed. Choose it if you would rather a refusal mean the call never happened.
 
 Neither setting undoes anything except file content. If the same command ran the tests over the bad content, made a commit, pushed, or ran a migration, those have already happened and they stay. The refusal message says so.
+
+## Files git puts in place
+
+A file that matches HEAD after the call is left out of the diff, when HEAD is a commit the repo already has. HEAD is the commit the checked-out branch points at. A call that makes a new commit, such as a commit, a rebase or a merge that is not a fast-forward, has every change judged.
+
+A `git switch`, `checkout` or `reset`, or a `pull` or `merge` that fast-forwards, writes files out of a commit the repo already has. That content is already committed, and committed content is judged at the commit gate. Judging it again against today's rules refuses files that are right for that commit, and writing them back leaves the tree different from HEAD. So flow compares each changed file with its copy in HEAD after the call:
+
+- **A file identical to its copy in HEAD** is left out. It is not judged, not written back, and shows no breadcrumb, and `flow facts` does not count it as a shell write.
+- **A file the call removed that HEAD held before the call and does not hold after it** is left out the same way. A file no commit holds, such as an untracked file or `.env`, is still judged when it is removed.
+- **Every other change** is judged as above. An edit to a committed file differs from its copy in HEAD, so it is judged.
+
+The test reads content, not the command line. So git run by a `just` recipe or a script is covered, and in `git switch dev && sed -i … file` the `sed` edit is still judged.
+
+**A commit the call makes** does not leave its files out, unless the call also pushes it. A call can skip the commit gate, with `git commit --no-verify` or by removing the hook first, so the content of a commit it makes has not been judged. HEAD after the call is a commit the repo already has in two cases:
+
+- **Before the call**, a ref or a worktree's HEAD pointed at it or at a commit built on it. A ref is a branch, a tag or a remote-tracking branch.
+- **After the call**, a remote-tracking branch points at it or at a commit built on it. A `git pull` fetches a commit and moves HEAD to it in the same call, and this is what leaves the files it brings out. A commit the call makes and pushes counts the same way.
+
+A `git stash pop`, a merge stopped on conflicts and a `cherry-pick --no-commit` write files that match no commit. Those files are judged like any other write.
 
 ## Several agents in one worktree
 

@@ -1147,6 +1147,41 @@ export function included(listed: readonly string[], include: readonly string[]):
 }
 
 /**
+ * Of the paths a call changed, the ones the AGENT changed. The rest are git's — a checkout, a reset
+ * or a fast-forward put them there, from a commit the repo already had, and the commit gate judged
+ * that content when it was committed — so they leave the diff before anything reads them: no rule,
+ * no write-back, no breadcrumb, no shell-write row. CONTENT, never the command line: git run by a
+ * recipe is caught the same way, and the `sed` in `git switch x && sed -i … f` is still judged.
+ *
+ * - A file on disk after the call is git's when it is identical to its copy in HEAD after the call.
+ * - A file the call removed is git's when HEAD held it BEFORE the call and does not hold it after:
+ *   git removed it by moving HEAD. A file no commit holds — an untracked file, an included `.env` —
+ *   is the agent's to answer for when it goes.
+ *
+ * `nameStatus` is the call's own diff, `git diff-tree -r -z --name-status --no-renames`, in git's
+ * order. `differsAfter` and `differsBefore` are every path where HEAD's tree after the call, and
+ * before it, disagree with the tree after the call. `differsAfter` is null when HEAD after the call
+ * is no commit the repo had before it — none yet, or one the call made, whose content no gate is
+ * known to have judged — and then nothing is git's. `differsBefore` is null where there was no HEAD
+ * before; for a path gone from disk, being in it is exactly "HEAD held it before".
+ */
+export function authored(nameStatus: string, differsAfter: readonly string[] | null, differsBefore: readonly string[] | null): string[] {
+  const after = differsAfter === null ? null : new Set(differsAfter);
+  const before = new Set(differsBefore ?? []);
+  const fields = nameStatus.split("\0");
+  const out: string[] = [];
+  for (let i = 0; i + 1 < fields.length; i += 2) {
+    const status = fields[i] ?? "";
+    const path = fields[i + 1] ?? "";
+    if (path === "") continue;
+    const matchesHead = after !== null && !after.has(path);
+    const gits = matchesHead && (!status.startsWith("D") || before.has(path));
+    if (!gits) out.push(path);
+  }
+  return out;
+}
+
+/**
  * Git's answer as paths, one per line — the plainest shape git has, and the only one flow parses.
  *
  * ONE reader for it in the adapter: `flow status` asks git what it ignores and the realWorld asks
@@ -1175,7 +1210,7 @@ export interface StagedChanges {
 }
 
 /** NUL-separated paths, as git prints them under `-z` — no quoting, so a path is a path. */
-function nulPaths(stdout: string): string[] {
+export function nulPaths(stdout: string): string[] {
   return stdout.split("\0").filter((path) => path !== "");
 }
 

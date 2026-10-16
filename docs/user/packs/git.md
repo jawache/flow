@@ -1,5 +1,5 @@
 ---
-summary: "7 guardrails · 1 breadcrumb · fires at: session · command · write · commit · takes 3 parameters"
+summary: "8 guardrails · 1 breadcrumb · fires at: session · command · write · commit · takes 3 parameters"
 ---
 
 # The `git` pack
@@ -52,6 +52,7 @@ refuse the first few commits while everyone re-learns the format — that is the
 - [`git.noAiAttributionInCommits`](#gitnoaiattributionincommits--guardrail) · guardrail · Blocks Claude/Anthropic attribution in commits, PRs and issues.
 - [`git.noGitDiscard`](#gitnogitdiscard--guardrail) · guardrail · Blocks a git command that would wipe uncommitted work — checkout/restore/reset --hard/clean -f. No bypass; use git stash.
 - [`git.noForcePush`](#gitnoforcepush--guardrail) · guardrail · Blocks a force-push — rewriting pushed history is the one loss a stash cannot undo.
+- [`git.noGateSkip`](#gitnogateskip--guardrail) · guardrail · Blocks a commit the commit gate never runs on — --no-verify, -c core.hooksPath=…, commit-tree, update-ref, hash-object -w.
 - [`git.conventionalCommitFormat`](#gitconventionalcommitformat--guardrail) · guardrail · The commit header must speak Conventional Commits v1.0.0 (checked before git commit runs).
 - [`git.noShellSubstitutionInProse`](#gitnoshellsubstitutioninprose--guardrail) · guardrail · A backtick inside a double-quoted argument of a commit or a PR body is live command substitution, not Markdown.
 - [`git.node.versionIsSemver`](#gitnodeversionissemver--guardrail) · guardrail · The manifest's version is valid SemVer 2.0.0 — the number the computed release writes. See https://semver.org/
@@ -261,6 +262,53 @@ EOF`
 - running `git push -f`
 - running `git push --force-with-lease origin main`
 - running `git status && git push --force origin main`
+
+## `git.noGateSkip` — guardrail
+
+Blocks a commit the commit gate never runs on — --no-verify, -c core.hooksPath=…, commit-tree, update-ref, hash-object -w.
+
+- **Refuses at** a shell command is about to run
+- **Watches** not scoped by path
+- **Categories** every session
+- **Check** `noGateSkip` *(written in this pack)* — no options
+
+### Why it exists
+
+The commit gate is a hook, and git has ways to commit without running it. A commit made that
+way holds content no rule judged, and flow treats a commit that already exists as judged: a
+later `git switch` to it puts its files in place unread.
+
+### What the agent reads when refused
+
+```
+That git command makes a commit, or moves a ref, without the commit gate judging it. Commit normally and fix what the gate refuses. There is no opt-out token; a repo whose workflow needs one of these disables this entry in flow.config.ts, visibly.
+```
+
+### Proved by
+
+**passes**
+
+- running `git commit -m "fix: a thing"`
+- running `git commit -qam 'fix: a thing'`
+- running `git commit -m '-n is not a flag here'`
+- running `git commit -m "fix: drop --no-verify from the docs"`
+- running `git clean -n`
+- running `git log -n 3`
+- running `git -c user.name=me commit -m 'fix: a thing'`
+- running `git hash-object src/a.ts`
+- running `git push --no-verify`
+
+**blocks**
+
+- running `git commit --no-verify -m 'fix: a thing'`
+- running `git commit -n -m 'fix: a thing'`
+- running `git commit -qanm 'fix: a thing'`
+- running `git add -A && git commit -nm 'fix: a thing'`
+- running `git -c core.hooksPath=/dev/null commit -m 'fix: a thing'`
+- running `git -C ../other -c core.hookspath=.nohooks commit -m 'fix: a thing'`
+- running `git commit-tree HEAD^{tree} -p HEAD -m "fix: a thing"`
+- running `git update-ref refs/heads/main abc123`
+- running `echo hi | git hash-object -w --stdin`
 
 ## `git.conventionalCommitFormat` — guardrail
 
