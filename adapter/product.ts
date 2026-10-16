@@ -54,6 +54,7 @@ import {
   uninstallCode,
   uninstallLines,
   uninstallRefusal,
+  MACHINE_FLAG,
   hostPath,
   pathLines,
   planInit,
@@ -337,9 +338,11 @@ export function runInit(cwd: string, args: readonly string[]): VerbResult {
 // ── uninstall ────────────────────────────────────────────────────────────────
 
 /** Everything uninstall found, before it removed anything. */
-function uninstallFacts(root: string): UninstallFacts {
+function uninstallFacts(root: string, machine: boolean): UninstallFacts {
   const manifest = readText(root, "package.json");
   const settings = parsedFile(root, REPO_SETTINGS);
+  const machinePath = machineSettingsPath();
+  const machineRead = parsedFile(root, machinePath);
   let hooksDir: string[] | null;
   try {
     hooksDir = readdirSync(join(root, HOOKS_DIR));
@@ -356,6 +359,8 @@ function uninstallFacts(root: string): UninstallFacts {
     listed: listsFlow(manifest),
     settings: settings.value,
     settingsUnreadable: settings.unreadable,
+    machine,
+    machineFile: { path: machinePath, settings: machineRead.value, unreadable: machineRead.unreadable },
   };
 }
 
@@ -376,7 +381,7 @@ function removeIfEmpty(dir: string): void {
 function performUninstall(root: string, plan: UninstallPlan): string[] {
   const { failures, attempt } = steps();
 
-  const { gate, settings } = plan;
+  const { gate } = plan;
   if (gate !== null)
     attempt(`could not ${gate.body === null ? "delete" : "rewrite"} ${gate.path}`, () => {
       const file = join(root, gate.path);
@@ -408,20 +413,26 @@ function performUninstall(root: string, plan: UninstallPlan): string[] {
       removeIfEmpty(join(root, "node_modules"));
     });
 
-  if (settings !== null)
+  // Repo-relative for a dev dependency's own file, absolute for the machine-wide one.
+  for (const settings of [plan.settings, plan.machine]) {
+    if (settings === null) continue;
     attempt(`could not write ${settings.path}`, () => {
-      writeFileSync(join(root, settings.path), `${JSON.stringify(settings.value, null, 2)}\n`);
+      writeFileSync(resolve(root, settings.path), `${JSON.stringify(settings.value, null, 2)}\n`);
     });
+  }
 
   return failures;
 }
 
-/** `flow uninstall` — remove what `flow init` wrote in this repo, but the config, and say exactly what went. */
+/**
+ * `flow uninstall [--machine]` — remove what `flow init` wrote in this repo, but the config, and say
+ * exactly what went. `--machine` takes flow's hooks out of the machine-wide settings file too.
+ */
 export function runUninstall(cwd: string, args: readonly string[]): VerbResult {
   const refusal = uninstallRefusal(args);
   if (refusal !== null) return { stdout: "", stderr: `${refusal}\n`, exitCode: 2 };
   const root = resolve(cwd);
-  const plan = planUninstall(uninstallFacts(root));
+  const plan = planUninstall(uninstallFacts(root, args.includes(MACHINE_FLAG)));
   const failures = performUninstall(root, plan);
   return { stdout: `${uninstallLines(plan, failures).join("\n")}\n`, stderr: "", exitCode: uninstallCode(plan, failures) };
 }

@@ -166,6 +166,7 @@ import {
   uninstallCode,
   uninstallRefusal,
   UNINSTALL_USAGE,
+  MACHINE_FLAG,
   gateWithoutFlow,
   withoutRegistrations,
   REPO_SETTINGS,
@@ -2727,7 +2728,13 @@ describe("gateWithoutFlow — the commit gate with flow's lines taken out", () =
   });
 });
 
-/** A repo `flow init` set up with a global flow: the gate, the hooks path, the state directory and the link. */
+/** The machine-wide settings file, absolute, as the shell hands it over. */
+const MACHINE_SETTINGS = "/home/me/.claude/settings.json";
+
+/**
+ * A repo `flow init` set up with a global flow: the gate, the hooks path, the state directory and the
+ * link, and flow's hooks in the machine-wide file beside a key of the person's own.
+ */
 const wired: UninstallFacts = {
   hasConfig: true,
   gateText: PRE_COMMIT,
@@ -2738,6 +2745,8 @@ const wired: UninstallFacts = {
   listed: false,
   settings: null,
   settingsUnreadable: false,
+  machine: false,
+  machineFile: { path: MACHINE_SETTINGS, settings: withRegistrations({ theme: "dark" }).settings, unreadable: false },
 };
 
 describe("planUninstall — a repo flow init set up", () => {
@@ -2790,13 +2799,77 @@ describe("planUninstall — a dev dependency", () => {
   it("writes nothing to a settings file that would not parse, says so, and answers 1", () => {
     const plan = planUninstall({ ...listed, settings: null, settingsUnreadable: true });
     expect(plan.settings).toBeNull();
-    expect(plan.settingsUnreadable).toBe(REPO_SETTINGS);
+    expect(plan.unreadable).toEqual([REPO_SETTINGS]);
     expect(uninstallLines(plan, []).join("\n")).toContain(".claude/settings.json is not valid JSON");
+    expect(uninstallLines(plan, []).join("\n")).toContain("run `flow uninstall` again.");
     expect(uninstallCode(plan, [])).toBe(1);
   });
 
   it("leaves a repo settings file alone when the repo does not list flow", () => {
     expect(planUninstall({ ...wired, settings: withRegistrations({}).settings }).settings).toBeNull();
+  });
+});
+
+describe("planUninstall — the machine-wide settings file", () => {
+  const theirs = { hooks: [{ type: "command", command: "say done" }] };
+  const machineWith = (settings: unknown, unreadable = false): UninstallFacts => ({
+    ...wired,
+    machine: true,
+    machineFile: { path: MACHINE_SETTINGS, settings, unreadable },
+  });
+
+  it("is left as it was without --machine, for a global install and a dev dependency alike", () => {
+    expect(planUninstall(wired).machine).toBeNull();
+    const listed = { ...wired, listed: true, settings: withRegistrations({}).settings };
+    expect(planUninstall(listed).machine).toBeNull();
+    expect(uninstallLines(planUninstall(wired), []).join("\n")).not.toContain(`  - ${MACHINE_SETTINGS}`);
+  });
+
+  it("with --machine, loses flow's registrations and keeps every other key and hook", () => {
+    const registered = withRegistrations({ theme: "dark", hooks: { Stop: [theirs] } }).settings;
+    const plan = planUninstall(machineWith(registered));
+    expect(plan.machine).toEqual({
+      path: MACHINE_SETTINGS,
+      value: { theme: "dark", hooks: { Stop: [theirs] } },
+      removed: ["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"],
+    });
+    expect(uninstallLines(plan, []).join("\n")).toContain(
+      `  - ${MACHINE_SETTINGS} — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop · SubagentStop`,
+    );
+    expect(uninstallCode(plan, [])).toBe(0);
+  });
+
+  it("with --machine, cleans both files for a dev dependency", () => {
+    const plan = planUninstall({ ...machineWith(withRegistrations({}).settings), listed: true, settings: withRegistrations({}).settings });
+    expect(plan.settings?.path).toBe(REPO_SETTINGS);
+    expect(plan.machine?.path).toBe(MACHINE_SETTINGS);
+  });
+
+  it("with --machine, has nothing to do in a machine-wide file with none of flow's, or none at all", () => {
+    expect(planUninstall(machineWith({ theme: "dark" })).machine).toBeNull();
+    expect(planUninstall(machineWith(null)).machine).toBeNull();
+  });
+
+  it("with --machine, writes nothing to a machine-wide file that would not parse, says so with the command to run again, and answers 1", () => {
+    const plan = planUninstall(machineWith(null, true));
+    expect(plan.machine).toBeNull();
+    expect(plan.unreadable).toEqual([MACHINE_SETTINGS]);
+    const said = uninstallLines(plan, []).join("\n");
+    expect(said).toContain(`  ✗ ${MACHINE_SETTINGS} is not valid JSON`);
+    expect(said).toContain(`run \`flow uninstall ${MACHINE_FLAG}\` again.`);
+    expect(uninstallCode(plan, [])).toBe(1);
+  });
+
+  it("without --machine, an unreadable machine-wide file is none of its business", () => {
+    const plan = planUninstall({ ...wired, machineFile: { path: MACHINE_SETTINGS, settings: null, unreadable: true } });
+    expect(plan.unreadable).toEqual([]);
+    expect(uninstallCode(plan, [])).toBe(0);
+  });
+
+  it("takes --machine, and still refuses anything beside it", () => {
+    expect(uninstallRefusal([MACHINE_FLAG])).toBeNull();
+    expect(uninstallRefusal([MACHINE_FLAG, "--help"])).toContain("unknown argument `--help`");
+    expect(UNINSTALL_USAGE).toBe("usage: flow uninstall [--machine]");
   });
 });
 

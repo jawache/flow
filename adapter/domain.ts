@@ -4064,6 +4064,9 @@ export function initLines(plan: InitPlan, failures: readonly string[]): string[]
 // `flow init` writes, read through the same constants it writes with, so the two cannot drift: a
 // line, a hook or a registration somebody wrote themselves is never removed. `flow.config.ts` and
 // its packs stay, because they are the person's own work and `flow init` wires them again.
+//
+// The machine-wide settings file is every repo's, so it is written only when `--machine` asks: a
+// plain run in one repo must not unguard every other repo on the machine.
 
 /** What the shell found before anything was removed. Every one is a stat, not a judgement. */
 export interface UninstallFacts {
@@ -4083,6 +4086,17 @@ export interface UninstallFacts {
   readonly settings: unknown;
   /** …it is there and would not parse. */
   readonly settingsUnreadable: boolean;
+  /** `--machine` was given: the machine-wide settings file is flow's to clean too. */
+  readonly machine: boolean;
+  /** The machine-wide settings file: its absolute path, its JSON (null when there is none), and whether it would not parse. */
+  readonly machineFile: { readonly path: string; readonly settings: unknown; readonly unreadable: boolean };
+}
+
+/** A settings file with flow's registrations taken out: where it is, what to write, and the events that went. */
+export interface SettingsWithout {
+  readonly path: string;
+  readonly value: unknown;
+  readonly removed: readonly string[];
 }
 
 /** Everything `flow uninstall` will do, decided before a byte is removed. */
@@ -4100,9 +4114,13 @@ export interface UninstallPlan {
   readonly flowDir: boolean;
   readonly link: boolean;
   /** The repo's settings file without flow's registrations, or null when it holds none. */
-  readonly settings: { readonly path: string; readonly value: unknown; readonly removed: readonly string[] } | null;
-  /** The repo's settings file is flow's to clean and would not parse: nothing written, said out loud. */
-  readonly settingsUnreadable: string | null;
+  readonly settings: SettingsWithout | null;
+  /** With `--machine`: the machine-wide settings file without flow's registrations, or null when it holds none. */
+  readonly machine: SettingsWithout | null;
+  /** The settings files flow's to clean that would not parse: nothing written to them, each said out loud. */
+  readonly unreadable: readonly string[];
+  /** How this run was typed, so a failure's report says what to run again. */
+  readonly command: string;
   readonly keptConfig: boolean;
   /** The command that removes the package, the report's last line. */
   readonly next: string;
@@ -4117,7 +4135,13 @@ export function planUninstall(facts: UninstallFacts): UninstallPlan {
   const hooksLeft = (facts.hooksDir ?? []).filter((name) => !(gateGone && name === "pre-commit"));
   const ownsHooksPath = facts.hooksPath === HOOKS_DIR;
   // Bytes nobody parsed are not written, as in `planInit`: the step is reported as failed instead.
-  const registrations = facts.listed && !facts.settingsUnreadable ? withoutRegistrations(facts.settings) : null;
+  const cleaned = (path: string, settings: unknown): SettingsWithout | null => {
+    const { settings: value, removed } = withoutRegistrations(settings);
+    return removed.length === 0 ? null : { path, value, removed };
+  };
+  const { machineFile } = facts;
+  const repoUnreadable = facts.listed && facts.settingsUnreadable;
+  const machineUnreadable = facts.machine && machineFile.unreadable;
   return {
     gate: gate === null ? null : { path: GATE_PATH, body: gate.delete ? null : gate.body },
     gateRunsFlow: armsFlow(leftText) || armsOldFlow(leftText),
@@ -4126,18 +4150,20 @@ export function planUninstall(facts: UninstallFacts): UninstallPlan {
     hooksDir: facts.hooksDir !== null && hooksLeft.length === 0,
     flowDir: facts.hasFlowDir,
     link: facts.linked,
-    settings:
-      registrations === null || registrations.removed.length === 0
-        ? null
-        : { path: REPO_SETTINGS, value: registrations.settings, removed: registrations.removed },
-    settingsUnreadable: facts.listed && facts.settingsUnreadable ? REPO_SETTINGS : null,
+    settings: facts.listed && !repoUnreadable ? cleaned(REPO_SETTINGS, facts.settings) : null,
+    machine: facts.machine && !machineUnreadable ? cleaned(machineFile.path, machineFile.settings) : null,
+    unreadable: [...(repoUnreadable ? [REPO_SETTINGS] : []), ...(machineUnreadable ? [machineFile.path] : [])],
+    command: facts.machine ? `flow uninstall ${MACHINE_FLAG}` : "flow uninstall",
     keptConfig: facts.hasConfig,
     next: facts.listed ? "npm uninstall @jawache/flow" : "npm uninstall -g @jawache/flow",
   };
 }
 
+/** The one argument `flow uninstall` takes: clean the machine-wide settings file too. */
+export const MACHINE_FLAG = "--machine";
+
 /** How `flow uninstall` is typed: the usage line a misused verb prints. */
-export const UNINSTALL_USAGE = "usage: flow uninstall";
+export const UNINSTALL_USAGE = `usage: flow uninstall [${MACHINE_FLAG}]`;
 
 /**
  * `flow uninstall`'s arguments, read: null when they are fine, else the refusal to print. An argument
@@ -4145,13 +4171,13 @@ export const UNINSTALL_USAGE = "usage: flow uninstall";
  * or a `--help` that went ahead would delete them too.
  */
 export function uninstallRefusal(args: readonly string[]): string | null {
-  const unknown = args[0];
+  const unknown = args.find((arg) => arg !== MACHINE_FLAG);
   return unknown === undefined ? null : `flow uninstall — unknown argument \`${unknown}\`; nothing was removed.\n${UNINSTALL_USAGE}`;
 }
 
 /** A step that could not be done answers 1, whether the shell hit it or the plan did. */
 export function uninstallCode(plan: UninstallPlan, failures: readonly string[]): 0 | 1 {
-  return failures.length === 0 && plan.settingsUnreadable === null ? 0 : 1;
+  return failures.length === 0 && plan.unreadable.length === 0 ? 0 : 1;
 }
 
 /** The report: every removal named, what was kept and why, each failure, and the command to run next. */
@@ -4162,7 +4188,8 @@ export function uninstallLines(plan: UninstallPlan, failures: readonly string[])
   if (plan.hooksDir) removed.push(`${HOOKS_DIR}/`);
   if (plan.flowDir) removed.push(`${FLOW_DIR}/ — flow's state and logs`);
   if (plan.link) removed.push(`${PACKAGE_DIR} — the link \`flow init\` made`);
-  if (plan.settings) removed.push(`${plan.settings.path} — ${plan.settings.removed.join(" · ")}`);
+  for (const settings of [plan.settings, plan.machine])
+    if (settings) removed.push(`${settings.path} — ${settings.removed.join(" · ")}`);
 
   const lines: string[] =
     removed.length === 0
@@ -4176,10 +4203,10 @@ export function uninstallLines(plan: UninstallPlan, failures: readonly string[])
       `  · ${GATE_PATH} still runs flow, in a line flow did not write. Remove it yourself, or every commit fails with \`flow: not found\` once flow is gone.`,
     );
   if (plan.keptConfig) lines.push(`  · kept ${CONFIG_FILE} and the packs it imports — \`flow init\` wires this repo again.`);
-  if (plan.settingsUnreadable !== null)
+  for (const path of plan.unreadable)
     lines.push(
-      `  ✗ ${plan.settingsUnreadable} is not valid JSON, so flow's hooks were NOT removed from it and nothing was written to it. ` +
-        "Fix the JSON (a trailing comma, or a // comment) and run `flow uninstall` again.",
+      `  ✗ ${path} is not valid JSON, so flow's hooks were NOT removed from it and nothing was written to it. ` +
+        `Fix the JSON (a trailing comma, or a // comment) and run \`${plan.command}\` again.`,
     );
   for (const failure of failures) lines.push(`  ✗ ${failure}`);
   lines.push(`  next: \`${plan.next}\` — removes the package.`);

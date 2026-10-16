@@ -758,7 +758,7 @@ describe("flow uninstall", () => {
       expect(flow(wired, ["init"]).code).toBe(0);
       const said = flow(wired, ["uninstall", "--dry-run"]);
       expect(said.code).toBe(2);
-      expect(said.stderr).toBe("flow uninstall — unknown argument `--dry-run`; nothing was removed.\nusage: flow uninstall\n");
+      expect(said.stderr).toBe("flow uninstall — unknown argument `--dry-run`; nothing was removed.\nusage: flow uninstall [--machine]\n");
       expect(said.stdout).toBe("");
       for (const kept of [".githooks/pre-commit", ".flow"]) expect(existsSync(join(wired, kept)), `${kept} is still there`).toBe(true);
     } finally {

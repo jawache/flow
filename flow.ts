@@ -19,7 +19,8 @@
 //
 //   THE SETUP, typed once:
 //     flow init [--empty]  scaffold a config, arm the gate, register the hooks
-//     flow uninstall       remove what init wrote, but the config, before the package goes
+//     flow uninstall       remove what init wrote, but the config, before the package goes;
+//                          --machine takes the hooks out of the machine-wide settings file too
 //
 // Anything else refuses, loudly, rather than doing nothing quietly.
 //
@@ -331,6 +332,7 @@ if (argv.includes("--version") || argv.includes("-v")) {
       "",
       "  flow init [--empty]    scaffold flow.config.ts, arm the git gate, register the hooks",
       "  flow uninstall         remove what flow init wrote here, but flow.config.ts — before npm uninstall",
+      "                         --machine also removes flow's hooks from the machine-wide settings file",
       "  flow status [--json]   what is bound here, at which moments — and what is not wired yet",
       "  flow test [config]     run every bound entry's cases (default: flow.config.ts)",
       `  flow hook <event>      a harness hook, payload on stdin — ${HOOK_EVENTS.join(" · ")}`,
