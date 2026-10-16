@@ -1249,7 +1249,7 @@ export interface Layer {
 }
 
 export interface Dialect {
-  /** What to cruise. A GLOB, because a bare directory makes depcruise cruise zero modules. */
+  /** What to cruise: a directory or a glob. `src` and `src/**` cruise the same modules. */
   readonly scan: string;
   /** Each layer, as globs — a bare list, or `{ path, not }` when it has holes in it. */
   readonly layers: Readonly<Record<string, readonly string[] | Layer>>;
