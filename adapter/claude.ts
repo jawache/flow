@@ -112,6 +112,7 @@ import {
   turnActions,
   agentSettingOf,
   nothingBound,
+  ridesRefusal,
   whileBroken,
   included,
   authored,
@@ -816,8 +817,9 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
     if (afterCall) finish();
     const result = toResult(hook, answer);
     // TURN-END IS TOLD RATHER THAN HELD. `whileBroken` says why; this is the only place that can
-    // write it, because the Stop rail has no context channel and `toResult` speaks only the two the
-    // host reads. Exit 0 — the turn ends, and the sentence goes where a human and the log see it.
+    // write it, because a note on the hand-back rails would keep the agent working, and `toResult`
+    // speaks only the two the host reads. Exit 0 — the turn ends, and the sentence goes where a
+    // human and the log see it.
     return snapshotted(answer.told === null ? result : { ...result, stderr: `${answer.told}\n` });
   };
   if (regime.kind === "broken") return outage(regime.message);
@@ -973,11 +975,11 @@ async function judge(args: {
       continue;
     }
 
-    // A REFUSED ANSWER CARRIES NO NOTES — `toResult` drops them for the refusal — so a note is not
+    // A REFUSED CALL CARRIES NO NOTES — `toResult` drops them for the refusal — so a note is not
     // judged here either, or it would be marked shown and stay silent until drift. A blocked `cat`
     // whose file is next read by the retried command then briefs on the retry, which is the call
-    // that runs.
-    if (blocked.length > 0) continue;
+    // that runs. A held TURN is the exception: its note goes to the agent with the refusal.
+    if (blocked.length > 0 && !ridesRefusal(event.moment)) continue;
     steps?.push({
       rail: "brief",
       moment: event.moment,

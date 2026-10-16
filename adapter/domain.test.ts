@@ -17,6 +17,7 @@
 import { describe, it, expect } from "vitest";
 import {
   breadcrumb,
+  defineCategory,
   defineConfig,
   definePack,
   guardrail,
@@ -29,7 +30,7 @@ import {
   type LoadResult,
   type TurnAction,
 } from "../index.ts";
-import { metrics, momentsView, type Block, type Bound, type Row } from "../engine/domain.ts";
+import { brief, metrics, momentsView, type Block, type Bound, type Row } from "../engine/domain.ts";
 import { missingGrammarText } from "../checks/domain.ts";
 import { parseCommandLine, parseShellSteps } from "../language/domain.ts";
 import { matchAny } from "../glob.ts";
@@ -57,6 +58,7 @@ import {
   sessionFactsFrom,
   agentSettingOf,
   nothingBound,
+  ridesRefusal,
   toEvent,
   toResult,
   tokensFromTranscript,
@@ -224,12 +226,12 @@ describe("the seven events, and the moments honestly delivered", () => {
     expect(isHookEvent("PreToolUse"), "the host's name is not flow's verb").toBe(false);
   });
 
-  it("states what it can supply, and does not claim turn-end briefing", () => {
-    // Stop's decision object carries no context channel, so a note bound at turn-end has nowhere to
-    // be shown. Saying so is the contract; faking it would be the failure.
+  it("states what it can supply, turn-end briefing among it", () => {
+    // The Stop and SubagentStop answers carry `additionalContext`, so a note bound at turn-end is
+    // shown there. Saying what is carried is the contract; faking it would be the failure.
     expect(delivers("guardrail", "turn-end"), "the turn-end GUARDRAIL rail works").toBe(true);
-    expect(delivers("breadcrumb", "turn-end"), "a NOTE bound there has nowhere to be shown").toBe(false);
-    expect(DELIVERS.brief).not.toContain("turn-end");
+    expect(delivers("breadcrumb", "turn-end"), "a NOTE bound there is shown at the hand-back").toBe(true);
+    expect(DELIVERS.brief).toContain("turn-end");
     expect(DELIVERS.guard, "commit is delivered — by the git gate, not by the harness").toContain("commit");
     expect(delivers("breadcrumb", "session")).toBe(true);
     expect(delivers("breadcrumb", "touch")).toBe(true);
@@ -619,6 +621,7 @@ describe("toEvent — one payload, every moment it carries", () => {
     const actions: TurnAction[] = [{ did: "edit", path: "a.ts" }];
     expect(toEvent("stop", { session_id: "s" }, world({}, actions))).toStrictEqual([
       { rail: "guard", moment: "turn-end", turn: actions },
+      { rail: "brief", moment: "turn-end" },
     ]);
     expect(
       toEvent("stop", { stop_hook_active: true }, world({}, actions)),
@@ -898,7 +901,10 @@ describe("a subagent's hand-back — the turn-end moment at SubagentStop", () =>
   });
 
   it("is the turn-end moment, carrying the turn the subagent took", () => {
-    expect(toEvent("subagent-stop", handBack, as(null))).toStrictEqual([{ rail: "guard", moment: "turn-end", turn: actions }]);
+    expect(toEvent("subagent-stop", handBack, as(null))).toStrictEqual([
+      { rail: "guard", moment: "turn-end", turn: actions },
+      { rail: "brief", moment: "turn-end" },
+    ]);
     expect(asked, "the turn is asked for, and so is the session's own agent").toStrictEqual(["sessionAgent", "turn"]);
   });
 
@@ -907,7 +913,7 @@ describe("a subagent's hand-back — the turn-end moment at SubagentStop", () =>
     expect(asked, "an empty type costs no transcript read, and no turn").toStrictEqual([]);
     expect(toEvent("subagent-stop", { ...handBack, agent_type: "leader" }, as("leader")), "a session run --agent leader").toStrictEqual([]);
     expect(asked, "nothing past the session's agent is read").toStrictEqual(["sessionAgent"]);
-    expect(toEvent("subagent-stop", { ...handBack, agent_type: "builder" }, as("leader")), "a builder spawned by the leader").toHaveLength(1);
+    expect(toEvent("subagent-stop", { ...handBack, agent_type: "builder" }, as("leader")), "a builder spawned by the leader").toHaveLength(2);
     const { agent_type: _type, ...untyped } = handBack;
     expect(toEvent("subagent-stop", untyped, as(null)), "no type at all").toStrictEqual([]);
     const { agent_id: _id, ...anonymous } = handBack;
@@ -956,6 +962,94 @@ describe("a subagent's hand-back — the turn-end moment at SubagentStop", () =>
     expect(answer.refused).toStrictEqual([]);
     expect(answer.shown, "no note on the answer").toStrictEqual([]);
     expect(answer.told, "the shell writes this to stderr and exits 0").toBe(`${fault}\n\n${FLOW_OFF}`);
+  });
+});
+
+describe("a turn-end note — a breadcrumb shown when an agent hands back", () => {
+  const builder = defineCategory("builder", (facts) => facts.agentType === "builder");
+  const notes = definePack("t", {
+    recap: breadcrumb().at(turnEnd).text("Write the recap before you hand back."),
+    phase: breadcrumb().at(turnEnd).for(builder).text("Tick your boxes."),
+  });
+  const load = loadConfig(defineConfig([pack(notes)]));
+  const settings = { driftTokens: 50_000 };
+  /** One hand-back, briefed: the notes that show, and the marks they leave. */
+  const handBack = (tokens: number, marks: Record<string, number> = {}, wearing: readonly string[] = []) =>
+    brief({ load, event: { moment: "turn-end", wearing, tokens }, marks, settings });
+  const recap: Shown = { entry: "t.recap", cause: "first-touch", body: "Write the recap before you hand back." };
+  const subagent: HookPayload = {
+    session_id: "s1",
+    transcript_path: "/c/p/s1.jsonl",
+    hook_event_name: "SubagentStop",
+    stop_hook_active: false,
+    agent_id: "a1",
+    agent_type: "Explore",
+  };
+  const quiet: EventWorld = { root: ROOT, read: () => null, turn: () => [], sessionAgent: () => null };
+  const briefs = (events: readonly AdapterEvent[]): boolean => events.some((event) => event.rail === "brief");
+
+  it("is shown the first time an agent hands back, on the Stop and SubagentStop answers' additionalContext", () => {
+    const first = handBack(1_000);
+    expect(first.notices.map((note) => [note.entry, note.cause])).toStrictEqual([["t.recap", "first-touch"]]);
+    expect(toEvent("stop", { session_id: "s1" }, quiet), "the main chat's hand-back asks for its notes").toContainEqual({ rail: "brief", moment: "turn-end" });
+    expect(toEvent("subagent-stop", subagent, quiet), "and so does a subagent's").toContainEqual({ rail: "brief", moment: "turn-end" });
+    for (const [hook, name] of [["stop", "Stop"], ["subagent-stop", "SubagentStop"]] as const) {
+      const result = toResult(hook, { refused: [], shown: [recap] });
+      expect(result.exitCode, "a note is not a refusal: the host keeps the agent going for one more turn").toBe(0);
+      expect(result.stderr).toBe("");
+      expect(JSON.parse(result.stdout)).toStrictEqual({
+        hookSpecificOutput: { hookEventName: name, additionalContext: "# breadcrumb: t.recap (first-touch)\nWrite the recap before you hand back." },
+      });
+    }
+  });
+
+  it("is shown again once the context has grown by driftTokens since the last showing, and not before", () => {
+    const marks = handBack(1_000).marks;
+    expect(handBack(50_999, marks).notices, "49,999 tokens on: not yet").toStrictEqual([]);
+    const again = handBack(51_000, marks);
+    expect(again.notices.map((note) => [note.entry, note.cause])).toStrictEqual([["t.recap", "drift"]]);
+    expect(handBack(51_000, again.marks).notices, "and the drift showing is marked in turn").toStrictEqual([]);
+  });
+
+  it("shows no note on a hand-back with stop_hook_active set", () => {
+    expect(briefs(toEvent("stop", { session_id: "s1", stop_hook_active: true }, quiet)), "the main chat").toBe(false);
+    expect(briefs(toEvent("subagent-stop", { ...subagent, stop_hook_active: true }, quiet)), "a subagent").toBe(false);
+  });
+
+  it("shows no note to Claude Code's internal agents", () => {
+    expect(briefs(toEvent("subagent-stop", { ...subagent, agent_type: "" }, quiet)), "an empty type").toBe(false);
+    expect(briefs(toEvent("subagent-stop", { ...subagent, agent_type: "leader" }, { ...quiet, sessionAgent: () => "leader" })), "the session's own type").toBe(
+      false,
+    );
+  });
+
+  it("passes a guardrail refusal and a note at the same hand-back to the agent together", () => {
+    expect(ridesRefusal("turn-end"), "a held turn is told its notes").toBe(true);
+    for (const moment of ["session", "touch", "command"] as const) expect(ridesRefusal(moment), `${moment}: a refused call is not`).toBe(false);
+    for (const hook of ["stop", "subagent-stop"] as const) {
+      const held = toResult(hook, { refused: [{ moment: "turn-end", block: block() }], shown: [recap] });
+      expect(held.exitCode, "still held").toBe(2);
+      expect(held.stdout, "exit 2 is read from stderr, so both are there").toBe("");
+      expect(held.stderr).toContain("flow — turn held open");
+      expect(held.stderr).toContain("No TODOs in shipped code.");
+      expect(held.stderr).toContain("# breadcrumb: t.recap (first-touch)\nWrite the recap before you hand back.");
+      expect(held.stderr.indexOf("turn held open"), "the refusal first, then the note").toBeLessThan(held.stderr.indexOf("# breadcrumb"));
+    }
+    const command = toResult("pre-tool-use", { refused: [{ moment: "command", block: block() }], shown: [recap] });
+    expect(command.stderr, "before a call, a refusal carries no notes").not.toContain("# breadcrumb");
+  });
+
+  it("is limited by .for(…) to the agents with one of its categories, as a guardrail is", () => {
+    const anyone = handBack(1_000).notices.map((note) => note.entry);
+    expect(anyone, "an agent with no category").toStrictEqual(["t.recap"]);
+    const builders = handBack(1_000, {}, ["builder"]).notices.map((note) => note.entry);
+    expect(builders, "a builder gets its own note too").toStrictEqual(["t.recap", "t.phase"]);
+  });
+
+  it("is not shown while the config will not load: the fault is told, and the turn ends", () => {
+    const answer = whileBroken(toEvent("stop", { session_id: "s1" }, quiet), "broken");
+    expect(answer.shown, "a note would keep the agent working").toStrictEqual([]);
+    expect(answer.told).toBe(`broken\n\n${FLOW_OFF}`);
   });
 });
 
@@ -2844,21 +2938,32 @@ describe("status — the whole answer", () => {
   });
 
   it("names an entry bound at a moment this adapter cannot deliver — the dark rail", () => {
+    // Claude Code delivers every moment the grammar has, so the dark entry is one the grammar would
+    // refuse: a guardrail at `session`, handed to status as loaded.
     const s = status({
       ...statusFacts(),
-      load: { ok: true, entries: [loaded("demo.late", noteAtTurnEnd)] },
+      load: { ok: true, entries: [loaded("demo.early", { kind: "guardrail", at: ["session"], message: "no" })] },
     });
-    expect(s.dark).toEqual(["demo.late"]);
-    expect(s.green, "a note that can never be shown is a red line").toBe(false);
+    expect(s.dark).toEqual(["demo.early"]);
+    expect(s.green, "a rule that can never fire is a red line").toBe(false);
     expect(statusLines(s).join("\n")).toContain("nothing delivers");
   });
 
-  it("keeps the turn-end GUARDRAIL out of that list — the rail works, only the note is dark", () => {
+  it("lists a turn-end breadcrumb as one that fires, with no red line — beside the turn-end guardrail", () => {
     const s = status({
       ...statusFacts(),
-      load: { ok: true, entries: [loaded("demo.ran", { kind: "guardrail", at: ["turn-end"], message: "no" })] },
+      load: {
+        ok: true,
+        entries: [loaded("demo.late", noteAtTurnEnd), loaded("demo.ran", { kind: "guardrail", at: ["turn-end"], message: "no" })],
+      },
     });
     expect(s.dark).toEqual([]);
+    expect(s.green, "a note shown at the hand-back is in force").toBe(true);
+    const page = statusLines(s).join("\n");
+    expect(page).not.toContain("nothing delivers");
+    expect(page, "listed as a note").toContain("🍞 demo.late");
+    const atTurnEnd = s.moments.moments.find((row) => row.moment === "turn-end")?.entries.map((entry) => entry.id);
+    expect(atTurnEnd, "under the moment it fires at").toContain("demo.late");
   });
 
   it("says the session's own categories when a live session marked this worktree", () => {

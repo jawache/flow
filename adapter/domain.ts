@@ -208,27 +208,41 @@ const HOST_EVENT: Record<HookEvent, string> = {
  *
  *   · `commit` is delivered, but not by the harness — git's pre-commit hook calls `flow hook
  *     commit`, which is why every harness gets the gates for free and why it is in this list at all.
- *   · turn-end BRIEFING is not delivered. Stop's decision object carries no context channel, so a
- *     `breadcrumb().at(turnEnd)` has nowhere to be shown; the guardrail rail at that moment works
- *     perfectly. Reporting an entry that goes dark is `flow status`'s job (F6).
+ *   · turn-end BRIEFING is delivered, on the `Stop` and `SubagentStop` answers'
+ *     `additionalContext`: the host labels it hook feedback rather than an error, and the agent
+ *     takes one more turn to read it. A refusal at the same hand-back carries the note beside it
+ *     (`toResult`), so the agent is held and told at once rather than held, then told on the next.
  *   · command BRIEFING is delivered, on the same PreToolUse answer the command guardrails use: when
  *     nothing blocks, the hook's `additionalContext` carries the note, and when something does, the
  *     refusal wins — which is the right order, since a blocked command is not about to run. The
  *     files a Bash command reads ride that same answer as touches (`bashReads`), so an area's note
  *     arrives before the output does.
  *
- * It is two lists rather than one because "turn-end" is a word in both vocabularies and the answer
- * differs between them — a single flat list could only lie about one of them.
+ * It is two lists rather than one because a moment is delivered for a KIND of entry: `command` and
+ * `turn-end` are words in both vocabularies, and another harness may carry one rail there and not
+ * the other — a single flat list could only lie about one of them.
  */
 export const DELIVERS = {
   guard: ["write", "delete", "command", "commit", "turn-end"] as readonly GuardrailMoment[],
-  brief: ["session", "touch", "command"] as readonly BreadcrumbMoment[],
+  brief: ["session", "touch", "command", "turn-end"] as readonly BreadcrumbMoment[],
 };
 
+/**
+ * Does a note at this moment ride a refusal, rather than wait for the call that runs?
+ *
+ * Before a call, a refusal means the call never runs, so a note about it is held back until the
+ * retry that does — and is not marked shown, or it would stay silent until drift. A held turn is
+ * different: the agent is about to act on the refusal anyway, and the note is about that same
+ * turn, so both go to it together.
+ */
+export function ridesRefusal(moment: BreadcrumbMoment): boolean {
+  return moment === "turn-end";
+}
+
 // `delivers` — the reader of the two lists — lives with `flow status`, its only caller, at the foot
-// of this file. It takes the entry's KIND as well as the moment, and it has to: `turn-end` is a word
-// in both vocabularies, so a reader that took the moment alone would answer "delivered" for a
-// breadcrumb bound there, which is the single lie these two lists exist to prevent.
+// of this file. It takes the entry's KIND as well as the moment, and it has to: a moment that is a
+// word in both vocabularies may be delivered for one kind only, and a reader that took the moment
+// alone would answer "delivered" for the other, which is the single lie these two lists prevent.
 
 /**
  * Whatever the host put there, as a string — a payload field is JSON and may be anything.
@@ -852,8 +866,12 @@ export function toEvent(hook: HookEvent, payload: HookPayload, world: EventWorld
       // A HAND-BACK NOBODY SPAWNED. The host's own agents send SubagentStop too; they run no rule.
       if (hook === "subagent-stop" && internalAgent(payload, world.sessionAgent ?? (() => null))) return [];
       // The turn is the one this agent took: the shell reads it from the agent's own transcript,
-      // a subagent's own under its parent's, never the parent's.
-      return [{ rail: "guard", moment: "turn-end", turn: world.turn?.() ?? [] }];
+      // a subagent's own under its parent's, never the parent's. The guard event comes first, as on
+      // every rail, and the note rides the same answer — beside a refusal too (`ridesRefusal`).
+      return [
+        { rail: "guard", moment: "turn-end", turn: world.turn?.() ?? [] },
+        { rail: "brief", moment: "turn-end" },
+      ];
 
     case "notification":
       // Registered, and it carries no flow moment: `Notification` says the human is wanted, which
@@ -1407,7 +1425,8 @@ export const FLOW_OFF = `flow is OFF until ${CONFIG_FILE} loads: every write, de
  *
  * TURN-END IS TOLD, NOT REFUSED. Holding a turn open on a broken config prevents nothing — the
  * commit gate stays shut — while it does stop the agent handing back to the one person who can fix
- * it. So the fault is reported and the turn ends.
+ * it. So the fault is reported and the turn ends. Not as a note either: a turn-end note keeps the
+ * agent working for one more turn, which is the same hold by a softer name.
  *
  * THE ENGINE HAS ITS OWN PAIR OF `!load.ok` BRANCHES — `guard()` blocks with the fault, `brief()`
  * notices it — and they are NOT this rule written twice. They answer a different question: "there
@@ -1420,19 +1439,19 @@ export interface Outage extends Answer {
   /**
    * The sentence turn-end is TOLD with, or null when no turn ended here.
    *
-   * It is not `shown`: the Stop rail has no context channel to inject prose into, which is what
-   * `DELIVERS` already says, so the shell writes this one to stderr and answers 0.
+   * It is not `shown`: a note at turn-end keeps the agent working for one more turn, and this
+   * sentence is for the human the turn hands back to, so the shell writes it to stderr and answers 0.
    */
   readonly told: string | null;
 }
 
 /**
  * Does this event's answer carry the load error? A session start, and a write, delete or command
- * not yet run. Not a touch, not a change the after-call rail observed, and not turn-end, which is
- * told on stderr instead.
+ * not yet run. Not a touch, not a change the after-call rail observed, and not turn-end, on either
+ * rail, which is told on stderr instead.
  */
 function carriesTheNotice(event: AdapterEvent): boolean {
-  if (event.rail === "brief") return event.moment !== "touch";
+  if (event.rail === "brief") return event.moment !== "touch" && event.moment !== "turn-end";
   return event.moment !== "turn-end" && event.observed !== true;
 }
 
@@ -1475,6 +1494,9 @@ export function briefBlock(shown: readonly Shown[]): string {
     .join("\n\n");
 }
 
+/** The rails an agent hands back on: the main chat's, and a subagent's. */
+const HAND_BACK: ReadonlySet<HookEvent> = new Set(["stop", "subagent-stop"]);
+
 /**
  * Effects → the three IO edges. The SECOND and THIRD of the seven questions, answered once.
  *
@@ -1485,12 +1507,17 @@ export function briefBlock(shown: readonly Shown[]): string {
  * moment. Exit 2 is the host's documented refusal channel and the model reads stderr on all three
  * rails, so flow has one refusal and one place to look when it fails to arrive.
  *
- * Injection stays the decision object, because there is no other channel for it.
+ * Injection stays the decision object, because there is no other channel for it — with one
+ * exception. A HELD TURN carries its notes on stderr after the refusal: the host reads that stderr
+ * as the agent's next instruction, and its hooks reference says no JSON field on stdout can
+ * override an exit 2, so stderr is the one place a note beside a refusal is sure to arrive. Before
+ * a call, a refusal carries no notes at all (`ridesRefusal`).
  */
 export function toResult(hook: HookEvent, answer: Answer): HookResult {
   const refusal = refused(answer.refused, answer.undone);
-  if (refusal !== null) return refusal;
   const prose = briefBlock(answer.shown);
+  if (refusal !== null)
+    return prose === "" || !HAND_BACK.has(hook) ? refusal : { ...refusal, stderr: `${refusal.stderr}\n${prose}\n` };
   if (prose === "") return ALLOW;
   return { stdout: decision(hook, prose), stderr: "", exitCode: 0 };
 }
