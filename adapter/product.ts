@@ -123,12 +123,10 @@ function resolves(root: string): boolean {
   }
 }
 
-/** Is there a `flow` this user can run in that folder? What a shell looking it up by name asks. */
-function hasFlow(dir: string): boolean {
-  return executable(join(dir, "flow"));
-}
-
-/** Can this user run the file at that path? What git asks before it runs a hook. */
+/**
+ * Can this user run the file at that path? What git asks before it runs a hook, and what a shell
+ * looking `flow` up by name asks of each folder on the PATH.
+ */
 function executable(path: string): boolean {
   try {
     accessSync(path, constants.X_OK);
@@ -389,7 +387,7 @@ export async function runStatus(cwd: string, args: readonly string[]): Promise<V
     binary: {
       listed: listsFlow(readText(root, "package.json")),
       copy: existsSync(join(root, PACKAGE_BIN)),
-      path: hostPath((process.env["PATH"] ?? "").split(delimiter), root).some(hasFlow),
+      path: hostPath((process.env["PATH"] ?? "").split(delimiter), root).some((dir) => executable(join(dir, "flow"))),
     },
   };
 
