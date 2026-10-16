@@ -17,7 +17,6 @@
 import { describe, it, expect } from "vitest";
 import {
   breadcrumb,
-  defineCategory,
   defineConfig,
   definePack,
   guardrail,
@@ -30,7 +29,7 @@ import {
   type LoadResult,
   type TurnAction,
 } from "../index.ts";
-import { brief, metrics, momentsView, type Block, type Bound, type Row } from "../engine/domain.ts";
+import { metrics, momentsView, type Block, type Bound, type Row } from "../engine/domain.ts";
 import { missingGrammarText } from "../checks/domain.ts";
 import { parseCommandLine, parseShellSteps } from "../language/domain.ts";
 import { matchAny } from "../glob.ts";
@@ -966,16 +965,9 @@ describe("a subagent's hand-back — the turn-end moment at SubagentStop", () =>
 });
 
 describe("a turn-end note — a breadcrumb shown when an agent hands back", () => {
-  const builder = defineCategory("builder", (facts) => facts.agentType === "builder");
-  const notes = definePack("t", {
-    recap: breadcrumb().at(turnEnd).text("Write the recap before you hand back."),
-    phase: breadcrumb().at(turnEnd).for(builder).text("Tick your boxes."),
-  });
-  const load = loadConfig(defineConfig([pack(notes)]));
-  const settings = { driftTokens: 50_000 };
-  /** One hand-back, briefed: the notes that show, and the marks they leave. */
-  const handBack = (tokens: number, marks: Record<string, number> = {}, wearing: readonly string[] = []) =>
-    brief({ load, event: { moment: "turn-end", wearing, tokens }, marks, settings });
+  // When a note shows — first, then after drift, and for which categories — is the engine's
+  // `brief`, the same at every moment. These pin what the adapter adds: the hand-back asks for its
+  // notes, and they reach the agent on the host's two channels.
   const recap: Shown = { entry: "t.recap", cause: "first-touch", body: "Write the recap before you hand back." };
   const subagent: HookPayload = {
     session_id: "s1",
@@ -989,8 +981,6 @@ describe("a turn-end note — a breadcrumb shown when an agent hands back", () =
   const briefs = (events: readonly AdapterEvent[]): boolean => events.some((event) => event.rail === "brief");
 
   it("is shown the first time an agent hands back, on the Stop and SubagentStop answers' additionalContext", () => {
-    const first = handBack(1_000);
-    expect(first.notices.map((note) => [note.entry, note.cause])).toStrictEqual([["t.recap", "first-touch"]]);
     expect(toEvent("stop", { session_id: "s1" }, quiet), "the main chat's hand-back asks for its notes").toContainEqual({ rail: "brief", moment: "turn-end" });
     expect(toEvent("subagent-stop", subagent, quiet), "and so does a subagent's").toContainEqual({ rail: "brief", moment: "turn-end" });
     for (const [hook, name] of [["stop", "Stop"], ["subagent-stop", "SubagentStop"]] as const) {
@@ -1001,14 +991,6 @@ describe("a turn-end note — a breadcrumb shown when an agent hands back", () =
         hookSpecificOutput: { hookEventName: name, additionalContext: "# breadcrumb: t.recap (first-touch)\nWrite the recap before you hand back." },
       });
     }
-  });
-
-  it("is shown again once the context has grown by driftTokens since the last showing, and not before", () => {
-    const marks = handBack(1_000).marks;
-    expect(handBack(50_999, marks).notices, "49,999 tokens on: not yet").toStrictEqual([]);
-    const again = handBack(51_000, marks);
-    expect(again.notices.map((note) => [note.entry, note.cause])).toStrictEqual([["t.recap", "drift"]]);
-    expect(handBack(51_000, again.marks).notices, "and the drift showing is marked in turn").toStrictEqual([]);
   });
 
   it("shows no note on a hand-back with stop_hook_active set", () => {
@@ -1025,7 +1007,6 @@ describe("a turn-end note — a breadcrumb shown when an agent hands back", () =
 
   it("passes a guardrail refusal and a note at the same hand-back to the agent together", () => {
     expect(ridesRefusal("turn-end"), "a held turn is told its notes").toBe(true);
-    for (const moment of ["session", "touch", "command"] as const) expect(ridesRefusal(moment), `${moment}: a refused call is not`).toBe(false);
     for (const hook of ["stop", "subagent-stop"] as const) {
       const held = toResult(hook, { refused: [{ moment: "turn-end", block: block() }], shown: [recap] });
       expect(held.exitCode, "still held").toBe(2);
@@ -1035,15 +1016,6 @@ describe("a turn-end note — a breadcrumb shown when an agent hands back", () =
       expect(held.stderr).toContain("# breadcrumb: t.recap (first-touch)\nWrite the recap before you hand back.");
       expect(held.stderr.indexOf("turn held open"), "the refusal first, then the note").toBeLessThan(held.stderr.indexOf("# breadcrumb"));
     }
-    const command = toResult("pre-tool-use", { refused: [{ moment: "command", block: block() }], shown: [recap] });
-    expect(command.stderr, "before a call, a refusal carries no notes").not.toContain("# breadcrumb");
-  });
-
-  it("is limited by .for(…) to the agents with one of its categories, as a guardrail is", () => {
-    const anyone = handBack(1_000).notices.map((note) => note.entry);
-    expect(anyone, "an agent with no category").toStrictEqual(["t.recap"]);
-    const builders = handBack(1_000, {}, ["builder"]).notices.map((note) => note.entry);
-    expect(builders, "a builder gets its own note too").toStrictEqual(["t.recap", "t.phase"]);
   });
 
   it("is not shown while the config will not load: the fault is told, and the turn ends", () => {

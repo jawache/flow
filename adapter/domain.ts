@@ -1494,9 +1494,6 @@ export function briefBlock(shown: readonly Shown[]): string {
     .join("\n\n");
 }
 
-/** The rails an agent hands back on: the main chat's, and a subagent's. */
-const HAND_BACK: ReadonlySet<HookEvent> = new Set(["stop", "subagent-stop"]);
-
 /**
  * Effects → the three IO edges. The SECOND and THIRD of the seven questions, answered once.
  *
@@ -1508,16 +1505,16 @@ const HAND_BACK: ReadonlySet<HookEvent> = new Set(["stop", "subagent-stop"]);
  * rails, so flow has one refusal and one place to look when it fails to arrive.
  *
  * Injection stays the decision object, because there is no other channel for it — with one
- * exception. A HELD TURN carries its notes on stderr after the refusal: the host reads that stderr
- * as the agent's next instruction, and its hooks reference says no JSON field on stdout can
- * override an exit 2, so stderr is the one place a note beside a refusal is sure to arrive. Before
- * a call, a refusal carries no notes at all (`ridesRefusal`).
+ * exception. Notes beside a refusal go on stderr after it: the host reads that stderr as the
+ * agent's next instruction, and its hooks reference says no JSON field on stdout can override an
+ * exit 2, so stderr is the one place both are sure to arrive. Only a held turn has any: before a
+ * call, the shell judges no notes once something refused (`ridesRefusal`).
  */
 export function toResult(hook: HookEvent, answer: Answer): HookResult {
   const refusal = refused(answer.refused, answer.undone);
   const prose = briefBlock(answer.shown);
   if (refusal !== null)
-    return prose === "" || !HAND_BACK.has(hook) ? refusal : { ...refusal, stderr: `${refusal.stderr}\n${prose}\n` };
+    return prose === "" ? refusal : { ...refusal, stderr: `${refusal.stderr}\n${prose}\n` };
   if (prose === "") return ALLOW;
   return { stdout: decision(hook, prose), stderr: "", exitCode: 0 };
 }

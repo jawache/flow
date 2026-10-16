@@ -1307,6 +1307,28 @@ describe("a turn-end note, shown when an agent hands back — at Stop and Subage
     writeFileSync(path, lines(prompt("go"), ...own));
     return runFlow(notes, ["hook", "stop"], {}, JSON.stringify({ session_id: session, transcript_path: path, hook_event_name: "Stop", stop_hook_active: false, ...over }));
   };
+  /** A subagent of that session hands back, its own transcript written first under the parent's. */
+  const subagentStop = (session: string, id: string, own: readonly string[]): Ran => {
+    const parent = join(notes, ".t", `${session}.jsonl`);
+    const path = join(notes, ".t", session, "subagents", `agent-${id}.jsonl`);
+    mkdirSync(join(notes, ".t", session, "subagents"), { recursive: true });
+    if (!existsSync(parent)) writeFileSync(parent, lines(prompt("go")));
+    writeFileSync(path, lines(prompt("do the phase"), ...own));
+    return runFlow(
+      notes,
+      ["hook", "subagent-stop"],
+      {},
+      JSON.stringify({
+        session_id: session,
+        transcript_path: parent,
+        hook_event_name: "SubagentStop",
+        stop_hook_active: false,
+        agent_id: id,
+        agent_type: "Explore",
+        agent_transcript_path: path,
+      }),
+    );
+  };
   /** The context a note is shown in, the whole JSON answer read back. */
   const context = (ran: Ran): unknown => (ran.stdout === "" ? null : JSON.parse(ran.stdout));
   const told = (event: string, note: string): unknown => ({ hookSpecificOutput: { hookEventName: event, additionalContext: note } });
@@ -1338,33 +1360,16 @@ export default defineConfig([pack(notes)], { driftTokens: 50_000 });
   });
 
   it("is shown the first time an agent hands back, as additionalContext on the Stop and SubagentStop answers", () => {
-    const main = stop([usage(1_000)]);
+    const session = `note-${++ids}`;
+    const sub = subagentStop(session, "asub1", [usage(1_000)]);
+    expect(sub.code, sub.stderr).toBe(0);
+    expect(sub.stderr).toBe("");
+    expect(context(sub), "a subagent").toStrictEqual(told("SubagentStop", NOTE));
+
+    const main = stop([usage(1_000)], {}, session);
     expect(main.code, main.stderr).toBe(0);
     expect(main.stderr).toBe("");
-    expect(context(main), "the main chat").toStrictEqual(told("Stop", NOTE));
-
-    const session = `note-${++ids}`;
-    const parent = join(notes, ".t", `${session}.jsonl`);
-    const own = join(notes, ".t", session, "subagents", "agent-asub1.jsonl");
-    mkdirSync(join(notes, ".t", session, "subagents"), { recursive: true });
-    writeFileSync(parent, lines(prompt("go")));
-    writeFileSync(own, lines(prompt("do the phase"), usage(1_000)));
-    const sub = runFlow(
-      notes,
-      ["hook", "subagent-stop"],
-      {},
-      JSON.stringify({
-        session_id: session,
-        transcript_path: parent,
-        hook_event_name: "SubagentStop",
-        stop_hook_active: false,
-        agent_id: "asub1",
-        agent_type: "Explore",
-        agent_transcript_path: own,
-      }),
-    );
-    expect(sub.code, sub.stderr).toBe(0);
-    expect(context(sub), "a subagent").toStrictEqual(told("SubagentStop", NOTE));
+    expect(context(main), "the main chat of the same session: a note is marked per agent").toStrictEqual(told("Stop", NOTE));
   });
 
   it("is shown again once the context has grown by driftTokens, and not before", () => {
@@ -1396,6 +1401,13 @@ export default defineConfig([pack(notes)], { driftTokens: 50_000 });
     expect(held.stderr).toContain("You edited all turn and ran nothing.");
     expect(held.stderr, "the note rides the refusal").toContain(NOTE);
     expect(stop([usage(1_000)], {}, session).stdout, "and it was shown, so the next hand-back is quiet").toBe("");
+
+    const sub = subagentStop(session, "asub2", [usage(1_000), wrote("a.ts"), wrote("b.ts"), wrote("c.ts"), wrote("d.ts")]);
+    expect(sub.code, "a subagent's hand-back is held the same way").toBe(2);
+    expect(sub.stdout).toBe("");
+    expect(sub.stderr).toContain("flow — turn held open");
+    expect(sub.stderr).toContain("You edited all turn and ran nothing.");
+    expect(sub.stderr, "with its own first note beside the refusal").toContain(NOTE);
   });
 });
 
