@@ -2877,6 +2877,17 @@ describe("planUninstall — the machine-wide settings file", () => {
     expect(uninstallCode(plan, [])).toBe(1);
   });
 
+  it("with --machine, lists both files when neither will parse, and each line says to run --machine again", () => {
+    const plan = planUninstall({ ...machineWith(null, true), listed: true, settings: null, settingsUnreadable: true });
+    expect(plan.settings).toBeNull();
+    expect(plan.machine).toBeNull();
+    expect(plan.unreadable).toEqual([REPO_SETTINGS, MACHINE_SETTINGS]);
+    const failed = uninstallLines(plan, []).filter((line) => line.startsWith("  ✗ "));
+    expect(failed.map((line) => line.split(" is not valid JSON")[0])).toEqual([`  ✗ ${REPO_SETTINGS}`, `  ✗ ${MACHINE_SETTINGS}`]);
+    for (const line of failed) expect(line).toContain(`run \`flow uninstall ${MACHINE_FLAG}\` again.`);
+    expect(uninstallCode(plan, [])).toBe(1);
+  });
+
   it("without --machine, an unreadable machine-wide file is none of its business", () => {
     const plan = planUninstall({ ...wired, machineFile: { path: MACHINE_SETTINGS, settings: null, unreadable: true } });
     expect(plan.unreadable).toEqual([]);
