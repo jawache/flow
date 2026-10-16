@@ -1585,3 +1585,115 @@ describe("flow facts — the record and the conversations, read back", () => {
     }
   });
 });
+
+describe("every row names the agent it came from (#15)", () => {
+  // A worktree of its own, so the marker the commit gate reads is the one these calls leave and
+  // nothing the suite above wrote. The config is the least that makes every kind of row: a session
+  // note, an area note, and one rule at write and at commit.
+  let tree: string;
+  let ids = 0;
+  const AGENTS_CONFIG = (packageRoot: string): string => `
+import { breadcrumb, commit, definePack, defineConfig, guardrail, pack, session, touch, write } from ${JSON.stringify(join(packageRoot, "index.ts"))};
+
+const demo = definePack("demo", {
+  noTodo: guardrail()
+    .at(write, commit)
+    .on("src/**")
+    .check((ctx) => (ctx.file?.content.includes("TODO") ? ctx.fail("line says TODO") : ctx.ok()))
+    .message("No TODOs in src/.")
+    .test({
+      pass: [{ path: "src/a.ts", content: "ok" }, { staged: ["src/a.ts"], world: { fs: { "src/a.ts": "ok" } } }],
+      block: [{ path: "src/a.ts", content: "TODO" }, { staged: ["src/a.ts"], world: { fs: { "src/a.ts": "TODO" } } }],
+    }),
+  orientation: breadcrumb().at(session).text("This repo is guarded by flow."),
+  area: breadcrumb().at(touch).on("src/**").text("src/ is the product."),
+});
+
+export default defineConfig([pack(demo)]);
+`;
+  const send = (event: string, payload: unknown): Ran => runFlow(tree, ["hook", event], {}, JSON.stringify(payload));
+  const sh = (command: string): number => spawnSync("bash", ["-c", command], { cwd: tree }).status ?? -1;
+  /** One tool call, both halves, with the tool run between them. */
+  function call(who: Record<string, unknown>, tool: string, input: Record<string, unknown>, act = ""): Ran {
+    const payload = { session_id: "agents", ...who, tool_name: tool, tool_input: input, tool_use_id: `toolu_agents_${++ids}`, cwd: tree };
+    expect(send("pre-tool-use", payload).code).toBe(0);
+    if (act !== "") sh(act);
+    return send("post-tool-use", payload);
+  }
+  /** The gate over one staged file, unstaged again after, as `gate` above does. */
+  function commitGate(path: string): Ran {
+    runGit(tree, ["add", "--", path]);
+    try {
+      return runFlow(tree, ["hook", "commit"]);
+    } finally {
+      runGit(tree, ["rm", "-q", "--cached", "--", path]);
+    }
+  }
+  const BUILDER = { agent_id: "a6009b558b4c9155c", agent_type: "builder" };
+  const UNTYPED = { agent_id: "a77untyped" };
+
+  beforeAll(() => {
+    tree = newRepo("flow-agents-");
+    writeFileSync(join(tree, "flow.config.ts"), AGENTS_CONFIG(PACKAGE));
+    mkdirSync(join(tree, "src"), { recursive: true });
+    writeFileSync(join(tree, "src", "a.ts"), "export const a = 1;\n");
+
+    // The parent: a session start, and a Read of the area.
+    expect(send("session-start", { session_id: "agents", source: "startup" }).code).toBe(0);
+    call({}, "Read", { file_path: join(tree, "src/a.ts") });
+    // A subagent whose message carries no type.
+    call(UNTYPED, "Read", { file_path: join(tree, "src/a.ts") });
+    // A builder: a command that reads the area by name and writes a TODO the rule refuses.
+    const refused = call(BUILDER, "Bash", { command: "cat src/a.ts && echo '// TODO' > src/b.ts" }, "cat src/a.ts && echo '// TODO' > src/b.ts");
+    expect(refused.code, "the write is refused, so the builder has a guardrail row").toBe(2);
+    // The builder's call was the last one, so the commit is the builder's.
+    writeFileSync(join(tree, "src", "c.ts"), "// TODO\n");
+    expect(commitGate("src/c.ts").code).toBe(2);
+    // No marker at all: the commit is nobody's.
+    for (const name of readdirSync(join(tree, ".flow"))) if (name.startsWith(".session")) rmSync(join(tree, ".flow", name));
+    expect(commitGate("src/c.ts").code).toBe(2);
+  });
+  afterAll(() => {
+    rmSync(tree, { recursive: true, force: true });
+  });
+
+  /** `agent`, `agentType` and `kind` of every row after meta, from one agent. */
+  const from = (session: string, agent: string): Record<string, unknown>[] =>
+    rows(tree, session).filter((row) => row["kind"] !== "meta" && row["agent"] === agent);
+  const kinds = (list: Record<string, unknown>[]): string[] => [...new Set(list.map((row) => row["kind"] as string))].sort();
+
+  it("names the agent on every row after meta: main for the session, the agent_id for a subagent", () => {
+    const all = rows(tree, "agents").slice(1);
+    expect(all.length).toBeGreaterThan(0);
+    for (const row of all) expect(typeof row["agent"], JSON.stringify(row)).toBe("string");
+    expect(new Set(all.map((row) => row["agent"]))).toEqual(new Set(["main", "a77untyped", "a6009b558b4c9155c"]));
+    expect(kinds(from("agents", "main"))).toEqual(["breadcrumb", "run", "tool"]);
+    expect(kinds(from("agents", "a6009b558b4c9155c"))).toEqual(["breadcrumb", "guardrail", "read", "run", "tool", "write"]);
+  });
+
+  it("puts agentType only on a subagent's rows, and only when its message sent the type", () => {
+    for (const row of from("agents", "a6009b558b4c9155c")) expect(row["agentType"], JSON.stringify(row)).toBe("builder");
+    for (const row of [...from("agents", "main"), ...from("agents", "a77untyped")]) expect(row, JSON.stringify(row)).not.toHaveProperty("agentType");
+    expect(from("agents", "a77untyped").length).toBeGreaterThan(0);
+  });
+
+  it("names the agent whose call last ran on the commit gate's rows, or commit when there was none", () => {
+    const gate = rows(tree, "agents").filter((row) => row["moment"] === "commit");
+    expect(gate.map((row) => row["kind"]).sort()).toEqual(["guardrail", "run"]);
+    for (const row of gate) expect(row).toMatchObject({ agent: "a6009b558b4c9155c", agentType: "builder" });
+
+    const nobody = rows(tree, "commit");
+    expect(nobody[0]).toMatchObject({ kind: "meta", session: "commit" });
+    expect(nobody.slice(1).map((row) => row["kind"]).sort()).toEqual(["guardrail", "run"]);
+    for (const row of nobody.slice(1)) {
+      expect(row["agent"]).toBe("commit");
+      expect(row).not.toHaveProperty("agentType");
+    }
+  });
+
+  it("leaves the meta row as it was: no agent, no agentType, and v 1", () => {
+    const [meta] = rows(tree, "agents");
+    expect(Object.keys(meta ?? {}).sort()).toEqual(["branch", "kind", "session", "started", "v", "worktree"]);
+    expect(meta).toMatchObject({ kind: "meta", v: 1, session: "agents" });
+  });
+});
