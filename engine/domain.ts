@@ -417,9 +417,9 @@ export interface Notice {
   readonly file: string | undefined;
   readonly cause: Cause;
   /**
-   * What the touch that showed it was about: the repo-relative path, or the command line, as a
-   * guardrail row's subject is. A `session` note fires on no touch, and a fault on no entry, so
-   * neither has one.
+   * What the event that showed it was about: the repo-relative path, or the command line, as a
+   * guardrail row's subject is. Absent when the event carries no file or command, such as a
+   * session note or a fault.
    */
   readonly subject: string | undefined;
 }
@@ -636,7 +636,7 @@ export function brief({ load, event, marks, settings, off = false }: BriefArgs):
     const last = next[entry.id];
     const cause: Cause = event.moment === "session" ? "session" : last === undefined ? "first-touch" : "drift";
     if (last !== undefined && (cause !== "drift" || event.tokens - last < limit)) continue;
-    const subject = cause === "session" ? undefined : (event.path ?? event.command);
+    const subject = event.path ?? event.command;
     notices.push({ do: "notice", entry: entry.id, text: entry.spec.text, file: entry.spec.file, cause, subject });
     next[entry.id] = event.tokens;
   }

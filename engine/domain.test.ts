@@ -16,6 +16,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
+  breadcrumb,
   command,
   commit,
   deletion,
@@ -28,6 +29,7 @@ import {
   pack,
   override,
   protectedPath,
+  turnEnd,
   write,
   type Ctx,
   type LoadResult,
@@ -786,6 +788,13 @@ describe("a breadcrumb across one session", () => {
     expect(opened.notices[0]?.subject, "a greeting fires on no touch").toBeUndefined();
     const again = briefing({ event: { moment: "session", tokens: 100, wearing: [] }, marks: opened.marks });
     expect(again.notices).toEqual([]);
+  });
+
+  it("gives a turn-end note no subject, because the event carries no file or command", () => {
+    const wrapUp = loadConfig(defineConfig([pack(definePack("ends", { wrapUp: breadcrumb().at(turnEnd).text("Commit before you stop.") }))]));
+    const ended = brief({ load: wrapUp, event: { moment: "turn-end", tokens: 0, wearing: [] }, marks: {}, settings: {} });
+    expect(noticeIds(ended)).toEqual(["ends.wrapUp"]);
+    expect(ended.notices[0]?.subject).toBeUndefined();
   });
 
   it("degrades to a NOTICE when the config will not load — the one exception to fail-loud", () => {
