@@ -3280,17 +3280,22 @@ describe("planUninstall — hooks of somebody's own", () => {
     const plan = planUninstall({ ...wired, gateText: `#!/bin/sh\nnpm test\n${GATE_LOCAL_LINE}\n${GATE_RUN_LINE}\n` });
     expect(plan.gate).toEqual({ path: GATE_PATH, body: "#!/bin/sh\nnpm test\n" });
     expect(plan.hooksPath).toBe(false);
-    expect(plan.gateRunsFlow).toBe(false);
+    expect(plan.hookCallsFlow, "nothing left calls flow").toBeNull();
     const said = uninstallLines(plan, []).join("\n");
     expect(said).toContain(`  - flow's lines from ${GATE_PATH} — the rest of the hook is kept`);
     expect(said).toContain("git still runs the hooks there: pre-commit.");
   });
 
-  it("says when what is left still runs flow in a line flow did not write", () => {
-    const plan = planUninstall({ ...wired, gateText: "#!/bin/sh\nnpx flow hook commit\n" });
+  it("names a gate line flow did not write that still calls flow, and puts deleting it first in the next line", () => {
+    const plan = planUninstall({ ...wired, gateText: "#!/bin/sh\nnpm test\nnpx flow hook commit\n", machineFile: { ...wired.machineFile, settings: null } });
     expect(plan.gate).toBeNull();
-    expect(plan.gateRunsFlow).toBe(true);
-    expect(uninstallLines(plan, []).join("\n")).toContain("still runs flow, in a line flow did not write");
+    expect(plan.hookCallsFlow).toEqual({ path: GATE_PATH, lines: ["npx flow hook commit"] });
+    const said = uninstallLines(plan, []);
+    expect(said).toContain(
+      `  · ${GATE_PATH} still calls flow, and flow takes out only the lines it wrote there itself. Delete this line from it yourself, or every commit fails with \`flow: not found\` once flow is gone:`,
+    );
+    expect(said).toContain("      npx flow hook commit");
+    expect(said.at(-1)).toBe(`  next: delete flow's lines from ${GATE_PATH}, then \`npm uninstall -g @jawache/flow\` — removes the package.`);
   });
 
   it("keeps core.hooksPath when the run is in a subfolder, says so, and names the top folder to run it in", () => {
@@ -3360,9 +3365,9 @@ describe("planUninstall — another folder's pre-commit hook that calls flow", (
     expect(plan.hookCallsFlow).toEqual({ path: ".husky/pre-commit", lines: [GATE_LOCAL_LINE, GATE_RUN_LINE] });
     expect(plan.gate, "the .githooks gate init wrote beside it still goes").toEqual({ path: GATE_PATH, body: null });
     const said = uninstallLines(plan, []);
-    const at = said.findIndex((line) => line.startsWith("  · kept .husky/pre-commit as it is"));
+    const at = said.findIndex((line) => line.startsWith("  · .husky/pre-commit still calls flow"));
     expect(said.slice(at, at + 3)).toEqual([
-      "  · kept .husky/pre-commit as it is — flow never edits a hook it did not write, and this one still calls flow. " +
+      "  · .husky/pre-commit still calls flow, and flow takes out only the lines it wrote there itself. " +
         "Delete these lines from it yourself, or every commit fails with `flow: not found` once flow is gone:",
       `      ${GATE_LOCAL_LINE}`,
       `      ${GATE_RUN_LINE}`,
@@ -3402,6 +3407,11 @@ describe("planUninstall — another folder's pre-commit hook that calls flow", (
   it("says nothing of flow's own .githooks gate, nor of a folder git could not name", () => {
     expect(planUninstall(wired).hookCallsFlow).toBeNull();
     expect(planUninstall({ ...huskyRepo(FLOWS_TWO), hooksFolder: null }).hookCallsFlow).toBeNull();
+  });
+
+  it("names the hook git runs over a .githooks gate that also still calls flow", () => {
+    const both = planUninstall({ ...huskyRepo(FLOWS_TWO), gateText: "#!/bin/sh\nnpx flow hook commit\n" });
+    expect(both.hookCallsFlow?.path).toBe(".husky/pre-commit");
   });
 });
 

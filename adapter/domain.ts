@@ -3789,7 +3789,7 @@ export function flowLinesOf(text: string | null): string[] {
   return text
     .split("\n")
     .map((line) => line.trim())
-    .filter((line) => !line.startsWith("#") && (GATE_RUNS.has(line) || armsFlow(line) || armsOldFlow(line)));
+    .filter((line) => GATE_RUNS.has(line) || armsFlow(line) || armsOldFlow(line));
 }
 
 /** What the gate judges: the staged changes, or the whole tree as if all of it were staged. */
@@ -4325,12 +4325,12 @@ export interface SettingsWithout {
 export interface UninstallPlan {
   /** The gate: deleted, rewritten without flow's lines, or null when nothing in it is flow's. */
   readonly gate: { readonly path: string; readonly body: string | null } | null;
-  /** The gate that stays still calls flow, in a line flow did not write. */
-  readonly gateRunsFlow: boolean;
   /**
-   * Git runs another folder's hooks, such as husky's, and the pre-commit hook a person edits for it
-   * still calls flow: that hook, as the report names it, and its lines that call flow. Never
-   * edited, as `flow init` never edits it: the report says which lines to delete. Null otherwise.
+   * A pre-commit hook that still calls flow after the run, in lines flow did not write there: that
+   * hook, as the report names it, and those lines, for a person to delete before `npm uninstall`.
+   * The hook git runs from another folder, such as husky's `.husky/pre-commit`, which uninstall
+   * never edits, as `flow init` never does; else what is left of `.githooks/pre-commit`. Null when
+   * neither calls flow.
    */
   readonly hookCallsFlow: { readonly path: string; readonly lines: readonly string[] } | null;
   /** Unset `core.hooksPath`: it is `.githooks`, the run is at the repo's top folder, and the folder holds no other hook. */
@@ -4390,16 +4390,19 @@ export function planUninstall(facts: UninstallFacts): UninstallPlan {
   const machineCleaned = machineFile.unreadable ? null : cleaned(machineFile.path, machineFile.settings);
   // The one reading of "git runs other hooks" that init and status use. The folder is read at the
   // top folder, so a run in a subfolder names that hook by its full path.
+  // That folder's hook first: when git runs it, it is the one a commit fails in.
   const { hooksFolder, subfolderOf } = facts;
-  const other = hooksFolder === null ? null : otherHooks(facts.hooksPath, hooksFolder);
-  const otherLines = other === null ? [] : flowLinesOf(hooksFolder?.preCommitText ?? null);
-  const hookCallsFlow =
-    other === null || otherLines.length === 0
-      ? null
-      : { path: subfolderOf === null ? other.preCommit : posix.resolve(subfolderOf, other.preCommit), lines: otherLines };
+  let hookCallsFlow: UninstallPlan["hookCallsFlow"] = null;
+  if (hooksFolder !== null) {
+    const other = otherHooks(facts.hooksPath, hooksFolder);
+    const lines = flowLinesOf(hooksFolder.preCommitText);
+    if (other !== null && lines.length > 0)
+      hookCallsFlow = { path: subfolderOf === null ? other.preCommit : posix.resolve(subfolderOf, other.preCommit), lines };
+  }
+  const gateLines = flowLinesOf(leftText);
+  if (hookCallsFlow === null && gateLines.length > 0) hookCallsFlow = { path: GATE_PATH, lines: gateLines };
   return {
     gate: gate === null ? null : { path: GATE_PATH, body: gate.delete ? null : gate.body },
-    gateRunsFlow: armsFlow(leftText) || armsOldFlow(leftText),
     hookCallsFlow,
     hooksPath: ownsHooksPath && hooksLeft.length === 0,
     hooksPathFrom: flowsHooksPath ? facts.subfolderOf : null,
@@ -4465,14 +4468,10 @@ export function uninstallLines(plan: UninstallPlan, failures: readonly string[])
     );
   if (plan.hooksKept.length > 0)
     lines.push(`  · kept core.hooksPath at ${HOOKS_DIR} — git still runs the hooks there: ${plan.hooksKept.join(" · ")}.`);
-  if (plan.gateRunsFlow)
-    lines.push(
-      `  · ${GATE_PATH} still runs flow, in a line flow did not write. Remove it yourself, or every commit fails with \`flow: not found\` once flow is gone.`,
-    );
   const kept = plan.hookCallsFlow;
   if (kept !== null)
     lines.push(
-      `  · kept ${kept.path} as it is — flow never edits a hook it did not write, and this one still calls flow. ` +
+      `  · ${kept.path} still calls flow, and flow takes out only the lines it wrote there itself. ` +
         `Delete ${kept.lines.length === 1 ? "this line" : "these lines"} from it yourself, or every commit fails with \`flow: not found\` once flow is gone:`,
       ...kept.lines.map((line) => `      ${line}`),
     );

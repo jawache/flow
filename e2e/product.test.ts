@@ -1057,6 +1057,9 @@ describe("flow uninstall", () => {
       expect(said.stdout).toContain(
         `  · kept core.hooksPath at .githooks — git reads it for the whole repo, and this run is in a subfolder. Run \`flow uninstall\` in ${top} to remove it with the gate.`,
       );
+      expect(said.stdout, "the hooks folder is read at the top folder, so flow's own gate is not taken for another tool's hook").not.toContain(
+        "still calls flow",
+      );
       expect(git(nested, ["config", "--get", "core.hooksPath"]).stdout.trim(), "the repo's hooks path stays").toBe(".githooks");
       expect(existsSync(join(nested, ".githooks", "pre-commit")), "the gate stays").toBe(true);
 
@@ -1074,7 +1077,7 @@ describe("flow uninstall", () => {
   /** The lines the report names under the hook it kept, as it printed them. */
   const linesToDelete = (stdout: string, preCommit: string): string[] => {
     const lines = stdout.split("\n");
-    const at = lines.findIndex((line) => line.startsWith(`  · kept ${preCommit} as it is`));
+    const at = lines.findIndex((line) => line.startsWith(`  · ${preCommit} still calls flow`));
     expect(at, "the report names the hook").not.toBe(-1);
     const named: string[] = [];
     for (const line of lines.slice(at + 1)) {
@@ -1096,9 +1099,6 @@ describe("flow uninstall", () => {
       expect(said.code, said.stdout + said.stderr).toBe(0);
       expect(readFileSync(join(husky, ".husky", "pre-commit"), "utf8"), "husky's hook, byte for byte").toBe(wiredHook);
       expect(git(husky, ["config", "--get", "core.hooksPath"]).stdout.trim(), "husky's setting, as it was").toBe(".husky/_");
-      expect(said.stdout).toContain(
-        "  · kept .husky/pre-commit as it is — flow never edits a hook it did not write, and this one still calls flow. Delete these lines from it yourself, or every commit fails with `flow: not found` once flow is gone:",
-      );
       const named = linesToDelete(said.stdout, ".husky/pre-commit");
       expect(named, "the two lines init told them to add").toEqual(linesToAdd(first.stdout, ".husky/pre-commit"));
       expect(said.stdout.trim().split("\n").at(-1)).toBe(
