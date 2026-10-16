@@ -3282,7 +3282,8 @@ export interface Registration {
 /**
  * WHAT `flow init` WRITES, verbatim — and it follows DELIVERS, not HOOK_EVENTS.
  *
- * flow answers six events and registers five. `Notification` is the difference and it is deliberate
+ * flow answers seven events and registers five. `SubagentStop` is answered and not yet registered.
+ * `Notification` is the other difference and it is deliberate
  * (ruled at F4): flow has no notification moment, so a registration there would spawn a process on
  * every banner to answer nothing — cost with no function, and a line contradicting the honest moment
  * list this file publishes. The day a notification moment earns its way into the grammar, the
