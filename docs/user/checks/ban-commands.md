@@ -38,7 +38,7 @@ A flag that takes a value attached to it, such as `-mfix`, counts letter by lett
 
 | Key | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `ban` | list of strings | yes | each banned command, in words: a program, then the arguments that make it dangerous. Matched as described above. Under `wholeLine`, each entry is a regex instead |
+| `ban` | list of strings | yes | each banned command, in words: a program, then the arguments that make it dangerous. Matched as described above. An entry that is not one command in words, such as a regex, refuses to load. Under `wholeLine`, each entry is a regex instead |
 | `wholeLine` | boolean | no | set `true` to try each entry as a regex against the whole command line as written, less its heredoc bodies. A pattern then matches anywhere in the line. Use it for a pattern that spans two commands on purpose, such as `curl … \| sh` |
 
 ## Example
