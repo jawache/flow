@@ -14,7 +14,8 @@
 // FIVE MOMENTS, DRIVEN LIVE, one refusal each: write · delete · command · commit · turn-end. Four
 // come from a shipped pack; turn-end comes from the stranger's own, because NO pack in the package
 // carries a turn-end rule and inventing one to make a table symmetrical would be a rule nobody
-// asked for. The rail is real either way, and this is what proves it.
+// asked for. The rail is real either way, and this is what proves it. Turn-end is driven twice,
+// because two host events reach it: the main chat's hand-back and a subagent's.
 //
 // THE CENSUS is what makes a deleted case visible. `flow status --json` gives the exact entry list
 // and one `flow test` per pack gives its case count, both pinned below: remove a block case from
@@ -394,7 +395,10 @@ describe("the machine test", () => {
     expect(scaffolded.code, scaffolded.stdout + scaffolded.stderr).toBe(0);
     for (const created of ["flow.config.ts", ".githooks/pre-commit", "node_modules/@jawache/flow", "core.hooksPath"])
       expect(scaffolded.stdout).toContain(created);
-    step("scaffold", "flow packs — the machine test, in a repo that has never heard of flow", "", "  scaffold   flow init armed the gate, the link and the five registrations");
+    expect(scaffolded.stdout).toContain("SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop · SubagentStop");
+    const hooks = (JSON.parse(readFileSync(join(home, "settings.json"), "utf8")) as { hooks: Record<string, unknown> }).hooks;
+    expect(Object.keys(hooks)).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"]);
+    step("scaffold", "flow packs — the machine test, in a repo that has never heard of flow", "", "  scaffold   flow init armed the gate, the link and the six registrations");
   });
 
   it("binds every pack the package ships, and exactly these entries", () => {
@@ -593,6 +597,28 @@ describe("the machine test", () => {
       hook("stop", { session_id: "machine-2", hook_event_name: "Stop", transcript_path: transcript }),
       "house.ranSomething",
     );
+
+    // …and a subagent's hand-back reaches the same rule, through the event init registered for it.
+    // Its turn is read from its own transcript, so that is the one holding the four edits.
+    const registered = (JSON.parse(readFileSync(join(home, "settings.json"), "utf8")) as { hooks: Record<string, unknown> }).hooks;
+    expect(JSON.stringify(registered["SubagentStop"]), "the host's SubagentStop runs this verb").toContain("hook subagent-stop");
+    const parent = join(repo, ".t", "machine-3.jsonl");
+    const own = join(repo, ".t", "machine-3", "subagents", "agent-amachine.jsonl");
+    mkdirSync(join(repo, ".t", "machine-3", "subagents"), { recursive: true });
+    writeFileSync(parent, `${JSON.stringify({ type: "user", message: { content: "tidy the core, with a helper" } })}\n`);
+    writeFileSync(own, readFileSync(transcript, "utf8"));
+    const sub = hook("subagent-stop", {
+      session_id: "machine-3",
+      hook_event_name: "SubagentStop",
+      transcript_path: parent,
+      stop_hook_active: false,
+      agent_id: "amachine",
+      agent_type: "Explore",
+      agent_transcript_path: own,
+    });
+    expect(sub.code, `a subagent's turn-end was not refused:\n${sub.stdout}${sub.stderr}`).toBe(2);
+    expect(sub.stderr).toContain("house.ranSomething");
+    report.push("               …and a subagent's hand-back, at SubagentStop: ✗ house.ranSomething");
     report.push(
       "               (no shipped pack carries a turn-end rule — this repo's own proves the rail)",
       "",
