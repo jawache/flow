@@ -101,6 +101,8 @@ Run `flow uninstall` before you remove the package. Uninstalling the package alo
 
    It removes the commit gate, `core.hooksPath` and `.flow/`, and, for a dev dependency, flow's hooks in the repo's `.claude/settings.json`. It leaves `flow.config.ts` and the packs it imports, so `flow init` can put the guard back. It prints each thing it removed. Each one is listed in [the command reference](../reference/cli.md#what-flow-uninstall-removes).
 
+   **If git runs another folder's hooks**, such as husky's, `flow uninstall` leaves that folder's `pre-commit` hook as it is. When the hook still calls flow, the output names the file, such as `.husky/pre-commit`, and flow's lines in it. Delete those lines yourself before you remove the package. Otherwise every commit fails with `flow: not found`.
+
 2. If you installed flow globally, and no repo on the machine needs it any more, remove its hooks from the machine-wide settings file:
 
    ```

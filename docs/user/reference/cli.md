@@ -78,6 +78,7 @@ Once the `pre-commit` hook git runs calls flow, and is executable when git runs 
 | Path | What happens to it |
 | --- | --- |
 | `.githooks/pre-commit` | Deleted when it holds only comments and the lines `flow init` writes. Otherwise the lines that run flow are removed, and the rest of the script is kept |
+| The `pre-commit` hook git runs, when it is not `.githooks/pre-commit` | Left as it is. When it still calls flow, such as `.husky/pre-commit` holding flow's two lines, the report names the file and the lines to delete by hand, and says to delete them before `npm uninstall` |
 | `core.hooksPath` | Unset when it is `.githooks` and the folder holds no other hook. `.githooks/` is then deleted if it is empty. When the folder holds another hook, `core.hooksPath` stays `.githooks` |
 | `.flow/` | Deleted, with its logs, recordings and switch files |
 | `node_modules/@jawache/flow` | Deleted when it is a link, which `flow init` writes when the repo does not install `@jawache/flow` itself |
