@@ -10,6 +10,7 @@ import {
   breadcrumb,
   defineCheck,
   defineCategory,
+  execPasses,
   write,
   commit,
   command,
@@ -72,7 +73,10 @@ export const house = definePack("house", {
 export const tdd = definePack("tdd", (params: { run: string }) => ({
   commitRunsTests: guardrail()
     .at(commit)
-    .check((ctx) => ctx.ok())
+    .check(execPasses({ run: params.run }))
     .message(`Tests failed (${params.run}) — the commit is refused.`)
-    .test({ pass: [{ staged: ["src/a.ts"] }], block: [] }),
+    .test({
+      pass: [{ staged: ["src/a.ts"], world: { exec: { [params.run]: { code: 0 } } } }],
+      block: [{ staged: ["src/a.ts"], world: { exec: { [params.run]: { code: 1 } } } }],
+    }),
 }));

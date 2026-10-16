@@ -33,6 +33,7 @@ import {
   realWorld,
   revertChanges,
   runCommand,
+  runHook,
   takeSnapshot,
 } from "./claude.ts";
 import { overlapping } from "./domain.ts";
@@ -264,6 +265,116 @@ describe("the snapshot — the tree before a call, the tree after it, and the wa
       [".gitignore", false, false],
       ["config/app.local.json", true, false],
     ]);
+  });
+
+  it("leaves out each file that matches HEAD after the call, whichever way it got there, and sees every other change", () => {
+    // `old` holds a file main does not, and its own copy of a.ts.
+    git("stash", "-q");
+    git("switch", "-qc", "old");
+    writeFileSync(join(repo, "legacy.ts"), "// from before the rule\n");
+    writeFileSync(join(repo, "a.ts"), "export const a = 'old';\n");
+    git("add", "legacy.ts", "a.ts");
+    git("commit", "-qm", "old");
+    git("switch", "-q", "main");
+    takeSnapshot(repo, "toolu_8", [], who);
+    spawnSync("bash", ["-c", "git switch -q old && echo '// mine' >> a.ts && echo scratch > notes.md"], { cwd: repo });
+    const there = observeDelta(repo, "toolu_8", []);
+    if (!there.ok) throw new Error(there.fault);
+    expect(there.changes, "legacy.ts is old's own copy; a.ts and notes.md are the call's").toStrictEqual([
+      { path: "a.ts", before: "export const a = 1;\n", after: "export const a = 'old';\n// mine\n" },
+      { path: "notes.md", before: null, after: "scratch\n" },
+    ]);
+    takeSnapshot(repo, "toolu_9", [], who);
+    spawnSync("bash", ["-c", "git checkout -q -- a.ts && rm notes.md && git switch -q main"], { cwd: repo });
+    const back = observeDelta(repo, "toolu_9", []);
+    expect(back.ok && back.changes, "every file is main's again; notes.md was in no commit, so its removal is the call's").toStrictEqual([
+      { path: "notes.md", before: "scratch\n", after: null },
+    ]);
+  });
+
+  it("judges every change a call commits itself, and leaves out a reset or a fast-forward to a commit the repo had", () => {
+    git("stash", "-q");
+    const call = (key: string, command: string): ReturnType<typeof observeDelta> => {
+      takeSnapshot(repo, key, [], who);
+      expect(spawnSync("bash", ["-c", command], { cwd: repo }).status, command).toBe(0);
+      return observeDelta(repo, key, []);
+    };
+    // The files match the commit the call lands on — but the call made that commit, and skipped the gate doing it.
+    const made = call("toolu_11", "echo '// TODO' >> a.ts && rm gone.ts && git add a.ts gone.ts && git commit -qm mine --no-verify");
+    expect(made.ok && made.changes, "a commit the call made vouches for nothing").toStrictEqual([
+      { path: "a.ts", before: "export const a = 1;\n", after: "export const a = 1;\n// TODO\n" },
+      { path: "gone.ts", before: "export const gone = 1;\n", after: null },
+    ]);
+    git("branch", "mine");
+    expect(call("toolu_12", "git reset -q --hard HEAD~1"), "back to a commit main had").toMatchObject({ ok: true, changes: [] });
+    expect(call("toolu_13", "git merge -q --ff-only mine"), "forward to a commit a branch had").toMatchObject({ ok: true, changes: [] });
+  });
+
+  it("leaves out what a pull brings in: a remote branch reaches the commit it lands on", () => {
+    git("stash", "-q");
+    const upstream = mkdtempSync(join(tmpdir(), "flow-upstream-"));
+    try {
+      spawnSync("git", ["clone", "-q", repo, upstream]);
+      writeFileSync(join(upstream, "a.ts"), "export const a = 'theirs'; // TODO\n");
+      writeFileSync(join(upstream, "pulled.ts"), "// TODO: from upstream\n");
+      spawnSync("bash", ["-c", "git add a.ts pulled.ts && git -c user.name=u -c user.email=u@e commit -qm upstream && git rm -q gone.ts && git -c user.name=u -c user.email=u@e commit -qm gone"], {
+        cwd: upstream,
+      });
+      git("remote", "add", "origin", upstream);
+      takeSnapshot(repo, "toolu_14", [], who);
+      expect(spawnSync("git", ["pull", "-q", "--ff-only", "origin", "main"], { cwd: repo }).status).toBe(0);
+      expect(read("pulled.ts"), "the pull landed").toBe("// TODO: from upstream\n");
+      expect(observeDelta(repo, "toolu_14", [])).toMatchObject({ ok: true, changes: [] });
+    } finally {
+      rmSync(upstream, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses and puts back the removal of an uncommitted .env snapshotInclude lists, made by a route other than rm", async () => {
+    // No commit holds .env, so its removal is the call's to answer for, whatever HEAD does.
+    const door = new URL("../index.ts", import.meta.url).pathname;
+    writeFileSync(
+      join(repo, "flow.config.ts"),
+      `import { defineConfig, definePack, deletion, guardrail, pack, protectedPath, write } from ${JSON.stringify(door)};
+const demo = definePack("demo", {
+  keepEnv: guardrail()
+    .at(write, deletion)
+    .on(".env")
+    .check(protectedPath({ existingOnly: true }))
+    .message("The .env stays.")
+    .test({ pass: [{ path: ".env", content: "new" }], block: [{ path: ".env", content: "x", world: { fs: { ".env": "old" } } }] }),
+});
+export default defineConfig([pack(demo)], { snapshotInclude: [".env"] });
+`,
+    );
+    const command = "python3 -c \"import os; os.remove('.env')\"";
+    const payload = { session_id: "s1", tool_name: "Bash", tool_input: { command }, tool_use_id: "toolu_env", cwd: repo };
+    expect((await runHook("pre-tool-use", payload, repo)).exitCode).toBe(0);
+    expect(spawnSync("bash", ["-c", command], { cwd: repo }).status).toBe(0);
+    expect(existsSync(join(repo, ".env")), "the script removed it").toBe(false);
+    const answer = await runHook("post-tool-use", payload, repo);
+    expect(answer.exitCode).toBe(2);
+    expect(answer.stderr).toContain("✗ demo.keepEnv · .env");
+    expect(read(".env"), "written back, byte for byte").toBe("TOKEN=old\n");
+  });
+
+  it("judges every change in a repo with no commit yet — there is no HEAD to match", () => {
+    const fresh = mkdtempSync(join(tmpdir(), "flow-unborn-"));
+    try {
+      spawnSync("git", ["init", "-q"], { cwd: fresh });
+      writeFileSync(join(fresh, "a.ts"), "one\n");
+      takeSnapshot(fresh, "toolu_10", [], who);
+      unlinkSync(join(fresh, "a.ts"));
+      writeFileSync(join(fresh, "b.ts"), "new\n");
+      const delta = observeDelta(fresh, "toolu_10", []);
+      if (!delta.ok) throw new Error(delta.fault);
+      expect(delta.changes).toStrictEqual([
+        { path: "a.ts", before: "one\n", after: null },
+        { path: "b.ts", before: null, after: "new\n" },
+      ]);
+    } finally {
+      rmSync(fresh, { recursive: true, force: true });
+    }
   });
 
   it("reports a snapshot that could not be taken, and one that was never taken — never an empty delta", () => {

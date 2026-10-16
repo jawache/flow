@@ -32,6 +32,7 @@ import {
   inScope,
   isCategory,
   makeCtx,
+  parseCommandLine,
   refusalText,
   verdict,
   type Scope,
@@ -61,8 +62,8 @@ import {
 // THE SETTLED ORDER, and it is not negotiable by taste. It was measured over 335 real subagent
 // transcripts, and each rung exists because the rung below it lies:
 //
-//   1. THE HOST'S OWN AGENT TYPE. The sidecar a harness writes beside every subagent transcript —
-//      present 335/335 — is host-written and unforgeable. When it names a specific type, that IS
+//   1. THE HOST'S OWN AGENT TYPE. The agent type a harness puts in the hook message for every call
+//      a subagent makes is host-written and unforgeable. When it names a specific type, that IS
 //      the answer and nothing else is consulted.
 //
 //   2. THE BRIEF, FOR GENERIC SPAWNS ONLY. A harness has buckets that carry no type information
@@ -73,8 +74,8 @@ import {
 //      a builder.
 //
 //   3. THE PARENT, BY ABSENCE. There is no positive evidence of being the top-level session, only
-//      the absence of a sidecar. It is STRUCTURAL and never derived from what the session is
-//      doing: one parent transcript legitimately spans several rungs (`/work start` and
+//      the absence of having been spawned. It is STRUCTURAL and never derived from what the
+//      session is doing: one parent transcript legitimately spans several rungs (`/work start` and
 //      `/work complete` in one file), so anything read out of its prose would flap mid-session.
 //
 // flow ships NO category names. What a "builder" is belongs to the platform that spawns one; this
@@ -90,7 +91,7 @@ import {
  */
 export interface SpawnRecipe {
   /**
-   * Sidecar agent types that ARE this category, decisively. Brief text is never consulted for a
+   * Host-sent agent types that ARE this category, decisively. Brief text is never consulted for a
    * session whose type is named here — nor for one whose type is named anywhere but `generic`.
    */
   readonly types?: readonly string[];
@@ -102,7 +103,7 @@ export interface SpawnRecipe {
   /** Substrings that recover this category from a generic spawn's brief. */
   readonly brief?: readonly string[];
   /**
-   * True for the top-level session only — no sidecar, no agent type. Structural, and exclusive: a
+   * True for the top-level session only — not spawned, no agent type. Structural, and exclusive: a
    * recipe is either about spawns or about the parent, never both.
    */
   readonly parent?: boolean;
@@ -168,7 +169,7 @@ export function categoriesIn(entries: readonly LoadedEntry[]): Category[] {
  * accident — a transcript since compacted, a brief scrolled away — and a rule that fired for the
  * first half of a session and not the second is worse than either outcome alone. The unit is
  * session × agent because that is what the evidence is about: each subagent has its own transcript
- * and its own sidecar.
+ * and its own agent id.
  */
 export function identify(
   stored: readonly string[] | undefined,
@@ -215,6 +216,8 @@ export interface GuardEvent {
   readonly file?: Ctx["file"];
   /** command: the line about to run. */
   readonly command?: string | undefined;
+  /** command: the line's parse, when the caller already made it. Absent, the engine parses the line. */
+  readonly commands?: Ctx["commands"];
   /** commit: the staged paths. */
   readonly staged?: readonly string[] | undefined;
   /**
@@ -375,7 +378,10 @@ async function subjectsOf(entry: LoadedEntry, event: GuardEvent, world: World): 
 // and the fault notice fired on every hook without one person seeing it. Every way the guard can be
 // wrong ends in a BLOCK carrying the reason:
 //
-//   the config will not load    every gated moment refuses, with every refusal
+//   the config will not load    `guard` refuses every gated moment, with every refusal — the
+//                               answer a replay and the commit gate give. The live hook rail
+//                               answers with the adapter's `whileBroken` instead: it lets every
+//                               call through and passes the load error to the agent with it
 //   a classifier throws         who this session is is unknown, so every rail refuses
 //   an entry has no check       it blocks; a rail that cannot ask is not a rail that passes
 //   a check throws              that entry blocks, naming itself and the error
@@ -485,6 +491,9 @@ export async function guard({ load, event, world, faults = [], off = false }: Gu
 
   const effects: Effect[] = [];
   const tallies: Tally[] = [];
+  // The line is parsed ONCE per hook, however many entries fire on it, and every ctx carries it:
+  // the adapter's parse rides the event, and a caller that made none has it made here.
+  const parsed = event.command === undefined ? {} : { commands: event.commands === undefined ? parseCommandLine(event.command) : event.commands };
   for (const entry of load.entries) {
     if (entry.spec.kind !== "guardrail" || !fires(entry.spec, event.moment)) continue;
     if (!bindsTo(entry, event.wearing)) {
@@ -504,7 +513,7 @@ export async function guard({ load, event, world, faults = [], off = false }: Gu
     let hits = 0;
     for (const subject of await subjectsOf(entry, event, world)) {
       evaluated += 1;
-      const answer = await ask(check, makeCtx(subject.moment ?? event.moment, { ...subject.facts, actor: event.wearing }, world));
+      const answer = await ask(check, makeCtx(subject.moment ?? event.moment, { ...subject.facts, ...(subject.facts.command === undefined ? {} : parsed), actor: event.wearing }, world));
       if (answer.ok) continue;
       hits += 1;
       effects.push({

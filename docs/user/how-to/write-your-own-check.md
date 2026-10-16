@@ -39,9 +39,9 @@ Most rules are a [stock check](../index.md#the-stock-checks--one-page-each) plus
    The check declares no moments, no schema and no `kind`. The entry's `.at(…)` says when it runs. The check reads whatever `ctx` holds at that moment, and [the `ctx` reference](../reference/ctx.md) lists what that is, moment by moment. The options are an ordinary typed argument, so a wrong value is a compile error.
 
 4. **Write the detail as a sentence** naming what was seen and what to do. If two causes need different answers from the reader, give each its own detail line. A check that returns the same line for both teaches the reader to ignore it.
-5. **Run `flow test`.** A bespoke check is authored logic, so its entry needs cases like any other: a guardrail with no cases does not load, and a block case is what proves the check catches something. [How to test your rules](./test-your-rules.md) gives the steps.
+5. **Run `flow test`.** A bespoke check is authored logic, so its entry needs cases like any other: a guardrail with no block case does not load, because a block case is what proves the check catches something. [How to test your rules](./test-your-rules.md) gives the steps.
 
-A check that throws while it runs never passes quietly. Live, the entry blocks, with the detail `the check threw: <the error's message>`. In `flow test`, the case fails with the same detail. A throw while `flow.config.ts` is being imported is different: the config does not load, and flow refuses every write, command and commit until it is fixed.
+A check that throws while it runs never passes quietly. Live, the entry blocks, with the detail `the check threw: <the error's message>`. In `flow test`, the case fails with the same detail. A throw while `flow.config.ts` is being imported is different: the config does not load, so every guardrail is off and every commit is refused until it is fixed. See [fail loud](../explanation/fail-loud.md).
 
 ---
 

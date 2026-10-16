@@ -31,6 +31,7 @@ A check declares no moments, no schema and no `kind`. The entry's `.at(…)` set
 | --- | --- |
 | `ctx.file` | The file this moment is about, `{ path, content, existed }`, at a file moment. See [ctx.file](#ctxfile) |
 | `ctx.command` | The shell command line, at the command moment |
+| `ctx.commands` | The command line parsed as bash, at the command moment: one entry per simple command, or `null` when the line does not parse. See [ctx.commands](#ctxcommands) |
 | `ctx.staged` | The staged paths, at the commit moment, in every call that moment makes |
 | `ctx.turn` | The turn's actions (edits and runs), at turn-end |
 | `ctx.actor` | The category names that match the session making this change. Each name comes from evidence the host wrote about that session, never from a claim the session made about itself. The stock `oneWriter` check reads this field |
@@ -49,6 +50,29 @@ A check declares no moments, no schema and no `kind`. The entry's `.at(…)` set
 
 Read `existed` when it is set.
 
+### ctx.commands
+
+`ctx.commands` lists every simple command in the line, in the order they appear, including commands nested inside another. [The parse](../explanation/what-the-guard-sees.md#the-parse-what-a-command-is) explains how the line is read. Each entry has these fields:
+
+| Field | Is |
+| --- | --- |
+| `program` | The program that runs, after any `FOO=1` assignment and any wrapper: `sudo`, `env`, `nohup`, `nice`, `time`, `timeout`, `command`, `exec` or `xargs` |
+| `args` | Its arguments, in order, each as the program receives it, with quotes removed |
+| `text` | `program` and `args` joined by single spaces. `banCommands` matches its patterns against this |
+| `heredocs` | Each heredoc the command is fed, as `{ body, quoted }`. `quoted` is `true` for a delimiter in quotes or after a backslash, such as `<<'EOF'`, where the shell runs nothing in the body |
+| `substitutions` | Each `$( … )` or backtick substitution the shell runs while building this command's arguments and unquoted heredocs, as `{ text, backtick, commands, argument, prefix }`. `commands` lists the commands it runs, nested ones included, as `ctx.commands` lists them. `argument` is the index in `args` of the argument the substitution ends, when only plain text comes before it in that argument. `prefix` is that text: `""` for `-m "$(cat <<'EOF' … EOF)"`, and `--message=` for `--message="$( … )"`. Both are `null` otherwise |
+| `redirects` | Each redirect on the command, as `{ operator, target }`, such as `{ operator: ">", target: "notes.md" }`. A redirect on a group or a loop, such as `{ …; } > out.log`, is listed on each command inside it |
+| `nested` | `true` for a command inside a substitution, a `<( … )`, or a string given to `bash -c`, `sh -c` or `eval`. Also `true` for each line of a heredoc a shell reads, such as `bash <<'EOF'` or `cat <<'EOF' \| sh`, and of a here-string a shell reads, such as `bash <<< 'ls'` |
+
+`ctx.commands` is `null` when the line does not parse, for example when a quote never closes. A check reads `null` as "cannot tell", and the stock checks then pass, except `banCommands`, which matches the whole line as written.
+
+```
+const noBareGh = defineCheck((_opts: Record<string, never>) => (ctx) => {
+  const bare = (ctx.commands ?? []).find((c) => c.program === "gh");
+  return bare === undefined ? ctx.ok() : ctx.fail(`\`${bare.text}\` runs gh directly — run it as \`work gh …\``);
+});
+```
+
 ## What each moment fills in
 
 | At | The check reads |
@@ -56,7 +80,7 @@ Read `existed` when it is set.
 | `write` | `ctx.file` = `{ path, content }`, plus `existed` when a shell command made the change |
 | `delete` | `ctx.file` = `{ path, content }`, where `content` is the file before it was removed |
 | `commit` (a file rule) | When the rule lists globs with `.on(…)`, the check is called once per staged file in scope that is on disk. `ctx.file` = `{ path, content, existed }`, and `ctx.staged` is the whole staged set |
-| `command` | `ctx.command`: the line about to run |
+| `command` | `ctx.command`: the line about to run, and `ctx.commands`: that line parsed |
 | `commit` (no `.on`) | `ctx.staged`: the whole staged set, in one call |
 | `commit`, for a deleted file | Only when the rule is bound at both `deletion` and `commit`, and lists globs with `.on(…)`. `ctx.moment` is `delete`, and `ctx.file` = `{ path, content, existed: true }`, where `content` is the file as the last commit has it. `ctx.staged` is the whole staged set |
 | `turn-end` | `ctx.turn`: the edits and runs of the turn |

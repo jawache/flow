@@ -1,7 +1,7 @@
 // flow/packs/work.ts — the WORK LIFECYCLE's rungs.
 //
 // EVERY ONE OF THEM READS HOST-WRITTEN EVIDENCE AND NOTHING ELSE. `spawnedAs` enforces the order
-// the 335-transcript probe settled (flow F3): the sidecar's `agentType` decides and ends the read;
+// the 335-transcript probe settled (flow F3): the host's agent type decides and ends the read;
 // the brief is consulted only for the buckets the harness treats as generic; the parent is the
 // absence of both. A session's own claim about itself is never consulted, because a permission that
 // rests on a claim rests on a lie.
@@ -35,7 +35,7 @@ import {
  */
 const GENERIC = ["general-purpose", "claude"] as const;
 
-/** The top-level chat: no sidecar, no agent type. The supervisor's rung. */
+/** The top-level chat: not spawned, no agent type. The supervisor's rung. */
 export const parent = defineCategory("parent", spawnedAs({ parent: true }));
 
 /**
@@ -118,7 +118,7 @@ export const work = definePack("work", (repo: Rungs = {}) => ({
   // state in prose: a builder owns its phase and not the plan, a checker reads and does not write,
   // a parent supervises and does not tick a box it did not build. They are RULES rather than mode
   // files because a rung is assigned by the harness that spawned you, and a rule that reads the
-  // sidecar cannot be talked out of it — which is the whole reason `.for(…)` exists.
+  // host's agent type cannot be talked out of it — which is the whole reason `.for(…)` exists.
   //
   // They are also what makes the three categories real. A category nothing names is never
   // classified and never shown: `flow status` lists the ones some entry binds to, so an unbound
@@ -130,9 +130,9 @@ export const work = definePack("work", (repo: Rungs = {}) => ({
     .check(
       banCommands({
         ban: [
-          "(?:^|[\\n;&|(]\\s*)\\s*work\\s+plan\\s+(?:verdict|amend)\\b",
-          "(?:^|[\\n;&|(]\\s*)\\s*work\\s+(?:save|task)\\b",
-          "(?:^|[\\n;&|(]\\s*)\\s*work\\s+cost\\s+record\\b",
+          "work\\s+plan\\s+(?:verdict|amend)\\b",
+          "work\\s+(?:save|task)\\b",
+          "work\\s+cost\\s+record\\b",
         ],
       }),
     )
@@ -168,7 +168,7 @@ export const work = definePack("work", (repo: Rungs = {}) => ({
     .at(command)
     .for(parent)
     .description("The parent records verdicts; a box is ticked by the child that built it, with its evidence.")
-    .check(banCommands({ ban: ["(?:^|[\\n;&|(]\\s*)\\s*work\\s+plan\\s+tick\\b"] }))
+    .check(banCommands({ ban: ["work\\s+plan\\s+tick\\b"] }))
     .message(
       "A box is ticked by the rung that built it. You are supervising: you did not do the work, so you cannot supply the evidence, and a tick whose proof came from reading a report is exactly the provenance the journal exists to prevent. If a child left a box unticked, that is the finding — record the verdict on it.",
     )
@@ -182,10 +182,9 @@ export const work = definePack("work", (repo: Rungs = {}) => ({
   noAgentInboxItems: guardrail()
     .at(command)
     .description("The inbox is the human's speccing queue — an agent raises a finding in chat, never files one.")
-    // Anchored to a COMMAND POSITION — the start of the line, or just past a shell operator — so
-    // prose that merely mentions the verb is not an invocation. Unanchored, the pattern refuses the
-    // command that is WRITING about it, because the phrase sits inside the heredoc it is writing.
-    .check(banCommands({ ban: ["(?:^|[\\n;&|(]\\s*)\\s*work\\s+inbox\\s+new\\b"] }))
+    // Matched from a command's program name, so prose that merely mentions the verb — an echo, a
+    // heredoc being written — is not an invocation.
+    .check(banCommands({ ban: ["work\\s+inbox\\s+new\\b"] }))
     .message(
       [
         "`work inbox new` is the human's own door, and this command rail is only ever crossed by an agent — a person typing in a terminal has no hooks in front of them. So the fact that this fired means an agent is filing.",
@@ -197,25 +196,28 @@ export const work = definePack("work", (repo: Rungs = {}) => ({
       pass: [
         "work inbox list",
         'echo "the human runs work inbox new themselves" >> note.md',
+        // …or named in another command's argument, which is prose about it.
+        'git commit -m "docs: the human runs work inbox new themselves"',
         "cat > note.md <<'EOF'\nwork inbox new --summary x\nEOF",
       ],
       block: ['work inbox new --summary "a thing"', "echo hi && work inbox new --summary x", "echo hi\nwork inbox new --summary x"],
     }),
 
   // The lifecycle's half of the prose-substitution rule; `git`'s half covers `git commit` and the
-  // two `gh` verbs, and both are built from the one tail in core, beside `banCommands`. The verbs
-  // named here write
+  // `gh` verbs, and both bind the one core check, beside `banCommands`. The verbs named here write
   // to an APPEND-ONLY journal, which is the half of the rule with no undo of any kind.
   noShellSubstitutionInProse: guardrail()
     .at(command)
-    .description("A backtick inside a double-quoted argument of a work verb that records prose is live command substitution, not Markdown.")
-    // matchHeredocs: an UNQUOTED heredoc in a `$(…)` is live, and its body is the prose.
-    .check(banCommands({ ban: [substitutionInProse(["work\\s+(?:plan|task|recap|record|spec|complete)\\b"])], matchHeredocs: true }))
+    .description("A backtick the shell would run in a work verb that records prose (double-quoted, bare, or in an unquoted heredoc) is live command substitution, not Markdown.")
+    .check(substitutionInProse({ heads: ["work\\s+(?:plan|task|recap|record|spec|complete)\\b"] }))
     .message(SUBSTITUTION_MESSAGE)
     .test({
       pass: [
         "work plan decision 'chose the `chain` builder' --chose x --reverse y",
         "work plan status --json",
+        // An escaped backtick is literal, and a backtick in the next command is not this one's.
+        String.raw`work plan decision "chose the \`chain\` builder" --chose x --reverse y`,
+        "work plan status --json; echo `date`",
       ],
       block: [
         'work plan decision "chose the `chain` builder" --chose x --reverse y',

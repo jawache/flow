@@ -12,7 +12,7 @@ Not to be confused with Flow, Meta's JavaScript type checker. No relation.
 - **A banned command is stopped before it runs.** A force-push, a `git reset --hard`, an `npm install` you did not want: the rule refuses the command, and the agent gets the rule's message instead of the command's output.
 - **Your commit rules hold for everyone.** A git pre-commit hook runs the same rules over the staged changes, whether you, an agent or a merge makes the commit, including files the commit deletes or renames.
 - **Rules are tested code.** Each rule lists the inputs it must let through and the inputs it must refuse. A rule with no refusal case does not load, `flow test` runs every case, and your editor flags a mistyped rule, because the rules are TypeScript.
-- **A broken guard refuses everything.** If the config does not load, every command and commit is refused, and so is every write except one that fixes the config. A mistake in the config never lets an action through.
+- **A broken guard is never silent.** If the config does not load, every guardrail and breadcrumb is off, and the agent is given the load error with every write, delete and command. The commit gate refuses every commit until the config loads.
 - **Notes arrive when they matter.** A breadcrumb is a note shown to the agent the first time it reads or changes a file in a given area, instead of one long instruction file read once at the start.
 - **Rules can depend on who is acting.** A rule can apply only to subagents, or let only one named agent write a folder. flow identifies an agent from what Claude Code records about it, never from what the agent says about itself.
 - **Ten packs come with it.** Rules for git, node, TypeScript, secrets, the justfile, docs, tests, code layout, agent workflow and the guard itself, each turned on with one line and adjusted with `override(…)`.
@@ -52,7 +52,7 @@ flow init
 flow status
 ```
 
-Git and Claude Code call `flow` by name, so it must be on your `PATH`. A dev dependency (`npm i -D @jawache/flow`) pins the version in the repo's lockfile, but the hooks still call the `flow` on your `PATH`, so keep the global install too. [How to install flow](./docs/user/how-to/install-flow.md) has the details.
+To guard one repo without a global install, install flow as a dev dependency instead: `npm i -D @jawache/flow`, then `npx flow init`. Git and Claude Code run the repo's copy when it has one, and the global one otherwise. [How to install flow](./docs/user/how-to/install-flow.md) has the details.
 
 `flow init` writes `flow.config.ts`, a git pre-commit hook and flow's hook registrations for Claude Code. `flow status` lists every rule and checks the wiring: green means every rule loads and is in place. Then follow [Getting started](./docs/user/tutorials/getting-started.md), which takes you from an unguarded repo to a refused commit in five minutes.
 

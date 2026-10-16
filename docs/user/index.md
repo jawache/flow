@@ -55,7 +55,7 @@ Ten packs arrive with the install, behind `@jawache/flow/packs`. A repo binds th
 
 ### The stock checks — one page each
 
-flow ships fourteen configured checks. You import one and pass it to `.check(…)`. Each page lists its options and a real example.
+flow ships fifteen configured checks. You import one and pass it to `.check(…)`. Each page lists its options and a real example.
 
 | Check | Reads | Checks |
 | --- | --- | --- |
@@ -65,6 +65,7 @@ flow ships fourteen configured checks. You import one and pass it to `.check(…
 | [`symbolsInSibling`](./checks/symbols-in-sibling.md) | file body | exported symbols are referenced in the sibling test |
 | [`banCommands`](./checks/ban-commands.md) | command line | banned shell commands, before they run |
 | [`commitReason`](./checks/commit-reason.md) | command line | this commit needs a reason recorded in its message |
+| [`substitutionInProse`](./checks/substitution-in-prose.md) | command line | a backtick the shell would run in a command that records prose |
 | [`protectedPath`](./checks/protected-path.md) | file path | paths that must not be changed (or are append-only) |
 | [`oneWriter`](./checks/one-writer.md) | the acting session's categories | only the listed categories may change a file; any other actor's write is refused, and one that already landed is put back |
 | [`siblingExists`](./checks/sibling-exists.md) | file path | a file's required companion exists on disk |
@@ -80,7 +81,7 @@ For you when you want to know why flow is built the way it is.
 
 - [How flow works](./explanation/how-flow-works.md): the two kinds of guidance, why one file is the whole guard, packs and overrides, and the demo config read line by line.
 - [Rules bound to who, not what](./explanation/rules-bound-to-who.md): categories, and why they read evidence the host wrote.
-- [Fail loud, and the one repair exception](./explanation/fail-loud.md): why a config that will not load refuses everything, and the one exception for its repair.
+- [Fail loud](./explanation/fail-loud.md): why a config that will not load turns flow off and reports it on every call, and why every commit is refused until it loads.
 - [What the guard sees](./explanation/what-the-guard-sees.md): how flow finds every change to the tree, and what a refusal puts back.
 
 ## Not here

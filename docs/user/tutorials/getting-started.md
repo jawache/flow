@@ -19,7 +19,7 @@ npm i -g @jawache/flow
 Let's check it worked: `flow --version` prints the version you installed.
 
 > [!NOTE]
-> This tutorial uses a global install so the steps are the same in every repo. To pin flow in one repo instead, see [How to install flow](../how-to/install-flow.md).
+> This tutorial uses a global install so the steps are the same in every repo. To guard one repo with a dev dependency instead, see [How to install flow](../how-to/install-flow.md).
 
 ## 2 · Guard a repo
 
@@ -87,6 +87,7 @@ flow is ON — 4 guardrails · 2 breadcrumbs, every one resolved and able to fir
   ✓ commit-gate: .githooks/pre-commit runs `flow hook commit` over the staged changes
   ✓ hooks-path: core.hooksPath = .githooks
   ✓ hooks: ~/.claude/settings.json — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop
+  ✓ binary: the hooks and the gate run the flow on the PATH
 green — every rule loads, every fitting is in place.
 ```
 

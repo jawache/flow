@@ -34,8 +34,9 @@ describe("the public surface", () => {
       "escapeRe",
       "execPasses",
       "faultsOf",
+      "gitCommand",
+      "gitCommands",
       "gitDirPrefix",
-      "gitInvocations",
       "givesReason",
       "guardrail",
       "jsonInvariant",
@@ -43,17 +44,18 @@ describe("the public surface", () => {
       "oneWriter",
       "override",
       "pack",
+      "programName",
       "protectedPath",
       "quoteArg",
       "ranSinceEdit",
       "refusalText",
       "session",
+      "shellCommands",
       "siblingExists",
       "spawnedAs",
       "substitutionInProse",
       "symbolsInSibling",
       "textBan",
-      "tokenizeCommand",
       "touch",
       "turnEnd",
       "withFaults",
@@ -77,7 +79,7 @@ describe("the public surface", () => {
 });
 
 const refusals = [
-  { code: "no-cases", entry: "house.noTodo", detail: "`house.noTodo` carries no cases." },
+  { code: "no-block-cases", entry: "house.noTodo", detail: "`house.noTodo` has no block case." },
   { code: "unknown-entry", entry: "tdd.x", detail: "`override(tdd.x)` names an entry no bound pack has." },
 ] as const;
 

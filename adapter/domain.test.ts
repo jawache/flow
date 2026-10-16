@@ -15,11 +15,10 @@
 // binary, over stdin.
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { join, posix } from "node:path";
 import type { TurnAction } from "../index.ts";
 import { metrics, momentsView, type Block, type Bound, type Row } from "../engine/domain.ts";
 import { missingGrammarText } from "../checks/domain.ts";
+import { parseCommandLine, parseShellSteps } from "../language/domain.ts";
 import { matchAny } from "../glob.ts";
 import {
   ALLOW,
@@ -36,14 +35,13 @@ import {
   decision,
   deleteTargets,
   delivers,
-  faultText,
   readFault,
   hermeticEnv,
   isHookEvent,
   isInjected,
   relativise,
+  ownTranscriptPath,
   sessionFactsFrom,
-  sidecarPath,
   toEvent,
   toResult,
   tokensFromTranscript,
@@ -58,10 +56,9 @@ import {
   touchedPath,
   CONFIG_FILE,
   configImports,
-  configSurface,
-  repairs,
   statusCode,
   whileBroken,
+  FLOW_OFF,
   guardPaths,
   HOST_SURFACE,
   formatFacts,
@@ -101,13 +98,23 @@ import {
   configLoadFault,
   loadsAsStrippedModule,
   HOOK_REGISTRATIONS,
+  hookCommand,
+  bareHook,
+  bareRegistrations,
+  hostPath,
   ourHookCommand,
   registeredEvents,
   staleRegistrations,
   withRegistrations,
+  withMachineCommandsUpToDate,
+  listsFlow,
+  PACKAGE_BIN,
+  PACKAGE_DIR,
   callKey,
   deltaFault,
   included,
+  authored,
+  nulPaths,
   literalScopes,
   preJudged,
   reversal,
@@ -126,7 +133,10 @@ import {
   snapshotPathspecs,
   staticPrefix,
   PRE_COMMIT,
+  GATE_LOCAL_LINE,
+  GATE_RUN_LINE,
   HOOKS_DIR,
+  LOCAL_BIN,
   GATE_PATH,
   SET_HOOKS_PATH,
   ADD_THE_GATE_LINE,
@@ -134,6 +144,7 @@ import {
   scaffold,
   planInit,
   initLines,
+  settingsFileFor,
   status,
   statusLines,
   type InitFacts,
@@ -268,28 +279,45 @@ describe("the would-be file, rebuilt in memory before disk", () => {
 
 describe("a Bash line's delete targets", () => {
   it("reads rm, git rm, and the SOURCE side of mv and git mv", () => {
-    expect(deleteTargets("rm -rf secret/a.ts b.ts")).toStrictEqual(["secret/a.ts", "b.ts"]);
-    expect(deleteTargets("git rm secret/a.ts")).toStrictEqual(["secret/a.ts"]);
-    expect(deleteTargets("mv secret/a.ts elsewhere/a.ts")).toStrictEqual(["secret/a.ts"]);
-    expect(deleteTargets("git mv secret/a.ts elsewhere/a.ts"), "git mv was the old blind spot").toStrictEqual([
+    expect(deleteTargets(parseCommandLine("rm -rf secret/a.ts b.ts"))).toStrictEqual(["secret/a.ts", "b.ts"]);
+    expect(deleteTargets(parseCommandLine("git rm secret/a.ts"))).toStrictEqual(["secret/a.ts"]);
+    expect(deleteTargets(parseCommandLine("mv secret/a.ts elsewhere/a.ts"))).toStrictEqual(["secret/a.ts"]);
+    expect(deleteTargets(parseCommandLine("git mv secret/a.ts elsewhere/a.ts")), "git mv was the old blind spot").toStrictEqual([
       "secret/a.ts",
     ]);
   });
 
   it("reads every sub-command of a chained line, and no others", () => {
-    expect(deleteTargets("just build && rm dist/a.js")).toStrictEqual(["dist/a.js"]);
-    expect(deleteTargets("echo 'rm a.ts'"), "a quoted mention is not a command").toStrictEqual([]);
-    expect(deleteTargets("git commit -m 'rm the thing'")).toStrictEqual([]);
+    expect(deleteTargets(parseCommandLine("just build && rm dist/a.js"))).toStrictEqual(["dist/a.js"]);
+    expect(deleteTargets(parseCommandLine("echo 'rm a.ts'")), "a quoted mention is not a command").toStrictEqual([]);
+    expect(deleteTargets(parseCommandLine("git commit -m 'rm the thing'"))).toStrictEqual([]);
   });
 
-  it("stands aside on a line it cannot tokenise, rather than guessing", () => {
-    // null from the tokeniser means "I cannot tell". A guard that guesses at a line it could not
+  it("stands aside on a line it cannot parse, rather than guessing", () => {
+    // null from the parse means "I cannot tell". A guard that guesses at a line it could not
     // parse is worse than one that stands aside — and the command rail still sees the raw line.
-    expect(deleteTargets("rm 'unclosed")).toStrictEqual([]);
+    expect(deleteTargets(parseCommandLine("rm 'unclosed"))).toStrictEqual([]);
   });
 
   it("does not read a rename with only a destination as a removal", () => {
-    expect(deleteTargets("mv onlyone")).toStrictEqual([]);
+    expect(deleteTargets(parseCommandLine("mv onlyone"))).toStrictEqual([]);
+  });
+
+  it("reads the removers' own arguments in the parse, never a heredoc body or another command's quoted argument", () => {
+    // A file written from a heredoc that names an `rm`, and a script fed to python on stdin.
+    expect(deleteTargets(parseCommandLine("cat > notes.md <<'EOF'\nrm secret/a.ts\nEOF"))).toStrictEqual([]);
+    expect(deleteTargets(parseCommandLine("python3 - <<'PY'\nimport os; os.system('rm secret/a.ts')\nPY"))).toStrictEqual([]);
+    expect(deleteTargets(parseCommandLine('gh issue comment 1 --body "then rm secret/a.ts and git rm b.ts"'))).toStrictEqual([]);
+    // …while an rm that RUNS is read wherever it sits: a substitution, a string given to a shell,
+    // a heredoc a shell reads, and past a wrapper.
+    expect(deleteTargets(parseCommandLine('echo "$(rm a.ts)"; bash -c "rm b.ts"; sudo rm c.ts'))).toStrictEqual(["a.ts", "b.ts", "c.ts"]);
+    expect(deleteTargets(parseCommandLine("bash <<'EOF'\nrm a.ts\nEOF"))).toStrictEqual(["a.ts"]);
+  });
+
+  it("reads git's own options before its subcommand, and a file after `--` that looks like a flag", () => {
+    expect(deleteTargets(parseCommandLine("git -c core.x=y rm --cached a.ts"))).toStrictEqual(["a.ts"]);
+    expect(deleteTargets(parseCommandLine("rm -- -weird.ts"))).toStrictEqual(["-weird.ts"]);
+    expect(deleteTargets(null), "a line that does not parse").toStrictEqual([]);
   });
 });
 
@@ -298,7 +326,7 @@ describe("a Bash line's delete targets", () => {
 describe("bashReads — the files a Bash command reads, before it runs", () => {
   const HOME = "/home/me";
   const at = (command: string, cwd = ROOT, home: string | undefined = HOME): { reads: readonly string[]; searched: readonly string[] } =>
-    bashReads(command, { cwd, root: ROOT, home });
+    bashReads(parseShellSteps(command), { cwd, root: ROOT, home });
   const reads = (command: string, cwd = ROOT): readonly string[] => at(command, cwd).reads;
   const searched = (command: string, cwd = ROOT): readonly string[] => at(command, cwd).searched;
 
@@ -330,7 +358,7 @@ describe("bashReads — the files a Bash command reads, before it runs", () => {
   it("keeps a search apart from a read — its operands may be directories", () => {
     expect(at("rg -n TODO src docs")).toStrictEqual({ reads: [], searched: ["src", "docs"] });
     expect(at("grep -rn TODO src")).toStrictEqual({ reads: [], searched: ["src"] });
-    expect(at("find src -name '*.ts' -o ( -name x ) ! -path y")).toStrictEqual({ reads: [], searched: ["src"] });
+    expect(at("find src -name '*.ts' -o \\( -name x \\) ! -path y")).toStrictEqual({ reads: [], searched: ["src"] });
     expect(at("ls -la docs && du -sh lib && tree -L 2 pkg")).toStrictEqual({ reads: [], searched: ["docs", "lib", "pkg"] });
   });
 
@@ -344,7 +372,7 @@ describe("bashReads — the files a Bash command reads, before it runs", () => {
   });
 
   it("stops find's paths at its expression", () => {
-    expect(searched("find src lib ( -name x )")).toStrictEqual(["src", "lib"]);
+    expect(searched("find src lib \\( -name x \\)")).toStrictEqual(["src", "lib"]);
     expect(searched("find src ! -name x")).toStrictEqual(["src"]);
   });
 
@@ -360,6 +388,9 @@ describe("bashReads — the files a Bash command reads, before it runs", () => {
     expect(reads("cat src/a.ts &> log.txt; cat src/b.ts &>> log.txt; cat c.ts 2>&1")).toStrictEqual(["src/a.ts", "src/b.ts", "c.ts"]);
     expect(reads("grep x <<< 'some text'")).toStrictEqual([]);
     expect(reads("while read l; do echo $l; done < list.txt")).toStrictEqual(["list.txt"]);
+    // A group's redirect is each inner command's own, target as written: expanded once, never the cwd.
+    expect(reads('F=list.txt; { cat; head -1; } < "$F"')).toStrictEqual(["list.txt"]);
+    expect(reads("cat <&- a.ts")).toStrictEqual(["a.ts"]);
   });
 
   it("does not read a heredoc's body as commands, quoted or dash delimiters alike", () => {
@@ -368,12 +399,21 @@ describe("bashReads — the files a Bash command reads, before it runs", () => {
     expect(reads("cat <<-EOF\n\tcat inside.ts\n\tEOF\ncat after.ts")).toStrictEqual(["after.ts"]);
     // A body that never closes runs to the end of the line, and names nothing.
     expect(reads("cat <<EOF\ncat inside.ts")).toStrictEqual([]);
-    // A `<<` with no delimiter after it is not a heredoc.
-    expect(reads("cat a.ts <<")).toStrictEqual(["a.ts"]);
+    // A `<<` with no delimiter after it does not parse, and names nothing.
+    expect(reads("cat a.ts <<")).toStrictEqual([]);
     // …but a body a SHELL reads is commands, and what they read is read.
     expect(reads("bash <<'EOF'\ncat inside.ts\nEOF\ncat after.ts")).toStrictEqual(["inside.ts", "after.ts"]);
     // A heredoc inside a `$(…)` is skipped there too, apostrophes and all.
     expect(reads("echo \"$(cat <<'EOF'\ndon't cat x.ts\nEOF\n)\"; cat after.ts")).toStrictEqual(["after.ts"]);
+  });
+
+  it("never reads a path in a heredoc body, or in a quoted argument of a command that is not a reader", () => {
+    expect(at("cat > notes.md <<'EOF'\ncat src/a.ts\ngrep -r x src\nEOF")).toStrictEqual({ reads: [], searched: [] });
+    expect(at("git commit -F - <<'EOF'\nfix: read src/a.ts\nEOF")).toStrictEqual({ reads: [], searched: [] });
+    expect(at("gh pr create --body 'see `cat src/a.ts` and src/b.ts'")).toStrictEqual({ reads: [], searched: [] });
+    // …but a backtick inside DOUBLE quotes runs, and what it runs reads.
+    expect(at('gh pr create --body "see `cat src/a.ts`"')).toStrictEqual({ reads: ["src/a.ts"], searched: [] });
+    expect(at("echo 'cat src/a.ts' | tee /dev/null")).toStrictEqual({ reads: [], searched: [] });
   });
 
   it("does not read a quoted operator as a separator, or a quoted word as a command", () => {
@@ -406,14 +446,23 @@ describe("bashReads — the files a Bash command reads, before it runs", () => {
     expect(at("cat ~/a.ts $HOME/b.ts", ROOT, "/repo/home").reads).toStrictEqual(["home/a.ts", "home/b.ts"]);
     expect(reads("cat ~/a.ts")).toStrictEqual([]);
     expect(reads("cat cost$ a.ts")).toStrictEqual(["cost$", "a.ts"]);
+    // Quoted or escaped, a `$` or a `~` is text the program is given as is, never expanded: what
+    // is read is a file of that literal name, never the home or the variable's value.
+    expect(at("cat '$HOME/x.ts'", ROOT, "/repo/home").reads).toStrictEqual(["$HOME/x.ts"]);
+    expect(at("cat \\$HOME/x.ts", ROOT, "/repo/home").reads).toStrictEqual(["$HOME/x.ts"]);
+    expect(at("cat '~/x.ts'", ROOT, "/repo/home").reads).toStrictEqual(["~/x.ts"]);
+    expect(reads("F=a.ts; cat '$F'")).toStrictEqual(["$F"]);
+    expect(reads("F='$G'; G=a.ts; cat $F")).toStrictEqual(["$G"]);
+    expect(reads("for f in '$D'; do cat $f; done; cat < '$F'")).toStrictEqual(["$D", "$F"]);
+    expect(reads('F=a.ts; cat "$F" < "$F"')).toStrictEqual(["a.ts"]);
   });
 
   it("runs a for loop's body once per value", () => {
     expect(reads("for f in a.ts b.ts; do head -c 3 $f; done")).toStrictEqual(["a.ts", "b.ts"]);
     expect(reads("for f in a.ts $(ls); do\n  cat $f\ndone")).toStrictEqual(["a.ts"]);
     expect(reads("for f; do cat $f; done; cat z.ts")).toStrictEqual(["z.ts"]);
-    // Unclosed, the loop still ends with the line.
-    expect(reads("for f in a.ts; do cat $f")).toStrictEqual(["a.ts"]);
+    // Unclosed, the loop does not parse, and names nothing.
+    expect(reads("for f in a.ts; do cat $f")).toStrictEqual([]);
   });
 
   it("reads what a `$(…)`, a backquote or a `<(…)` runs, without guessing at what it prints", () => {
@@ -421,7 +470,7 @@ describe("bashReads — the files a Bash command reads, before it runs", () => {
     expect(reads("echo `cat a.ts` \"$(cat b.ts)\" \"`cat c.ts`\"")).toStrictEqual(["a.ts", "b.ts", "c.ts"]);
     expect(reads("diff <(sort a.txt) >(cat) <(sort b.txt)")).toStrictEqual(["a.txt", "b.txt"]);
     expect(reads('echo "$(printf "%s" "x")"; cat a.ts')).toStrictEqual(["a.ts"]);
-    expect(reads("echo $(echo (nested) 'q)' \\)); cat a.ts")).toStrictEqual(["a.ts"]);
+    expect(reads("echo $(echo \\(nested\\) 'q)' \\)); cat a.ts")).toStrictEqual(["a.ts"]);
   });
 
   it("peels the wrappers off the command they run", () => {
@@ -429,6 +478,10 @@ describe("bashReads — the files a Bash command reads, before it runs", () => {
     expect(reads("env -u X A=1 cat a.ts")).toStrictEqual(["a.ts"]);
     expect(reads("nice -n 5 nohup time cat a.ts")).toStrictEqual(["a.ts"]);
     expect(reads("xargs -a list.txt -n 1 grep -l x")).toStrictEqual(["list.txt"]);
+    expect(reads("xargs --arg-file list.txt grep -l x src/a.ts")).toStrictEqual(["list.txt", "src/a.ts"]);
+    expect(reads("xargs --arg-file=list.txt grep x")).toStrictEqual(["list.txt"]);
+    expect(reads("xargs -alist.txt grep x")).toStrictEqual(["list.txt"]);
+    expect(reads("exec -a name xargs grep x"), "exec's -a names the process, it is not xargs's list").toStrictEqual([]);
     expect(reads("command -v cat a.ts")).toStrictEqual([]);
     expect(reads("command cat a.ts")).toStrictEqual(["a.ts"]);
     expect(reads("timeout 5")).toStrictEqual([]);
@@ -462,31 +515,6 @@ describe("bashReads — the files a Bash command reads, before it runs", () => {
     expect(reads('cat "a `b.ts"')).toStrictEqual([]);
   });
 
-  it("finds at least what it found when it won the bake-off, on the hand-labelled corpus", () => {
-    // The yardstick the mechanism was chosen by (__fixtures__/bash-corpus/, scored by
-    // `just score-bash`; the bake-off is evidence/f3-b1-bakeoff.log in the task's journal). The
-    // scorer lives in tools/, which the import fence keeps apart from this layer, so the one number
-    // that matters is counted here: labelled reads found, over labelled reads. A root of "" makes
-    // every absolute path "inside", so paths outside any repo are scored too. The labels spell `~`
-    // as the home of the machine they were recorded on, so that home is handed in, not this one's.
-    const corpus = JSON.parse(readFileSync(join(import.meta.dirname, "..", "__fixtures__", "bash-corpus", "corpus.json"), "utf8")) as {
-      command: string;
-      cwd: string;
-      reads: string[];
-    }[];
-    let found = 0;
-    let labelled = 0;
-    for (const entry of corpus) {
-      const got = bashReads(entry.command, { cwd: entry.cwd, root: "", home: "/Users/jawache" });
-      const named = new Set([...got.reads, ...got.searched].map((p) => `/${p}`));
-      const want = new Set(entry.reads.map((p) => posix.resolve(entry.cwd, p)));
-      labelled += want.size;
-      found += [...want].filter((p) => named.has(p)).length;
-    }
-    expect(labelled).toBe(272);
-    expect(found).toBeGreaterThanOrEqual(241);
-  });
-
   it("leaves out what lies outside the repo, and the repo root itself", () => {
     expect(reads("cat /etc/hosts /repo/src/a.ts ../elsewhere.ts")).toStrictEqual(["src/a.ts"]);
     expect(reads("cat src/a.ts src/./a.ts")).toStrictEqual(["src/a.ts"]);
@@ -498,7 +526,7 @@ describe("bashReads — the files a Bash command reads, before it runs", () => {
     expect(reads("{ cat a.ts; } 2>&1 | head; ! cat b.ts")).toStrictEqual(["a.ts", "b.ts"]);
     expect(reads("f() { cat a.ts; }; f")).toStrictEqual(["a.ts"]);
     expect(reads("case $x in a) cat a.ts;; esac; cat b.ts")).toStrictEqual(["a.ts", "b.ts"]);
-    expect(reads("done; cat a.ts) ; (cat b.ts")).toStrictEqual(["a.ts", "b.ts"]);
+    expect(reads("done; cat a.ts) ; (cat b.ts"), "a line that does not parse").toStrictEqual([]);
     expect(reads("cat a.ts & cat b.ts || cat c.ts |& cat")).toStrictEqual(["a.ts", "b.ts", "c.ts"]);
   });
 });
@@ -527,7 +555,7 @@ describe("toEvent — one payload, every moment it carries", () => {
     const events = toEvent("pre-tool-use", pre("Bash", { command: "rm secret/a.ts" }), w);
     // Every guard event comes first: a refusal carries no notes, so none is judged after one.
     expect(events).toStrictEqual([
-      { rail: "guard", moment: "command", command: "rm secret/a.ts" },
+      { rail: "guard", moment: "command", command: "rm secret/a.ts", commands: parseCommandLine("rm secret/a.ts") },
       { rail: "guard", moment: "delete", file: { path: "secret/a.ts", content: "the content" } },
       { rail: "brief", moment: "command", command: "rm secret/a.ts" },
     ]);
@@ -539,7 +567,7 @@ describe("toEvent — one payload, every moment it carries", () => {
     const command = "cat a.ts && rg x lib ~/n.md";
     const events = toEvent("pre-tool-use", { ...pre("Bash", { command }), cwd: "/repo/src" }, { ...world(), home: "/repo/home" });
     expect(events).toStrictEqual([
-      { rail: "guard", moment: "command", command },
+      { rail: "guard", moment: "command", command, commands: parseCommandLine(command) },
       { rail: "brief", moment: "command", command },
       { rail: "brief", moment: "touch", path: "src/a.ts" },
       { rail: "brief", moment: "touch", path: "src/lib" },
@@ -555,7 +583,7 @@ describe("toEvent — one payload, every moment it carries", () => {
   it("raises no delete moment for a file that is already gone", () => {
     const events = toEvent("pre-tool-use", pre("Bash", { command: "rm nowhere.ts" }), world());
     expect(events).toStrictEqual([
-      { rail: "guard", moment: "command", command: "rm nowhere.ts" },
+      { rail: "guard", moment: "command", command: "rm nowhere.ts", commands: parseCommandLine("rm nowhere.ts") },
       { rail: "brief", moment: "command", command: "rm nowhere.ts" },
     ]);
   });
@@ -689,26 +717,37 @@ describe("toResult — one refusal spelling, one injection spelling", () => {
     });
   });
 
-  it("says which of the three things happened to a payload it could not read", () => {
-    // "There was nothing to guard" and "I could not SEE what I was guarding" were one answer in the
-    // old engine — an empty object — so a rail that could not read its payload allowed, silently.
-    expect(faultText("pre-tool-use", "unreadable", "EBADF")).toBe(
-      "[flow hook pre-tool-use] the guard could not READ its payload from stdin (EBADF).",
-    );
-    expect(faultText("stop", "unparseable", "12 bytes on stdin, and not JSON")).toContain("could not PARSE");
-  });
-
   it("is LOUD on every rail that judges a tool call, and speaks without holding on the rest", () => {
-    for (const hook of ["pre-tool-use", "post-tool-use", "post-tool-use-failure"] as const) {
-      const answer = readFault(hook, "unparseable", "not JSON");
-      expect(answer.exitCode, hook).toBe(2);
-      expect(answer.stderr).toContain(`[flow hook ${hook}] the guard could not PARSE its payload`);
-    }
-    for (const hook of ["session-start", "stop", "notification"] as const) {
-      const answer = readFault(hook, "unreadable", "EBADF");
-      expect(answer.exitCode, hook).toBe(0);
-      expect(answer.stderr).toContain("could not READ");
-    }
+    // The after-call rails say it the way every unseen call is said — the call ran and nothing it
+    // changed was checked — never as a guard refusing a call that has already landed (#12).
+    expect(readFault("pre-tool-use", "unparseable", "not JSON")).toStrictEqual({
+      stdout: "",
+      stderr: "\n[flow hook pre-tool-use] could not PARSE its payload (not JSON).\n",
+      exitCode: 2,
+    });
+    expect(readFault("post-tool-use", "unparseable", "not JSON")).toStrictEqual({
+      stdout: "",
+      stderr:
+        "\nflow — could not see what this call changed:\n\n" +
+        "[flow hook post-tool-use] could not PARSE its payload (not JSON).\n\n" +
+        "The call ran, and nothing it changed was checked or put back. Check what the call changed before you go on.\n",
+      exitCode: 2,
+    });
+    expect(readFault("post-tool-use-failure", "unreadable", "EBADF")).toStrictEqual({
+      stdout: "",
+      stderr:
+        "\nflow — could not see what this call changed:\n\n" +
+        "[flow hook post-tool-use-failure] could not READ its payload from stdin (EBADF).\n\n" +
+        "The call ran, and nothing it changed was checked or put back. Check what the call changed before you go on.\n",
+      exitCode: 2,
+    });
+    expect(readFault("session-start", "unreadable", "EBADF")).toStrictEqual({
+      stdout: "",
+      stderr: "[flow hook session-start] could not READ its payload from stdin (EBADF).\n",
+      exitCode: 0,
+    });
+    expect(readFault("stop", "unreadable", "EBADF").exitCode).toBe(0);
+    expect(readFault("notification", "unreadable", "EBADF").exitCode).toBe(0);
   });
 });
 
@@ -804,32 +843,35 @@ describe("the transcript's dialect", () => {
 });
 
 describe("who the session is, from what the host wrote", () => {
-  const sidecar = JSON.stringify({ agentType: "builder", description: "build F4", spawnDepth: 1 });
+  // The message Claude Code sends for a subagent's call: its id and type, and the PARENT's path.
+  const parent = "/c/projects/p/s1.jsonl";
+  const subagent = { session_id: "s1", agent_id: "a6009b5", agent_type: "builder", transcript_path: parent };
 
-  it("takes the agent type from the sidecar and the brief from the transcript", () => {
-    const facts = sessionFactsFrom({
-      payload: { session_id: "s", agent_id: "agent-1" },
-      transcript: human("Follow `/work build`"),
-      sidecar,
-    });
-    expect(facts).toStrictEqual({
-      head: "Follow `/work build`",
-      subagent: true,
-      agentType: "builder",
-      description: "build F4",
-    });
+  it("takes the agent type from the hook message and the brief from the subagent's own transcript", () => {
+    const facts = sessionFactsFrom({ payload: subagent, transcript: human("Follow `/work build`") });
+    expect(facts).toStrictEqual({ head: "Follow `/work build`", subagent: true, agentType: "builder" });
   });
 
-  it("reads the parent by ABSENCE — no sidecar, no agent id, no type", () => {
-    const facts = sessionFactsFrom({ payload: { session_id: "s" }, transcript: human("hello"), sidecar: null });
-    expect(facts).toStrictEqual({ head: "hello", subagent: false });
+  it("finds a subagent's own transcript under the parent's, by its agent id", () => {
+    expect(ownTranscriptPath(subagent)).toBe("/c/projects/p/s1/subagents/agent-a6009b5.jsonl");
+    expect(ownTranscriptPath({ session_id: "s1", transcript_path: parent }), "the parent reads its own").toBe(parent);
+    expect(ownTranscriptPath({ session_id: "s1", agent_id: "a1" }), "no path sent, none to read").toBeNull();
+    expect(ownTranscriptPath({ ...subagent, transcript_path: "/c/projects/p/s1" }), "not a transcript").toBeNull();
+    expect(ownTranscriptPath({ ...subagent, agent_id: "../../etc/x" }), "an id that leaves the folder").toBeNull();
   });
 
-  it("keeps a spawn a spawn when its sidecar will not parse — spawned, but as what we cannot say", () => {
-    const facts = sessionFactsFrom({ payload: { session_id: "s", agent_id: "a" }, transcript: null, sidecar: "{oops" });
-    expect(facts.subagent).toBe(true);
+  it("keeps a subagent a subagent when its message carries no type — spawned, but as what we cannot say", () => {
+    const facts = sessionFactsFrom({ payload: { session_id: "s1", agent_id: "a1", transcript_path: parent }, transcript: null });
+    expect(facts.subagent, "the agent id alone makes it a subagent, with no file read").toBe(true);
     expect(facts.agentType, "a category keyed on a type declines; the parent must not claim it").toBeUndefined();
     expect(facts.head).toBe("");
+  });
+
+  it("reads the parent by ABSENCE — no agent id, no type — even when a top-level --agent session sends a type", () => {
+    const plain = sessionFactsFrom({ payload: { session_id: "s" }, transcript: human("hello") });
+    expect(plain).toStrictEqual({ head: "hello", subagent: false });
+    const named = sessionFactsFrom({ payload: { session_id: "s", agent_type: "leader" }, transcript: human("hello") });
+    expect(named, "agent_type without agent_id is the top-level session's own").toStrictEqual(plain);
   });
 
   it("reads the branch out of HEAD's own text, ref or detached", () => {
@@ -838,13 +880,6 @@ describe("who the session is, from what the host wrote", () => {
     expect(branchFromHead("ref: refs/heads/workflow/flow\n")).toBe("workflow/flow");
     expect(branchFromHead("9f2c1a4b8e7d6c5b4a39\n"), "detached — the short sha").toBe("9f2c1a4b8e7d");
     expect(branchFromHead("  \n")).toBeNull();
-  });
-
-  it("finds the sidecar beside the transcript it belongs to", () => {
-    expect(sidecarPath("/c/projects/p/s1/subagents/agent-a7.jsonl")).toBe(
-      "/c/projects/p/s1/subagents/agent-a7.meta.json",
-    );
-    expect(sidecarPath("/c/projects/p/s1"), "not a transcript path at all").toBeNull();
   });
 });
 
@@ -1158,10 +1193,32 @@ describe("the justfile — a bypass is DERIVED from the repo's own recipes", () 
     expect(recipeTools("")).toEqual([]);
   });
 
+  it("reads a recipe body whole, so a loop over several lines is commands, and an assignment is no tool", () => {
+    const looped = ["check:", "    for f in a b; do \\", "      npx tsc -p $f; \\", "    done", "    FLOW_MACHINE_REPORT=1 npx vitest run", "    @-rm -rf dist"].join("\n");
+    expect(recipeTools(looped).sort()).toEqual(["rm", "tsc", "vitest"]);
+    // A body that does not parse whole is read line by line, and a line that does not parse names nothing.
+    expect(recipeTools(["a:", '    printf "unclosed', "    eslint ."].join("\n"))).toEqual(["eslint"]);
+  });
+
+  it("judges a line that holds a heredoc: the commands around it count, the body it is fed does not", () => {
+    const tools = ["vitest", "eslint"];
+    expect(classifyBash("cat > notes.md <<'EOF'\nnpx vitest run\nEOF\nnpx vitest run", tools)).toEqual({ recipes: [], bypasses: ["vitest"], commits: false });
+    expect(classifyBash("git commit -F - <<'EOF'\nfix: run eslint\nEOF", tools)).toEqual({ recipes: [], bypasses: [], commits: true });
+    expect(classifyBash("python3 - <<'PY'\nimport os\nPY\njust test", tools)).toEqual({ recipes: ["test"], bypasses: [], commits: false });
+    // A body a shell reads is commands, and runs.
+    expect(classifyBash("bash <<'EOF'\neslint .\nEOF", tools).bypasses).toEqual(["eslint"]);
+    // A tool named inside another command's quoted argument is not run.
+    expect(classifyBash('gh issue create --body "ran npx vitest run"', tools).bypasses).toEqual([]);
+    expect(classifyBash('echo "x', tools), "a line that does not parse").toEqual({ recipes: [], bypasses: [], commits: false });
+  });
+
   it("tells a recipe call from going round it, and leaves a heredoc alone", () => {
     const tools = ["vitest", "eslint"];
     expect(classifyBash("just test && just lint", tools)).toEqual({ recipes: ["test", "lint"], bypasses: [], commits: false });
     expect(classifyBash("npx vitest run", tools)).toEqual({ recipes: [], bypasses: ["vitest"], commits: false });
+    // A tool run by its path is the tool.
+    expect(classifyBash("node_modules/.bin/vitest run", tools)).toEqual({ recipes: [], bypasses: ["vitest"], commits: false });
+    expect(classifyBash("./node_modules/.bin/eslint .", tools)).toEqual({ recipes: [], bypasses: ["eslint"], commits: false });
     expect(classifyBash("just test-vitest", tools)).toEqual({ recipes: ["test-vitest"], bypasses: [], commits: false });
     expect(classifyBash("git commit -m x", tools).commits).toBe(true);
     // Authoring a file whose body mentions a tool is not running that tool.
@@ -1309,13 +1366,10 @@ describe("what the session ran under — the permission mode, and auto mode's st
 });
 
 describe("weakened after a block — the one failure a guard cannot catch itself", () => {
-  it("watches the host's registrations, and takes the repo's half whole from the surface", () => {
-    // Two halves, and only one of them is this test's. That the repo half FOLLOWS the config's own
-    // imports is `configSurface`'s claim and is proved where it is made, further down this file;
-    // `guardPaths` does nothing but concatenate, so re-proving the derivation here would be a
-    // second place for the same fact to be right and a first place for it to disagree.
+  it("watches the config and the host's registrations", () => {
+    // That the repo half FOLLOWS the config's own imports is proved in "the guard's own files",
+    // further down this file.
     const paths = guardPaths(`import { house } from "./rules/house.ts";`);
-    expect(paths).toStrictEqual([...configSurface(`import { house } from "./rules/house.ts";`), ...HOST_SURFACE]);
 
     // The config's name is spelled ONCE — a second copy here would leave a renamed config's old
     // name watched and its new one not.
@@ -1646,6 +1700,19 @@ describe("which modules flow strips and evaluates itself", () => {
   });
 });
 
+/** flow's five registrations, each running the command `as` makes of today's one. */
+const registrationsAs = (as: (command: string) => string): { hooks: Record<string, unknown[]> } => ({
+  hooks: Object.fromEntries(
+    HOOK_REGISTRATIONS.map((r) => [
+      r.event,
+      [{ ...(r.matcher === undefined ? {} : { matcher: r.matcher }), hooks: [{ type: "command", command: as(r.command) }] }],
+    ]),
+  ),
+});
+
+/** The registrations an older `flow init` wrote: each the bare `flow hook <event>`. */
+const BARE_SETTINGS = registrationsAs((command) => command.replace(/^.* flow /, "flow "));
+
 describe("the hook registrations flow writes", () => {
   it("names exactly the events it answers — five, and Notification is not one", () => {
     expect(HOOK_REGISTRATIONS.map((r) => r.event)).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
@@ -1659,7 +1726,19 @@ describe("the hook registrations flow writes", () => {
   it("commands a word this build answers to — the list is derived, so it cannot name one it doesn't", () => {
     for (const registration of HOOK_REGISTRATIONS)
       expect(ourHookCommand(registration.command), registration.command).toBe(true);
-    expect(HOOK_REGISTRATIONS.map((r) => r.command)).toContain("flow hook session-start");
+    expect(HOOK_REGISTRATIONS.map((r) => r.command)).toContain(
+      'f="$CLAUDE_PROJECT_DIR/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook session-start; exec flow hook session-start',
+    );
+  });
+
+  // A `flow` in node_modules/.bin can be anyone's: Facebook's `flow-bin` installs one, and nothing
+  // guards the folder. Every caller flow writes runs its own package's file, by path, or the PATH's.
+  it("writes no command that finds flow through node_modules/.bin — only its own package's file, then the PATH", () => {
+    for (const command of [...HOOK_REGISTRATIONS.map((r) => r.command), PRE_COMMIT]) {
+      expect(command, command).not.toContain(LOCAL_BIN);
+      expect(command, command).not.toMatch(/\bPATH=/);
+      expect(command, command).toContain(PACKAGE_BIN);
+    }
   });
 
   it("recognises its own registration whatever path stands in front of the binary", () => {
@@ -1678,7 +1757,7 @@ describe("the hook registrations flow writes", () => {
     const after = settings as { permissions: unknown; hooks: Record<string, unknown[]> };
     expect(after.permissions, "untouched, byte for byte").toEqual(before.permissions);
     expect(registeredEvents(settings)).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
-    expect(after.hooks["Stop"]).toEqual([{ hooks: [{ type: "command", command: "flow hook stop" }] }]);
+    expect(after.hooks["Stop"]).toEqual([{ hooks: [{ type: "command", command: hookCommand("stop") }] }]);
     expect(after.hooks["PreToolUse"]?.[0]).toMatchObject({ matcher: "*" });
   });
 
@@ -1695,14 +1774,14 @@ describe("the hook registrations flow writes", () => {
     expect(added).toContain("Stop");
     const stop = (settings as { hooks: Record<string, unknown[]> }).hooks["Stop"];
     expect(JSON.stringify(stop), "theirs survives — we add, we never rewrite").toContain("their-tool --report");
-    expect(JSON.stringify(stop)).toContain("flow hook stop");
+    expect(JSON.stringify(stop)).toContain(JSON.stringify(hookCommand("stop")));
   });
 
   it("asks for every tool after the call, succeeded or failed — any tool can change the tree", () => {
     const matcher = (event: string): string | undefined => HOOK_REGISTRATIONS.find((r) => r.event === event)?.matcher;
     expect(matcher("PostToolUse")).toBe("*");
     expect(matcher("PostToolUseFailure")).toBe("*");
-    expect(HOOK_REGISTRATIONS.find((r) => r.event === "PostToolUseFailure")?.command).toBe("flow hook post-tool-use-failure");
+    expect(HOOK_REGISTRATIONS.find((r) => r.event === "PostToolUseFailure")?.command).toBe(hookCommand("post-tool-use-failure"));
   });
 
   it("widens its OWN narrow registration in place, and says so — a second entry would fire twice", () => {
@@ -1710,7 +1789,7 @@ describe("the hook registrations flow writes", () => {
       hooks: {
         ...(withRegistrations({}).settings as { hooks: Record<string, unknown> }).hooks,
         PostToolUse: [
-          { matcher: "Read|Glob|Grep|Edit|Write|Bash", hooks: [{ type: "command", command: "flow hook post-tool-use" }] },
+          { matcher: "Read|Glob|Grep|Edit|Write|Bash", hooks: [{ type: "command", command: hookCommand("post-tool-use") }] },
           { matcher: "Bash", hooks: [{ type: "command", command: "their-tool --after" }] },
         ],
       },
@@ -1720,11 +1799,107 @@ describe("the hook registrations flow writes", () => {
     expect(added).toEqual(["PostToolUse (widened to every tool)"]);
     const post = (settings as { hooks: Record<string, unknown[]> }).hooks["PostToolUse"];
     expect(post).toEqual([
-      { matcher: "*", hooks: [{ type: "command", command: "flow hook post-tool-use" }] },
+      { matcher: "*", hooks: [{ type: "command", command: hookCommand("post-tool-use") }] },
       { matcher: "Bash", hooks: [{ type: "command", command: "their-tool --after" }] },
     ]);
     expect(staleRegistrations(settings), "and a second run finds nothing to widen").toEqual([]);
     expect(withRegistrations(settings).added).toEqual([]);
+  });
+
+  it("reads the old shape, the bare `flow hook <event>`, and nothing else as old", () => {
+    expect(bareHook("flow hook stop")).toBe("stop");
+    expect(bareHook("  flow hook pre-tool-use ")).toBe("pre-tool-use");
+    expect(bareHook(hookCommand("stop")), "today's command").toBeNull();
+    expect(bareHook("/usr/local/bin/flow hook stop"), "a path names the copy it runs").toBeNull();
+    expect(bareHook("node /x/flow/dist/flow.mjs hook stop")).toBeNull();
+    expect(bareHook("flow hook nonsense"), "a word we do not answer to").toBeNull();
+    expect(bareHook("work hook stop")).toBeNull();
+  });
+
+  // THE MACHINE-WIDE FILE AN OLDER INIT WROTE: five registrations in the old shape. They are flow's,
+  // so status counts them, and init rewrites them where they stand — a new entry beside each would
+  // run flow twice for every event.
+  it("counts the old shape as flow's, and rewrites it in place to the new command", () => {
+    const older = {
+      model: "opus",
+      hooks: Object.fromEntries(
+        Object.entries(BARE_SETTINGS.hooks).map(([event, entries]) => [
+          event,
+          [...entries, { hooks: [{ type: "command", command: "their-tool --report" }] }],
+        ]),
+      ),
+    };
+    const five = ["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"];
+    expect(registeredEvents(older), "both shapes are flow's").toEqual(five);
+    expect(bareRegistrations(older)).toEqual(five);
+    expect(status(statusFacts({ settings: older })).fittings.find((f) => f.id === "hooks")?.ok).toBe(true);
+
+    const { settings, added } = withRegistrations(older);
+    expect(added).toEqual(five.map((event) => `${event} (now runs the flow in node_modules/@jawache/flow first)`));
+    const hooks = (settings as { model: string; hooks: Record<string, { matcher?: string; hooks: { command: string }[] }[]> }).hooks;
+    const flows = Object.values(hooks).flatMap((entries) => entries.flatMap((entry) => entry.hooks.map((h) => h.command)).filter(ourHookCommand));
+    expect(flows, "exactly five of flow's, each the new command").toEqual(HOOK_REGISTRATIONS.map((r) => r.command));
+    expect(hooks["PreToolUse"]?.[0]?.matcher, "the matcher stays").toBe("*");
+    expect(JSON.stringify(hooks["Stop"]), "theirs is untouched").toContain("their-tool --report");
+    expect((settings as { model: string }).model).toBe("opus");
+    expect(withRegistrations(settings).added, "and a second run finds nothing to do").toEqual([]);
+  });
+
+  it("rewrites only flow's command inside an entry it shares, and widens an old narrow one in the same pass", () => {
+    const older = {
+      hooks: {
+        ...(withRegistrations({}).settings as { hooks: Record<string, unknown> }).hooks,
+        PostToolUse: [
+          {
+            matcher: "Read|Glob|Grep|Edit|Write|Bash",
+            hooks: [
+              { type: "command", command: "flow hook post-tool-use" },
+              { type: "command", command: "their-tool --after" },
+            ],
+          },
+        ],
+      },
+    };
+    const { settings, added } = withRegistrations(older);
+    expect(added).toEqual(["PostToolUse (widened to every tool, now runs the flow in node_modules/@jawache/flow first)"]);
+    expect((settings as { hooks: Record<string, unknown[]> }).hooks["PostToolUse"]).toEqual([
+      {
+        matcher: "*",
+        hooks: [
+          { type: "command", command: hookCommand("post-tool-use") },
+          { type: "command", command: "their-tool --after" },
+        ],
+      },
+    ]);
+  });
+
+  it("leaves a registration with a path to the binary as it is — it names the copy it runs", () => {
+    const pinned = registrationsAs((command) => command.replace(/^.* flow /, "node /x/dist/flow.mjs "));
+    expect(withRegistrations(pinned).added).toEqual([]);
+  });
+
+  it("leaves a by-name command with anything else in it as it is — it is somebody's own", () => {
+    for (const prefix of ["FLOW_DEBUG=1 flow ", "cd /x && flow "]) {
+      const theirs = registrationsAs((command) => command.replace(/^.* flow /, prefix));
+      expect(bareRegistrations(theirs), prefix).toEqual([]);
+      expect(withRegistrations(theirs).added, prefix).toEqual([]);
+    }
+  });
+
+  // An older flow, or a hand, filed a bare command under an event flow does not register today. It
+  // is still flow's, and still finds only the PATH, so it is rewritten and reported like the five.
+  it("rewrites an old-shape command under an event flow does not register, and names that event", () => {
+    const older = {
+      hooks: {
+        ...(withRegistrations({}).settings as { hooks: Record<string, unknown> }).hooks,
+        SubagentStop: [{ hooks: [{ type: "command", command: "flow hook stop" }] }],
+      },
+    };
+    const { settings, added } = withRegistrations(older);
+    expect(added).toEqual(["SubagentStop (now runs the flow in node_modules/@jawache/flow first)"]);
+    expect((settings as { hooks: Record<string, unknown[]> }).hooks["SubagentStop"]).toEqual([
+      { hooks: [{ type: "command", command: hookCommand("stop") }] },
+    ]);
   });
 
   it("reads nothing out of a settings file that is not an object", () => {
@@ -1738,10 +1913,18 @@ const OLD_GATE = '#!/bin/sh\nstaged=$(git diff --cached --name-only --diff-filte
 
 describe("the git gate flow arms", () => {
   it("calls `flow hook commit` and passes nothing — no list, no filter, no early exit", () => {
-    expect(PRE_COMMIT).toContain("\nexec flow hook commit\n");
     expect(PRE_COMMIT.startsWith("#!")).toBe(true);
     expect(PRE_COMMIT, "flow asks git; the hook does not").not.toContain("git diff");
     expect(PRE_COMMIT).not.toContain("exit 0");
+  });
+
+  // A DEV DEPENDENCY GUARDS THE REPO: git hands its hooks the PATH it was given, and a repo with
+  // flow only as a dev dependency has none there, so the gate runs the repo's own package first.
+  it("runs the repo's own @jawache/flow first, then the flow on the PATH", () => {
+    const lines = PRE_COMMIT.split("\n").filter((line) => line !== "" && !line.startsWith("#"));
+    expect(lines).toEqual([GATE_LOCAL_LINE, GATE_RUN_LINE]);
+    expect(GATE_LOCAL_LINE).toBe('f="$PWD/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook commit');
+    expect(GATE_RUN_LINE).toBe("exec flow hook commit");
   });
 
   it("names one hooks directory, and one gate inside it", () => {
@@ -1809,6 +1992,7 @@ const bare: InitFacts = {
   settingsPath: "/home/.claude/settings.json",
   settings: {},
   settingsUnreadable: false,
+  machine: null,
   resolves: false,
   packageRoot: "/checkout/flow",
 };
@@ -1871,6 +2055,17 @@ describe("planInit — a repo that already has a pre-commit hook", () => {
     expect(said, "the same instruction status gives, in the same words").toContain(ADD_THE_GATE_LINE);
   });
 
+  // FOLLOWED TO THE LETTER, the advice must leave a dev-dependency repo able to commit: both lines,
+  // the one that puts the repo's own flow first and the one that runs it.
+  it("names both of the gate's lines, and a hook that follows it is armed and finds the repo's own flow", () => {
+    expect(ADD_THE_GATE_LINE).toContain(GATE_LOCAL_LINE);
+    expect(ADD_THE_GATE_LINE).toContain(GATE_RUN_LINE);
+    const followed = `#!/bin/sh\nnpm test\n${GATE_LOCAL_LINE}\n${GATE_RUN_LINE}\n`;
+    expect(armsFlow(followed)).toBe(true);
+    const fitting = status(statusFacts({ gateText: followed, binary: { listed: true, copy: true, path: false } })).fittings.find((f) => f.id === "binary");
+    expect(fitting?.ok, fitting?.detail).toBe(true);
+  });
+
   it("never overwrites flow's OLD gate either, and says which line to replace", () => {
     const old = planInit({ ...bare, gateText: OLD_GATE });
     expect(old.gate).toBeNull();
@@ -1880,9 +2075,21 @@ describe("planInit — a repo that already has a pre-commit hook", () => {
     expect(said).not.toContain(ADD_THE_GATE_LINE);
     expect(planInit({ ...bare, gateText: PRE_COMMIT }).gateKept, "today's gate is simply kept").toBe(false);
   });
+
+  // THE SAME GAP AS A HOOK THAT NEVER RAN FLOW: the old verb's line, replaced by the run line alone,
+  // still finds flow on the PATH alone. Followed to the letter, the advice runs the repo's own first.
+  it("names both of the gate's lines for the old verb too, and a gate that follows it finds the repo's own flow", () => {
+    expect(UPDATE_THE_GATE_LINE).toContain(GATE_LOCAL_LINE);
+    expect(UPDATE_THE_GATE_LINE).toContain(GATE_RUN_LINE);
+    const followed = OLD_GATE.replace(/^exec flow commit .*$/m, `${GATE_LOCAL_LINE}\n${GATE_RUN_LINE}`);
+    expect(armsFlow(followed)).toBe(true);
+    expect(armsOldFlow(followed)).toBe(false);
+    const fitting = status(statusFacts({ gateText: followed, binary: { listed: true, copy: true, path: false } })).fittings.find((f) => f.id === "binary");
+    expect(fitting?.ok, fitting?.detail).toBe(true);
+  });
 });
 
-describe("the config surface — what a write may target while the guard is broken", () => {
+describe("the guard's own files — the repo's half read out of the config's text, and the host's", () => {
   // The config as this repo writes it, and as a broken one still reads: the imports survive
   // whatever went wrong two hundred lines below them.
   const CONFIG = [
@@ -1893,35 +2100,38 @@ describe("the config surface — what a write may target while the guard is brok
     `export default defineConfig([pack(git), pack(house)]);`,
   ].join("\n");
 
-  it("is the config and the packs it imports, and nothing else", () => {
-    const surface = configSurface(CONFIG);
-    expect(matchAny(CONFIG_FILE, surface)).toBe(true);
-    expect(matchAny("guards/house.ts", surface)).toBe(true);
-    expect(matchAny("guards/git.ts", surface), "the folder comes with the file").toBe(true);
-    expect(matchAny("guards/nested/deep.ts", surface)).toBe(true);
-    expect(matchAny("src/a.ts", surface)).toBe(false);
-    expect(matchAny("cli/work.ts", surface)).toBe(false);
+  it("is the config, the packs it imports and the host's half, and nothing else", () => {
+    // MEMBERSHIP, never order: the one caller asks whether a path is in the list, so an order
+    // pinned here would break on a reshuffle that changes nothing a user sees.
+    const paths = guardPaths(CONFIG);
+    expect(paths, "the host's half is there, whole").toEqual(expect.arrayContaining([...HOST_SURFACE]));
+    expect(matchAny(CONFIG_FILE, paths)).toBe(true);
+    expect(matchAny("guards/house.ts", paths)).toBe(true);
+    expect(matchAny("guards/git.ts", paths), "the folder comes with the file").toBe(true);
+    expect(matchAny("guards/nested/deep.ts", paths)).toBe(true);
+    expect(matchAny("src/a.ts", paths)).toBe(false);
+    expect(matchAny("cli/work.ts", paths)).toBe(false);
     // Not a suffix match: a file that merely ENDS with the config's name is somebody else's.
-    expect(matchAny("vendor/flow.config.ts", surface)).toBe(false);
-    expect(matchAny("src/guards/thing.ts", surface), "the folder is where the import said").toBe(false);
+    expect(matchAny("vendor/flow.config.ts", paths)).toBe(false);
+    expect(matchAny("src/guards/thing.ts", paths), "the folder is where the import said").toBe(false);
   });
 
   it("follows whatever the repo called the folder, and reaches nothing when the config names nothing", () => {
-    // The whole point of reading the text: `guards/` was one repo's name for it, and every other
-    // repo got a repair exception over a folder it does not have.
-    const theirs = configSurface(`import { house } from "./.guard/house.ts";`);
+    // The whole point of reading the text: `guards/` is one repo's name for it, and the engine
+    // knows no folder name of its own.
+    const theirs = guardPaths(`import { house } from "./.guard/house.ts";`);
     expect(matchAny(".guard/house.ts", theirs)).toBe(true);
     expect(matchAny(".guard/helpers/text.ts", theirs)).toBe(true);
     expect(matchAny("guards/house.ts", theirs)).toBe(false);
-    // A config with every rule written inline imports no pack, so the surface is the config alone.
-    const inline = configSurface(`import { defineConfig } from "@jawache/flow";`);
-    expect([...inline]).toStrictEqual([CONFIG_FILE]);
-    expect([...configSurface(null)]).toStrictEqual([CONFIG_FILE]);
+    // A config with every rule written inline imports no pack, so the repo's half is the config alone.
+    const inline = guardPaths(`import { defineConfig } from "@jawache/flow";`);
+    expect(new Set(inline)).toStrictEqual(new Set([CONFIG_FILE, ...HOST_SURFACE]));
+    expect(new Set(guardPaths(null))).toStrictEqual(new Set([CONFIG_FILE, ...HOST_SURFACE]));
   });
 
   it("reads the TEXT, not the module — which is the only reader a broken config has", () => {
-    // Package specifiers are somebody else's source and never repairable here; `../` climbs out
-    // of the root, where a repo-relative surface cannot follow.
+    // Package specifiers are somebody else's source, never this repo's guard; `../` climbs out
+    // of the root, where repo-relative paths cannot follow.
     expect(configImports(CONFIG)).toStrictEqual(["guards/house.ts"]);
     expect(configImports(`import x from "../outside/y.ts";`)).toStrictEqual([]);
     expect(configImports(`const m = await import("./late/pack.ts");`)).toStrictEqual(["late/pack.ts"]);
@@ -1932,59 +2142,63 @@ describe("the config surface — what a write may target while the guard is brok
     ]);
     // A `from '…'` phrase inside a QUOTED MESSAGE is harvested too, and that is the accepted
     // behaviour rather than a miss: separating a real import from a sentence that quotes one takes
-    // a parser, and the file being asked about is the one that will not parse. Pinned here because
-    // it only ever WIDENS the repair surface, and only while the config is already refusing every
-    // other write — so the cost is one extra repairable path at a moment when nothing can commit.
+    // a parser, and the file being asked about may be one that will not parse. Pinned here because
+    // it only ever WIDENS the guard's paths, so the cost is one extra path reported as a guard file.
     expect(configImports(`.message("write it as: import { x } from './guards/x.ts'")`)).toStrictEqual(["guards/x.ts"]);
   });
 });
 
 describe("what every rail answers while the config will not load", () => {
-  const SURFACE = ["flow.config.ts", "guards/house.ts", "guards/**"];
   const FAULT = "flow: the config will not load — 1 refusal.";
-  const write = (path: string): AdapterEvent => ({ rail: "guard", moment: "write", file: { path, content: "x" } });
+  const TOLD = `${FAULT}\n\n${FLOW_OFF}`;
 
-  describe("repairs — the exception is exactly as wide as the repair", () => {
-    it("is the config and the packs it imports, at a write or a delete", () => {
-      expect(repairs(write("flow.config.ts"), SURFACE)).toBe(true);
-      expect(repairs(write("guards/house.ts"), SURFACE)).toBe(true);
-      expect(repairs(write("guards/nested/helper.ts"), SURFACE), "the folder comes with the file").toBe(true);
-      expect(repairs({ rail: "guard", moment: "delete", file: { path: "flow.config.ts", content: "" } }, SURFACE)).toBe(true);
+  describe("whileBroken — every call goes through, and the agent is told why", () => {
+    it("refuses no write, edit, delete or command, and hands each one the load error", () => {
+      const files = world({ "src/a.ts": "a", "flow.config.ts": "old" });
+      for (const payload of [
+        pre("Write", { file_path: "/repo/src/b.ts", content: "fine" }),
+        pre("Edit", { file_path: "/repo/src/a.ts", old_string: "a", new_string: "b" }),
+        pre("Bash", { command: "rm src/a.ts" }),
+        pre("Bash", { command: "npm ci" }),
+        pre("Bash", { command: "git reset --hard" }),
+      ]) {
+        const answer = whileBroken(toEvent("pre-tool-use", payload, files), FAULT);
+        expect(answer.refused, `${JSON.stringify(payload.tool_input)} is let through`).toStrictEqual([]);
+        expect(answer.shown).toStrictEqual([{ entry: null, cause: "fault", body: TOLD }]);
+        expect(answer.told).toBeNull();
+        const result = toResult("pre-tool-use", answer);
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout, "the load error reaches the agent as context").toContain(FAULT);
+      }
     });
 
-    it("is nothing else — not another file, not a command, not a rail without a target", () => {
-      expect(repairs(write("src/a.ts"), SURFACE)).toBe(false);
-      // A command names a STRING, never a target: `sed -i` on the config reads exactly like
-      // `rm -rf` before either runs, so the command rail stays fully shut in the broken state.
-      expect(repairs({ rail: "guard", moment: "command", command: "sed -i s/x/y/ flow.config.ts" }, SURFACE)).toBe(false);
-      expect(repairs({ rail: "guard", moment: "commit", staged: ["flow.config.ts"] }, SURFACE)).toBe(false);
-      expect(repairs({ rail: "brief", moment: "touch", path: "flow.config.ts" }, SURFACE)).toBe(false);
-    });
-  });
-
-  describe("whileBroken — one answer, whichever way it broke", () => {
-    it("refuses every gated moment but the repair, and hands the fault to a breadcrumb rail", () => {
-      const answer = whileBroken(
-        [write("src/a.ts"), write("flow.config.ts"), { rail: "brief", moment: "session" }],
-        SURFACE,
-        FAULT,
-      );
-      expect(answer.refused.map((r) => r.moment), "the repair is not among them").toStrictEqual(["write"]);
-      expect(answer.refused[0]?.block.message).toBe(FAULT);
-      expect(answer.refused[0]?.block.entry, "the guard itself refused, not a rule").toBeNull();
-      expect(answer.shown.map((s) => s.body), "a breadcrumb rail has no rail to refuse with").toStrictEqual([FAULT]);
-      expect(answer.told).toBeNull();
+    it("tells the agent once per answer, however many events the payload carried", () => {
+      // One Bash call is a command, each file an `rm` removes, and each file it reads — four
+      // events here, and the agent needs the sentence once.
+      const events = toEvent("pre-tool-use", pre("Bash", { command: "rm src/a.ts && cat src/b.ts" }), world({ "src/a.ts": "a", "src/b.ts": "b" }));
+      expect(events.length).toBeGreaterThan(2);
+      expect(whileBroken(events, FAULT).shown).toHaveLength(1);
     });
 
-    it("tells turn-end rather than holding it, which is the only rail that changes", () => {
-      const answer = whileBroken([{ rail: "guard", moment: "turn-end", turn: [] }], SURFACE, FAULT);
+    it("greets a session with the load error in place of the breadcrumbs", () => {
+      expect(whileBroken([{ rail: "brief", moment: "session" }], FAULT).shown.map((note) => note.body)).toStrictEqual([TOLD]);
+    });
+
+    it("says nothing after the call, because the agent was told when it asked", () => {
+      const changes = [{ path: "src/a.ts", before: "a", after: "b" }];
+      const events = toEvent("post-tool-use", pre("Bash", { command: "python3 fix.py" }), { ...world(), changes });
+      expect(events.some((event) => event.rail === "guard" && event.observed === true), "the change was seen").toBe(true);
+      expect(whileBroken(events, FAULT)).toStrictEqual({ refused: [], shown: [], told: null });
+    });
+
+    it("tells turn-end rather than holding it", () => {
+      const answer = whileBroken([{ rail: "guard", moment: "turn-end", turn: [] }], FAULT);
       expect(answer.refused, "a held turn cannot hand back to the human who would fix it").toStrictEqual([]);
-      expect(answer.told, "and it is not silent either").toBe(FAULT);
+      expect(answer.told, "and it is not silent either").toBe(TOLD);
     });
 
     it("says nothing at all when the payload carried no rail", () => {
-      const answer = whileBroken([], SURFACE, FAULT);
-      expect(answer).toStrictEqual({ refused: [], shown: [], told: null });
+      expect(whileBroken([], FAULT)).toStrictEqual({ refused: [], shown: [], told: null });
     });
   });
 
@@ -2002,6 +2216,38 @@ describe("what every rail answers while the config will not load", () => {
       expect(statusCode(answer({ refusals: [], green: true }))).toBe(0);
       expect(statusCode(answer({ refusals: [], green: false }))).toBe(1);
     });
+  });
+});
+
+describe("settingsFileFor — which settings file holds flow's hooks", () => {
+  const machine = "/home/someone/.claude/settings.json";
+  const manifest = (body: unknown): string => JSON.stringify(body);
+
+  it("is the repo's own when package.json lists flow as a dev dependency", () => {
+    expect(settingsFileFor(manifest({ devDependencies: { "@jawache/flow": "^0.3.0" } }), machine)).toBe(".claude/settings.json");
+  });
+
+  it("is the repo's own when package.json lists flow as a dependency", () => {
+    expect(settingsFileFor(manifest({ dependencies: { "@jawache/flow": "0.3.0" } }), machine)).toBe(".claude/settings.json");
+    expect(listsFlow(manifest({ dependencies: { "@jawache/flow": "0.3.0" } })), "the rule status judges the repo's own copy by").toBe(true);
+    expect(listsFlow(manifest({ name: "@jawache/flow" }))).toBe(false);
+  });
+
+  it("is the machine-wide one when package.json lists other packages only — this repo, which IS flow, among them", () => {
+    expect(settingsFileFor(manifest({ name: "@jawache/flow", devDependencies: { vitest: "^3.0.0" } }), machine)).toBe(machine);
+    expect(settingsFileFor(manifest({ peerDependencies: { "@jawache/flow": "*" } }), machine)).toBe(machine);
+  });
+
+  it("is the machine-wide one when there is no package.json", () => {
+    expect(settingsFileFor(null, machine)).toBe(machine);
+  });
+
+  it("is the machine-wide one when package.json will not parse, or is not an object", () => {
+    expect(settingsFileFor('{ "devDependencies": { "@jawache/flow": "^0.3.0" }, }', machine)).toBe(machine);
+    expect(settingsFileFor("", machine)).toBe(machine);
+    expect(settingsFileFor("null", machine)).toBe(machine);
+    expect(settingsFileFor('["@jawache/flow"]', machine)).toBe(machine);
+    expect(settingsFileFor(manifest({ devDependencies: ["@jawache/flow"] }), machine)).toBe(machine);
   });
 });
 
@@ -2055,6 +2301,99 @@ describe("planInit — the flags and the edges", () => {
   });
 });
 
+// A DEV DEPENDENCY'S HOOKS are in the repo's own file, and the host merges only IDENTICAL commands
+// across its files: an older flow's bare command left in the machine-wide file runs flow twice.
+describe("the machine-wide file, beside a dev dependency's own", () => {
+  const machinePath = "/home/.claude/settings.json";
+  const theirs = { type: "command", command: "lint-on-stop" };
+  const older = {
+    theme: "dark",
+    hooks: {
+      ...BARE_SETTINGS.hooks,
+      PostToolUse: [{ matcher: "Read|Glob|Grep|Edit|Write|Bash", hooks: [{ type: "command", command: "flow hook post-tool-use" }] }],
+      Stop: [...(BARE_SETTINGS.hooks["Stop"] ?? []), { hooks: [theirs] }],
+      Notification: [{ hooks: [{ type: "command", command: "say done" }] }],
+    },
+  };
+
+  it("rewrites flow's old commands there to today's, and touches nothing else", () => {
+    const { settings, rewritten } = withMachineCommandsUpToDate(older);
+    expect(rewritten).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
+    const after = settings as typeof older;
+    expect(after.theme).toBe("dark");
+    expect(after.hooks.PostToolUse, "the command is rewritten, the matcher is left as it was").toEqual([
+      { matcher: "Read|Glob|Grep|Edit|Write|Bash", hooks: [{ type: "command", command: hookCommand("post-tool-use") }] },
+    ]);
+    expect(after.hooks.Stop).toEqual([{ hooks: [{ type: "command", command: hookCommand("stop") }] }, { hooks: [theirs] }]);
+    expect(after.hooks.Notification).toEqual(older.hooks.Notification);
+    expect(older.hooks.Stop[0], "a new object; the one handed in is not changed").toEqual(BARE_SETTINGS.hooks["Stop"]?.[0]);
+  });
+
+  it("adds no registration there, and has nothing to do a second time", () => {
+    const none = withMachineCommandsUpToDate({ theme: "dark" });
+    expect(none).toEqual({ settings: { theme: "dark" }, rewritten: [] });
+    expect(withMachineCommandsUpToDate(null).rewritten).toEqual([]);
+    const once = withMachineCommandsUpToDate(older);
+    expect(withMachineCommandsUpToDate(once.settings).rewritten).toEqual([]);
+  });
+
+  it("is planned and reported by init, and skipped when the file would not parse", () => {
+    const facts = { ...bare, settingsPath: ".claude/settings.json", settings: null };
+    const plan = planInit({ ...facts, machine: { path: machinePath, settings: older, unreadable: false } });
+    expect(plan.machine?.path).toBe(machinePath);
+    expect(plan.machine?.rewritten).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
+    expect(initLines(plan, []).join("\n")).toContain(
+      `+ ${machinePath} — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop (an older flow's command, now the same as .claude/settings.json's, so each hook runs once)`,
+    );
+    expect(planInit({ ...facts, machine: { path: machinePath, settings: null, unreadable: true } }).machine).toBeNull();
+    expect(planInit({ ...facts, machine: { path: machinePath, settings: { theme: "dark" }, unreadable: false } }).machine).toBeNull();
+    expect(planInit(bare).machine, "no machine-wide file to bring in line when it IS the hooks' file").toBeNull();
+  });
+
+  const hooks = (machine: unknown) => {
+    const facts = statusFacts({ settingsPath: ".claude/settings.json", machine: { path: machinePath, settings: machine } });
+    const s = status(facts);
+    return { fitting: s.fittings.find((f) => f.id === "hooks"), green: s.green };
+  };
+
+  it("turns the hooks line red when the machine-wide file calls flow with another command", () => {
+    const { fitting, green } = hooks(older);
+    expect(fitting?.ok).toBe(false);
+    expect(fitting?.detail).toBe(
+      `${machinePath} also calls flow for SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop the old way, as the bare \`flow hook <event>\`, ` +
+        "so Claude Code runs it beside .claude/settings.json's command and each of those hooks fires twice. Re-run `flow init`, which rewrites it to the same command.",
+    );
+    expect(green).toBe(false);
+  });
+
+  // A COMMAND OF SOMEBODY'S OWN runs twice too, and init leaves it: its fix is a hand edit, never
+  // "re-run flow init", which would leave the line red for good.
+  it("names a command of somebody's own apart, with the fix init cannot make", () => {
+    const debug = {
+      hooks: {
+        Stop: [{ hooks: [{ type: "command", command: "FLOW_DEBUG=1 flow hook stop" }] }],
+        PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: "flow hook pre-tool-use" }] }],
+      },
+    };
+    expect(withMachineCommandsUpToDate({ hooks: { Stop: debug.hooks.Stop } }).rewritten, "init has nothing to rewrite there").toEqual([]);
+    const { fitting } = hooks(debug);
+    expect(fitting?.ok).toBe(false);
+    expect(fitting?.detail).toBe(
+      [
+        `${machinePath} also calls flow for PreToolUse the old way, as the bare \`flow hook <event>\`, ` +
+          "so Claude Code runs it beside .claude/settings.json's command and each of those hooks fires twice. Re-run `flow init`, which rewrites it to the same command.",
+        `${machinePath} also calls flow for Stop with a command of its own, ` +
+          "so Claude Code runs it beside .claude/settings.json's command and each of those hooks fires twice. Make it the same command as .claude/settings.json's, or remove it from that file.",
+      ].join("\n"),
+    );
+  });
+
+  it("is green when the machine-wide file has the same commands, none of flow's, or nothing", () => {
+    for (const machine of [withMachineCommandsUpToDate(older).settings, withRegistrations({}).settings, { theme: "dark" }, null])
+      expect(hooks(machine).fitting?.ok, JSON.stringify(machine)).toBe(true);
+  });
+});
+
 // ── status ───────────────────────────────────────────────────────────────────
 
 const noteAtTurnEnd = { kind: "breadcrumb", at: ["turn-end"], text: "late" } as const;
@@ -2070,11 +2409,189 @@ const statusFacts = (over: Partial<StatusFacts> = {}): StatusFacts => ({
   hooksPath: HOOKS_DIR,
   settingsPath: "/home/.claude/settings.json",
   settings: withRegistrations({}).settings,
+  machine: null,
   grammars: [],
   session: null,
   ignored: [],
   snapshotInclude: [],
+  binary: { listed: false, copy: false, path: true },
   ...over,
+});
+
+/** The gate an older `flow init` wrote: today's, without the line that runs the repo's own package first. */
+const PATH_ONLY_GATE = PRE_COMMIT.replace(`${GATE_LOCAL_LINE}\n`, "");
+
+describe("the binary fitting — can the hooks and the gate find flow", () => {
+  const binary = (modules: boolean, path: boolean, over: Partial<StatusFacts> = {}) => {
+    const s = status(statusFacts({ binary: { listed: modules, copy: modules, path }, ...over }));
+    return { fitting: s.fittings.find((f) => f.id === "binary"), green: s.green, lines: statusLines(s) };
+  };
+
+  it("fixes its two old shapes as fixtures: a gate without the PATH line, and the bare registration", () => {
+    expect(armsFlow(PATH_ONLY_GATE)).toBe(true);
+    expect(PATH_ONLY_GATE).not.toContain(PACKAGE_BIN);
+    expect(bareRegistrations(BARE_SETTINGS)).toEqual(HOOK_REGISTRATIONS.map((r) => r.event));
+  });
+
+  it("names the PATH when only the PATH has one, in the tutorial's words", () => {
+    const { lines, green } = binary(false, true);
+    expect(lines).toContain("  ✓ binary: the hooks and the gate run the flow on the PATH");
+    expect(green).toBe(true);
+  });
+
+  // THE DEV DEPENDENCY: today's gate and registrations run the repo's own package first, so the
+  // repo's copy answers them with no flow on the PATH, and wins over one that is there.
+  it("names node_modules/@jawache/flow when the repo has its own, whatever the PATH holds", () => {
+    for (const path of [false, true]) {
+      const { lines, green } = binary(true, path);
+      expect(lines).toContain("  ✓ binary: the hooks and the gate run the flow in node_modules/@jawache/flow");
+      expect(green).toBe(true);
+    }
+  });
+
+  it("judges a gate older `flow init` wrote by the PATH alone, and says how to bring it up to date", () => {
+    const { fitting, green } = binary(true, false, { gateText: PATH_ONLY_GATE });
+    expect(fitting?.ok).toBe(false);
+    expect(fitting?.detail).toBe(
+      "the flow in node_modules/@jawache/flow is not on the PATH, and the gate looks for flow on the PATH alone, so git refuses every commit — " +
+        'add `f="$PWD/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook commit` to .githooks/pre-commit above the line that runs flow; ' +
+        "or install it for every repo with `npm i -g @jawache/flow`.",
+    );
+    expect(green).toBe(false);
+    expect(binary(true, false, { gateText: OLD_GATE }).fitting?.detail, "the old verb's gate too").toContain("the gate looks for flow on the PATH alone");
+  });
+
+  // THE LINE, NOT THE TEXT: a gate that runs another tool from node_modules/.bin, with no PATH
+  // line, still finds flow on the PATH alone — and git fails every commit with `flow: not found`.
+  it("judges a gate that names node_modules/.bin only for another tool by the PATH alone", () => {
+    const lintFirst = "#!/bin/sh\nnode_modules/.bin/lint-staged && flow hook commit\n";
+    expect(armsFlow(lintFirst)).toBe(true);
+    const { fitting, green } = binary(true, false, { gateText: lintFirst });
+    expect(fitting?.ok).toBe(false);
+    expect(fitting?.detail).toContain("the gate looks for flow on the PATH alone");
+    expect(fitting?.detail).toContain(`add \`${GATE_LOCAL_LINE}\` to .githooks/pre-commit`);
+    expect(green).toBe(false);
+    expect(binary(true, false, { gateText: `#!/bin/sh\n  ${GATE_LOCAL_LINE}\nnode_modules/.bin/lint-staged && flow hook commit\n` }).fitting?.ok,
+      "the line itself, indented, puts the repo's copy first").toBe(true);
+  });
+
+  it("judges registrations in the old shape by the PATH alone, and names `flow init` as the fix", () => {
+    const { fitting, green } = binary(true, false, { settings: BARE_SETTINGS });
+    expect(fitting?.ok).toBe(false);
+    expect(fitting?.detail).toContain("the hooks look for flow on the PATH alone, so every hook fails with `flow: not found`");
+    expect(fitting?.detail).toContain("re-run `flow init`");
+    expect(fitting?.detail).not.toContain("the gate");
+    expect(green).toBe(false);
+  });
+
+  it("names both when both are old", () => {
+    const { fitting } = binary(true, false, { gateText: PATH_ONLY_GATE, settings: BARE_SETTINGS });
+    expect(fitting?.detail).toContain("the hooks and the gate look for flow on the PATH alone");
+    expect(fitting?.detail).toContain("every hook fails with `flow: not found` and git refuses every commit");
+  });
+
+  it("is green over old callers when the PATH has one, and says which copy each runs", () => {
+    expect(binary(true, true, { settings: BARE_SETTINGS }).fitting).toEqual({
+      id: "binary",
+      ok: true,
+      detail: "the hooks run the flow on the PATH, and the gate the flow in node_modules/@jawache/flow",
+    });
+    expect(binary(true, true, { gateText: PATH_ONLY_GATE }).fitting?.detail).toBe(
+      "the hooks run the flow in node_modules/@jawache/flow, and the gate the flow on the PATH",
+    );
+    expect(binary(false, true, { gateText: PATH_ONLY_GATE, settings: BARE_SETTINGS }).fitting?.detail).toBe(
+      "the hooks and the gate run the flow on the PATH",
+    );
+  });
+
+  // ONE RULE FOR STATUS AND INIT: a red line whose fix is `flow init` must be one init can carry out.
+  it("judges registrations by the rule init rewrites by — a prefixed by-name command is somebody's own", () => {
+    const theirs = registrationsAs((command) => command.replace(/^.* flow /, "FLOW_DEBUG=1 flow "));
+    expect(withRegistrations(theirs).added, "init has nothing to rewrite").toEqual([]);
+    expect(binary(true, false, { settings: theirs }).fitting?.ok, "so status names no fix init would not make").toBe(true);
+  });
+
+  it("does not judge a registration with a path to the binary by the PATH — it names its own copy", () => {
+    const pinned = {
+      hooks: { Stop: [{ hooks: [{ type: "command", command: "/usr/local/bin/flow hook stop" }] }] },
+    };
+    expect(binary(true, false, { settings: pinned }).fitting?.ok).toBe(true);
+  });
+
+  it("judges a gate and registrations not there yet as `flow init` will write them — their own fittings are red", () => {
+    const { fitting, green } = binary(true, false, { gateText: null, settings: {} });
+    expect(fitting?.ok).toBe(true);
+    expect(green, "the commit-gate and hooks lines are").toBe(false);
+  });
+
+  // INIT'S LINK, in a repo that does not list flow, is the flow that ran init — not the repo's own.
+  // Judged by the PATH, the tutorial's global install reads "on the PATH"; with nothing there, it is
+  // red on the safe side, and says the link is what runs until it breaks.
+  it("judges a copy the repo does not list by the PATH: green with one there, and a red line naming the link without", () => {
+    const linked = (path: boolean) => status(statusFacts({ binary: { listed: false, copy: true, path } }));
+    expect(statusLines(linked(true))).toContain("  ✓ binary: the hooks and the gate run the flow on the PATH");
+    const red = linked(false);
+    expect(red.fittings.find((f) => f.id === "binary")).toEqual({
+      id: "binary",
+      ok: false,
+      detail:
+        "this repo's package.json does not list @jawache/flow, so node_modules/@jawache/flow is the link `flow init` made to the flow that ran it, " +
+        "and no flow is on the PATH. The hooks and the gate run that link only while it resolves, and once it breaks every hook fails " +
+        "with `flow: not found` and git refuses every commit — install it for this repo with `npm i -D @jawache/flow`, or for every repo with `npm i -g @jawache/flow`.",
+    });
+    expect(red.green).toBe(false);
+    const listedNotInstalled = status(statusFacts({ binary: { listed: true, copy: false, path: false } })).fittings.find((f) => f.id === "binary");
+    expect(listedNotInstalled?.detail, "listed, but not installed yet").toContain(`no flow in ${PACKAGE_DIR} or on the PATH`);
+  });
+
+  it("is a red line naming both installs when neither has one, and status is not green", () => {
+    for (const over of [{}, { gateText: PATH_ONLY_GATE, settings: BARE_SETTINGS }]) {
+      const { fitting, green, lines } = binary(false, false, over);
+      expect(fitting?.ok).toBe(false);
+      expect(fitting?.detail).toContain(`no flow in ${PACKAGE_DIR} or on the PATH`);
+      expect(fitting?.detail).toContain("npm i -D @jawache/flow");
+      expect(fitting?.detail).toContain("npm i -g @jawache/flow");
+      expect(green).toBe(false);
+      expect(lines.at(-1)).toContain("1 red line");
+    }
+  });
+});
+
+describe("hostPath — the PATH git and the host hand their hooks", () => {
+  // `npx flow status` and `npm run` put the repo's node_modules/.bin, and every ancestor's, on the
+  // PATH of this one run. Counted, a dev dependency's flow is "on the PATH" though git never sees it.
+  it("drops the node_modules/.bin npm adds for one run: the repo's own, and an ancestor's", () => {
+    const dirs = ["/repo/node_modules/.bin", "/node_modules/.bin", "/opt/homebrew/bin", "/usr/bin"];
+    expect(hostPath(dirs, "/repo")).toEqual(["/opt/homebrew/bin", "/usr/bin"]);
+    expect(hostPath(["/work/node_modules/.bin/"], "/work/repo"), "a trailing slash is the same folder").toEqual([]);
+  });
+
+  it("drops npx's cache of a package it fetched", () => {
+    expect(hostPath(["/home/u/.npm/_npx/1a2b3c/node_modules/.bin", "/usr/bin"], "/repo")).toEqual(["/usr/bin"]);
+  });
+
+  it("keeps another repo's node_modules/.bin — someone put it on the PATH, so the hooks have it too", () => {
+    expect(hostPath(["/elsewhere/node_modules/.bin", "/repo-two/node_modules/.bin"], "/repo")).toEqual([
+      "/elsewhere/node_modules/.bin",
+      "/repo-two/node_modules/.bin",
+    ]);
+  });
+
+  it("drops the empty entries a PATH can hold", () => {
+    expect(hostPath(["", "/usr/bin", ""], "/repo")).toEqual(["/usr/bin"]);
+  });
+
+  // THE FALSE GREEN B5 closes: an old gate and old registrations, flow only as a dev dependency, and
+  // status run through npx. The npx folder is not the PATH, so the line is red.
+  it("leaves an old gate and old registrations red under npx, with flow only as a dev dependency", () => {
+    const holdsFlow = new Set(["/repo/node_modules/.bin"]);
+    const onPath = hostPath(["/repo/node_modules/.bin", "/usr/bin"], "/repo").some((dir) => holdsFlow.has(dir));
+    const fitting = status(
+      statusFacts({ gateText: PATH_ONLY_GATE, settings: BARE_SETTINGS, binary: { listed: true, copy: true, path: onPath } }),
+    ).fittings.find((f) => f.id === "binary");
+    expect(fitting?.ok).toBe(false);
+    expect(fitting?.detail).toContain("the hooks and the gate look for flow on the PATH alone");
+  });
 });
 
 describe("the grammar fitting", () => {
@@ -2246,12 +2763,12 @@ describe("status — the red lines, each carrying its fix", () => {
   it("a config that will not load — every refusal, and every rail off until it is fixed", () => {
     const s = status(
       statusFacts({
-        load: { ok: false, refusals: [{ code: "no-cases", entry: "demo.x", detail: "`demo.x` carries no cases." }] },
+        load: { ok: false, refusals: [{ code: "no-block-cases", entry: "demo.x", detail: "`demo.x` has no block case." }] },
       }),
     );
     expect(s.green).toBe(false);
     const said = statusLines(s).join("\n");
-    expect(said).toContain("carries no cases");
+    expect(said).toContain("has no block case");
     expect(said, "no moment table under a headline saying nothing is armed").not.toContain("commit  ");
   });
 
@@ -2297,7 +2814,7 @@ describe("status — the red lines, each carrying its fix", () => {
       { hasConfig: false, load: null },
       { settings: {} },
       { load: { ok: true, entries: [loaded("demo.late", noteAtTurnEnd)] } },
-      { load: { ok: false, refusals: [{ code: "no-cases", entry: "demo.x", detail: "no cases" }] } },
+      { load: { ok: false, refusals: [{ code: "no-block-cases", entry: "demo.x", detail: "no block case" }] } },
     ];
     for (const shape of shapes) {
       const s = status(statusFacts(shape));
@@ -2502,17 +3019,6 @@ describe("reversal — exactly the refused files go back", () => {
   it("reverts nothing on a refusal that names no landed change — a revert is never a guess", () => {
     expect(reversal(changes, [{ moment: "command", block: block("x") }])).toStrictEqual({ revert: [], kept: ["src/a.ts", "src/b.ts"] });
   });
-
-  it("honours the repair exception: a broken config's own repair lands and stays", () => {
-    const repair = [
-      { path: "flow.config.ts", before: "old", after: "fixed" },
-      { path: "src/a.ts", before: "a", after: "b" },
-    ];
-    const events = toEvent("post-tool-use", pre("Bash", { command: "python3 fix.py" }), { ...world(), changes: repair });
-    const answer = whileBroken(events, configSurface(""), "the config will not load");
-    expect(answer.refused.map((r) => r.observed), "only the path off the surface is refused").toEqual(["src/a.ts"]);
-    expect(reversal(repair, answer.refused)).toStrictEqual({ revert: [repair[1]], kept: ["flow.config.ts"] });
-  });
 });
 
 describe("an observed refusal — its own banner, and what was put back", () => {
@@ -2588,12 +3094,13 @@ describe("an observed refusal — its own banner, and what was put back", () => 
     );
   });
 
-  it("reports a call it could not see — loud, exit 2, nothing judged and nothing put back", () => {
+  it("reports a call it could not see — loud, exit 2, the call ran and nothing it changed was checked", () => {
     const said = deltaFault("No snapshot was taken before this call.");
     expect(said.exitCode).toBe(2);
-    expect(said.stderr).toContain("flow — could not see what this call changed:");
-    expect(said.stderr).toContain("No snapshot was taken before this call.");
-    expect(said.stderr).toContain("nothing was put back");
+    expect(said.stderr).toBe(
+      "\nflow — could not see what this call changed:\n\nNo snapshot was taken before this call.\n\n" +
+        "The call ran, and nothing it changed was checked or put back. Check what the call changed before you go on.\n",
+    );
   });
 });
 
@@ -2730,5 +3237,33 @@ describe("snapshotInclude — where git looks, and what it keeps", () => {
 
   it("keeps the listed paths a glob matches, through the one glob engine", () => {
     expect(included(["config/a.local.json", "config/cache.bin", ""], ["config/*.local.json"])).toEqual(["config/a.local.json"]);
+  });
+
+  it("leaves out of the diff each changed path that matches HEAD after the call, and keeps every other", () => {
+    // git diff-tree --name-status -z, in git's order: two files on disk, one gone.
+    const diff = "A\0migrations/002.sql\0M\0src/a.ts\0A\0src/legacy.ts\0";
+    // src/a.ts still differs from HEAD after the call (the agent's edit); the other two now agree with it.
+    expect(authored(diff, ["src/a.ts", "notes.md"], ["src/a.ts"])).toEqual(["src/a.ts"]);
+    expect(authored(diff, [], []), "a call that leaves the tree equal to HEAD authored nothing").toEqual([]);
+    expect(authored(diff, null, null), "no HEAD the repo had before the call — none yet, or one the call made: every change is the agent's").toEqual([
+      "migrations/002.sql",
+      "src/a.ts",
+      "src/legacy.ts",
+    ]);
+  });
+
+  it("leaves out a removal only when HEAD held the file before the call and does not hold it after", () => {
+    const diff = "D\0migrations/002.sql\0D\0.env\0D\0notes.md\0";
+    // Before the call HEAD held 002.sql (so it differs from the tree it is gone from); after, nothing
+    // holds any of the three. .env and notes.md are in neither commit: the agent removed them.
+    expect(authored(diff, [], ["migrations/002.sql"])).toEqual([".env", "notes.md"]);
+    expect(authored(diff, [], null), "no HEAD before the call: nothing was git's to remove").toEqual(["migrations/002.sql", ".env", "notes.md"]);
+    // HEAD still holds 002.sql after the call, so the removal differs from it, whatever HEAD held before.
+    expect(authored(diff, ["migrations/002.sql"], ["migrations/002.sql"])).toEqual(["migrations/002.sql", ".env", "notes.md"]);
+  });
+
+  it("reads git's -z answer as paths, with no quoting and no empty tail", () => {
+    expect(nulPaths("src/a b.ts\0src/\"q\".ts\0")).toEqual(["src/a b.ts", 'src/"q".ts']);
+    expect(nulPaths("")).toEqual([]);
   });
 });

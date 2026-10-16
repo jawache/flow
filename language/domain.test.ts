@@ -15,7 +15,6 @@ import {
   BREADCRUMB_MOMENTS,
   type BreadcrumbSpec,
   cannedWorld,
-  type Cases,
   chain,
   type Check,
   checkSettings,
@@ -35,17 +34,24 @@ import {
   GUARDRAIL_KEYS,
   GUARDRAIL_MOMENTS,
   type GuardrailSpec,
-  hasCases,
   isBreadcrumbMoment,
   isCategory,
   isGuardrailMoment,
   isPathMoment,
+  parseShellSteps,
+  type ShellStep,
+  type ShellWord,
+  stepCommands,
   isSentence,
   loadConfig,
   makeCtx,
   overlay,
   override,
   pack,
+  parseCommandLine,
+  programName,
+  elideHeredocBodies,
+  type ShellCommand,
   BRIEF_SCOPE_MOMENTS,
   withFaults,
   isScopable,
@@ -190,7 +196,7 @@ describe("defineCategory", () => {
     ).toBe(false);
   });
 
-  it("can classify the parent by absence — no sidecar, no agent type", () => {
+  it("can classify the parent by absence — not spawned, no agent type", () => {
     const parent = defineCategory("parent", (s) => !s.subagent);
     expect(parent.classify(facts())).toBe(true);
     expect(parent.classify(facts({ subagent: true, agentType: "builder" }))).toBe(false);
@@ -298,6 +304,543 @@ describe("makeCtx — the ONE assembler", () => {
     }
     const built = makeCtx("command", { command: "ls" }, new Adapter());
     expect((await built.exec("ls")).stdout).toBe("live:ls");
+  });
+
+  it("fills ctx.commands wherever ctx.command is, so no caller can forget the parse", () => {
+    const built = makeCtx("command", { command: "git push origin main; ls -f" }, spy().world);
+    expect(built.commands?.map((c) => c.text)).toEqual(["git push origin main", "ls -f"]);
+    expect(makeCtx("command", { command: 'echo "oops' }, spy().world).commands).toBeNull();
+    expect(makeCtx("write", { file: { path: "a.ts", content: "x" } }, spy().world).commands).toBeUndefined();
+  });
+
+  it("keeps a parse its caller already made, rather than parsing the line again", () => {
+    const parsed = parseCommandLine("ls") ?? [];
+    expect(makeCtx("command", { command: "ls", commands: parsed }, spy().world).commands).toBe(parsed);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE PARSE — a shell line read as code
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+describe("programName — a program without its path", () => {
+  it("drops the path a command was run by, and leaves a bare name as it is", () => {
+    expect(programName("/usr/bin/git")).toBe("git");
+    expect(programName("node_modules/.bin/vitest")).toBe("vitest");
+    expect(programName("git")).toBe("git");
+    expect(programName("/usr/bin/")).toBe("");
+  });
+});
+
+describe("parseCommandLine — the 45 hand-labelled commands from triage's bake-off", () => {
+  // Lifted from LABELLED in the bake-off that chose unbash (.work/tmp/bakeoff/bakeoff.mjs, #17).
+  // Each label is what a shell does with the line: the programs that run, in the order they appear,
+  // nested ones included; each heredoc's owner and whether its delimiter is quoted; and the
+  // programs a substitution runs. One label differs from the bake-off's on purpose: `bash -c`
+  // lists the commands in its string, which the bake-off did not ask of any parser.
+  interface Label {
+    readonly programs: readonly string[] | null;
+    readonly heredocs?: readonly (readonly [string, boolean])[];
+    readonly spliced?: readonly string[];
+  }
+  const L = (programs: readonly string[] | null, extra: Omit<Label, "programs"> = {}): Label => ({ programs, ...extra });
+  const LABELLED: Record<string, readonly [string, Label]> = {
+    // the issue's cases
+    "#14 keyfile": ['grep -n "a" src/RoomMap.tsx | head -20; echo ---; grep -n "square.key" src/RoomBingoCard.tsx | head -12', L(["grep", "head", "echo", "grep", "head"])],
+    "#9 push;ls": ["git push origin main; ls -f", L(["git", "ls"])],
+    "#9 push;gh": ["git push origin HEAD; gh api graphql -f query=x", L(["git", "gh"])],
+    "#9 push&&gh": ["git push && gh api -f a=b repos/x/y", L(["git", "gh"])],
+    "#4 body prose": ['gh issue create --body "the builder ran npx vitest run instead of just test"', L(["gh"])],
+    "#4 echo": ["echo 'npx vitest run'", L(["echo"])],
+    "#10A": ["gh pr create --body-file - <<'EOF'\nRun \"`just test`\" before merging.\nEOF", L(["gh"], { heredocs: [["gh", true]], spliced: [] })],
+    "#10B": [
+      "gh issue view 35 --json body --jq .body > body.md\npython3 - <<'EOF'\nnew = f\"\"\"- **Docs** `work` starts the daemon\"\"\"\nEOF",
+      L(["gh", "python3"], { heredocs: [["python3", true]], spliced: [] }),
+    ],
+    "#10C": ["gh issue view 1 > old.md\ncat > new.md <<'EOF'\nsay \"run `just test`\"\nEOF", L(["gh", "cat"], { heredocs: [["cat", true]], spliced: [] })],
+    "#11D": ['gh issue comment 1 --body "run \\`just test\\` first"', L(["gh"], { spliced: [] })],
+    "#11E": ['gh issue view 10 --json body --jq .body | grep -n "x\\\\\\\\\\`"', L(["gh", "grep"], { spliced: [] })],
+    "#11F": ['gh issue comment 1 --body "run `just test` first"', L(["gh", "just"], { spliced: ["just"] })],
+    "#9 two heredocs": ["python3 - <<'EOF'\nprint(1)\nEOF\ngit commit -F - <<'EOF'\nfix: a thing\nEOF", L(["python3", "git"], { heredocs: [["python3", true], ["git", true]] })],
+    "unquoted $(cat <<EOF)": ['git commit -m "$(cat <<EOF\nfix: a `thing`\nEOF\n)"', L(["git", "cat", "thing"], { heredocs: [["cat", false]], spliced: ["cat", "thing"] })],
+    // quoting and splitting traps
+    "ops in dquotes": ['echo "a; b && c | d"', L(["echo"])],
+    "adjacent squotes": ["echo 'it''s'; ls", L(["echo", "ls"])],
+    "heredoc body ops": ["cat <<EOF\na; b | c\ndon't\nEOF", L(["cat"], { heredocs: [["cat", false]] })],
+    "<<- tabs": ["cat <<-EOF\n\tx; y\n\tEOF\necho done", L(["cat", "echo"], { heredocs: [["cat", false]] })],
+    "<<\\X escaped": ["cat <<\\X\n$(rm -rf /)\nX", L(["cat"], { heredocs: [["cat", true]], spliced: [] })],
+    'cat << "EOF"': ['cat << "EOF" > f\n`danger`\nEOF', L(["cat"], { heredocs: [["cat", true]], spliced: [] })],
+    "unquoted heredoc subst": ['python3 - <<EOF\nprint("$(whoami)")\nEOF', L(["python3", "whoami"], { heredocs: [["python3", false]], spliced: ["whoami"] })],
+    "two heredocs one line": ["paste <(cat) <<A\na\nA", L(["paste", "cat"], { heredocs: [["paste", false]] })],
+    subshell: ["(cd x && make) || echo fail", L(["cd", "make", "echo"])],
+    "group redirect": ["{ a; b; } > out", L(["a", "b"])],
+    "for loop": ['for f in *.ts; do wc -l "$f"; done', L(["wc"])],
+    if: ["if [ -f x ]; then rm x; fi", L(["[", "rm"])],
+    "while <": ['while read l; do echo "$l"; done < file', L(["read", "echo"])],
+    "assign subst": ["x=$(git rev-parse HEAD) && echo $x", L(["git", "echo"], { spliced: ["git"] })],
+    "process subst": ["diff <(sort a) <(sort b)", L(["diff", "sort", "sort"], { spliced: ["sort", "sort"] })],
+    backquote: ["echo `date`", L(["echo", "date"], { spliced: ["date"] })],
+    "line continuation": ["ls \\\n  -la", L(["ls"])],
+    "; in squoted fmt": ["git log --format='%H;%s' | head", L(["git", "head"])],
+    "comment ;": ["npm test # runs; everything", L(["npm"])],
+    "background &": ["a & b", L(["a", "b"])],
+    case: ["case $x in a) echo a;; b) echo b;; esac", L(["echo", "echo"])],
+    "env prefix": ['FOO=1 BAR="x y" node app.js', L(["node"])],
+    "python writes rm text": ["cat > f.py <<'PY'\nimport os; os.system(\"rm -rf /\")\nPY\npython3 f.py", L(["cat", "python3"], { heredocs: [["cat", true]] })],
+    "quoted heredoc in $()": ["git commit -m \"$(cat <<'EOF'\nfeat: x; y `z`\nEOF\n)\"", L(["git", "cat"], { heredocs: [["cat", true]], spliced: ["cat"] })],
+    "nested dquote subst": ['echo "$(echo "nested \\"q\\"; x")"', L(["echo", "echo"], { spliced: ["echo"] })],
+    "param ;": ["echo ${x:-a;b}", L(["echo"])],
+    arith: ["echo $(( 1 + 2 )); ls", L(["echo", "ls"])],
+    "[[ ]]": ['[[ $a == "b;c" ]] && echo y', L(["echo"])],
+    "pipe into sh": ['cat << "EOF" | sh\nrm -rf x\nEOF', L(["cat", "sh", "rm"], { heredocs: [["cat", true]], spliced: ["rm"] })],
+    "bash -c string": ["bash -c 'npx vitest run; ls'", L(["bash", "npx", "ls"], { spliced: ["npx", "ls"] })],
+    "unclosed quote": ['echo "oops', L(null)],
+  };
+
+  for (const [name, [line, label]] of Object.entries(LABELLED)) {
+    it(name, () => {
+      const parsed = parseCommandLine(line);
+      if (label.programs === null) {
+        expect(parsed).toBeNull();
+        return;
+      }
+      expect(parsed?.map((c) => c.program)).toEqual(label.programs);
+      if (label.heredocs !== undefined)
+        expect(parsed?.flatMap((c) => c.heredocs.map((h) => [c.program, h.quoted]))).toEqual(label.heredocs);
+      if (label.spliced !== undefined) expect(parsed?.filter((c) => c.nested).map((c) => c.program)).toEqual(label.spliced);
+    });
+  }
+});
+
+describe("parseCommandLine — a heredoc piped into a shell, and a here-string", () => {
+  const programs = (line: string): (string | null)[] | null => parseCommandLine(line)?.map((c) => (c.nested ? `>${c.program}` : c.program)) ?? null;
+
+  it("reads the heredoc of an earlier stage as the script of a later shell that reads its stdin", () => {
+    expect(programs("cat <<'EOF' | bash -s\nls; rm -rf x\nEOF")).toEqual(["cat", "bash", ">ls", ">rm"]);
+    expect(programs("cat <<EOF | grep . | sh\nrm -rf x\nEOF")).toEqual(["cat", "grep", "sh", ">rm"]);
+    expect(programs("cat <<'EOF' | eval\nrm -rf x\nEOF")).toEqual(["cat", "eval", ">rm"]);
+  });
+
+  it("leaves the body alone when no later stage reads it as a script", () => {
+    expect(programs("cat <<'EOF' | python3\nrm -rf x\nEOF")).toEqual(["cat", "python3"]);
+    expect(programs("cat <<'EOF' | bash script.sh\nrm -rf x\nEOF")).toEqual(["cat", "bash"]);
+    expect(programs("sh -s | cat <<'EOF'\nrm -rf x\nEOF")).toEqual(["sh", "cat"]);
+  });
+
+  it("reads a shell's own heredoc once, piped or not", () => {
+    expect(programs("bash <<'EOF' | sh\nls\nEOF")).toEqual(["bash", ">ls", "sh"]);
+  });
+
+  it("gives a here-string's text as its command's last argument, and no more", () => {
+    const [grep] = parseCommandLine('grep -c x <<< "a b" > out') ?? [];
+    expect(grep?.args).toEqual(["-c", "x", "a b"]);
+    expect(grep?.text).toBe("grep -c x a b");
+  });
+
+  it("reads a here-string fed to a shell as that shell's script, as it reads a heredoc", () => {
+    expect(programs("bash <<< 'rm -rf x'")).toEqual(["bash", ">rm"]);
+    expect(programs('sh -s -- a <<< "ls; rm -rf x"')).toEqual(["sh", ">ls", ">rm"]);
+    // A shell given a script file, or a `-c` string, reads its stdin as data.
+    expect(programs("bash run.sh <<< 'rm -rf x'")).toEqual(["bash"]);
+    expect(programs("bash -c 'cat' <<< 'rm -rf x'")).toEqual(["bash", ">cat"]);
+    expect(programs("grep x <<< 'rm -rf x'")).toEqual(["grep"]);
+    expect(programs("bash <<< 'echo \"oops'")).toBeNull();
+  });
+});
+
+// What a `banCommands` rule with `wholeLine` matches: the line as written, every heredoc body cut
+// out by where the parse found it, never by scanning for the delimiter again.
+describe("elideHeredocBodies", () => {
+  it("cuts every body and keeps the opener, the terminator and everything else as written", () => {
+    expect(elideHeredocBodies("python3 - <<'PY'\nprint('x; y')\nPY\nnpx vitest run")).toBe("python3 - <<'PY'\nPY\nnpx vitest run");
+    expect(elideHeredocBodies("cat <<-EOF\n\tx; y\n\tEOF\nls")).toBe("cat <<-EOF\n\tEOF\nls");
+    expect(elideHeredocBodies("cat <<A <<B\na\nA\nb\nB\nls")).toBe("cat <<A <<B\nA\nB\nls");
+    expect(elideHeredocBodies('git commit -m "subject\n\nbody"')).toBe('git commit -m "subject\n\nbody"');
+  });
+
+  it("cuts a body inside a substitution, and one inside an unquoted body once", () => {
+    expect(elideHeredocBodies('git commit -m "$(cat <<EOF\nfix: a\nEOF\n)"')).toBe('git commit -m "$(cat <<EOF\nEOF\n)"');
+    expect(elideHeredocBodies("cat <<A\n$(cat <<B\nb\nB\n)\nA")).toBe("cat <<A\nA");
+  });
+
+  it("keeps the body of a heredoc a shell reads, fed or piped, which is commands", () => {
+    for (const line of ["bash <<'EOF'\nls\nEOF", "cat <<'EOF' | sh\nls\nEOF"]) expect(elideHeredocBodies(line)).toBe(line);
+    expect(elideHeredocBodies("cat <<'EOF' | python3\nls\nEOF")).toBe("cat <<'EOF' | python3\nEOF");
+  });
+
+  it("leaves a heredoc inside a string a shell is given, which is part of that string", () => {
+    const line = "bash -c 'cat <<E\nx\nE'";
+    expect(elideHeredocBodies(line)).toBe(line);
+  });
+
+  it("is null for a line that does not parse", () => {
+    expect(elideHeredocBodies('echo "oops')).toBeNull();
+  });
+});
+
+describe("parseCommandLine — the six fields", () => {
+  const only = (line: string): ShellCommand => {
+    const parsed = parseCommandLine(line);
+    expect(parsed).toHaveLength(1);
+    return (parsed ?? [])[0] as ShellCommand;
+  };
+
+  it("hands each argument over as the program receives it, quotes removed, and joins them as text", () => {
+    expect(only(`gh issue create --body "ran npx vitest run" 'a b' c\\ d`)).toEqual({
+      program: "gh",
+      args: ["issue", "create", "--body", "ran npx vitest run", "a b", "c d"],
+      text: "gh issue create --body ran npx vitest run a b c d",
+      heredocs: [],
+      substitutions: [],
+      redirects: [],
+      nested: false,
+    });
+  });
+
+  it("lists each redirect on its command, as operator and target, and a heredoc or here-string as none", () => {
+    expect(only("go test ./... > out.log 2>&1").redirects).toEqual([
+      { operator: ">", target: "out.log" },
+      { operator: ">&", target: "1" },
+    ]);
+    expect(only("cat <<'EOF' >> README.md\nmore\nEOF").redirects).toEqual([{ operator: ">>", target: "README.md" }]);
+    expect(only("wc -l < in.txt").redirects).toEqual([{ operator: "<", target: "in.txt" }]);
+    expect(only("cat <<< x").redirects).toEqual([]);
+    expect(only('grep -rn "a > b" docs').redirects, "a > inside quotes is an argument").toEqual([]);
+  });
+
+  it("lists a group's or a loop's redirects on each command inside it, and not on a command in a substitution", () => {
+    const group = parseCommandLine("{ echo a; echo $(date); } > out.log") ?? [];
+    expect(group.map((c) => [c.program, c.redirects])).toEqual([
+      ["echo", [{ operator: ">", target: "out.log" }]],
+      ["echo", [{ operator: ">", target: "out.log" }]],
+      ["date", []],
+    ]);
+    const loop = parseCommandLine("while read l; do echo $l; done < in.txt > out.txt") ?? [];
+    expect(loop.map((c) => c.redirects.map((r) => r.target))).toEqual([
+      ["in.txt", "out.txt"],
+      ["in.txt", "out.txt"],
+    ]);
+  });
+
+  it("hands an assignment given as an argument over as the program receives it", () => {
+    expect(only("export a+=x b[1]=y c=( 1 2 )").args).toEqual(["a+=x", "b[1]=y", "c=(1 2)"]);
+  });
+
+  it("attaches each heredoc to the command it feeds, with its body and whether it is quoted", () => {
+    const [python, git] = parseCommandLine("python3 - <<'EOF'\nprint(1)\nEOF\ngit commit -F - <<EOF\nfix: a thing\nEOF") ?? [];
+    expect(python?.heredocs).toEqual([{ body: "print(1)\n", quoted: true }]);
+    expect(git?.heredocs).toEqual([{ body: "fix: a thing\n", quoted: false }]);
+  });
+
+  it("counts every quoting of a heredoc delimiter as quoted: '…', \"…\" and a backslash, and their <<- forms", () => {
+    for (const opener of ["<<'X'", '<<"X"', "<<\\X", "<<-'X'", '<<-"X"', "<<-\\X"])
+      expect(only(`cat ${opener}\nbody\nX`).heredocs.map((h) => h.quoted)).toEqual([true]);
+    expect(only("cat <<-X\nbody\nX").heredocs.map((h) => h.quoted)).toEqual([false]);
+  });
+
+  it("records the substitutions the shell runs, with which spelling, and not the ones it does not", () => {
+    const [gh] = parseCommandLine('gh issue comment 1 --body "run `just test` and $(date)"') ?? [];
+    expect(gh?.substitutions.map(({ text, backtick }) => ({ text, backtick }))).toEqual([
+      { text: "just test", backtick: true },
+      { text: "date", backtick: false },
+    ]);
+    expect(only('gh issue comment 1 --body "run \\`just test\\` first"').substitutions).toEqual([]);
+    expect(only("gh issue comment 1 --body 'run `just test` first'").substitutions).toEqual([]);
+    expect(only("gh pr create --body-file - <<'EOF'\nRun `just test`\nEOF").substitutions).toEqual([]);
+    const [cat] = parseCommandLine("cat <<EOF\nRun `just test`\nEOF") ?? [];
+    expect(cat?.substitutions.map((sub) => [sub.text, sub.backtick])).toEqual([["just test", true]]);
+  });
+
+  it("lists the commands each substitution runs, as ctx.commands lists them, nested ones included", () => {
+    const parsed = parseCommandLine('echo "$(git log -1 | head -c `wc -c < f`)"') ?? [];
+    const [echo] = parsed;
+    const [sub] = echo?.substitutions ?? [];
+    expect(sub?.commands.map((c) => c.program)).toEqual(["git", "head", "wc"]);
+    expect(sub?.commands[0], "the same command ctx.commands lists").toBe(parsed[1]);
+    expect(sub?.commands.map((c) => c.nested)).toEqual([true, true, true]);
+  });
+
+  it("records the argument a substitution ends with only plain text before it, and that text", () => {
+    const placed = (line: string): (readonly [number | null, string | null])[] | undefined =>
+      parseCommandLine(line)?.[0]?.substitutions.map((sub) => [sub.argument, sub.prefix] as const);
+    expect(placed('git commit -m "$(cat <<\'EOF\'\nfix: a\nEOF\n)"')).toEqual([[2, ""]]);
+    expect(placed("echo $(date) `whoami`")).toEqual([[0, ""], [1, ""]]);
+    expect(placed("sudo -u root echo x $(date)"), "counted from the program, past the wrappers").toEqual([[1, ""]]);
+    // An option attached in front of it is plain text, quoted or not.
+    expect(placed('git commit -m"$(date)"')).toEqual([[1, "-m"]]);
+    expect(placed("git commit --message=$(date)")).toEqual([[1, "--message="]]);
+    expect(placed('echo "today: $(date)"')).toEqual([[0, "today: "]]);
+    // Something after it, an expansion or a second substitution before it, or no argument at all: none.
+    expect(placed('echo "$(date) today"')).toEqual([[null, null]]);
+    expect(placed('echo "$HOME $(date)"')).toEqual([[null, null]]);
+    expect(placed('echo "$(date)$(whoami)"')).toEqual([[null, null], [null, null]]);
+    expect(placed("$(which ls) -la")).toEqual([[null, null]]);
+    expect(placed("cat <<EOF\n$(date)\nEOF")).toEqual([[null, null]]);
+  });
+});
+
+describe("parseCommandLine — the program that runs", () => {
+  const programs = (line: string): (readonly [string, readonly string[]])[] | undefined =>
+    parseCommandLine(line)?.map((c) => [c.program, c.args] as const);
+
+  it("steps past every wrapper the banCommands page names, and an assignment", () => {
+    expect(programs("sudo rm -rf build")).toEqual([["rm", ["-rf", "build"]]]);
+    expect(programs("sudo -u root rm x")).toEqual([["rm", ["x"]]]);
+    expect(programs("env FOO=1 -u BAR node app.js")).toEqual([["node", ["app.js"]]]);
+    expect(programs("nohup make &")).toEqual([["make", []]]);
+    expect(programs("nice -n 5 make")).toEqual([["make", []]]);
+    expect(programs("time git push")).toEqual([["git", ["push"]]]);
+    expect(programs("sudo time -p git push")).toEqual([["git", ["push"]]]);
+    expect(programs("timeout 5 git push")).toEqual([["git", ["push"]]]);
+    expect(programs("timeout -s KILL --preserve-status 5s git push")).toEqual([["git", ["push"]]]);
+    expect(programs("command git push")).toEqual([["git", ["push"]]]);
+    expect(programs("exec node app.js")).toEqual([["node", ["app.js"]]]);
+    expect(programs("find . -name x | xargs -I {} -0 rm {}")).toEqual([
+      ["find", [".", "-name", "x"]],
+      ["rm", ["{}"]],
+    ]);
+    expect(programs("FOO=1 BAR=2 git push")).toEqual([["git", ["push"]]]);
+  });
+
+  it("steps past a chain of wrappers, and a wrapper named by its path", () => {
+    expect(programs("FOO=1 sudo env BAR=2 nice -n 5 timeout 10 nohup git push -f")).toEqual([["git", ["push", "-f"]]]);
+    expect(programs("/usr/bin/env node app.js")).toEqual([["node", ["app.js"]]]);
+  });
+
+  it("leaves a wrapper that runs nothing as the program", () => {
+    expect(programs("command -v rm")).toEqual([["command", ["-v", "rm"]]]);
+    expect(programs("env")).toEqual([["env", []]]);
+    expect(programs("exec >log")).toEqual([["exec", []]]);
+  });
+
+  it("lists no command for a line of assignments alone, but reads what they run", () => {
+    expect(programs("x=1")).toEqual([]);
+    expect(programs("x=$(git rev-parse HEAD)")).toEqual([["git", ["rev-parse", "HEAD"]]]);
+  });
+});
+
+describe("parseCommandLine — nested commands", () => {
+  const nested = (line: string): (readonly [string, boolean])[] | undefined => parseCommandLine(line)?.map((c) => [c.program, c.nested] as const);
+
+  it("reads a $( … ), a backtick and a <( … ) as commands of their own, nested", () => {
+    expect(nested("echo $(rm x) `rm y`; diff <(sort a) b")).toEqual([
+      ["echo", false],
+      ["rm", true],
+      ["rm", true],
+      ["diff", false],
+      ["sort", true],
+    ]);
+  });
+
+  it("reads the string given to bash -c, sh -c and eval", () => {
+    expect(nested("bash -c 'npx vitest run; ls'")).toEqual([
+      ["bash", false],
+      ["npx", true],
+      ["ls", true],
+    ]);
+    expect(nested('sh -ec "rm -rf x"')).toEqual([
+      ["sh", false],
+      ["rm", true],
+    ]);
+    expect(nested("bash -o pipefail -lc 'git push -f'")).toEqual([
+      ["bash", false],
+      ["git", true],
+    ]);
+    expect(nested('eval "rm -rf x && ls"')).toEqual([
+      ["eval", false],
+      ["rm", true],
+      ["ls", true],
+    ]);
+    expect(nested("xargs sh -c 'rm \"$1\"' _")).toEqual([
+      ["sh", false],
+      ["rm", true],
+    ]);
+  });
+
+  it("reads a heredoc fed to a shell, and not one fed to a shell that runs a script file", () => {
+    expect(nested("bash <<'EOF'\nrm -rf x\nEOF")).toEqual([
+      ["bash", false],
+      ["rm", true],
+    ]);
+    expect(nested("sh -s <<EOF\ngit push -f\nEOF")).toEqual([
+      ["sh", false],
+      ["git", true],
+    ]);
+    expect(nested("bash deploy.sh <<'EOF'\nrm -rf x\nEOF")).toEqual([["bash", false]]);
+    expect(nested("python3 - <<'EOF'\nrm -rf x\nEOF")).toEqual([["python3", false]]);
+  });
+
+  it("keeps a command nested at any depth", () => {
+    expect(nested("bash -c 'echo $(rm x)'")).toEqual([
+      ["bash", false],
+      ["echo", true],
+      ["rm", true],
+    ]);
+  });
+
+  // Every place bash runs a command while building another, and every compound command a simple
+  // one can sit inside: each line pins one branch of the walk, so a branch dropped is a case red.
+  const WHERE: Record<string, readonly (readonly [string, boolean])[]> = {
+    // arithmetic, in each of its node shapes
+    "echo $(( $(rm x) + 1 ))": [["echo", false], ["rm", true]],
+    "echo $(( -$(rm x) ))": [["echo", false], ["rm", true]],
+    "echo $(( a ? $(rm x) : 2 ))": [["echo", false], ["rm", true]],
+    "echo $(( ($(rm x)) ))": [["echo", false], ["rm", true]],
+    "echo $(( $x + 1 ))": [["echo", false]],
+    "(( $(rm y) ))": [["rm", true]],
+    "for ((i=$(rm w);;)); do :; done": [["rm", true], [":", false]],
+    // parameter expansions: each operation that carries a word, and one that carries none
+    "echo ${x/a/$(rm z)}": [["echo", false], ["rm", true]],
+    "echo ${x:2:$(rm v)}": [["echo", false], ["rm", true]],
+    "echo ${x^^$(rm c)}": [["echo", false], ["rm", true]],
+    "echo ${x[$(rm i)]}": [["echo", false], ["rm", true]],
+    "echo ${!x[@]}": [["echo", false]],
+    // [[ … ]], in each of its expression shapes
+    "[[ ! -f $(rm t) || -n x ]]": [["rm", true]],
+    "[[ ( -f $(rm t) ) ]]": [["rm", true]],
+    "[[ $(rm a) == b ]]": [["rm", true]],
+    // globs and braces
+    "echo {a,$(rm b)}": [["echo", false], ["rm", true]],
+    "echo @($(rm q)|b)": [["echo", false], ["rm", true]],
+    // redirections: before the name, a here-string, and a heredoc on a compound command
+    ">$(rm r) ls": [["ls", false], ["rm", true]],
+    "ls <<< $(rm h)": [["ls", false], ["rm", true]],
+    "while read l; do :; done <<EOF\n$(rm n)\nEOF": [["read", false], [":", false], ["rm", true]],
+    // assignments as arguments
+    "declare a=$(rm s)": [["declare", false], ["rm", true]],
+    "local -a b=( $(rm u) )": [["local", false], ["rm", true]],
+    // the compound commands
+    "if false; then :; else rm e; fi": [["false", false], [":", false], ["rm", false]],
+    "if false; then :; elif true; then rm e; fi": [["false", false], [":", false], ["true", false], ["rm", false]],
+    "f() { rm g; }": [["rm", false]],
+    "coproc rm h": [["rm", false]],
+    "select x in $(rm k); do :; done": [["rm", true], [":", false]],
+    "case $(rm m) in a) :;; esac": [["rm", true], [":", false]],
+    "! rm o": [["rm", false]],
+    "time rm p": [["rm", false]],
+    // the end of options, to a wrapper and to a shell
+    "sudo -- rm x": [["rm", false]],
+    "bash -- 'x'": [["bash", false]],
+    "bash --login <<EOF\nrm y\nEOF": [["bash", false], ["rm", true]],
+    "bash - <<EOF\nrm y\nEOF": [["bash", false], ["rm", true]],
+    "bash -c": [["bash", false]],
+    "sh -s deploy <<EOF\nrm y\nEOF": [["sh", false], ["rm", true]],
+    "bash -o pipefail deploy.sh": [["bash", false]],
+    // the walk's quiet ends: a glob and a brace with nothing in them, a parameter op with no word,
+    // a for with no list, and assignments with an index and an append
+    "echo {a,b} @(x|y) ${!pre*}": [["echo", false]],
+    "for x; do rm f; done": [["rm", false]],
+    "export a+=x b[1]=y": [["export", false]],
+  };
+
+  for (const [line, want] of Object.entries(WHERE)) {
+    it(`finds what runs in ${JSON.stringify(line)}`, () => {
+      expect(nested(line)).toEqual(want);
+    });
+  }
+});
+
+describe("parseShellSteps — the same parse, in the order the shell runs it", () => {
+  // A word as written, with each piece the shell expands marked, so `'$F'` reads apart from `$F`.
+  const written = (word: ShellWord): string =>
+    word.map((p) => (p.kind === "text" ? p.text : p.kind === "variable" ? `{${p.name}}` : p.kind === "tilde" ? "{~}" : "{?}")).join("");
+  // Each step as a short string, in the order the shell runs it: a command's substitutions first.
+  const shape = (steps: readonly ShellStep[]): unknown[] =>
+    steps.flatMap((step) =>
+      step.kind === "command"
+        ? [...shape(step.before), step.command.text]
+        : step.kind === "assign"
+          ? [`${step.name}=${written(step.value)}`]
+          : step.kind === "scope"
+            ? [{ scope: shape(step.body) }]
+            : [{ for: step.name, in: step.values.map(written), do: shape(step.body) }],
+    );
+  const steps = (line: string): unknown[] | null => {
+    const parsed = parseShellSteps(line);
+    return parsed === null ? null : shape(parsed);
+  };
+
+  it("lists a bare assignment as a step, and an assignment in front of a command as nothing", () => {
+    expect(steps("F=src/a.ts; cat $F")).toEqual(["F=src/a.ts", "cat $F"]);
+    expect(steps("F=$HOME/'$x'")).toEqual(["F={HOME}/$x"]);
+    expect(steps("X=1 cat a.ts")).toEqual(["cat a.ts"]);
+    expect(steps("F=$(pick)")).toEqual([{ scope: ["pick"] }, "F={?}"]);
+  });
+
+  it("lists each assignment a declaration makes as a step after it, and nothing for one that appends or sets an element", () => {
+    expect(steps("export F=src/a.ts G; cat $F")).toEqual(["export F=src/a.ts G", "F=src/a.ts", "cat $F"]);
+    expect(steps("declare -x F=$HOME/a")).toEqual(["declare -x F=$HOME/a", "F={HOME}/a"]);
+    expect(steps("local F=$(pick)")).toEqual([{ scope: ["pick"] }, "local F=$(pick)", "F={?}"]);
+    expect(steps("export F+=x A[1]=y")).toEqual(["export F+=x A[1]=y"]);
+    expect(steps("echo F=x")).toEqual(["echo F=x"]);
+  });
+
+  it("puts a subshell, a substitution and a string given to a shell in a scope of their own", () => {
+    expect(steps("(cd src; cat a.ts); cat b.ts")).toEqual([{ scope: ["cd src", "cat a.ts"] }, "cat b.ts"]);
+    // A substitution runs before the command whose word it builds.
+    expect(steps("echo $(cat a.ts)")).toEqual([{ scope: ["cat a.ts"] }, "echo $(cat a.ts)"]);
+    expect(steps("bash -c 'cd x && cat a.ts'")).toEqual(["bash -c cd x && cat a.ts", { scope: ["cd x", "cat a.ts"] }]);
+    // A brace group runs in the line's own shell, so it is no scope.
+    expect(steps("{ cd src; cat a.ts; }")).toEqual(["cd src", "cat a.ts"]);
+  });
+
+  it("gives a for loop its name, its values and its body", () => {
+    expect(steps("for f in a.ts b.ts; do cat $f; done")).toEqual([{ for: "f", in: ["a.ts", "b.ts"], do: ["cat $f"] }]);
+    expect(steps("for f in $D/a '$D/b'; do cat $f; done")).toEqual([{ for: "f", in: ["{D}/a", "$D/b"], do: ["cat $f"] }]);
+    expect(steps("for f; do cat $f; done")).toEqual([{ for: "f", in: [], do: ["cat $f"] }]);
+  });
+
+  it("keeps each word as written, a here-string out of them, and the wrappers stepped past before the program", () => {
+    const [step] = parseShellSteps("xargs -a list.txt grep x <<< 'some text'") ?? [];
+    if (step?.kind !== "command") throw new Error("no command step");
+    expect(step.command.args).toEqual(["x", "some text"]);
+    expect(step.words.map(written)).toEqual(["xargs", "-a", "list.txt", "grep", "x"]);
+    expect(step.at).toBe(3);
+    // Quoted and escaped text is text; only an unquoted `~` and an unquoted `$NAME` expand.
+    const [quoted] = parseShellSteps("cat '$HOME/a' \\$F ~/b '~/c' \"$G\" ${H} ${X:-y} $1 $(ls) < '$I'") ?? [];
+    if (quoted?.kind !== "command") throw new Error("no command step");
+    expect(quoted.words.map(written)).toEqual(["cat", "$HOME/a", "$F", "{~}/b", "~/c", "{G}", "{H}", "{?}", "{?}", "{?}"]);
+    expect(quoted.redirects.map((r) => `${r.operator} ${written(r.target)}`)).toEqual(["< $I"]);
+    // A `${…}` is a variable only with no prefix, index or operation, and only for a name.
+    const [braced] = parseShellSteps("cat ${A} ${!B} ${#C} ${D[0]} ${1} $@ $_x") ?? [];
+    if (braced?.kind !== "command") throw new Error("no command step");
+    expect(braced.words.map(written)).toEqual(["cat", "{A}", "{?}", "{?}", "{?}", "{?}", "{?}", "{_x}"]);
+  });
+
+  it("lists the commands ctx.commands holds, in the order they appear, a group's redirects on each", () => {
+    // [text, redirects, nested] for each command, against fixed output.
+    const listed = (line: string): unknown =>
+      stepCommands(parseShellSteps(line) ?? []).map((c) => [c.text, c.redirects.map((r) => `${r.operator} ${r.target}`), c.nested]);
+    expect(listed("(cd a; cat b) | sh")).toEqual([["cd a", [], false], ["cat b", [], false], ["sh", [], false]]);
+    expect(listed("for f in a; do echo $(cat $f); done > out")).toEqual([["echo $(cat $f)", ["> out"], false], ["cat $f", [], true]]);
+    expect(listed("F=1; echo `ls` <(sort a)")).toEqual([["echo `ls` <(sort a)", [], false], ["ls", [], true], ["sort a", [], true]]);
+    expect(listed("cat <<'EOF' | bash\nls\nEOF")).toEqual([["cat", [], false], ["bash", [], false], ["ls", [], true]]);
+    expect(listed("coproc cat a < in")).toEqual([["cat a", ["< in"], false]]);
+    expect(listed("{ cat a; ls $(pwd); } 2>&1 >> log")).toEqual([
+      ["cat a", [">& 1", ">> log"], false],
+      ["ls $(pwd)", [">& 1", ">> log"], false],
+      ["pwd", [], true],
+    ]);
+    for (const line of ["(cd a; cat b) | sh", "for f in a; do echo $(cat $f); done > out", "{ cat a; ls $(pwd); } 2>&1 >> log"]) {
+      expect(stepCommands(parseShellSteps(line) ?? [])).toEqual(parseCommandLine(line));
+    }
+  });
+
+  it("is null for a line that does not parse", () => {
+    expect(parseShellSteps('echo "oops')).toBeNull();
+  });
+});
+
+describe("parseCommandLine — a line that does not parse", () => {
+  it("is null, whether the fault is in the line or in a script nested in it", () => {
+    expect(parseCommandLine('echo "oops')).toBeNull();
+    expect(parseCommandLine("echo $(ls")).toBeNull();
+    expect(parseCommandLine("if true; then ls")).toBeNull();
+    expect(parseCommandLine("bash -c 'echo \"oops'")).toBeNull();
+  });
+
+  it("is an empty list for an empty line, which parses to nothing", () => {
+    expect(parseCommandLine("")).toEqual([]);
   });
 });
 
@@ -425,21 +968,6 @@ describe("a pack whose parameters are all optional", () => {
     const load = loadConfig(defineConfig([{ kind: "pack", pack: packDefinition(required), params: undefined, hasParams: false }]));
     expect(load.ok).toBe(false);
     expect(!load.ok && load.refusals[0]?.code).toBe("missing-parameter");
-  });
-});
-
-describe("hasCases", () => {
-  it("is true when either arm carries a case", () => {
-    expect(hasCases({ block: ["git push origin main"] })).toBe(true);
-    expect(hasCases({ pass: [{ path: "a.ts", content: "" }] })).toBe(true);
-    expect(hasCases({ pass: [{ staged: ["package.json"] }] })).toBe(true);
-  });
-
-  it("is false for a cases block that proves nothing", () => {
-    const empty: Cases = {};
-    expect(hasCases(empty)).toBe(false);
-    expect(hasCases({ pass: [], block: [] })).toBe(false);
-    expect(hasCases(undefined)).toBe(false);
   });
 });
 
@@ -787,6 +1315,42 @@ describe("overlay — a spoken key replaces the pack's WHOLE key, nothing merges
     const { spec } = overlay(packSpec, { at: [command] });
     expect(spec.at).toEqual(["command"]);
   });
+
+  it("leaves a breadcrumb's prose alone when the override says none", () => {
+    const note = breadcrumb().at(touch).file("docs/long-note.md").spec;
+    const { spec, source } = overlay(note, { on: ["docs/**"] });
+    expect(spec.kind === "breadcrumb" && spec.file).toBe("docs/long-note.md");
+    expect(source["file"]).toBe("pack");
+  });
+});
+
+describe("overlay — a breadcrumb's prose is one key in two forms, and an override replaces it", () => {
+  const fileNote = breadcrumb().at(touch).on("docs/**").file("docs/long-note.md").spec;
+  const textNote = breadcrumb().at(touch).on("docs/**").text("One inline sentence.").spec;
+
+  it("an override's `.text(…)` replaces a pack's `.file(…)`, and the prose is the override's", () => {
+    const { spec, source } = overlay(fileNote, { text: "Shorter, inline." });
+    expect(spec).not.toHaveProperty("file");
+    expect(spec.kind === "breadcrumb" && spec.text).toBe("Shorter, inline.");
+    expect(source["text"]).toBe("override");
+    expect(source).not.toHaveProperty("file");
+    expect(source["on"]).toBe("pack");
+  });
+
+  it("an override's `.file(…)` replaces a pack's `.text(…)`, the reverse", () => {
+    const { spec, source } = overlay(textNote, { file: "docs/our-note.md" });
+    expect(spec).not.toHaveProperty("text");
+    expect(spec.kind === "breadcrumb" && spec.file).toBe("docs/our-note.md");
+    expect(source["file"]).toBe("override");
+    expect(source).not.toHaveProperty("text");
+  });
+
+  it("a later override's prose replaces an earlier override's", () => {
+    const first = overlay(fileNote, { text: "First." });
+    const second = overlay(first.spec, { file: "docs/second.md" }, first.source);
+    expect(second.spec).not.toHaveProperty("text");
+    expect(second.source["file"]).toBe("override");
+  });
 });
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -976,14 +1540,27 @@ describe("the load refuses", () => {
     expect(shape(refusalsOf([fake]))).toEqual([["undeclared-category", "fake.x"]]);
   });
 
-  it("a guardrail that carries no cases — the dead-fence class, killed at authoring time", () => {
+  it("a guardrail that carries no block case — the dead-fence class, killed at authoring time", () => {
     const untested = rawPack("untested", { x: { spec: { kind: "guardrail", at: [commit], check: passes, message: "m" } } });
-    expect(shape(refusalsOf([untested]))).toEqual([["no-cases", "untested.x"]]);
+    expect(shape(refusalsOf([untested]))).toEqual([["no-block-cases", "untested.x"]]);
 
     const empty = rawPack("empty", {
       x: { spec: { kind: "guardrail", at: [commit], check: passes, message: "m", test: {} } },
     });
-    expect(shape(refusalsOf([empty]))).toEqual([["no-cases", "empty.x"]]);
+    expect(shape(refusalsOf([empty]))).toEqual([["no-block-cases", "empty.x"]]);
+
+    const bothEmpty = rawPack("bothEmpty", {
+      x: { spec: { kind: "guardrail", at: [commit], check: passes, message: "m", test: { pass: [], block: [] } } },
+    });
+    expect(shape(refusalsOf([bothEmpty]))).toEqual([["no-block-cases", "bothEmpty.x"]]);
+
+    // Pass cases alone prove nothing about what the rule catches, so they do not count.
+    const passOnly = rawPack("passOnly", {
+      x: { spec: { kind: "guardrail", at: [commit], check: passes, message: "m", test: { pass: [{ staged: ["a.ts"] }] } } },
+    });
+    const refusals = refusalsOf([passOnly]);
+    expect(shape(refusals)).toEqual([["no-block-cases", "passOnly.x"]]);
+    expect(refusals[0]?.detail).toContain("`passOnly.x` has no block case");
   });
 
   // A CHECK THAT SAID ITS OWN OPTIONS ARE UNUSABLE. The loader does not know what makes a depcruise
@@ -1083,6 +1660,132 @@ describe("the load refuses", () => {
     expect(shape(refusalsOf([rawPack("late", { x: late })]))).toEqual([["dead-scope", "late.x"]]);
   });
 
+  // An empty scope reaches the load the way a real config writes it: a list spread into the verb
+  // that turns out empty. The compiler refuses only a literal `.on()`; this one compiles, and the
+  // load is what catches it. Each case asserts the whole sentence, since the wording is the advice.
+  const none: string[] = [];
+
+  it("an empty `.on()` from the pack as empty-scope, on a guardrail", () => {
+    const rail = definePack("rail", {
+      x: guardrail().at(write).on(...none).check(passes).message("m").test(cases),
+    });
+    expect(refusalsOf([pack(rail)])).toEqual([
+      {
+        code: "empty-scope",
+        entry: "rail.x",
+        detail:
+          "`rail.x` has a scope that narrows nothing: its pack says `.on()` with no globs. In the pack, give `.on()` at least one glob or delete it.",
+      },
+    ]);
+  });
+
+  it("an empty `.ignore()` from the pack as empty-scope, on a breadcrumb", () => {
+    const note = definePack("note", {
+      x: breadcrumb().at(touch).on("docs/**").ignore(...none).text("hi"),
+    });
+    expect(refusalsOf([pack(note)])).toEqual([
+      {
+        code: "empty-scope",
+        entry: "note.x",
+        detail:
+          "`note.x` has a scope that narrows nothing: its pack says `.ignore()` with no globs. In the pack, give `.ignore()` at least one glob or delete it.",
+      },
+    ]);
+  });
+
+  it("both verbs empty in the pack, refused once naming both", () => {
+    const bare = definePack("bare", { x: breadcrumb().at(touch).on(...none).ignore(...none).text("hi") });
+    expect(refusalsOf([pack(bare)])).toEqual([
+      {
+        code: "empty-scope",
+        entry: "bare.x",
+        detail:
+          "`bare.x` has a scope that narrows nothing: its pack says `.on()` and `.ignore()` with no globs. In the pack, give `.on()` and `.ignore()` each at least one glob or delete them.",
+      },
+    ]);
+  });
+
+  it("an empty verb an override leaves, saying the override said it", () => {
+    expect(refusalsOf([pack(house), override(house.noTodo).on(...none)])).toEqual([
+      {
+        code: "empty-scope",
+        entry: "house.noTodo",
+        detail:
+          "`house.noTodo` has a scope that narrows nothing: an override says `.on()` with no globs. In the override, give `.on()` at least one glob or delete it.",
+      },
+    ]);
+  });
+
+  it("both verbs empty in one override, the override named once", () => {
+    expect(refusalsOf([pack(house), override(house.noTodo).on(...none).ignore(...none)])).toEqual([
+      {
+        code: "empty-scope",
+        entry: "house.noTodo",
+        detail:
+          "`house.noTodo` has a scope that narrows nothing: an override says `.on()` and `.ignore()` with no globs. In the override, give `.on()` and `.ignore()` each at least one glob or delete them.",
+      },
+    ]);
+  });
+
+  it("an empty scope split between the pack and an override, saying who said each and where to fix it", () => {
+    const mixed = definePack("mixed", { x: breadcrumb().at(touch).on(...none).text("hi") });
+    expect(refusalsOf([pack(mixed), override(mixed.x).ignore(...none)])).toEqual([
+      {
+        code: "empty-scope",
+        entry: "mixed.x",
+        detail:
+          "`mixed.x` has a scope that narrows nothing: its pack says `.on()` with no globs, and an override says `.ignore()` with no globs. In the pack, give `.on()` at least one glob or delete it. In the override, give `.ignore()` at least one glob or delete it.",
+      },
+    ]);
+  });
+
+  it("an empty scope the pack said and an override filled, which loads clean", () => {
+    // The check reads the entry after the override is laid over it: an override's `.on(…)`
+    // replaces the pack's whole list, so the pack's empty one is gone by the time it is judged.
+    const fixed = definePack("fixed", {
+      x: guardrail().at(write).on(...none).check(passes).message("m").test(cases),
+    });
+    expect(refusalsOf([pack(fixed), override(fixed.x).on("src/**")])).toEqual([]);
+  });
+
+  it("an empty scope on a disabled entry too — what was written is wrong, whatever the entry proves", () => {
+    const off = definePack("off", {
+      x: guardrail().at(write).on(...none).check(passes).message("m").test(cases),
+    });
+    expect(shape(refusalsOf([pack(off), override(off.x).disabled("not yet")]))).toEqual([["empty-scope", "off.x"]]);
+  });
+
+  it("a breadcrumb with both `.text(…)` and `.file(…)` as double-prose, naming the entry", () => {
+    const both = rawPack("both", { x: { spec: { kind: "breadcrumb", at: [session], text: "hi", file: "docs/hi.md" } } });
+    const refusals = refusalsOf([both]);
+    expect(shape(refusals)).toEqual([["double-prose", "both.x"]]);
+    expect(refusals[0]?.detail).toContain("both.x");
+
+    // The sentence chain, cast past its types as a config built outside an editor would be.
+    const spoken = (breadcrumb().at(session).text("hi") as unknown as { file: (p: string) => unknown }).file("docs/hi.md");
+    expect(shape(refusalsOf([rawPack("chained", { x: spoken })]))).toEqual([["double-prose", "chained.x"]]);
+  });
+
+  it("a breadcrumb with both on a disabled entry too", () => {
+    const off = rawPack("off", {
+      x: { spec: { kind: "breadcrumb", at: [session], text: "hi", file: "docs/hi.md", disabled: { reason: "not yet" } } },
+    });
+    expect(shape(refusalsOf([off]))).toEqual([["double-prose", "off.x"]]);
+  });
+
+  it("an override that says both, even over a pack that used one", () => {
+    const both = (override(house.orientation).text("Inline.") as unknown as { file: (p: string) => ConfigSentence }).file(
+      "docs/note.md",
+    );
+    expect(shape(refusalsOf([pack(house), both]))).toEqual([["double-prose", "house.orientation"]]);
+  });
+
+  it("but not an override's prose over a pack's other form — it replaces it, and loads", () => {
+    const files = definePack("files", { note: breadcrumb().at(touch).on("docs/**").file("docs/long-note.md") });
+    const [entry] = loadOrThrow([pack(files), override(files.note).text("One inline sentence.")]);
+    expect(entry?.spec.kind === "breadcrumb" && entry.spec.text).toBe("One inline sentence.");
+  });
+
   it("but never asks a disabled entry to prove itself", () => {
     const off = rawPack("off", { x: { spec: { kind: "guardrail", at: [commit], disabled: { reason: "not yet" } } } });
     expect(shape(refusalsOf([off]))).toEqual([]);
@@ -1111,7 +1814,7 @@ describe("the load refuses", () => {
     expect(shape(refusalsOf([broken]))).toEqual([
       ["missing-mandatory", "broken.a"],
       ["missing-mandatory", "broken.b"],
-      ["no-cases", "broken.c"],
+      ["no-block-cases", "broken.c"],
     ]);
   });
 
@@ -1132,10 +1835,12 @@ describe("REFUSAL_CODES", () => {
       "unknown-moment",
       "missing-mandatory",
       "undeclared-category",
-      "no-cases",
+      "no-block-cases",
       "duplicate-id",
       "dead-scope",
       "bad-check-options",
+      "empty-scope",
+      "double-prose",
     ]);
   });
 });

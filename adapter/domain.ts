@@ -11,8 +11,8 @@
 // seam that makes a recorded session replayable with no harness at all (F5), and the reason a
 // second harness is a second column rather than a second engine.
 //
-// THE SEVEN QUESTIONS (pack-engine guide §7) are what an adapter IS. Five are answered here; the
-// two that need disk are answered by the shell next door:
+// THE SEVEN QUESTIONS (pack-engine guide §7) are what an adapter IS. Six are answered here; the
+// one that needs the process environment is answered by the shell next door:
 //
 //   how does a live moment arrive   JSON on stdin of `flow hook <event>`       → toEvent
 //   how do we block                 exit 2, stderr shown to the model          → toResult
@@ -20,7 +20,7 @@
 //   how many tokens so far          parsed from the transcript                 → tokensFromTranscript
 //   what moments can it deliver     the honest list, never a faked one         → DELIVERS
 //   which repo is this              CLAUDE_PROJECT_DIR, falling back to cwd    → claude.ts
-//   where is the session log        the payload's own transcript_path          → claude.ts
+//   where is the session log        transcript_path; a subagent's own under it → ownTranscriptPath
 //
 // IT IS STILL A PURE HOME. `flow/**/domain.ts` is flow's pure shape, so there is no node:fs, no
 // child_process and no process.env here — the bytes are handed over. That split is what lets the
@@ -35,6 +35,10 @@
 import {
   isBreadcrumbMoment,
   isGuardrailMoment,
+  parseCommandLine,
+  parseShellSteps,
+  programName,
+  stepCommands,
   type BreadcrumbMoment,
   type Ctx,
   type EntrySpec,
@@ -44,12 +48,14 @@ import {
   type Moment,
   type Refusal,
   type SessionFacts,
+  type ShellCommand,
+  type ShellStep,
+  type ShellWord,
   type TurnAction,
 } from "../language/domain.ts";
 import {
   covers,
   FLOW_DIR,
-  fault,
   formatBlock,
   insideRepo,
   momentsView,
@@ -63,11 +69,10 @@ import {
   type Row,
   type TerrainNode,
 } from "../engine/domain.ts";
-// The command tokeniser, borrowed rather than copied. Reading `rm -rf src/x.ts` for the paths it
-// would remove is event ASSEMBLY — the adapter's job — but quote-aware shell tokenising is a
-// question the checks layer already answers, and the old engine's second answer (a regex split on
-// `&&|\|\||;`) is exactly the near-duplicate this rewrite exists to delete.
-import { closeParen, dquoteEnd, elideHeredocs, firstHeredoc, GIT_VALUE_OPTS, missingGrammarText, tokenizeCommand } from "../checks/domain.ts";
+// Git read from the parse, borrowed rather than copied. Reading `git rm src/x.ts` for the paths it
+// would remove is event ASSEMBLY — the adapter's job — but where git's own options stop and its
+// subcommand starts is a question the checks layer already answers.
+import { GIT_VALUE_OPTS, gitCommand, gitCommands, missingGrammarText } from "../checks/domain.ts";
 // String algebra only — a Bash read is resolved against the directory the shell was in.
 import { posix } from "node:path";
 // The one glob engine. A coverage question asked with a second matcher is a coverage answer about
@@ -88,7 +93,13 @@ import { matchAny } from "../glob.ts";
  */
 export interface HookPayload {
   readonly session_id?: string;
+  /** Present on every call a SUBAGENT makes, and only then: the host's id for that one spawn. */
   readonly agent_id?: string;
+  /**
+   * The agent type the host started this subagent as, sent beside `agent_id` on its every call.
+   * Host-written: the session cannot change the message, which is why a category may key on it.
+   */
+  readonly agent_type?: string;
   readonly hook_event_name?: string;
   readonly transcript_path?: string;
   readonly stop_hook_active?: boolean;
@@ -133,23 +144,22 @@ export const CONFIG_FILE = "flow.config.ts";
  * Every relative module the config names, READ OUT OF ITS TEXT.
  *
  * A regex over source, deliberately, and it is the only reader that can work here: this is asked
- * about a file that will not import, so anything that had to resolve, parse or evaluate it would
+ * about a file that may not import, so anything that had to resolve, parse or evaluate it would
  * be asking the broken thing to answer for itself. A line like `import { house } from
  * "./guards/house.ts";` survives almost every way a config breaks, because what breaks a config is
  * a missing `.message(…)` or a stray brace two hundred lines below its imports.
  *
  * Only `./…` and `../…` count. A bare specifier is a package — `@jawache/flow`, or a pack somebody
- * published — and a package is not this repo's source to repair. A `..` segment climbs out of the
- * root, so those are dropped too: the config sits at the repo root and the surface is
- * repo-relative or it is nothing. A leading dot in a FOLDER name is ordinary and is kept —
- * `./.guard/house.ts` is a pack like any other.
+ * published — and a package is not this repo's source. A `..` segment climbs out of the root, so
+ * those are dropped too: the config sits at the repo root and `guardPaths` is repo-relative or it
+ * is nothing. A leading dot in a FOLDER name is ordinary and is kept — `./.guard/house.ts` is a pack
+ * like any other.
  *
  * A `from '…'` phrase inside a QUOTED STRING is harvested as well — a rule whose `.message(…)`
- * spells an import line puts that path on the surface though no import named it. ACCEPTED, not
+ * spells an import line puts that path among the guard's files though no import named it. ACCEPTED, not
  * overlooked: telling a real import from a sentence quoting one takes a parser, and a parser is
  * the one thing a file that will not parse cannot give. The cost is bounded and one-directional —
- * the surface only ever WIDENS, it widens only while the config is already refusing every other
- * write, and the commit gate goes on refusing until the config loads green.
+ * the list only ever WIDENS, so the worst it does is report one extra path as a guard file.
  */
 export function configImports(configText: string): readonly string[] {
   const out: string[] = [];
@@ -161,48 +171,6 @@ export function configImports(configText: string): readonly string[] {
   }
   return out;
 }
-
-/**
- * THE CONFIG SURFACE — the files a write may target while the guard is broken, and nothing else.
- *
- * Fail-loud says a config that will not load refuses every gated moment, and it is right: a guard
- * that quietly carries on with yesterday's rules is a guard that lies about being there. But taken
- * without exception it also refuses the ONE write that can end the outage, and then the doctrine's
- * own instruction — "adjust the change so it passes, then retry" — is impossible to obey. A human
- * in an editor never meets this (no hooks sit in front of them, so they just undo); an agent that
- * broke the config is locked out of repairing it, and the repo stays broken until a human arrives.
- * Measured twice on the crossing that introduced it, once for real.
- *
- * So the exception is exactly as wide as the repair and no wider: a write whose target is the
- * config or a pack it imports. Everything else still refuses — every other path, every command,
- * and the commit gate, which goes on refusing until the config loads green, so nothing written
- * under the exception can reach a commit unreviewed by a working guard.
- *
- * DERIVED FROM THE CONFIG'S OWN TEXT, and it used to be a two-line constant: the config file, plus
- * one repo's pack folder spelled into the engine. Every other repo got a repair exception over a
- * folder it does not have, and an agent that broke the config there could not reach the pack it
- * broke. The text is readable when the module is not, so nothing is given up by asking it — and the
- * answer now follows whatever a repo actually called the folder.
- *
- * The FOLDER of each imported pack comes with the file, which is the one deliberate widening. A
- * repair is rarely one file: a pack imports its own helpers, and those the config never names. The
- * import graph cannot be walked (walking it means resolving, and resolving is what is broken), so
- * the folder is the honest approximation — and it is exactly the width the old constant had.
- */
-export function configSurface(configText: string | null): readonly string[] {
-  const surface: string[] = [CONFIG_FILE];
-  for (const file of configImports(configText ?? "")) {
-    if (!surface.includes(file)) surface.push(file);
-    const dir = file.includes("/") ? `${file.slice(0, file.lastIndexOf("/"))}/**` : null;
-    if (dir !== null && !surface.includes(dir)) surface.push(dir);
-  }
-  return surface;
-}
-
-// `onConfigSurface(path, surface)` used to sit here and was exactly `matchAny` under a longer
-// name: once the surface stopped being a module-level constant and became an argument, the
-// wrapper carried no fact of its own. Its two call sites read better without it — the local is
-// already called `surface`, and `matchAny(path, surface)` says the same sentence in one hop.
 
 export const HOOK_EVENTS = [
   "session-start",
@@ -277,7 +245,7 @@ function text(value: unknown): string {
 
 /**
  * One event in the engine's vocabulary, minus the two things the engine's own event types demand
- * and this file cannot know: who the session is (`wearing`, which needs the sidecar and the stored
+ * and this file cannot know: who the session is (`wearing`, which needs the transcript and the stored
  * verdict) and how far it has drifted (`tokens`, which needs the transcript). The shell adds both,
  * because both come off disk.
  */
@@ -287,6 +255,8 @@ export type AdapterEvent =
       readonly moment: GuardrailMoment;
       readonly file?: Ctx["file"];
       readonly command?: string | undefined;
+      /** command: the line's parse, made once here and handed to the engine with the line. */
+      readonly commands?: Ctx["commands"];
       readonly staged?: readonly string[] | undefined;
       readonly turn?: readonly TurnAction[] | undefined;
       /**
@@ -392,48 +362,36 @@ export function wouldBeFile(
   return null;
 }
 
-/** The words that remove a file, and whether their LAST argument is a destination instead. */
-const REMOVERS: readonly { readonly words: readonly string[]; readonly renames: boolean }[] = [
-  { words: ["rm"], renames: false },
-  { words: ["git", "rm"], renames: false },
-  { words: ["mv"], renames: true },
-  { words: ["git", "mv"], renames: true },
-];
-
-/** Where one command in a line stops and the next begins. */
-const OPERATORS = new Set([";", "&&", "||", "|", "&", "|&", "\n"]);
+/** The programs, and the git subcommands, that remove a file — and whether their LAST argument is a destination instead. */
+const REMOVERS: ReadonlyMap<string, { readonly renames: boolean }> = new Map([
+  ["rm", { renames: false }],
+  ["mv", { renames: true }],
+]);
 
 /**
- * The paths a Bash line would remove — `rm`, `git rm`, and the SOURCE side of `mv` / `git mv`.
+ * The paths a Bash line would remove — `rm`, `git rm`, and the SOURCE side of `mv` / `git mv` —
+ * read from those commands' arguments in the parse.
  *
  * Deletion has no tool of its own: it is a side effect of a shell command, so the delete moment is
- * assembled here or it does not exist at all. `git mv` was the old engine's blind spot; it is
- * covered, and quoting is respected, so a commit message mentioning `rm` is not a removal.
+ * assembled here or it does not exist at all. The parse decides what is a command, so a commit
+ * message mentioning `rm`, a heredoc body that names a file, or an `echo 'rm a.ts'` is not a
+ * removal, while an `rm` inside a `$( … )` or a `bash -c` string, which runs, is.
  *
- * A line that cannot be tokenised yields NOTHING, deliberately: `null` from the tokeniser means "I
- * cannot tell", and a guard that guesses at a line it could not parse is worse than one that stands
- * aside. The command rail still sees the raw line either way.
+ * A line that does not parse yields NOTHING, deliberately: the parse's `null` means "I cannot tell",
+ * and a guard that guesses at a line it could not parse is worse than one that stands aside. The
+ * command rail still sees the raw line either way.
  */
-export function deleteTargets(command: string): string[] {
-  const tokens = tokenizeCommand(command);
-  if (tokens === null) return [];
+export function deleteTargets(commands: readonly ShellCommand[] | null): string[] {
   const out: string[] = [];
-  let segment: string[] = [];
-  const flush = (): void => {
-    const words = segment;
-    segment = [];
-    for (const remover of REMOVERS) {
-      if (!remover.words.every((word, i) => words[i] === word)) continue;
-      const args = words.slice(remover.words.length).filter((token) => !token.startsWith("-"));
-      out.push(...(remover.renames ? (args.length >= 2 ? args.slice(0, -1) : []) : args));
-      return;
-    }
-  };
-  for (const token of tokens) {
-    if (OPERATORS.has(token)) flush();
-    else segment.push(token);
+  for (const command of commands ?? []) {
+    const git = gitCommand(command);
+    const remover = git === null ? REMOVERS.get(programName(command.program)) : git.subcommand === null ? undefined : REMOVERS.get(git.subcommand);
+    if (remover === undefined) continue;
+    const args = git === null ? command.args : git.args;
+    const dash = args.indexOf("--");
+    const named = [...(dash === -1 ? args : args.slice(0, dash)).filter((arg) => !arg.startsWith("-")), ...(dash === -1 ? [] : args.slice(dash + 1))];
+    out.push(...(remover.renames ? named.slice(0, -1) : named));
   }
-  flush();
   return out;
 }
 
@@ -446,16 +404,18 @@ export function deleteTargets(command: string): string[] {
 // command line, BEFORE it runs, so the note rides the PreToolUse answer and arrives ahead of the
 // output.
 //
-// CHOSEN BY MEASUREMENT (flow F3, `evidence/f3-b1-bakeoff.log`). Three mechanisms were scored on
-// 150 real commands labelled by hand (`__fixtures__/bash-corpus/`): this lexer found 86% of the
-// labelled reads, tree-sitter-bash 89% and shell functions shadowing the read commands 81%, all at
-// 99-100% precision. The grammar's margin was two `for` loops, which the lexer now reads too; the
-// grammar would have cost a 16 MB native dependency loaded on every Bash call. The functions only
-// learn a path while the command RUNS, after this answer has gone.
+// READ FROM THE PARSE (#45), the one every rule that judges a shell command reads, so a heredoc
+// body, a quoted argument or a commit message is never a command here either. The table below
+// decides which of a command's arguments are files; the parse's steps decide what the commands are,
+// where a `cd` leaves the shell and what a variable the line set holds. Measured against the 150
+// hand-labelled commands in `__fixtures__/bash-corpus/` (`just score-bash`), it finds what the
+// hand-written lexer it replaced found, mechanism by mechanism and trap by trap: 89% of the
+// labelled reads at 100% precision. That lexer had itself won flow F3's bake-off against
+// tree-sitter-bash and shell functions shadowing the read commands.
 //
-// BEST-EFFORT AND FAILING OPEN, on purpose. A breadcrumb is guidance, not a refusal: a word the
-// lexer cannot settle — a `$(…)`, an unknown variable, an unclosed quote — is left out rather than
-// guessed at, and a whole line it cannot lex names nothing. What it misses the working-tree delta
+// BEST-EFFORT AND FAILING OPEN, on purpose. A breadcrumb is guidance, not a refusal: a word that
+// cannot be settled from the line — a `$(…)`, an unknown variable — is left out rather than
+// guessed at, and a line that does not parse names nothing. What it misses the working-tree delta
 // catches later: a file changed before any read of it was seen gets its note at the change.
 
 /** Which arguments of one read command are files. */
@@ -542,21 +502,6 @@ const READERS: Readonly<Record<string, ReadSpec>> = {
 /** The `git` subcommands whose pathspecs are a reader looking at a path. */
 const GIT_LOOKS = new Set(["diff", "log", "show", "status", "add", "blame", "ls-files", "grep"]);
 
-/** Commands that run the command after them, with the options that consume a value. */
-const WRAPPERS: Readonly<Record<string, { readonly valued: readonly string[]; readonly positional?: number }>> = {
-  timeout: { valued: ["-s", "-k", "--signal", "--kill-after"], positional: 1 },
-  nohup: { valued: [] },
-  time: { valued: [] },
-  nice: { valued: ["-n"] },
-  sudo: { valued: ["-u", "-g", "-C"] },
-  env: { valued: ["-u", "-C"] },
-  stdbuf: { valued: ["-i", "-o", "-e"] },
-  command: { valued: [] },
-  builtin: { valued: [] },
-  exec: { valued: [] },
-  xargs: { valued: ["-a", "--arg-file", "-n", "-I", "-L", "-P", "-d", "-E", "-s"] },
-};
-
 /** An argument after expansion, or null when it could not be known without running the line. */
 type Arg = string | null;
 
@@ -577,27 +522,10 @@ interface ArgvReads {
 function argvReads(argv: readonly Arg[]): ArgvReads {
   const reads: string[] = [];
   const searched: string[] = [];
-  let words = argv;
-  let name = words[0] === undefined || words[0] === null ? "" : posix.basename(words[0]);
-  let wrap = WRAPPERS[name];
-  // Wrappers first — `timeout 60 rg …`, `env X=1 cat f`, `xargs -a list grep …` — peeled until
-  // the command they run is at the front.
-  while (wrap !== undefined) {
-    if (name === "command" && (words[1] === "-v" || words[1] === "-V")) return { reads, searched };
-    let i = 1;
-    for (;;) {
-      const word = words[i] ?? null;
-      if (isOption(word)) {
-        if (name === "xargs" && (word === "-a" || word === "--arg-file") && typeof words[i + 1] === "string") reads.push(words[i + 1] as string);
-        i += wrap.valued.includes(word as string) ? 2 : 1;
-      } else if (name === "env" && /^[A-Za-z_]\w*=/.test(word ?? "")) i += 1;
-      else break;
-    }
-    words = words.slice(i + (wrap.positional ?? 0));
-    name = words[0] === undefined || words[0] === null ? "" : posix.basename(words[0]);
-    wrap = WRAPPERS[name];
-  }
-  const args = words.slice(1);
+  // The parse has already stepped past the wrappers (`timeout 60 rg …`, `env X=1 cat f`), so the
+  // program is at the front.
+  const name = argv[0] === undefined || argv[0] === null ? "" : programName(argv[0]);
+  const args = argv.slice(1);
   if (name === "git") return gitReads(args, reads);
   if (name === "ffmpeg") {
     args.forEach((arg, i) => {
@@ -674,241 +602,6 @@ function gitReads(args: readonly Arg[], reads: string[]): ArgvReads {
   return found;
 }
 
-// ── the lexer ───────────────────────────────────────────────────────────────
-
-/** One piece of a word: text, `~`, a variable, a nested command, or something unknowable. */
-type Part =
-  | { readonly kind: "text"; readonly text: string }
-  | { readonly kind: "tilde" }
-  | { readonly kind: "var"; readonly name: string }
-  | { readonly kind: "subst"; readonly command: string }
-  | { readonly kind: "unknown" };
-type Word = readonly Part[];
-type Token = { readonly t: "word"; readonly word: Word } | { readonly t: "op"; readonly op: string } | { readonly t: "redir"; readonly op: string };
-
-/** `$NAME`, `${NAME}`, `$(…)`, `$((…))`, `$?` at `s[i]` → the part, and where it ends. */
-function dollar(s: string, i: number): { part: Part; end: number } {
-  const next = s[i + 1] ?? "";
-  if (s.startsWith("((", i + 1)) {
-    const end = s.indexOf("))", i + 3);
-    return { part: { kind: "unknown" }, end: end === -1 ? s.length : end + 2 };
-  }
-  if (next === "(") {
-    const end = closeParen(s, i + 2);
-    return end === -1 ? { part: { kind: "unknown" }, end: s.length } : { part: { kind: "subst", command: s.slice(i + 2, end) }, end: end + 1 };
-  }
-  if (next === "{") {
-    const end = s.indexOf("}", i + 2);
-    const inner = end === -1 ? "" : s.slice(i + 2, end);
-    return { part: /^[A-Za-z_]\w*$/.test(inner) ? { kind: "var", name: inner } : { kind: "unknown" }, end: end === -1 ? s.length : end + 1 };
-  }
-  const name = /^[A-Za-z_]\w*/.exec(s.slice(i + 1))?.[0];
-  if (name !== undefined) return { part: { kind: "var", name }, end: i + 1 + name.length };
-  if (/[0-9@*#?$!-]/.test(next)) return { part: { kind: "unknown" }, end: i + 2 };
-  return { part: { kind: "text", text: "$" }, end: i + 1 };
-}
-
-/** A backquoted command at `s[i]` → the part, and where it ends. */
-function backquote(s: string, i: number, limit: number): { part: Part; end: number } {
-  const close = s.indexOf("`", i + 1);
-  return close === -1 || close > limit ? { part: { kind: "unknown" }, end: limit } : { part: { kind: "subst", command: s.slice(i + 1, close) }, end: close + 1 };
-}
-
-/** The inside of a double-quoted run → its parts. */
-function dquoteParts(s: string, from: number, to: number): Part[] {
-  const parts: Part[] = [];
-  let text = "";
-  const flush = (): void => {
-    if (text !== "") parts.push({ kind: "text", text });
-    text = "";
-  };
-  for (let j = from; j < to; ) {
-    const c = s[j] as string;
-    if (c === "\\" && /["\\$`]/.test(s[j + 1] ?? "")) {
-      text += s[j + 1] as string;
-      j += 2;
-    } else if (c === "$" || c === "`") {
-      flush();
-      const got = c === "$" ? dollar(s, j) : backquote(s, j, to);
-      parts.push(got.part);
-      j = got.end;
-    } else {
-      text += c;
-      j++;
-    }
-  }
-  flush();
-  return parts;
-}
-
-const BREAKS = new Set([";", "&", "|", "(", ")", "<", ">", "\n", " ", "\t", "'", '"', "\\", "$", "`"]);
-
-/**
- * A command line → words, operators and redirects. Null when a quote never closes: the line cannot
- * be read, so it names nothing. Heredoc bodies are gone before it runs (`shellProgram` lexes the
- * line `elideHeredocs` returns): a `<<`'s delimiter is one more redirect target, and the
- * terminator line left behind is a word that reads nothing.
- */
-function lexShell(s: string): Token[] | null {
-  const tokens: Token[] = [];
-  let parts: Part[] = [];
-  let text = "";
-  let inWord = false;
-  const endWord = (): void => {
-    if (text !== "") parts.push({ kind: "text", text });
-    if (inWord) tokens.push({ t: "word", word: parts });
-    parts = [];
-    text = "";
-    inWord = false;
-  };
-  let i = 0;
-  while (i < s.length) {
-    const c = s[i] as string;
-    const at = s.slice(i);
-    if (at.startsWith("\\\n")) {
-      i += 2;
-    } else if (!inWord && c === "#") {
-      const nl = s.indexOf("\n", i);
-      i = nl === -1 ? s.length : nl;
-    } else if (c === "\n") {
-      endWord();
-      tokens.push({ t: "op", op: "\n" });
-      i++;
-    } else if (c === " " || c === "\t") {
-      endWord();
-      i++;
-    } else if (at.startsWith("<(") || at.startsWith(">(")) {
-      endWord();
-      const end = closeParen(s, i + 2);
-      tokens.push({ t: "word", word: [end === -1 ? { kind: "unknown" } : { kind: "subst", command: s.slice(i + 2, end) }] });
-      i = end === -1 ? s.length : end + 1;
-    } else if (c === "<" || c === ">" || at.startsWith("&>")) {
-      // A redirect. An fd glued in front of it (`2>`) is part of the operator, not a word.
-      if (inWord && parts.length === 0 && /^\d+$/.test(text)) {
-        text = "";
-        inWord = false;
-      }
-      endWord();
-      const op = /^(&>>|&>|<<<|<<-|<<|<>|<&|<|>>|>\||>&|>)/.exec(at)?.[0] ?? c;
-      tokens.push({ t: "redir", op });
-      i += op.length;
-    } else if (c === ";" || c === "&" || c === "|" || c === "(" || c === ")") {
-      endWord();
-      const two = s.slice(i, i + 2);
-      const op = ["&&", "||", "|&", ";;"].includes(two) ? two : c;
-      tokens.push({ t: "op", op });
-      i += op.length;
-    } else {
-      inWord = true;
-      if (c === "'" || at.startsWith("$'")) {
-        const open = c === "'" ? i : i + 1;
-        const end = s.indexOf("'", open + 1);
-        if (end === -1) return null;
-        text += s.slice(open + 1, end);
-        i = end + 1;
-      } else if (c === '"') {
-        const end = dquoteEnd(s, i + 1);
-        if (end === -1) return null;
-        if (text !== "") parts.push({ kind: "text", text });
-        text = "";
-        parts.push(...dquoteParts(s, i + 1, end));
-        i = end + 1;
-      } else if (c === "\\") {
-        text += s[i + 1] ?? "";
-        i += 2;
-      } else if (c === "$" || c === "`") {
-        if (text !== "") parts.push({ kind: "text", text });
-        text = "";
-        const got = c === "$" ? dollar(s, i) : backquote(s, i, s.length);
-        parts.push(got.part);
-        i = got.end;
-      } else if (c === "~" && text === "" && parts.length === 0) {
-        parts.push({ kind: "tilde" });
-        i++;
-      } else {
-        while (i < s.length && !BREAKS.has(s[i] as string)) text += s[i++] as string;
-      }
-    }
-  }
-  endWord();
-  return tokens;
-}
-
-// ── the program ─────────────────────────────────────────────────────────────
-
-/** A command line reduced to what decides a read. */
-type ShellNode =
-  | { readonly kind: "cmd"; readonly words: readonly Word[]; readonly inputs: readonly Word[] }
-  | { readonly kind: "subshell"; readonly body: readonly ShellNode[] }
-  | { readonly kind: "for"; readonly name: string; readonly values: readonly Word[]; readonly body: readonly ShellNode[] };
-
-/** Words that open or close a construct; stripped from the front of the command they lead. */
-const SHELL_KEYWORDS = new Set(["if", "then", "else", "elif", "fi", "while", "until", "{", "}", "!", "esac", "do", "done"]);
-
-/** A word that is plain text and nothing else, or null. */
-function plain(word: Word | undefined): string | null {
-  const [only] = word ?? [];
-  return word?.length === 1 && only?.kind === "text" ? only.text : null;
-}
-
-/**
- * Tokens → a program: one node per simple command, `( … )` as a subshell and `for … do … done` as a
- * loop whose body runs once per value. Null when the line would not lex.
- */
-function shellProgram(command: string): ShellNode[] | null {
-  const tokens = lexShell(elideHeredocs(command));
-  if (tokens === null) return null;
-  type Frame = { readonly nodes: ShellNode[]; readonly kind: "top" | "subshell" | "do"; readonly loop: { name: string; values: Word[] } | null };
-  const frames: Frame[] = [{ nodes: [], kind: "top", loop: null }];
-  const top = (): Frame => frames[frames.length - 1] as Frame;
-  let loop: { name: string; values: Word[] } | null = null;
-  let words: Word[] = [];
-  let inputs: Word[] = [];
-  let redirect: string | null = null;
-  const close = (): void => {
-    const frame = frames.pop() as Frame;
-    if (frame.kind === "subshell") top().nodes.push({ kind: "subshell", body: frame.nodes });
-    else if (frame.loop !== null) top().nodes.push({ kind: "for", ...frame.loop, body: frame.nodes });
-    else top().nodes.push(...frame.nodes);
-  };
-  const flush = (): void => {
-    let lead = words;
-    for (let head = plain(lead[0]); head !== null && SHELL_KEYWORDS.has(head); head = plain(lead[0])) {
-      if (head === "do") {
-        frames.push({ nodes: [], kind: "do", loop });
-        loop = null;
-      } else if (head === "done" && top().kind === "do") close();
-      lead = lead.slice(1);
-    }
-    if (plain(lead[0]) === "for") {
-      const at = lead.findIndex((word) => plain(word) === "in");
-      loop = { name: plain(lead[1]) ?? "", values: at === -1 ? [] : lead.slice(at + 1) };
-    } else if (plain(lead[0]) !== "case" && (lead.length > 0 || inputs.length > 0)) top().nodes.push({ kind: "cmd", words: lead, inputs });
-    words = [];
-    inputs = [];
-  };
-  for (const token of tokens) {
-    if (token.t === "redir") redirect = token.op;
-    else if (token.t === "word") {
-      if (redirect === null) words.push(token.word);
-      else if (redirect === "<" || redirect === "<>") inputs.push(token.word);
-      redirect = null;
-    } else {
-      redirect = null;
-      const opens = token.op === "(" && words.length === 0;
-      flush();
-      if (opens) frames.push({ nodes: [], kind: "subshell", loop: null });
-      else if (token.op === ")" && frames.some((frame) => frame.kind === "subshell")) {
-        while (top().kind !== "subshell") close();
-        close();
-      }
-    }
-  }
-  flush();
-  while (frames.length > 1) close();
-  return top().nodes;
-}
-
 // ── the walk ────────────────────────────────────────────────────────────────
 
 interface ShellScope {
@@ -939,11 +632,47 @@ export interface BashReads {
 }
 
 /**
- * The repo paths a Bash command reads or searches — the `READERS` table, a `<` redirect, a `git`
- * pathspec — followed through `cd`, `VAR=`, `for` loops and `$(…)`. The repo root itself is not an
- * area and is left out. Best-effort, failing open: see the section head.
+ * One word of the parse as the shell would expand it, from what the line itself holds: an unquoted
+ * leading `~`, `$HOME`, and a variable the line assigned. Quoted or escaped text is passed as is,
+ * so `'$F'` stays `$F`. Null when only running the line could tell — an unknown or special
+ * variable, a `${…}` with an operation in it, or a substitution, whose commands are read as steps
+ * of their own.
  */
-export function bashReads(command: string, where: BashWhere): BashReads {
+function expandWord(word: ShellWord, vars: ReadonlyMap<string, string>, home: string | undefined): string | null {
+  let out = "";
+  for (const piece of word) {
+    const value =
+      piece.kind === "text" ? piece.text : piece.kind === "tilde" ? home : piece.kind === "variable" ? (piece.name === "HOME" ? home : vars.get(piece.name)) : undefined;
+    if (value === undefined) return null;
+    out += value;
+  }
+  return out;
+}
+
+/**
+ * The list file `xargs` reads — `-a FILE`, `-aFILE`, `--arg-file FILE` or `--arg-file=FILE` — from
+ * the wrappers the parse stepped past. Only xargs's own options count, the words between the last
+ * `xargs` and the program: an `exec -a NAME` in front of it names a process, not a file.
+ */
+function xargsList(wrappers: readonly (string | null)[]): string | null {
+  const from = wrappers.findLastIndex((word) => word !== null && programName(word) === "xargs");
+  if (from === -1) return null;
+  const own = wrappers.slice(from + 1);
+  for (const [i, word] of own.entries()) {
+    if (word === "-a" || word === "--arg-file") return own[i + 1] ?? null;
+    if (word?.startsWith("--arg-file=") === true) return word.slice("--arg-file=".length) || null;
+    if (word?.startsWith("-a") === true && !word.startsWith("--")) return word.slice(2);
+  }
+  return null;
+}
+
+/**
+ * The repo paths a Bash command reads or searches — the `READERS` table, a `<` redirect, a `git`
+ * pathspec — read from the parse's steps, and followed through `cd`, `VAR=`, `for` loops and the
+ * commands a `$(…)` runs. The repo root itself is not an area and is left out. Best-effort, failing
+ * open: see the section head. A line that does not parse names nothing.
+ */
+export function bashReads(steps: readonly ShellStep[] | null, where: BashWhere): BashReads {
   const reads: string[] = [];
   const searched: string[] = [];
   const at = (path: string, base: string | null): string | null =>
@@ -952,73 +681,55 @@ export function bashReads(command: string, where: BashWhere): BashReads {
     const rel = path !== null && path.startsWith(`${where.root}/`) ? path.slice(where.root.length + 1) : null;
     if (rel !== null && !list.includes(rel)) list.push(rel);
   };
-  const expand = (word: Word, scope: ShellScope): string | null => {
-    let value: string | null = "";
-    for (const part of word) {
-      let piece: string | null | undefined = null;
-      if (part.kind === "text") piece = part.text;
-      else if (part.kind === "tilde" || (part.kind === "var" && part.name === "HOME")) piece = where.home;
-      else if (part.kind === "var") piece = scope.vars.get(part.name);
-      else if (part.kind === "subst") nested(part.command, scope);
-      value = value === null || piece === null || piece === undefined ? null : value + piece;
-    }
-    return value;
+  const assign = (name: string, value: ShellWord, scope: ShellScope): void => {
+    const expanded = expandWord(value, scope.vars, where.home);
+    if (expanded === null) scope.vars.delete(name);
+    else scope.vars.set(name, expanded);
   };
-  const nested = (inner: string, scope: ShellScope): void => {
-    walk(shellProgram(inner) ?? [], { cwd: scope.cwd, old: scope.old, vars: new Map(scope.vars) });
-  };
-  const assign = (word: Word, scope: ShellScope): boolean => {
-    const [head, ...rest] = word;
-    const m = head?.kind === "text" ? /^([A-Za-z_]\w*)=/.exec(head.text) : null;
-    if (m === null || head?.kind !== "text") return false;
-    const value = expand([{ kind: "text", text: head.text.slice(m[0].length) }, ...rest], scope);
-    if (value === null) scope.vars.delete(m[1] as string);
-    else scope.vars.set(m[1] as string, value);
-    return true;
-  };
-  const run = (node: Extract<ShellNode, { kind: "cmd" }>, scope: ShellScope): void => {
-    for (const input of node.inputs) {
-      const path = expand(input, scope);
+  const run = (step: Extract<ShellStep, { kind: "command" }>, scope: ShellScope): void => {
+    for (const { operator, target } of step.redirects) {
+      if (operator !== "<" && operator !== "<>") continue;
+      const path = expandWord(target, scope.vars, where.home);
       add(reads, path === null ? null : at(path, scope.cwd));
     }
-    // A line of only `X=…` sets them; in front of a command they are that command's own env.
-    const first = node.words.findIndex((word) => !/^[A-Za-z_]\w*=/.test(plain(word.slice(0, 1)) ?? ""));
-    if (first === -1) {
-      for (const word of node.words) assign(word, scope);
-      return;
-    }
-    const words = node.words.slice(first);
-    const argv = words.map((word) => expand(word, scope));
-    const name = argv[0];
-    if (name === "export" || name === "local" || name === "declare" || name === "readonly") {
-      for (const word of words.slice(1)) assign(word, scope);
-    } else if (name === "cd" || name === "pushd") {
+    const expand = (word: ShellWord): string | null => expandWord(word, scope.vars, where.home);
+    const list = xargsList(step.words.slice(0, step.at).map(expand));
+    if (list !== null) add(reads, at(list, scope.cwd));
+    const name = step.command.program;
+    const words = step.words.slice(step.at + 1);
+    const argv = [expand(step.words[step.at] ?? []), ...words.map(expand)];
+    if (name === "cd" || name === "pushd") {
       const target = argv.slice(1).find((arg) => !isOption(arg));
       const next = target === undefined ? (where.home ?? null) : target === null ? null : target === "-" ? scope.old : at(target, scope.cwd);
       scope.old = scope.cwd;
       scope.cwd = next;
-    } else {
-      const found = argvReads(argv);
-      const from = found.base === undefined ? scope.cwd : at(found.base, scope.cwd);
-      for (const path of found.reads) add(reads, at(path, from));
-      for (const path of found.searched) add(searched, at(path, from));
+      return;
     }
+    const found = argvReads(argv);
+    const from = found.base === undefined ? scope.cwd : at(found.base, scope.cwd);
+    for (const path of found.reads) add(reads, at(path, from));
+    for (const path of found.searched) add(searched, at(path, from));
   };
-  const walk = (nodes: readonly ShellNode[], scope: ShellScope): void => {
-    for (const node of nodes) {
-      if (node.kind === "subshell") walk(node.body, { cwd: scope.cwd, old: scope.old, vars: new Map(scope.vars) });
-      else if (node.kind === "cmd") run(node, scope);
+  const walk = (body: readonly ShellStep[], scope: ShellScope): void => {
+    for (const step of body) {
+      if (step.kind === "command") {
+        // The substitutions that build its words run first, each in a scope of its own.
+        walk(step.before, scope);
+        run(step, scope);
+      }
+      else if (step.kind === "assign") assign(step.name, step.value, scope);
+      else if (step.kind === "scope") walk(step.body, { cwd: scope.cwd, old: scope.old, vars: new Map(scope.vars) });
       else {
-        const values = node.values.map((word) => expand(word, scope));
+        const values = step.values.map((value) => expandWord(value, scope.vars, where.home));
         for (const value of values.length > 0 ? values : [null]) {
-          if (value === null) scope.vars.delete(node.name);
-          else scope.vars.set(node.name, value);
-          walk(node.body, scope);
+          if (value === null) scope.vars.delete(step.name);
+          else scope.vars.set(step.name, value);
+          walk(step.body, scope);
         }
       }
     }
   };
-  walk(shellProgram(command) ?? [], { cwd: where.cwd, old: null, vars: new Map() });
+  walk(steps ?? [], { cwd: where.cwd, old: null, vars: new Map() });
   return { reads, searched };
 }
 
@@ -1054,8 +765,12 @@ export function toEvent(hook: HookEvent, payload: HookPayload, world: EventWorld
         //
         // Every guard event comes before every brief event: a refusal carries no notes, and the
         // shell stops judging notes once something has refused, so they are not marked shown.
-        const events: AdapterEvent[] = [{ rail: "guard", moment: "command", command }];
-        for (const target of deleteTargets(command)) {
+        // The line is parsed once here: the command rules read it, and so do the files it removes
+        // and the files it reads.
+        const steps = parseShellSteps(command);
+        const commands = steps === null ? null : stepCommands(steps);
+        const events: AdapterEvent[] = [{ rail: "guard", moment: "command", command, commands }];
+        for (const target of deleteTargets(commands)) {
           // The file is still there at PreToolUse, so a content rule can ask what is about to be
           // lost ("this matched X — did you move the code first?"). One that is already gone yields
           // no event: there is nothing to judge, and an invented empty file would let a content
@@ -1069,7 +784,7 @@ export function toEvent(hook: HookEvent, payload: HookPayload, world: EventWorld
         // command briefing, before the output does, rather than never (a Bash payload names no
         // path for the post-tool-use rail to steer on). The host's `cwd` is where the shell stands.
         const cwd = text(payload["cwd"]) || world.root;
-        const { reads, searched } = bashReads(command, { cwd, root: world.root, home: world.home });
+        const { reads, searched } = bashReads(steps, { cwd, root: world.root, home: world.home });
         for (const path of new Set([...reads, ...searched])) events.push({ rail: "brief", moment: "touch", path });
         return events;
       }
@@ -1185,6 +900,41 @@ export function included(listed: readonly string[], include: readonly string[]):
 }
 
 /**
+ * Of the paths a call changed, the ones the AGENT changed. The rest are git's — a checkout, a reset
+ * or a fast-forward put them there, from a commit the repo already had, and the commit gate judged
+ * that content when it was committed — so they leave the diff before anything reads them: no rule,
+ * no write-back, no breadcrumb, no shell-write row. CONTENT, never the command line: git run by a
+ * recipe is caught the same way, and the `sed` in `git switch x && sed -i … f` is still judged.
+ *
+ * - A file on disk after the call is git's when it is identical to its copy in HEAD after the call.
+ * - A file the call removed is git's when HEAD held it BEFORE the call and does not hold it after:
+ *   git removed it by moving HEAD. A file no commit holds — an untracked file, an included `.env` —
+ *   is the agent's to answer for when it goes.
+ *
+ * `nameStatus` is the call's own diff, `git diff-tree -r -z --name-status --no-renames`, in git's
+ * order. `differsAfter` and `differsBefore` are every path where HEAD's tree after the call, and
+ * before it, disagree with the tree after the call. `differsAfter` is null when HEAD after the call
+ * is no commit the repo had before it — none yet, or one the call made, whose content no gate is
+ * known to have judged — and then nothing is git's. `differsBefore` is null where there was no HEAD
+ * before; for a path gone from disk, being in it is exactly "HEAD held it before".
+ */
+export function authored(nameStatus: string, differsAfter: readonly string[] | null, differsBefore: readonly string[] | null): string[] {
+  const after = differsAfter === null ? null : new Set(differsAfter);
+  const before = new Set(differsBefore ?? []);
+  const fields = nameStatus.split("\0");
+  const out: string[] = [];
+  for (let i = 0; i + 1 < fields.length; i += 2) {
+    const status = fields[i] ?? "";
+    const path = fields[i + 1] ?? "";
+    if (path === "") continue;
+    const matchesHead = after !== null && !after.has(path);
+    const gits = matchesHead && (!status.startsWith("D") || before.has(path));
+    if (!gits) out.push(path);
+  }
+  return out;
+}
+
+/**
  * Git's answer as paths, one per line — the plainest shape git has, and the only one flow parses.
  *
  * ONE reader for it in the adapter: `flow status` asks git what it ignores and the realWorld asks
@@ -1213,7 +963,7 @@ export interface StagedChanges {
 }
 
 /** NUL-separated paths, as git prints them under `-z` — no quoting, so a path is a path. */
-function nulPaths(stdout: string): string[] {
+export function nulPaths(stdout: string): string[] {
   return stdout.split("\0").filter((path) => path !== "");
 }
 
@@ -1280,7 +1030,7 @@ export function preJudged(payload: HookPayload, root: string): { readonly writes
   const tool = text(payload.tool_name);
   const input = payload.tool_input ?? {};
   if (tool === "Bash")
-    return { writes: [], deletes: deleteTargets(text(input["command"])).map((target) => relativise(target, root)) };
+    return { writes: [], deletes: deleteTargets(parseCommandLine(text(input["command"]))).map((target) => relativise(target, root)) };
   if (tool === "Write" || tool === "Edit" || tool === "MultiEdit") {
     const named = text(input["file_path"]);
     return { writes: named === "" ? [] : [relativise(named, root)], deletes: [] };
@@ -1577,55 +1327,49 @@ export interface Answer {
 }
 
 /**
- * Is this event the WRITE that could fix a config that will not load?
+ * What the agent is told beside the load error, on every answer it rides: what that error means.
  *
- * The one exception to fail-loud, and it is deliberately the narrowest shape that works: a write
- * (or a delete) whose target is the guard's own source. `configSurface` above says why that surface
- * is read out of the config's own text rather than resolved.
- *
- * A COMMAND is never a repair, however plausible it looks. `sed -i` on the config would qualify by
- * intent and there is no way to tell it from `rm -rf` before it runs — a command rail sees a string,
- * not a target — so the command rail stays fully closed in the broken state, and the agent's route
- * back is the edit tools, which name the file they are about to write.
- *
- * It lives HERE rather than in the shell beside its caller because it decides and reads nothing.
- * The coverage gate over this file is what keeps the exception's exact width asserted.
+ * The load error says what broke; this says what flow is doing about it. Without it, a call that
+ * went through reads like a guard that judged it and passed.
  */
-export function repairs(event: AdapterEvent, surface: readonly string[]): boolean {
-  if (event.rail !== "guard") return false;
-  if (event.moment !== "write" && event.moment !== "delete") return false;
-  return event.file !== undefined && matchAny(event.file.path, surface);
-}
+export const FLOW_OFF = `flow is OFF until ${CONFIG_FILE} loads: every write, delete and command goes through unchecked, and every commit is refused.`;
 
 /**
  * WHAT EVERY RAIL ANSWERS WHILE THE CONFIG WILL NOT LOAD — one decision for both ways it can break.
  *
- * A config has two ways of not loading, and they used to get two different answers. One will not
- * IMPORT — a missing module, a syntax error — which the shell catches as a thrown error. The other
- * imports fine and the GRAMMAR refuses it: a missing `.message(…)`, an override naming an entry the
- * pack does not have, a mandatory parameter nobody supplied. Only the first ever reached the repair
- * exception, because the second was refused a layer deeper inside `guard()` — so the break
- * docs/user/explanation/fail-loud.md tells a reader to make was the one break an agent could not
- * repair itself out of. To everyone who meets them the two are the same fact, "the guard is
- * entirely off", and now they are the same answer as well.
+ * A config has two ways of not loading. One will not IMPORT — a missing module, a syntax error —
+ * which the shell catches as a thrown error. The other imports fine and the GRAMMAR refuses it: a
+ * missing `.message(…)`, an override naming an entry the pack does not have, a mandatory parameter
+ * nobody supplied. To everyone who meets them the two are the same fact, "the guard is entirely
+ * off", so they get the same answer.
  *
- * TURN-END IS TOLD, NOT REFUSED. Holding a turn open on a broken config prevents nothing risky —
- * every write, command and commit is already refused and the commit gate stays shut — while it does
- * stop the agent handing back to the one person who can fix it. So the fault is reported and the
- * turn ends.
+ * NOTHING IS REFUSED HERE (docs/user/explanation/fail-loud.md). A guard that refused every call
+ * would refuse the repair too — the fix for a missing package is `npm ci`, a command — and a write
+ * made now reaches the commit gate anyway, which stays shut until the config loads and then checks
+ * the staged files against every guardrail. The cost is the guardrails on commands, which nothing
+ * later can check; the agent is told on every call that they are off.
+ *
+ * TOLD BEFORE THE CALL, ONCE. The load error rides the answer to a session start and to every
+ * write, delete or command about to run — one notice per answer, however many events the payload
+ * carried. A touch never carries it, on either rail: a Read is not told, and a Bash call is told by
+ * its command, not by the files it reads. So the after-call rail, whose events are observed changes
+ * and touches, stays silent: the agent was told when the call was asked for, and saying it again
+ * with the result is the same sentence twice.
+ *
+ * TURN-END IS TOLD, NOT REFUSED. Holding a turn open on a broken config prevents nothing — the
+ * commit gate stays shut — while it does stop the agent handing back to the one person who can fix
+ * it. So the fault is reported and the turn ends.
  *
  * THE ENGINE HAS ITS OWN PAIR OF `!load.ok` BRANCHES — `guard()` blocks with the fault, `brief()`
  * notices it — and they are NOT this rule written twice. They answer a different question: "there
- * is nothing to run, say so", for the two callers that have no repair to make and no turn to end,
- * namely `replay` and the commit gate. Deleting them was considered at F3.B3 and measured first:
- * `flow replay` over a config the grammar refuses reaches `brief()`'s branch and emits the fault
- * notice, so the branch is live and its deletion would have dropped that notice silently. What IS
- * shared is the shape — `Outage extends Answer`, so the hook rail's answer and every other answer
- * are one type rather than two that happen to match.
+ * is nothing to run, say so", for the two callers that have no call to let through and no turn to
+ * end, namely `replay` and the commit gate. `flow replay` over a config the grammar refuses reaches
+ * `brief()`'s branch and emits the fault notice, so that branch is live. What IS shared is the
+ * shape — `Outage extends Answer`, so the hook rail's answer and every other answer are one type.
  */
 export interface Outage extends Answer {
   /**
-   * The sentence turn-end is TOLD instead of being refused with, or null when no turn ended here.
+   * The sentence turn-end is TOLD with, or null when no turn ended here.
    *
    * It is not `shown`: the Stop rail has no context channel to inject prose into, which is what
    * `DELIVERS` already says, so the shell writes this one to stderr and answers 0.
@@ -1633,18 +1377,22 @@ export interface Outage extends Answer {
   readonly told: string | null;
 }
 
-export function whileBroken(events: readonly AdapterEvent[], surface: readonly string[], message: string): Outage {
-  const rails = events.filter((event) => event.rail === "guard");
+/**
+ * Does this event's answer carry the load error? A session start, and a write, delete or command
+ * not yet run. Not a touch, not a change the after-call rail observed, and not turn-end, which is
+ * told on stderr instead.
+ */
+function carriesTheNotice(event: AdapterEvent): boolean {
+  if (event.rail === "brief") return event.moment !== "touch";
+  return event.moment !== "turn-end" && event.observed !== true;
+}
+
+export function whileBroken(events: readonly AdapterEvent[], message: string): Outage {
+  const body = `${message}\n\n${FLOW_OFF}`;
   return {
-    refused: rails
-      .filter((event) => event.moment !== "turn-end" && !repairs(event, surface))
-      .map((event) => ({
-        moment: event.moment,
-        block: fault(message),
-        ...(event.observed === true && event.file !== undefined ? { observed: event.file.path } : {}),
-      })),
-    shown: events.filter((event) => event.rail === "brief").map(() => ({ entry: null, cause: "fault", body: message })),
-    told: rails.some((event) => event.moment === "turn-end") ? message : null,
+    refused: [],
+    shown: events.some(carriesTheNotice) ? [{ entry: null, cause: "fault", body }] : [],
+    told: events.some((event) => event.rail === "guard" && event.moment === "turn-end") ? body : null,
   };
 }
 
@@ -1732,7 +1480,7 @@ export function deltaFault(fault: string): HookResult {
     stdout: "",
     stderr:
       `\nflow — could not see what this call changed:\n\n${fault}\n\n` +
-      "Nothing it wrote was judged and nothing was put back. Check what the call changed before you go on.\n",
+      "The call ran, and nothing it changed was checked or put back. Check what the call changed before you go on.\n",
     exitCode: 2,
   };
 }
@@ -1742,34 +1490,37 @@ export function decision(hook: HookEvent, additionalContext: string): string {
   return JSON.stringify({ hookSpecificOutput: { hookEventName: HOST_EVENT[hook], additionalContext } });
 }
 
-/**
- * What the guard says when it could not read its own payload.
- *
- * The three outcomes of a read are not one outcome. "There was nothing to guard" is safe and common
- * — a hand-run, an empty stdin — and silence is the right answer to it. "I could not SEE what I was
- * guarding" is the old engine's invisible swallow: both were folded into `{}`, so a PreToolUse rail
- * holding an unreadable payload found no tool call, allowed, and told nobody. The sentence is the
- * same on every rail; what differs is whether the rail blocks with it, and that is the caller's
- * decision because it is a fact about what the event is FOR.
- */
-export function faultText(hook: HookEvent, why: "unreadable" | "unparseable", detail: string): string {
-  const what =
-    why === "unreadable" ? `could not READ its payload from stdin (${detail})` : `could not PARSE its payload (${detail})`;
-  return `[flow hook ${hook}] the guard ${what}.`;
-}
+/** The rails that run once a tool call has landed: their exit 2 reports, it cannot block. */
+export const AFTER_CALL: ReadonlySet<HookEvent> = new Set(["post-tool-use", "post-tool-use-failure"]);
 
 /**
  * The answer a rail gives when it could not read its payload — and which rails must be LOUD.
  *
+ * The three outcomes of a read are not one outcome. "There was nothing to guard" is safe and common
+ * — a hand-run, an empty stdin — and silence is the right answer to it. "I could not SEE what I was
+ * guarding" is the old engine's invisible swallow: both were folded into `{}`, so a PreToolUse rail
+ * holding an unreadable payload found no tool call, allowed, and told nobody. So every rail says one
+ * fault line, and it keeps READ apart from PARSE: a payload that never arrived and one that arrived
+ * and was not JSON are different faults. The line names the hook and the cause, never "the guard",
+ * because on an after-call rail the call has already run and must not read as refused (#12).
+ *
  * The three rails that judge a tool call answer exit 2: PreToolUse, where it refuses the call it
  * could not see, and the two after-call rails, where every change the call made is judged — there
- * exit 2 blocks nothing (the call has run) and puts the sentence in front of the model beside the
+ * exit 2 blocks nothing (the call has run) and puts the line in front of the model beside the
  * result, so a call whose changes went unjudged is never passed as clean. The rest only add a
  * breadcrumb or end a turn, and say it on stderr with exit 0.
+ *
+ * PreToolUse and the annotating rails print the line bare; an after-call rail wraps it in
+ * `deltaFault`, the one message for "flow could not see what this call changed", because the host
+ * labels its exit 2 a "blocking error" and the bare line read as a refusal of a call that had
+ * already landed (#12).
  */
 export function readFault(hook: HookEvent, why: "unreadable" | "unparseable", detail: string): HookResult {
-  const text = faultText(hook, why, detail);
-  return hook === "pre-tool-use" || hook === "post-tool-use" || hook === "post-tool-use-failure"
+  const what =
+    why === "unreadable" ? `could not READ its payload from stdin (${detail})` : `could not PARSE its payload (${detail})`;
+  const text = `[flow hook ${hook}] ${what}.`;
+  if (AFTER_CALL.has(hook)) return deltaFault(text);
+  return hook === "pre-tool-use"
     ? { stdout: "", stderr: `\n${text}\n`, exitCode: 2 }
     : { stdout: "", stderr: `${text}\n`, exitCode: 0 };
 }
@@ -2016,39 +1767,28 @@ export function branchFromHead(head: string): string | null {
 }
 
 /**
- * The sidecar beside a subagent's transcript: `…/agent-<id>.jsonl` → `…/agent-<id>.meta.json`.
- *
- * The host writes one for every spawn — present 335/335 in the probe — and it is the strongest
- * evidence in the system precisely because the session did not write it. A session could claim to
- * be anything, and permissions resting on the claim would rest on a lie.
- */
-export function sidecarPath(transcriptPath: string): string | null {
-  return transcriptPath.endsWith(".jsonl") ? `${transcriptPath.slice(0, -".jsonl".length)}.meta.json` : null;
-}
-
-/**
  * Host-written evidence about one session × agent, assembled — the shape a classifier sees.
  *
- * The sidecar's absence is itself the evidence for the top-level session: there is no positive
- * marker for being the parent, only the absence of having been spawned. A sidecar that will not
- * parse is NOT the same as none — the session was spawned, we simply cannot say as what — so
- * `subagent` stays true and `agentType` is left undefined, and a category keyed on a specific type
- * declines rather than the parent category wrongly claiming it.
+ * The payload's `agent_id` is what makes a call a subagent's, whether or not any file exists for
+ * it, and its `agent_type` is the type that subagent was started as. Both are in the message the
+ * host writes, which the session cannot change. A subagent whose message carries no type is
+ * spawned as something unknown: `subagent` stays true and `agentType` is left undefined, so a
+ * category keyed on a specific type declines rather than the parent category wrongly claiming it.
+ * The parent is recognised by ABSENCE — there is no positive marker for being the top-level
+ * session, only the absence of having been spawned.
+ *
+ * `transcript` is this agent's own transcript, a subagent's included, and its head is the brief.
  */
-export function sessionFactsFrom(args: {
-  readonly payload: HookPayload;
-  readonly transcript: string | null;
-  readonly sidecar: string | null;
-}): SessionFacts {
+export function sessionFactsFrom(args: { readonly payload: HookPayload; readonly transcript: string | null }): SessionFacts {
   const spawned = typeof args.payload.agent_id === "string" && args.payload.agent_id !== "";
-  const meta = parseObject(args.sidecar);
-  const agentType = typeof meta?.["agentType"] === "string" ? meta["agentType"] : undefined;
-  const description = typeof meta?.["description"] === "string" ? meta["description"] : undefined;
+  // Read only beside an `agent_id`: the host also sends `agent_type` on a top-level session started
+  // with `--agent`, and that session is still the parent.
+  const type = args.payload.agent_type;
+  const agentType = spawned && typeof type === "string" && type !== "" ? type : undefined;
   return {
     head: args.transcript === null ? "" : briefHead(args.transcript),
-    subagent: spawned || meta !== null,
+    subagent: spawned,
     ...(agentType === undefined ? {} : { agentType }),
-    ...(description === undefined ? {} : { description }),
   };
 }
 
@@ -2107,7 +1847,7 @@ export function shellReadRows(payload: HookPayload, root: string, home?: string)
   const command = text(payload.tool_input?.["command"]);
   if (text(payload.tool_name) !== "Bash" || command === "") return [];
   const cwd = text(payload["cwd"]) || root;
-  return bashReads(command, { cwd, root, home }).reads.map((path) => ({ kind: "read", tool: "Bash", path }));
+  return bashReads(parseShellSteps(command), { cwd, root, home }).reads.map((path) => ({ kind: "read", tool: "Bash", path }));
 }
 
 /** How a path changed across one call. */
@@ -2206,7 +1946,12 @@ export function hermeticEnv(
 // `<sessionId>.jsonl` per top-level session and, for each, a `<sessionId>/subagents/agent-*.jsonl`
 // per child with an `agent-*.meta.json` beside it. Two readers of that layout existed in the old
 // platform — the CLI's corpus reader and the guard's backlog reader — and they disagreed about the
-// folder-name rule; there is one here.
+// folder-name rule. Here the layout is read in two places: this section, where `classifyStore`
+// sorts a listing by it after the fact and `ownTranscriptPath` finds a live subagent's transcript
+// by it, and the store listing in archive.ts, which spells the `subagents` folder again to walk it.
+
+/** The folder under a session that holds its subagents' transcripts. */
+const SUBAGENTS = "subagents";
 
 /**
  * The folder a working directory's transcripts live in.
@@ -2264,7 +2009,7 @@ export function classifyStore(paths: readonly string[]): {
       sessions.push({ path, meta: null, session: path.slice(0, -".jsonl".length), agent: null });
       continue;
     }
-    if (parts.length === 3 && parts[1] === "subagents" && path.endsWith(".jsonl")) {
+    if (parts.length === 3 && parts[1] === SUBAGENTS && path.endsWith(".jsonl")) {
       const meta = `${path.slice(0, -".jsonl".length)}.meta.json`;
       subagents.push({
         path,
@@ -2274,7 +2019,7 @@ export function classifyStore(paths: readonly string[]): {
       });
       continue;
     }
-    if (parts.length === 3 && parts[1] === "subagents" && path.endsWith(".meta.json")) continue;
+    if (parts.length === 3 && parts[1] === SUBAGENTS && path.endsWith(".meta.json")) continue;
     ignored.push(path);
   }
 
@@ -2283,13 +2028,31 @@ export function classifyStore(paths: readonly string[]): {
 }
 
 /**
+ * The path of THIS agent's own transcript, from a live payload — null when the payload names none.
+ *
+ * On a subagent's call the host sends the PARENT's `transcript_path`, and keeps the subagent's own
+ * transcript under it, in the store's layout: `…/<session>.jsonl` →
+ * `…/<session>/subagents/agent-<agent_id>.jsonl`. The parent's path is the parent's transcript.
+ * Null too when a subagent's half is not what that layout needs — an id that could step out of the
+ * folder included, since it becomes part of a path that is then read.
+ */
+export function ownTranscriptPath(payload: HookPayload): string | null {
+  const sent = typeof payload.transcript_path === "string" ? payload.transcript_path : "";
+  if (sent === "") return null;
+  const id = payload.agent_id;
+  if (typeof id !== "string" || id === "") return sent;
+  if (!sent.endsWith(".jsonl") || !/^[\w-]+$/.test(id)) return null;
+  return `${sent.slice(0, -".jsonl".length)}/${SUBAGENTS}/agent-${id}.jsonl`;
+}
+
+/**
  * The sidecar the host writes beside every subagent transcript, read.
  *
  * `toolUseId` is the field that makes this more than a label: it is the id of the parent's own
- * `Agent` tool call, so a sidecar and the block that spawned it join exactly. That join is what
- * lets cost attribution and classification agree about who an actor was — the sidecar says what a
- * spawn WAS, the parent's block says when it happened and what it was asked for, and neither
- * alone answers both.
+ * `Agent` tool call, so a sidecar and the block that spawned it join exactly. That join names an
+ * actor for cost attribution, after the fact — the sidecar says what a spawn WAS, the parent's
+ * block says when it happened and what it was asked for, and neither alone answers both. A live
+ * session is not classified from it: that reads the agent type in its hook message.
  */
 export interface SpawnMeta {
   readonly agentType: string | null;
@@ -2369,9 +2132,10 @@ const SPAWN_TOOL = "Agent";
  * Every spawn a parent transcript made, by tool_use id — the parent's half of the join.
  *
  * It is the WEAKER half and is read as such: what the parent asked for is a claim by the session
- * being classified, while the sidecar is host-written and unforgeable. The classification order
- * (engine, `spawnedAs`) reads the sidecar and never this. What this is for is everything the
- * sidecar cannot say — when the spawn happened, and where in the parent's own transcript to look.
+ * being classified, while the sidecar is host-written and unforgeable, and so outranks it here.
+ * Neither decides who a live session is: classification (engine, `spawnedAs`) reads the agent type
+ * in the hook message. What this is for is everything the sidecar cannot say — when the spawn
+ * happened, and where in the parent's own transcript to look.
  */
 export function spawnsIn(jsonl: string): Map<string, Spawn> {
   const out = new Map<string, Spawn>();
@@ -2492,7 +2256,7 @@ export function parseEvents(jsonl: string, root = "", home?: string): Transcript
       // A Bash call's reads need a repo to be relative to; with no root there is none to count in.
       const reads =
         name === "Bash" && root !== ""
-          ? bashReads(text(input["command"]), { cwd: text(line.record["cwd"]) || root, root, home }).reads
+          ? bashReads(parseShellSteps(text(input["command"])), { cwd: text(line.record["cwd"]) || root, root, home }).reads
           : [];
       out.push({
         line: line.line,
@@ -2549,9 +2313,9 @@ export function isCorrection(prose: string): boolean {
 
 // ── the justfile's own tools, so a bypass is derived rather than guessed ──
 //
-// Every recipe body line → each command segment's first word → the set of tools that "should go
-// through just". Shell noise is dropped; with no justfile, bypass detection is switched off
-// entirely rather than falling back to a hardcoded list that would be wrong for every other repo.
+// Each recipe's body is parsed, and each command's program, or the tool `npx` runs, is a tool that
+// "should go through just". Shell noise is dropped; with no justfile, bypass detection is switched
+// off entirely rather than falling back to a hardcoded list that would be wrong for every other repo.
 
 const NOISE = new Set([
   "set", "node", "npx", "just", "cd", "export", "echo", "then", "fi", "do", "done", "if", "for", "while", "source",
@@ -2566,30 +2330,36 @@ function isRecipeHeader(line: string): boolean {
   return head !== "" && /^[@A-Za-z_][\w-]*(\s|$)/.test(head) && !head.includes("=");
 }
 
-/** The tools a repo's justfile actually drives — what a direct invocation would be bypassing. */
+/**
+ * The tools a repo's justfile actually drives — what a direct invocation would be bypassing.
+ *
+ * Each recipe's body is read through the parse as one script, so a loop or an `if` that spans its
+ * lines is read whole; a body that does not parse whole is read line by line, and a line that does
+ * not parse names nothing. Just's own `@` and `-` line prefixes are dropped first.
+ */
 export function recipeTools(justfile: string): string[] {
-  const tools = new Set<string>();
-  let inRecipe = false;
+  const bodies: string[][] = [];
+  let body: string[] | null = null;
   for (const raw of justfile.split("\n")) {
-    if (raw.trim() === "") continue;
-    const indented = /^\s/.test(raw);
     const line = raw.trim();
-    if (line.startsWith("#")) continue;
-    if (!indented) {
-      inRecipe = isRecipeHeader(line);
-      continue; // the header itself is not a command
-    }
-    if (!inRecipe) continue;
-    for (const segment of line.split(/&&|\|\||\||;/)) {
-      const words = segment.trim().split(/\s+/);
+    if (line === "") continue;
+    if (!/^\s/.test(raw)) {
+      // A top-level line opens a recipe, or ends one; the header itself is not a command.
+      body = isRecipeHeader(line) ? [] : null;
+      if (body !== null) bodies.push(body);
+    } else if (body !== null && !line.startsWith("#")) body.push(line.replace(/^[@-]+/, ""));
+  }
+  const tools = new Set<string>();
+  for (const lines of bodies) {
+    const commands = parseCommandLine(lines.join("\n")) ?? lines.flatMap((line) => parseCommandLine(line) ?? []);
+    for (const command of commands) {
       // A LAUNCHER names the tool in its next word, and dropping the line at the launcher is how
       // the ported reader came back empty on this very repo: every recipe here is `npx tsc`,
       // `npx vitest`, `npx eslint`, so `npx` matched the noise list and no tool was ever
       // collected — leaving the bypass section switched off and looking like a clean record.
-      const first = (words[0] ?? "").replace(/^@/, "");
-      const word = first === "npx" ? (words[1] ?? "") : first;
-      if (word === "" || !/^[A-Za-z]/.test(word) || word.includes("/") || NOISE.has(word)) continue;
-      tools.add(word);
+      const tool = toolOf(command);
+      if (command.nested || command.program.includes("/") || !/^[A-Za-z]/.test(tool) || NOISE.has(tool)) continue;
+      tools.add(tool);
     }
   }
   return [...tools];
@@ -2602,22 +2372,30 @@ export interface BashClass {
   readonly commits: boolean;
 }
 
-/** Read one command line against the repo's own recipe tools. HEURISTIC, like everything below. */
+/** The tool a command runs: its program, or the tool `npx` is asked to run. */
+function toolOf(command: ShellCommand): string {
+  const program = programName(command.program);
+  return program === "npx" ? programName(command.args.find((arg) => !arg.startsWith("-")) ?? "") : program;
+}
+
+/**
+ * Read one command line against the repo's own recipe tools, from its parse. A heredoc's body is
+ * text the command is fed, so a file being written that names a tool is not a run of it — while
+ * the line around the heredoc is judged like any other, and so is a body a shell runs. A line that
+ * does not parse is nothing: no recipe, no bypass, no commit.
+ */
 export function classifyBash(command: unknown, tools: readonly string[]): BashClass {
-  const line = strip(command);
-  // A heredoc is authoring, not running — the body is a file being written, and every word in it
-  // would otherwise read as a command.
-  if (firstHeredoc(line) !== null) return { recipes: [], bypasses: [], commits: false };
-  const recipes: string[] = [];
-  for (const match of line.matchAll(/(?:^|\n|;|\||&&|\()\s*just\s+([a-z][\w-]*)/g)) recipes.push(match[1] as string);
-  const bypasses: string[] = [];
-  for (const tool of tools) {
-    const escaped = tool.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const direct = new RegExp(`(?:^|\\n|;|\\||&&|\\(|node_modules/\\.bin/|npx\\s+)\\s*(?:\\./)?${escaped}\\b`);
-    const viaJust = new RegExp(`just\\s+\\S*\\b${escaped}\\b`);
-    if (direct.test(line) && !viaJust.test(line)) bypasses.push(tool);
-  }
-  return { recipes, bypasses, commits: /\bgit\s+commit\b/.test(line) };
+  const commands = parseCommandLine(strip(command)) ?? [];
+  const recipes = commands.flatMap((c) => {
+    const recipe = programName(c.program) === "just" ? c.args[0] : undefined;
+    return recipe !== undefined && /^[a-z][\w-]*$/.test(recipe) ? [recipe] : [];
+  });
+  const ran = new Set(commands.map(toolOf));
+  return {
+    recipes,
+    bypasses: tools.filter((tool) => ran.has(tool)),
+    commits: gitCommands({ commands }).some((git) => git.subcommand === "commit"),
+  };
 }
 
 // ── the reading ────────────────────────────────────────────────────────────
@@ -2847,11 +2625,16 @@ export function mergeNarratives(each: readonly { session: string; read: Narrativ
 // ── weaken-after-block ─────────────────────────────────────────────────────
 
 /**
+ * The repo's own Claude Code settings file, relative to the repo root: guarded here, and where
+ * `settingsFileFor` registers a dev dependency's hooks.
+ */
+const REPO_SETTINGS = ".claude/settings.json";
+
+/**
  * The HOST's half of the guard: where the hooks that invoke any of it are registered.
  *
  * Fixed, because these are the harness's own file names and not a repo's choice — unlike the
- * repo's half, which is `configSurface` reading the config's imports. The old list spelled the two
- * halves as one constant, with one repo's pack folder standing in for every repo's.
+ * repo's half, which `guardPaths` reads out of the config's imports.
  *
  * THE GUARD PACK KEEPS ITS OWN, WIDER LIST, and the difference is deliberate — this is the one
  * place that says so, because two lists that look like copies are read as drift until somebody
@@ -2870,11 +2653,28 @@ export function mergeNarratives(each: readonly { session: string; read: Narrativ
  *     door — which would put one harness's file names into the GRAMMAR every config is written
  *     in, and that is the coupling the fence exists to prevent.
  */
-export const HOST_SURFACE: readonly string[] = [".claude/settings.json", ".claude/settings.local.json", ".claude/agents/**"];
+export const HOST_SURFACE: readonly string[] = [REPO_SETTINGS, ".claude/settings.local.json", ".claude/agents/**"];
 
-/** Every file that decides what the guard does here — the config and its packs, plus the host's. */
+/**
+ * Every file that decides what the guard does here: the config and the packs it imports, then the
+ * host's half. `weakenedAfterBlock` reads it — "a rail refused, and then somebody edited the guard".
+ *
+ * The repo's half is READ OUT OF THE CONFIG'S TEXT (`configImports`) rather than resolved, so it
+ * answers the same whether or not the config loads, and it follows whatever a repo called its pack
+ * folder — no folder name is spelled into the engine.
+ *
+ * The FOLDER of each imported pack comes with the file, which is the one deliberate widening. A
+ * pack imports its own helpers, and those the config never names. The import graph cannot be
+ * walked from text, so the folder is the honest approximation.
+ */
 export function guardPaths(configText: string | null): readonly string[] {
-  return [...configSurface(configText), ...HOST_SURFACE];
+  const paths: string[] = [CONFIG_FILE];
+  for (const file of configImports(configText ?? "")) {
+    if (!paths.includes(file)) paths.push(file);
+    const dir = file.includes("/") ? `${file.slice(0, file.lastIndexOf("/"))}/**` : null;
+    if (dir !== null && !paths.includes(dir)) paths.push(dir);
+  }
+  return [...paths, ...HOST_SURFACE];
 }
 
 /** Is this one of the files that decides what the guard does? */
@@ -3058,9 +2858,9 @@ export function health({ armed, rows, withRecord, analysed }: HealthArgs): Healt
  *
  * The sidecar says what a spawn WAS (`agentType`, unforgeable, written by the host) and the
  * parent's own `Agent` block says when it happened and what was asked for. Joining them on
- * `toolUseId` is what lets classification and cost attribution name the same actor: a builder
- * spawned under a generic bucket is `general-purpose` in the parent's claim and `builder` in the
- * host's record, and only one of those is evidence.
+ * `toolUseId` names an actor for cost attribution, after the fact: a builder spawned under a
+ * generic bucket is `general-purpose` in the parent's claim and `builder` in the host's record,
+ * and only one of those is evidence. A live session is classified from its hook message instead.
  */
 export interface SpawnRecord {
   /** The conversation that spawned it. */
@@ -3460,11 +3260,74 @@ const REGISTERED: readonly { readonly hook: HookEvent; readonly matcher?: string
   { hook: "stop" },
 ];
 
+/**
+ * The repo's bin folder, relative to the repo root. flow never runs a `flow` from here: any package
+ * can install one (Facebook's `flow-bin` does), and nothing guards the folder. `hostPath` drops it
+ * from the PATH npm hands one run.
+ */
+export const LOCAL_BIN = "node_modules/.bin";
+
+/** Where the repo's own `@jawache/flow` is, relative to the repo root: a dev dependency, or init's link. */
+export const PACKAGE_DIR = "node_modules/@jawache/flow";
+
+/** That package's own binary — the file its `bin` names. */
+export const PACKAGE_BIN = `${PACKAGE_DIR}/dist/flow.mjs`;
+
+/**
+ * The repo-first half of a caller of flow: run the repo's own package's binary when it is there.
+ * `root` is how the shell names the repo: `$CLAUDE_PROJECT_DIR` for a hook, `$PWD` for git's.
+ */
+function repoFirst(root: string, verb: string): string {
+  return `f="${root}/${PACKAGE_BIN}"; [ -f "$f" ] && exec node "$f" ${verb}`;
+}
+
+/**
+ * The command each registration runs: the repo's own `@jawache/flow` first, then the PATH's.
+ *
+ * The host runs it through a shell with `$CLAUDE_PROJECT_DIR` set to the repo, so a repo with flow
+ * only as a dev dependency answers its hooks, and its lockfile's version wins over a global one. It
+ * runs the package's own file, by path, never a `flow` in node_modules/.bin, which any package can
+ * put there. The same command goes in either settings file, so the host, which merges identical
+ * commands, runs it once when it is in both.
+ */
+export function hookCommand(hook: HookEvent): string {
+  return `${repoFirst("$CLAUDE_PROJECT_DIR", `hook ${hook}`)}; exec flow hook ${hook}`;
+}
+
 export const HOOK_REGISTRATIONS: readonly Registration[] = REGISTERED.map(({ hook, matcher }) => ({
   event: HOST_EVENT[hook],
-  command: `flow hook ${hook}`,
+  command: hookCommand(hook),
   ...(matcher === undefined ? {} : { matcher }),
 }));
+
+/**
+ * WHICH SETTINGS FILE holds flow's hooks: the repo's own `.claude/settings.json` when the repo's
+ * `package.json` lists `@jawache/flow` as a dependency or a dev dependency, and the machine-wide
+ * file otherwise.
+ *
+ * A dev dependency guards that one repo: the repo's file is committed, so a fresh clone is guarded
+ * after `npm install`, and a machine with no global flow is not handed a hook that fails in every
+ * other repo it opens. A `package.json` that is missing, or will not parse, lists nothing.
+ */
+export function settingsFileFor(manifest: string | null, machine: string): string {
+  return listsFlow(manifest) ? REPO_SETTINGS : machine;
+}
+
+/** Does this `package.json` list `@jawache/flow` as a dependency or a dev dependency? */
+export function listsFlow(manifest: string | null): boolean {
+  if (manifest === null) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(manifest);
+  } catch {
+    return false;
+  }
+  if (typeof parsed !== "object" || parsed === null) return false;
+  const { dependencies, devDependencies } = parsed as Record<string, unknown>;
+  return [dependencies, devDependencies].some(
+    (listed) => typeof listed === "object" && listed !== null && Object.hasOwn(listed, "@jawache/flow"),
+  );
+}
 
 /**
  * Is this registration OURS?
@@ -3491,12 +3354,20 @@ function hookArrays(settings: unknown): Record<string, unknown[]> {
 
 /** Is this one entry of a hook array a registration of ours? */
 function isOurs(entry: unknown): boolean {
+  return commandsOf(entry).some((command) => ourHookCommand(command));
+}
+
+/** The command of one hook inside an entry, or null when it has none. Loose, like everything read out of the file. */
+function commandOf(held: unknown): string | null {
+  const command = (held as { command?: unknown } | null)?.command;
+  return typeof command === "string" ? command : null;
+}
+
+/** The commands of one entry of a hook array. */
+function commandsOf(entry: unknown): string[] {
   const inner = (entry as { hooks?: unknown } | null)?.hooks;
-  if (!Array.isArray(inner)) return false;
-  return inner.some((held) => {
-    const command = (held as { command?: unknown } | null)?.command;
-    return typeof command === "string" && ourHookCommand(command);
-  });
+  if (!Array.isArray(inner)) return [];
+  return inner.flatMap((held) => commandOf(held) ?? []);
 }
 
 /** The events this settings file already calls flow for. What makes init idempotent and status honest. */
@@ -3524,29 +3395,105 @@ export function staleRegistrations(settings: unknown): string[] {
 }
 
 /**
- * A settings file with flow's registrations in it — a NEW object, and only ever added to.
+ * flow's own registration in the OLD shape, the bare `flow hook <event>`: the word it answers to, or
+ * null when the command is anything else. It finds flow on the PATH alone, so a repo with flow only
+ * as a dev dependency answers none of its hooks. A command with a path to the binary is not this
+ * shape: it names the copy it runs, and that is somebody's choice.
+ */
+export function bareHook(command: string): HookEvent | null {
+  const word = /^flow\s+hook\s+([a-z-]+)$/.exec(command.trim())?.[1];
+  return word !== undefined && isHookEvent(word) ? word : null;
+}
+
+/** The events this settings file calls flow for in the old shape — see `bareHook`. */
+export function bareRegistrations(settings: unknown): string[] {
+  return Object.entries(hookArrays(settings))
+    .filter(([, entries]) => entries.some((entry) => commandsOf(entry).some((command) => bareHook(command) !== null)))
+    .map(([event]) => event);
+}
+
+/**
+ * The settings file's hooks, with flow's own entries on those events rewritten in place: a stale
+ * matcher widened, and an old-shape command (`bareHook`) made today's. FLOW'S OWN ENTRIES ARE
+ * FLOW'S TO REWRITE, and these are the only two rewrites flow makes. Adding a second entry beside
+ * either instead would fire flow twice for every event the old one already answers.
+ */
+function rewrittenOurs(settings: unknown, stale: ReadonlySet<string>, bare: ReadonlySet<string>): Record<string, unknown> {
+  const held = (settings && typeof settings === "object" ? settings : {}) as Record<string, unknown>;
+  const arrays = hookArrays(settings);
+  const hooks: Record<string, unknown> = { ...(held["hooks"] as Record<string, unknown> | undefined) };
+  const matcherOf = new Map(HOOK_REGISTRATIONS.map((r) => [r.event, r.matcher]));
+  for (const event of new Set([...stale, ...bare]))
+    hooks[event] = (arrays[event] ?? []).map((entry) => {
+      if (!isOurs(entry)) return entry;
+      const ours = entry as Record<string, unknown> & { hooks: unknown[] };
+      return {
+        ...ours,
+        ...(stale.has(event) ? { matcher: matcherOf.get(event) } : {}),
+        hooks: ours.hooks.map((inner) => {
+          const command = commandOf(inner);
+          const word = command === null ? null : bareHook(command);
+          return word === null ? inner : { ...(inner as Record<string, unknown>), command: hookCommand(word) };
+        }),
+      };
+    });
+  return hooks;
+}
+
+/**
+ * THE MACHINE-WIDE FILE, when a dev dependency's hooks are in the repo's own: flow's old-shape
+ * commands there (`bareHook`) rewritten to today's, and nothing else touched — no registration
+ * added, no matcher widened, no other key or hook changed. A NEW object; `rewritten` names the
+ * events, empty when there was nothing to do.
  *
- * It is somebody's file and holds far more than us, so nothing is rewritten and nothing is removed:
- * a registration on our event that belongs to another tool keeps its place and flow stands beside
- * it. Adding what is already there is skipped, which is the whole of what makes `flow init`
- * idempotent — a second run has nothing to say.
+ * The host merges only IDENTICAL commands across its settings files. An old `flow hook stop` in the
+ * machine-wide file beside today's command in the repo's would run flow twice for every event, so
+ * every rule would fire twice and every refusal print twice. Made the same command, it runs once.
+ */
+export function withMachineCommandsUpToDate(settings: unknown): { settings: unknown; rewritten: string[] } {
+  const bare = new Set(bareRegistrations(settings));
+  if (bare.size === 0) return { settings, rewritten: [] };
+  const held = settings as Record<string, unknown>;
+  return { settings: { ...held, hooks: rewrittenOurs(settings, new Set(), bare) }, rewritten: [...bare] };
+}
+
+/**
+ * The events the machine-wide file calls flow for with a command the repo's own file does not use
+ * for that event. The host runs both, so each of those hooks fires twice. Split by the fix: `bare`
+ * holds only old-shape commands, which `flow init` rewrites; `theirs` holds a command of somebody's
+ * own (`FLOW_DEBUG=1 flow hook stop`), which init leaves as it is.
+ */
+function machineDiffers(repo: unknown, machine: unknown): { bare: string[]; theirs: string[] } {
+  const repoArrays = hookArrays(repo);
+  const out = { bare: [] as string[], theirs: [] as string[] };
+  for (const [event, entries] of Object.entries(hookArrays(machine))) {
+    const repoCommands = new Set((repoArrays[event] ?? []).flatMap(commandsOf));
+    const differ = entries.flatMap(commandsOf).filter((command) => ourHookCommand(command) && !repoCommands.has(command));
+    if (differ.length === 0) continue;
+    (differ.every((command) => bareHook(command) !== null) ? out.bare : out.theirs).push(event);
+  }
+  return out;
+}
+
+/**
+ * A settings file with flow's registrations in it — a NEW object, added to, and with flow's own
+ * entries brought up to date.
+ *
+ * It is somebody's file and holds far more than us, so nothing of anyone else's is rewritten and
+ * nothing is removed: a registration on our event that belongs to another tool keeps its place and
+ * flow stands beside it. Adding what is already there is skipped, which is the whole of what makes
+ * `flow init` idempotent — a second run has nothing to say.
  */
 export function withRegistrations(settings: unknown): { settings: unknown; added: string[] } {
   const base = (settings && typeof settings === "object" ? settings : {}) as Record<string, unknown>;
   const already = new Set(registeredEvents(settings));
   const wanted = HOOK_REGISTRATIONS.filter((r) => !already.has(r.event));
   const stale = new Set(staleRegistrations(settings));
-  if (wanted.length === 0 && stale.size === 0) return { settings: base, added: [] };
+  const bare = new Set(bareRegistrations(settings));
+  if (wanted.length === 0 && stale.size === 0 && bare.size === 0) return { settings: base, added: [] };
 
   const arrays = hookArrays(settings);
-  const hooks: Record<string, unknown> = { ...(base["hooks"] as Record<string, unknown> | undefined) };
-  // A STALE REGISTRATION IS OURS, and widening it is the one rewrite this function makes: the entry
-  // is flow's own, so its matcher is flow's to set. Adding a second, wider entry beside it instead
-  // would fire flow twice for every tool the old matcher named.
-  for (const registration of HOOK_REGISTRATIONS.filter((r) => stale.has(r.event)))
-    hooks[registration.event] = (arrays[registration.event] ?? []).map((entry) =>
-      isOurs(entry) ? { ...(entry as Record<string, unknown>), matcher: registration.matcher } : entry,
-    );
+  const hooks = rewrittenOurs(settings, stale, bare);
   for (const registration of wanted) {
     hooks[registration.event] = [
       ...(arrays[registration.event] ?? []),
@@ -3556,12 +3503,17 @@ export function withRegistrations(settings: unknown): { settings: unknown; added
       },
     ];
   }
-  return {
-    settings: { ...base, hooks },
-    added: HOOK_REGISTRATIONS.filter((r) => stale.has(r.event) || !already.has(r.event)).map((r) =>
-      stale.has(r.event) ? `${r.event} (widened to every tool)` : r.event,
-    ),
-  };
+  // THE REPORT, in registration order: each event added, widened or rewritten, once, with why.
+  const added: string[] = [];
+  for (const event of new Set([...HOOK_REGISTRATIONS.map((r) => r.event), ...bare])) {
+    const why = [
+      ...(stale.has(event) ? ["widened to every tool"] : []),
+      ...(bare.has(event) ? [`now runs the flow in ${PACKAGE_DIR} first`] : []),
+    ];
+    if (why.length > 0) added.push(`${event} (${why.join(", ")})`);
+    else if (!already.has(event)) added.push(event);
+  }
+  return { settings: { ...base, hooks }, added };
 }
 
 // ── the git gate ─────────────────────────────────────────────────────────────
@@ -3581,13 +3533,24 @@ export const GATE_PATH = `${HOOKS_DIR}/pre-commit`;
 export const SET_HOOKS_PATH = `git config core.hooksPath ${HOOKS_DIR}`;
 
 /**
- * How to arm a gate flow will not write over, in the ONE wording both readers use.
+ * The gate's line that runs the repo's own `@jawache/flow` first: git runs the hook from the repo's
+ * root, so `$PWD` is the repo. Written by `init`, looked for by `status`, and named in its fixes.
+ */
+export const GATE_LOCAL_LINE = repoFirst("$PWD", "hook commit");
+
+/** The gate's line that runs flow, last, so its exit code is the hook's. */
+export const GATE_RUN_LINE = "exec flow hook commit";
+
+/**
+ * How to arm a gate flow will not write over, in the ONE wording both readers use. Both of the
+ * gate's lines: the run line alone finds flow on the PATH alone, and a repo with flow only as a dev
+ * dependency then fails every commit.
  *
  * `init` says it about the hook it just declined to overwrite; `status` says it about the hook it
  * found unarmed. The same instruction, at the two moments a person can meet it — and two spellings
  * of an instruction are two instructions the day one of them is edited.
  */
-export const ADD_THE_GATE_LINE = "add `flow hook commit` to it";
+export const ADD_THE_GATE_LINE = `add \`${GATE_LOCAL_LINE}\` and then \`${GATE_RUN_LINE}\` to the end of it`;
 
 /**
  * How to bring a gate written for the old verb up to date, in the ONE wording both readers use.
@@ -3596,7 +3559,7 @@ export const ADD_THE_GATE_LINE = "add `flow hook commit` to it";
  * leaves out deletions, and exits before calling flow at all when a commit only deletes files.
  * `status` says that much; this is the instruction alone, so it ends `init`'s sentence cleanly.
  */
-export const UPDATE_THE_GATE_LINE = "replace its `flow commit …` line with `exec flow hook commit`";
+export const UPDATE_THE_GATE_LINE = `replace its \`flow commit …\` line with \`${GATE_LOCAL_LINE}\` and then \`${GATE_RUN_LINE}\``;
 
 /**
  * The pre-commit hook, verbatim.
@@ -3612,7 +3575,11 @@ export const PRE_COMMIT = `#!/bin/sh
 # git refuses the commit. This is the half of the promise the PreToolUse rail cannot make: it fires
 # for a human's commit, a merge and CI, with no session in the room. flow asks git itself what the
 # commit adds, changes and deletes.
-exec flow hook commit
+#
+# git runs this from the repo's root, so the repo's own @jawache/flow, a dev dependency's, runs
+# before any flow on the PATH.
+${GATE_LOCAL_LINE}
+${GATE_RUN_LINE}
 `;
 
 /** A hook's commands, without its comments — a comment that names the gate does not run it. */
@@ -3696,8 +3663,8 @@ import { banCommands, command, commit, defineCategory, defineConfig, definePack,
 import { flow } from "@jawache/flow/packs";
 
 // A category is a name and the HOST-WRITTEN evidence that recognises it — never a claim a session
-// made about itself. This one is "the harness wrote a sidecar for you", which is what a spawned
-// subagent is and a chat is not.
+// made about itself. This one is "the harness sent an agent id with your call", which is what a
+// spawned subagent is and a chat is not.
 const subagent = defineCategory("subagent", (facts) => facts.subagent);
 
 // Spelled in pieces on purpose. Written whole it would appear in this very file, and the gate below
@@ -3765,8 +3732,9 @@ export interface InitFacts {
   readonly hasFlowDir: boolean;
   /** `git config core.hooksPath` as it stands. */
   readonly hooksPath: string | null;
+  /** The settings file flow's hooks go in: the repo's own, repo-relative, or the machine-wide one. */
   readonly settingsPath: string;
-  /** The parsed host settings file. */
+  /** That file, parsed. */
   readonly settings: unknown;
   /**
    * The settings file is THERE and would not parse.
@@ -3778,6 +3746,11 @@ export interface InitFacts {
    * settings.json holding JSONC comments: the write was one branch away.
    */
   readonly settingsUnreadable: boolean;
+  /**
+   * The machine-wide settings file, read, when flow's hooks go in the repo's own file — a dev
+   * dependency's — and null when they go in the machine-wide file itself.
+   */
+  readonly machine: { readonly path: string; readonly settings: unknown; readonly unreadable: boolean } | null;
   /** Does `@jawache/flow` already resolve from this repo? */
   readonly resolves: boolean;
   /**
@@ -3813,8 +3786,24 @@ export interface InitPlan {
   /** The rewritten settings, or null when they already call flow — or could not be read. */
   readonly settings: { readonly path: string; readonly value: unknown } | null;
   readonly registered: readonly string[];
+  /**
+   * The machine-wide file with flow's old commands brought up to date, for a dev dependency whose
+   * hooks are in the repo's own file — or null when it has none, or could not be read.
+   */
+  readonly machine: { readonly path: string; readonly value: unknown; readonly rewritten: readonly string[] } | null;
   /** The settings file was there and would not parse, so nothing was registered. Said out loud. */
   readonly settingsUnreadable: string | null;
+}
+
+/**
+ * The machine-wide file's write, with its path: null when there is no such file to bring in line,
+ * nothing in it to rewrite, or it would not parse — the same rule as the hooks' own file: bytes
+ * nobody parsed are not written.
+ */
+function machineRewrite(file: InitFacts["machine"]): InitPlan["machine"] {
+  if (file === null || file.unreadable) return null;
+  const { settings, rewritten } = withMachineCommandsUpToDate(file.settings);
+  return rewritten.length === 0 ? null : { path: file.path, value: settings, rewritten };
 }
 
 /** What init will do to this repo. Pure: every branch reads a fact the shell already gathered. */
@@ -3840,6 +3829,7 @@ export function planInit(facts: InitFacts): InitPlan {
     hooksPath: facts.isGit && facts.hooksPath !== HOOKS_DIR,
     settings: registration.added.length === 0 ? null : { path: facts.settingsPath, value: registration.settings },
     registered: registration.added,
+    machine: machineRewrite(facts.machine),
     settingsUnreadable: facts.settingsUnreadable ? facts.settingsPath : null,
   };
 }
@@ -3862,6 +3852,10 @@ export function initLines(plan: InitPlan, failures: readonly string[]): string[]
   // belongs. `npm i -D @jawache/flow` and this line is simply absent.
   if (plan.link) wrote.push(`node_modules/@jawache/flow → ${plan.link} (a link to the flow that is running — nothing here resolved @jawache/flow)`);
   if (plan.settings) wrote.push(`${plan.settings.path} — ${plan.registered.join(" · ")}`);
+  if (plan.machine)
+    wrote.push(
+      `${plan.machine.path} — ${plan.machine.rewritten.join(" · ")} (an older flow's command, now the same as ${REPO_SETTINGS}'s, so each hook runs once)`,
+    );
   if (plan.hooksPath) wrote.push(SET_HOOKS_PATH);
 
   const lines: string[] =
@@ -3917,6 +3911,11 @@ export interface StatusFacts {
   readonly settingsPath: string;
   readonly settings: unknown;
   /**
+   * The machine-wide settings file, parsed, when flow's hooks are in the repo's own file — a dev
+   * dependency's — and null when `settingsPath` is the machine-wide file itself.
+   */
+  readonly machine: { readonly path: string; readonly settings: unknown } | null;
+  /**
    * The grammars the config declared, each with its library path made absolute and a straight
    * answer about whether that file is there.
    *
@@ -3944,6 +3943,14 @@ export interface StatusFacts {
   readonly ignored: readonly string[];
   /** The config's `snapshotInclude` globs: the ignored paths the snapshot records anyway. */
   readonly snapshotInclude: readonly string[];
+  /**
+   * Where the flow the hooks and the gate run is, as three stats. `listed`: the repo's
+   * `package.json` lists `@jawache/flow`. `copy`: its package's binary, `PACKAGE_BIN`, is there —
+   * a dev dependency's, or the link `flow init` made to the flow that ran it. `path`: a `flow` on
+   * the PATH this command was run with, less what npm added for this run (`hostPath`) — the nearest
+   * reading there is of the PATH git and the host hand their hooks. `binaryFitting` judges them.
+   */
+  readonly binary: { readonly listed: boolean; readonly copy: boolean; readonly path: boolean };
 }
 
 /**
@@ -4043,6 +4050,8 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
   const registered = registeredEvents(facts.settings);
   const missing = HOOK_REGISTRATIONS.filter((r) => !registered.includes(r.event)).map((r) => r.event);
   const stale = staleRegistrations(facts.settings);
+  const twice = facts.machine === null ? { bare: [], theirs: [] } : machineDiffers(facts.settings, facts.machine.settings);
+  const once = twice.bare.length === 0 && twice.theirs.length === 0;
   const armed = armsFlow(facts.gateText);
   const old = !armed && armsOldFlow(facts.gateText);
   return [
@@ -4090,9 +4099,9 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
         ]),
     {
       id: "hooks",
-      ok: missing.length === 0 && stale.length === 0,
+      ok: missing.length === 0 && stale.length === 0 && once,
       detail:
-        missing.length === 0 && stale.length === 0
+        missing.length === 0 && stale.length === 0 && once
           ? `${facts.settingsPath} — ${registered.join(" · ")}`
           : [
               missing.length === 0
@@ -4101,12 +4110,136 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
               stale.length === 0
                 ? ""
                 : `${facts.settingsPath} calls flow for ${stale.join(" · ")} on some tools only — an older flow registered ${stale.length === 1 ? "it" : "them"} that way, and a change another tool makes is not judged after it lands. Re-run \`flow init\` to widen ${stale.length === 1 ? "it" : "them"}.`,
+              twice.bare.length === 0 || facts.machine === null
+                ? ""
+                : `${facts.machine.path} also calls flow for ${twice.bare.join(" · ")} the old way, as the bare \`flow hook <event>\`, so Claude Code runs it beside ${facts.settingsPath}'s command and each of those hooks fires twice. Re-run \`flow init\`, which rewrites it to the same command.`,
+              twice.theirs.length === 0 || facts.machine === null
+                ? ""
+                : `${facts.machine.path} also calls flow for ${twice.theirs.join(" · ")} with a command of its own, so Claude Code runs it beside ${facts.settingsPath}'s command and each of those hooks fires twice. Make it the same command as ${facts.settingsPath}'s, or remove it from that file.`,
             ]
               .filter((line) => line !== "")
               .join("\n"),
     },
+    binaryFitting(facts),
     ...snapshotGaps(universe(facts.load?.ok === true ? facts.load.entries : []), facts.ignored, facts.snapshotInclude),
   ];
+}
+
+/** Where a caller of `flow` looks for it: the repo's own package, then the PATH — or the PATH alone. */
+type Reach = "local" | "path";
+
+/**
+ * The gate, as written: one with `GATE_LOCAL_LINE` puts the repo's copy first, and one without it —
+ * the gate an older `flow init` wrote, which it never rewrites — finds only the PATH. The LINE, not
+ * text `node_modules/`: a gate that runs another tool from there still finds flow on the PATH
+ * alone. A gate that does not call flow at all is judged as `flow init` writes one; its own
+ * fitting is red.
+ */
+function gateReach(text: string | null): Reach {
+  if (text === null || (!armsFlow(text) && !armsOldFlow(text))) return "local";
+  return hookCommands(text)
+    .split("\n")
+    .some((line) => line.trim() === GATE_LOCAL_LINE)
+    ? "local"
+    : "path";
+}
+
+/**
+ * The registrations, as written: one in the old shape (`bareHook`) finds only the PATH, and that is
+ * every hook it answers. The SAME rule `flow init` rewrites by, so the fix this names is one init
+ * can carry out. Any other command is somebody's own, and none at all is judged as init writes them.
+ */
+function hooksReach(settings: unknown): Reach {
+  return bareRegistrations(settings).length > 0 ? "path" : "local";
+}
+
+/**
+ * THE PATH GIT AND THE HOST HAND THEIR HOOKS, read off the PATH this command was run with: every
+ * folder of it but a `node_modules/.bin` that npm put there for this one run — the repo's own or an
+ * ancestor's, which `npx flow` and `npm run` add, and npx's cache of a package it fetched. Counted,
+ * `npx flow status` would find a dev dependency's copy "on the PATH" that git never sees.
+ *
+ * Another repo's node_modules/.bin stays: it is on the PATH because someone put it there.
+ */
+export function hostPath(dirs: readonly string[], root: string): string[] {
+  const tidy = (path: string): string => path.replace(/\\/g, "/").replace(/\/+$/, "");
+  const bin = `/${LOCAL_BIN}`;
+  const at = tidy(root);
+  return dirs.filter((dir) => {
+    const path = tidy(dir);
+    if (path === "") return false;
+    if (!path.endsWith(bin)) return true;
+    const owner = path.slice(0, -bin.length);
+    return !(at === owner || at.startsWith(`${owner}/`) || path.includes("/_npx/"));
+  });
+}
+
+/**
+ * CAN THE HOOKS AND THE GATE FIND `flow`? Both call it by name, so a repo can carry every other
+ * fitting and still have each hook fail with `flow: not found` and every commit refused.
+ *
+ * Each is judged AS WRITTEN. Today's gate and registrations run the repo's own package first, so
+ * a dev dependency answers them and its copy wins over the PATH's. An older gate, or a
+ * registration in the old shape, finds only the PATH — and the repo's own copy is one it never
+ * runs, a red line naming which of them is stranded and how to bring it up to date.
+ */
+function binaryFitting(facts: Pick<StatusFacts, "binary" | "gateText" | "settings">): Fitting {
+  const { listed, copy, path } = facts.binary;
+  // THE REPO'S OWN COPY is one its package.json lists. In a repo that does not list flow, the copy
+  // is the link `flow init` made to the flow that ran it — the PATH's, in the ordinary global
+  // install — so it is judged by the PATH, and the tutorial's line names the PATH.
+  const modules = listed && copy;
+  const hooks = hooksReach(facts.settings);
+  const gate = gateReach(facts.gateText);
+  const runs = (reach: Reach): string | null => (reach === "local" && modules ? `in ${PACKAGE_DIR}` : path ? "on the PATH" : null);
+  const [byHooks, byGate] = [runs(hooks), runs(gate)];
+  if (byHooks !== null && byGate !== null)
+    return {
+      id: "binary",
+      ok: true,
+      detail:
+        byHooks === byGate
+          ? `the hooks and the gate run the flow ${byHooks}`
+          : `the hooks run the flow ${byHooks}, and the gate the flow ${byGate}`,
+    };
+  const install = `install it for this repo with \`npm i -D @jawache/flow\`, or for every repo with \`npm i -g @jawache/flow\`.`;
+  // LINKED, NOT LISTED, AND NOTHING ON THE PATH: the hooks and the gate run the link while it
+  // resolves, so this is red on the safe side, and it says so rather than "no flow".
+  if (!modules && copy)
+    return {
+      id: "binary",
+      ok: false,
+      detail:
+        `this repo's package.json does not list @jawache/flow, so ${PACKAGE_DIR} is the link \`flow init\` made to the flow that ran it, ` +
+        `and no flow is on the PATH. The hooks and the gate run that link only while it resolves, and once it breaks every hook fails ` +
+        `with \`flow: not found\` and git refuses every commit — ${install}`,
+    };
+  if (!modules)
+    return {
+      id: "binary",
+      ok: false,
+      detail:
+        `no flow in ${PACKAGE_DIR} or on the PATH, so every hook fails with \`flow: not found\` and git refuses every commit — ${install}`,
+    };
+  // A COPY IN THE REPO'S OWN PACKAGE, AND A CALLER THAT NEVER LOOKS THERE: name each stranded one, with
+  // the fix that brings it up to date — init for the registrations, a line by hand for the gate,
+  // which init never rewrites. Each carries its own verb: "the hooks look", "the gate looks".
+  const stranded = [
+    ...(byHooks === null
+      ? [{ who: "the hooks", looks: "look", fails: "every hook fails with `flow: not found`", fix: "re-run `flow init`, which rewrites flow's registrations to look there first" }]
+      : []),
+    ...(byGate === null
+      ? [{ who: "the gate", looks: "looks", fails: "git refuses every commit", fix: `add \`${GATE_LOCAL_LINE}\` to ${GATE_PATH} above the line that runs flow` }]
+      : []),
+  ];
+  const looks = stranded.length === 1 ? stranded[0]?.looks : "look";
+  return {
+    id: "binary",
+    ok: false,
+    detail:
+      `the flow in ${PACKAGE_DIR} is not on the PATH, and ${stranded.map((s) => s.who).join(" and ")} ${looks} for flow on the PATH alone, ` +
+      `so ${stranded.map((s) => s.fails).join(" and ")} — ${stranded.map((s) => s.fix).join("; ")}; or install it for every repo with \`npm i -g @jawache/flow\`.`,
+  };
 }
 
 /**

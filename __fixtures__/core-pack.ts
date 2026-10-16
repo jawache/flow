@@ -24,6 +24,7 @@ import {
   protectedPath,
   ranSinceEdit,
   siblingExists,
+  substitutionInProse,
   symbolsInSibling,
   textBan,
 } from "../checks/domain.ts";
@@ -52,6 +53,12 @@ export const core = definePack("core", {
     .check(banCommands({ ban: ["git\\s+push[^\\n]*--force"] }))
     .message("Never force-push — the history is shared.")
     .test({ pass: ["git push origin feature/x"], block: ["git push --force origin main"] }),
+
+  noBacktickInProse: guardrail()
+    .at(command)
+    .check(substitutionInProse({ heads: ["gh\\s+(?:pr|issue)\\b"], gitSubcommands: ["commit"] }))
+    .message("A backtick in a double-quoted body runs as a command — single-quote it, or use a quoted heredoc.")
+    .test({ pass: ["gh issue comment 1 --body 'run `just test` first'"], block: ['gh issue comment 1 --body "run `just test` first"'] }),
 
   generatedIsProtected: guardrail()
     .at(write)

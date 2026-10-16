@@ -6,8 +6,8 @@
 // the property `.test()` cases and recorded replay both stand on.
 //
 // ONE FILE, so that what these checks SHARE is visible: `patternHits` is the one matcher,
-// `changedSet` the one changed-file read, `gitInvocations` the one tokeniser. A fifteenth check
-// says what it reuses, or it is a sixth copy of something already here.
+// `changedSet` the one changed-file read, `shellCommands` the one door to the parse. There are
+// fifteen checks; a sixteenth says what it reuses, or it is a second copy of something already here.
 //
 // The options are ordinary typed arguments and nothing more: one spelling per key, a list where a
 // list is meant, and the compiler checking both where you type them. There is no runtime schema
@@ -20,16 +20,16 @@
 // refuses them at the commit, but the rails are not the reason: a check that reads the world
 // directly cannot be driven by a case and cannot be replayed.
 //
-//   PATTERNS      the one regex sweep — textBan · banCommands
-//   PATHS         protectedPath · siblingExists · canonicalFiles
+//   PATTERNS      the one regex sweep — textBan · banCommands · substitutionInProse
+//   PATHS         protectedPath · oneWriter · siblingExists · canonicalFiles
 //   CONTENT       jsonInvariant · symbolsInSibling
 //   THE COMMIT    changeTogether
-//   COMMANDS      the git tokeniser · commitReason
+//   COMMANDS      the parse read as git · commitReason
 //   THE TURN      ranSinceEdit
 //   TOOLS         execPasses · depcruise · astGrep, each orchestrating, never reimplementing
 //   CASES         the canned ctx a `.test()` case becomes, and the runner that walks them
 
-import { cannedWorld, defineCheck, inScope, makeCtx, withFaults } from "../language/domain.ts";
+import { cannedWorld, defineCheck, elideHeredocBodies, inScope, makeCtx, parseCommandLine, programName, withFaults } from "../language/domain.ts";
 import type {
   Case,
   CaseWorld,
@@ -40,6 +40,8 @@ import type {
   GuardrailMoment,
   LoadedEntry,
   Moment,
+  ShellCommand,
+  ShellSubstitution,
   TurnAction,
   Unanswered,
   Verdict,
@@ -131,72 +133,114 @@ export const textBan = defineCheck(
  * A DETERRENT: the patterns ARE its scope, so matching nothing in a repo is the rule working, not
  * a rule watching the wrong place.
  *
- * MATCHED WHOLE, and that is the one difference from `textBan` above. A command is ONE subject
- * however many lines it occupies — `git commit -m "subject\n\nCo-Authored-By: …"` is a single
- * invocation, and the patterns that police it span the newline on purpose. Swept line by line
- * (which is right for a file, where a hit must be able to name its line) every one of those
- * patterns matches nothing, silently: the rule loads, counts, and cannot catch the thing it
- * names.
+ * ONE COMMAND AT A TIME, FROM ITS PROGRAM NAME. Each pattern is tried against the `text` of each
+ * command in `ctx.commands` — the program that runs and its arguments, quotes removed — anchored
+ * at its start. Matched against the raw line, a verb in one command paired with a target in the
+ * next (`git push origin main; ls -f` read as a force push), and a banned command named inside
+ * another's quoted argument read as run. A quoted argument keeps its newlines, so a pattern can
+ * still span the lines of a commit message, which is why `[\s\S]*` appears in the packs' bans.
  *
- * WITHOUT ITS HEREDOC BODIES (`elideHeredocs`), by default. A heredoc is text fed to a program,
- * and a python script or a note that names a banned command is not a use of it: matched whole,
- * `python3 - <<'PY'` scripts were refused for naming a recipe in a string. Only the bodies go —
- * the newlines the patterns above span are kept — and a body a shell reads stays, because it is
- * commands.
+ * A HEREDOC is text fed to a program, so its body is not matched — unless a shell reads it, when
+ * the parse has already made its lines commands of their own. `matchHeredocs: true` matches each
+ * command with the text of its OWN heredocs after its arguments: a rule about what a command is
+ * fed, the message of `git commit -F - <<'EOF'`, needs it.
  *
- * `matchHeredocs: true` matches the whole command instead. A rule about what a command is FED —
- * the text of a commit message given on stdin, `git commit -F - <<'EOF'` — has to see the body,
- * and would be blind to that message without it.
+ * `wholeLine: true` is the escape hatch for a pattern that spans two commands on purpose
+ * (`curl … | sh`): it is tried anywhere in the line as written, less its heredoc bodies. A line
+ * that does not parse is matched whole and as written: a deterrent that cannot read a line errs
+ * toward refusing it.
+ *
+ * docs/user/checks/ban-commands.md is the promise, case by case.
  */
 export const banCommands = defineCheck(
-  (opts: { ban: readonly string[]; matchHeredocs?: boolean }): Check =>
+  (opts: { ban: readonly string[]; matchHeredocs?: boolean; wholeLine?: boolean }): Check =>
     (ctx) => {
-      const command = opts.matchHeredocs === true ? (ctx.command ?? "") : elideHeredocs(ctx.command ?? "");
-      const hits = opts.ban.filter((pattern) => new RegExp(pattern).test(command));
+      const subjects = banSubjects(ctx, opts);
+      const hits = opts.ban.filter((pattern) => {
+        const re = new RegExp(subjects.anchored ? `^(?:${pattern})` : pattern);
+        return subjects.texts.some((text) => re.test(text));
+      });
       return answer(ctx, hits.map((pattern) => `matches banned /${pattern}/`));
     },
 );
 
 /**
- * A `banCommands` pattern for: a command that writes permanent prose, with a BACKTICK inside a
- * double-quoted argument.
- *
- * Reads as: <one of `heads`> … <an OPEN double quote> … <a backtick>, where the quote-pair walk
- * skips arguments that are already closed, and both scans refuse to cross a QUOTED heredoc opener
- * — inside one the shell substitutes nothing, so it is the sanctioned way to carry backticks and
- * must not be blocked. An unquoted `<<EOF` is deliberately still caught: there, substitution
- * really does happen. This is the one pattern that has to span a newline, and the reason
- * `banCommands` matches a command whole rather than line by line.
- *
- * A BUILDER over a `heads` list rather than one frozen expression, because the commands that
- * record prose belong to different packs: `git commit` and `gh pr|issue` are `git`'s, which every
- * repo binds, and the `work …` verbs are `work`'s, which only a repo running the work lifecycle
- * binds. One tail, two heads, and neither pack carries a copy of the other's — a second copy of
- * this expression is how the two would drift while both still read as armed.
- *
- * WHY IT IS CORE and not a helper beside the packs: TWO PACKS
- * SHARE IT, and that is the whole rule the fold settled — anything two packs share is a core
- * check. A shared file sitting beside the packs is a library with two users and no owner, and this
- * one proved it by growing four unrelated sections around this pair. Here it sits next to the
- * check it builds a pattern for, and the door that exports one exports both.
+ * What a `banCommands` pattern is tried against: each command's text, anchored at its program
+ * name — or, under `wholeLine` or for a line that does not parse, the one line, matched anywhere.
  */
-export function substitutionInProse(heads: readonly string[]): string {
-  return `(?:${heads.join("|")})` + "[^\"`]*(?:\"(?:(?!<<-?')[^\"])*\"[^\"`]*)*\"(?:(?!<<-?')[^\"])*`";
+function banSubjects(
+  ctx: CommandFacts,
+  opts: { readonly matchHeredocs?: boolean; readonly wholeLine?: boolean },
+): { readonly texts: readonly string[]; readonly anchored: boolean } {
+  const line = ctx.command ?? "";
+  const parsed = shellCommands(ctx);
+  if (parsed === null) return { texts: [line], anchored: false };
+  if (opts.wholeLine === true) {
+    return { texts: [elideHeredocBodies(line) ?? line], anchored: false };
+  }
+  const texts = parsed.map((c) => (opts.matchHeredocs === true ? [c.text, ...c.heredocs.map((h) => h.body)].join("\n") : c.text));
+  return { texts, anchored: true };
+}
+
+/**
+ * Refuse a command that records permanent prose when the shell would run a BACKTICK substitution
+ * while building it — a commit message, a PR or issue body, a journal entry.
+ *
+ * `heads` are the commands that record prose, each a regex matched from a command's program name
+ * as `banCommands` matches one. `gitSubcommands` names git's own, `commit`, and is read through
+ * `gitCommand`: git's options sit between `git` and its subcommand, and a value with a space in it,
+ * `-C '/a b'`, is two words in a command's text, where a regex loses it.
+ *
+ * The verdict reads the parse, never the line: a backtick the shell runs is one the parse lists as
+ * the command's substitution — in a double-quoted or bare argument, or in an unquoted heredoc the
+ * command is fed. A single-quoted argument, an escaped backtick and a QUOTED heredoc run nothing,
+ * so none is refused, and neither is a backtick in another command on the same line. A `$( … )`
+ * substitution is the sanctioned way to feed a heredoc into an argument, so it is not refused
+ * itself; what it runs is, when that holds a backtick — the unquoted `"$(cat <<EOF … EOF)"`
+ * message. A line that does not parse is not judged.
+ *
+ * A CORE CHECK because TWO PACKS SHARE IT: `git` polices `git commit` and the `gh` verbs, which
+ * every repo binds, and `work` the lifecycle verbs, which only a repo running the work lifecycle
+ * binds. Anything two packs share is a core check; a copy in each is how the two would drift
+ * while both still read as armed.
+ */
+export const substitutionInProse = defineCheck(
+  (opts: { heads: readonly string[]; gitSubcommands?: readonly string[] }): Check =>
+    (ctx) => {
+      const heads = opts.heads.map((head) => new RegExp(`^(?:${head})`));
+      const hits = (shellCommands(ctx) ?? []).flatMap((c) => {
+        const sub = gitCommand(c)?.subcommand;
+        const head =
+          sub != null && opts.gitSubcommands?.includes(sub) === true ? `git ${sub}` : heads.map((re) => re.exec(c.text)?.[0]).find((m) => m !== undefined);
+        if (head === undefined) return [];
+        return backticksRun(c.substitutions).map((run) => `\`${head}\` would run \`${run}\` and record its output in place of the backticks`);
+      });
+      return answer(ctx, hits);
+    },
+);
+
+/**
+ * The backtick substitutions a command's own substitutions run, through any `$( … )` among them:
+ * a `$( … )` lists the commands it runs at any depth, and each of those its own substitutions.
+ */
+function backticksRun(substitutions: readonly ShellSubstitution[]): string[] {
+  return substitutions.flatMap((s) =>
+    s.backtick ? [s.text] : s.commands.flatMap((c) => c.substitutions.filter((t) => t.backtick).map((t) => t.text)),
+  );
 }
 
 /**
  * What a blocked prose-writing command is told, and it is the same sentence whichever pack caught
- * it: the mechanism, the absence of an undo, the fix, and the one false positive the rule owns.
+ * it: the mechanism, the absence of an undo, and the fix.
  *
  * ONE constant rather than a message per pack. The sentence never named the verb that was blocked
  * — it names the shape — so two copies would be two places for the same advice to drift, and the
  * copy that drifted would still read as correct.
  */
 export const SUBSTITUTION_MESSAGE = [
-  "You are recording prose through a shell command, and a backtick inside a DOUBLE-quoted argument is not Markdown — the shell RUNS it and splices its output into your text before the command ever sees it.",
+  "You are recording prose through a shell command, and a backtick in a double-quoted argument or an unquoted heredoc is not Markdown — the shell RUNS it and splices its output into your text before the command ever sees it.",
   "On an append-only record there is no undo: no amend, no redact. And once the binary has argv the splice has already happened, so this is the only moment it can be caught.",
-  "Fix: SINGLE-quote the argument (backticks are literal there), or feed the prose on stdin with a QUOTED heredoc — `git commit -F -` plus `<<'EOF'`, which this rule treats as safe.",
-  "ALREADY single-quoted and still blocked? Then your PROSE carries an unbalanced double quote before the backtick, and the matcher cannot tell that quote from a real open argument. Nothing would splice — this one is the rule's cost, not your mistake. Balance the quote, drop it, or use the heredoc; do not go back to double quotes to make it pass.",
+  "Fix: SINGLE-quote the argument (backticks are literal there), escape each backtick as \\` inside the double quotes, or feed the prose on stdin with a QUOTED heredoc — `git commit -F -` plus `<<'EOF'`, which this rule treats as safe.",
 ].join("\n");
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -489,7 +533,7 @@ export function unreferenced(names: readonly string[], siblingText: string): str
 }
 
 /**
- * The names a TypeScript source exports — functions, classes and consts.
+ * The names a TypeScript source exports — functions, classes and consts, in source order.
  *
  * A real parser rather than a regex, because `export const x = …` inside a string or a comment is
  * exactly the false positive that teaches people to ignore a rule. Parsing is not reaching the
@@ -500,17 +544,21 @@ export function unreferenced(names: readonly string[], siblingText: string): str
 export async function exportedNames(content: string): Promise<string[]> {
   const { parse, Lang } = await import("@ast-grep/napi");
   const root = parse(Lang.Tsx, content).root();
-  const out = new Set<string>();
+  const found: { readonly at: number; readonly name: string }[] = [];
   for (const p of ["export function $N($$$) { $$$ }", "export class $N { $$$ }", "export const $N = $V"]) {
     for (const m of root.findAll(p)) {
       const n = m.getMatch("N");
-      if (n) out.add(n.text());
+      if (n) found.push({ at: n.range().start.index, name: n.text() });
     }
   }
-  return [...out];
+  return [...new Set(found.sort((a, b) => a.at - b.at).map((f) => f.name))];
 }
 
-/** Every exported symbol is referenced in its sibling test. */
+/**
+ * Every exported symbol is referenced in its sibling test.
+ *
+ * A refusal is one line: the sibling test once, then every export it never mentions.
+ */
 export const symbolsInSibling = defineCheck(
   (opts: { sibling: string }): Check =>
     async (ctx) => {
@@ -519,7 +567,7 @@ export const symbolsInSibling = defineCheck(
       if (!(await ctx.fs.exists(sibling))) return ctx.fail(`sibling test not found: ${sibling}`);
       const text = await ctx.fs.read(sibling);
       const missing = unreferenced(await exportedNames(content), text);
-      return answer(ctx, missing.map((n) => `exported '${n}' is never referenced in ${sibling}`));
+      return answer(ctx, missing.length === 0 ? [] : [`not referenced in ${sibling}: ${missing.join(", ")}`]);
     },
 );
 
@@ -570,15 +618,11 @@ export const changeTogether = defineCheck(
 // COMMANDS — reading a command line, and what a commit owes
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 //
-// The tokeniser is here rather than with the adapter because judging a command IS a check's job:
-// the string arrives as an event fact, already in memory, and what it MEANS is a question about
-// shell and git syntax rather than about any harness. Its old twin, the `git status --porcelain`
-// parser, went the other way and belongs with the adapter — that one reads the world's format.
-
-// A NEWLINE separates commands too. Leaving it out meant anything after a line break was
-// invisible: `git commit -m "bad"` judged on line one, sailing through as line two of a multi-line
-// block — which is exactly how an agent batches commands.
-const OPERATORS = new Set([";", "&&", "||", "|", "&", "|&", "\n"]);
+// The parse in the language layer is the one reader of a command line: what each command is, its
+// program, its arguments, its heredocs and its substitutions. The readers here take that parse —
+// `ctx.commands`, or the line parsed on the spot for an engine that hands none — and ask a question
+// of it about git or a commit. None of them splits or lexes a line by hand: where a quote closes,
+// where a command ends and whose heredoc a body is are the parser's to find.
 
 /**
  * git's own options that TAKE A VALUE, and therefore swallow the token after them.
@@ -599,411 +643,69 @@ export const GIT_VALUE_OPTS: ReadonlySet<string> = new Set([
   "--config-env",
 ]);
 
-// ── the shell primitives: quotes, `$(…)` and heredocs ─────────────────────────
-//
-// ONE COPY, shared with the adapter's read lexer (`bashReads`), which used to carry its own. Two
-// scanners for "where does this double quote close" answered differently the moment a `"` sat
-// inside a `$(…)`, and the one that was wrong was the one the command rail used.
-
-/** A heredoc's opener: its delimiter, whether `<<-` strips leading tabs, and where the opener ends. */
-export interface HeredocOpen {
-  readonly delim: string;
-  readonly tabs: boolean;
-  readonly end: number;
-}
-
-// A delimiter is one word: quoted whole ('EOF', "EOF"), escaped (\EOF) or bare. Sticky, so it is
-// tried exactly where the opener left off.
-const DELIMITER = /(?:'([^'\n]*)'|"([^"\n]*)"|\\?([^\s'";&|<>()`]+))/y;
+/** What a command reader is handed: the line, and its parse when the engine made one. */
+type CommandFacts = Pick<Ctx, "command" | "commands">;
 
 /**
- * The heredoc opening at `s[i]` — `<<` or `<<-`, then its delimiter — or null when none does. A
- * here-string (`<<<`) is not one, and neither is a `<<` with no word after it.
+ * The command line parsed as bash: `ctx.commands`, or the line parsed here when the ctx carries no
+ * parse at all — which is what an engine older than the parse hands these checks. Null when the
+ * line does not parse, and every reader takes null as "cannot tell".
  */
-function heredocOpen(s: string, i: number): HeredocOpen | null {
-  if (!s.startsWith("<<", i) || s[i + 2] === "<") return null;
-  const tabs = s[i + 2] === "-";
-  let at = i + (tabs ? 3 : 2);
-  while (s[at] === " " || s[at] === "\t") at++;
-  DELIMITER.lastIndex = at;
-  const m = DELIMITER.exec(s);
-  const delim = m?.[1] ?? m?.[2] ?? m?.[3] ?? "";
-  return m === null || delim === "" ? null : { delim, tabs, end: at + m[0].length };
+export function shellCommands(facts: CommandFacts): readonly ShellCommand[] | null {
+  return facts.commands === undefined ? parseCommandLine(facts.command ?? "") : facts.commands;
 }
 
-/**
- * The first heredoc opener anywhere in a line, quoted context or not — the one definition of "this
- * line carries a heredoc". A here-string (`<<<`) is stepped over whole, so its tail is not read as
- * one.
- */
-export function firstHeredoc(s: string): HeredocOpen | null {
-  for (let i = s.indexOf("<<"); i !== -1; ) {
-    const doc = heredocOpen(s, i);
-    if (doc !== null) return doc;
-    while (s[i] === "<") i++;
-    i = s.indexOf("<<", i);
-  }
-  return null;
-}
-
-/**
- * Where a heredoc's body ends — `body`, the start of its terminator line (the delimiter alone on a
- * line, after leading tabs for `<<-`) — and `end`, just past that line. Both are the end of the
- * string when the terminator never comes. `from` is the body's first character, the one after the
- * newline that ends the opener's line.
- */
-function heredocEnd(s: string, from: number, doc: HeredocOpen): { body: number; end: number } {
-  let i = from;
-  while (i < s.length) {
-    const start = i;
-    const nl = s.indexOf("\n", i);
-    const line = s.slice(i, nl === -1 ? s.length : nl);
-    i = nl === -1 ? s.length : nl + 1;
-    if ((doc.tabs ? line.replace(/^\t+/, "") : line) === doc.delim) return { body: start, end: i };
-  }
-  return { body: i, end: i };
-}
-
-/**
- * Where a `$(` closes, honouring quotes, nesting and any heredoc inside it — a body is text, so an
- * apostrophe or a `)` in it closes nothing. -1 when it never closes.
- */
-export function closeParen(s: string, from: number): number {
-  let depth = 1;
-  const docs: HeredocOpen[] = [];
-  for (let i = from; i < s.length; i++) {
-    const c = s[i];
-    if (c === "\\") i++;
-    else if (c === "'" || c === '"') {
-      const end = c === "'" ? s.indexOf("'", i + 1) : dquoteEnd(s, i + 1);
-      if (end === -1) return -1;
-      i = end;
-    } else if (s.startsWith("$((", i)) {
-      const end = s.indexOf("))", i + 3);
-      if (end === -1) return -1;
-      i = end + 1;
-    } else if (s.startsWith("<<<", i)) i += 2;
-    else if (c === "<") {
-      const doc = heredocOpen(s, i);
-      if (doc !== null) {
-        docs.push(doc);
-        i = doc.end - 1;
-      }
-    } else if (c === "\n") {
-      for (const doc of docs.splice(0)) i = heredocEnd(s, i + 1, doc).end - 1;
-    } else if (c === "(") depth++;
-    else if (c === ")" && --depth === 0) return i;
-  }
-  return -1;
-}
-
-/** Where a double-quoted run closes — a `"` inside a `$(…)` in it does not close it. -1 when it never does. */
-export function dquoteEnd(s: string, from: number): number {
-  for (let i = from; i < s.length; i++) {
-    if (s[i] === "\\") i++;
-    else if (s[i] === "$" && s[i + 1] === "(") {
-      const end = closeParen(s, i + 2);
-      if (end === -1) return -1;
-      i = end;
-    } else if (s[i] === '"') return i;
-  }
-  return -1;
-}
-
-/**
- * The programs whose heredoc is itself a list of commands. Their body is kept, because a banned
- * command in it is one the shell will run. The docs name these four; `dash` and `ksh` are the same
- * fact under other names.
- */
-const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh", "eval"]);
-
-/** Words that lead the command they run, or open a construct, so the NEXT word is the program. */
-const LEADERS = new Set(["sudo", "env", "exec", "command", "builtin", "nohup", "nice", "time", "if", "then", "else", "elif", "while", "until", "do", "!", "{"]);
-
-/** Where one word stops at the top level of a line. */
-const WORD_BREAKS = new Set([" ", "\t", "\n", ";", "&", "|", "(", ")", "<", ">"]);
-
-/** A stretch of a command to remove: a heredoc body and its terminator line, `[from, to)`. */
-type Cut = readonly [number, number];
-
-/** The cuts of the command nested at `s[from, to)` — a `$(…)`, a backquote — moved into `s`. */
-function nestedCuts(s: string, from: number, to: number, cuts: Cut[]): void {
-  for (const [a, b] of heredocCuts(s.slice(from, to))) cuts.push([a + from, b + from]);
-}
-
-/** The cuts inside a double-quoted run `s[from, to)`: the commands its `$(…)` and backquotes run. */
-function dquoteCuts(s: string, from: number, to: number, cuts: Cut[]): void {
-  for (let j = from; j < to; j++) {
-    if (s[j] === "\\") j++;
-    else if (s.startsWith("$(", j)) {
-      // dquoteEnd already closed every `$(` in the run, so this one closes too.
-      const end = closeParen(s, j + 2);
-      if (s[j + 2] !== "(") nestedCuts(s, j + 2, end, cuts);
-      j = end;
-    } else if (s[j] === "`") {
-      const end = s.indexOf("`", j + 1);
-      if (end === -1 || end > to) return;
-      nestedCuts(s, j + 1, end, cuts);
-      j = end;
-    }
-  }
-}
-
-/**
- * One word at `s[i]`: where it ends, and its text with quotes removed (a substitution reads as a
- * NUL, since what it prints is not known). The heredocs of the commands it runs go into `cuts`.
- * Null when a quote or a substitution never closes.
- */
-function shellWord(s: string, from: number, cuts: Cut[]): { end: number; text: string } | null {
-  let text = "";
-  let i = from;
-  while (i < s.length && !WORD_BREAKS.has(s[i] as string)) {
-    const c = s[i] as string;
-    let end: number;
-    if (c === "\\") {
-      // An escaped character is itself; an escaped NEWLINE is a line continuation and is nothing.
-      if (s[i + 1] !== "\n") text += s[i + 1] ?? "";
-      i += 2;
-      continue;
-    } else if (c === "'") {
-      end = s.indexOf("'", i + 1);
-      if (end !== -1) text += s.slice(i + 1, end);
-    } else if (c === '"') {
-      end = dquoteEnd(s, i + 1);
-      if (end !== -1) {
-        text += s.slice(i + 1, end);
-        dquoteCuts(s, i + 1, end, cuts);
-      }
-    } else if (s.startsWith("$((", i)) {
-      end = s.indexOf("))", i + 3);
-      end = end === -1 ? -1 : end + 1;
-      text += "\0";
-    } else if (s.startsWith("$(", i)) {
-      end = closeParen(s, i + 2);
-      if (end !== -1) nestedCuts(s, i + 2, end, cuts);
-      text += "\0";
-    } else if (c === "`") {
-      end = s.indexOf("`", i + 1);
-      if (end !== -1) nestedCuts(s, i + 1, end, cuts);
-      text += "\0";
-    } else {
-      text += c;
-      i++;
-      continue;
-    }
-    if (end === -1) return null;
-    i = end + 1;
-  }
-  return { end: i, text };
-}
-
-/**
- * Where every heredoc body in a command lies, in order — at the top level and inside any `$(…)`,
- * backquote or process substitution, quoted or not — less the bodies a shell reads.
- */
-function heredocCuts(s: string): Cut[] {
-  const cuts: Cut[] = [];
-  let pipeline = { shell: false };
-  let docs: { doc: HeredocOpen; pipeline: { shell: boolean } }[] = [];
-  let atCommand = true;
-  let led = false;
-  let target = false;
-  let i = 0;
-  while (i < s.length) {
-    const c = s[i] as string;
-    if (c === "\n") {
-      i++;
-      for (const { doc, pipeline: into } of docs) {
-        // The body goes and its terminator line stays, so the opener still has an end: a reader
-        // of the elided line (the read lexer, `closeParen`) must not run on to the end looking for it.
-        const { body, end } = heredocEnd(s, i, doc);
-        if (!into.shell) cuts.push([i, body]);
-        i = end;
-      }
-      docs = [];
-      pipeline = { shell: false };
-      atCommand = true;
-      led = false;
-    } else if (c === " " || c === "\t") i++;
-    else if (s.startsWith("\\\n", i)) i += 2;
-    else if (c === "#") {
-      const nl = s.indexOf("\n", i);
-      i = nl === -1 ? s.length : nl;
-    } else if (s.startsWith("<(", i) || s.startsWith(">(", i)) {
-      const end = closeParen(s, i + 2);
-      if (end === -1) break;
-      nestedCuts(s, i + 2, end, cuts);
-      i = end + 1;
-      atCommand = false;
-    } else if (c === "<" || c === ">" || s.startsWith("&>", i)) {
-      const doc = heredocOpen(s, i);
-      if (doc !== null) {
-        docs.push({ doc, pipeline });
-        i = doc.end;
-      } else {
-        i += (/^(?:&>>|&>|<<<|<<-|<<|<>|<&|>>|>\||>&|<|>)/.exec(s.slice(i))?.[0] ?? c).length;
-        target = true;
-      }
-    } else if (c === ";" || c === "&" || c === "|" || c === "(" || c === ")") {
-      const two = s.slice(i, i + 2);
-      const op = ["&&", "||", "|&", ";;"].includes(two) ? two : c;
-      i += op.length;
-      if (op !== "|" && op !== "|&") pipeline = { shell: false };
-      atCommand = true;
-      led = false;
-    } else {
-      const word = shellWord(s, i, cuts);
-      if (word === null) break;
-      i = word.end;
-      if (target) target = false;
-      else if (atCommand) {
-        const name = word.text.slice(word.text.lastIndexOf("/") + 1);
-        if (LEADERS.has(name)) led = true;
-        else if (!/^[A-Za-z_]\w*=/.test(word.text) && !(led && word.text.startsWith("-"))) {
-          if (SHELLS.has(name)) pipeline.shell = true;
-          atCommand = false;
-        }
-      }
-    }
-  }
-  return cuts.sort((a, b) => a[0] - b[0]);
-}
-
-/**
- * THE COMMAND LINE WITHOUT ITS HEREDOC BODIES — what a command ban matches unless the rule sets
- * `matchHeredocs`.
- *
- * A heredoc is text fed to a program on its standard input: a python script, a file being written,
- * a note. The words of a banned command inside it are not a use of that command, and matching
- * them refused `python3 - <<'PY'` scripts for naming a recipe in a string. Every body is removed
- * (its terminator line stays, so the opener still ends), whether the delimiter is quoted or not,
- * and wherever the heredoc sits —
- * inside a `$(…)` or a quoted argument too. EVERYTHING ELSE IS LEFT AS WRITTEN — newlines
- * included, because the patterns that police a commit message span them.
- *
- * One exception keeps a body: a heredoc fed to a SHELL (`bash`, `sh`, `zsh`, `eval`, or a pipeline
- * into one), whose body is commands, and a banned one in it will run.
- *
- * Best-effort, and it errs toward matching: from a word whose quote never closes, the line is
- * returned as written, so a ban still sees everything it saw before.
- */
-export function elideHeredocs(command: string): string {
-  let out = "";
-  let copied = 0;
-  for (const [from, to] of heredocCuts(command)) {
-    out += command.slice(copied, from);
-    copied = to;
-  }
-  return out + command.slice(copied);
-}
-
-/**
- * A shell-ish tokeniser: quotes respected (so a commit message mentioning `git commit` is not a
- * second command), operators emitted as their own tokens.
- *
- * Null on unparseable input — an unclosed quote — and null means "cannot tell", which every caller
- * must read as "do not judge". A guard that guesses at a line it cannot parse is worse than one
- * that stands aside.
- */
-export function tokenizeCommand(command: string): string[] | null {
-  const cmd = command;
-  const tokens: string[] = [];
-  let cur = "";
-  let started = false;
-  let i = 0;
-  const push = (): void => {
-    if (started) tokens.push(cur);
-    cur = "";
-    started = false;
-  };
-  while (i < cmd.length) {
-    const c = cmd[i] as string;
-    if (c === "'" || c === '"') {
-      const end = c === "'" ? cmd.indexOf("'", i + 1) : dquoteEnd(cmd, i + 1);
-      if (end === -1) return null;
-      cur += c === '"' ? cmd.slice(i + 1, end).replace(/\\(["\\$`])/g, "$1") : cmd.slice(i + 1, end);
-      started = true;
-      i = end + 1;
-    } else if (c === "\\" && i + 1 < cmd.length) {
-      cur += cmd[i + 1] as string;
-      started = true;
-      i += 2;
-    } else if (c === "\n") {
-      push();
-      tokens.push("\n");
-      i++;
-    } else if (/\s/.test(c)) {
-      push();
-      i++;
-    } else if (c === ";" || c === "|" || c === "&") {
-      push();
-      const two = cmd.slice(i, i + 2);
-      if (two === "&&" || two === "||" || two === "|&") {
-        tokens.push(two);
-        i += 2;
-      } else {
-        tokens.push(c);
-        i++;
-      }
-    } else {
-      cur += c;
-      started = true;
-      i++;
-    }
-  }
-  push();
-  return tokens;
-}
-
-/** One `git …` in a command line, split where git stops and its subcommand starts. */
-export interface GitInvocation {
+/** One `git` command in the parse, split where git's own options stop and its subcommand starts. */
+export interface GitCommand {
   /** git's OWN options, before the subcommand — where `-C` counts and only there. */
   readonly globals: readonly string[];
-  /** The subcommand word (`commit`, `status`), or null when the invocation carries none. */
+  /** The subcommand word (`commit`, `status`), or null when the command carries none. */
   readonly subcommand: string | null;
   /** Everything after the subcommand — its own flags and arguments. */
   readonly args: readonly string[];
+  /** Where `args` starts in `command.args`: `args[i]` is `command.args[argsAt + i]`. */
+  readonly argsAt: number;
+  /** The parsed command it was read from: its heredocs are what `git commit -F -` reads. */
+  readonly command: ShellCommand;
 }
 
 /**
- * Every git invocation in a command line, in order. Null when the line cannot be parsed at all.
- *
- * A token only starts an invocation at a COMMAND position — the start of the line or just after an
- * operator — so a `git` inside a quoted message or as an argument to something else is not one.
+ * One parsed command read as git, or null when its program is not git. The parse has already
+ * found the program, so a `git` inside a quoted message, a heredoc body or another command's
+ * arguments is never one, and a `git` inside `$( … )` or a `bash -c` string is.
  */
-export function gitInvocations(command: string): GitInvocation[] | null {
-  const tokens = tokenizeCommand(command);
-  if (!tokens) return null;
-  const out: GitInvocation[] = [];
-  let i = 0;
-  let atCommand = true;
-  while (i < tokens.length) {
-    const tok = tokens[i] as string;
-    if (OPERATORS.has(tok)) {
-      atCommand = true;
-      i++;
-      continue;
-    }
-    if (atCommand && tok === "git") {
-      const words: string[] = [];
-      let j = i + 1;
-      while (j < tokens.length && !OPERATORS.has(tokens[j] as string)) words.push(tokens[j++] as string);
-      let k = 0;
-      while (k < words.length) {
-        const a = words[k] as string;
-        if (GIT_VALUE_OPTS.has(a)) k += 2;
-        else if (a.startsWith("-")) k += 1;
-        else break; // the subcommand
-      }
-      out.push({ globals: words.slice(0, k), subcommand: words[k] ?? null, args: words.slice(k + 1) });
-      i = j;
-      atCommand = false;
-      continue;
-    }
-    atCommand = false;
-    i++;
+export function gitCommand(command: ShellCommand): GitCommand | null {
+  if (programName(command.program) !== "git") return null;
+  const { args } = command;
+  let k = 0;
+  while (k < args.length) {
+    const a = args[k] as string;
+    if (GIT_VALUE_OPTS.has(a)) k += 2;
+    else if (a.startsWith("-")) k += 1;
+    else break; // the subcommand
   }
-  return out;
+  return { globals: args.slice(0, k), subcommand: args[k] ?? null, args: args.slice(k + 1), argsAt: k + 1, command };
+}
+
+/** Every git command the line runs, in the order the parse lists them; none when it does not parse. */
+export function gitCommands(facts: CommandFacts): GitCommand[] {
+  return (shellCommands(facts) ?? []).flatMap((c) => gitCommand(c) ?? []);
+}
+
+/**
+ * The message in the commit's argument at `i`, after its `option` (`""` for a value given apart,
+ * `-m` or `--message=` for one attached), as git receives it. A message that is one substitution
+ * running only `cat` on a heredoc — `"$(cat <<'EOF' … EOF)"`, the form an agent is taught — is
+ * that heredoc's body, less the trailing newlines a substitution drops. Any other is passed as written.
+ */
+function passedAs(commit: GitCommand, i: number, option: string): string {
+  const value = (commit.args[i] as string).slice(option.length);
+  const at = commit.argsAt + i;
+  const commands = commit.command.substitutions.find((s) => s.argument === at && s.prefix === option)?.commands;
+  const [cat] = commands ?? [];
+  if (commands?.length !== 1 || cat?.program !== "cat" || cat.args.length > 0) return value;
+  const body = cat.heredocs[cat.heredocs.length - 1]?.body;
+  return body === undefined ? value : body.replace(/\n+$/, "");
 }
 
 /**
@@ -1023,7 +725,12 @@ export function gitInvocations(command: string): GitInvocation[] | null {
  *
  *   git commit -m MSG · -mMSG · --message MSG · --message=MSG      judged
  *   git commit -m SUBJECT -m BODY   (repeated, any mix of forms)   judged, joined as git joins them
- *   git commit -F - <<'EOF' … EOF   (the commit reads stdin)        judged, via the heredoc body
+ *   git commit -m "$(cat <<'EOF' … EOF)"                            judged, via that heredoc's body,
+ *                                                                  which is what the shell passes
+ *   git commit -F - <<'EOF' … EOF   (the commit reads stdin)        judged, via ITS heredoc's body
+ *   python3 - <<'PY' … PY; git commit -F - <<'EOF' … EOF            judged, via the commit's own
+ *                                                                  heredoc — the first one is the
+ *                                                                  python's script
  *   python3 - <<'PY' … PY; git commit -F msg.txt                    NOT judged — the heredoc is
  *                                                                  another command's script, and
  *                                                                  the message is on disk
@@ -1037,23 +744,21 @@ export function gitInvocations(command: string): GitInvocation[] | null {
  * The boundary is on the record: this rail polices AGENT-typed commits, which are its audience. A
  * human committing from an editor is not its subject and never was.
  */
-export function commitMessage(command: string): string | null {
-  const invocations = gitInvocations(command);
-  if (!invocations) return null; // unparseable → cannot tell → do not judge
-  const commit = invocations.find((inv) => inv.subcommand === "commit");
+export function commitMessage(facts: CommandFacts): string | null {
+  // A line that does not parse has no git commands, so it is not judged: cannot tell.
+  const commit = gitCommands(facts).find((g) => g.subcommand === "commit");
   if (!commit) return null;
   const parts: string[] = [];
   for (let i = 0; i < commit.args.length; i++) {
     const a = commit.args[i] as string;
     if (a === "-m" || a === "--message") {
-      const value = commit.args[i + 1];
-      if (value === undefined) break; // a trailing `-m` with nothing after it — git would refuse too
-      parts.push(value);
+      if (i + 1 >= commit.args.length) break; // a trailing `-m` with nothing after it — git would refuse too
+      parts.push(passedAs(commit, i + 1, ""));
       i++; // STEP OVER the value: without this a message that looks like a flag is read twice
       continue;
     }
-    if (a.startsWith("-m") && a !== "-m") parts.push(a.slice(2)); // -mMESSAGE
-    else if (a.startsWith("--message=")) parts.push(a.slice("--message=".length));
+    if (a.startsWith("-m") && a !== "-m") parts.push(passedAs(commit, i, "-m")); // -mMESSAGE
+    else if (a.startsWith("--message=")) parts.push(passedAs(commit, i, "--message="));
   }
   if (parts.length) return parts.join("\n\n");
   // No inline message: it may still be on stdin, and ONLY when the commit itself says so. `-F -`
@@ -1066,15 +771,11 @@ export function commitMessage(command: string): string | null {
     (a, i) => ((a === "-F" || a === "--file") && commit.args[i + 1] === "-") || a === "-F-" || a === "--file=-",
   );
   if (!readsStdin) return null;
-  // The message is then the FIRST heredoc's body — a QUOTED heredoc is the safe way to write one
-  // containing backticks. Deliberately dumb: a commit command carrying two is not a shape anyone
-  // writes, and guessing between them would be worse than the gap. Trimmed; empty is no message.
-  const doc = firstHeredoc(command);
-  const from = doc === null ? -1 : command.indexOf("\n", doc.end) + 1; // the rest of the opener's line is not body
-  if (doc === null || from === 0) return null;
-  const { body, end } = heredocEnd(command, from, doc);
-  if (body === end) return null; // unterminated — not ours to guess at
-  return command.slice(from, body).trim() || null;
+  // The message is then the body of the heredoc the commit ITSELF is fed — a QUOTED heredoc is the
+  // safe way to write one containing backticks. Fed several, its stdin is the last: each `<<`
+  // replaces the one before. Trimmed; empty is no message.
+  const { heredocs } = commit.command;
+  return heredocs[heredocs.length - 1]?.body.trim() || null;
 }
 
 /** One shell argument, single-quoted so nothing in it can be expanded or re-parsed. */
@@ -1107,23 +808,25 @@ export function quoteArg(value: string): string {
  * options exactly as a shell chains directory changes: `cd /a && git -C b status` runs in `/a/b`,
  * and `-C '/a' -C 'b'` says precisely that. Nothing has to decide which of the two wins.
  *
- * ONLY A LEADING `cd`, and only when an operator follows its path. A `cd` in the middle of a chain
- * can be preceded by another that already moved, and a command line that walks two trees is beyond
- * what one answer can honestly describe — the same reason the FIRST git invocation decides below.
+ * ONLY A LEADING `cd`, and only when a command follows it. A `cd` in the middle of a chain can be
+ * preceded by another that already moved, and a command line that walks two trees is beyond what
+ * one answer can honestly describe — the same reason the FIRST git command decides below. Both are
+ * read from the parse, so a `cd` or a `git` inside a quoted argument or a heredoc body is neither.
  *
  * A path the SHELL would have expanded — `~`, a variable — is quoted here and so reaches git
  * literally, which makes the read fail rather than lie. Every caller treats a failed read as "not
  * a repo, git owns that error" and passes: a false negative, which is this pack's stated trade.
  */
-export function gitDirPrefix(command: string): string {
+export function gitDirPrefix(facts: CommandFacts): string {
   const out: string[] = [];
-  const tokens = tokenizeCommand(command);
-  const path = tokens?.[1];
-  // `cd <path> &&` or `cd <path>;` at the head of the line. A bare `cd`, a `cd -`, or a `cd` whose
-  // path is not followed by an operator is not a move this can name, so none of them is guessed at.
-  if (tokens?.[0] === "cd" && path !== undefined && !path.startsWith("-") && !OPERATORS.has(path) && OPERATORS.has(tokens[2] ?? ""))
+  const commands = shellCommands(facts) ?? [];
+  const [head] = commands;
+  const path = head?.args[0];
+  // `cd <path> && …` or `cd <path>; …` at the head of the line. A bare `cd`, a `cd -`, or a `cd`
+  // nothing follows is not a move this can name, so none of them is guessed at.
+  if (head?.program === "cd" && !head.nested && head.args.length === 1 && path !== undefined && !path.startsWith("-") && commands.slice(1).some((c) => !c.nested))
     out.push("-C", quoteArg(path));
-  const first = gitInvocations(command)?.[0];
+  const first = gitCommands(facts)[0];
   if (!first) return out.join(" ");
   for (let i = 0; i < first.globals.length - 1; i++) {
     if (first.globals[i] === "-C") out.push("-C", quoteArg(first.globals[i + 1] as string));
@@ -1338,10 +1041,10 @@ export const commitReason = defineCheck(
     async (ctx) => {
       // The message first, and no git call unless there is one: a command that is not a judgeable
       // commit is the overwhelming majority of everything typed at this rail.
-      const message = commitMessage(ctx.command ?? "");
+      const message = commitMessage(ctx);
       if (message == null) return ctx.ok();
 
-      const git = `git ${gitDirPrefix(ctx.command ?? "")}`.trimEnd();
+      const git = `git ${gitDirPrefix(ctx)}`.trimEnd();
 
       let state: WorkingState = { changed: [], added: [] };
       if (opts.whenChanged || opts.whenAdded) {

@@ -15,10 +15,13 @@
 //
 // IT FAILS IN TWO DIRECTIONS ON PURPOSE, and the split is the whole doctrine:
 //
-//   THE GUARD fails LOUD. A config that will not load, a classifier that throws, a check that
-//   crashes, a bound command that is missing — every one of them BLOCKS, carrying the reason. The
-//   engine decides that; this file just does not soften it. 2026-08-22 is why: this repo's own
-//   config was broken for a day, the fault notice fired on every hook, and the human never saw one.
+//   THE GUARD fails LOUD. A classifier that throws, a check that crashes, a bound command that is
+//   missing — every one of them BLOCKS, carrying the reason. The engine decides that; this file
+//   just does not soften it. A config that will not load is loud the other way: it goes to
+//   `whileBroken`, which lets every call through and hands the agent the load error with each one,
+//   and the commit gate refuses every commit until the config loads. 2026-08-22 is why it must
+//   never be silent: this repo's own config was broken for a day, the fault notice fired on every
+//   hook, and the human never saw one.
 //
 //   THE TELEMETRY fails SAFE and silent. A log that cannot be written must never be the reason a
 //   write is refused — `.flow/` answers with a boolean and this file does not look. State is a
@@ -26,8 +29,9 @@
 //   direction.
 
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
+import { isatty } from "node:tty";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -78,13 +82,13 @@ import {
   ALLOW,
   CONFIG_FILE,
   configLoadFault,
-  configSurface,
   branchFromHead,
   callKey,
   callRecord,
   forgettable,
   overlapping,
   deltaFault,
+  AFTER_CALL,
   readFault,
   hermeticEnv,
   isHookEvent,
@@ -95,7 +99,7 @@ import {
   type CommitScope,
   type StagedChanges,
   sessionFactsFrom,
-  sidecarPath,
+  ownTranscriptPath,
   refused,
   reversal,
   toEvent,
@@ -108,6 +112,8 @@ import {
   turnActions,
   whileBroken,
   included,
+  authored,
+  nulPaths,
   snapshotPathspecs,
   type AdapterEvent,
   type Answer,
@@ -234,8 +240,8 @@ export function currentBranch(root: string): string | null {
  * surprise the marker exists to prevent.
  *
  * `agent` is null when the marker is missing, stale or malformed, and then the wearer wears NOTHING
- * rather than a guess: there is no transcript and no sidecar out here, so the stored verdict is the
- * only truthful answer there can be.
+ * rather than a guess: there is no transcript and no hook message out here, so the stored verdict is
+ * the only truthful answer there can be.
  */
 export function wearer(root: string): {
   readonly branch: string | null;
@@ -298,6 +304,37 @@ function gitDir(root: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** HEAD's commit, or null when there is none to read — a repo with no commit yet. */
+function headCommit(root: string): string | null {
+  const head = runGit(root, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+  return head.ok ? head.stdout.toString("utf8").trim() : null;
+}
+
+/**
+ * The commits the refs point at — every ref and every worktree's HEAD for `--all`, the
+ * remote-tracking branches for `--remotes`. None when git cannot say.
+ */
+function tips(root: string, refs: "--all" | "--remotes"): string[] {
+  const listed = runGit(root, ["rev-list", refs, "--no-walk"]);
+  return listed.ok ? listed.stdout.toString("utf8").split("\n").filter((line) => line !== "") : [];
+}
+
+/**
+ * HEAD after the call when it is a commit the repo already had: one that `known`, the tips recorded
+ * before the call, reaches, or that a remote-tracking branch reaches after it. A switch, a checkout,
+ * a reset, a fast-forward or a pull lands on such a commit. null when there is no HEAD, or when the
+ * call made it — a commit, a rebase, a merge that is not a fast-forward — since a commit the call
+ * made holds the call's own edits, and no gate it might have skipped (`--no-verify`, a removed
+ * hook) can be taken on trust.
+ */
+function existingHead(root: string, known: readonly string[]): string | null {
+  const head = headCommit(root);
+  if (head === null || known.includes(head)) return head;
+  const reach = [...known, ...tips(root, "--remotes")];
+  const beyond = runGit(root, ["rev-list", "-n1", "--stdin"], { input: `${[head, ...reach.map((tip) => `^${tip}`)].join("\n")}\n` });
+  return beyond.ok && beyond.stdout.toString("utf8").trim() === "" ? head : null;
 }
 
 /** Where one call's snapshot lives: what it recorded, and the throwaway index it was built in. */
@@ -367,8 +404,12 @@ export function takeSnapshot(
   }
   const dir = gitDir(root);
   const taken = dir === null ? { fault: `${root} is not a git checkout, so there is no tree to snapshot` } : writeTree(root, files.index, join(dir, "index"), include);
+  // HEAD before the call, beside the tree: a file the call removed is git's only if HEAD held it.
+  // And every tip the repo has, so the after-call rail can tell a commit it lands on from one it made.
+  const head = "tree" in taken ? headCommit(root) : null;
+  const known = "tree" in taken ? tips(root, "--all") : [];
   try {
-    writeFileSync(files.meta, JSON.stringify({ ...who, at: Date.now(), ...taken }));
+    writeFileSync(files.meta, JSON.stringify({ ...who, at: Date.now(), ...taken, ...(head === null ? {} : { head }), known }));
   } catch {
     // Nothing can be recorded, so the after-call rail finds no snapshot and says so — the loud way.
   }
@@ -409,13 +450,14 @@ function blobs(root: string, specs: readonly string[]): (string | null)[] | null
 
 /**
  * WHAT THE CALL CHANGED: the tree now against the tree its snapshot recorded, path by path, with
- * the content either side. The before-snapshot is kept — a revert reads from it — until `forget`.
+ * the content either side, less each path git put there (see `authored`). The before-snapshot is
+ * kept — a revert reads from it — until `forget`.
  */
 export function observeDelta(root: string, key: string, include: readonly string[]): Delta & { readonly before?: string } {
   const files = snapshotFiles(root, key);
-  let meta: { tree?: unknown; fault?: unknown };
+  let meta: { tree?: unknown; head?: unknown; known?: unknown; fault?: unknown };
   try {
-    meta = JSON.parse(readFileSync(files.meta, "utf8")) as { tree?: unknown; fault?: unknown };
+    meta = JSON.parse(readFileSync(files.meta, "utf8")) as { tree?: unknown; head?: unknown; known?: unknown; fault?: unknown };
   } catch {
     return { ok: false, fault: `No snapshot was taken before this call (tool_use_id ${key}), so there is nothing to compare the tree against.` };
   }
@@ -425,20 +467,43 @@ export function observeDelta(root: string, key: string, include: readonly string
   const now = writeTree(root, files.after, files.index, include);
   if ("fault" in now) return { ok: false, fault: `The tree after this call could not be recorded: ${now.fault}.` };
   if (now.tree === before) return { ok: true, changes: [], before };
-  // One path per entry, NUL-separated — git's plainest answer, never a status format. Submodules
-  // are another repository's business and are left out.
-  const diff = runGit(root, ["diff-tree", "-r", "-z", "--name-only", "--no-renames", "--ignore-submodules=all", before, now.tree]);
-  if (!diff.ok) return { ok: false, fault: `git could not compare the trees: ${diff.stderr}.` };
-  const paths = diff.stdout.toString("utf8").split("\0").filter((path) => path !== "");
-  if (paths.some((path) => path.includes("\n")))
-    return { ok: false, fault: "A changed path has a newline in its name, which flow cannot ask git about safely." };
-  const content = blobs(root, paths.flatMap((path) => [`${before}:${path}`, `${now.tree}:${path}`]));
-  if (content === null) return { ok: false, fault: "git could not read the changed files back out of the snapshot." };
-  return {
-    ok: true,
-    changes: paths.map((path, i) => ({ path, before: content[2 * i] ?? null, after: content[2 * i + 1] ?? null })),
-    before,
+  // One entry per path, NUL-separated, never a human status format. Submodules are another
+  // repository's business and are left out.
+  const diffTree = (from: string, format: "--name-status" | "--name-only"): string | { why: string } => {
+    const ran = runGit(root, ["diff-tree", "-r", "-z", format, "--no-renames", "--ignore-submodules=all", from, now.tree]);
+    return ran.ok ? ran.stdout.toString("utf8") : { why: ran.stderr };
   };
+  const changed = diffTree(before, "--name-status");
+  if (typeof changed !== "string") return { ok: false, fault: `git could not compare the trees: ${changed.why}.` };
+  /** The delta, once `authored` has said which changed paths are the call's own. */
+  const delta = (paths: readonly string[]): Delta & { readonly before?: string } => {
+    if (paths.some((path) => path.includes("\n")))
+      return { ok: false, fault: "A changed path has a newline in its name, which flow cannot ask git about safely." };
+    const content = blobs(root, paths.flatMap((path) => [`${before}:${path}`, `${now.tree}:${path}`]));
+    if (content === null) return { ok: false, fault: "git could not read the changed files back out of the snapshot." };
+    return {
+      ok: true,
+      changes: paths.map((path, i) => ({ path, before: content[2 * i] ?? null, after: content[2 * i + 1] ?? null })),
+      before,
+    };
+  };
+  // WHAT GIT PUT THERE leaves the diff here, before anything reads it: HEAD after the call and HEAD
+  // before it, each against the tree after it, are one more tree comparison each (`authored`
+  // decides). Only a HEAD the repo already had can be matched: none, or one the call made, leaves
+  // every change judged. HEAD before only ever answers for a file that matches HEAD after, and when
+  // HEAD did not move one comparison answers for both.
+  const known = Array.isArray(meta.known) ? meta.known.filter((tip): tip is string => typeof tip === "string") : [];
+  const headAfter = existingHead(root, known);
+  if (headAfter === null) return delta(authored(changed, null, null));
+  const fromAfter = diffTree(headAfter, "--name-only");
+  if (typeof fromAfter !== "string") return { ok: false, fault: `git could not compare the tree with HEAD: ${fromAfter.why}.` };
+  const differsAfter = nulPaths(fromAfter);
+  const headBefore = typeof meta.head === "string" ? meta.head : null;
+  if (headBefore === null) return delta(authored(changed, differsAfter, null));
+  if (headBefore === headAfter) return delta(authored(changed, differsAfter, differsAfter));
+  const fromBefore = diffTree(headBefore, "--name-only");
+  if (typeof fromBefore !== "string") return { ok: false, fault: `git could not compare the tree with HEAD before the call: ${fromBefore.why}.` };
+  return delta(authored(changed, differsAfter, nulPaths(fromBefore)));
 }
 
 /**
@@ -528,10 +593,10 @@ export function projectRoot(cwd: string): string {
  * once in the host's settings and fire in every repo the agent visits, so a missing config is the
  * ordinary case and blocking on it would make flow unusable the moment it was installed.
  *
- * `broken` is the opposite fact and gets the opposite answer: a config file that is THERE and will
- * not even import is a guard that cannot run, which is what fail-loud exists for. (A config that
- * imports and then will not load is the engine's own path — `load.ok === false` — and refuses with
- * the same shape from inside `guard`.)
+ * `broken` is the opposite fact and must never be silent: a config file that is THERE and will
+ * not even import is a guard that cannot run. The hook rail hands it to `whileBroken`, which lets
+ * every call through with the load error, and the commit gate refuses. (A config that imports and
+ * then will not load — `load.ok === false` — is the same fact and gets the same two answers.)
  */
 export type Regime =
   | { readonly kind: "none" }
@@ -599,8 +664,7 @@ interface Session {
   readonly id: string;
   readonly agent: string;
   readonly branch: string | null;
-  /** The transcript's own path, as the host named it. Empty when the payload carried none. */
-  readonly transcriptPath: string;
+  /** This agent's own transcript: a subagent's own, never its parent's. */
   readonly transcript: () => string | null;
   readonly tokens: () => number;
   readonly turn: () => readonly TurnAction[];
@@ -615,16 +679,20 @@ function once<T>(answer: () => T): () => T {
   };
 }
 
-/** What the payload says about this session, with the expensive answers left unasked. */
+/**
+ * What the payload says about this session, with the expensive answers left unasked.
+ *
+ * A subagent's call carries its PARENT's `transcript_path`, so the transcript this agent's brief,
+ * tokens and turn are read from is the subagent's own one under it, found by its `agent_id`.
+ */
 function sessionOf(payload: HookPayload, root: string): Session {
-  const transcriptPath = typeof payload.transcript_path === "string" ? payload.transcript_path : "";
-  const transcript = once((): string | null => (transcriptPath === "" ? null : readText(root, transcriptPath)));
+  const path = ownTranscriptPath(payload);
+  const transcript = once((): string | null => (path === null ? null : readText(root, path)));
   return {
     root,
     id: typeof payload.session_id === "string" && payload.session_id !== "" ? payload.session_id : "unknown",
     agent: typeof payload.agent_id === "string" && payload.agent_id !== "" ? payload.agent_id : "main",
     branch: currentBranch(root),
-    transcriptPath,
     transcript,
     tokens: once((): number => {
       const text = transcript();
@@ -640,9 +708,9 @@ function sessionOf(payload: HookPayload, root: string): Session {
 /**
  * Who this session × agent is, read once and then remembered on disk.
  *
- * The sidecar is the answer when there is one, and the transcript's head is consulted only for the
- * generic buckets a recipe declares — that order is `spawnedAs`'s and is enforced there. What this
- * owes is the evidence, gathered from the two files the host wrote.
+ * The agent type in the hook message is the answer when there is one, and the transcript's head is
+ * consulted only for the generic buckets a recipe declares — that order is `spawnedAs`'s and is
+ * enforced there. What this owes is the evidence: the message, and this agent's own transcript.
  *
  * NO CATEGORIES, NO QUESTION. A config that declares none has nobody to be, so the transcript is
  * never opened and no state file is written to remember an empty answer — which is the common case
@@ -651,12 +719,7 @@ function sessionOf(payload: HookPayload, root: string): Session {
  */
 function identityOf(session: Session, payload: HookPayload, categories: readonly Category[]): Identity {
   if (categories.length === 0) return { wearing: [], faults: [], fresh: false };
-  const sidecar = session.transcriptPath === "" ? null : sidecarPath(session.transcriptPath);
-  const facts = sessionFactsFrom({
-    payload,
-    transcript: session.transcript(),
-    sidecar: sidecar === null ? null : readText(session.root, sidecar),
-  });
+  const facts = sessionFactsFrom({ payload, transcript: session.transcript() });
   return stickyIdentity(session.root, session.id, session.agent, facts, categories);
 }
 
@@ -698,24 +761,61 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
   if (hook === "pre-tool-use" && !off && session.id !== "unknown")
     writeMarker(root, session.id, session.agent, session.branch);
 
-  // THE DELTA, on the after-call rails: what this call changed in the tree, from the snapshot the
-  // PreToolUse rail took. A call flow could not see is REPORTED and goes no further — nothing is
-  // judged as clean and nothing is put back on a guess.
-  const include = regime.kind === "loaded" ? (regime.config.settings.snapshotInclude ?? []) : [];
   const key = callKey(payload);
   const tool = typeof payload.tool_name === "string" ? payload.tool_name : "";
-  const delta: (Delta & { readonly before?: string }) | null =
-    (hook === "post-tool-use" || hook === "post-tool-use-failure") && !off && tool !== ""
-      ? key === null
-        ? { ok: false, fault: "The host sent no tool_use_id with this call, so its snapshot cannot be found." }
-        : observeDelta(root, key, include)
-      : null;
+  const afterCall = AFTER_CALL.has(hook) && !off && tool !== "";
   // THE CALL IS OVER, however it went: its record says it finished, so a diff still to come can
   // tell this call overlapped it.
   const now = Date.now();
   const finish = (): void => {
     if (key !== null) finishSnapshot(root, key, now);
   };
+
+  // THE TREE BEFORE THE CALL, taken only once the call is ALLOWED: a refused call never runs, so its
+  // snapshot would be read as a call still in flight. It is taken while the config will not load as
+  // well, on purpose: the call that repairs the config needs it, because that call's after-call rail
+  // loads a healthy config and diffs against this snapshot.
+  const include = regime.kind === "loaded" ? (regime.config.settings.snapshotInclude ?? []) : [];
+  const snapshotted = (result: HookResult): HookResult => {
+    if (hook === "pre-tool-use" && !off && key !== null && result.exitCode === 0)
+      takeSnapshot(root, key, include, { session: session.id, agent: session.agent, tool });
+    return result;
+  };
+
+  // THE CONFIG WILL NOT LOAD. `kind: "broken"` is a module that would not import; a LoadResult
+  // carrying refusals is a module that imported and whose grammar was refused. Both are the same
+  // fact, "flow is off", and get the same answer: `whileBroken` refuses nothing and hands the agent
+  // the load error. They are asked in sequence only because the second needs the LoadResult the
+  // first does not have.
+  //
+  // NO DIFF IS TAKEN after the call: nothing then can be refused or told, so the diff would be work
+  // thrown away, and a diff that failed would print a fault about a call nothing judges. So NOTHING
+  // IS PUT BACK either: what the call wrote stands — `npm ci`'s `node_modules`, an edit to the
+  // config — and the commit gate, which stays shut until the config loads, is where it is checked.
+  // The call is over, so its record says so.
+  const outage = (sentence: string): HookResult => {
+    if (off) return ALLOW;
+    const answer = whileBroken(toEvent(hook, payload, eventWorld(root, session)), sentence);
+    if (afterCall) finish();
+    const result = toResult(hook, answer);
+    // TURN-END IS TOLD RATHER THAN HELD. `whileBroken` says why; this is the only place that can
+    // write it, because the Stop rail has no context channel and `toResult` speaks only the two the
+    // host reads. Exit 0 — the turn ends, and the sentence goes where a human and the log see it.
+    return snapshotted(answer.told === null ? result : { ...result, stderr: `${answer.told}\n` });
+  };
+  if (regime.kind === "broken") return outage(regime.message);
+
+  const { load, config } = regime;
+  if (!load.ok) return outage(refusalText(load.refusals));
+
+  // THE DELTA, on the after-call rails: what this call changed in the tree, from the snapshot the
+  // PreToolUse rail took. A call flow could not see is REPORTED and goes no further — nothing is
+  // judged as clean and nothing is put back on a guess.
+  const delta: (Delta & { readonly before?: string }) | null = afterCall
+    ? key === null
+      ? { ok: false, fault: "The host sent no tool_use_id with this call, so its snapshot cannot be found." }
+      : observeDelta(root, key, include)
+    : null;
   if (delta !== null && !delta.ok) {
     finish();
     return deltaFault(delta.fault);
@@ -724,7 +824,7 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
 
   // WHAT A REFUSAL MAY UNDO, asked only of a call that changed something: the repo's setting, and
   // the other actors' calls that overlapped this one.
-  const revert = regime.kind === "loaded" && regime.config.settings.revert === "all" ? "all" : "refused";
+  const revert = config.settings.revert === "all" ? "all" : "refused";
   const scopeOf = (landed: readonly Change[]): RevertScope => {
     if (landed.length === 0 || key === null) return { revert, overlap: [] };
     const log = callLog(root);
@@ -744,37 +844,6 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
     const landed = answer.refused.some((refusal) => refusal.observed !== undefined);
     return landed ? { ...answer, undone: { restored: plan.revert, kept: plan.kept, failed, scope } } : answer;
   };
-  // THE TREE BEFORE THE CALL, taken only once the call is ALLOWED: a refused call never runs, so its
-  // snapshot would be read as a call still in flight.
-  const snapshotted = (result: HookResult): HookResult => {
-    if (hook === "pre-tool-use" && !off && key !== null && result.exitCode === 0)
-      takeSnapshot(root, key, include, { session: session.id, agent: session.agent, tool });
-    return result;
-  };
-
-  // THE CONFIG WILL NOT LOAD, either way it can fail to. `kind: "broken"` is a module that would
-  // not import; a LoadResult carrying refusals is a module that imported and whose grammar was
-  // refused. They were two branches with two behaviours until the F3 read found that only the first
-  // reached the repair exception — so a deleted `.message(…)`, which is the break
-  // docs/user/explanation/fail-loud.md tells a reader to make, locked the agent out of its own
-  // repair. One sentence, one answer, one place. They are asked in sequence only because the second
-  // needs the LoadResult the first does not have; `outage` is the answer both of them give.
-  const outage = (sentence: string): HookResult => {
-    if (off) return ALLOW;
-    // The config's TEXT, not its module: the module is the thing that will not load, and the
-    // surface a repair may reach is whatever this config imports. Read once, here, and only here.
-    const surface = configSurface(readText(root, CONFIG_FILE));
-    const answer = whileBroken(toEvent(hook, payload, eventWorld(root, session, changes)), surface, sentence);
-    const result = toResult(hook, settle(answer));
-    // TURN-END IS TOLD RATHER THAN HELD. `whileBroken` says why; this is the only place that can
-    // write it, because the Stop rail has no context channel and `toResult` speaks only the two the
-    // host reads. Exit 0 — the turn ends, and the sentence goes where a human and the log see it.
-    return snapshotted(answer.told === null || result.exitCode !== 0 ? result : { ...result, stderr: `${answer.told}\n` });
-  };
-  if (regime.kind === "broken") return outage(regime.message);
-
-  const { load, config } = regime;
-  if (!load.ok) return outage(refusalText(load.refusals));
 
   const entries = load.entries;
   const identity = identityOf(session, payload, categoriesIn(entries));
@@ -854,6 +923,7 @@ async function judge(args: {
           moment: event.moment,
           file: event.file,
           command: event.command,
+          commands: event.commands,
           staged: event.staged,
           turn: event.turn,
           wearing: identity.wearing,
@@ -993,7 +1063,7 @@ function readChanges(
  * WHO IT IS comes from the marker the PreToolUse rail left — session AND agent — so a commit's rows
  * land in the session that caused them and an actor-scoped rule fires at this moment as honestly as
  * at any other. The classification itself is never re-derived here: there is no transcript and no
- * sidecar outside a session, so the STORED verdict is the only truthful answer, and a fresh commit
+ * hook message outside a session, so the STORED verdict is the only truthful answer, and a fresh commit
  * on a stale or absent marker wears nothing rather than wearing a guess.
  */
 export async function runCommit(root: string, scope: CommitScope): Promise<HookResult> {
@@ -1001,10 +1071,10 @@ export async function runCommit(root: string, scope: CommitScope): Promise<HookR
   if (regime.kind === "none") return ALLOW;
   if (isOff(root)) return ALLOW;
   // THE GATE USES THE ENGINE'S OWN FAULT, not `whileBroken` next door, and the difference is the
-  // point rather than an oversight: `whileBroken` exists to carve out the repair and to let a turn
-  // end, and the commit moment has neither. Nothing written under the repair exception may reach a
-  // commit until the config loads green, so this rail stays fully shut however the config broke —
-  // the import fault here, and a load refusal through `guard()`'s own `!load.ok` branch below.
+  // point rather than an oversight: `whileBroken` lets every call through, and the commit gate is
+  // the one rail that stays shut. Everything written while flow was off reaches a commit only once
+  // the config loads and every guardrail has checked it — so this rail refuses however the config
+  // broke: the import fault here, and a load refusal through `guard()`'s own `!load.ok` branch below.
   if (regime.kind === "broken") return refused([{ moment: "commit", block: fault(regime.message) }]) ?? ALLOW;
   const changes = readChanges(root, scope);
   if (!changes.ok) return refused([{ moment: "commit", block: fault(changes.why) }]) ?? ALLOW;
@@ -1060,6 +1130,38 @@ export type PayloadRead =
   | { readonly ok: true; readonly payload: HookPayload }
   | { readonly ok: false; readonly why: "unreadable" | "unparseable"; readonly detail: string };
 
+/** What `readStdin` sleeps on between tries: nothing ever wakes it, so each wait runs its full timeout. */
+const NAP = new Int32Array(new SharedArrayBuffer(4));
+
+/** How long one EAGAIN waits before the next try: the host's next write is usually milliseconds away. */
+const STDIN_NAP_MS = 5;
+
+/**
+ * Every byte on fd 0, to the end of the stream.
+ *
+ * `readFileSync(0)` gives up the first time a NON-BLOCKING stdin is empty, with EAGAIN, and empty
+ * there means "the host has not written the next piece yet", not "there is no more". A payload far
+ * larger than a pipe's buffer arrives in pieces, so it is exactly the payload that read loses (#12).
+ * This one waits for the next piece instead, and the thread SLEEPS between tries rather than
+ * spinning. Every other error is thrown, for `readPayload` to report.
+ */
+function readStdin(): string {
+  const pieces: Buffer[] = [];
+  const piece = Buffer.alloc(64 * 1024);
+  for (;;) {
+    let got: number;
+    try {
+      got = readSync(0, piece, 0, piece.length, null);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EAGAIN") throw error;
+      Atomics.wait(NAP, 0, 0, STDIN_NAP_MS);
+      continue;
+    }
+    if (got === 0) return Buffer.concat(pieces).toString("utf8");
+    pieces.push(Buffer.from(piece.subarray(0, got)));
+  }
+}
+
 /**
  * Read the payload, and REPORT which of three things happened.
  *
@@ -1074,10 +1176,13 @@ export type PayloadRead =
  */
 export function readPayload(): PayloadRead {
   // HAND-RUN: a person typing `flow hook stop` has no payload and must not block on stdin forever.
-  if (process.stdin.isTTY) return { ok: true, payload: {} };
+  // Asked of fd 0 itself, never of `process.stdin`: merely reading that property opens a stream on
+  // fd 0 and the stream makes it NON-BLOCKING (#12). `isatty(0)` leaves fd 0 blocking, so on an
+  // ordinary pipe the read below never meets EAGAIN and its wait loop is not needed.
+  if (isatty(0)) return { ok: true, payload: {} };
   let raw: string;
   try {
-    raw = readFileSync(0, "utf8");
+    raw = readStdin();
   } catch (error) {
     // The errno is the actionable half, and only the errno: a raw error string can carry a
     // stack-shaped prefix, and this text goes in front of the model.
