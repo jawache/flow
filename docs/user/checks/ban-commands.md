@@ -8,7 +8,7 @@ Bans a shell command before it runs. You name each banned command in plain words
 
 ## How a command is matched
 
-Each entry in `ban` is parsed the same way as the command line: the first word is the program, and the words after it are its arguments. A command matches the entry when both of these hold:
+flow parses the command line with [unbash](https://github.com/webpro-nl/unbash), a bash parser, into a list of commands, each one program and its arguments. [The parse](../explanation/what-the-guard-sees.md#the-parse-what-a-command-is) explains how. Each entry in `ban` goes through the same parser: the first word is the program, and the words after it are its arguments. A command matches the entry when both of these hold:
 
 - **The program is the same.** The program's path is ignored on both sides, so `/usr/local/bin/work plan tick` has the program `work`.
 - **Every argument of the entry is among the command's arguments.** Order and position do not matter, and other arguments may come before, between and after them. So `"work plan tick"` matches `work plan tick F7.B1` and `work --verbose plan A B tick`.
