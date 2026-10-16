@@ -1780,16 +1780,34 @@ export function branchFromHead(head: string): string | null {
  * `transcript` is this agent's own transcript, a subagent's included, and its head is the brief.
  */
 export function sessionFactsFrom(args: { readonly payload: HookPayload; readonly transcript: string | null }): SessionFacts {
-  const spawned = typeof args.payload.agent_id === "string" && args.payload.agent_id !== "";
-  // Read only beside an `agent_id`: the host also sends `agent_type` on a top-level session started
-  // with `--agent`, and that session is still the parent.
-  const type = args.payload.agent_type;
-  const agentType = spawned && typeof type === "string" && type !== "" ? type : undefined;
+  const { agent, agentType } = agentOf(args.payload);
   return {
     head: args.transcript === null ? "" : briefHead(args.transcript),
-    subagent: spawned,
+    subagent: agent !== "main",
     ...(agentType === undefined ? {} : { agentType }),
   };
+}
+
+/** Which agent one hook message came from: the key its state is stored under, and its type. */
+export interface AgentOf {
+  /** `main` for the session itself, or the subagent's `agent_id`. */
+  readonly agent: string;
+  /** The type the subagent was started as. Never on `main`. */
+  readonly agentType?: string;
+}
+
+/**
+ * Which agent one hook message came from — the one reading of it, for its state, its classification
+ * and its log rows alike.
+ *
+ * The type is read only beside an `agent_id`: the host also sends `agent_type` on a top-level
+ * session started with `--agent`, and that session is still the parent.
+ */
+export function agentOf(payload: HookPayload): AgentOf {
+  const id = payload.agent_id;
+  if (typeof id !== "string" || id === "") return { agent: "main" };
+  const type = payload.agent_type;
+  return typeof type === "string" && type !== "" ? { agent: id, agentType: type } : { agent: id };
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════

@@ -46,7 +46,7 @@ afterEach(() => {
 
 /** A fixed clock, so the rows a test reads back are the rows it can write down. */
 const at = new Date("2026-09-04T12:00:00.000Z");
-const ctx = (): LogContext => ({ root, session: "sess-1", branch: "workflow/flow", now: () => at });
+const ctx = (): LogContext => ({ root, session: "sess-1", branch: "workflow/flow", agent: "main", now: () => at });
 
 describe("the state directory", () => {
   it("makes itself, and ignores itself and its own ignore file", () => {
@@ -166,6 +166,24 @@ describe("the event log", () => {
     });
   });
 
+  it("names the agent on every row after meta, and a subagent's type beside its id", () => {
+    appendRows(ctx(), rows);
+    appendRows({ ...ctx(), agent: "a6009b5", agentType: "builder" }, [{ kind: "compaction" }]);
+    appendRows({ ...ctx(), agent: "a1", agentType: undefined }, [{ kind: "compaction" }]);
+    const [meta, ...events] = readRows(root, "sess-1");
+    expect(meta, "the meta row is the stream, not an agent's").not.toHaveProperty("agent");
+    expect(events.map((r) => [r["agent"], r["agentType"]])).toEqual([
+      ["main", undefined],
+      ["main", undefined],
+      ["a6009b5", "builder"],
+      ["a1", undefined],
+    ]);
+    expect(events[0], "no agentType key at all on the session's own rows").not.toHaveProperty("agentType");
+    // The stamp leads the row, in the order the log page shows it.
+    const third = readFileSync(logFile(root, "sess-1"), "utf8").split("\n")[3] as string;
+    expect(Object.keys(JSON.parse(third) as object)).toEqual(["ts", "seq", "agent", "agentType", "kind"]);
+  });
+
   it("numbers every row, and keeps numbering across separate appends", () => {
     appendRows(ctx(), rows);
     appendRows(ctx(), [{ kind: "compaction" }]);
@@ -197,7 +215,7 @@ describe("the event log", () => {
     const blocked = mkdtempSync(join(tmpdir(), "flow-blocked-"));
     mkdirSync(join(blocked, FLOW_DIR), { recursive: true });
     writeFileSync(join(blocked, FLOW_DIR, "log"), "in the way");
-    expect(appendRows({ root: blocked, session: "s", branch: null }, rows)).toBe(false);
+    expect(appendRows({ root: blocked, session: "s", branch: null, agent: "main" }, rows)).toBe(false);
     rmSync(blocked, { recursive: true, force: true });
   });
 });
@@ -242,8 +260,8 @@ describe("reading the whole history back", () => {
     expect(sessionIds(root)).toEqual([]);
     expect(readHistory(root)).toEqual([]);
 
-    appendRows({ root, session: "sess-1", branch: null, now: () => at }, [{ kind: "tool", tool: "Read", path: "a.ts" }]);
-    appendRows({ root, session: "commit", branch: null, now: () => at }, [{ kind: "run", moment: "commit", subjects: 1, rules: [] }]);
+    appendRows({ root, session: "sess-1", branch: null, agent: "main", now: () => at }, [{ kind: "tool", tool: "Read", path: "a.ts" }]);
+    appendRows({ root, session: "commit", branch: null, agent: "commit", now: () => at }, [{ kind: "run", moment: "commit", subjects: 1, rules: [] }]);
     // A stray file in the log folder is not a stream.
     writeFileSync(join(root, FLOW_DIR, "log", "notes.md"), "x");
 

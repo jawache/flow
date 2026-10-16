@@ -99,6 +99,7 @@ import {
   type CommitScope,
   type StagedChanges,
   sessionFactsFrom,
+  agentOf,
   ownTranscriptPath,
   refused,
   reversal,
@@ -663,6 +664,8 @@ interface Session {
   readonly root: string;
   readonly id: string;
   readonly agent: string;
+  /** The type the host started this subagent as, when its message says. Never beside `main`. */
+  readonly agentType: string | undefined;
   readonly branch: string | null;
   /** This agent's own transcript: a subagent's own, never its parent's. */
   readonly transcript: () => string | null;
@@ -688,10 +691,12 @@ function once<T>(answer: () => T): () => T {
 function sessionOf(payload: HookPayload, root: string): Session {
   const path = ownTranscriptPath(payload);
   const transcript = once((): string | null => (path === null ? null : readText(root, path)));
+  const { agent, agentType } = agentOf(payload);
   return {
     root,
     id: typeof payload.session_id === "string" && payload.session_id !== "" ? payload.session_id : "unknown",
-    agent: typeof payload.agent_id === "string" && payload.agent_id !== "" ? payload.agent_id : "main",
+    agent,
+    agentType,
     branch: currentBranch(root),
     transcript,
     tokens: once((): number => {
@@ -873,7 +878,7 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
   const taping = isRecording(root);
 
   const answer = await judge({ events, session, load, settings: config.settings, identity, off, hook, payload, rows, steps: taping ? steps : null });
-  if (!off) appendRows({ root, session: session.id, branch: session.branch }, rows);
+  if (!off) appendRows({ root, session: session.id, branch: session.branch, agent: session.agent, agentType: session.agentType }, rows);
   if (taping) appendSteps(root, session.id, steps);
   return snapshotted(toResult(hook, settle(answer)));
 }
@@ -1084,7 +1089,7 @@ export async function runCommit(root: string, scope: CommitScope): Promise<HookR
   // empty or not, through `guard()`'s own `!load.ok` branch.
   if (load.ok && files.length === 0 && deleted.length === 0) return ALLOW;
 
-  const { branch, session, wearing } = wearer(root);
+  const { branch, session, agent, wearing } = wearer(root);
   // The gate is where the expensive checks live — a suite, a type-check, a whole dependency
   // cruise — so it is also where a recording is worth the most: replaying a refused commit is the
   // one thing you cannot do by re-running it, because the working tree has moved on since.
@@ -1113,7 +1118,9 @@ export async function runCommit(root: string, scope: CommitScope): Promise<HookR
         world: tape.taken(),
       },
     ]);
-  appendRows({ root, session, branch }, runRows("commit", outcome, files.length + gone.length));
+  // An agent nobody can name — no fresh marker, or one written before markers held the agent — is
+  // `commit`, the same word that names the stream such a commit's rows land in.
+  appendRows({ root, session, branch, agent: agent ?? "commit" }, runRows("commit", outcome, files.length + gone.length));
 
   const blocks: Refused[] = outcome.effects
     .filter((effect): effect is Block => effect.do === "block")
