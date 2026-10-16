@@ -2626,9 +2626,9 @@ export function mergeNarratives(each: readonly { session: string; read: Narrativ
 
 /**
  * The repo's own Claude Code settings file, relative to the repo root: guarded here, and where
- * `settingsFileFor` registers a dev dependency's hooks.
+ * `settingsFileFor` registers a dev dependency's hooks, and `flow uninstall` takes them out.
  */
-const REPO_SETTINGS = ".claude/settings.json";
+export const REPO_SETTINGS = ".claude/settings.json";
 
 /**
  * The HOST's half of the guard: where the hooks that invoke any of it are registered.

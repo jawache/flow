@@ -149,6 +149,7 @@ import {
   uninstallCode,
   gateWithoutFlow,
   withoutRegistrations,
+  REPO_SETTINGS,
   type UninstallFacts,
   settingsFileFor,
   status,
@@ -2542,7 +2543,7 @@ describe("planUninstall — a dev dependency", () => {
 
   it("takes flow's hooks out of the repo's own settings file, and ends with the repo's npm uninstall", () => {
     const plan = planUninstall(listed);
-    expect(plan.settings?.path).toBe(".claude/settings.json");
+    expect(plan.settings?.path).toBe(REPO_SETTINGS);
     expect(plan.settings?.value).toEqual({ permissions: { allow: [] } });
     expect(plan.link, "an installed package is npm's to remove").toBe(false);
     const said = uninstallLines(plan, []).join("\n");
@@ -2553,7 +2554,7 @@ describe("planUninstall — a dev dependency", () => {
   it("writes nothing to a settings file that would not parse, says so, and answers 1", () => {
     const plan = planUninstall({ ...listed, settings: null, settingsUnreadable: true });
     expect(plan.settings).toBeNull();
-    expect(plan.settingsUnreadable).toBe(".claude/settings.json");
+    expect(plan.settingsUnreadable).toBe(REPO_SETTINGS);
     expect(uninstallLines(plan, []).join("\n")).toContain(".claude/settings.json is not valid JSON");
     expect(uninstallCode(plan, [])).toBe(1);
   });
