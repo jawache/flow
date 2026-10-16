@@ -4047,10 +4047,13 @@ export function initLines(plan: InitPlan, failures: readonly string[], colour = 
     );
   if (plan.hooksPath) wrote.push(SET_HOOKS_PATH);
 
+  const unwired = notInstalled(plan);
   const lines: string[] =
-    wrote.length === 0
-      ? ["flow init — already set up here; nothing to do."]
-      : ["flow init — created:", ...wrote.map((what) => `  + ${what}`)];
+    wrote.length > 0
+      ? ["flow init — created:", ...wrote.map((what) => `  + ${what}`)]
+      : unwired === null
+        ? ["flow init — already set up here; nothing to do."]
+        : ["flow init — nothing new to write here."];
 
   if (plan.notGit) lines.push("  · not a git repo, so no commit gate was armed. Run `git init`, then `flow init` again.");
   if (plan.gateKept)
@@ -4070,7 +4073,6 @@ export function initLines(plan: InitPlan, failures: readonly string[], colour = 
   // LAST, so it is what is left on the screen: a muted `·` note is too quiet for a commit gate git
   // will never run. Bold red in a terminal, each line wrapped on its own so a pager or a terminal
   // that cuts a line never leaves the colour on.
-  const unwired = notInstalled(plan);
   if (unwired !== null) lines.push("", ...notInstalledLines(unwired).map((line) => (colour ? `${BOLD_RED}${line}${RESET}` : line)));
   return lines;
 }

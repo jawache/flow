@@ -2345,6 +2345,23 @@ describe("planInit — when git already runs other hooks", () => {
     });
   });
 
+  it("run again with nothing left to write, it never says the repo is set up above a block saying it is not", () => {
+    const again = planInit({
+      ...bare,
+      ...husky("#!/bin/sh\nnpm test\n"),
+      hasConfig: true,
+      gateText: PRE_COMMIT,
+      hasFlowDir: true,
+      resolves: true,
+      settings: withRegistrations({}).settings,
+    });
+    const said = initLines(again, []).join("\n");
+    expect(said).not.toContain("already set up");
+    expect(said).toContain("nothing new to write");
+    expect(said).toContain(NOT_INSTALLED);
+    expect(initCode(again, [])).toBe(1);
+  });
+
   it("a repo with a hook in .git/hooks names that folder and its pre-commit", () => {
     const plan = planInit({ ...bare, ...gitHooks(["pre-push", "post-checkout"]) });
     expect(plan.hooksPath).toBe(false);
