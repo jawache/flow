@@ -1098,6 +1098,20 @@ function gitCommands(facts: CommandFacts): GitCommand[] {
 }
 
 /**
+ * A `-m` value as git receives it. A value that is one `$( … )` running only `cat` on a heredoc —
+ * `"$(cat <<'EOF' … EOF)"`, the form an agent is taught — is that heredoc's body, less the trailing
+ * newlines a substitution drops. Any other value is passed as written.
+ */
+function passedAs(value: string): string {
+  const inner = /^\$\(([\s\S]*)\)$/.exec(value)?.[1];
+  const commands = inner === undefined ? null : parseCommandLine(inner);
+  const [cat] = commands ?? [];
+  if (commands?.length !== 1 || cat?.program !== "cat" || cat.args.length > 0) return value;
+  const body = cat.heredocs[cat.heredocs.length - 1]?.body;
+  return body === undefined ? value : body.replace(/\n+$/, "");
+}
+
+/**
  * The message a `git commit` in this command line carries, or null when there is no judgeable
  * commit in it at all. Null is the "not our business" answer and every caller passes on it.
  *
@@ -1114,6 +1128,8 @@ function gitCommands(facts: CommandFacts): GitCommand[] {
  *
  *   git commit -m MSG · -mMSG · --message MSG · --message=MSG      judged
  *   git commit -m SUBJECT -m BODY   (repeated, any mix of forms)   judged, joined as git joins them
+ *   git commit -m "$(cat <<'EOF' … EOF)"                            judged, via that heredoc's body,
+ *                                                                  which is what the shell passes
  *   git commit -F - <<'EOF' … EOF   (the commit reads stdin)        judged, via ITS heredoc's body
  *   python3 - <<'PY' … PY; git commit -F - <<'EOF' … EOF            judged, via the commit's own
  *                                                                  heredoc — the first one is the
@@ -1141,12 +1157,12 @@ export function commitMessage(facts: CommandFacts): string | null {
     if (a === "-m" || a === "--message") {
       const value = commit.args[i + 1];
       if (value === undefined) break; // a trailing `-m` with nothing after it — git would refuse too
-      parts.push(value);
+      parts.push(passedAs(value));
       i++; // STEP OVER the value: without this a message that looks like a flag is read twice
       continue;
     }
-    if (a.startsWith("-m") && a !== "-m") parts.push(a.slice(2)); // -mMESSAGE
-    else if (a.startsWith("--message=")) parts.push(a.slice("--message=".length));
+    if (a.startsWith("-m") && a !== "-m") parts.push(passedAs(a.slice(2))); // -mMESSAGE
+    else if (a.startsWith("--message=")) parts.push(passedAs(a.slice("--message=".length)));
   }
   if (parts.length) return parts.join("\n\n");
   // No inline message: it may still be on stdin, and ONLY when the commit itself says so. `-F -`

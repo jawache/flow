@@ -794,6 +794,20 @@ describe("commitMessage on stdin — the body of the commit's own heredoc", () =
   });
 });
 
+describe("commitMessage from a heredoc in a $( … )", () => {
+  it("reads `-m \"$(cat <<'EOF' … EOF)\"` as the heredoc's body, quoted or bare, as the shell passes it", () => {
+    expect(messageOf("git commit -m \"$(cat <<'EOF'\nfix: a thing\n\nwhy: x\nEOF\n)\"")).toBe("fix: a thing\n\nwhy: x");
+    expect(messageOf('git commit -m "$(cat <<EOF\nfix: a thing\nEOF\n)"')).toBe("fix: a thing");
+    expect(messageOf("git commit -m \"$(cat <<'EOF'\nfix: a\nEOF\n)\" -m body")).toBe("fix: a\n\nbody");
+  });
+
+  it("passes any other substitution as written, since what it prints is not on the line", () => {
+    expect(messageOf('git commit -m "$(cat msg.txt)"')).toBe("$(cat msg.txt)");
+    expect(messageOf("git commit -m \"$(sed 1d <<'EOF'\nfix: a\nEOF\n)\"")).toBe("$(sed 1d <<'EOF'\nfix: a\nEOF\n)");
+    expect(messageOf("git commit -m \"see $(cat <<'EOF'\nfix: a\nEOF\n)\"")).toBe("see $(cat <<'EOF'\nfix: a\nEOF\n)");
+  });
+});
+
 describe("gitCommand", () => {
   const git = (line: string): GitCommand[] => (parseCommandLine(line) ?? []).flatMap((c) => gitCommand(c) ?? []);
 

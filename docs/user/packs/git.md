@@ -330,6 +330,12 @@ EOF
 git commit -F - <<'EOF'
 fix: a thing
 EOF`
+- running `git commit -m "$(cat <<'EOF'
+fix: a thing
+
+why it was needed
+EOF
+)"`
 
 **blocks**
 
@@ -344,6 +350,10 @@ EOF
 git commit -F - <<'EOF'
 tidied things up
 EOF`
+- running `git commit -m "$(cat <<'EOF'
+tidied things up
+EOF
+)"`
 
 ## `git.noShellSubstitutionInProse` — guardrail
 
@@ -494,6 +504,11 @@ The version is computed from the commit history at release time — run `./ci.sh
   - given `git diff HEAD -- 'package.json'` exits 0 and says `- "version": "1.2.2" + "version": "1.2.3"`
 - running `git commit -m "release(flow)!: 2.0.0"`
   - given `git diff HEAD -- 'package.json'` exits 0 and says `- "version": "1.2.2" + "version": "2.0.0"`
+- running `git commit -m "$(cat <<'EOF'
+chore(release): 1.2.3
+EOF
+)"`
+  - given `git diff HEAD -- 'package.json'` exits 0 and says `- "version": "1.2.2" + "version": "1.2.3"`
 - running `git commit -m "chore: add a field"`
   - given `git diff HEAD -- 'package.json'` exits 0 and says `- "version": "1.2.2" + "version": "1.2.2",`
 - running `git commit -m "fix: a thing"`

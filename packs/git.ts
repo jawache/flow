@@ -586,6 +586,9 @@ export const git = definePack("git", (repo: Release) => {
         // THE COMMIT'S OWN HEREDOC is its message, not the first heredoc on the line, which here is
         // a python script (#9).
         "python3 - <<'EOF'\nprint(1)\nEOF\ngit commit -F - <<'EOF'\nfix: a thing\nEOF",
+        // A message given as `-m "$(cat <<'EOF' … EOF)"` is the heredoc's body, which is what the
+        // shell passes to git, and the form an agent is taught.
+        "git commit -m \"$(cat <<'EOF'\nfix: a thing\n\nwhy it was needed\nEOF\n)\"",
       ],
       block: [
         'git commit -m "fixed the auth thing"',
@@ -598,6 +601,8 @@ export const git = definePack("git", (repo: Release) => {
         "git commit -m 'tidied things up\n\nfeat: the thing I actually did'",
         // …and the other way round: a header-shaped script ahead of the commit lends it nothing.
         "cat > a.md <<'EOF'\nfix: a thing\nEOF\ngit commit -F - <<'EOF'\ntidied things up\nEOF",
+        // …and the heredoc in a `$( … )` is judged by its body, not passed for its `$(cat` text.
+        "git commit -m \"$(cat <<'EOF'\ntidied things up\nEOF\n)\"",
       ],
     }),
 
@@ -685,6 +690,11 @@ export const git = definePack("git", (repo: Release) => {
           {
             command: 'git commit -m "release(flow)!: 2.0.0"',
             world: { exec: { [`git diff HEAD -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "2.0.0"' } } },
+          },
+          // A release commit whose message is a heredoc in a `$( … )`: its body is the header.
+          {
+            command: "git commit -m \"$(cat <<'EOF'\nchore(release): 1.2.3\nEOF\n)\"",
+            world: { exec: { [`git diff HEAD -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
           },
           // A metadata edit that rewrites the version LINE without moving its value — adding a key
           // after it puts a comma on the end. Values are compared, never lines, or this would fire
