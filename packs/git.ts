@@ -24,6 +24,7 @@ import {
   jsonInvariant,
   quoteArg,
   session,
+  shellCommands,
   substitutionInProse,
   SUBSTITUTION_MESSAGE,
   write,
@@ -406,16 +407,35 @@ const SITE = ["cl", "aude", "\\.com/", "cl", "aude", "-code"].join("");
 const LINK = ["cl", "aude", ".com/", "cl", "aude", "-code"].join("");
 const ROBOT = "\u{1F916}";
 
-// `git commit` as a regex source, from the program name, with any of git's own options between the
-// two words: `-C <dir>`, `-c key=value`, `--git-dir=…`. A builder in a worktree commits as
-// `git -C <worktree> commit`, and a pattern that wanted the two words side by side let every one
-// of those commits through. It reads a command's text, where quotes are gone: a value with a space
-// in it, `-C '/a b'`, is two words there, and `--git-dir /x` is a long option with its value
-// apart, and the pattern misses both commits. The backtick rule finds `git commit` through the
-// parse instead, with `gitSubcommands`.
-const GIT_COMMIT = String.raw`(?:\S*/)?git(?:\s+-[Cc]\s+\S+|\s+--[\w-]+(?:=\S+)?)*\s+commit`;
 // `gh pr` or `gh issue`, run bare or through `work gh`, the wrapper a repo driven by work runs it as.
 const GH_PROSE = String.raw`(?:\S*/)?(?:work\s+)?gh\s+(?:pr|issue)\b`;
+
+/**
+ * Refuses attribution in what a `git commit` is given, and in the prose of a `gh` command.
+ *
+ * The commits are read from the parse, through `gitCommands`: git's own options sit between `git`
+ * and `commit` (`git -C <worktree> commit`), and a value with a space in it, `-C '/a b'`, is two
+ * words in a command's text, where a pattern loses it. `message` is matched against each commit's
+ * arguments after `commit`, one per line, and the bodies of the heredocs it is fed: every argument
+ * rather than the `-m` values alone, so `-am`, `-m"…"` and a `"$(cat <<'EOF' … EOF)"` message are
+ * all in view. A line that does not parse is matched whole, as `banCommands` matches it.
+ *
+ * `prose` is `banCommands` with `matchHeredocs`, for the `gh` verbs, each pattern matched from a
+ * command's program name.
+ */
+const noAttribution = defineCheck((opts: { message: readonly string[]; prose: readonly string[] }): Check => {
+  const prose = banCommands({ ban: opts.prose, matchHeredocs: true });
+  return (ctx) => {
+    const given =
+      shellCommands(ctx) === null
+        ? [ctx.command ?? ""]
+        : gitCommands(ctx)
+            .filter((g) => g.subcommand === "commit")
+            .map((g) => [...g.args, ...g.command.heredocs.map((h) => h.body)].join("\n"));
+    const hits = opts.message.filter((pattern) => given.some((text) => new RegExp(pattern).test(text)));
+    return hits.length === 0 ? prose(ctx) : ctx.fail(hits.map((pattern) => `the commit's message matches /${pattern}/`).join(" · "));
+  };
+});
 
 /** What this pack cannot know: which recipe cuts a release, and which file carries the version. */
 export interface Release {
@@ -491,16 +511,16 @@ export const git = definePack("git", (repo: Release) => {
     .at(command)
     .description("Blocks Claude/Anthropic attribution in commits, PRs and issues.")
     .check(
-      banCommands({
-        ban: [
-          `${GIT_COMMIT}[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(${VENDOR}|[Aa]nthropic)`,
-          `${GIT_COMMIT}[\\s\\S]*[Gg]enerated with[\\s\\S]*${VENDOR}`,
-          `${GIT_COMMIT}[\\s\\S]*(${SITE}|🤖 Generated)`,
+      noAttribution({
+        message: [
+          `[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(${VENDOR}|[Aa]nthropic)`,
+          `[Gg]enerated with[\\s\\S]*${VENDOR}`,
+          `${SITE}|🤖 Generated`,
+        ],
+        prose: [
           `${GH_PROSE}[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(${VENDOR}|[Aa]nthropic)`,
           `${GH_PROSE}[\\s\\S]*(${SITE}|🤖 Generated)`,
         ],
-        // A message fed on stdin — `git commit -F - <<'EOF'` — is still the commit's message.
-        matchHeredocs: true,
       }),
     )
     .message(
@@ -509,8 +529,22 @@ export const git = definePack("git", (repo: Release) => {
     // EVERY LITERAL ASSEMBLED, the cases included: written whole, a case would carry the shape its
     // own rule bans, and this file's next commit would be refused by it.
     .test({
-      pass: ['git commit -m "fix(auth): renew the session"', 'git -C /repo/worktree commit -m "fix(auth): renew the session"'],
+      pass: [
+        'git commit -m "fix(auth): renew the session"',
+        'git -C /repo/worktree commit -m "fix(auth): renew the session"',
+        // A search for the trailer, and a note that names it, are no commit.
+        `git log --grep "${TRAILER}: ${VENDOR}"`,
+        `git commit -m "fix(auth): renew the session" && echo "${TRAILER}: ${VENDOR}"`,
+      ],
       block: [
+        // A value with a space in it, and a long option with its value apart: a pattern over the
+        // command's text lost the commit in each.
+        `git -C '/a b' commit -m "fix(auth): renew the session\n\n${TRAILER}: ${VENDOR}"`,
+        `git -c user.name='A B' commit -m "fix(auth): renew the session\n\n${TRAILER}: ${VENDOR}"`,
+        `git --git-dir /x commit -m "fix(auth): renew the session\n\n${TRAILER}: ${VENDOR}"`,
+        // The message in a bundle of short flags, and through a heredoc in a substitution.
+        `git commit -am "fix(auth): renew the session\n\n${TRAILER}: ${VENDOR}"`,
+        `git commit -m "$(cat <<'EOF'\nfix(auth): renew the session\n\n${TRAILER}: ${VENDOR}\nEOF\n)"`,
         // git's own options before `commit`: a builder in a worktree, and a one-off config value.
         `git -C /repo/worktree commit -m "fix(auth): renew the session\n\n${TRAILER}: ${VENDOR} Opus <noreply@anthropic.com>"`,
         `git -c commit.gpgsign=false commit -m "fix(auth): renew the session\n\n${TRAILER}: ${VENDOR}"`,

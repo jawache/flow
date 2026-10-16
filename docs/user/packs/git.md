@@ -88,20 +88,21 @@ Blocks Claude/Anthropic attribution in commits, PRs and issues.
 - **Refuses at** a shell command is about to run
 - **Watches** not scoped by path
 - **Categories** every session
-- **Check** [`banCommands`](../checks/ban-commands.md)
+- **Check** `noAttribution` *(written in this pack)*
 
 <details><summary>settings</summary>
 
 ```
 {
-  "ban": [
-    "(?:\\S*/)?git(?:\\s+-[Cc]\\s+\\S+|\\s+--[\\w-]+(?:=\\S+)?)*\\s+commit[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(Claude|[Aa]nthropic)",
-    "(?:\\S*/)?git(?:\\s+-[Cc]\\s+\\S+|\\s+--[\\w-]+(?:=\\S+)?)*\\s+commit[\\s\\S]*[Gg]enerated with[\\s\\S]*Claude",
-    "(?:\\S*/)?git(?:\\s+-[Cc]\\s+\\S+|\\s+--[\\w-]+(?:=\\S+)?)*\\s+commit[\\s\\S]*(claude\\.com/claude-code|🤖 Generated)",
+  "message": [
+    "[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(Claude|[Aa]nthropic)",
+    "[Gg]enerated with[\\s\\S]*Claude",
+    "claude\\.com/claude-code|🤖 Generated"
+  ],
+  "prose": [
     "(?:\\S*/)?(?:work\\s+)?gh\\s+(?:pr|issue)\\b[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(Claude|[Aa]nthropic)",
     "(?:\\S*/)?(?:work\\s+)?gh\\s+(?:pr|issue)\\b[\\s\\S]*(claude\\.com/claude-code|🤖 Generated)"
-  ],
-  "matchHeredocs": true
+  ]
 }
 ```
 
@@ -125,9 +126,29 @@ Commit / PR / issue body contains Claude or Anthropic attribution. Remove it (th
 
 - running `git commit -m "fix(auth): renew the session"`
 - running `git -C /repo/worktree commit -m "fix(auth): renew the session"`
+- running `git log --grep "Co-Authored-By: Claude"`
+- running `git commit -m "fix(auth): renew the session" && echo "Co-Authored-By: Claude"`
 
 **blocks**
 
+- running `git -C '/a b' commit -m "fix(auth): renew the session
+
+Co-Authored-By: Claude"`
+- running `git -c user.name='A B' commit -m "fix(auth): renew the session
+
+Co-Authored-By: Claude"`
+- running `git --git-dir /x commit -m "fix(auth): renew the session
+
+Co-Authored-By: Claude"`
+- running `git commit -am "fix(auth): renew the session
+
+Co-Authored-By: Claude"`
+- running `git commit -m "$(cat <<'EOF'
+fix(auth): renew the session
+
+Co-Authored-By: Claude
+EOF
+)"`
 - running `git -C /repo/worktree commit -m "fix(auth): renew the session
 
 Co-Authored-By: Claude Opus <noreply@anthropic.com>"`
