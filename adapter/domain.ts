@@ -4105,7 +4105,7 @@ export interface UninstallPlan {
   readonly gate: { readonly path: string; readonly body: string | null } | null;
   /** The gate that stays still calls flow, in a line flow did not write. */
   readonly gateRunsFlow: boolean;
-  /** Unset `core.hooksPath`: it is `.githooks`, and nothing else is in the folder. */
+  /** Unset `core.hooksPath`: it is `.githooks`, this run found that folder, and nothing else is in it. */
   readonly hooksPath: boolean;
   /** The hooks that keep `core.hooksPath` at `.githooks`, named for the report. */
   readonly hooksKept: readonly string[];
@@ -4139,7 +4139,10 @@ export function planUninstall(facts: UninstallFacts): UninstallPlan {
   const leftText = gate === null ? facts.gateText : gate.delete ? null : gate.body;
   // A hook left in the folder is a hook git should still run, so `core.hooksPath` stays pointed at it.
   const hooksLeft = (facts.hooksDir ?? []).filter((name) => !(gateGone && name === "pre-commit"));
-  const ownsHooksPath = facts.hooksPath === HOOKS_DIR;
+  // `core.hooksPath` is the whole repo's, so it is flow's to unset only when this run found the
+  // folder it points at: from a subfolder there is no `.githooks/` beside the run, and unsetting it
+  // there would leave the gate in place with nothing pointing git at it.
+  const ownsHooksPath = facts.hooksPath === HOOKS_DIR && facts.hooksDir !== null;
   // Bytes nobody parsed are not written, as in `planInit`: the step is reported as failed instead.
   const cleaned = (path: string, settings: unknown): SettingsWithout | null => {
     const { settings: value, removed } = withoutRegistrations(settings);

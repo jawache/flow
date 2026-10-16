@@ -733,6 +733,29 @@ describe("flow uninstall", () => {
     }
   });
 
+  // `core.hooksPath` IS THE WHOLE REPO'S, wherever the command is typed. From a subfolder there is
+  // no `.githooks/` beside the run, so the setting stays: unsetting it would leave the gate behind
+  // with nothing pointing git at it, and every commit unguarded.
+  it("run from a subfolder, leaves core.hooksPath and the gate as they were", () => {
+    const nested = newRepo();
+    try {
+      expect(flow(nested, ["init"]).code).toBe(0);
+      const sub = join(nested, "sub");
+      mkdirSync(sub);
+
+      const said = flow(sub, ["uninstall"]);
+      expect(said.code, said.stdout + said.stderr).toBe(0);
+      expect(said.stdout).not.toContain("core.hooksPath");
+      expect(git(nested, ["config", "--get", "core.hooksPath"]).stdout.trim(), "the repo's hooks path stays").toBe(".githooks");
+      expect(existsSync(join(nested, ".githooks", "pre-commit")), "the gate stays").toBe(true);
+
+      const removed = flow(nested, ["uninstall"]);
+      expect(removed.stdout, "from the top folder, it all goes").toContain("  - core.hooksPath (it was .githooks)");
+    } finally {
+      rmSync(nested, { recursive: true, force: true });
+    }
+  });
+
   // THE SHELL'S OWN FAILURE PATH: a removal the disk refuses. Root deletes through any mode, so the
   // case cannot be staged there.
   it.skipIf(process.getuid?.() === 0)("lists a removal the disk refused, names it, still removes the rest, and answers 1", () => {

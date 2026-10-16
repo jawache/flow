@@ -2927,6 +2927,13 @@ describe("planUninstall — hooks of somebody's own", () => {
     expect(uninstallLines(plan, []).join("\n")).toContain("still runs flow, in a line flow did not write");
   });
 
+  it("leaves core.hooksPath when this run found no .githooks/ — run from a subfolder, the setting is still the whole repo's", () => {
+    const plan = planUninstall({ ...wired, gateText: null, hooksDir: null, hasFlowDir: false, linked: false });
+    expect(plan.hooksPath).toBe(false);
+    expect(plan.hooksDir).toBe(false);
+    expect(uninstallLines(plan, []).join("\n")).not.toContain("core.hooksPath");
+  });
+
   it("leaves a core.hooksPath that points somewhere else", () => {
     const plan = planUninstall({ ...wired, hooksPath: ".husky/_" });
     expect(plan.hooksPath).toBe(false);
