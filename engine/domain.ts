@@ -871,7 +871,7 @@ export interface SessionMarker {
  * One value rather than two loose ones, because the type means nothing without the id it belongs to.
  */
 export interface AgentOf {
-  /** `main` for the session itself, a subagent's `agent_id`, or `commit` for a gate nobody ran. */
+  /** `main` for the session itself, a subagent's `agent_id`, or `commit` for a gate run no agent can be named for. */
   readonly agent: string;
   /** The type the subagent was started as, when the host said. Never beside `main` or `commit`. */
   readonly agentType?: string;
