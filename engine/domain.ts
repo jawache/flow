@@ -216,6 +216,8 @@ export interface GuardEvent {
   readonly file?: Ctx["file"];
   /** command: the line about to run. */
   readonly command?: string | undefined;
+  /** command: the line's parse, when the caller already made it. Absent, the engine parses the line. */
+  readonly commands?: Ctx["commands"];
   /** commit: the staged paths. */
   readonly staged?: readonly string[] | undefined;
   /**
@@ -489,8 +491,9 @@ export async function guard({ load, event, world, faults = [], off = false }: Gu
 
   const effects: Effect[] = [];
   const tallies: Tally[] = [];
-  // The line is parsed ONCE per event, however many entries fire on it, and every ctx carries it.
-  const parsed = event.command === undefined ? {} : { commands: parseCommandLine(event.command) };
+  // The line is parsed ONCE per hook, however many entries fire on it, and every ctx carries it:
+  // the adapter's parse rides the event, and a caller that made none has it made here.
+  const parsed = event.command === undefined ? {} : { commands: event.commands === undefined ? parseCommandLine(event.command) : event.commands };
   for (const entry of load.entries) {
     if (entry.spec.kind !== "guardrail" || !fires(entry.spec, event.moment)) continue;
     if (!bindsTo(entry, event.wearing)) {

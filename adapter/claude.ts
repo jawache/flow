@@ -923,6 +923,7 @@ async function judge(args: {
           moment: event.moment,
           file: event.file,
           command: event.command,
+          commands: event.commands,
           staged: event.staged,
           turn: event.turn,
           wearing: identity.wearing,

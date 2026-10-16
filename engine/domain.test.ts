@@ -41,6 +41,7 @@ import {
   cannedWorld,
   GUARDRAIL_MOMENTS,
   isPathMoment,
+  parseCommandLine,
   type CaseWorld,
   type Unanswered,
 } from "../language/domain.ts";
@@ -449,6 +450,13 @@ describe("what an entry is run against", () => {
     expect(seen).toHaveLength(2);
     expect(seen[0]).toBe(seen[1]);
     expect(seen[0]?.map((c) => c.text)).toEqual(["git push origin main", "ls -f"]);
+
+    // A parse the adapter already made rides the event, and is the one every entry reads.
+    seen.length = 0;
+    const made = parseCommandLine("ls");
+    await guard({ load, event: { moment: "command", command: "ls", commands: made, wearing: [] }, world: world() });
+    expect(seen).toEqual([made, made]);
+    expect(seen[0]).toBe(made);
   });
 
   it("hands turn-end the turn's actions, in order", async () => {

@@ -255,6 +255,8 @@ export type AdapterEvent =
       readonly moment: GuardrailMoment;
       readonly file?: Ctx["file"];
       readonly command?: string | undefined;
+      /** command: the line's parse, made once here and handed to the engine with the line. */
+      readonly commands?: Ctx["commands"];
       readonly staged?: readonly string[] | undefined;
       readonly turn?: readonly TurnAction[] | undefined;
       /**
@@ -763,10 +765,12 @@ export function toEvent(hook: HookEvent, payload: HookPayload, world: EventWorld
         //
         // Every guard event comes before every brief event: a refusal carries no notes, and the
         // shell stops judging notes once something has refused, so they are not marked shown.
-        // The line is parsed once here, for the files it removes and the files it reads.
+        // The line is parsed once here: the command rules read it, and so do the files it removes
+        // and the files it reads.
         const steps = parseShellSteps(command);
-        const events: AdapterEvent[] = [{ rail: "guard", moment: "command", command }];
-        for (const target of deleteTargets(steps === null ? null : stepCommands(steps))) {
+        const commands = steps === null ? null : stepCommands(steps);
+        const events: AdapterEvent[] = [{ rail: "guard", moment: "command", command, commands }];
+        for (const target of deleteTargets(commands)) {
           // The file is still there at PreToolUse, so a content rule can ask what is about to be
           // lost ("this matched X — did you move the code first?"). One that is already gone yields
           // no event: there is nothing to judge, and an invented empty file would let a content
