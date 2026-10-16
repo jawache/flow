@@ -16,6 +16,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
+  breadcrumb,
   command,
   commit,
   deletion,
@@ -28,6 +29,8 @@ import {
   pack,
   override,
   protectedPath,
+  touch,
+  turnEnd,
   write,
   type Ctx,
   type LoadResult,
@@ -96,6 +99,7 @@ import {
   readState,
   runRows,
   attribution,
+  UNNAMED_COMMIT,
   sanitise,
   spawnedAs,
   statePath,
@@ -111,6 +115,7 @@ import {
   type RowKind,
   type Attribution,
   type Row,
+  type AgentOf,
   type SessionMarker,
   type SessionState,
   type SpawnRecipe,
@@ -712,6 +717,7 @@ describe("a breadcrumb across one session", () => {
     const first = briefing({ event: touched("src/a.ts", 40_000), marks: {} });
     expect(noticeIds(first)).toEqual(["rails.notes.area"]);
     expect(first.notices[0]?.cause).toBe("first-touch");
+    expect(first.notices[0]?.subject).toBe("src/a.ts");
     expect(first.marks).toEqual({ "rails.notes.area": 40_000 });
   });
 
@@ -725,6 +731,7 @@ describe("a breadcrumb across one session", () => {
     const drifted = briefing({ event: touched("src/b.ts", 250_000), marks: { "rails.notes.area": 40_000 } });
     expect(noticeIds(drifted)).toEqual(["rails.notes.area"]);
     expect(drifted.notices[0]?.cause).toBe("drift");
+    expect(drifted.notices[0]?.subject, "the touch that re-showed it, not the one that first did").toBe("src/b.ts");
     expect(drifted.marks).toEqual({ "rails.notes.area": 250_000 });
   });
 
@@ -753,6 +760,7 @@ describe("a breadcrumb across one session", () => {
   it("marks a command note as shown, so it does not repeat on the next install", () => {
     const first = briefing({ event: { moment: "command", command: "npm install lodash", tokens: 10, wearing: [] }, marks: {} });
     expect(noticeIds(first)).toEqual(["rails.notes.installing"]);
+    expect(first.notices[0]?.subject, "a command note's subject is the line it matched").toBe("npm install lodash");
     const again = briefing({
       event: { moment: "command", command: "npm install zod", tokens: 200, wearing: [] },
       marks: first.marks,
@@ -778,8 +786,24 @@ describe("a breadcrumb across one session", () => {
     const opened = briefing({ event: { moment: "session", tokens: 0, wearing: [] }, marks: {} });
     expect(noticeIds(opened)).toEqual(["rails.notes.orientation"]);
     expect(opened.notices[0]?.cause).toBe("session");
+    expect(opened.notices[0]?.subject, "a greeting fires on no touch").toBeUndefined();
     const again = briefing({ event: { moment: "session", tokens: 100, wearing: [] }, marks: opened.marks });
     expect(again.notices).toEqual([]);
+  });
+
+  it("gives a turn-end note no subject, because the event carries no file or command", () => {
+    const wrapUp = loadConfig(defineConfig([pack(definePack("ends", { wrapUp: breadcrumb().at(turnEnd).text("Commit before you stop.") }))]));
+    const ended = brief({ load: wrapUp, event: { moment: "turn-end", tokens: 0, wearing: [] }, marks: {}, settings: {} });
+    expect(noticeIds(ended)).toEqual(["ends.wrapUp"]);
+    expect(ended.notices[0]?.subject).toBeUndefined();
+  });
+
+  it("gives a touch with no file a note with no subject, rather than an empty one", () => {
+    const anywhere = loadConfig(defineConfig([pack(definePack("touches", { anyFile: breadcrumb().at(touch).text("Mind the layout.") }))]));
+    const shown = brief({ load: anywhere, event: { moment: "touch", tokens: 0, wearing: [] }, marks: {}, settings: {} });
+    expect(noticeIds(shown)).toEqual(["touches.anyFile"]);
+    expect(shown.notices[0]?.cause).toBe("first-touch");
+    expect(shown.notices[0]?.subject).toBeUndefined();
   });
 
   it("degrades to a NOTICE when the config will not load — the one exception to fail-loud", () => {
@@ -789,6 +813,7 @@ describe("a breadcrumb across one session", () => {
     const only = degraded.notices[0];
     expect(only?.do).toBe("notice");
     expect(only?.cause).toBe("fault");
+    expect(only?.subject).toBeUndefined();
     expect(only?.text).toContain("the config will not load");
     expect(degraded.marks).toEqual({});
   });
@@ -869,7 +894,7 @@ describe("formatting a refusal", () => {
   it("gathers every block into one message, and ignores the notices beside them", () => {
     const effects: Effect[] = [
       { do: "block", entry: "a.b", message: "m", subject: null, detail: "" },
-      { do: "notice", entry: "a.note", text: "hi", file: undefined, cause: "first-touch" },
+      { do: "notice", entry: "a.note", text: "hi", file: undefined, cause: "first-touch", subject: "src/a.ts" },
       { do: "block", entry: "c.d", message: "n", subject: null, detail: "" },
     ];
     expect(formatBlocks(effects)).toBe("✗ a.b\n  m\n✗ c.d\n  n");
@@ -930,12 +955,28 @@ describe("a session × agent's own state", () => {
 describe("the commit gate's session marker", () => {
   const now = Date.parse("2026-09-04T12:00:00.000Z");
   const fresh: SessionMarker = { session: "live", agent: "agent-7", ts: "2026-09-04T11:59:00.000Z" };
-  const none: Attribution = { session: "commit", agent: null };
+  const none: Attribution = { session: "commit", who: null };
 
   it("attributes a commit to the session AND the agent that was just editing", () => {
     // The agent is what makes an actor-scoped commit rule possible: identity is stored per
     // session × agent, so the session id alone cannot find who was working.
-    expect(attribution(fresh, "commit", now)).toStrictEqual({ session: "live", agent: "agent-7" });
+    expect(attribution(fresh, "commit", now)).toStrictEqual({ session: "live", who: { agent: "agent-7" } });
+  });
+
+  it("carries the agent's type with the agent, and never a type without one", () => {
+    expect(attribution({ ...fresh, agentType: "builder" }, "commit", now)).toStrictEqual({
+      session: "live",
+      who: { agent: "agent-7", agentType: "builder" },
+    });
+    expect(attribution({ ...fresh, agentType: "" }, "commit", now), "an empty type is none").toStrictEqual({
+      session: "live",
+      who: { agent: "agent-7" },
+    });
+    expect(attribution({ session: "live", agentType: "builder", ts: fresh.ts }, "commit", now)).toStrictEqual({
+      session: "live",
+      who: null,
+    });
+    expect(attribution({ ...fresh, agentType: "builder", ts: "2026-09-04T02:00:00.000Z" }, "commit", now)).toStrictEqual(none);
   });
 
   it("falls back rather than mis-pinning a commit to a session that ended hours ago", () => {
@@ -947,11 +988,15 @@ describe("the commit gate's session marker", () => {
   });
 
   it("reads a marker written before the agent field as an unknown actor, not a wrong one", () => {
-    expect(attribution({ session: "live", ts: fresh.ts }, "commit", now)).toStrictEqual({
-      session: "live",
-      agent: null,
-    });
-    expect(attribution({ session: "live", agent: 7, ts: fresh.ts }, "commit", now).agent).toBeNull();
+    expect(attribution({ session: "live", ts: fresh.ts }, "commit", now)).toStrictEqual({ session: "live", who: null });
+    expect(attribution({ session: "live", agent: 7, ts: fresh.ts }, "commit", now).who).toBeNull();
+  });
+
+  it("logs a commit no agent can be named for as UNNAMED_COMMIT", () => {
+    const logged = (marker: SessionMarker): AgentOf => attribution(marker, "commit", now).who ?? UNNAMED_COMMIT;
+    expect(logged({ ...fresh, ts: "2026-09-04T02:00:00.000Z" }), "a stale marker").toBe(UNNAMED_COMMIT);
+    expect(logged({ session: "live", ts: fresh.ts }), "a marker without an agent").toBe(UNNAMED_COMMIT);
+    expect(UNNAMED_COMMIT).toStrictEqual({ agent: "commit" });
   });
 
   it("takes the age as an argument, because a clock inside a decision cannot be tested", () => {
@@ -983,7 +1028,7 @@ describe("the log's layout", () => {
     const outcome: Outcome = {
       effects: [
         { do: "block", entry: "a.b", message: "m", subject: "x.ts", detail: "d" },
-        { do: "notice", entry: "a.note", text: "hi", file: undefined, cause: "drift" },
+        { do: "notice", entry: "a.note", text: "hi", file: undefined, cause: "drift", subject: "x.ts" },
       ],
       tallies: [{ id: "a.b", evaluated: 1, hits: 1, silenced: 0 }],
     };
@@ -998,8 +1043,18 @@ describe("the log's layout", () => {
         message: "m",
         detail: "d",
       },
-      { kind: "breadcrumb", moment: "write", id: "a.note", cause: "drift" },
+      { kind: "breadcrumb", moment: "write", id: "a.note", cause: "drift", subject: "x.ts" },
     ]);
+  });
+
+  it("writes no subject on a breadcrumb row whose note fired on no touch", () => {
+    const greeting: Outcome = {
+      effects: [{ do: "notice", entry: "a.hello", text: "hi", file: undefined, cause: "session", subject: undefined }],
+      tallies: [],
+    };
+    const [, row] = runRows("session", greeting, 1);
+    expect(row).toEqual({ kind: "breadcrumb", moment: "session", id: "a.hello", cause: "session" });
+    expect(row).not.toHaveProperty("subject");
   });
 
   it("reads the next event index off the log's own tail", () => {
@@ -1549,6 +1604,22 @@ describe("diffRows — the proof is an EMPTY diff", () => {
     expect(diffRows([row("breadcrumb", { moment: "touch", id: "x", cause: "drift" })], [])).toEqual([
       { side: "replay", at: 0, row: "breadcrumb touch x drift" },
     ]);
+  });
+
+  it("catches a note shown for the wrong file, when both rows name one", () => {
+    const shown = (subject: string): Row => row("breadcrumb", { moment: "touch", id: "x", cause: "first-touch", subject });
+    expect(diffRows([shown("src/a.ts")], [shown("src/b.ts")])).toEqual([
+      { side: "replay", at: 0, row: "breadcrumb touch x first-touch src/a.ts" },
+      { side: "live", at: 0, row: "breadcrumb touch x first-touch src/b.ts" },
+    ]);
+    expect(diffRows([shown("src/a.ts")], [shown("src/a.ts")])).toEqual([]);
+  });
+
+  it("still agrees with a live log written before breadcrumb rows named their subject", () => {
+    const replayed = row("breadcrumb", { moment: "touch", id: "x", cause: "first-touch", subject: "src/a.ts" });
+    const old = row("breadcrumb", { moment: "touch", id: "x", cause: "first-touch" });
+    expect(diffRows([replayed], [old])).toEqual([]);
+    expect(diffRows([old], [replayed])).toEqual([]);
   });
 });
 
