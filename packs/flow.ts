@@ -63,6 +63,15 @@ function runsUninstall(c: ShellCommand): boolean {
   return namesFlowThenUninstall(0) || (RUNNERS.has(programName(c.program)) && c.args.some((_, i) => namesFlowThenUninstall(i + 1)));
 }
 
+/** What ends a word in a line that does not parse, as `banCommands` reads one: whitespace, a quote, a backtick and the shell's operators. */
+const EDGE = String.raw`\s'"\x60;&|()<>`;
+
+/** The word, whole, anywhere in a line that does not parse. */
+const wholeWord = (word: string): RegExp => new RegExp(`(?:^|[${EDGE}])${word}(?=$|[${EDGE}])`);
+
+/** For a line that does not parse: a word naming flow, after any path, and the word `uninstall`, each whole. */
+const UNPARSED = [wholeWord(`(?:[^${EDGE}]*/)?flow(?:@[^${EDGE}]+|\\.mjs)?`), wholeWord("uninstall")];
+
 /**
  * Refuses `flow uninstall` in every way an agent can start flow, read from the parse, so a commit
  * message, an echo or a heredoc that names the command is prose about it. A check of its own rather
@@ -70,11 +79,20 @@ function runsUninstall(c: ShellCommand): boolean {
  * compares whole: `node node_modules/@jawache/flow/dist/flow.mjs uninstall`, and
  * `pnpm dlx @jawache/flow@<any version> uninstall`. A regex under `wholeLine` would read the line
  * as written, prose included, and refuse a commit message that quotes the node form.
+ *
+ * A line that does not parse is refused when it names flow and `uninstall` as whole words, as
+ * `banCommands` refuses one: bash runs every complete command before a later syntax error, so
+ * `flow uninstall` on a line above an unmatched `)` still runs.
  */
 const noFlowUninstall = defineCheck(
   (_opts: Record<string, never>): Check =>
     (ctx) => {
-      const found = (shellCommands(ctx) ?? []).filter(runsUninstall).map((c) => `\`${c.text}\` runs flow uninstall`);
+      const parsed = shellCommands(ctx);
+      if (parsed === null) {
+        const line = ctx.command ?? "";
+        return UNPARSED.every((re) => re.test(line)) ? ctx.fail("the line does not parse, and names flow and `uninstall` as whole words") : ctx.ok();
+      }
+      const found = parsed.filter(runsUninstall).map((c) => `\`${c.text}\` runs flow uninstall`);
       return found.length === 0 ? ctx.ok() : ctx.fail(found.join("\n"));
     },
 );
@@ -182,11 +200,6 @@ export const flow = definePack("flow", (repo: Home) => {
     noUninstall: guardrail()
       .at(command)
       .description("Refuses `flow uninstall` when an agent runs it. Taking flow off a repo or a machine is the user's call, made in their own terminal.")
-      // Read from the parse, so prose that names the command passes. Two ways in: flow on PATH or
-      // by path (`./node_modules/.bin/flow`), and flow started by a runner, which is a package
-      // runner (`npx flow`, `pnpm dlx @jawache/flow@latest`, `npm exec -- flow`, `bun run flow`) or
-      // node on the bundle or the bin link (`node …/dist/flow.mjs`, which is how the registered
-      // hooks call it). A runner may be named by its path too (`/usr/local/bin/npx`).
       .check(noFlowUninstall({}))
       .message(
         "`flow uninstall` removes this repo's guard: the commit gate, `core.hooksPath` and flow's hook registrations, and with `--machine` the hooks every repo on this machine runs. An agent does not take off the guard it works under, so there is no bypass. If flow should come off, say so and ask the user to run `flow uninstall` in their own terminal. If a guardrail is in your way, `override(pack.entry).disabled(\"why\")` inside flow.config.ts is the visible, committed route, and it is the user's call too.",
@@ -201,6 +214,7 @@ export const flow = definePack("flow", (repo: Home) => {
           "node scripts/workflow.mjs uninstall",
           "npx workflow uninstall",
           'echo "the hooks call node node_modules/@jawache/flow/dist/flow.mjs uninstall"',
+          'git commit -m "node node_modules/@jawache/flow/dist/flow.mjs uninstall"',
           "npm test -- flow",
         ],
         block: [
@@ -225,6 +239,7 @@ export const flow = definePack("flow", (repo: Home) => {
           "sudo flow uninstall --machine",
           "cd app && flow uninstall",
           "bash -c 'flow uninstall --machine'",
+          "flow uninstall\n)",
         ],
       }),
   };

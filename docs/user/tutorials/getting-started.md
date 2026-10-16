@@ -149,10 +149,10 @@ Every guardrail carries the inputs it must let through and the inputs it must re
 
 ```
 flow test
-# flow test — 38 cases over 5 guardrails, all green
+# flow test — 40 cases over 5 guardrails, all green
 ```
 
-Notice the count: 38 cases over 5 guardrails, all green.
+Notice the count: 40 cases over 5 guardrails, all green.
 
 ## 7 · Commit the guard
 

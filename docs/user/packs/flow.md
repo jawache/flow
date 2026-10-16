@@ -160,6 +160,7 @@ EOF`
 - running `node scripts/workflow.mjs uninstall`
 - running `npx workflow uninstall`
 - running `echo "the hooks call node node_modules/@jawache/flow/dist/flow.mjs uninstall"`
+- running `git commit -m "node node_modules/@jawache/flow/dist/flow.mjs uninstall"`
 - running `npm test -- flow`
 
 **blocks**
@@ -185,6 +186,8 @@ EOF`
 - running `sudo flow uninstall --machine`
 - running `cd app && flow uninstall`
 - running `bash -c 'flow uninstall --machine'`
+- running `flow uninstall
+)`
 
 ## Where each part of this page comes from
 
