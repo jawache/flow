@@ -439,6 +439,39 @@ export interface ShellCommand {
 }
 
 /**
+ * THE SAME PARSE, IN THE ORDER IT RUNS — for a reader that follows the line the way the shell does:
+ * where a `cd` leaves it, what a variable the line set holds, what a `for` loop's body is given.
+ * Not on ctx, and not public: `ctx.commands` is exactly these steps' commands, in order
+ * (`stepCommands`), so the two can never disagree about what a line runs.
+ */
+export type ShellStep =
+  /** One command. `hereStrings` counts its last arguments that are `<<<` texts, which it reads on stdin rather than is given. */
+  | { readonly kind: "command"; readonly command: ShellCommand; readonly hereStrings: number }
+  /** `NAME=value` on its own, which sets a shell variable. In front of a command it is that command's env, and not a step. */
+  | { readonly kind: "assign"; readonly name: string; readonly value: string }
+  /** A subshell, a substitution, or a script handed to another shell: a `cd` or a variable set inside stays inside. */
+  | { readonly kind: "scope"; readonly body: readonly ShellStep[] }
+  /** `for name in values; do body; done`: the body runs once per value. `values` is empty when the line lists none. */
+  | { readonly kind: "for"; readonly name: string; readonly values: readonly string[]; readonly body: readonly ShellStep[] };
+
+/** Every command in the steps, nested ones included, in the order the parse found them. */
+export function stepCommands(steps: readonly ShellStep[]): ShellCommand[] {
+  return steps.flatMap((step) => (step.kind === "command" ? [step.command] : step.kind === "assign" ? [] : stepCommands(step.body)));
+}
+
+/** The steps with a group's or a loop's redirects added to each command at its own level, however deep in a subshell or a loop. */
+function withRedirects(steps: readonly ShellStep[], nested: boolean, redirects: readonly ShellRedirect[]): ShellStep[] {
+  return steps.map((step): ShellStep => {
+    if (step.kind === "assign") return step;
+    if (step.kind === "command") {
+      const c = step.command;
+      return c.nested === nested ? { ...step, command: { ...c, redirects: [...c.redirects, ...redirects] } } : step;
+    }
+    return { ...step, body: withRedirects(step.body, nested, redirects) };
+  });
+}
+
+/**
  * The wrappers stepped past to the program that runs, each with the options that take a value —
  * the word after one of those is the value, not the program. `assignments` is env's `NAME=value`
  * list, `operands` the words a wrapper takes before the program (timeout's duration), and `lookup`
@@ -527,7 +560,13 @@ function substitutionText(text: string): ShellSubstitution {
  * order they appear — or `null` when the line, or any script nested inside it, does not parse.
  */
 export function parseCommandLine(line: string): ShellCommand[] | null {
-  return walkLine(line)?.commands ?? null;
+  const walked = walkLine(line);
+  return walked === null ? null : stepCommands(walked.steps);
+}
+
+/** The same parse as its steps, in the order the shell runs them — or `null` when it does not parse. */
+export function parseShellSteps(line: string): readonly ShellStep[] | null {
+  return walkLine(line)?.steps ?? null;
 }
 
 /**
@@ -551,10 +590,10 @@ export function elideHeredocBodies(line: string): string | null {
 }
 
 /**
- * THE walk: the line's simple commands, and where each heredoc body sits in it — one parse, read
- * by `parseCommandLine` and `elideHeredocBodies` alike.
+ * THE walk: the line's steps, and where each heredoc body sits in it — one parse, read by
+ * `parseCommandLine`, `parseShellSteps` and `elideHeredocBodies` alike.
  */
-function walkLine(line: string): { readonly commands: ShellCommand[]; readonly bodies: readonly (readonly [number, number])[] } | null {
+function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies: readonly (readonly [number, number])[] } | null {
   // Objects, not `let`s: the walk below sets them from inside closures, which narrowing cannot see.
   const fault = { found: false };
   // How deep the walk is in text the parse read on its own — a `bash -c` string, an `eval`, a
@@ -564,13 +603,13 @@ function walkLine(line: string): { readonly commands: ShellCommand[]; readonly b
   // commands, so they stay in the line `elideHeredocBodies` returns.
   const spans = new Map<ShellHeredoc, readonly [number, number]>();
   const shellRead = new Set<ShellHeredoc>();
-  const readAsScript = (h: ShellHeredoc, out: ShellCommand[]): void => {
+  const readAsScript = (h: ShellHeredoc, out: ShellStep[]): void => {
     shellRead.add(h);
     source(h.body, out);
   };
 
   // A script the walk enters: the line itself, a substitution's body, a `bash -c` string.
-  const script = (s: ParsedScript | undefined, nested: boolean, out: ShellCommand[]): void => {
+  const script = (s: ParsedScript | undefined, nested: boolean, out: ShellStep[]): void => {
     if (s === undefined || (s.errors?.length ?? 0) > 0) {
       fault.found = true;
       return;
@@ -580,25 +619,32 @@ function walkLine(line: string): { readonly commands: ShellCommand[]; readonly b
     for (const statement of s.commands) node(statement, nested, out);
     if (own) foreign.depth -= 1;
   };
-  const source = (text: string, out: ShellCommand[]): void => {
+  // A script that runs apart from the line's own shell — a substitution, a `bash -c` string — is
+  // one scope: what it changes stays in it.
+  const scope = (fill: (body: ShellStep[]) => void, out: ShellStep[]): void => {
+    const body: ShellStep[] = [];
+    fill(body);
+    out.push({ kind: "scope", body });
+  };
+  const source = (text: string, out: ShellStep[]): void => {
     foreign.depth += 1;
-    script(parseBash(text), true, out);
+    scope((body) => { script(parseBash(text), true, body); }, out);
     foreign.depth -= 1;
   };
 
   // A word's parts: every substitution in it is recorded for the command it belongs to (`subs`,
   // null where it belongs to none) and the commands inside it are read as nested ones.
-  const word = (w: Word | undefined, subs: ShellSubstitution[] | null, out: ShellCommand[]): void => {
+  const word = (w: Word | undefined, subs: ShellSubstitution[] | null, out: ShellStep[]): void => {
     for (const part of w?.parts ?? []) wordPart(part, subs, out);
   };
-  const wordPart = (part: WordPart, subs: ShellSubstitution[] | null, out: ShellCommand[]): void => {
+  const wordPart = (part: WordPart, subs: ShellSubstitution[] | null, out: ShellStep[]): void => {
     switch (part.type) {
       case "CommandExpansion":
         subs?.push(substitutionText(part.text));
-        script(part.script, true, out);
+        scope((body) => { script(part.script, true, body); }, out);
         return;
       case "ProcessSubstitution":
-        script(part.script, true, out);
+        scope((body) => { script(part.script, true, body); }, out);
         return;
       case "DoubleQuoted":
       case "LocaleString":
@@ -619,7 +665,7 @@ function walkLine(line: string): { readonly commands: ShellCommand[]; readonly b
         return;
     }
   };
-  const operation = (op: ParameterOperation, subs: ShellSubstitution[] | null, out: ShellCommand[]): void => {
+  const operation = (op: ParameterOperation, subs: ShellSubstitution[] | null, out: ShellStep[]): void => {
     switch (op.type) {
       case "Default":
       case "Remove":
@@ -639,7 +685,7 @@ function walkLine(line: string): { readonly commands: ShellCommand[]; readonly b
         return;
     }
   };
-  const arithmetic = (e: ArithmeticExpression | undefined, subs: ShellSubstitution[] | null, out: ShellCommand[]): void => {
+  const arithmetic = (e: ArithmeticExpression | undefined, subs: ShellSubstitution[] | null, out: ShellStep[]): void => {
     if (e === undefined) return;
     switch (e.type) {
       case "ArithmeticBinary":
@@ -662,11 +708,11 @@ function walkLine(line: string): { readonly commands: ShellCommand[]; readonly b
         return;
       case "ArithmeticCommandExpansion":
         subs?.push(substitutionText(e.text));
-        script(e.script, true, out);
+        scope((body) => { script(e.script, true, body); }, out);
         return;
     }
   };
-  const test = (e: TestExpression, out: ShellCommand[]): void => {
+  const test = (e: TestExpression, out: ShellStep[]): void => {
     switch (e.type) {
       case "TestUnary":
         word(e.operand, null, out);
@@ -694,7 +740,7 @@ function walkLine(line: string): { readonly commands: ShellCommand[]; readonly b
     heredocs: ShellHeredoc[] | null,
     redirects: ShellRedirect[],
     subs: ShellSubstitution[] | null,
-    out: ShellCommand[],
+    out: ShellStep[],
   ): void => {
     if (r.type !== "HereDoc") {
       if (r.type === "Redirect") redirects.push({ operator: r.operator, target: r.target?.value ?? "" });
@@ -708,7 +754,7 @@ function walkLine(line: string): { readonly commands: ShellCommand[]; readonly b
     if (!quoted) for (const part of r.body.parts ?? []) wordPart(part, subs, out);
   };
 
-  const node = (n: Statement | AndOr | PipelineNode | CommandNode | CompoundList, nested: boolean, out: ShellCommand[]): void => {
+  const node = (n: Statement | AndOr | PipelineNode | CommandNode | CompoundList, nested: boolean, out: ShellStep[]): void => {
     switch (n.type) {
       case "Statement":
         node(n.command, nested, out);
@@ -728,11 +774,11 @@ function walkLine(line: string): { readonly commands: ShellCommand[]; readonly b
         return;
       case "Redirected": {
         // A group's or a loop's redirects apply to every command inside it, so each one lists them.
-        const inside: ShellCommand[] = [];
+        const inside: ShellStep[] = [];
         const redirects: ShellRedirect[] = [];
         node(n.command, nested, inside);
         for (const r of n.redirects) redirection(r, null, redirects, null, inside);
-        out.push(...inside.map((c) => (c.nested === nested ? { ...c, redirects: [...c.redirects, ...redirects] } : c)));
+        out.push(...withRedirects(inside, nested, redirects));
         return;
       }
       case "CompoundList":
@@ -745,9 +791,11 @@ function walkLine(line: string): { readonly commands: ShellCommand[]; readonly b
         node(n.body, nested, out);
         return;
       case "Subshell":
+      case "Coproc":
+        scope((body) => { node(n.body, nested, body); }, out);
+        return;
       case "BraceGroup":
       case "Function":
-      case "Coproc":
         node(n.body, nested, out);
         return;
       case "If":
@@ -755,7 +803,13 @@ function walkLine(line: string): { readonly commands: ShellCommand[]; readonly b
         node(n.then, nested, out);
         if (n.else !== undefined) node(n.else, nested, out);
         return;
-      case "For":
+      case "For": {
+        for (const w of n.wordlist ?? []) word(w, null, out);
+        const body: ShellStep[] = [];
+        node(n.body, nested, body);
+        out.push({ kind: "for", name: n.name.value, values: (n.wordlist ?? []).map((w) => w.value), body });
+        return;
+      }
       case "Select":
         for (const w of n.wordlist ?? []) word(w, null, out);
         node(n.body, nested, out);
@@ -781,12 +835,12 @@ function walkLine(line: string): { readonly commands: ShellCommand[]; readonly b
   // eval — the heredocs an earlier stage is fed are that shell's script, and are read as nested
   // commands after the pipeline: `cat <<'EOF' | sh` runs the body. A stage that is itself a shell
   // reading its own heredoc has already had it read, by `simple`.
-  const pipeline = (stages: readonly CommandNode[], nested: boolean, out: ShellCommand[]): void => {
+  const pipeline = (stages: readonly CommandNode[], nested: boolean, out: ShellStep[]): void => {
     const outs = stages.map((stage) => {
-      const own: ShellCommand[] = [];
+      const own: ShellStep[] = [];
       node(stage, nested, own);
       out.push(...own);
-      return own.filter((c) => c.nested === nested);
+      return stepCommands(own).filter((c) => c.nested === nested);
     });
     const readsStdin = (c: ShellCommand | undefined): boolean =>
       c !== undefined && (basename(c.program) === "eval" || (SHELLS.has(basename(c.program)) && shellInput(c.args) === "stdin"));
@@ -798,12 +852,12 @@ function walkLine(line: string): { readonly commands: ShellCommand[]; readonly b
 
   // ONE simple command: its argv with quotes removed, its heredocs, the substitutions that build
   // it, and — after it, in the order they appear — every command nested inside it.
-  const simple = (c: BashCommand, nested: boolean, out: ShellCommand[]): void => {
+  const simple = (c: BashCommand, nested: boolean, out: ShellStep[]): void => {
     const argv: string[] = [];
     const heredocs: ShellHeredoc[] = [];
     const redirects: ShellRedirect[] = [];
     const subs: ShellSubstitution[] = [];
-    const inner: ShellCommand[] = [];
+    const inner: ShellStep[] = [];
     for (const p of c.prefix) {
       if (p.type === "Assignment") assignment(p.value, subs, inner);
       else redirection(p, heredocs, redirects, subs, inner);
@@ -823,13 +877,19 @@ function walkLine(line: string): { readonly commands: ShellCommand[]; readonly b
       } else redirection(s, heredocs, redirects, subs, inner);
     }
     // A `<<<` here-string's text is the command's last argument, after every word.
+    const words = argv.length;
     if (argv.length > 0) for (const r of [...c.prefix, ...c.suffix]) if (r.type === "HereString" && r.target !== undefined) argv.push(r.target.value);
     const [program, ...args] = stepWrappers(argv);
     if (program !== undefined) {
-      out.push({ program, args, text: [program, ...args].join(" "), heredocs, substitutions: subs, redirects, nested });
+      const command = { program, args, text: [program, ...args].join(" "), heredocs, substitutions: subs, redirects, nested };
+      out.push({ kind: "command", command, hereStrings: argv.length - words });
     }
     out.push(...inner);
-    if (program === undefined) return;
+    if (program === undefined) {
+      // Assignments alone set the shell's variables, once their values are built.
+      for (const p of c.prefix) if (p.type === "Assignment" && p.value.type === "Word") out.push({ kind: "assign", name: p.name, value: p.value.value });
+      return;
+    }
     const name = basename(program);
     if (name === "eval") source(args.join(" "), out);
     if (!SHELLS.has(name)) return;
@@ -837,15 +897,15 @@ function walkLine(line: string): { readonly commands: ShellCommand[]; readonly b
     if (input === "stdin") for (const h of heredocs) readAsScript(h, out);
     else if (input !== null) source(input.string, out);
   };
-  const assignment = (value: Word | { readonly elements: readonly Word[] }, subs: ShellSubstitution[], out: ShellCommand[]): void => {
+  const assignment = (value: Word | { readonly elements: readonly Word[] }, subs: ShellSubstitution[], out: ShellStep[]): void => {
     if ("elements" in value) for (const e of value.elements) word(e, subs, out);
     else word(value, subs, out);
   };
 
-  const out: ShellCommand[] = [];
+  const out: ShellStep[] = [];
   script(parseBash(line), false, out);
   const bodies = [...spans].filter(([h]) => !shellRead.has(h)).map(([, span]) => span);
-  return fault.found ? null : { commands: out, bodies };
+  return fault.found ? null : { steps: out, bodies };
 }
 
 /**

@@ -38,6 +38,9 @@ import {
   isCategory,
   isGuardrailMoment,
   isPathMoment,
+  parseShellSteps,
+  type ShellStep,
+  stepCommands,
   isSentence,
   loadConfig,
   makeCtx,
@@ -689,6 +692,57 @@ describe("parseCommandLine — nested commands", () => {
       expect(nested(line)).toEqual(want);
     });
   }
+});
+
+describe("parseShellSteps — the same parse, in the order the shell runs it", () => {
+  // Each step as a short string, so a test reads like the line it parses.
+  const shape = (steps: readonly ShellStep[]): unknown[] =>
+    steps.map((step) =>
+      step.kind === "command"
+        ? `${step.command.text}${step.hereStrings > 0 ? ` <<<${step.hereStrings}` : ""}`
+        : step.kind === "assign"
+          ? `${step.name}=${step.value}`
+          : step.kind === "scope"
+            ? { scope: shape(step.body) }
+            : { for: step.name, in: step.values, do: shape(step.body) },
+    );
+  const steps = (line: string): unknown[] | null => {
+    const parsed = parseShellSteps(line);
+    return parsed === null ? null : shape(parsed);
+  };
+
+  it("lists a bare assignment as a step, and an assignment in front of a command as nothing", () => {
+    expect(steps("F=src/a.ts; cat $F")).toEqual(["F=src/a.ts", "cat $F"]);
+    expect(steps("X=1 cat a.ts")).toEqual(["cat a.ts"]);
+    expect(steps("F=$(pick)")).toEqual([{ scope: ["pick"] }, "F=$(pick)"]);
+  });
+
+  it("puts a subshell, a substitution and a string given to a shell in a scope of their own", () => {
+    expect(steps("(cd src; cat a.ts); cat b.ts")).toEqual([{ scope: ["cd src", "cat a.ts"] }, "cat b.ts"]);
+    expect(steps("echo $(cat a.ts)")).toEqual(["echo $(cat a.ts)", { scope: ["cat a.ts"] }]);
+    expect(steps("bash -c 'cd x && cat a.ts'")).toEqual(["bash -c cd x && cat a.ts", { scope: ["cd x", "cat a.ts"] }]);
+    // A brace group runs in the line's own shell, so it is no scope.
+    expect(steps("{ cd src; cat a.ts; }")).toEqual(["cd src", "cat a.ts"]);
+  });
+
+  it("gives a for loop its name, its values and its body", () => {
+    expect(steps("for f in a.ts b.ts; do cat $f; done")).toEqual([{ for: "f", in: ["a.ts", "b.ts"], do: ["cat $f"] }]);
+    expect(steps("for f; do cat $f; done")).toEqual([{ for: "f", in: [], do: ["cat $f"] }]);
+  });
+
+  it("counts a command's here-strings, which are its last arguments", () => {
+    expect(steps("grep x <<< 'some text'")).toEqual(["grep x some text <<<1"]);
+  });
+
+  it("holds exactly the commands ctx.commands holds, in the same order", () => {
+    for (const line of ["(cd a; cat b) | sh", "for f in a; do echo $(cat $f); done > out", "F=1; echo `ls` <(sort a)", "cat <<'EOF' | bash\nls\nEOF"]) {
+      expect(stepCommands(parseShellSteps(line) ?? [])).toEqual(parseCommandLine(line));
+    }
+  });
+
+  it("is null for a line that does not parse", () => {
+    expect(parseShellSteps('echo "oops')).toBeNull();
+  });
 });
 
 describe("parseCommandLine — a line that does not parse", () => {
