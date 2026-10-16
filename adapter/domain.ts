@@ -3346,6 +3346,10 @@ export interface Registration {
  * read off `HOST_EVENT`, the one place that mapping is stated. Written out by hand, this list would
  * be a second spelling of it — and the day an event is renamed, the half that still compiled would
  * register a command nothing answers.
+ *
+ * `unregistered` is what goes unjudged while that one registration is missing — what `flow status`
+ * says beside the fix. Each event costs its own rails and no others, so a file missing one names
+ * that one's cost, not the whole guard's.
  */
 const REGISTERED: readonly { readonly hook: HookEvent; readonly matcher?: string; readonly unregistered: string }[] = [
   { hook: "session-start", matcher: "startup|resume|clear|compact", unregistered: "no note is shown when a session starts" },
@@ -3355,13 +3359,6 @@ const REGISTERED: readonly { readonly hook: HookEvent; readonly matcher?: string
   { hook: "stop", unregistered: "no turn-end rule runs when the main chat hands back" },
   { hook: "subagent-stop", unregistered: "no turn-end rule runs when a subagent hands back" },
 ];
-
-/**
- * What goes unjudged while one registration is missing, by the host's name for its event — what
- * `flow status` says beside the fix. Each event costs its own rails and no others, so a file
- * missing one names that one's cost, not the whole guard's.
- */
-const UNREGISTERED: ReadonlyMap<string, string> = new Map(REGISTERED.map(({ hook, unregistered }) => [HOST_EVENT[hook], unregistered]));
 
 /**
  * The repo's bin folder, relative to the repo root. flow never runs a `flow` from here: any package
@@ -4151,7 +4148,8 @@ export interface Status {
 
 function fittingsOf(facts: StatusFacts): Fitting[] {
   const registered = registeredEvents(facts.settings);
-  const missing = HOOK_REGISTRATIONS.filter((r) => !registered.includes(r.event)).map((r) => r.event);
+  const unregistered = REGISTERED.filter(({ hook }) => !registered.includes(HOST_EVENT[hook]));
+  const missing = unregistered.map(({ hook }) => HOST_EVENT[hook]);
   const stale = staleRegistrations(facts.settings);
   const twice = facts.machine === null ? { bare: [], theirs: [] } : machineDiffers(facts.settings, facts.machine.settings);
   const once = twice.bare.length === 0 && twice.theirs.length === 0;
@@ -4209,7 +4207,7 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
           : [
               missing.length === 0
                 ? ""
-                : `${facts.settingsPath} does not call flow for ${missing.join(" · ")} — re-run \`flow init\`. Until it does, ${missing.map((event) => UNREGISTERED.get(event)).join("; ")}.`,
+                : `${facts.settingsPath} does not call flow for ${missing.join(" · ")} — re-run \`flow init\`. Until it does, ${unregistered.map((r) => r.unregistered).join("; ")}.`,
               stale.length === 0
                 ? ""
                 : `${facts.settingsPath} calls flow for ${stale.join(" · ")} on some tools only — an older flow registered ${stale.length === 1 ? "it" : "them"} that way, and a change another tool makes is not judged after it lands. Re-run \`flow init\` to widen ${stale.length === 1 ? "it" : "them"}.`,
