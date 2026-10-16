@@ -1786,9 +1786,9 @@ describe("every stock check, bound in a real config", () => {
     const entries = loaded.ok ? loaded.entries : [];
     const results = await runCases(entries);
     expect(results.filter((r) => !r.ok)).toEqual([]);
-    // One pass case and one block case for each of the fourteen, plus the extra pass case that
+    // One pass case and one block case for each of the fifteen, plus the extra pass case that
     // proves commitReason never asks git about a command that is not a commit.
-    expect(results).toHaveLength(28);
+    expect(results).toHaveLength(30);
   });
 
   it("an entry with a pass case and no block case does not load at all, and the refusal names it", async () => {
