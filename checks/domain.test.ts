@@ -549,6 +549,28 @@ describe("exportedNames", () => {
     const names = await exportedNames("export const A = 1;\nexport function b(){}\nexport class C {}\nexport const d = 2;\n");
     expect(names).toEqual(["A", "b", "C", "d"]);
   });
+
+  it("reads every declarator of one export const", async () => {
+    expect(await exportedNames("export const a = 1, b = 2;")).toEqual(["a", "b"]);
+  });
+
+  it("reads every name an object pattern binds, the renamed one and the rest included", async () => {
+    expect(await exportedNames("export const { a, b: c, ...d } = obj;")).toEqual(["a", "c", "d"]);
+  });
+
+  it("reads every name an array pattern binds", async () => {
+    expect(await exportedNames("export const [x, y] = arr;")).toEqual(["x", "y"]);
+  });
+
+  it("reads the bound side only, nested patterns all the way down, never a key or a default", async () => {
+    const names = await exportedNames("export const { p, q: { r }, s = f(x), t: u = 3, v: [w, , ...z] } = obj;");
+    expect(names).toEqual(["p", "r", "s", "u", "w", "z"]);
+  });
+
+  it("leaves out an export const with a type annotation, destructured or not, and an export let", async () => {
+    const names = await exportedNames("export const a: number = 1;\nexport const { b }: T = o;\nexport let c = 1;\nexport const d = 2;");
+    expect(names).toEqual(["d"]);
+  });
 });
 
 describe("symbolsInSibling", () => {
@@ -580,6 +602,39 @@ describe("symbolsInSibling", () => {
       world: { fs: { "a/x.test.ts": "test(foo); test(bar)" } },
     });
     expect(detail).toBeNull();
+  });
+
+  it("refuses the second declarator of an export const when the test names only the first", async () => {
+    const detail = await run(check, "write", {
+      path: "a/x.ts",
+      content: "export const a = 1, b = 2;",
+      world: { fs: { "a/x.test.ts": "test(a)" } },
+    });
+    expect(detail).toBe("not referenced in a/x.test.ts: b");
+  });
+
+  it("passes a destructured export when the test names every name it binds", async () => {
+    const detail = await run(check, "write", {
+      path: "a/x.ts",
+      content: "export const { a, b: c, ...d } = obj;",
+      world: { fs: { "a/x.test.ts": "test(a); test(c); test(d)" } },
+    });
+    expect(detail).toBeNull();
+  });
+
+  it("refuses a destructured export for the one bound name the test never names", async () => {
+    const detail = await run(check, "write", {
+      path: "a/x.ts",
+      content: "export const { a, b: c, ...d } = obj;",
+      world: { fs: { "a/x.test.ts": "test(a); test(b); test(d)" } },
+    });
+    expect(detail).toBe("not referenced in a/x.test.ts: c");
+  });
+
+  it("reads an array-destructured export as each name it binds", async () => {
+    const content = "export const [x, y] = arr;";
+    expect(await run(check, "write", { path: "a/x.ts", content, world: { fs: { "a/x.test.ts": "test(x)" } } })).toBe("not referenced in a/x.test.ts: y");
+    expect(await run(check, "write", { path: "a/x.ts", content, world: { fs: { "a/x.test.ts": "test(x, y)" } } })).toBeNull();
   });
 
   it("a missing sibling is its own honest hit, not a crash", async () => {

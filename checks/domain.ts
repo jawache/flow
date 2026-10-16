@@ -48,6 +48,7 @@ import type {
   World,
 } from "../language/domain.ts";
 import { escapeRe, expandTemplate, globTokenToRegExp, matchAny, notAGlob, tokenizeGlob } from "../glob.ts";
+import type { SgNode } from "@ast-grep/napi";
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE TWO SHAPES EVERY CHECK HAS
@@ -533,7 +534,40 @@ export function unreferenced(names: readonly string[], siblingText: string): str
 }
 
 /**
+ * Every name a binding target binds: the identifier itself, or each name inside a destructuring
+ * pattern, nested patterns read all the way down. Only the bound side counts: `c` in `{ b: c }`,
+ * never the key `b`, and `d` in `{ d = f(x) }`, never the default `f(x)`.
+ */
+function boundNames(node: SgNode): SgNode[] {
+  switch (node.kind()) {
+    case "identifier":
+    case "shorthand_property_identifier_pattern":
+      return [node];
+    case "pair_pattern":
+      return boundAt(node, "value");
+    case "assignment_pattern":
+    case "object_assignment_pattern":
+      return boundAt(node, "left");
+    case "object_pattern":
+    case "array_pattern":
+    case "rest_pattern":
+      return node.children().flatMap(boundNames);
+    default:
+      return [];
+  }
+}
+
+function boundAt(node: SgNode, field: string): SgNode[] {
+  const child = node.field(field);
+  return child ? boundNames(child) : [];
+}
+
+/**
  * The names a TypeScript source exports — functions, classes and consts, in source order.
+ *
+ * An `export const` is read as every name it binds: each declarator of `export const a = 1, b = 2`,
+ * and each name a destructuring pattern binds. A declarator with a type annotation is left out,
+ * destructured or not.
  *
  * A real parser rather than a regex, because `export const x = …` inside a string or a comment is
  * exactly the false positive that teaches people to ignore a rule. Parsing is not reaching the
@@ -544,13 +578,23 @@ export function unreferenced(names: readonly string[], siblingText: string): str
 export async function exportedNames(content: string): Promise<string[]> {
   const { parse, Lang } = await import("@ast-grep/napi");
   const root = parse(Lang.Tsx, content).root();
-  const found: { readonly at: number; readonly name: string }[] = [];
-  for (const p of ["export function $N($$$) { $$$ }", "export class $N { $$$ }", "export const $N = $V"]) {
+  const named: SgNode[] = [];
+  for (const p of ["export function $N($$$) { $$$ }", "export class $N { $$$ }"]) {
     for (const m of root.findAll(p)) {
       const n = m.getMatch("N");
-      if (n) found.push({ at: n.range().start.index, name: n.text() });
+      if (n) named.push(n);
     }
   }
+  const declarators = root.findAll({
+    rule: {
+      kind: "variable_declarator",
+      inside: { kind: "lexical_declaration", regex: "^const\\b", inside: { kind: "export_statement" } },
+    },
+  });
+  for (const d of declarators) {
+    if (d.field("value") !== null && d.field("type") === null) named.push(...boundAt(d, "name"));
+  }
+  const found = named.map((n) => ({ at: n.range().start.index, name: n.text() }));
   return [...new Set(found.sort((a, b) => a.at - b.at).map((f) => f.name))];
 }
 
