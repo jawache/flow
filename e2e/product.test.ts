@@ -14,7 +14,7 @@
 // driven for real instead of mocked — the seam is the product's, not the suite's.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync, lstatSync, symlinkSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync, existsSync, lstatSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -434,6 +434,21 @@ function huskyRepo(preCommit: string): string {
   return repo;
 }
 
+/** The three lines the block tells a person to create a missing pre-commit hook with, as it printed them. */
+const linesToCreate = (stdout: string, preCommit: string): string[] => {
+  const lines = stdout.split("\n");
+  const at = lines.findIndex((line) => line.includes(`Create ${preCommit} with these three lines`));
+  expect(at, "the block says to create the hook").not.toBe(-1);
+  return lines.slice(at + 1, at + 4).map((line) => line.trim());
+};
+
+/** A repo whose only hook is the `pre-push` Git LFS installs in `.git/hooks`: no pre-commit there. */
+function lfsRepo(): string {
+  const repo = newRepo();
+  writeFileSync(join(repo, ".git", "hooks", "pre-push"), '#!/bin/sh\ngit lfs pre-push "$@"\n', { mode: 0o755 });
+  return repo;
+}
+
 /** The block, from its first line to the end of the output, or nothing when there is none. */
 const blockOf = (stdout: string): string => {
   const at = stdout.indexOf(NOT_INSTALLED);
@@ -473,6 +488,7 @@ describe("flow init, when git already runs other hooks", () => {
       expect(first.code).toBe(1);
       // Followed to the letter: the two lines the block printed, appended to husky's hook.
       writeFileSync(join(husky, ".husky", "pre-commit"), `echo husky ran\n${linesToAdd(first.stdout, ".husky/pre-commit").join("\n")}\n`);
+      expect(statSync(join(husky, ".husky", "pre-commit")).mode & 0o111, "husky's stub runs it with sh, so it needs no execute bit").toBe(0);
 
       const again = flow(husky, ["init"]);
       expect(again.code, again.stdout + again.stderr).toBe(0);
@@ -492,15 +508,74 @@ describe("flow init, when git already runs other hooks", () => {
   });
 
   it("leaves a hook in .git/hooks alone, names that folder, and answers 1", () => {
-    const lfs = newRepo();
+    const lfs = lfsRepo();
     try {
-      writeFileSync(join(lfs, ".git", "hooks", "pre-push"), "#!/bin/sh\ngit lfs pre-push \"$@\"\n", { mode: 0o755 });
       const said = flow(lfs, ["init"]);
       expect(said.code, said.stdout + said.stderr).toBe(1);
       expect(git(lfs, ["config", "--get", "core.hooksPath"]).code, "still unset").toBe(1);
       const block = blockOf(said.stdout);
-      expect(block).toContain("Git runs hooks from .git/hooks");
-      expect(block).toContain("Add these two lines to the end of .git/hooks/pre-commit:");
+      expect(block).toContain("Git runs hooks from .git/hooks, and there is no .git/hooks/pre-commit");
+      expect(block).toContain("Create .git/hooks/pre-commit with these three lines, then run `chmod +x .git/hooks/pre-commit` so git runs it:");
+      expect(existsSync(join(lfs, ".git", "hooks", "pre-commit")), "init creates nothing in another tool's folder").toBe(false);
+    } finally {
+      rmSync(lfs, { recursive: true, force: true });
+    }
+  });
+
+  it("with no pre-commit in .git/hooks, the first fix followed to the letter installs flow, and the gate refuses", () => {
+    const lfs = lfsRepo();
+    try {
+      const first = flow(lfs, ["init"]);
+      expect(first.code).toBe(1);
+      // As printed: the three lines into the file, then the chmod the block names.
+      const hook = join(lfs, ".git", "hooks", "pre-commit");
+      writeFileSync(hook, `${linesToCreate(first.stdout, ".git/hooks/pre-commit").join("\n")}\n`);
+      chmodSync(hook, 0o755);
+
+      const again = flow(lfs, ["init"]);
+      expect(again.code, again.stdout + again.stderr).toBe(0);
+      expect(again.stdout).not.toContain(NOT_INSTALLED);
+      expect(again.stdout).toContain("git runs hooks from .git/hooks, and .git/hooks/pre-commit calls flow");
+      expect(flow(lfs, ["status"]).code).toBe(0);
+
+      writeFileSync(join(lfs, "secret.txt"), `${["DO", "NOT", "COMMIT"].join("-")}\n`);
+      git(lfs, ["add", "secret.txt"]);
+      const refused = git(lfs, ["commit", "-m", "test: a marked file"]);
+      expect(refused.code, "git refuses when its own pre-commit runs the gate").not.toBe(0);
+      expect(refused.stderr).toContain("demo.noMarkedFiles");
+    } finally {
+      rmSync(lfs, { recursive: true, force: true });
+    }
+  });
+
+  it("a .git/hooks/pre-commit that calls flow without the execute bit is not installed: git ignores it", () => {
+    const lfs = lfsRepo();
+    try {
+      const first = flow(lfs, ["init"]);
+      // The rehearsal's slip: flow's lines in the file, and no chmod.
+      const hook = join(lfs, ".git", "hooks", "pre-commit");
+      writeFileSync(hook, `${linesToCreate(first.stdout, ".git/hooks/pre-commit").join("\n")}\n`, { mode: 0o644 });
+
+      const said = flow(lfs, ["init"]);
+      expect(said.code, said.stdout + said.stderr).toBe(1);
+      const block = blockOf(said.stdout);
+      expect(block).toContain(".git/hooks/pre-commit calls flow but is not executable, so git ignores it");
+      expect(block).toContain("Make .git/hooks/pre-commit executable, so git runs it: `chmod +x .git/hooks/pre-commit`");
+      expect(said.stdout).not.toContain("· git runs hooks from");
+
+      const status = flow(lfs, ["status"]);
+      expect(status.code).toBe(1);
+      expect(hooksPathOf(status.stdout)).toContain(`✗ hooks-path: ${NOT_INSTALLED}. Git runs hooks from .git/hooks, and .git/hooks/pre-commit calls flow but is not executable`);
+
+      // What the red line is about: git really does commit past it.
+      writeFileSync(join(lfs, "secret.txt"), `${["DO", "NOT", "COMMIT"].join("-")}\n`);
+      git(lfs, ["add", "secret.txt"]);
+      const passed = git(lfs, ["commit", "-m", "test: a marked file"]);
+      expect(passed.code, "git ignores a hook that is not executable").toBe(0);
+      expect(passed.stderr).toContain("not set as executable");
+
+      chmodSync(hook, 0o755);
+      expect(flow(lfs, ["init"]).code, "the chmod the block names installs it").toBe(0);
     } finally {
       rmSync(lfs, { recursive: true, force: true });
     }
@@ -567,15 +642,14 @@ describe("flow status, when git already runs other hooks", () => {
   });
 
   it("a hook in .git/hooks: red, naming that folder, and exit 1", () => {
-    const lfs = newRepo();
+    const lfs = lfsRepo();
     try {
-      writeFileSync(join(lfs, ".git", "hooks", "pre-push"), '#!/bin/sh\ngit lfs pre-push "$@"\n', { mode: 0o755 });
       expect(flow(lfs, ["init"]).code).toBe(1);
       const said = flow(lfs, ["status"]);
       expect(said.code, said.stdout + said.stderr).toBe(1);
       const line = hooksPathOf(said.stdout);
       expect(line).toContain(`✗ hooks-path: ${NOT_INSTALLED}. Git runs hooks from .git/hooks`);
-      expect(line).toContain("Add these two lines to the end of .git/hooks/pre-commit:");
+      expect(line).toContain("Create .git/hooks/pre-commit with these three lines");
     } finally {
       rmSync(lfs, { recursive: true, force: true });
     }
