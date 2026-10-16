@@ -2313,9 +2313,9 @@ export function isCorrection(prose: string): boolean {
 
 // ── the justfile's own tools, so a bypass is derived rather than guessed ──
 //
-// Every recipe body line → each command segment's first word → the set of tools that "should go
-// through just". Shell noise is dropped; with no justfile, bypass detection is switched off
-// entirely rather than falling back to a hardcoded list that would be wrong for every other repo.
+// Each recipe's body is parsed, and each command's program, or the tool `npx` runs, is a tool that
+// "should go through just". Shell noise is dropped; with no justfile, bypass detection is switched
+// off entirely rather than falling back to a hardcoded list that would be wrong for every other repo.
 
 const NOISE = new Set([
   "set", "node", "npx", "just", "cd", "export", "echo", "then", "fi", "do", "done", "if", "for", "while", "source",
