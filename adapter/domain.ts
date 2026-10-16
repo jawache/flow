@@ -3815,6 +3815,13 @@ export function otherHooks(hooksPath: string | null, folder: HooksFolder): Other
 /** The words the block opens with, fixed by the docs, for every reader that looks for them. */
 export const NOT_INSTALLED = "FLOW IS NOT INSTALLED";
 
+/**
+ * Git could not name the folder it runs hooks from, in the ONE wording init's report and status's
+ * line share. No advice: telling a husky repo to set `core.hooksPath` is what turns husky off.
+ */
+export const HOOKS_UNKNOWN =
+  "git could not name the folder it runs hooks from, so flow cannot tell whether a commit runs its gate. Run `git rev-parse --git-path hooks` here to see why.";
+
 /** Other hooks whose pre-commit calls flow, in the ONE wording init's note and status's line share. */
 export function wiredLine(other: OtherHooks): string {
   return `git runs hooks from ${other.dir}, and ${other.preCommit} calls flow`;
@@ -4042,6 +4049,11 @@ export interface InitPlan {
   readonly hooksPath: boolean;
   /** Git runs other hooks, so `core.hooksPath` is left alone. Flow is not installed unless it is wired. */
   readonly otherHooks: OtherHooks | null;
+  /**
+   * A git repo whose git could not name the folder it runs hooks from, so `core.hooksPath` is left
+   * alone too: that folder may hold another tool's hooks, and setting it would turn them off.
+   */
+  readonly hooksUnknown: boolean;
   /** The rewritten settings, or null when they already call flow — or could not be read. */
   readonly settings: { readonly path: string; readonly value: unknown } | null;
   readonly registered: readonly string[];
@@ -4073,8 +4085,10 @@ export function planInit(facts: InitFacts): InitPlan {
   // every other tool's hooks, gone. There is no safe merge into bytes nobody parsed, so init
   // registers nothing and says which file to fix.
   const registration = facts.settingsUnreadable ? { settings: facts.settings, added: [] } : withRegistrations(facts.settings);
-  // Outside git there are no hooks to keep, and a folder git could not name has none to read.
+  // Outside git there are no hooks to keep. A folder git could not name has none to read, and may
+  // still hold some, so it is left alone as other hooks are.
   const other = facts.isGit && facts.hooksFolder !== null ? otherHooks(facts.hooksPath, facts.hooksFolder) : null;
+  const hooksUnknown = facts.isGit && facts.hooksFolder === null;
   return {
     config: facts.hasConfig ? null : { path: CONFIG_FILE, body: scaffold(facts.empty) },
     // NEVER over a hook that is already there. This is a scaffold, and a repo whose gate runs its
@@ -4088,8 +4102,9 @@ export function planInit(facts: InitFacts): InitPlan {
     // Per CLONE, not per repo: `core.hooksPath` is not committed, so a fresh clone and every
     // worktree needs it set again. That is why init is the command a new checkout runs. NEVER over
     // other hooks: git runs one folder, and pointing it at ours turns theirs off without a word.
-    hooksPath: facts.isGit && facts.hooksPath !== HOOKS_DIR && other === null,
+    hooksPath: facts.isGit && facts.hooksPath !== HOOKS_DIR && other === null && !hooksUnknown,
     otherHooks: other,
+    hooksUnknown,
     settings: registration.added.length === 0 ? null : { path: facts.settingsPath, value: registration.settings },
     registered: registration.added,
     machine: machineRewrite(facts.machine),
@@ -4125,7 +4140,7 @@ export function initLines(plan: InitPlan, failures: readonly string[], colour = 
   const lines: string[] =
     wrote.length > 0
       ? ["flow init — created:", ...wrote.map((what) => `  + ${what}`)]
-      : unwired(plan.otherHooks)
+      : unwired(plan.otherHooks) || plan.hooksUnknown
         ? ["flow init — nothing new to write here."]
         : ["flow init — already set up here; nothing to do."];
 
@@ -4142,6 +4157,7 @@ export function initLines(plan: InitPlan, failures: readonly string[], colour = 
     );
   if (plan.otherHooks !== null && plan.otherHooks.fix === null)
     lines.push(`  · ${wiredLine(plan.otherHooks)}, so core.hooksPath was left as it is.`);
+  if (plan.hooksUnknown) lines.push(`  ✗ ${HOOKS_UNKNOWN}`);
   for (const failure of failures) lines.push(`  ✗ ${failure}`);
   lines.push("  next: `flow status` — what is bound, and what is not wired yet.");
   // LAST, so it is what is left on the screen: a muted `·` note is too quiet for a commit gate git
@@ -4165,11 +4181,12 @@ export function wantsColour(terminal: boolean, noColor: string | undefined): boo
 }
 
 /**
- * Init's exit code. 1 when it could not finish, and 1 when flow is not installed: a script chaining
- * `flow init && …` is asking whether the repo is guarded, and a gate git never runs is not.
+ * Init's exit code. 1 when it could not finish, and 1 when flow is not installed or cannot tell: a
+ * script chaining `flow init && …` is asking whether the repo is guarded, and a gate git never runs
+ * is not.
  */
 export function initCode(plan: InitPlan, failures: readonly string[]): 0 | 1 {
-  return failures.length === 0 && !unwired(plan.otherHooks) ? 0 : 1;
+  return failures.length === 0 && !unwired(plan.otherHooks) && !plan.hooksUnknown ? 0 : 1;
 }
 
 // ── status ───────────────────────────────────────────────────────────────────
@@ -4479,7 +4496,7 @@ function hooksPathFitting(facts: Pick<StatusFacts, "hooksPath" | "hooksFolder">)
     return {
       id: "hooks-path",
       ok: false,
-      detail: "git could not name the folder it runs hooks from, so flow cannot tell whether a commit runs its gate. Run `git rev-parse --git-path hooks` here to see why.",
+      detail: HOOKS_UNKNOWN,
     };
   if (folder.dir === HOOKS_DIR) return { id: "hooks-path", ok: true, detail: `core.hooksPath = ${HOOKS_DIR}` };
   const other = otherHooks(facts.hooksPath, folder);

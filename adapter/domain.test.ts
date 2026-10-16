@@ -165,6 +165,7 @@ import {
   initLines,
   notInstalledLines,
   NOT_INSTALLED,
+  HOOKS_UNKNOWN,
   wantsColour,
   hooksDirOf,
   otherHooks,
@@ -2402,6 +2403,32 @@ describe("planInit — when git already runs other hooks", () => {
     });
   });
 
+  describe("when git could not name the folder it runs hooks from", () => {
+    // That folder may be husky's, so setting core.hooksPath over it is the very switch-off this guards.
+    for (const hooksPath of [".husky/_", null]) {
+      const plan = planInit({ ...bare, hooksPath, hooksFolder: null });
+
+      it(`leaves core.hooksPath alone (set to ${String(hooksPath)}), and says what status says`, () => {
+        expect(plan.hooksPath).toBe(false);
+        expect(plan.hooksUnknown).toBe(true);
+        const said = initLines(plan, []);
+        expect(said.join("\n")).not.toContain(`+ ${SET_HOOKS_PATH}`);
+        expect(said).toContain(`  ✗ ${HOOKS_UNKNOWN}`);
+        expect(plan.gate?.path, "every other file is still written").toBe(GATE_PATH);
+      });
+
+      it(`answers 1, since flow cannot tell it is installed (core.hooksPath ${String(hooksPath)})`, () => {
+        expect(initCode(plan, [])).toBe(1);
+      });
+    }
+
+    it("never reads as unknown outside git, or when git named the folder", () => {
+      expect(planInit({ ...bare, isGit: false, hooksFolder: null }).hooksUnknown).toBe(false);
+      expect(planInit(bare).hooksUnknown).toBe(false);
+      expect(planInit(bare).hooksPath, "a fresh clone still gets core.hooksPath").toBe(true);
+    });
+  });
+
   it("run again with nothing left to write, it never says the repo is set up above a block saying it is not", () => {
     const again = planInit({
       ...bare,
@@ -3407,6 +3434,7 @@ describe("status — does git run the commit gate", () => {
     for (const hooksPath of [".husky/_", HOOKS_DIR, null]) {
       const { fitting } = judged({ hooksPath, hooksFolder: null });
       expect(fitting?.ok, String(hooksPath)).toBe(false);
+      expect(fitting?.detail, String(hooksPath)).toBe(HOOKS_UNKNOWN);
       expect(fitting?.detail, String(hooksPath)).toContain("git could not name the folder it runs hooks from");
       expect(fitting?.detail, String(hooksPath)).not.toContain("core.hooksPath");
     }
