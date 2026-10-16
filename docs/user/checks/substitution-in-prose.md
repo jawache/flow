@@ -10,7 +10,7 @@ Refuses a command that records prose, such as a commit message or a pull request
 
 The check reads [the parse](../explanation/what-the-guard-sees.md#the-parse-what-a-command-is) of the command line, one command at a time.
 
-- **A command named by a head.** Each head is a regex, tried against a command from its program name, as [`banCommands`](./ban-commands.md#what-a-pattern-is-matched-against) tries a pattern.
+- **A command named by a head.** Each head is a command in words, such as `"gh pr"`, matched the way [`banCommands`](./ban-commands.md#how-a-command-is-matched) matches an entry: the same program, and every argument of the head among the command's arguments.
 - **A git command named by its subcommand.** A git command is matched by the subcommand the parse finds after git's own options, so `git -C '/a b' commit` and `git --git-dir /x commit` are both `commit`.
 - **Any other command** is never refused.
 - **A backtick the shell runs.** The command is refused when one of its [substitutions](../reference/ctx.md#ctxcommands) is a backtick. That covers a backtick in a double-quoted or bare argument, and in an unquoted heredoc the command is fed.
@@ -28,7 +28,7 @@ These run nothing, so they pass:
 
 | Key | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `heads` | list of regex | yes | the commands that record prose. Each is tried against each command in the line, from its program name |
+| `heads` | list of strings | yes | the commands that record prose, each in words: a program, then the arguments that make it record prose. Each is matched against each command in the line, as `banCommands` matches an entry |
 | `gitSubcommands` | list of strings | no | the git subcommands that record prose, such as `commit`. A git command whose subcommand is in the list is checked, whatever options come before the subcommand |
 
 ## Example
@@ -36,7 +36,7 @@ These run nothing, so they pass:
 ```
 noBacktickInNotes: guardrail()
   .at(command)
-  .check(substitutionInProse({ heads: ["notes\\s+add\\b"] }))
+  .check(substitutionInProse({ heads: ["notes add"] }))
   .message(SUBSTITUTION_MESSAGE)
   .test({ pass: ["notes add 'run `just test`'"], block: ['notes add "run `just test`"'] }),
 ```

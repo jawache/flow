@@ -58,13 +58,13 @@ Read `existed` when it is set.
 | --- | --- |
 | `program` | The program that runs, after any `FOO=1` assignment and any wrapper: `sudo`, `env`, `nohup`, `nice`, `time`, `timeout`, `command`, `exec` or `xargs` |
 | `args` | Its arguments, in order, each as the program receives it, with quotes removed |
-| `text` | `program` and `args` joined by single spaces. `banCommands` matches its patterns against this |
+| `text` | `program` and `args` joined by single spaces, for a message to show. A check compares `program` and `args`, never this |
 | `heredocs` | Each heredoc the command is fed, as `{ body, quoted }`. `quoted` is `true` for a delimiter in quotes or after a backslash, such as `<<'EOF'`, where the shell runs nothing in the body |
 | `substitutions` | Each `$( … )` or backtick substitution the shell runs while building this command's arguments and unquoted heredocs, as `{ text, backtick, commands, argument, prefix }`. `commands` lists the commands it runs, nested ones included, as `ctx.commands` lists them. `argument` is the index in `args` of the argument the substitution ends, when only plain text comes before it in that argument. `prefix` is that text: `""` for `-m "$(cat <<'EOF' … EOF)"`, and `--message=` for `--message="$( … )"`. Both are `null` otherwise |
 | `redirects` | Each redirect on the command, as `{ operator, target }`, such as `{ operator: ">", target: "notes.md" }`. A redirect on a group or a loop, such as `{ …; } > out.log`, is listed on each command inside it |
 | `nested` | `true` for a command inside a substitution, a `<( … )`, or a string given to `bash -c`, `sh -c` or `eval`. Also `true` for each line of a heredoc a shell reads, such as `bash <<'EOF'` or `cat <<'EOF' \| sh`, and of a here-string a shell reads, such as `bash <<< 'ls'` |
 
-`ctx.commands` is `null` when the line does not parse, for example when a quote never closes. A check reads `null` as "cannot tell", and the stock checks then pass, except `banCommands`, which matches the whole line as written.
+`ctx.commands` is `null` when the line does not parse, for example when a quote never closes. A check reads `null` as "cannot tell", and the stock checks then pass, except `banCommands`, which refuses the line when the program and every argument it names appear in it as whole words.
 
 ```
 const noBareGh = defineCheck((_opts: Record<string, never>) => (ctx) => {
