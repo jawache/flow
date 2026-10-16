@@ -19,6 +19,7 @@ import {
   definePack,
   gitCommand,
   guardrail,
+  programName,
   session,
   shellCommands,
   type ShellCommand,
@@ -91,7 +92,7 @@ function writesFile(r: ShellRedirect): boolean {
  * lists every command a `$( )`, a `bash -c` or an `eval` string runs, so each is judged here.
  */
 function writeOf(cmd: ShellCommand): string | null {
-  const prog = cmd.program.replace(/^.*\//, "");
+  const prog = programName(cmd.program);
   const { args } = cmd;
   if (WRITE_PROGRAMS.has(prog)) return `\`${prog}\` changes files`;
   if (IN_PLACE.has(prog) && args.some((a) => /^-[A-Za-z]*i/.test(a) || a.startsWith("--in-place"))) return `\`${prog} -i\` edits a file in place`;

@@ -49,6 +49,7 @@ import {
   override,
   pack,
   parseCommandLine,
+  programName,
   elideHeredocBodies,
   type ShellCommand,
   BRIEF_SCOPE_MOMENTS,
@@ -321,6 +322,15 @@ describe("makeCtx — the ONE assembler", () => {
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE PARSE — a shell line read as code
 // ════════════════════════════════════════════════════════════════════════════════════════════════
+
+describe("programName — a program without its path", () => {
+  it("drops the path a command was run by, and leaves a bare name as it is", () => {
+    expect(programName("/usr/bin/git")).toBe("git");
+    expect(programName("node_modules/.bin/vitest")).toBe("vitest");
+    expect(programName("git")).toBe("git");
+    expect(programName("/usr/bin/")).toBe("");
+  });
+});
 
 describe("parseCommandLine — the 45 hand-labelled commands from triage's bake-off", () => {
   // Lifted from LABELLED in the bake-off that chose unbash (.work/tmp/bakeoff/bakeoff.mjs, #17).

@@ -37,6 +37,7 @@ import {
   isGuardrailMoment,
   parseCommandLine,
   parseShellSteps,
+  programName,
   stepCommands,
   type BreadcrumbMoment,
   type Ctx,
@@ -382,7 +383,7 @@ export function deleteTargets(commands: readonly ShellCommand[] | null): string[
   const out: string[] = [];
   for (const command of commands ?? []) {
     const git = gitCommand(command);
-    const remover = git === null ? REMOVERS.get(posix.basename(command.program)) : git.subcommand === null ? undefined : REMOVERS.get(git.subcommand);
+    const remover = git === null ? REMOVERS.get(programName(command.program)) : git.subcommand === null ? undefined : REMOVERS.get(git.subcommand);
     if (remover === undefined) continue;
     const args = git === null ? command.args : git.args;
     const dash = args.indexOf("--");
@@ -521,7 +522,7 @@ function argvReads(argv: readonly Arg[]): ArgvReads {
   const searched: string[] = [];
   // The parse has already stepped past the wrappers (`timeout 60 rg …`, `env X=1 cat f`), so the
   // program is at the front.
-  const name = argv[0] === undefined || argv[0] === null ? "" : posix.basename(argv[0]);
+  const name = argv[0] === undefined || argv[0] === null ? "" : programName(argv[0]);
   const args = argv.slice(1);
   if (name === "git") return gitReads(args, reads);
   if (name === "ffmpeg") {
@@ -663,7 +664,7 @@ function assignmentIn(word: ShellWord): { readonly name: string; readonly value:
  * `xargs` and the program: an `exec -a NAME` in front of it names a process, not a file.
  */
 function xargsList(wrappers: readonly (string | null)[]): string | null {
-  const from = wrappers.findLastIndex((word) => word !== null && posix.basename(word) === "xargs");
+  const from = wrappers.findLastIndex((word) => word !== null && programName(word) === "xargs");
   if (from === -1) return null;
   const own = wrappers.slice(from + 1);
   for (const [i, word] of own.entries()) {
@@ -2387,8 +2388,8 @@ export interface BashClass {
 
 /** The tool a command runs: its program, or the tool `npx` is asked to run. */
 function toolOf(command: ShellCommand): string {
-  const program = posix.basename(command.program);
-  return program === "npx" ? posix.basename(command.args.find((arg) => !arg.startsWith("-")) ?? "") : program;
+  const program = programName(command.program);
+  return program === "npx" ? programName(command.args.find((arg) => !arg.startsWith("-")) ?? "") : program;
 }
 
 /**
@@ -2400,7 +2401,7 @@ function toolOf(command: ShellCommand): string {
 export function classifyBash(command: unknown, tools: readonly string[]): BashClass {
   const commands = parseCommandLine(strip(command)) ?? [];
   const recipes = commands.flatMap((c) => {
-    const recipe = posix.basename(c.program) === "just" ? c.args[0] : undefined;
+    const recipe = programName(c.program) === "just" ? c.args[0] : undefined;
     return recipe !== undefined && /^[a-z][\w-]*$/.test(recipe) ? [recipe] : [];
   });
   const ran = new Set(commands.map(toolOf));

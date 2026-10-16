@@ -44,6 +44,7 @@ describe("the public surface", () => {
       "oneWriter",
       "override",
       "pack",
+      "programName",
       "protectedPath",
       "quoteArg",
       "ranSinceEdit",

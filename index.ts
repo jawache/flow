@@ -124,7 +124,9 @@ export { substitutionInProse, SUBSTITUTION_MESSAGE } from "./checks/domain.ts";
 // `shellCommands` is the door to the parse for a check that may be loaded by an older engine,
 // which hands no `ctx.commands`: it parses the line itself then. `gitCommand` reads one parsed
 // command as git — its own options, its subcommand, its arguments — and `gitCommands` every git
-// command a line runs.
+// command a line runs. `programName` is a command's program without its path, the one way flow
+// reads it.
+export { programName } from "./language/domain.ts";
 export {
   commitMessage,
   gitCommand,

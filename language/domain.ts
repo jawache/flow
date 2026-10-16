@@ -559,7 +559,13 @@ const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh"]);
 
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
-const basename = (program: string): string => program.slice(program.lastIndexOf("/") + 1);
+/**
+ * A program's name without its path, the ONE way flow reads it: `/usr/bin/git` and `git` are both
+ * `git`. A word ending in `/` names a directory, and gives "".
+ */
+export function programName(program: string): string {
+  return program.slice(program.lastIndexOf("/") + 1);
+}
 
 /**
  * How many words at the head of an argv are wrappers, their options and their operands — where the
@@ -568,7 +574,7 @@ const basename = (program: string): string => program.slice(program.lastIndexOf(
 function wrapperWords(argv: readonly string[]): number {
   let rest = argv;
   for (;;) {
-    const spec = WRAPPERS[basename(rest[0] ?? "")];
+    const spec = WRAPPERS[programName(rest[0] ?? "")];
     if (spec === undefined) return argv.length - rest.length;
     const flags: string[] = [];
     let at = rest.length; // where the program is: past every flag, value and assignment
@@ -958,7 +964,7 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
       return stepCommands(own).filter((c) => c.nested === nested);
     });
     const readsStdin = (c: ShellCommand | undefined): boolean =>
-      c !== undefined && (basename(c.program) === "eval" || (SHELLS.has(basename(c.program)) && shellInput(c.args) === "stdin"));
+      c !== undefined && (programName(c.program) === "eval" || (SHELLS.has(programName(c.program)) && shellInput(c.args) === "stdin"));
     outs.forEach((own, i) => {
       if (readsStdin(own[0]) || !outs.slice(i + 1).some((later) => readsStdin(later[0]))) return;
       for (const c of own) for (const h of c.heredocs) readAsScript(h, out);
@@ -1009,7 +1015,7 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
       for (const p of c.prefix) if (p.type === "Assignment" && p.value.type === "Word") out.push({ kind: "assign", name: p.name, value: shellWord(p.value) });
       return;
     }
-    const name = basename(program);
+    const name = programName(program);
     if (name === "eval") source(args.join(" "), out);
     if (!SHELLS.has(name)) return;
     const input = shellInput(args);

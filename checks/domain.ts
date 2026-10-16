@@ -29,7 +29,7 @@
 //   TOOLS         execPasses · depcruise · astGrep, each orchestrating, never reimplementing
 //   CASES         the canned ctx a `.test()` case becomes, and the runner that walks them
 
-import { cannedWorld, defineCheck, elideHeredocBodies, inScope, makeCtx, parseCommandLine, withFaults } from "../language/domain.ts";
+import { cannedWorld, defineCheck, elideHeredocBodies, inScope, makeCtx, parseCommandLine, programName, withFaults } from "../language/domain.ts";
 import type {
   Case,
   CaseWorld,
@@ -673,7 +673,7 @@ export interface GitCommand {
  * arguments is never one, and a `git` inside `$( … )` or a `bash -c` string is.
  */
 export function gitCommand(command: ShellCommand): GitCommand | null {
-  if (command.program.slice(command.program.lastIndexOf("/") + 1) !== "git") return null;
+  if (programName(command.program) !== "git") return null;
   const { args } = command;
   let k = 0;
   while (k < args.length) {
