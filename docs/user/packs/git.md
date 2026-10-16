@@ -100,8 +100,8 @@ Blocks Claude/Anthropic attribution in commits, PRs and issues.
     "claude\\.com/claude-code|🤖 Generated"
   ],
   "prose": [
-    "(?:\\S*/)?(?:work\\s+)?gh\\s+(?:pr|issue)\\b[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(Claude|[Aa]nthropic)",
-    "(?:\\S*/)?(?:work\\s+)?gh\\s+(?:pr|issue)\\b[\\s\\S]*(claude\\.com/claude-code|🤖 Generated)"
+    "[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(Claude|[Aa]nthropic)",
+    "claude\\.com/claude-code|🤖 Generated"
   ]
 }
 ```

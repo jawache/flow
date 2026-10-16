@@ -10,7 +10,6 @@
 // the entry is called, and a pack's shape is what a reader navigates it by.
 
 import {
-  banCommands,
   breadcrumb,
   command,
   commit,
@@ -22,6 +21,7 @@ import {
   gitDirPrefix,
   guardrail,
   jsonInvariant,
+  programName,
   quoteArg,
   session,
   shellCommands,
@@ -31,6 +31,7 @@ import {
   type Check,
   type Ctx,
   type GitCommand,
+  type ShellCommand,
 } from "../index.ts";
 
 // ── git: the commands that destroy work, and the commits that owe a sentence ──
@@ -406,30 +407,47 @@ const ROBOT = "\u{1F916}";
 const GH_PROSE = String.raw`(?:\S*/)?(?:work\s+)?gh\s+(?:pr|issue)\b`;
 
 /**
- * Refuses attribution in what a `git commit` is given, and in the prose of a `gh` command.
- *
- * The commits are read from the parse, through `gitCommands`: git's own options sit between `git`
- * and `commit` (`git -C <worktree> commit`), and a value with a space in it, `-C '/a b'`, is two
- * words in a command's text, where a pattern loses it. `message` is matched against each commit's
- * arguments after `commit`, one per line, and the bodies of the heredocs it is fed: every argument
- * rather than the `-m` values alone, so `-am`, `-m"…"` and a `"$(cat <<'EOF' … EOF)"` message are
- * all in view. A line that does not parse is matched whole, as `banCommands` matches it.
- *
- * `prose` is `banCommands` with `matchHeredocs`, for the `gh` verbs, each pattern matched from a
- * command's program name.
+ * The arguments after the verb of a `gh pr` or `gh issue` command, run bare or as `work gh`, the
+ * wrapper a repo driven by work runs it as — or null for any other command.
  */
-const noAttribution = defineCheck((opts: { message: readonly string[]; prose: readonly string[] }): Check => {
-  const prose = banCommands({ ban: opts.prose, matchHeredocs: true });
-  return (ctx) => {
-    const given =
-      shellCommands(ctx) === null
-        ? [ctx.command ?? ""]
-        : gitCommands(ctx)
-            .filter((g) => g.subcommand === "commit")
-            .map((g) => [...g.args, ...g.command.heredocs.map((h) => h.body)].join("\n"));
-    const hits = opts.message.filter((pattern) => given.some((text) => new RegExp(pattern).test(text)));
-    return hits.length === 0 ? prose(ctx) : ctx.fail(hits.map((pattern) => `the commit's message matches /${pattern}/`).join(" · "));
-  };
+function ghProseArgs(c: ShellCommand): readonly string[] | null {
+  const program = programName(c.program);
+  const words = program === "gh" ? c.args : program === "work" && c.args[0] === "gh" ? c.args.slice(1) : null;
+  return words !== null && (words[0] === "pr" || words[0] === "issue") ? words.slice(1) : null;
+}
+
+/**
+ * Refuses attribution in what a `git commit` is given, and in the prose of a `gh pr` or `gh issue`.
+ *
+ * Both are read from the parse, never from a command's text. The commits come through
+ * `gitCommands`: git's own options sit between `git` and `commit` (`git -C <worktree> commit`), and
+ * a value with a space in it, `-C '/a b'`, is two words in a command's text, where a pattern loses
+ * it. `message` is matched against each commit's arguments after `commit`, one per line, and the
+ * bodies of the heredocs it is fed: every argument rather than the `-m` values alone, so `-am`,
+ * `-m"…"` and a `"$(cat <<'EOF' … EOF)"` message are all in view. `prose` is matched the same way
+ * against a `gh pr` or `gh issue` command's arguments after its verb and its heredocs' bodies, so a
+ * `--body-file -` fed on stdin is in view too. A line that does not parse is matched whole.
+ */
+const noAttribution = defineCheck((opts: { message: readonly string[]; prose: readonly string[] }): Check => (ctx) => {
+  const parsed = shellCommands(ctx);
+  const given = (args: readonly string[], c: ShellCommand): string => [...args, ...c.heredocs.map((h) => h.body)].join("\n");
+  const line = [ctx.command ?? ""];
+  const commits =
+    parsed === null ? line : gitCommands(ctx).filter((g) => g.subcommand === "commit").map((g) => given(g.args, g.command));
+  const prose =
+    parsed === null
+      ? line
+      : parsed.flatMap((c) => {
+          const args = ghProseArgs(c);
+          return args === null ? [] : [given(args, c)];
+        });
+  const matching = (patterns: readonly string[], texts: readonly string[]): string[] =>
+    patterns.filter((pattern) => texts.some((text) => new RegExp(pattern).test(text)));
+  const hits = [
+    ...matching(opts.message, commits).map((pattern) => `the commit's message matches /${pattern}/`),
+    ...matching(opts.prose, prose).map((pattern) => `the PR or issue text matches /${pattern}/`),
+  ];
+  return hits.length === 0 ? ctx.ok() : ctx.fail(hits.join(" · "));
 });
 
 /** What this pack cannot know: which recipe cuts a release, and which file carries the version. */
@@ -513,8 +531,8 @@ export const git = definePack("git", (repo: Release) => {
           `${SITE}|🤖 Generated`,
         ],
         prose: [
-          `${GH_PROSE}[\\s\\S]*[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(${VENDOR}|[Aa]nthropic)`,
-          `${GH_PROSE}[\\s\\S]*(${SITE}|🤖 Generated)`,
+          `[Cc]o-[Aa]uthored-[Bb]y:[\\s\\S]*(${VENDOR}|[Aa]nthropic)`,
+          `${SITE}|🤖 Generated`,
         ],
       }),
     )
@@ -543,7 +561,7 @@ export const git = definePack("git", (repo: Release) => {
         // git's own options before `commit`: a builder in a worktree, and a one-off config value.
         `git -C /repo/worktree commit -m "fix(auth): renew the session\n\n${TRAILER}: ${VENDOR} Opus <noreply@anthropic.com>"`,
         `git -c commit.gpgsign=false commit -m "fix(auth): renew the session\n\n${TRAILER}: ${VENDOR}"`,
-        // The message given on stdin, through a heredoc: matchHeredocs is what keeps it in view.
+        // The message given on stdin, through a heredoc: the heredoc's body is read with the arguments.
         `git commit -F - <<'EOF'\nfix(auth): renew the session\n\n${TRAILER}: ${VENDOR}\nEOF`,
         `git commit -m "fix(auth): renew the session\n\n${TRAILER}: ${VENDOR} <noreply@anthropic.com>"`,
         `gh pr create --body "${TRAILER}: ${VENDOR}"`,
