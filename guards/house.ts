@@ -242,10 +242,10 @@ export const house = definePack("house", (repo: Terrain) => ({
     .text(
       [
         "EVERY READING OF A SHELL COMMAND GOES THROUGH THE ONE PARSE. `parseCommandLine` in `language/domain.ts` parses the line as bash with `unbash`, once; checks read it as `ctx.commands`, and the adapter's delete, read and recipe detection read the same walk as `parseShellSteps`.",
-        "· A check, a pack or a guard reads `ctx.commands`, or `shellCommands(ctx)` and `gitCommands(ctx)` where an older engine may hand no parse. Match a pattern against one command's `text`, never against `ctx.command`.",
+        "· A check, a pack or a guard reads `ctx.commands`, or `shellCommands(ctx)` and `gitCommands(ctx)` where an older engine may hand no parse. Which command runs is a program and its arguments, not text: compare `programName(c.program)` and `c.args`, or name the command in words with `banCommands`, never a regex against a command's `text` or against `ctx.command`. A regex is for text, such as a commit message, a file or a heredoc's body.",
         "· Never write a second reader: no splitting the line on `;`, `&&`, `|` or a newline, no scanning for where a quote, a `$(` or a heredoc closes, no regex over the raw line to find a program, an argument, a heredoc, a substitution or a redirect.",
         "· The parse lacks a fact the rule needs? Add it to the parse in `language/domain.ts`, and its row to `docs/user/reference/ctx.md`, so every reader gets it.",
-        "· `ctx.commands` is null when the line does not parse. Read null as \"cannot tell\": stand aside, or match the whole line as written the way `banCommands` does; never fall back to splitting or lexing it yourself.",
+        "· `ctx.commands` is null when the line does not parse. Read null as \"cannot tell\": stand aside, or look for the command's program and arguments in the line as whole words, the way `banCommands` does; never fall back to splitting or lexing it yourself.",
         "· A pattern that spans commands on purpose sets `banCommands`' `wholeLine`, which matches the line less its heredoc bodies, cut by the same parse (`elideHeredocBodies`).",
         "How the parse works and what it cannot know: `docs/user/explanation/what-the-guard-sees.md` § The parse.",
       ].join("\n"),
