@@ -629,9 +629,6 @@ export interface BashReads {
   readonly searched: readonly string[];
 }
 
-/** The commands that set the variables named in their arguments. */
-const DECLARERS = new Set(["export", "local", "declare", "readonly", "typeset"]);
-
 /**
  * One word of the parse as the shell would expand it, from what the line itself holds: an unquoted
  * leading `~`, `$HOME`, and a variable the line assigned. Quoted or escaped text is passed as is,
@@ -648,14 +645,6 @@ function expandWord(word: ShellWord, vars: ReadonlyMap<string, string>, home: st
     out += value;
   }
   return out;
-}
-
-/** `NAME=` at the head of a word, split off: the name, and the value as written. */
-function assignmentIn(word: ShellWord): { readonly name: string; readonly value: ShellWord } | null {
-  const [head, ...rest] = word;
-  const m = head?.kind === "text" ? /^([A-Za-z_]\w*)=/.exec(head.text) : null;
-  if (m === null || head?.kind !== "text") return null;
-  return { name: m[1] as string, value: [{ kind: "text", text: head.text.slice(m[0].length) }, ...rest] };
 }
 
 /**
@@ -706,13 +695,6 @@ export function bashReads(steps: readonly ShellStep[] | null, where: BashWhere):
     if (list !== null) add(reads, at(list, scope.cwd));
     const name = step.command.program;
     const words = step.words.slice(step.at + 1);
-    if (DECLARERS.has(name)) {
-      for (const word of words) {
-        const found = assignmentIn(word);
-        if (found !== null) assign(found.name, found.value, scope);
-      }
-      return;
-    }
     const argv = [expand(step.words[step.at] ?? []), ...words.map(expand)];
     if (name === "cd" || name === "pushd") {
       const target = argv.slice(1).find((arg) => !isOption(arg));

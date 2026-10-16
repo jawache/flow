@@ -480,7 +480,10 @@ export type ShellStep =
       /** The substitutions that build its words, which run before it does. */
       readonly before: readonly ShellStep[];
     }
-  /** `NAME=value` on its own, which sets a shell variable. In front of a command it is that command's env, and not a step. */
+  /**
+   * `NAME=value` on its own, or as an argument of `export`, `declare`, `local`, `readonly` or
+   * `typeset`, which sets a shell variable. In front of a command it is that command's env, and not a step.
+   */
   | { readonly kind: "assign"; readonly name: string; readonly value: ShellWord }
   /** A subshell, a substitution, or a script handed to another shell: a `cd` or a variable set inside stays inside. */
   | { readonly kind: "scope"; readonly body: readonly ShellStep[] }
@@ -1042,6 +1045,11 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
       const substitutions = subs.map((sub) => ({ ...sub, argument: argument(sub) }));
       const command = { program, args, text: [program, ...args].join(" "), heredocs, substitutions, redirects: redirects.map(publicRedirect), nested };
       out.push({ kind: "command", command, words, at, redirects: redirects.map(stepRedirect), before: inner });
+      // `export A=b`: the parse gives a declaration's arguments as assignments, which set the
+      // shell's variables once it has run. One that appends or sets an element is not followed.
+      for (const s of c.suffix)
+        if (s.type === "Assignment" && s.value.type === "Word" && s.index === undefined && !s.append)
+          out.push({ kind: "assign", name: s.name, value: shellWord(s.value) });
     } else {
       // Assignments alone set the shell's variables, once the substitutions in their values have run.
       out.push(...inner);

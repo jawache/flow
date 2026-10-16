@@ -753,6 +753,14 @@ describe("parseShellSteps — the same parse, in the order the shell runs it", (
     expect(steps("F=$(pick)")).toEqual([{ scope: ["pick"] }, "F={?}"]);
   });
 
+  it("lists each assignment a declaration makes as a step after it, and nothing for one that appends or sets an element", () => {
+    expect(steps("export F=src/a.ts G; cat $F")).toEqual(["export F=src/a.ts G", "F=src/a.ts", "cat $F"]);
+    expect(steps("declare -x F=$HOME/a")).toEqual(["declare -x F=$HOME/a", "F={HOME}/a"]);
+    expect(steps("local F=$(pick)")).toEqual([{ scope: ["pick"] }, "local F=$(pick)", "F={?}"]);
+    expect(steps("export F+=x A[1]=y")).toEqual(["export F+=x A[1]=y"]);
+    expect(steps("echo F=x")).toEqual(["echo F=x"]);
+  });
+
   it("puts a subshell, a substitution and a string given to a shell in a scope of their own", () => {
     expect(steps("(cd src; cat a.ts); cat b.ts")).toEqual([{ scope: ["cd src", "cat a.ts"] }, "cat b.ts"]);
     // A substitution runs before the command whose word it builds.
