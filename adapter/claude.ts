@@ -826,9 +826,13 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
 
   const { load, config } = regime;
   if (!load.ok) return outage(refusalText(load.refusals));
+  // RECORDING is a second, independent stream and it is deliberately not gated on `off`: turning
+  // the guard off to reproduce something and finding the recorder off with it is the one moment
+  // this seam exists for. It is gated on the switch alone, and on nothing else.
+  const taping = isRecording(root);
   // NOTHING BOUND HERE, NOTHING READ: a hand-back with no turn-end entry to run is answered before
-  // either transcript is opened.
-  if (nothingBound(hook, load.entries)) return ALLOW;
+  // either transcript is opened, unless it is being recorded.
+  if (nothingBound(hook, load.entries, taping)) return ALLOW;
 
   // THE DELTA, on the after-call rails: what this call changed in the tree, from the snapshot the
   // PreToolUse rail took. A call flow could not see is REPORTED and goes no further — nothing is
@@ -888,11 +892,7 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
     if (mismatch !== null) rows.push(mismatch);
   }
 
-  // RECORDING is a second, independent stream and it is deliberately not gated on `off`: turning
-  // the guard off to reproduce something and finding the recorder off with it is the one moment
-  // this seam exists for. It is gated on the switch alone, and on nothing else.
   const steps: RecordedStep[] = [];
-  const taping = isRecording(root);
 
   const answer = await judge({ events, session, load, settings: config.settings, identity, off, hook, payload, rows, steps: taping ? steps : null });
   if (!off) appendRows({ root, session: session.id, branch: session.branch }, rows);

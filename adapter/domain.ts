@@ -910,9 +910,12 @@ function internalAgent(payload: HookPayload, sessionAgent: () => string | null):
  * subagent's own (its turn), and it comes at every hand-back of every subagent. A config that binds
  * no entry at turn-end, guardrail or breadcrumb, has nothing either read could feed, so neither is
  * made. A disabled entry binds nothing.
+ *
+ * A repo that is RECORDING never answers early: the tape is for replaying a session against rules
+ * written later, so it keeps every hand-back whatever is bound today.
  */
-export function nothingBound(hook: HookEvent, entries: readonly LoadedEntry[]): boolean {
-  return hook === "subagent-stop" && !entries.some((entry) => fires(entry.spec, "turn-end"));
+export function nothingBound(hook: HookEvent, entries: readonly LoadedEntry[], recording: boolean): boolean {
+  return !recording && hook === "subagent-stop" && !entries.some((entry) => fires(entry.spec, "turn-end"));
 }
 
 /** What a post-tool-use call was about, repo-relative: a path, or nothing this rail can steer on. */

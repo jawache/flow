@@ -938,16 +938,17 @@ describe("a subagent's hand-back — the turn-end moment at SubagentStop", () =>
       .message("m")
       .test({ pass: [{ actions: [] }], block: [{ actions: [{ did: "edit", path: "a.ts" }] }] });
     const elsewhere = entries(loadConfig(defineConfig([pack(definePack("t", { told: breadcrumb().at(session).text("t") }))])));
-    expect(nothingBound("subagent-stop", elsewhere), "a config with no turn-end entry").toBe(true);
-    expect(nothingBound("subagent-stop", entries(loadConfig(defineConfig([pack(definePack("t", { held }))])))), "a turn-end guardrail").toBe(false);
+    expect(nothingBound("subagent-stop", elsewhere, false), "a config with no turn-end entry").toBe(true);
+    expect(nothingBound("subagent-stop", entries(loadConfig(defineConfig([pack(definePack("t", { held }))]))), false), "a turn-end guardrail").toBe(false);
     const told = definePack("t", { told: breadcrumb().at(turnEnd).text("t") });
-    expect(nothingBound("subagent-stop", entries(loadConfig(defineConfig([pack(told)])))), "a turn-end breadcrumb").toBe(false);
+    expect(nothingBound("subagent-stop", entries(loadConfig(defineConfig([pack(told)]))), false), "a turn-end breadcrumb").toBe(false);
     const off = definePack("t", { held });
     expect(
-      nothingBound("subagent-stop", entries(loadConfig(defineConfig([pack(off), override(off.held).disabled("not here")])))),
+      nothingBound("subagent-stop", entries(loadConfig(defineConfig([pack(off), override(off.held).disabled("not here")]))), false),
       "a disabled one binds nothing",
     ).toBe(true);
-    expect(nothingBound("stop", elsewhere), "only the subagent's hand-back is answered early").toBe(false);
+    expect(nothingBound("stop", elsewhere, false), "only the subagent's hand-back is answered early").toBe(false);
+    expect(nothingBound("subagent-stop", elsewhere, true), "a recording repo keeps every hand-back on its tape").toBe(false);
   });
 
   it("holds an agent once: a hand-back already held open is let through, and nothing is read", () => {

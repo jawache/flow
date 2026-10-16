@@ -1372,6 +1372,44 @@ export default defineConfig([pack(notes)], { driftTokens: 50_000 });
   });
 });
 
+describe("a subagent's hand-back, recorded though nothing is bound at turn-end", () => {
+  // A repo of its own, whose config binds nothing at turn-end, with the recorder armed. A hand-back
+  // with no turn-end entry is answered before a transcript is read, but not while recording: a tape
+  // replayed against a turn-end rule added later must still hold every hand-back.
+  let taped: string;
+  const SESSION = "taped-1";
+
+  beforeAll(() => {
+    taped = newRepo("flow-taped-");
+    mkdirSync(join(taped, ".flow"), { recursive: true });
+    writeFileSync(join(taped, ".flow", "record"), "");
+    writeFileSync(
+      join(taped, "flow.config.ts"),
+      `import { breadcrumb, defineConfig, definePack, pack, session } from ${JSON.stringify(join(PACKAGE, "index.ts"))};
+
+export default defineConfig([pack(definePack("quiet", { hello: breadcrumb().at(session).text("Hello.") }))]);
+`,
+    );
+  });
+
+  afterAll(() => {
+    rmSync(taped, { recursive: true, force: true });
+  });
+
+  it("puts the turn-end step on the tape", () => {
+    const prompt = JSON.stringify({ type: "user", message: { content: "do the phase" } });
+    const at = subagentTranscripts(join(taped, ".t"), SESSION, "atape1", { parent: [prompt], own: [prompt] });
+    const ran = runFlow(taped, ["hook", "subagent-stop"], {}, JSON.stringify(subagentStopPayload(SESSION, "atape1", "Explore", at)));
+    expect(ran.code, ran.stderr).toBe(0);
+
+    const tape = readFileSync(join(taped, ".flow", "replay", `${SESSION}.jsonl`), "utf8")
+      .split("\n")
+      .filter((line) => line.trim() !== "")
+      .map((line) => JSON.parse(line) as { rail?: string; moment?: string });
+    expect(tape.map((step) => `${step.rail ?? ""} ${step.moment ?? ""}`.trim())).toContain("guard turn-end");
+  });
+});
+
 describe("the off switch", () => {
   it("silences every rail, and writes no telemetry while it is off", () => {
     writeFileSync(join(repo, ".flow", "off"), "");
