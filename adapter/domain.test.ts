@@ -2405,7 +2405,7 @@ describe("planInit — when git already runs other hooks", () => {
 
   describe("when git could not name the folder it runs hooks from", () => {
     // That folder may be husky's, so setting core.hooksPath over it is the very switch-off this guards.
-    for (const hooksPath of [".husky/_", null]) {
+    for (const hooksPath of [".husky/_", HOOKS_DIR, null]) {
       const plan = planInit({ ...bare, hooksPath, hooksFolder: null });
 
       it(`leaves core.hooksPath alone (set to ${String(hooksPath)}), and says what status says`, () => {
