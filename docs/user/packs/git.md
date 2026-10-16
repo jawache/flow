@@ -229,20 +229,7 @@ Blocks a force-push — rewriting pushed history is the one loss a stash cannot 
 - **Refuses at** a shell command is about to run
 - **Watches** not scoped by path
 - **Categories** every session
-- **Check** [`banCommands`](../checks/ban-commands.md)
-
-<details><summary>settings</summary>
-
-```
-{
-  "ban": [
-    "git\\s+push\\b[^\\n]*\\s(--force|-f)(\\s|$)",
-    "git\\s+push\\b[^\\n]*--force-with-lease"
-  ]
-}
-```
-
-</details>
+- **Check** `noForcePush` *(written in this pack)* — no options
 
 ### What the agent reads when refused
 
@@ -265,6 +252,9 @@ EOF`
 - running `git push origin HEAD; gh api graphql -f query=x`
 - running `git push && gh api -f a=b repos/x/y`
 - running `echo "never git push -f here"`
+- running `git push -o +f origin main`
+- running `git push -of origin main`
+- running `git fetch origin +main:main`
 
 **blocks**
 
@@ -274,9 +264,17 @@ git push --force origin main`
 - running `bash <<'EOF'
 git push --force origin main
 EOF`
+- running `bash <<< 'git push --force origin main'`
 - running `git push -f`
 - running `git push -f origin main`
+- running `git push -fu origin main`
 - running `git push --force-with-lease origin main`
+- running `git push --force-with-lease=main:abc123 origin main`
+- running `git push origin +main`
+- running `git push origin -- +HEAD:main`
+- running `git -C /x push --force`
+- running `git --no-pager push -f`
+- running `/usr/bin/git push --force`
 - running `git status && git push --force origin main`
 
 ## `git.noGateSkip` — guardrail

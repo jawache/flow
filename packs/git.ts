@@ -253,6 +253,58 @@ const noGateSkip = defineCheck(
     },
 );
 
+/** `git push`'s options that take the next word as their value, so the value is never read as a flag or a refspec. */
+const PUSH_TAKES_VALUE = new Set(["-o", "--push-option", "--repo", "--receive-pack", "--exec"]);
+
+/**
+ * How this `git push` argument list forces the remote, or null when it does not: `--force`, `-f`
+ * alone or in a bundle such as `-fu`, `--force-with-lease` with or without its value, or a refspec
+ * that starts with `+`.
+ */
+function pushForce(args: readonly string[]): string | null {
+  let refspecs = false; // past `--`, every word is the repository or a refspec
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i] as string;
+    if (refspecs || !arg.startsWith("-")) {
+      if (arg.startsWith("+")) return `the refspec \`${arg}\``;
+      continue;
+    }
+    if (arg === "--") refspecs = true;
+    else if (arg === "--force" || arg === "--force-with-lease" || arg.startsWith("--force-with-lease=")) return `\`${arg}\``;
+    else if (PUSH_TAKES_VALUE.has(arg)) i++;
+    else if (!arg.startsWith("--"))
+      for (const flag of arg.slice(1)) {
+        if (flag === "f") return `\`-f\` in \`${arg}\``;
+        if (flag === "o") {
+          if (arg.endsWith("o")) i++; // `-o` last in the bundle takes the next word; otherwise the rest is its value
+          break;
+        }
+      }
+  }
+  return null;
+}
+
+/**
+ * Each force-push in the command line, or [] when there is none. The pushes are read from the parse,
+ * so git's own options before `push` (`git -C <dir> push`) and git run by its path are pushes, and
+ * a push written in a heredoc body or a quoted argument is not one.
+ */
+function forcePushes(facts: Pick<Ctx, "command" | "commands">): string[] {
+  return gitCommands(facts).flatMap(({ subcommand, args }) => {
+    const how = subcommand === "push" ? pushForce(args) : null;
+    return how === null ? [] : [`\`git push\` forces the remote with ${how}`];
+  });
+}
+
+/** Refuses a force-push, in every spelling git takes. */
+const noForcePush = defineCheck(
+  (_opts: Record<string, never>): Check =>
+    (ctx) => {
+      const found = forcePushes(ctx);
+      return found.length === 0 ? ctx.ok() : ctx.fail(found.join("\n"));
+    },
+);
+
 /** Does this header line speak Conventional Commits for the given type set? */
 export function isConventional(header: string, types: readonly string[]): boolean {
   const alt = types.map(escapeRe).join("|");
@@ -604,25 +656,19 @@ export const git = definePack("git", (repo: Release) => {
   noForcePush: guardrail()
     .at(command)
     .description("Blocks a force-push — rewriting pushed history is the one loss a stash cannot undo.")
-    // Matched one command at a time, from its program name: the `-f` must be an argument of the
-    // push itself, never of the command after it (`git push origin main; ls -f`), and the words in
-    // a note or a heredoc a script is writing are not a push at all.
-    .check(
-      banCommands({
-        ban: ["git\\s+push\\b[^\\n]*\\s(--force|-f)(\\s|$)", "git\\s+push\\b[^\\n]*--force-with-lease"],
-      }),
-    )
+    // Read from the parsed git command: the `-f` must be an argument of the push itself, never of
+    // the command after it (`git push origin main; ls -f`), and the words in a note or a heredoc a
+    // script is writing are not a push at all.
+    .check(noForcePush({}))
     .message(
       "Force-push rewrites history that other clones (and every open PR) already have — the one loss no stash can undo. Push a new commit that corrects the old one. A repo whose workflow genuinely rewrites a scratch remote disables this entry in flow.config.ts, visibly.",
     )
     .test({
       pass: [
         "git push origin main",
-        // PROSE THAT MENTIONS THE VERB IS NOT AN INVOCATION. A heredoc writing a note about the
-        // ban carries the words in a BODY line, where no command position is — which is the whole
-        // difference the anchor reads, and the false positive it was added for.
+        // A heredoc's body is text fed to `cat`, so a push written in it is not one, even where a
+        // body line starts with the verb.
         "cat > notes.md <<'EOF'\nnever run git push --force here\nEOF",
-        // …and a heredoc body is not the command line at all, even where a body line starts with the verb.
         "cat > notes.md <<'EOF'\ngit push --force origin main\nEOF",
         // ONE COMMAND AT A TIME: the flag belongs to the command after the push (#9, #14).
         "git push origin main; ls -f",
@@ -630,17 +676,30 @@ export const git = definePack("git", (repo: Release) => {
         "git push && gh api -f a=b repos/x/y",
         // …and a push named inside another command's argument is not one.
         'echo "never git push -f here"',
+        // A value of `-o` is never a flag or a refspec.
+        "git push -o +f origin main",
+        "git push -of origin main",
+        "git fetch origin +main:main",
       ],
       block: [
         "git push --force origin main",
         // A command line spans newlines, and a body a SHELL reads is commands.
         "git status\ngit push --force origin main",
         "bash <<'EOF'\ngit push --force origin main\nEOF",
+        "bash <<< 'git push --force origin main'",
         "git push -f",
         "git push -f origin main",
+        "git push -fu origin main",
         "git push --force-with-lease origin main",
-        // …and a POSITION is not the start of the string: a real force-push chained behind another
-        // command is still one, which is the half an anchor written as `^` alone would let through.
+        "git push --force-with-lease=main:abc123 origin main",
+        "git push origin +main",
+        "git push origin -- +HEAD:main",
+        // git's own options before `push`, and git run by its path: an agent in a worktree pushes
+        // as `git -C <worktree> push`.
+        "git -C /x push --force",
+        "git --no-pager push -f",
+        "/usr/bin/git push --force",
+        // A force-push chained behind another command is a command of its own.
         "git status && git push --force origin main",
       ],
     }),
