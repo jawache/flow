@@ -397,6 +397,7 @@ function subfolderOf(root: string): string | null {
 function uninstallFacts(root: string, machineFlag: boolean): UninstallFacts {
   const manifest = readText(root, "package.json");
   const settings = parsedFile(root, REPO_SETTINGS);
+  const top = subfolderOf(root);
   let hooksDir: string[] | null;
   try {
     hooksDir = readdirSync(join(root, HOOKS_DIR));
@@ -407,8 +408,10 @@ function uninstallFacts(root: string, machineFlag: boolean): UninstallFacts {
     hasConfig: existsSync(join(root, CONFIG_FILE)),
     gateText: readText(root, GATE_PATH),
     hooksPath: hooksPath(root),
-    subfolderOf: subfolderOf(root),
+    subfolderOf: top,
     hooksDir,
+    // At the top folder: from a subfolder, git names flow's own `.githooks` by a path init does not.
+    hooksFolder: hooksFolder(top ?? root),
     hasFlowDir: existsSync(join(root, FLOW_DIR)),
     linked: lstatSync(join(root, PACKAGE_DIR), { throwIfNoEntry: false })?.isSymbolicLink() ?? false,
     listed: listsFlow(manifest),
