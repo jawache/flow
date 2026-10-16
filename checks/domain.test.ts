@@ -1291,6 +1291,15 @@ describe("the depcruise dialect", () => {
     expect(faults[0]).toContain("silently dropped");
   });
 
+  it("refuses the removed `warn` option, which a config built in a variable carries past the compiler", () => {
+    const options = { scan: "src/**", layers: {}, warn: ["sdp"] };
+    const faults = faultsOf(depcruise(options));
+    expect(faults).toHaveLength(1);
+    expect(faults[0]).toContain("`warn`");
+    expect(faults[0]).toContain('`forbid: ["sdp"]`');
+    expect(faultsOf(depcruise({ scan: "src/**", layers: {}, forbid: ["sdp"] }))).toEqual([]);
+  });
+
   it("compiles forbid edges, transitive and plain, with the fence's own why", () => {
     const forbid: ForbidEdge[] = [{ from: "core", to: "fx", transitive: true, why: "purity is transitive" }];
     const config = compileDialect({ scan: "s", layers: { core: ["c/**"], fx: ["f/**"] }, forbid });

@@ -1567,6 +1567,22 @@ export function holesInAnOnlyList(opts: Dialect): string[] {
 }
 
 /**
+ * A `warn` option — refused, because it is gone and its rule would silently go with it.
+ *
+ * `warn: ["sdp"]` was the old spelling of `forbid: ["sdp"]`. The type no longer has the key, so a
+ * literal config fails to compile; but options built in a variable carry it past the compiler, and
+ * the compiler is all that would have said so. Dropped quietly, the Stable Dependencies fence would
+ * report armed and fence nothing. It is read off the raw object because the type cannot name it.
+ */
+export function removedWarnOption(opts: Dialect): string[] {
+  if (!Object.hasOwn(opts, "warn")) return [];
+  return [
+    `binds a depcruise \`warn\` option, which no longer exists: its rules would be silently dropped. ` +
+      `Write \`forbid: ["sdp"]\` for the Stable Dependencies rule; every depcruise rule refuses the commit.`,
+  ];
+}
+
+/**
  * The generic import-fence runner.
  *
  * A whole-graph check: bind it at commit or turn-end, never per keystroke. It orchestrates and
@@ -1577,7 +1593,7 @@ export const depcruise = defineCheck((opts: Dialect): Check => {
   const run: Check = async (ctx) => answer(ctx, depcruiseHits(await ctx.exec(depcruiseCommand(opts))), "\n");
   // The options are judged when the check is BUILT, and a fault refuses the load rather than
   // waiting for a commit: a fence that cannot match is worse than no fence, because it reports.
-  return withFaults(run, [...nonGlobLayers(opts.layers), ...holesInAnOnlyList(opts)]);
+  return withFaults(run, [...nonGlobLayers(opts.layers), ...holesInAnOnlyList(opts), ...removedWarnOption(opts)]);
 });
 
 // ── ast-grep: ban or require a code SHAPE, parsed rather than matched ────────────────────────
