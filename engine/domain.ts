@@ -416,6 +416,12 @@ export interface Notice {
   /** The file the prose lives in, when it did not. The shell resolves it; a pure home cannot. */
   readonly file: string | undefined;
   readonly cause: Cause;
+  /**
+   * What the touch that showed it was about: the repo-relative path, or the command line, as a
+   * guardrail row's subject is. A `session` note fires on no touch, and a fault on no entry, so
+   * neither has one.
+   */
+  readonly subject: string | undefined;
 }
 
 export type Effect = Block | Notice;
@@ -609,7 +615,7 @@ export function brief({ load, event, marks, settings, off = false }: BriefArgs):
   if (off) return { notices: [], marks };
   if (!load.ok)
     return {
-      notices: [{ do: "notice", entry: null, text: refusalText(load.refusals), file: undefined, cause: "fault" }],
+      notices: [{ do: "notice", entry: null, text: refusalText(load.refusals), file: undefined, cause: "fault", subject: undefined }],
       marks,
     };
 
@@ -630,7 +636,8 @@ export function brief({ load, event, marks, settings, off = false }: BriefArgs):
     const last = next[entry.id];
     const cause: Cause = event.moment === "session" ? "session" : last === undefined ? "first-touch" : "drift";
     if (last !== undefined && (cause !== "drift" || event.tokens - last < limit)) continue;
-    notices.push({ do: "notice", entry: entry.id, text: entry.spec.text, file: entry.spec.file, cause });
+    const subject = cause === "session" ? undefined : (event.path ?? event.command);
+    notices.push({ do: "notice", entry: entry.id, text: entry.spec.text, file: entry.spec.file, cause, subject });
     next[entry.id] = event.tokens;
   }
   return { notices, marks: next };
@@ -979,7 +986,14 @@ export function runRows(moment: Moment, outcome: Outcome, subjects: number): Row
         message: effect.message,
         detail: effect.detail,
       });
-    else rows.push({ kind: "breadcrumb", moment, id: effect.entry, cause: effect.cause });
+    else
+      rows.push({
+        kind: "breadcrumb",
+        moment,
+        id: effect.entry,
+        cause: effect.cause,
+        ...(effect.subject === undefined ? {} : { subject: effect.subject }),
+      });
   }
   return rows;
 }

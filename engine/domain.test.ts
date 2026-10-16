@@ -714,6 +714,7 @@ describe("a breadcrumb across one session", () => {
     const first = briefing({ event: touched("src/a.ts", 40_000), marks: {} });
     expect(noticeIds(first)).toEqual(["rails.notes.area"]);
     expect(first.notices[0]?.cause).toBe("first-touch");
+    expect(first.notices[0]?.subject).toBe("src/a.ts");
     expect(first.marks).toEqual({ "rails.notes.area": 40_000 });
   });
 
@@ -727,6 +728,7 @@ describe("a breadcrumb across one session", () => {
     const drifted = briefing({ event: touched("src/b.ts", 250_000), marks: { "rails.notes.area": 40_000 } });
     expect(noticeIds(drifted)).toEqual(["rails.notes.area"]);
     expect(drifted.notices[0]?.cause).toBe("drift");
+    expect(drifted.notices[0]?.subject, "the touch that re-showed it, not the one that first did").toBe("src/b.ts");
     expect(drifted.marks).toEqual({ "rails.notes.area": 250_000 });
   });
 
@@ -755,6 +757,7 @@ describe("a breadcrumb across one session", () => {
   it("marks a command note as shown, so it does not repeat on the next install", () => {
     const first = briefing({ event: { moment: "command", command: "npm install lodash", tokens: 10, wearing: [] }, marks: {} });
     expect(noticeIds(first)).toEqual(["rails.notes.installing"]);
+    expect(first.notices[0]?.subject, "a command note's subject is the line it matched").toBe("npm install lodash");
     const again = briefing({
       event: { moment: "command", command: "npm install zod", tokens: 200, wearing: [] },
       marks: first.marks,
@@ -780,6 +783,7 @@ describe("a breadcrumb across one session", () => {
     const opened = briefing({ event: { moment: "session", tokens: 0, wearing: [] }, marks: {} });
     expect(noticeIds(opened)).toEqual(["rails.notes.orientation"]);
     expect(opened.notices[0]?.cause).toBe("session");
+    expect(opened.notices[0]?.subject, "a greeting fires on no touch").toBeUndefined();
     const again = briefing({ event: { moment: "session", tokens: 100, wearing: [] }, marks: opened.marks });
     expect(again.notices).toEqual([]);
   });
@@ -791,6 +795,7 @@ describe("a breadcrumb across one session", () => {
     const only = degraded.notices[0];
     expect(only?.do).toBe("notice");
     expect(only?.cause).toBe("fault");
+    expect(only?.subject).toBeUndefined();
     expect(only?.text).toContain("the config will not load");
     expect(degraded.marks).toEqual({});
   });
@@ -871,7 +876,7 @@ describe("formatting a refusal", () => {
   it("gathers every block into one message, and ignores the notices beside them", () => {
     const effects: Effect[] = [
       { do: "block", entry: "a.b", message: "m", subject: null, detail: "" },
-      { do: "notice", entry: "a.note", text: "hi", file: undefined, cause: "first-touch" },
+      { do: "notice", entry: "a.note", text: "hi", file: undefined, cause: "first-touch", subject: "src/a.ts" },
       { do: "block", entry: "c.d", message: "n", subject: null, detail: "" },
     ];
     expect(formatBlocks(effects)).toBe("✗ a.b\n  m\n✗ c.d\n  n");
@@ -1013,7 +1018,7 @@ describe("the log's layout", () => {
     const outcome: Outcome = {
       effects: [
         { do: "block", entry: "a.b", message: "m", subject: "x.ts", detail: "d" },
-        { do: "notice", entry: "a.note", text: "hi", file: undefined, cause: "drift" },
+        { do: "notice", entry: "a.note", text: "hi", file: undefined, cause: "drift", subject: "x.ts" },
       ],
       tallies: [{ id: "a.b", evaluated: 1, hits: 1, silenced: 0 }],
     };
@@ -1028,8 +1033,18 @@ describe("the log's layout", () => {
         message: "m",
         detail: "d",
       },
-      { kind: "breadcrumb", moment: "write", id: "a.note", cause: "drift" },
+      { kind: "breadcrumb", moment: "write", id: "a.note", cause: "drift", subject: "x.ts" },
     ]);
+  });
+
+  it("writes no subject on a breadcrumb row whose note fired on no touch", () => {
+    const greeting: Outcome = {
+      effects: [{ do: "notice", entry: "a.hello", text: "hi", file: undefined, cause: "session", subject: undefined }],
+      tallies: [],
+    };
+    const [, row] = runRows("session", greeting, 1);
+    expect(row).toEqual({ kind: "breadcrumb", moment: "session", id: "a.hello", cause: "session" });
+    expect(row).not.toHaveProperty("subject");
   });
 
   it("reads the next event index off the log's own tail", () => {
