@@ -3344,14 +3344,21 @@ export interface Registration {
  * be a second spelling of it — and the day an event is renamed, the half that still compiled would
  * register a command nothing answers.
  */
-const REGISTERED: readonly { readonly hook: HookEvent; readonly matcher?: string }[] = [
-  { hook: "session-start", matcher: "startup|resume|clear|compact" },
-  { hook: "pre-tool-use", matcher: "*" },
-  { hook: "post-tool-use", matcher: "*" },
-  { hook: "post-tool-use-failure", matcher: "*" },
-  { hook: "stop" },
-  { hook: "subagent-stop" },
+const REGISTERED: readonly { readonly hook: HookEvent; readonly matcher?: string; readonly unregistered: string }[] = [
+  { hook: "session-start", matcher: "startup|resume|clear|compact", unregistered: "no note is shown when a session starts" },
+  { hook: "pre-tool-use", matcher: "*", unregistered: "no rule judges a tool call before it runs" },
+  { hook: "post-tool-use", matcher: "*", unregistered: "no rule judges what a tool call changed" },
+  { hook: "post-tool-use-failure", matcher: "*", unregistered: "no rule judges what a failed tool call changed" },
+  { hook: "stop", unregistered: "no turn-end rule runs when the main chat hands back" },
+  { hook: "subagent-stop", unregistered: "no turn-end rule runs when a subagent hands back" },
 ];
+
+/**
+ * What goes unjudged while one registration is missing, by the host's name for its event — what
+ * `flow status` says beside the fix. Each event costs its own rails and no others, so a file
+ * missing one names that one's cost, not the whole guard's.
+ */
+const UNREGISTERED: ReadonlyMap<string, string> = new Map(REGISTERED.map(({ hook, unregistered }) => [HOST_EVENT[hook], unregistered]));
 
 /**
  * The repo's bin folder, relative to the repo root. flow never runs a `flow` from here: any package
@@ -4199,7 +4206,7 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
           : [
               missing.length === 0
                 ? ""
-                : `${facts.settingsPath} does not call flow for ${missing.join(" · ")} — re-run \`flow init\`. No live rail fires until it does.`,
+                : `${facts.settingsPath} does not call flow for ${missing.join(" · ")} — re-run \`flow init\`. Until it does, ${missing.map((event) => UNREGISTERED.get(event)).join("; ")}.`,
               stale.length === 0
                 ? ""
                 : `${facts.settingsPath} calls flow for ${stale.join(" · ")} on some tools only — an older flow registered ${stale.length === 1 ? "it" : "them"} that way, and a change another tool makes is not judged after it lands. Re-run \`flow init\` to widen ${stale.length === 1 ? "it" : "them"}.`,
