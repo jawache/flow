@@ -2,7 +2,7 @@
 //
 // AND THEY ARE THE `flow` PACK NOW, not `guard`, which is a rename worth its churn: every entry in
 // every pack here is a guardrail or a breadcrumb, so `guard.` as a prefix said nothing that was not
-// already true of `git.` and `tdd.`. What these three are actually about is FLOW — the config file,
+// already true of `git.` and `tdd.`. What these four are actually about is FLOW — the config file,
 // the packs it imports, the gate that runs them — and `flow.noDeleteGuardrails` names the thing
 // being protected where `guard.noDeleteGuardrails` named the category it belongs to.
 //
@@ -131,15 +131,17 @@ export const flow = definePack("flow", (repo: Home) => {
       .at(command)
       .description("Refuses `flow uninstall` when an agent runs it. Taking flow off a repo or a machine is the user's call, made in their own terminal.")
       // Matched from the program name, so a commit message, an echo or a heredoc that names the
-      // command is prose about it. Three ways in: flow on PATH or by path (`./node_modules/.bin/flow`),
-      // through a package runner (`npx flow`, `npx @jawache/flow`, `npm exec -- flow`), and the
-      // bundle itself under node, which is how the registered hooks call it.
+      // command is prose about it. Two ways in, one pattern each: flow on PATH or by path
+      // (`./node_modules/.bin/flow`), and flow started by a runner, which is a package runner
+      // (`npx flow`, `pnpm dlx @jawache/flow@latest`, `npm exec -- flow`, `bun run flow`) or node
+      // on the bundle or the bin link (`node …/dist/flow.mjs`, which is how the registered hooks
+      // call it). After the runner, the words up to flow are skipped, and flow must start a path
+      // segment, so `workflow` and `scripts/workflow.mjs` are not flow.
       .check(
         banCommands({
           ban: [
             "(?:\\S*/)?flow\\s+uninstall\\b",
-            "(?:npx|pnpx|bunx|yarn|(?:npm|pnpm|yarn)\\s+(?:exec|dlx))\\s+(?:\\S+\\s+)*?(?:\\S*/)?flow(?:@\\S+)?\\s+uninstall\\b",
-            "node\\s+(?:\\S+\\s+)*?\\S*flow\\.mjs\\s+uninstall\\b",
+            "(?:npx|pnpx|bunx|yarn|pnpm|bun|npm|node)\\s+(?:\\S+\\s+)*?(?:\\S*/)?flow(?:@\\S+|\\.mjs)?\\s+uninstall\\b",
           ],
         }),
       )
@@ -151,10 +153,10 @@ export const flow = definePack("flow", (repo: Home) => {
           "flow status",
           "flow init",
           "npx flow test",
-          'echo "run flow uninstall in your own terminal"',
           'git commit -m "docs: flow uninstall leaves flow.config.ts in place"',
-          'grep -rn "flow uninstall" docs',
           "cat > note.md <<'EOF'\nflow uninstall --machine\nEOF",
+          "node scripts/workflow.mjs uninstall",
+          "npx workflow uninstall",
         ],
         block: [
           "flow uninstall",
@@ -162,8 +164,11 @@ export const flow = definePack("flow", (repo: Home) => {
           "npx flow uninstall",
           "npx @jawache/flow uninstall --machine",
           "npm exec -- flow uninstall",
+          "pnpm dlx @jawache/flow@latest uninstall",
+          "bunx flow uninstall",
           "./node_modules/.bin/flow uninstall",
           "node node_modules/@jawache/flow/dist/flow.mjs uninstall",
+          "node node_modules/.bin/flow uninstall",
           "cd app && flow uninstall",
           "bash -c 'flow uninstall --machine'",
         ],
