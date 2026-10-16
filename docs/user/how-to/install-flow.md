@@ -131,6 +131,13 @@ If you uninstalled the package first, `flow uninstall` is not there to run. Remo
 
    If the repo kept other hooks in `.githooks/`, delete only `pre-commit`, and set `core.hooksPath` back to the folder those hooks need.
 
+   **If git runs another folder's hooks**, such as husky's, leave `core.hooksPath` as it is and delete only `.githooks/pre-commit`. Then delete flow's lines from that folder's `pre-commit` hook, such as `.husky/pre-commit`. These are the two lines `flow init` told you to add:
+
+   ```
+   f="$PWD/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook commit
+   exec flow hook commit
+   ```
+
 2. Open the Claude Code settings file that holds flow's hooks:
 
    - **A dev dependency:** the repo's `.claude/settings.json`.
