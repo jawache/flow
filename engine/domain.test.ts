@@ -1604,6 +1604,22 @@ describe("diffRows — the proof is an EMPTY diff", () => {
       { side: "replay", at: 0, row: "breadcrumb touch x drift" },
     ]);
   });
+
+  it("catches a note shown for the wrong file, when both rows name one", () => {
+    const shown = (subject: string): Row => row("breadcrumb", { moment: "touch", id: "x", cause: "first-touch", subject });
+    expect(diffRows([shown("src/a.ts")], [shown("src/b.ts")])).toEqual([
+      { side: "replay", at: 0, row: "breadcrumb touch x first-touch src/a.ts" },
+      { side: "live", at: 0, row: "breadcrumb touch x first-touch src/b.ts" },
+    ]);
+    expect(diffRows([shown("src/a.ts")], [shown("src/a.ts")])).toEqual([]);
+  });
+
+  it("still agrees with a live log written before breadcrumb rows named their subject", () => {
+    const replayed = row("breadcrumb", { moment: "touch", id: "x", cause: "first-touch", subject: "src/a.ts" });
+    const old = row("breadcrumb", { moment: "touch", id: "x", cause: "first-touch" });
+    expect(diffRows([replayed], [old])).toEqual([]);
+    expect(diffRows([old], [replayed])).toEqual([]);
+  });
 });
 
 describe("the recording seam — the live world's answers, written down", () => {

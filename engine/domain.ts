@@ -1903,27 +1903,38 @@ export interface RowDiff {
  * Only the two MECHANISM rows are compared, and that is not a softening: a replay has no tool
  * calls to record and no session to stamp a meta row for, so `tool`, `run` and `meta` are facts
  * about the live process rather than about the guard's judgement. What the recording claims is
- * that the same rules refuse the same subjects and the same notes show for the same causes, and
- * those are exactly the rows named here.
+ * that the same rules refuse the same subjects and the same notes show for the same causes and
+ * files, and those are exactly the rows named here.
  */
 export function diffRows(replayed: readonly Row[], live: readonly Row[]): RowDiff[] {
-  const judgements = (rows: readonly Row[]): string[] =>
+  // A breadcrumb's `subject` is compared only when BOTH rows carry one: a log written before
+  // breadcrumb rows named their file or command has none, and it still has to compare clean. A
+  // guardrail row has always named its subject, so it is part of the key outright.
+  const judgements = (rows: readonly Row[]): { key: string; subject: string | null }[] =>
     rows
       .filter((row) => row.kind === "guardrail" || row.kind === "breadcrumb")
       .map((row) =>
         row.kind === "guardrail"
-          ? `guardrail ${field(row, "moment") ?? ""} ${field(row, "id") ?? "—"} ${row["out"] as string} ${subjectOf(row) ?? ""}`.trim()
-          : `breadcrumb ${field(row, "moment") ?? ""} ${field(row, "id") ?? "—"} ${field(row, "cause") ?? ""}`.trim(),
+          ? {
+              key: `guardrail ${field(row, "moment") ?? ""} ${field(row, "id") ?? "—"} ${row["out"] as string} ${subjectOf(row) ?? ""}`.trim(),
+              subject: null,
+            }
+          : {
+              key: `breadcrumb ${field(row, "moment") ?? ""} ${field(row, "id") ?? "—"} ${field(row, "cause") ?? ""}`.trim(),
+              subject: field(row, "subject"),
+            },
       );
+  const text = (j: { key: string; subject: string | null }): string => (j.subject === null ? j.key : `${j.key} ${j.subject}`);
   const mine = judgements(replayed);
   const theirs = judgements(live);
   const out: RowDiff[] = [];
   for (let i = 0; i < Math.max(mine.length, theirs.length); i++) {
     const a = mine[i];
     const b = theirs[i];
-    if (a === b) continue;
-    if (a !== undefined) out.push({ side: "replay", at: i, row: a });
-    if (b !== undefined) out.push({ side: "live", at: i, row: b });
+    if (a !== undefined && b !== undefined && a.key === b.key && (a.subject === null || b.subject === null || a.subject === b.subject))
+      continue;
+    if (a !== undefined) out.push({ side: "replay", at: i, row: text(a) });
+    if (b !== undefined) out.push({ side: "live", at: i, row: text(b) });
   }
   return out;
 }
