@@ -242,7 +242,6 @@ describe("banCommands", () => {
       "env A=b nohup rm -rf build",
     ];
     await each("rm -rf", wrapped, true);
-    await each("sudo", ["sudo rm -rf build"], false);
   });
 
   it("nested commands: a substitution, backticks, a process substitution, and a string given to a shell or eval", async () => {
@@ -294,6 +293,11 @@ describe("banCommands", () => {
     const fault = (entry: string): string =>
       `bans \`${entry}\`, which is not one command in words. Name a program and the arguments that make it dangerous, such as "git push --force"; a regex goes under \`wholeLine: true\`.`;
     for (const entry of ["git\\s+push", "rm (-rf|-fr)", "git push; ls", "echo 'oops", "cat > x", ""]) {
+      expect(faultsOf(banCommands({ ban: ["curl", entry] })), entry).toStrictEqual([fault(entry)]);
+    }
+    // A wrapper the parse steps past is never a command's program: in front, the entry would ban
+    // every use of the program after it, and alone it would ban nothing.
+    for (const entry of ["sudo rm", "env FOO=1 rm", "sudo", "timeout 5 rm -rf", "xargs rm"]) {
       expect(faultsOf(banCommands({ ban: ["curl", entry] })), entry).toStrictEqual([fault(entry)]);
     }
     expect(faultsOf(banCommands({ ban: ["git push --force", "drizzle-kit drop"] }))).toStrictEqual([]);

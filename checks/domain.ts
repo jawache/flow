@@ -29,7 +29,19 @@
 //   TOOLS         execPasses · depcruise · astGrep, each orchestrating, never reimplementing
 //   CASES         the canned ctx a `.test()` case becomes, and the runner that walks them
 
-import { cannedWorld, defineCheck, elideHeredocBodies, inScope, makeCtx, parseCommandLine, programName, withFaults } from "../language/domain.ts";
+import {
+  cannedWorld,
+  defineCheck,
+  elideHeredocBodies,
+  inScope,
+  isWrapper,
+  makeCtx,
+  parseCommandLine,
+  parseShellSteps,
+  programName,
+  stepCommands,
+  withFaults,
+} from "../language/domain.ts";
 import type {
   Case,
   CaseWorld,
@@ -151,9 +163,9 @@ export const textBan = defineCheck(
  * heredoc bodies. A line that does not parse is refused when an entry's words all appear in it as
  * whole words: a deterrent that cannot read a line errs toward refusing it.
  *
- * An entry that is not one command in words — a line that does not parse, two commands, or a
- * backslash, the mark of a regex written before words — refuses to load, rather than arming a ban
- * that matches nothing.
+ * An entry that is not one command in words — a line that does not parse, two commands, a
+ * backslash, the mark of a regex written before words, or a wrapper such as `sudo` in front —
+ * refuses to load, rather than arming a ban that matches nothing, or every use of its program.
  *
  * docs/user/checks/ban-commands.md is the promise, case by case.
  */
@@ -191,14 +203,19 @@ interface BannedCommand {
   readonly args: readonly string[];
 }
 
-/** The entry parsed as one command, or null when it is not one: no parse, not one command, or a backslash. */
+/**
+ * The entry parsed as one command, or null when it is not one: no parse, not one command, a
+ * backslash, or a wrapper. A wrapper the parse steps past is never a command's program, so
+ * `"sudo rm"` would ban every `rm` and `"sudo"` alone nothing at all.
+ */
 function bannedCommand(entry: string): BannedCommand | null {
   if (entry.includes("\\")) return null;
-  const parsed = parseCommandLine(entry);
-  if (parsed?.length !== 1) return null;
-  const [c] = parsed as [ShellCommand];
+  const steps = parseShellSteps(entry);
+  const [step] = steps ?? [];
+  if (steps?.length !== 1 || step?.kind !== "command" || step.at !== 0 || stepCommands(steps).length !== 1) return null;
+  const c = step.command;
   const program = programName(c.program);
-  if (program === "" || c.heredocs.length > 0 || c.substitutions.length > 0 || c.redirects.length > 0) return null;
+  if (program === "" || isWrapper(program) || c.heredocs.length > 0 || c.substitutions.length > 0 || c.redirects.length > 0) return null;
   return { entry, program, args: comparedArgs(c.args) };
 }
 

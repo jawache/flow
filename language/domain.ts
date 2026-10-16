@@ -566,6 +566,11 @@ const WRAPPERS: Readonly<
   },
 };
 
+/** Whether the program, without its path, is a wrapper the parse steps past to the program that runs. */
+export function isWrapper(program: string): boolean {
+  return Object.hasOwn(WRAPPERS, programName(program));
+}
+
 /** The shells whose `-c` string, or whose stdin heredoc or here-string, is itself a script the parse reads. */
 const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh"]);
 
