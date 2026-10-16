@@ -20,7 +20,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, readdirSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { VERSION } from "../version.ts";
 import { ensureFlowDir, isOff, readRows } from "../engine/state.ts";
@@ -29,6 +29,7 @@ import {
   CONFIG_FILE,
   GATE_PATH,
   HOOKS_DIR,
+  hooksDirOf,
   initCode,
   initLines,
   lastMode,
@@ -147,8 +148,7 @@ function hooksPath(root: string): string | null {
  *
  * `git rev-parse --git-path hooks` is git's own answer: `core.hooksPath` when it is set, with `~`
  * expanded, and `.git/hooks` when it is not. That is the shared git directory in a worktree, whose
- * `.git` is a file. Repo-relative when the folder is inside the repo, so the report reads the way a
- * person would type it. Null when git cannot say.
+ * `.git` is a file. `hooksDirOf` spells it the way a person would type it. Null when git cannot say.
  */
 function hooksFolder(root: string): HooksFolder | null {
   let said: string;
@@ -158,9 +158,8 @@ function hooksFolder(root: string): HooksFolder | null {
     return null;
   }
   if (said === "") return null;
-  const at = resolve(root, said);
-  const inside = relative(root, at);
-  const dir = inside !== "" && inside !== ".." && !inside.startsWith(`..${sep}`) && !isAbsolute(inside) ? inside : at;
+  const dir = hooksDirOf(root, said);
+  const at = resolve(root, dir);
   let files: string[] = [];
   try {
     files = readdirSync(at, { withFileTypes: true })

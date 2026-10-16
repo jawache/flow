@@ -3732,7 +3732,7 @@ export function commitScope(args: readonly string[], legacy: boolean): CommitSco
 
 /** The folder git runs hooks from, as the shell found it. One reading, for init and status alike. */
 export interface HooksFolder {
-  /** As git names it (`git rev-parse --git-path hooks`), repo-relative when it is inside the repo. */
+  /** As git names it (`git rev-parse --git-path hooks`), spelled by `hooksDirOf`. */
   readonly dir: string;
   /** The name of every file in it, `.sample` files included: which of them count is decided here. */
   readonly files: readonly string[];
@@ -3763,13 +3763,24 @@ export function preCommitOf(dir: string): string {
 }
 
 /**
+ * The hooks folder as a person would type it, from git's answer to `git rev-parse --git-path hooks`
+ * run at the repo root: repo-relative when it is inside the repo, absolute when it is not, such as
+ * a worktree's shared `.git/hooks`. Resolved, so `.githooks/` and `./.githooks` both read `.githooks`.
+ */
+export function hooksDirOf(root: string, said: string): string {
+  return relativise(posix.resolve(root, said), root);
+}
+
+/**
  * Does git run hooks other than flow's here? Null when it does not: `core.hooksPath` is flow's own
  * folder, or it is unset and `.git/hooks` holds nothing but git's own `.sample` files. A
  * `core.hooksPath` anywhere else counts whatever is in it, and any other file in `.git/hooks` counts,
  * not only a `pre-commit`: Git LFS installs `pre-push` and `post-checkout` there.
  */
-export function otherHooks(hooksPath: string | null, folder: HooksFolder | null): OtherHooks | null {
-  if (folder === null || hooksPath === HOOKS_DIR) return null;
+export function otherHooks(hooksPath: string | null, folder: HooksFolder): OtherHooks | null {
+  // The folder git resolved, not the setting as typed: `.githooks/`, `./.githooks` and an absolute
+  // path to it are all flow's own.
+  if (folder.dir === HOOKS_DIR) return null;
   if (hooksPath === null && folder.files.every((name) => name.endsWith(".sample"))) return null;
   return { dir: folder.dir, preCommit: preCommitOf(folder.dir), wired: armsFlow(folder.preCommit) };
 }
@@ -3999,7 +4010,8 @@ export function planInit(facts: InitFacts): InitPlan {
   // every other tool's hooks, gone. There is no safe merge into bytes nobody parsed, so init
   // registers nothing and says which file to fix.
   const registration = facts.settingsUnreadable ? { settings: facts.settings, added: [] } : withRegistrations(facts.settings);
-  const other = facts.isGit ? otherHooks(facts.hooksPath, facts.hooksFolder) : null;
+  // Outside git there are no hooks to keep, and a folder git could not name has none to read.
+  const other = facts.isGit && facts.hooksFolder !== null ? otherHooks(facts.hooksPath, facts.hooksFolder) : null;
   return {
     config: facts.hasConfig ? null : { path: CONFIG_FILE, body: scaffold(facts.empty) },
     // NEVER over a hook that is already there. This is a scaffold, and a repo whose gate runs its

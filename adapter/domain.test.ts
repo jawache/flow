@@ -165,6 +165,7 @@ import {
   notInstalledLines,
   NOT_INSTALLED,
   wantsColour,
+  hooksDirOf,
   otherHooks,
   preCommitOf,
   settingsFileFor,
@@ -2277,8 +2278,18 @@ describe("other hooks — what counts, and the pre-commit hook a person edits", 
     expect(otherHooks(HOOKS_DIR, folder(["pre-commit"], HOOKS_DIR))).toBeNull();
   });
 
-  it("outside git, or when git could not say, there is nothing to read", () => {
-    expect(otherHooks(".husky/_", null)).toBeNull();
+  it("compares the folder git resolved, so any spelling of .githooks is flow's own", () => {
+    for (const set of [".githooks/", "./.githooks", "/repo/.githooks"])
+      expect(otherHooks(set, folder(["pre-commit"], hooksDirOf("/repo", set))), set).toBeNull();
+  });
+
+  it("names the folder repo-relative when it is inside the repo, and absolute when it is not", () => {
+    expect(hooksDirOf("/repo", ".husky/_")).toBe(".husky/_");
+    expect(hooksDirOf("/repo", ".git/hooks")).toBe(".git/hooks");
+    expect(hooksDirOf("/repo", "..foo/hooks"), "a name that starts with .. is still inside").toBe("..foo/hooks");
+    expect(hooksDirOf("/repo", "../sibling/hooks"), "a sibling of the repo is outside it").toBe("/sibling/hooks");
+    expect(hooksDirOf("/wt", "/main/.git/hooks"), "a worktree's shared folder").toBe("/main/.git/hooks");
+    expect(hooksDirOf("/repo", "."), "the repo root itself is not a folder inside it").toBe("/repo");
   });
 
   it("is wired once the pre-commit hook a person edits calls flow, and a comment naming it does not", () => {
@@ -2299,6 +2310,7 @@ describe("other hooks — what counts, and the pre-commit hook a person edits", 
     expect(planInit({ ...bare, ...husky(null) }).otherHooks).toStrictEqual({ dir: ".husky/_", preCommit: ".husky/pre-commit", wired: false });
     expect(planInit({ ...bare, ...gitHooks(["pre-push"]) }).otherHooks?.dir).toBe(".git/hooks");
     expect(planInit({ ...bare, ...husky(null), isGit: false }).otherHooks, "outside git there are no hooks to keep").toBeNull();
+    expect(planInit({ ...bare, hooksPath: ".husky/_", hooksFolder: null }).otherHooks, "nor when git could not say").toBeNull();
   });
 });
 
@@ -2340,7 +2352,10 @@ describe("planInit — when git already runs other hooks", () => {
     });
 
     it("followed to the letter, the first fix wires it", () => {
-      const followed = `#!/bin/sh\nnpm test\n${GATE_LOCAL_LINE}\n${GATE_RUN_LINE}\n`;
+      const lines = block(plan);
+      const at = lines.findIndex((line) => line.includes("Add these two lines to the end of .husky/pre-commit:"));
+      const added = lines.slice(at + 1, at + 3).map((line) => line.trim());
+      const followed = `#!/bin/sh\nnpm test\n${added.join("\n")}\n`;
       expect(planInit({ ...bare, ...husky(followed) }).otherHooks?.wired).toBe(true);
     });
   });
@@ -2445,6 +2460,7 @@ describe("planInit — the second run", () => {
     gateText: PRE_COMMIT,
     hasFlowDir: true,
     hooksPath: HOOKS_DIR,
+    hooksFolder: { dir: HOOKS_DIR, files: ["pre-commit"], preCommit: PRE_COMMIT },
     resolves: true,
     settings: withRegistrations({}).settings,
   });

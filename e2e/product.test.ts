@@ -413,8 +413,13 @@ describe("flow init, run again", () => {
 /** The words the block opens with, as the docs fix them. */
 const NOT_INSTALLED = "FLOW IS NOT INSTALLED";
 
-/** Flow's two lines, as the block prints them for a person to add. */
-const FLOW_LINES = 'f="$PWD/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook commit\nexec flow hook commit\n';
+/** The two lines the block tells a person to add to that pre-commit hook, as it printed them. */
+const linesToAdd = (stdout: string, preCommit: string): string[] => {
+  const lines = stdout.split("\n");
+  const at = lines.findIndex((line) => line.includes(`Add these two lines to the end of ${preCommit}:`));
+  expect(at, "the block names the hook to add them to").not.toBe(-1);
+  return lines.slice(at + 1, at + 3).map((line) => line.trim());
+};
 
 /**
  * A repo set up the way husky 9 sets one up: `core.hooksPath` is `.husky/_`, whose `pre-commit` is
@@ -464,8 +469,10 @@ describe("flow init, when git already runs other hooks", () => {
   it("counts flow installed once .husky/pre-commit calls it: no block, 0, and husky's hook runs the gate", () => {
     const husky = huskyRepo("npm test\n");
     try {
-      expect(flow(husky, ["init"]).code).toBe(1);
-      writeFileSync(join(husky, ".husky", "pre-commit"), `echo husky ran\n${FLOW_LINES}`);
+      const first = flow(husky, ["init"]);
+      expect(first.code).toBe(1);
+      // Followed to the letter: the two lines the block printed, appended to husky's hook.
+      writeFileSync(join(husky, ".husky", "pre-commit"), `echo husky ran\n${linesToAdd(first.stdout, ".husky/pre-commit").join("\n")}\n`);
 
       const again = flow(husky, ["init"]);
       expect(again.code, again.stdout + again.stderr).toBe(0);
