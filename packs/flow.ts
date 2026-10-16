@@ -135,13 +135,14 @@ export const flow = definePack("flow", (repo: Home) => {
       // (`./node_modules/.bin/flow`), and flow started by a runner, which is a package runner
       // (`npx flow`, `pnpm dlx @jawache/flow@latest`, `npm exec -- flow`, `bun run flow`) or node
       // on the bundle or the bin link (`node …/dist/flow.mjs`, which is how the registered hooks
-      // call it). After the runner, the words up to flow are skipped, and flow must start a path
-      // segment, so `workflow` and `scripts/workflow.mjs` are not flow.
+      // call it). A runner may be named by its path too (`/usr/local/bin/npx`). After the runner,
+      // the words up to flow are skipped, and flow must start a path segment, so `workflow` and
+      // `scripts/workflow.mjs` are not flow.
       .check(
         banCommands({
           ban: [
             "(?:\\S*/)?flow\\s+uninstall\\b",
-            "(?:npx|pnpx|bunx|yarn|pnpm|bun|npm|node)\\s+(?:\\S+\\s+)*?(?:\\S*/)?flow(?:@\\S+|\\.mjs)?\\s+uninstall\\b",
+            "(?:\\S*/)?(?:npx|pnpx|bunx|yarn|pnpm|bun|npm|node)\\s+(?:\\S+\\s+)*?(?:\\S*/)?flow(?:@\\S+|\\.mjs)?\\s+uninstall\\b",
           ],
         }),
       )
@@ -166,6 +167,11 @@ export const flow = definePack("flow", (repo: Home) => {
           "npm exec -- flow uninstall",
           "pnpm dlx @jawache/flow@latest uninstall",
           "bunx flow uninstall",
+          "pnpx flow uninstall",
+          "yarn flow uninstall",
+          "bun run flow uninstall",
+          "/usr/local/bin/npx flow uninstall",
+          "/opt/homebrew/bin/node node_modules/.bin/flow uninstall",
           "./node_modules/.bin/flow uninstall",
           "node node_modules/@jawache/flow/dist/flow.mjs uninstall",
           "node node_modules/.bin/flow uninstall",

@@ -138,7 +138,7 @@ Refuses `flow uninstall` when an agent runs it. Taking flow off a repo or a mach
 {
   "ban": [
     "(?:\\S*/)?flow\\s+uninstall\\b",
-    "(?:npx|pnpx|bunx|yarn|pnpm|bun|npm|node)\\s+(?:\\S+\\s+)*?(?:\\S*/)?flow(?:@\\S+|\\.mjs)?\\s+uninstall\\b"
+    "(?:\\S*/)?(?:npx|pnpx|bunx|yarn|pnpm|bun|npm|node)\\s+(?:\\S+\\s+)*?(?:\\S*/)?flow(?:@\\S+|\\.mjs)?\\s+uninstall\\b"
   ]
 }
 ```
@@ -182,6 +182,11 @@ EOF`
 - running `npm exec -- flow uninstall`
 - running `pnpm dlx @jawache/flow@latest uninstall`
 - running `bunx flow uninstall`
+- running `pnpx flow uninstall`
+- running `yarn flow uninstall`
+- running `bun run flow uninstall`
+- running `/usr/local/bin/npx flow uninstall`
+- running `/opt/homebrew/bin/node node_modules/.bin/flow uninstall`
 - running `./node_modules/.bin/flow uninstall`
 - running `node node_modules/@jawache/flow/dist/flow.mjs uninstall`
 - running `node node_modules/.bin/flow uninstall`
