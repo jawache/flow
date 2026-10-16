@@ -58,6 +58,7 @@ import {
   agentSettingOf,
   nothingBound,
   ridesRefusal,
+  agentOf,
   toEvent,
   toResult,
   tokensFromTranscript,
@@ -1060,6 +1061,14 @@ describe("who the session is, from what the host wrote", () => {
     expect(plain).toStrictEqual({ head: "hello", subagent: false });
     const named = sessionFactsFrom({ payload: { session_id: "s", agent_type: "leader" }, transcript: human("hello") });
     expect(named, "agent_type without agent_id is the top-level session's own").toStrictEqual(plain);
+  });
+
+  it("names the agent a message came from the one way: main, or the subagent's id with its type when sent", () => {
+    expect(agentOf(subagent)).toStrictEqual({ agent: "a6009b5", agentType: "builder" });
+    expect(agentOf({ session_id: "s1", agent_id: "a1" }), "a subagent sent with no type").toStrictEqual({ agent: "a1" });
+    expect(agentOf({ session_id: "s1", agent_id: "a1", agent_type: "" }), "an empty type is none").toStrictEqual({ agent: "a1" });
+    expect(agentOf({ session_id: "s" }), "the session itself").toStrictEqual({ agent: "main" });
+    expect(agentOf({ session_id: "s", agent_type: "leader" }), "a top-level --agent session is still main").toStrictEqual({ agent: "main" });
   });
 
   it("reads the branch out of HEAD's own text, ref or detached", () => {

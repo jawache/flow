@@ -416,6 +416,12 @@ export interface Notice {
   /** The file the prose lives in, when it did not. The shell resolves it; a pure home cannot. */
   readonly file: string | undefined;
   readonly cause: Cause;
+  /**
+   * What the event that showed it was about: the repo-relative path, or the command line, as a
+   * guardrail row's subject is. Absent when the event carries no file or command, such as a
+   * session note or a fault.
+   */
+  readonly subject: string | undefined;
 }
 
 export type Effect = Block | Notice;
@@ -609,7 +615,7 @@ export function brief({ load, event, marks, settings, off = false }: BriefArgs):
   if (off) return { notices: [], marks };
   if (!load.ok)
     return {
-      notices: [{ do: "notice", entry: null, text: refusalText(load.refusals), file: undefined, cause: "fault" }],
+      notices: [{ do: "notice", entry: null, text: refusalText(load.refusals), file: undefined, cause: "fault", subject: undefined }],
       marks,
     };
 
@@ -630,7 +636,8 @@ export function brief({ load, event, marks, settings, off = false }: BriefArgs):
     const last = next[entry.id];
     const cause: Cause = event.moment === "session" ? "session" : last === undefined ? "first-touch" : "drift";
     if (last !== undefined && (cause !== "drift" || event.tokens - last < limit)) continue;
-    notices.push({ do: "notice", entry: entry.id, text: entry.spec.text, file: entry.spec.file, cause });
+    const subject = event.path ?? event.command;
+    notices.push({ do: "notice", entry: entry.id, text: entry.spec.text, file: entry.spec.file, cause, subject });
     next[entry.id] = event.tokens;
   }
   return { notices, marks: next };
@@ -853,7 +860,40 @@ export interface SessionMarker {
    * delete. Absent on a marker written before this field existed, which reads as "unknown actor".
    */
   readonly agent?: unknown;
+  /** The type that agent was started as, for the commit gate's log rows. Absent on `main`. */
+  readonly agentType?: unknown;
   readonly ts?: unknown;
+}
+
+/**
+ * The agent one row, marker or call came from: the key its state is stored under, and its type.
+ *
+ * One value rather than two loose ones, because the type means nothing without the id it belongs to.
+ */
+export interface AgentOf {
+  /** `main` for the session itself, a subagent's `agent_id`, or `commit`: see `UNNAMED_COMMIT`. */
+  readonly agent: string;
+  /** The type the subagent was started as, when the host said. Never beside `main` or `commit`. */
+  readonly agentType?: string;
+}
+
+/**
+ * The agent a commit-gate run's rows name when no agent can be named: no marker, a stale one, or
+ * one written before markers held the agent. `commit` is also the stream such a commit's rows land
+ * in when no session claims it.
+ */
+export const UNNAMED_COMMIT: AgentOf = { agent: "commit" };
+
+/**
+ * An agent named by an id and, maybe, a type — the one reading of the pair, wherever it is read
+ * from: a hook message's `agent_id` and `agent_type`, or a marker's `agent` and `agentType`.
+ *
+ * Null when the id is not a non-empty string, and the type counts only beside such an id, because a
+ * type means nothing without the agent it belongs to.
+ */
+export function namedAgent(id: unknown, type: unknown): AgentOf | null {
+  if (typeof id !== "string" || id === "") return null;
+  return typeof type === "string" && type !== "" ? { agent: id, agentType: type } : { agent: id };
 }
 
 /** A commit long after the last edit is not this session's. */
@@ -863,7 +903,7 @@ export const MARKER_MAX_AGE_MS = 4 * 60 * 60 * 1000;
 export interface Attribution {
   readonly session: string;
   /** Null when the marker named no agent — an old marker, or a run with nobody to attribute to. */
-  readonly agent: string | null;
+  readonly who: AgentOf | null;
 }
 
 /**
@@ -884,11 +924,11 @@ export function attribution(
   nowMs: number,
   maxAgeMs: number = MARKER_MAX_AGE_MS,
 ): Attribution {
-  const none: Attribution = { session: fallback, agent: null };
+  const none: Attribution = { session: fallback, who: null };
   if (!marker || typeof marker.session !== "string" || !marker.session) return none;
   const at = Date.parse(String(marker.ts));
   if (!Number.isFinite(at) || Math.abs(nowMs - at) > maxAgeMs) return none;
-  return { session: marker.session, agent: typeof marker.agent === "string" && marker.agent ? marker.agent : null };
+  return { session: marker.session, who: namedAgent(marker.agent, marker.agentType) };
 }
 
 /**
@@ -947,7 +987,14 @@ export function runRows(moment: Moment, outcome: Outcome, subjects: number): Row
         message: effect.message,
         detail: effect.detail,
       });
-    else rows.push({ kind: "breadcrumb", moment, id: effect.entry, cause: effect.cause });
+    else
+      rows.push({
+        kind: "breadcrumb",
+        moment,
+        id: effect.entry,
+        cause: effect.cause,
+        ...(effect.subject === undefined ? {} : { subject: effect.subject }),
+      });
   }
   return rows;
 }
@@ -1857,27 +1904,36 @@ export interface RowDiff {
  * Only the two MECHANISM rows are compared, and that is not a softening: a replay has no tool
  * calls to record and no session to stamp a meta row for, so `tool`, `run` and `meta` are facts
  * about the live process rather than about the guard's judgement. What the recording claims is
- * that the same rules refuse the same subjects and the same notes show for the same causes, and
- * those are exactly the rows named here.
+ * that the same rules refuse the same subjects and the same notes show for the same causes and
+ * files, and those are exactly the rows named here.
  */
 export function diffRows(replayed: readonly Row[], live: readonly Row[]): RowDiff[] {
-  const judgements = (rows: readonly Row[]): string[] =>
+  // A breadcrumb's `subject` is compared only when BOTH rows carry one: a log written before
+  // breadcrumb rows named their file or command has none, and it still has to compare clean. So a
+  // row is its full line, plus a `loose` key without the subject; a guardrail row has always named
+  // its subject, so its loose key is its full line.
+  const judgements = (rows: readonly Row[]): { full: string; loose: string }[] =>
     rows
       .filter((row) => row.kind === "guardrail" || row.kind === "breadcrumb")
-      .map((row) =>
-        row.kind === "guardrail"
-          ? `guardrail ${field(row, "moment") ?? ""} ${field(row, "id") ?? "—"} ${row["out"] as string} ${subjectOf(row) ?? ""}`.trim()
-          : `breadcrumb ${field(row, "moment") ?? ""} ${field(row, "id") ?? "—"} ${field(row, "cause") ?? ""}`.trim(),
-      );
+      .map((row) => {
+        if (row.kind === "guardrail") {
+          const full = `guardrail ${field(row, "moment") ?? ""} ${field(row, "id") ?? "—"} ${row["out"] as string} ${subjectOf(row) ?? ""}`.trim();
+          return { full, loose: full };
+        }
+        const loose = `breadcrumb ${field(row, "moment") ?? ""} ${field(row, "id") ?? "—"} ${field(row, "cause") ?? ""}`.trim();
+        const subject = field(row, "subject");
+        return { full: subject === null ? loose : `${loose} ${subject}`, loose };
+      });
   const mine = judgements(replayed);
   const theirs = judgements(live);
   const out: RowDiff[] = [];
   for (let i = 0; i < Math.max(mine.length, theirs.length); i++) {
     const a = mine[i];
     const b = theirs[i];
-    if (a === b) continue;
-    if (a !== undefined) out.push({ side: "replay", at: i, row: a });
-    if (b !== undefined) out.push({ side: "live", at: i, row: b });
+    const unnamed = (j: { full: string; loose: string }): boolean => j.full === j.loose;
+    if (a !== undefined && b !== undefined && (a.full === b.full || ((unnamed(a) || unnamed(b)) && a.loose === b.loose))) continue;
+    if (a !== undefined) out.push({ side: "replay", at: i, row: a.full });
+    if (b !== undefined) out.push({ side: "live", at: i, row: b.full });
   }
   return out;
 }

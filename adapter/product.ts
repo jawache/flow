@@ -186,10 +186,11 @@ function parsedFile(root: string, path: string): { readonly value: unknown; read
  * marker the write rail leaves, and the mode its last call recorded.
  */
 function liveSession(root: string): StatusFacts["session"] {
-  const { session, agent, wearing } = wearer(root);
+  const { session, who, wearing } = wearer(root);
   // `wearer` answers with the attribution's fallback when the marker is missing, stale or malformed,
   // and that fallback is not a session: reporting it would name a chat that never existed.
-  if (agent === null) return null;
+  if (who === null) return null;
+  const { agent } = who;
   const mode = lastMode(readRows(root, session));
   return { id: session, agent, wearing, mode, steer: mode === "auto" ? steerOf(transcriptOf(root, session, agent)) : null };
 }

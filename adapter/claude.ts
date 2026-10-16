@@ -57,6 +57,8 @@ import {
   guard,
   recorder,
   runRows,
+  UNNAMED_COMMIT,
+  type AgentOf,
   type Block,
   type Identity,
   type Marks,
@@ -99,6 +101,7 @@ import {
   type CommitScope,
   type StagedChanges,
   sessionFactsFrom,
+  agentOf,
   ownTranscriptPath,
   refused,
   reversal,
@@ -242,19 +245,19 @@ export function currentBranch(root: string): string | null {
  * who is here — and a rule that fires at the gate for a wearer status never showed is the exact
  * surprise the marker exists to prevent.
  *
- * `agent` is null when the marker is missing, stale or malformed, and then the wearer wears NOTHING
+ * `who` is null when the marker is missing, stale or malformed, and then the wearer wears NOTHING
  * rather than a guess: there is no transcript and no hook message out here, so the stored verdict is
  * the only truthful answer there can be.
  */
 export function wearer(root: string): {
   readonly branch: string | null;
   readonly session: string;
-  readonly agent: string | null;
+  readonly who: AgentOf | null;
   readonly wearing: readonly string[];
 } {
   const branch = currentBranch(root);
-  const { session, agent } = commitAttribution(root, branch);
-  return { branch, session, agent, wearing: agent === null ? [] : (loadState(root, session, agent).categories ?? []) };
+  const { session, who } = commitAttribution(root, branch);
+  return { branch, session, who, wearing: who === null ? [] : (loadState(root, session, who.agent).categories ?? []) };
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -665,7 +668,8 @@ export async function loadRegime(root: string): Promise<Regime> {
 interface Session {
   readonly root: string;
   readonly id: string;
-  readonly agent: string;
+  /** Which agent the call came from, and its type when the host said. */
+  readonly who: AgentOf;
   readonly branch: string | null;
   /** This agent's own transcript: a subagent's own, never its parent's. */
   readonly transcript: () => string | null;
@@ -696,7 +700,7 @@ function sessionOf(payload: HookPayload, root: string): Session {
   return {
     root,
     id: typeof payload.session_id === "string" && payload.session_id !== "" ? payload.session_id : "unknown",
-    agent: typeof payload.agent_id === "string" && payload.agent_id !== "" ? payload.agent_id : "main",
+    who: agentOf(payload),
     branch: currentBranch(root),
     transcript,
     tokens: once((): number => {
@@ -731,7 +735,7 @@ function sessionOf(payload: HookPayload, root: string): Session {
 function identityOf(session: Session, payload: HookPayload, categories: readonly Category[]): Identity {
   if (categories.length === 0) return { wearing: [], faults: [], fresh: false };
   const facts = sessionFactsFrom({ payload, transcript: session.transcript() });
-  return stickyIdentity(session.root, session.id, session.agent, facts, categories);
+  return stickyIdentity(session.root, session.id, session.who.agent, facts, categories);
 }
 
 /** The world a payload is read against — disk, and the turn, asked only if the moment needs them. */
@@ -777,7 +781,7 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
   // session, so this is the only way a later `git commit` can attribute its refusals to the chat
   // that caused them. Best-effort by construction — `writeMarker` answers a boolean.
   if (hook === "pre-tool-use" && !off && session.id !== "unknown")
-    writeMarker(root, session.id, session.agent, session.branch);
+    writeMarker(root, session.id, session.who, session.branch);
 
   const key = callKey(payload);
   const tool = typeof payload.tool_name === "string" ? payload.tool_name : "";
@@ -796,7 +800,7 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
   const include = regime.kind === "loaded" ? (regime.config.settings.snapshotInclude ?? []) : [];
   const snapshotted = (result: HookResult): HookResult => {
     if (hook === "pre-tool-use" && !off && key !== null && result.exitCode === 0)
-      takeSnapshot(root, key, include, { session: session.id, agent: session.agent, tool });
+      takeSnapshot(root, key, include, { session: session.id, agent: session.who.agent, tool });
     return result;
   };
 
@@ -895,7 +899,7 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
   const steps: RecordedStep[] = [];
 
   const answer = await judge({ events, session, load, settings: config.settings, identity, off, hook, payload, rows, steps: taping ? steps : null });
-  if (!off) appendRows({ root, session: session.id, branch: session.branch }, rows);
+  if (!off) appendRows({ root, session: session.id, branch: session.branch, who: session.who }, rows);
   if (taping) appendSteps(root, session.id, steps);
   return snapshotted(toResult(hook, settle(answer)));
 }
@@ -927,7 +931,7 @@ async function judge(args: {
   // READ AFTER the identity was settled, deliberately: `stickyIdentity` writes the classification
   // into this same file, and the save at the end of this function carries `stored` forward whole. A
   // read taken before it would write the categories back out of existence on the next breadcrumb.
-  const stored = loadState(session.root, session.id, session.agent);
+  const stored = loadState(session.root, session.id, session.who.agent);
   let marks: Marks = compacted && load.ok ? afterCompaction(stored.marks, load.entries) : stored.marks;
   if (compacted && !off) rows.push({ kind: "compaction" });
   if (compacted) steps?.push({ rail: "compaction" });
@@ -1023,7 +1027,7 @@ async function judge(args: {
       rows.push(...runRows(event.moment, { effects: notices, tallies: [] } satisfies Outcome, 1));
   }
 
-  if (!off && marks !== stored.marks) saveState(session.root, session.id, session.agent, { ...stored, marks });
+  if (!off && marks !== stored.marks) saveState(session.root, session.id, session.who.agent, { ...stored, marks });
   return { refused: blocked, shown };
 }
 
@@ -1107,7 +1111,7 @@ export async function runCommit(root: string, scope: CommitScope): Promise<HookR
   // empty or not, through `guard()`'s own `!load.ok` branch.
   if (load.ok && files.length === 0 && deleted.length === 0) return ALLOW;
 
-  const { branch, session, wearing } = wearer(root);
+  const { branch, session, who, wearing } = wearer(root);
   // The gate is where the expensive checks live — a suite, a type-check, a whole dependency
   // cruise — so it is also where a recording is worth the most: replaying a refused commit is the
   // one thing you cannot do by re-running it, because the working tree has moved on since.
@@ -1136,7 +1140,7 @@ export async function runCommit(root: string, scope: CommitScope): Promise<HookR
         world: tape.taken(),
       },
     ]);
-  appendRows({ root, session, branch }, runRows("commit", outcome, files.length + gone.length));
+  appendRows({ root, session, branch, who: who ?? UNNAMED_COMMIT }, runRows("commit", outcome, files.length + gone.length));
 
   const blocks: Refused[] = outcome.effects
     .filter((effect): effect is Block => effect.do === "block")
