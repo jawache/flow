@@ -376,9 +376,9 @@ function removeIfEmpty(dir: string): void {
 }
 
 /**
- * The plan, carried out, in the reverse of init's order: the gate first, then the hooks path that
- * points git at it. Every step is attempted, and every failure is COLLECTED rather than thrown, so a
- * person reads what did go beside the one thing that did not.
+ * The plan, carried out: the gate first, then the hooks path that points git at it, then the
+ * folders, the link and the settings files. Every step is attempted, and every failure is COLLECTED
+ * rather than thrown, so a person reads what did go beside the one thing that did not.
  */
 function performUninstall(root: string, plan: UninstallPlan): string[] {
   const { failures, attempt } = steps();
