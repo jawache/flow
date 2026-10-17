@@ -4689,8 +4689,8 @@ export interface StatusFacts {
     readonly steer?: Steer | null | undefined;
   } | null;
   /**
-   * Of the paths a write or delete rule names outright ({@link literalScopes}), the ones git ignores,
-   * whether or not the file exists yet (`.env`).
+   * Of the paths a write or delete rule names outright ({@link literalScopes}, which leaves out
+   * flow's own `.flow/`), the ones git ignores, whether or not the file exists yet (`.env`).
    */
   readonly ignored: readonly string[];
   /** The config's `snapshotInclude` globs: the ignored paths the snapshot records anyway. */
@@ -4729,10 +4729,12 @@ function namedOutright(entry: Bound): string[] {
 
 /**
  * The paths those rules name OUTRIGHT, across every rule: the only paths status asks git about, by
- * name, so a `.env` that does not exist yet is asked about too.
+ * name, so a `.env` that does not exist yet is asked about too. flow's own `.flow/` is left out: it
+ * ignores itself, and the snapshot never holds it, so no `snapshotInclude` could bring it back.
  */
 export function literalScopes(load: LoadResult | null): string[] {
-  return [...new Set(treeRules(universe(load?.ok === true ? load.entries : [])).flatMap(namedOutright))];
+  const named = treeRules(universe(load?.ok === true ? load.entries : [])).flatMap(namedOutright);
+  return [...new Set(named)].filter((path) => path !== FLOW_DIR && !path.startsWith(`${FLOW_DIR}/`));
 }
 
 /**

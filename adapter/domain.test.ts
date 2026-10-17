@@ -4052,6 +4052,8 @@ describe("status — the snapshot's edges and a registration an older flow wrote
     const load = { ok: true as const, entries: [guardsAt([".env", "src/**", "config/app.json"]), guardsAt([".env"], ["delete"])] };
     expect(literalScopes(load)).toEqual([".env", "config/app.json"]);
     expect(literalScopes(null)).toEqual([]);
+    const own = { ok: true as const, entries: [guardsAt([".env", ".flow/state.json", ".flow"])] };
+    expect(literalScopes(own), "flow's own state ignores itself, and no rule is about it").toEqual([".env"]);
   });
 
   it("goes red on an older flow's narrow PostToolUse, and says re-running init widens it", () => {

@@ -206,14 +206,13 @@ function hooksFolder(root: string): HooksFolder | null {
 /**
  * Which of the paths the rules name outright git ignores — the edge of the snapshot, which is git's
  * view of the tree. `git check-ignore` answers by name, so a `.env` that has not been written yet is
- * caught, and a path inside an ignored directory is too. flow's own `.flow/` is left out: it ignores
- * itself, and no rule is about it. No names, not a git repo, or git unable to answer, is an empty
- * list — status has its own lines for those.
+ * caught, and a path inside an ignored directory is too. No names, not a git repo, or git unable to
+ * answer, is an empty list — status has its own lines for those.
  */
 function ignoredPaths(root: string, literals: readonly string[]): string[] {
   if (literals.length === 0) return [];
   const named = spawnSync("git", ["-C", root, "check-ignore", "--stdin"], { encoding: "utf8", input: `${literals.join("\n")}\n` });
-  return [...new Set(pathLines(named.stdout))].filter((path) => path !== `${FLOW_DIR}/` && !path.startsWith(`${FLOW_DIR}/`));
+  return pathLines(named.stdout);
 }
 
 /**
