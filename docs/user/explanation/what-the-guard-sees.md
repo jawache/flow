@@ -150,7 +150,9 @@ The paths come from [the parse](#the-parse-what-a-command-is), so a path named i
 The snapshot holds what git holds: every tracked file, and every untracked file that git does not ignore.
 
 - **A file git ignores** is not in it, so a shell write to that file is not judged, and neither is anything under `.git`. Some ignored files are worth guarding, and an `.env` file is the usual one. `snapshotInclude` in the config lists globs for the ignored paths to record as well.
-- **A rule whose scope reaches an ignored path** that the snapshot leaves out is reported by `flow status` as a red line naming the rule and the setting, so the gap cannot stay silent.
+- **A rule that names an ignored path exactly**, such as `.on(".env.keys")`, is reported by `flow status` as a red line naming the rule and the setting, unless `snapshotInclude` lists the path. The red line is only for a path the rule names exactly. A broad glob such as `src/**` that also matches an ignored `.DS_Store` gets no red line.
+- **A file that enters the snapshot during a call** has no earlier copy in it. This happens when the call adds the file to `snapshotInclude`, or edits `.gitignore` so git stops ignoring it. flow records the file as it stands, does not judge it for that call, and prints one line naming it. Every later change to the file is judged. So flow never deletes a file it has no earlier copy of.
+- **A file that leaves the snapshot during a call** stays on disk as the call left it. This happens when the call removes the file from `snapshotInclude`, or adds it to `.gitignore`. The file was not removed, so no delete rule is called on it.
 - **Files outside the repository** are never recorded.
 - **A file that one command creates and then deletes** leaves nothing in the diff, so no rule is called on it.
 - **A command you type yourself with `!`** is your own work rather than the agent's, and it is not put through the guard.
