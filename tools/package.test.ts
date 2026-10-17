@@ -13,14 +13,14 @@ import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { packedFiles, shippedPages, unshippedLinks } from "./domain.ts";
+import { packedFiles, unshippedLinks } from "./domain.ts";
 
 const PACKAGE = resolve(import.meta.dirname, "..");
 
 describe("the npm package — every page it ships, as an agent follows it from node_modules", () => {
   // --ignore-scripts: what is asked is the file list, and nothing a lifecycle script might do.
   const pack = spawnSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], { cwd: PACKAGE, encoding: "utf8" });
-  const shipped = packedFiles(pack.stdout) ?? [];
+  const shipped = packedFiles(pack.stdout);
 
   it("lists what npm would upload", () => {
     expect(pack.status, pack.stderr).toBe(0);
@@ -28,9 +28,9 @@ describe("the npm package — every page it ships, as an agent follows it from n
   });
 
   it("has no shipped page linking to a file the package leaves out", () => {
-    const pages = new Map(shippedPages(shipped).map((page) => [page, readFileSync(join(PACKAGE, page), "utf8")]));
-    expect(pages.size).toBeGreaterThan(20);
-    const faults = unshippedLinks(shipped, pages);
+    expect(pack.status, pack.stderr).toBe(0);
+    expect(shipped.filter((file) => file.endsWith(".md")).length).toBeGreaterThan(20);
+    const faults = unshippedLinks(shipped, (page) => readFileSync(join(PACKAGE, page), "utf8"));
     expect(faults, `a shipped page links to a file the package leaves out:\n  ${faults.join("\n  ")}`).toStrictEqual([]);
   });
 });
