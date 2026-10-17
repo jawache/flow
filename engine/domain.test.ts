@@ -522,6 +522,32 @@ describe("what an entry is run against", () => {
     expect(blocks(untold).map((b) => b.subject), "refused rather than allowed on a guess").toEqual(["m/2.sql"]);
   });
 
+  it("marks each file the last commit holds as it is unchanged, and no other", async () => {
+    const says = loadConfig(
+      defineConfig([
+        pack(
+          definePack("log", {
+            says: guardrail()
+              .at(commit)
+              .on("**")
+              .check((ctx) => ctx.fail(String(ctx.file?.unchanged)))
+              .message("says")
+              .test({ block: [{ staged: ["a.ts"], world: { fs: { "a.ts": "" } } }] }),
+          }),
+        ),
+      ]),
+    );
+    const outcome = await guard({
+      load: says,
+      event: { moment: "commit", staged: ["a.ts", "b.ts"], added: [], unchanged: ["a.ts"], wearing: [] },
+      world: world({ fs: { "a.ts": "same", "b.ts": "edited" } }),
+    });
+    expect(blocks(outcome).map((b) => [b.subject, b.detail])).toEqual([
+      ["a.ts", "true"],
+      ["b.ts", "undefined"],
+    ]);
+  });
+
   it("asks a staged deletion only of an entry bound at delete as well as commit — and asks it AS a delete", async () => {
     const both = loadConfig(
       defineConfig([
@@ -1506,6 +1532,30 @@ describe("replay — a recorded session, run again with no repo and no harness",
       ]),
     });
     expect(failing.rows.filter((r) => r.kind === "guardrail").map((r) => r["id"])).toEqual(["rails.suitePasses"]);
+  });
+
+  it("keeps which files a recorded --all commit held as committed, so an append-only rule passes them again", async () => {
+    const check = protectedPath({ existingOnly: true });
+    const appendOnly = guardrail()
+      .at(commit)
+      .on("m/**")
+      .check(check)
+      .message("history")
+      .test({ block: [{ staged: ["m/1.sql"], added: [], world: { fs: { "m/1.sql": "" } } }] });
+    const load = loadConfig(defineConfig([pack(definePack("log", { appendOnly }))]));
+    const step = (unchanged?: readonly string[]): RecordedStep => ({
+      rail: "guard",
+      moment: "commit",
+      staged: ["m/1.sql"],
+      added: [],
+      ...(unchanged === undefined ? {} : { unchanged }),
+      wearing: [],
+      world: { fs: { "m/1.sql": "old" } },
+    });
+    const denied = async (s: RecordedStep): Promise<unknown[]> =>
+      (await replay({ load, settings: {}, recording: recording([s]) })).rows.filter((r) => r.kind === "guardrail").map((r) => r["subject"]);
+    expect(await denied(step(["m/1.sql"])), "as committed").toEqual([]);
+    expect(await denied(step()), "the same step, edited").toEqual(["m/1.sql"]);
   });
 
   it("a reach the recording never answered is REPORTED — a replay carrying one is not evidence", async () => {

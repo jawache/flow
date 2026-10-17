@@ -4042,12 +4042,13 @@ describe("stagedChanges — one question to git, and every staged change comes b
     expect(stagedChanges(z)).toEqual({
       files: ["m/2.sql", "src/a.ts", "m/1b.sql", "bin/x"],
       added: ["m/2.sql", "m/1b.sql"],
+      unchanged: [],
       deleted: ["m/1.sql", "a path with spaces.sql"],
     });
   });
 
   it("reads nothing staged as an empty commit", () => {
-    expect(stagedChanges("")).toEqual({ files: [], added: [], deleted: [] });
+    expect(stagedChanges("")).toEqual({ files: [], added: [], unchanged: [], deleted: [] });
   });
 });
 
@@ -4057,21 +4058,39 @@ describe("treeChanges — the whole tree as one commit, against the last commit'
     throw new Error("HEAD was asked about although the tree answered");
   };
 
-  it("marks what the last commit lacks as new, and what it has that is gone as removed", () => {
-    const tree = ran(["m/1.sql", "m/gone.sql", "src/a.ts", ""].join("\0"));
-    expect(treeChanges(["m/1.sql", "m/2.sql", "src/a.ts"], tree, unasked)).toEqual({
-      files: ["m/1.sql", "m/2.sql", "src/a.ts"],
+  it("marks what the last commit lacks as new, what it has as it was as unchanged, and what is gone as removed", () => {
+    const tree = ran(["m/1.sql", "m/3.sql", "m/gone.sql", "src/a.ts", ""].join("\0"));
+    // The diff names the edited file and the removed one; m/2.sql is untracked, so it names neither.
+    const differs = ran(["src/a.ts", "m/gone.sql", ""].join("\0"));
+    expect(treeChanges(["m/1.sql", "m/2.sql", "m/3.sql", "src/a.ts"], tree, differs, unasked)).toEqual({
+      files: ["m/1.sql", "m/2.sql", "m/3.sql", "src/a.ts"],
       added: ["m/2.sql"],
+      unchanged: ["m/1.sql", "m/3.sql"],
       deleted: ["m/gone.sql"],
     });
   });
 
+  it("names no file unchanged when the diff failed, so every committed file still reads as an edit", () => {
+    const tree = ran(["m/1.sql", ""].join("\0"));
+    expect(treeChanges(["m/1.sql"], tree, ran("", 128), unasked)).toEqual({ files: ["m/1.sql"], added: [], unchanged: [], deleted: [] });
+  });
+
   it("treats every file as new before the first commit, when there is no HEAD to list", () => {
-    expect(treeChanges(["m/1.sql"], ran("", 128), () => false)).toEqual({ files: ["m/1.sql"], added: ["m/1.sql"], deleted: [] });
+    expect(treeChanges(["m/1.sql"], ran("", 128), ran("", 128), () => false)).toEqual({
+      files: ["m/1.sql"],
+      added: ["m/1.sql"],
+      unchanged: [],
+      deleted: [],
+    });
   });
 
   it("says nothing is known when git failed for any other reason, so a check refuses rather than allows", () => {
-    expect(treeChanges(["m/1.sql"], ran("", 127), () => true)).toEqual({ files: ["m/1.sql"], added: undefined, deleted: [] });
+    expect(treeChanges(["m/1.sql"], ran("", 127), ran("", 127), () => true)).toEqual({
+      files: ["m/1.sql"],
+      added: undefined,
+      unchanged: [],
+      deleted: [],
+    });
   });
 });
 

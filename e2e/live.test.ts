@@ -85,6 +85,13 @@ const demo = definePack("demo", {
       ],
     }),
 
+  keepGenerated: guardrail()
+    .at(write, deletion, commit)
+    .on("gen/**")
+    .check(protectedPath({}))
+    .message("Machine-written: edit its source, then re-run the build.")
+    .test({ block: [{ path: "gen/a.ts", content: "" }] }),
+
   noForce: guardrail()
     .at(command)
     .check((ctx) => ((ctx.command ?? "").includes("--force") ? ctx.fail("--force") : ctx.ok()))
@@ -417,6 +424,13 @@ describe("the commit gate", () => {
       runGit(other, ["add", "migrations"]);
       const first = gateHere();
       expect(first.code, `before the first commit every file is new: ${first.stderr}`).toBe(0);
+      // Committed past the gate, for --all to find as committed: a file only a plain protectedPath
+      // covers, and one holding the marker the content rule noSecrets bans.
+      mkdirSync(join(other, "gen"));
+      writeFileSync(join(other, "gen", "a.ts"), "export const a = 1;\n");
+      mkdirSync(join(other, "src"));
+      writeFileSync(join(other, "src", "marked.ts"), "// DO-NOT-COMMIT\n");
+      runGit(other, ["add", "gen", "src"]);
       runGit(other, ["commit", "-q", "-m", "one"]);
     });
     afterAll(() => {
@@ -459,6 +473,26 @@ describe("the commit gate", () => {
         const old = gateHere(["commit", "migrations/001_renamed.sql"]);
         expect(old.code, "the old verb an older hook calls asks git too, whatever list it passes").toBe(2);
         expect(old.stderr).toContain("✗ demo.appendOnly · migrations/001.sql");
+      } finally {
+        reset();
+      }
+    });
+
+    it("passes --all over a tree the last commit already holds, and blocks --all over an edit of one (#142)", () => {
+      // This repo's config is untracked and carries the marker noSecrets bans, so --all refuses it
+      // whatever happens here: only the append-only rule's lines are this test's business.
+      const clean = gateHere(["hook", "commit", "--all"]);
+      expect(clean.stderr, "every migration is as committed").not.toContain("demo.appendOnly");
+      expect(clean.stderr, "a plain protectedPath passes a file as committed").not.toContain("demo.keepGenerated");
+      expect(clean.stderr, "a content rule still reads a file as committed").toContain("✗ demo.noSecrets · src/marked.ts");
+      writeFileSync(migration("001.sql"), "drop table a;\n");
+      writeFileSync(join(other, "gen", "a.ts"), "export const a = 2;\n");
+      try {
+        const edited = gateHere(["hook", "commit", "--all"]);
+        expect(edited.code).toBe(2);
+        expect(edited.stderr).toContain("✗ demo.appendOnly · migrations/001.sql");
+        expect(edited.stderr, "002.sql is as committed").not.toContain("migrations/002.sql");
+        expect(edited.stderr).toContain("✗ demo.keepGenerated · gen/a.ts");
       } finally {
         reset();
       }
@@ -1796,7 +1830,7 @@ describe("flow facts — the record and the conversations, read back", () => {
     expect(read.metrics.headline.blocks).toBeGreaterThan(0);
     expect(read.metrics.span.tools).toBeGreaterThan(0);
     expect(read.metrics.guardrails.find((g) => g.id === "demo.noTodo")?.hits).toBeGreaterThan(0);
-    expect(read.moments.totals).toMatchObject({ guardrails: 8, breadcrumbs: 2 });
+    expect(read.moments.totals).toMatchObject({ guardrails: 9, breadcrumbs: 2 });
     expect(read.terrain.some((n) => n.path === "src")).toBe(true);
   });
 

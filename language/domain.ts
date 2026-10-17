@@ -329,8 +329,20 @@ export interface Ctx {
    * `ctx.fs.exists(path)` answers yes to every file it created; at commit every staged file is on
    * disk, and "before" is the last commit. Absent, ask `ctx.fs`: at write the tree is still the
    * one from before the change.
+   *
+   * `unchanged` is `true` on a file identical to the last commit's copy, which only `flow hook
+   * commit --all` hands a check: it judges the whole tree, and most of it is as committed. A check
+   * about content reads it all the same; a check about edits has nothing to judge. Absent everywhere
+   * else, because every other event is a change.
    */
-  readonly file?: { readonly path: string; readonly content: string; readonly existed?: boolean | undefined } | undefined;
+  readonly file?:
+    | {
+        readonly path: string;
+        readonly content: string;
+        readonly existed?: boolean | undefined;
+        readonly unchanged?: boolean | undefined;
+      }
+    | undefined;
   /** command: the line about to run. */
   readonly command?: string | undefined;
   /**
@@ -338,7 +350,7 @@ export interface Ctx {
    * the order they appear. `null` when the line does not parse: read it as "cannot tell".
    */
   readonly commands?: readonly ShellCommand[] | null | undefined;
-  /** commit: the staged paths. */
+  /** commit: the staged paths. Under `flow hook commit --all`, every file in the tree. */
   readonly staged?: readonly string[] | undefined;
   /** turn-end: what the actor did this turn, in order. */
   readonly turn?: readonly TurnAction[] | undefined;
@@ -1255,6 +1267,8 @@ export type Case =
       readonly staged: readonly string[];
       /** The staged paths the last commit does not have. Each file's `ctx.file.existed` says so. */
       readonly added?: readonly string[];
+      /** The staged paths identical to the last commit, as under `--all`. Each sets `ctx.file.unchanged`. */
+      readonly unchanged?: readonly string[];
       /**
        * Staged deletions, by path, each with its content as the last commit has it. An entry that
        * fires at `delete` as well as `commit` is asked about each one, as a delete.

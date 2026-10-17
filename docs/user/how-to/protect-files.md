@@ -34,9 +34,11 @@ This guide shows you how to stop anyone changing or deleting files that nobody s
 
 `protectedPath` refuses every file it is called with, and it does not read the file's contents. Which files are protected is set only by the globs in `.on(…)`. The agent is shown the text you pass to `.message(…)`.
 
+**A file identical to the one in the last commit passes.** Only `flow hook commit --all` calls the rule with such a file.
+
 The glob also covers deleting the whole folder. `rm -rf src/generated` removes every file under the folder. Once the command has run, flow judges each removed file and writes back each one the rule refuses.
 
-The `.test` block has `block` cases and no `pass` cases. `pass` lists the inputs the rule must let through, and `block` lists the inputs it must refuse. This rule refuses every input, so `pass` has nothing to list.
+The `.test` block has `block` cases and no `pass` cases. `pass` lists the inputs the rule must let through, and `block` lists the inputs it must refuse. This rule refuses every edit, so `pass` has nothing to list.
 
 ## Variants
 
