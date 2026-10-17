@@ -54,6 +54,7 @@ import {
   type Verdict,
   type World,
 } from "../language/domain.ts";
+import { stagedFiles } from "../checks/domain.ts";
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // CATEGORIES — who a session is
@@ -350,16 +351,8 @@ async function subjectsOf(entry: LoadedEntry, event: GuardEvent, world: World): 
   if (event.moment === "commit") {
     const staged = event.staged ?? [];
     if (!spec.on) return [{ name: null, facts: { staged } }];
-    const out: Subject[] = [];
-    // A Set, not a list: under `--all` nearly every file in the tree is unchanged.
-    const same = new Set(event.unchanged ?? []);
-    for (const path of staged) {
-      if (!inScope(spec, path)) continue;
-      if (!(await world.fs.exists(path))) continue;
-      const existed = event.added === undefined ? {} : { existed: !event.added.includes(path) };
-      const unchanged = same.has(path) ? { unchanged: true } : {};
-      out.push({ name: path, facts: { file: { path, content: await world.fs.read(path), ...existed, ...unchanged }, staged } });
-    }
+    const files = await stagedFiles(entry, staged, world, event.added, event.unchanged);
+    const out: Subject[] = files.map((file) => ({ name: file.path, facts: { file, staged } }));
     for (const gone of event.deleted ?? []) {
       if (!judgesDeletion(entry, gone.path)) continue;
       out.push({ name: gone.path, facts: { file: { ...gone, existed: true }, staged }, moment: "delete" });

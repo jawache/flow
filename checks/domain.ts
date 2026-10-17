@@ -384,7 +384,7 @@ export const protectedPath = defineCheck(
   (opts: { existingOnly?: boolean }): Check =>
     async (ctx) => {
       const { path } = touched(ctx);
-      if (ctx.moment !== "delete" && ctx.file?.unchanged === true) return ctx.ok();
+      if (ctx.file?.unchanged === true) return ctx.ok();
       if (opts.existingOnly === true) {
         // "Already there" means before THIS change. Before an Edit the tree still answers that.
         // After a shell command, and at commit, the tree holds the file either way, so the event
@@ -2034,6 +2034,32 @@ export async function caseCtxs(entry: LoadedEntry, moment: Moment, c: Case, unan
 }
 
 /**
+ * Each staged file an entry that named `.on(…)` is asked about, as its `ctx.file` — the ONE rule
+ * for a commit's file subjects, which the live gate (`subjectsOf`) and a case both build through.
+ *
+ * A file out of the entry's scope, or not on disk, yields none. `existed` is set when `added` is
+ * given, and `unchanged` on each file `unchanged` names — which only `--all` has.
+ */
+export async function stagedFiles(
+  entry: LoadedEntry,
+  staged: readonly string[],
+  world: World,
+  added: readonly string[] | undefined,
+  unchanged: readonly string[] | undefined,
+): Promise<NonNullable<Ctx["file"]>[]> {
+  // A Set, not a list: under `--all` nearly every file in the tree is unchanged.
+  const same = new Set(unchanged ?? []);
+  const out: NonNullable<Ctx["file"]>[] = [];
+  for (const path of staged) {
+    if (!inScope(entry.spec, path)) continue;
+    if (!(await world.fs.exists(path))) continue;
+    const existed = added === undefined ? {} : { existed: !added.includes(path) };
+    out.push({ path, content: await world.fs.read(path), ...existed, ...(same.has(path) ? { unchanged: true } : {}) });
+  }
+  return out;
+}
+
+/**
  * THE COMMIT FAN-OUT, in a case — the same split the engine makes, made from a recorded world.
  *
  * At the gate an entry that named `.on(…)` is about FILES: it is asked once per staged file in its
@@ -2064,14 +2090,7 @@ async function commitSubjects(
   const staged = facts.staged ?? [];
   const { spec } = entry;
   if (!spec.on) return [facts];
-  const out: Partial<Ctx>[] = [];
-  for (const path of staged) {
-    if (!inScope(spec, path)) continue;
-    if (!(await world.fs.exists(path))) continue;
-    const existed = added === undefined ? {} : { existed: !added.includes(path) };
-    const same = unchanged?.includes(path) === true ? { unchanged: true } : {};
-    out.push({ file: { path, content: await world.fs.read(path), ...existed, ...same }, staged });
-  }
+  const out: Partial<Ctx>[] = (await stagedFiles(entry, staged, world, added, unchanged)).map((file) => ({ file, staged }));
   const atDelete = ((spec.at ?? []) as readonly string[]).includes("delete");
   for (const [path, content] of Object.entries(deleted ?? {})) {
     if (!atDelete || !inScope(spec, path)) continue;
