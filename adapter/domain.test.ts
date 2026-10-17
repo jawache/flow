@@ -4297,7 +4297,7 @@ describe("the call log — which other calls overlapped this one", () => {
     const me: CallRecord = { key: "today", session: "today-session", agent: "main", tool: "Bash", at: dead.at + 20 * 60 * 60 * 1000 };
     expect(overlapping(me, [me, dead]).map((c) => c.key), "a call dead for 20 hours is not in flight").toStrictEqual([]);
     const finished = call("finished", "sub1", me.at - 1000, me.at - 500);
-    expect(forgettable([dead, finished], me.at), "nor does it pin every later record, and it is forgotten itself").toStrictEqual([dead.key, "finished"]);
+    expect(forgettable([dead, finished], me.at), "nor does it pin every later record; it is left for the day's sweep").toStrictEqual(["finished"]);
   });
 
   it("counts a call with no finish only for its first hour", () => {
@@ -4307,22 +4307,29 @@ describe("the call log — which other calls overlapped this one", () => {
     expect(overlapping(me, [me, young, old]).map((c) => c.key), "a call an hour old at this snapshot is dead").toStrictEqual(["young"]);
     expect(overlapping(me, [me, { ...old, done: me.at + 5 }]).map((c) => c.key), "a long call that did finish counts as ever").toStrictEqual(["old"]);
     const gone = call("gone", "sub2", me.at - 3 * CALL_LIFETIME_MS);
-    expect(forgettable([young, gone, call("kept", "sub3", me.at - 10, me.at - 5)], me.at), "the young call still pins what finished after it began").toStrictEqual(["gone"]);
+    const kept = call("kept", "sub3", me.at - 10, me.at - 5);
+    expect(forgettable([young, gone, kept], me.at), "the young call still pins what finished after it began").toStrictEqual([]);
+    expect(forgettable([gone, kept], me.at), "the dead one pins nothing").toStrictEqual(["kept"]);
   });
 
-  it("keeps a dead call while a call that began inside its hour has yet to diff", () => {
+  it("names a call dead by now to a call that began inside its hour", () => {
     const x = call("x", "sub1", 0);
     const me = call("me", "main", CALL_LIFETIME_MS - 60_000);
     const now = CALL_LIFETIME_MS + 60_000;
     expect(overlapping(me, [me, x]).map((c) => c.key), "x was 59 minutes old at me's snapshot").toStrictEqual(["x"]);
-    expect(forgettable([x, me], now), "me's diff, still to come, counts x").toStrictEqual([]);
-    expect(forgettable([x, { ...me, done: now }], now), "once me has diffed, nothing still to come can count x").toStrictEqual(["x", "me"]);
+    expect(forgettable([x, { ...me, done: now }], now), "x has no finish, so it is never forgotten here").toStrictEqual(["me"]);
+  });
+
+  it("never forgets a call with no finish: one approved after an hour at the prompt still needs its snapshot", () => {
+    const waited = call("waited", "main", 0);
+    const now = 2 * CALL_LIFETIME_MS;
+    expect(forgettable([waited, call("other", "sub1", now - 10, now - 5)], now), "dead, it pins nothing, and it stays").toStrictEqual(["other"]);
   });
 
   it("keeps a call under its hour that its own agent has moved past: it may be a read still running", () => {
     const parallel = [call("slow", "main", 10), call("quick", "main", 20, 30)];
     expect(forgettable(parallel, 40), "its after-call hook still needs its snapshot").toStrictEqual(["quick"]);
-    expect(forgettable(parallel, 10 + CALL_LIFETIME_MS + 1), "and once its hour is up, it goes").toStrictEqual(["slow", "quick"]);
+    expect(forgettable(parallel, 10 + CALL_LIFETIME_MS + 1), "and once its hour is up, the day's sweep takes it").toStrictEqual(["quick"]);
   });
 
   it("never treats a spawn as dead by age: its subagent can work for hours", () => {

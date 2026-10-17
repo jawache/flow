@@ -432,18 +432,16 @@ export default defineConfig([pack(demo)], { snapshotInclude: [".env"] });
     expect(callLog(repo), "nothing in flight any more, so the log empties").toStrictEqual([]);
   });
 
-  it("deletes a call an hour gone with no finish once the next call finishes, and keeps one under the hour", () => {
+  it("keeps a call an hour gone with no finish for the day's sweep, and it pins no other record", () => {
     const dir = join(repo, ".flow", "snapshots");
     takeSnapshot(repo, "toolu_dead", [], { session: "killed", agent: "sub9", tool: "Bash" });
     const held = JSON.parse(readFileSync(join(dir, "toolu_dead.json"), "utf8")) as Record<string, unknown>;
     writeFileSync(join(dir, "toolu_dead.json"), JSON.stringify({ ...held, at: Date.now() - CALL_LIFETIME_MS - 60_000 }));
-    takeSnapshot(repo, "toolu_young", [], { session: "s1", agent: "sub1", tool: "Bash" });
     takeSnapshot(repo, "toolu_next", [], who);
     finishSnapshot(repo, "toolu_next");
-    expect(readdirSync(dir).sort(), "the dead call's record and index are gone; the young call still pins the one that finished").toStrictEqual([
-      "toolu_next.json",
-      "toolu_young.index",
-      "toolu_young.json",
+    expect(readdirSync(dir).sort(), "the dead call's snapshot stays; the call that finished after it goes").toStrictEqual([
+      "toolu_dead.index",
+      "toolu_dead.json",
     ]);
   });
 

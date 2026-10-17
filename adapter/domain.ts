@@ -1169,6 +1169,11 @@ function abandoned(call: CallRecord, log: readonly CallRecord[]): boolean {
  * How long a tool call can run. The host stops a shell call after ten minutes and a command started
  * in the background returns at once, so a call this long past its start with no finish is dead: its
  * session was killed before the after-call hook ran, and the hook never will.
+ *
+ * The hour runs from the snapshot, which is taken before the host's permission prompt, so it counts
+ * the time the call waits there too. A call approved after an hour at the prompt runs as a dead one:
+ * never named as overlapping. Its own snapshot is kept all the same (see `forgettable`), so its diff
+ * is still taken when it finishes.
  */
 export const CALL_LIFETIME_MS = 60 * 60 * 1000;
 
@@ -1223,16 +1228,17 @@ export function overlapping(me: CallRecord, log: readonly CallRecord[]): CallRec
 }
 
 /**
- * The calls the log can forget: those that stopped running — finished, or dead at the end of their
- * hour — before any call still to diff started, so no diff still to come can overlap them. Keeping
- * every record for a day would make every diff read a day of records. A call still running is kept
- * even when its agent has moved past it: a read beside its agent's later calls still has its own
- * after-call hook to come.
+ * The finished calls the log can forget: no call still running started before one finished, so no
+ * diff still to come can overlap it. Keeping every record for a day would make every diff read a day
+ * of records. A dead call pins nothing — no diff still to come counts it — but it is never forgotten
+ * here: it may be waiting at a permission prompt, and its after-call hook still needs its snapshot.
+ * The day's sweep of the snapshots folder takes it. A call still running is kept even when its agent
+ * has moved past it: a read beside its agent's later calls still has its own after-call hook to come.
  */
 export function forgettable(log: readonly CallRecord[], now: number): string[] {
   const live = log.filter((call) => call.done === undefined && !abandoned(call, log) && runningAt(call, now)).map((call) => call.at);
   const oldest = live.length === 0 ? Number.POSITIVE_INFINITY : Math.min(...live);
-  return log.filter((call) => !runningAt(call, now) && (ended(call) ?? Number.POSITIVE_INFINITY) < oldest).map((call) => call.key);
+  return log.filter((call) => call.done !== undefined && call.done < oldest).map((call) => call.key);
 }
 
 /** How a call is named in a message: the tool, the host's id, and whose it was. */
