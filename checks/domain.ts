@@ -52,6 +52,7 @@ import type {
   GuardrailMoment,
   LoadedEntry,
   Moment,
+  Scope,
   ShellCommand,
   ShellSubstitution,
   TurnAction,
@@ -1959,6 +1960,20 @@ const SPEAKS: Readonly<Record<CaseDialect, readonly GuardrailMoment[]>> = {
 };
 
 /**
+ * What a commit says about its staged files beyond their paths — what a case lists, and what the
+ * live gate's event carries. Written out rather than derived from `readCase`, so a field added to a
+ * case's reading does not silently become an option of the fan-out.
+ */
+export interface CommitFileFacts {
+  /** The staged paths the last commit does not have. Absent, each file's `existed` is left unset. */
+  readonly added?: readonly string[] | undefined;
+  /** The staged paths identical to the last commit, which only `--all` has. */
+  readonly unchanged?: readonly string[] | undefined;
+  /** The staged deletions, by path, with their content as the last commit has it. */
+  readonly deleted?: Readonly<Record<string, string>> | undefined;
+}
+
+/**
  * Read a case once: which dialect it speaks, the event facts it carries, and its recorded world.
  *
  * ONE ladder over the union, and it is the only one. There were three — this, a `caseMoment` that
@@ -1970,13 +1985,7 @@ export function readCase(c: Case): {
   readonly dialect: CaseDialect;
   readonly facts: Partial<Ctx>;
   readonly world: CaseWorld;
-  /** commit: the staged paths the last commit does not have, when the case says. */
-  readonly added?: readonly string[] | undefined;
-  /** commit: the staged paths identical to the last commit, when the case says. */
-  readonly unchanged?: readonly string[] | undefined;
-  /** commit: the staged deletions, by path, with their content as the last commit has it. */
-  readonly deleted?: Readonly<Record<string, string>> | undefined;
-} {
+} & CommitFileFacts {
   if (typeof c === "string") return { dialect: "command", facts: { command: c }, world: {} };
   const world = c.world ?? {};
   // The canned session's categories, the same field on every shape: a live rail hands every check
@@ -2041,19 +2050,20 @@ export async function caseCtxs(entry: LoadedEntry, moment: Moment, c: Case, unan
  * given, and `unchanged` on each file `unchanged` names — which only `--all` has.
  */
 export async function stagedFiles(
-  entry: LoadedEntry,
+  scope: Scope,
   staged: readonly string[],
   world: World,
-  added: readonly string[] | undefined,
-  unchanged: readonly string[] | undefined,
+  { added, unchanged }: Pick<CommitFileFacts, "added" | "unchanged">,
 ): Promise<NonNullable<Ctx["file"]>[]> {
-  // A Set, not a list: under `--all` nearly every file in the tree is unchanged.
+  // Sets, not lists: under `--all` nearly every file in the tree is unchanged, and before the
+  // first commit every one is added.
+  const fresh = added === undefined ? undefined : new Set(added);
   const same = new Set(unchanged ?? []);
   const out: NonNullable<Ctx["file"]>[] = [];
   for (const path of staged) {
-    if (!inScope(entry.spec, path)) continue;
+    if (!inScope(scope, path)) continue;
     if (!(await world.fs.exists(path))) continue;
-    const existed = added === undefined ? {} : { existed: !added.includes(path) };
+    const existed = fresh === undefined ? {} : { existed: !fresh.has(path) };
     out.push({ path, content: await world.fs.read(path), ...existed, ...(same.has(path) ? { unchanged: true } : {}) });
   }
   return out;
@@ -2085,12 +2095,12 @@ async function commitSubjects(
   entry: LoadedEntry,
   facts: Partial<Ctx>,
   world: World,
-  { added, unchanged, deleted }: Omit<ReturnType<typeof readCase>, "dialect" | "facts" | "world">,
+  { added, unchanged, deleted }: CommitFileFacts,
 ): Promise<Partial<Ctx>[]> {
   const staged = facts.staged ?? [];
   const { spec } = entry;
   if (!spec.on) return [facts];
-  const out: Partial<Ctx>[] = (await stagedFiles(entry, staged, world, added, unchanged)).map((file) => ({ file, staged }));
+  const out: Partial<Ctx>[] = (await stagedFiles(spec, staged, world, { added, unchanged })).map((file) => ({ file, staged }));
   const atDelete = ((spec.at ?? []) as readonly string[]).includes("delete");
   for (const [path, content] of Object.entries(deleted ?? {})) {
     if (!atDelete || !inScope(spec, path)) continue;

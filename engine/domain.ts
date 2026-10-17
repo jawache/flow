@@ -351,7 +351,7 @@ async function subjectsOf(entry: LoadedEntry, event: GuardEvent, world: World): 
   if (event.moment === "commit") {
     const staged = event.staged ?? [];
     if (!spec.on) return [{ name: null, facts: { staged } }];
-    const files = await stagedFiles(entry, staged, world, event.added, event.unchanged);
+    const files = await stagedFiles(spec, staged, world, { added: event.added, unchanged: event.unchanged });
     const out: Subject[] = files.map((file) => ({ name: file.path, facts: { file, staged } }));
     for (const gone of event.deleted ?? []) {
       if (!judgesDeletion(entry, gone.path)) continue;
