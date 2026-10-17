@@ -44,6 +44,7 @@ A check declares no moments, no schema and no `kind`. The entry's `.at(…)` set
 - **`content` at write** is the would-be bytes when the Edit tool made the change, and the bytes now on disk when a shell command made it. A check reads `content` the same way in both cases.
 - **`existed` after a shell command** is `true` if a file was at `path` before the command ran, and `false` if the command created it. The check runs after the command, so `ctx.fs.exists(path)` returns `true` for a file the command created.
 - **`existed` at commit** is `true` if the last commit has the file, and `false` if it does not.
+- **`unchanged`** is `true` on a file identical to the one in the last commit. Only `flow hook commit --all` passes such a file to a rule. On every other file, and at every other moment, `unchanged` is not set.
 - **When `existed` is not set**, use `ctx.fs.exists(path)`. At write, it returns whether the file was there before the change.
 - **A file the commit deletes** is passed to a rule bound at both `deletion` and `commit`, with paths in `.on(…)`. `ctx.moment` is `delete`, `content` is the file as the last commit has it, and `existed` is `true`.
 - **At an in-session delete**, `ctx.file` is `{ path, content }`, with no `existed`. `content` is the file before it was removed.

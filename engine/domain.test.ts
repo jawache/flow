@@ -522,6 +522,32 @@ describe("what an entry is run against", () => {
     expect(blocks(untold).map((b) => b.subject), "refused rather than allowed on a guess").toEqual(["m/2.sql"]);
   });
 
+  it("marks each file the last commit holds as it is unchanged, and no other", async () => {
+    const says = loadConfig(
+      defineConfig([
+        pack(
+          definePack("log", {
+            says: guardrail()
+              .at(commit)
+              .on("**")
+              .check((ctx) => ctx.fail(String(ctx.file?.unchanged)))
+              .message("says")
+              .test({ block: [{ staged: ["a.ts"], world: { fs: { "a.ts": "" } } }] }),
+          }),
+        ),
+      ]),
+    );
+    const outcome = await guard({
+      load: says,
+      event: { moment: "commit", staged: ["a.ts", "b.ts"], added: [], unchanged: ["a.ts"], wearing: [] },
+      world: world({ fs: { "a.ts": "same", "b.ts": "edited" } }),
+    });
+    expect(blocks(outcome).map((b) => [b.subject, b.detail])).toEqual([
+      ["a.ts", "true"],
+      ["b.ts", "undefined"],
+    ]);
+  });
+
   it("asks a staged deletion only of an entry bound at delete as well as commit — and asks it AS a delete", async () => {
     const both = loadConfig(
       defineConfig([

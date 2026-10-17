@@ -1022,14 +1022,20 @@ export function pathLines(stdout: string | null): string[] {
 
 /**
  * What a commit changes, in the shape the commit gate judges: the files it will hold, which of
- * those the last commit does not have, and the files it removes. A rename is a removal of the old
- * path plus an add of the new one, so it needs no shape of its own.
+ * those the last commit does not have, which of them are as the last commit has them, and the
+ * files it removes. A rename is a removal of the old path plus an add of the new one, so it needs
+ * no shape of its own.
  */
 export interface StagedChanges {
   /** Every path the commit will hold that it changes — the subjects of a file rule. */
   readonly files: readonly string[];
   /** The `files` the last commit does not have. Undefined when git could not say. */
   readonly added: readonly string[] | undefined;
+  /**
+   * The `files` identical to the last commit's copy. Only `--all` has any: a real commit never
+   * stages a file it leaves as it was. Empty when git could not say, so every file reads as changed.
+   */
+  readonly unchanged: readonly string[];
   /** The paths the last commit has and this one will not. */
   readonly deleted: readonly string[];
 }
@@ -1060,7 +1066,7 @@ export function stagedChanges(nameStatus: string): StagedChanges {
       if (status.startsWith("A")) added.push(path);
     }
   }
-  return { files, added, deleted };
+  return { files, added, unchanged: [], deleted };
 }
 
 /**
@@ -1070,15 +1076,21 @@ export function stagedChanges(nameStatus: string): StagedChanges {
  * HEAD`. It fails in two ways that answer differently. Before the first commit there is no HEAD, so
  * every file is new and nothing is removed. Any other failure is unknown: `added` stays undefined,
  * so a check asks the disk and refuses rather than allows.
+ *
+ * `differs` is `git diff --name-only --no-renames -z HEAD`, the tracked files whose copy here is not
+ * the last commit's. A file the last commit has that it does not name is unchanged: still a subject,
+ * so a content rule reads it, but never an edit. A failed diff names no file unchanged.
  */
-export function treeChanges(present: readonly string[], tree: ExecResult, hasHead: () => boolean): StagedChanges {
-  if (tree.code !== 0) return { files: [...present], added: hasHead() ? undefined : [...present], deleted: [] };
+export function treeChanges(present: readonly string[], tree: ExecResult, differs: ExecResult, hasHead: () => boolean): StagedChanges {
+  if (tree.code !== 0) return { files: [...present], added: hasHead() ? undefined : [...present], unchanged: [], deleted: [] };
   const committed = nulPaths(tree.stdout);
   const inTree = new Set(committed);
   const here = new Set(present);
+  const changed = differs.code === 0 ? new Set(nulPaths(differs.stdout)) : null;
   return {
     files: [...present],
     added: present.filter((path) => !inTree.has(path)),
+    unchanged: changed === null ? [] : present.filter((path) => inTree.has(path) && !changed.has(path)),
     deleted: committed.filter((path) => !here.has(path)),
   };
 }

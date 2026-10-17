@@ -329,8 +329,20 @@ export interface Ctx {
    * `ctx.fs.exists(path)` answers yes to every file it created; at commit every staged file is on
    * disk, and "before" is the last commit. Absent, ask `ctx.fs`: at write the tree is still the
    * one from before the change.
+   *
+   * `unchanged` is `true` on a file identical to the last commit's copy, which only `flow hook
+   * commit --all` hands a check: it judges the whole tree, and most of it is as committed. A check
+   * about content reads it all the same; a check about edits has nothing to judge. Absent everywhere
+   * else, because every other event is a change.
    */
-  readonly file?: { readonly path: string; readonly content: string; readonly existed?: boolean | undefined } | undefined;
+  readonly file?:
+    | {
+        readonly path: string;
+        readonly content: string;
+        readonly existed?: boolean | undefined;
+        readonly unchanged?: boolean | undefined;
+      }
+    | undefined;
   /** command: the line about to run. */
   readonly command?: string | undefined;
   /**

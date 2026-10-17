@@ -226,6 +226,11 @@ export interface GuardEvent {
    */
   readonly added?: readonly string[] | undefined;
   /**
+   * commit: the staged paths identical to the last commit, which only `--all` has. Each one's
+   * `ctx.file.unchanged` is `true`.
+   */
+  readonly unchanged?: readonly string[] | undefined;
+  /**
    * commit: the staged deletions an entry will judge (`judgedDeletions`), each with its content as
    * the last commit has it. A rename is a deletion of its old path plus an add of its new one.
    */
@@ -346,11 +351,14 @@ async function subjectsOf(entry: LoadedEntry, event: GuardEvent, world: World): 
     const staged = event.staged ?? [];
     if (!spec.on) return [{ name: null, facts: { staged } }];
     const out: Subject[] = [];
+    // A Set, not a list: under `--all` nearly every file in the tree is unchanged.
+    const same = new Set(event.unchanged ?? []);
     for (const path of staged) {
       if (!inScope(spec, path)) continue;
       if (!(await world.fs.exists(path))) continue;
       const existed = event.added === undefined ? {} : { existed: !event.added.includes(path) };
-      out.push({ name: path, facts: { file: { path, content: await world.fs.read(path), ...existed }, staged } });
+      const unchanged = same.has(path) ? { unchanged: true } : {};
+      out.push({ name: path, facts: { file: { path, content: await world.fs.read(path), ...existed, ...unchanged }, staged } });
     }
     for (const gone of event.deleted ?? []) {
       if (!judgesDeletion(entry, gone.path)) continue;
@@ -1740,6 +1748,7 @@ export type RecordedStep =
       readonly command?: string | undefined;
       readonly staged?: readonly string[] | undefined;
       readonly added?: readonly string[] | undefined;
+      readonly unchanged?: readonly string[] | undefined;
       readonly deleted?: GuardEvent["deleted"];
       readonly turn?: readonly TurnAction[] | undefined;
       readonly wearing: readonly string[];
@@ -1860,6 +1869,7 @@ export async function replay({ load, recording, settings, marks = {} }: ReplayAr
           command: step.command,
           staged: step.staged,
           added: step.added,
+          unchanged: step.unchanged,
           deleted: step.deleted,
           turn: step.turn,
           wearing: step.wearing,
