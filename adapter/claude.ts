@@ -394,6 +394,19 @@ function writeTree(root: string, index: string, seed: string | null, include: re
 }
 
 /**
+ * WHAT THE SNAPSHOT COULD NOT SEE: every path on disk that git ignored and `index` does not hold,
+ * names only. It is what tells a file that entered the snapshot during a call from one the call
+ * created (`visibility`), and it is taken before the call, so the config the call may edit decides
+ * nothing. `--directory` names a directory git ignores whole once, `node_modules/`, so git never
+ * walks it and the list stays short.
+ */
+function hiddenPaths(root: string, index: string): { hidden: string[] } | { fault: string } {
+  const listed = runGit(root, ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"], { index });
+  if (!listed.ok) return { fault: `git could not list the ignored paths the snapshot leaves out: ${listed.stderr}` };
+  return { hidden: nulPaths(listed.stdout.toString("utf8")) };
+}
+
+/**
  * RECORD THE TREE BEFORE A CALL, filed under the host's `tool_use_id`.
  *
  * A snapshot that cannot be taken is RECORDED as a fault rather than skipped, so the after-call rail
@@ -415,7 +428,11 @@ export function takeSnapshot(
     // The write below reports what went wrong, if anything did; a sweep that failed costs nothing.
   }
   const dir = gitDir(root);
-  const taken = dir === null ? { fault: `${root} is not a git checkout, so there is no tree to snapshot` } : writeTree(root, files.index, join(dir, "index"), include);
+  const written = dir === null ? { fault: `${root} is not a git checkout, so there is no tree to snapshot` } : writeTree(root, files.index, join(dir, "index"), include);
+  // What the tree left out, beside it: the after-call rail needs it to tell a file the call
+  // created from one that was already on disk and hidden (#146).
+  const hidden = "tree" in written ? hiddenPaths(root, files.index) : null;
+  const taken = hidden !== null && "fault" in hidden ? hidden : { ...written, ...hidden };
   // HEAD before the call, beside the tree: a file the call removed is git's only if HEAD held it.
   // And every tip the repo has, so the after-call rail can tell a commit it lands on from one it made.
   const head = "tree" in taken ? headCommit(root) : null;
