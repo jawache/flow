@@ -36,7 +36,7 @@ import {
   runHook,
   takeSnapshot,
 } from "./claude.ts";
-import { overlapping } from "./domain.ts";
+import { CALL_LIFETIME_MS, overlapping } from "./domain.ts";
 
 let repo: string;
 
@@ -430,6 +430,21 @@ export default defineConfig([pack(demo)], { snapshotInclude: [".env"] });
     ]);
     finishSnapshot(repo, "toolu_long");
     expect(callLog(repo), "nothing in flight any more, so the log empties").toStrictEqual([]);
+  });
+
+  it("deletes a call an hour gone with no finish once the next call finishes, and keeps one under the hour", () => {
+    const dir = join(repo, ".flow", "snapshots");
+    takeSnapshot(repo, "toolu_dead", [], { session: "killed", agent: "sub9", tool: "Bash" });
+    const held = JSON.parse(readFileSync(join(dir, "toolu_dead.json"), "utf8")) as Record<string, unknown>;
+    writeFileSync(join(dir, "toolu_dead.json"), JSON.stringify({ ...held, at: Date.now() - CALL_LIFETIME_MS - 60_000 }));
+    takeSnapshot(repo, "toolu_young", [], { session: "s1", agent: "sub1", tool: "Bash" });
+    takeSnapshot(repo, "toolu_next", [], who);
+    finishSnapshot(repo, "toolu_next");
+    expect(readdirSync(dir).sort(), "the dead call's record and index are gone; the young call still pins the one that finished").toStrictEqual([
+      "toolu_next.json",
+      "toolu_young.index",
+      "toolu_young.json",
+    ]);
   });
 
   it("leaves a record it cannot read out of the log rather than failing the diff", () => {
