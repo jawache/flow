@@ -172,6 +172,40 @@ describe("flow status", () => {
     expect(read.fittings.every((f) => f.ok)).toBe(true);
   });
 
+  // THE SNAPSHOT'S EDGE, as git answers it: one rule names an ignored `.env.keys` outright, one
+  // reaches an ignored `src/.DS_Store` with a broad glob. Only the first is a rule that wants a file
+  // it cannot see, so only the first is a red line, and `snapshotInclude` clears it.
+  it("goes red on a rule that names an ignored path exactly, and says nothing of a broad glob over one", () => {
+    const edge = newRepo();
+    try {
+      expect(flow(edge, ["init", "--empty"]).code).toBe(0);
+      writeFileSync(join(edge, ".gitignore"), ".env.keys\n.DS_Store\n");
+      mkdirSync(join(edge, "src"));
+      writeFileSync(join(edge, ".env.keys"), "KEY=x\n");
+      writeFileSync(join(edge, "src", ".DS_Store"), "x");
+      const config = (settings: string): string => `import { defineConfig, definePack, guardrail, pack, protectedPath, write } from "@jawache/flow";
+const edge = definePack("edge", {
+  keys: guardrail().at(write).on(".env.keys").check(protectedPath({})).message("no").test({ pass: [], block: [{ path: ".env.keys", content: "x" }] }),
+  src: guardrail().at(write).on("src/**").check(protectedPath({})).message("no").test({ pass: [], block: [{ path: "src/a.ts", content: "x" }] }),
+});
+export default defineConfig([pack(edge)]${settings});
+`;
+      writeFileSync(join(edge, "flow.config.ts"), config(""));
+      const said = flow(edge, ["status"]);
+      const lines = said.stdout.split("\n").filter((line) => line.includes("snapshot:"));
+      expect(lines, said.stdout).toEqual([expect.stringContaining("✗ snapshot: edge.keys guards .env.keys, which git ignores")]);
+      expect(said.stdout).not.toContain(".DS_Store");
+      expect(said.code).toBe(1);
+
+      writeFileSync(join(edge, "flow.config.ts"), config(`, { snapshotInclude: [".env*"] }`));
+      const listed = flow(edge, ["status"]);
+      expect(listed.stdout, "listed, so the snapshot holds it").not.toContain("snapshot:");
+      expect(listed.code).toBe(0);
+    } finally {
+      rmSync(edge, { recursive: true, force: true });
+    }
+  });
+
   it("goes red, with the fix, when the gate is not armed", () => {
     const bare = newRepo();
     try {
