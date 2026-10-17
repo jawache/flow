@@ -2989,12 +2989,6 @@ describe("the machine-wide file, beside a dev dependency's own", () => {
     );
   });
 
-  it("#144 repro: says nothing fires twice when the repo's own file calls flow for nothing yet", () => {
-    const facts = statusFacts({ settingsPath: ".claude/settings.json", settings: null, machine: { path: machinePath, settings: withRegistrations({}).settings } });
-    const detail = status(facts).fittings.find((f) => f.id === "hooks")?.detail ?? "";
-    expect(detail).not.toContain("fires twice");
-  });
-
   // BEFORE `flow init`: the repo's own file calls flow for nothing, and the machine-wide file runs it
   // for every event. The line is red, because a fresh clone has no registration, but it neither
   // predicts a double fire nor claims that no rule runs.
@@ -3003,7 +2997,7 @@ describe("the machine-wide file, beside a dev dependency's own", () => {
       (f) => f.id === "hooks",
     );
 
-  it("says the machine-wide file runs flow meanwhile, and stays red, before init", () => {
+  it("says the machine-wide file runs flow meanwhile, and stays red, before init (#144)", () => {
     for (const machine of [withRegistrations({}).settings, older]) {
       const fitting = beforeInit(machine);
       expect(fitting?.ok, "red until the repo's own file calls flow").toBe(false);
@@ -3022,6 +3016,13 @@ describe("the machine-wide file, beside a dev dependency's own", () => {
     );
     expect(beforeInit({ theme: "dark" })?.detail, "a machine-wide file with none of flow's covers nothing").toContain(
       "Until it does, no note is shown when a session starts;",
+    );
+  });
+
+  it("calls the one missing event \"it\" when the machine-wide file covers it", () => {
+    const subagentStopOnly = { hooks: { SubagentStop: [{ hooks: [{ type: "command", command: hookCommand("subagent-stop") }] }] } };
+    expect(beforeInit(subagentStopOnly, BEFORE_SUBAGENT_STOP)?.detail).toBe(
+      `.claude/settings.json does not call flow for SubagentStop — re-run \`flow init\`. Until it does, ${machinePath} calls flow for it in the meantime.`,
     );
   });
 

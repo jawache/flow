@@ -873,6 +873,13 @@ describe("a repo whose package.json lists flow", () => {
       };
       writeFileSync(join(machine, "settings.json"), `${JSON.stringify(older, null, 2)}\n`);
 
+      // Before init the repo's own file calls flow for nothing, so the machine-wide command is the
+      // only one that runs: the line is red, credits that file, and predicts no double fire (#144).
+      const before = flow(listed, ["status"], machine);
+      expect(before.stdout).toContain(`${join(machine, "settings.json")} calls flow for PreToolUse · Stop in the meantime`);
+      expect(before.stdout).not.toContain("fires twice");
+      expect(before.code).toBe(1);
+
       const init = flow(listed, ["init"], machine);
       expect(init.code, init.stdout + init.stderr).toBe(0);
       expect(init.stdout).toContain(

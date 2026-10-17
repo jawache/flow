@@ -4678,17 +4678,17 @@ export interface Status {
  * either way, because the repo's file is what a fresh clone gets.
  */
 function unregisteredText(facts: StatusFacts, unregistered: readonly (typeof REGISTERED)[number][]): string {
-  const elsewhere = new Set(facts.machine === null ? [] : registeredEvents(facts.machine.settings));
-  const covered = unregistered.filter((r) => elsewhere.has(HOST_EVENT[r.hook]));
-  const uncovered = unregistered.filter((r) => !elsewhere.has(HOST_EVENT[r.hook]));
-  const meanwhile =
-    covered.length === 0 || facts.machine === null
-      ? []
-      : [
-          `${facts.machine.path} calls flow for ${covered.length === unregistered.length ? (covered.length === 1 ? "it" : "them") : covered.map((r) => HOST_EVENT[r.hook]).join(" · ")} in the meantime`,
-        ];
+  const names = (rs: readonly (typeof REGISTERED)[number][]): string => rs.map((r) => HOST_EVENT[r.hook]).join(" · ");
+  const machine = facts.machine;
+  const elsewhere = new Set(machine === null ? [] : registeredEvents(machine.settings));
+  const covered: (typeof REGISTERED)[number][] = [];
+  const uncovered: (typeof REGISTERED)[number][] = [];
+  for (const r of unregistered) (elsewhere.has(HOST_EVENT[r.hook]) ? covered : uncovered).push(r);
+  // Every missing event covered reads back as "it" or "them"; only some, and they are named.
+  const which = uncovered.length > 0 ? names(covered) : covered.length === 1 ? "it" : "them";
+  const meanwhile = machine === null || covered.length === 0 ? [] : [`${machine.path} calls flow for ${which} in the meantime`];
   const until = [...meanwhile, ...uncovered.map((r) => r.unregistered)].join("; ");
-  return `${facts.settingsPath} does not call flow for ${unregistered.map((r) => HOST_EVENT[r.hook]).join(" · ")} — re-run \`flow init\`. Until it does, ${until}.`;
+  return `${facts.settingsPath} does not call flow for ${names(unregistered)} — re-run \`flow init\`. Until it does, ${until}.`;
 }
 
 function fittingsOf(facts: StatusFacts): Fitting[] {

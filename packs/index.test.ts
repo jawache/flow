@@ -210,7 +210,10 @@ describe("the packs surface", () => {
   it("names a bare -f once in the force-push refusal, and the bundle it sits in otherwise", () => {
     const entry = loaded(loadConfig(defineConfig([pack(packs.git, { release: "just release" })]))).find((e) => e.id === "git.noForcePush");
     const check = (entry?.spec as { check: Check }).check;
-    // Only what the check reads: the command line, which `gitCommands` parses, and the two verdicts.
+    // Only what the check reads: the command line and the two verdicts. The ctx carries no
+    // `commands` ON PURPOSE, so `gitCommands` takes its fallback and parses the line itself, with
+    // the same `parseCommandLine` the live rails hand over as `commands`. A pack may import only the
+    // public door, and the parse is not on it.
     const detail = (command: string): string | undefined => {
       const ctx = { command, ok: () => ({ ok: true }), fail: (said?: string) => ({ ok: false, detail: said }) } as unknown as Ctx;
       const verdict = check(ctx) as { ok: boolean; detail?: string };
