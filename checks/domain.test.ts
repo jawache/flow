@@ -1890,6 +1890,23 @@ describe("runCase", () => {
       expect((await runCase(appendOnly, check, { staged: ["m/2.sql"], world }, "block", 0)).ok, "the disk decides").toBe(true);
     });
 
+    it("passes a protected file identical to the last commit, with and without existingOnly, and refuses an edited one", async () => {
+      const world = { fs: { "m/1.sql": "old", "m/2.sql": "edited" } };
+      for (const check of [protectedPath({}), protectedPath({ existingOnly: true })]) {
+        const guarded = entry({ at: ["commit"], on: ["m/**"], check });
+        const asCommitted = { staged: ["m/1.sql"], added: [], unchanged: ["m/1.sql"], world };
+        expect((await runCase(guarded, check, asCommitted, "pass", 0)).ok, "as committed is not an edit").toBe(true);
+        const edited = { staged: ["m/1.sql", "m/2.sql"], added: [], unchanged: ["m/1.sql"], world };
+        const outcome = await runCase(guarded, check, edited, "block", 0);
+        expect(outcome.ok, "the edited file is still refused").toBe(true);
+      }
+    });
+
+    it("still refuses an unchanged file for what it holds: only an edit rule passes one", async () => {
+      const asCommitted = { staged: ["a.ts"], added: [], unchanged: ["a.ts"], world: { fs: { "a.ts": "SECRET" } } };
+      expect((await runCase(scoped, banned, asCommitted, "block", 0)).ok).toBe(true);
+    });
+
     it("asks a case's `deleted` files of an entry bound at delete as well as commit, as deletes", async () => {
       const check = protectedPath({ existingOnly: true });
       const gone = { staged: [], deleted: { "m/1.sql": "-- old" } };

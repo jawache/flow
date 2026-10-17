@@ -95,10 +95,10 @@ export const node = definePack("node", {
    */
   newDependencyNeedsReason: guardrail()
     .at(command)
-    .description("A commit that moves package.json must record why, and what else was checked.")
+    .description("A commit made while package.json has uncommitted changes must record why, and what else was checked.")
     .check(commitReason({ whenChanged: ["package.json"], token: "new-dep" }))
     .message(
-      "This commit moves package.json with no reason recorded. A dependency is a supply-chain surface — put `new-dep: <name> — <why, and what else was checked>` on a line of its own in the commit message. Doing it is fine; doing it silently is not.",
+      "package.json has changes since the last commit, staged or not, and this commit's message records no reason. If this commit adds or moves a dependency, put `new-dep: <name> — <why, and what else was checked>` on a line of its own in the message. If the package.json changes belong to another commit, commit them first with their own `new-dep:` line, or stash them, then commit again.",
     )
     .test({
       pass: [

@@ -29,10 +29,10 @@ A check declares no moments, no schema and no `kind`. The entry's `.at(…)` set
 
 | Field | Is |
 | --- | --- |
-| `ctx.file` | The file this moment is about, `{ path, content, existed }`, at a file moment. See [ctx.file](#ctxfile) |
+| `ctx.file` | The file this moment is about, `{ path, content, existed, unchanged }`, at a file moment. See [ctx.file](#ctxfile) |
 | `ctx.command` | The shell command line, at the command moment |
 | `ctx.commands` | The command line parsed as bash, at the command moment: one entry per simple command, or `null` when the line does not parse. See [ctx.commands](#ctxcommands) |
-| `ctx.staged` | The staged paths, at the commit moment, in every call that moment makes |
+| `ctx.staged` | The staged paths, at the commit moment, in every call that moment makes. Under `flow hook commit --all`, every file git lists |
 | `ctx.turn` | The turn's actions (edits and runs), at turn-end. For a subagent, they are that subagent's own actions |
 | `ctx.actor` | The category names that match the session making this change. Each name comes from evidence the host wrote about that session, never from a claim the session made about itself. The stock `oneWriter` check reads this field |
 | `ctx.moment` | Which moment this is, to branch on |
@@ -44,6 +44,7 @@ A check declares no moments, no schema and no `kind`. The entry's `.at(…)` set
 - **`content` at write** is the would-be bytes when the Edit tool made the change, and the bytes now on disk when a shell command made it. A check reads `content` the same way in both cases.
 - **`existed` after a shell command** is `true` if a file was at `path` before the command ran, and `false` if the command created it. The check runs after the command, so `ctx.fs.exists(path)` returns `true` for a file the command created.
 - **`existed` at commit** is `true` if the last commit has the file, and `false` if it does not.
+- **`unchanged`** is `true` on a file identical to the one in the last commit. Only `flow hook commit --all` passes such a file to a rule. On every other file, and at every other moment, `unchanged` is not set.
 - **When `existed` is not set**, use `ctx.fs.exists(path)`. At write, it returns whether the file was there before the change.
 - **A file the commit deletes** is passed to a rule bound at both `deletion` and `commit`, with paths in `.on(…)`. `ctx.moment` is `delete`, `content` is the file as the last commit has it, and `existed` is `true`.
 - **At an in-session delete**, `ctx.file` is `{ path, content }`, with no `existed`. `content` is the file before it was removed.
@@ -81,7 +82,7 @@ const noBareGh = defineCheck((_opts: Record<string, never>) => (ctx) => {
 | --- | --- |
 | `write` | `ctx.file` = `{ path, content }`, plus `existed` when a shell command made the change |
 | `delete` | `ctx.file` = `{ path, content }`, where `content` is the file before it was removed |
-| `commit` (a file rule) | When the rule lists globs with `.on(…)`, the check is called once per staged file in scope that is on disk. `ctx.file` = `{ path, content, existed }`, and `ctx.staged` is the whole staged set |
+| `commit` (a file rule) | When the rule lists globs with `.on(…)`, the check is called once per staged file in scope that is on disk. `ctx.file` = `{ path, content, existed }`, and `ctx.staged` is the whole staged set. Under `flow hook commit --all`, `ctx.file` also has `unchanged: true` when the file is identical to the one in the last commit |
 | `command` | `ctx.command`: the line about to run, and `ctx.commands`: that line parsed |
 | `commit` (no `.on`) | `ctx.staged`: the whole staged set, in one call |
 | `commit`, for a deleted file | Only when the rule is bound at both `deletion` and `commit`, and lists globs with `.on(…)`. `ctx.moment` is `delete`, and `ctx.file` = `{ path, content, existed: true }`, where `content` is the file as the last commit has it. `ctx.staged` is the whole staged set |

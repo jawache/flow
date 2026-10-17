@@ -17,7 +17,7 @@ summary: "every `flow` command, what `flow init` writes and `flow uninstall` rem
 | `flow facts [options]` | Reports what the log in `.flow/` and the Claude Code transcripts record about this repo. The options are listed under [`flow facts`](#flow-facts) |
 | `flow replay <file> [config] [--against <log>]` | Runs a recorded session through the rules again, with no repo and no Claude Code. `config` is the config to judge it with, `flow.config.ts` by default. `--against` compares the result with a log |
 | `flow hook <event>` | Called by the Claude Code hook registrations, with the hook's payload on standard input. You do not type it. An event flow does not know exits 0 and does nothing |
-| `flow hook commit [--all]` | Called by `.githooks/pre-commit`. Runs every `commit` rule over the staged changes, which flow reads from git. `--all` runs them over every file git lists, tracked or untracked, as if all of them were staged |
+| `flow hook commit [--all]` | Called by `.githooks/pre-commit`. Runs every `commit` rule over the staged changes, which flow reads from git. `--all` runs them over every file git lists, tracked or untracked, as if all of them were staged. Under `--all`, a file identical to the one in the last commit is checked for its content, never as an edit |
 | `flow --version` | Prints the version |
 
 `flow commit` is the name `.githooks/pre-commit` used before 0.2.2. It runs the same gate as `flow hook commit`, and ignores any file list it is given.

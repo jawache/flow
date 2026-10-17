@@ -137,6 +137,7 @@ import {
   reversal,
   callName,
   callRecord,
+  CALL_LIFETIME_MS,
   forgettable,
   overlapping,
   pathLines,
@@ -4087,12 +4088,13 @@ describe("stagedChanges — one question to git, and every staged change comes b
     expect(stagedChanges(z)).toEqual({
       files: ["m/2.sql", "src/a.ts", "m/1b.sql", "bin/x"],
       added: ["m/2.sql", "m/1b.sql"],
+      unchanged: [],
       deleted: ["m/1.sql", "a path with spaces.sql"],
     });
   });
 
   it("reads nothing staged as an empty commit", () => {
-    expect(stagedChanges("")).toEqual({ files: [], added: [], deleted: [] });
+    expect(stagedChanges("")).toEqual({ files: [], added: [], unchanged: [], deleted: [] });
   });
 });
 
@@ -4102,21 +4104,39 @@ describe("treeChanges — the whole tree as one commit, against the last commit'
     throw new Error("HEAD was asked about although the tree answered");
   };
 
-  it("marks what the last commit lacks as new, and what it has that is gone as removed", () => {
-    const tree = ran(["m/1.sql", "m/gone.sql", "src/a.ts", ""].join("\0"));
-    expect(treeChanges(["m/1.sql", "m/2.sql", "src/a.ts"], tree, unasked)).toEqual({
-      files: ["m/1.sql", "m/2.sql", "src/a.ts"],
+  it("marks what the last commit lacks as new, what it has as it was as unchanged, and what is gone as removed", () => {
+    const tree = ran(["m/1.sql", "m/3.sql", "m/gone.sql", "src/a.ts", ""].join("\0"));
+    // The diff names the edited file and the removed one; m/2.sql is untracked, so it names neither.
+    const differs = ran(["src/a.ts", "m/gone.sql", ""].join("\0"));
+    expect(treeChanges(["m/1.sql", "m/2.sql", "m/3.sql", "src/a.ts"], tree, differs, unasked)).toEqual({
+      files: ["m/1.sql", "m/2.sql", "m/3.sql", "src/a.ts"],
       added: ["m/2.sql"],
+      unchanged: ["m/1.sql", "m/3.sql"],
       deleted: ["m/gone.sql"],
     });
   });
 
+  it("names no file unchanged when the diff failed, so every committed file still reads as an edit", () => {
+    const tree = ran(["m/1.sql", ""].join("\0"));
+    expect(treeChanges(["m/1.sql"], tree, ran("", 128), unasked)).toEqual({ files: ["m/1.sql"], added: [], unchanged: [], deleted: [] });
+  });
+
   it("treats every file as new before the first commit, when there is no HEAD to list", () => {
-    expect(treeChanges(["m/1.sql"], ran("", 128), () => false)).toEqual({ files: ["m/1.sql"], added: ["m/1.sql"], deleted: [] });
+    expect(treeChanges(["m/1.sql"], ran("", 128), ran("", 128), () => false)).toEqual({
+      files: ["m/1.sql"],
+      added: ["m/1.sql"],
+      unchanged: [],
+      deleted: [],
+    });
   });
 
   it("says nothing is known when git failed for any other reason, so a check refuses rather than allows", () => {
-    expect(treeChanges(["m/1.sql"], ran("", 127), () => true)).toEqual({ files: ["m/1.sql"], added: undefined, deleted: [] });
+    expect(treeChanges(["m/1.sql"], ran("", 127), ran("", 127), () => true)).toEqual({
+      files: ["m/1.sql"],
+      added: undefined,
+      unchanged: [],
+      deleted: [],
+    });
   });
 });
 
@@ -4336,11 +4356,63 @@ describe("the call log — which other calls overlapped this one", () => {
     expect(overlapping(me, [me, denied, call("next", "sub1", 30, 40)])).toStrictEqual([]);
   });
 
+  it("#145: does not name a call whose after-hook never came, from a session a day gone", () => {
+    // The issue's own record: a subagent's Bash call of session e42a31ba, killed mid-call at 00:01Z.
+    const dead: CallRecord = { key: "toolu_01E5vnKWbskveeNuhHo2HjZ1", session: "e42a31ba-dead", agent: "aa87bd88ff0b87b33", tool: "Bash", at: 1792108910019 };
+    const me: CallRecord = { key: "today", session: "today-session", agent: "main", tool: "Bash", at: dead.at + 20 * 60 * 60 * 1000 };
+    expect(overlapping(me, [me, dead]).map((c) => c.key), "a call dead for 20 hours is not in flight").toStrictEqual([]);
+    const finished = call("finished", "sub1", me.at - 1000, me.at - 500);
+    expect(forgettable([dead, finished], me.at), "nor does it pin every later record; it is left for the day's sweep").toStrictEqual(["finished"]);
+  });
+
+  it("counts a call with no finish only for its first hour", () => {
+    const me = call("me", "main", 10 * CALL_LIFETIME_MS);
+    const young = call("young", "sub1", me.at - CALL_LIFETIME_MS + 1);
+    const old = call("old", "sub2", me.at - CALL_LIFETIME_MS);
+    expect(overlapping(me, [me, young, old]).map((c) => c.key), "a call an hour old at this snapshot is dead").toStrictEqual(["young"]);
+    expect(overlapping(me, [me, { ...old, done: me.at + 5 }]).map((c) => c.key), "a long call that did finish counts as ever").toStrictEqual(["old"]);
+    const gone = call("gone", "sub2", me.at - 3 * CALL_LIFETIME_MS);
+    const kept = call("kept", "sub3", me.at - 10, me.at - 5);
+    expect(forgettable([young, gone, kept], me.at), "the young call still pins what finished after it began").toStrictEqual([]);
+    expect(forgettable([gone, kept], me.at), "the dead one pins nothing").toStrictEqual(["kept"]);
+  });
+
+  it("names a call dead by now to a call that began inside its hour", () => {
+    const x = call("x", "sub1", 0);
+    const me = call("me", "main", CALL_LIFETIME_MS - 60_000);
+    const now = CALL_LIFETIME_MS + 60_000;
+    expect(overlapping(me, [me, x]).map((c) => c.key), "x was 59 minutes old at me's snapshot").toStrictEqual(["x"]);
+    expect(forgettable([x, { ...me, done: now }], now), "x has no finish, so it is never forgotten here").toStrictEqual(["me"]);
+  });
+
+  it("does not name a call approved after an hour at the prompt while it runs, and names it once it has finished", () => {
+    // The hour runs from the snapshot, taken before the permission prompt. A call that waited there
+    // longer is dead by the rule while it runs: a refusal of another agent's write in that time can
+    // put back under revert: "all" what this call wrote. Accepted on #157; pinned here.
+    const waited = call("waited", "main", 0);
+    const me = call("me", "sub1", CALL_LIFETIME_MS + 60_000);
+    expect(overlapping(me, [waited, me]), "running, but past its hour").toStrictEqual([]);
+    const after = call("after", "sub1", me.at + 1000);
+    expect(overlapping(after, [{ ...waited, done: after.at + 500 }, after]).map((c) => c.key), "its finish is inside this window").toStrictEqual(["waited"]);
+  });
+
+  it("keeps a call under its hour that its own agent has moved past: it may be a read still running", () => {
+    const parallel = [call("slow", "main", 10), call("quick", "main", 20, 30)];
+    expect(forgettable(parallel, 40), "its after-call hook still needs its snapshot").toStrictEqual(["quick"]);
+  });
+
+  it("never treats a spawn as dead by age: its subagent can work for hours", () => {
+    const spawn = call("spawn", "main", 0, undefined, "Agent");
+    const now = 10 * CALL_LIFETIME_MS;
+    expect(forgettable([spawn, call("pinned", "sub3", 1, 2)], now), "it still pins what finished after it began").toStrictEqual([]);
+    expect(forgettable([spawn], now), "and is kept itself").toStrictEqual([]);
+  });
+
   it("forgets a finished call once no call still in flight began before it finished", () => {
     const log = [call("live", "main", 100), call("old", "sub1", 10, 50), call("recent", "sub1", 60, 150)];
-    expect(forgettable(log), "recent finished after live began, so live's diff still needs it").toStrictEqual(["old"]);
-    expect(forgettable([...log, call("earliest", "sub2", 5)]), "a call in flight since before either pins both").toStrictEqual([]);
-    expect(forgettable([call("a", "main", 1, 2), call("b", "sub1", 3, 4)]), "nothing in flight").toStrictEqual(["a", "b"]);
+    expect(forgettable(log, 200), "recent finished after live began, so live's diff still needs it").toStrictEqual(["old"]);
+    expect(forgettable([...log, call("earliest", "sub2", 5)], 200), "a call in flight since before either pins both").toStrictEqual([]);
+    expect(forgettable([call("a", "main", 1, 2), call("b", "sub1", 3, 4)], 200), "nothing in flight").toStrictEqual(["a", "b"]);
   });
 
   it("names a call by its tool, its id and whose it was", () => {

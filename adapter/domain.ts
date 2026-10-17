@@ -1022,14 +1022,23 @@ export function pathLines(stdout: string | null): string[] {
 
 /**
  * What a commit changes, in the shape the commit gate judges: the files it will hold, which of
- * those the last commit does not have, and the files it removes. A rename is a removal of the old
- * path plus an add of the new one, so it needs no shape of its own.
+ * those the last commit does not have, which of them are as the last commit has them, and the
+ * files it removes. A rename is a removal of the old path plus an add of the new one, so it needs
+ * no shape of its own.
  */
 export interface StagedChanges {
-  /** Every path the commit will hold that it changes — the subjects of a file rule. */
+  /**
+   * The subjects of a file rule: every path the commit will hold that it changes, or under `--all`
+   * every file in the tree, changed or not (`unchanged` says which are not).
+   */
   readonly files: readonly string[];
   /** The `files` the last commit does not have. Undefined when git could not say. */
   readonly added: readonly string[] | undefined;
+  /**
+   * The `files` identical to the last commit's copy. Only `--all` has any: a real commit never
+   * stages a file it leaves as it was. Empty when git could not say, so every file reads as changed.
+   */
+  readonly unchanged: readonly string[];
   /** The paths the last commit has and this one will not. */
   readonly deleted: readonly string[];
 }
@@ -1060,7 +1069,7 @@ export function stagedChanges(nameStatus: string): StagedChanges {
       if (status.startsWith("A")) added.push(path);
     }
   }
-  return { files, added, deleted };
+  return { files, added, unchanged: [], deleted };
 }
 
 /**
@@ -1070,15 +1079,21 @@ export function stagedChanges(nameStatus: string): StagedChanges {
  * HEAD`. It fails in two ways that answer differently. Before the first commit there is no HEAD, so
  * every file is new and nothing is removed. Any other failure is unknown: `added` stays undefined,
  * so a check asks the disk and refuses rather than allows.
+ *
+ * `differs` is `git diff --name-only --no-renames -z HEAD`, the tracked files whose copy here is not
+ * the last commit's. A file the last commit has that it does not name is unchanged: still a subject,
+ * so a content rule reads it, but never an edit. A failed diff names no file unchanged.
  */
-export function treeChanges(present: readonly string[], tree: ExecResult, hasHead: () => boolean): StagedChanges {
-  if (tree.code !== 0) return { files: [...present], added: hasHead() ? undefined : [...present], deleted: [] };
+export function treeChanges(present: readonly string[], tree: ExecResult, differs: ExecResult, hasHead: () => boolean): StagedChanges {
+  if (tree.code !== 0) return { files: [...present], added: hasHead() ? undefined : [...present], unchanged: [], deleted: [] };
   const committed = nulPaths(tree.stdout);
   const inTree = new Set(committed);
   const here = new Set(present);
+  const changed = differs.code === 0 ? new Set(nulPaths(differs.stdout)) : null;
   return {
     files: [...present],
     added: present.filter((path) => !inTree.has(path)),
+    unchanged: changed === null ? [] : present.filter((path) => inTree.has(path) && !changed.has(path)),
     deleted: committed.filter((path) => !here.has(path)),
   };
 }
@@ -1120,7 +1135,7 @@ export function preJudged(payload: HookPayload, root: string): { readonly writes
 
 /**
  * One tool call as flow's own log holds it: who made it, when its snapshot was taken, and when its
- * diff was, once it has been. A record with no `done` is a call still in flight.
+ * diff was, once it has been. A record with no `done` is a call still in flight, until it is dead.
  */
 export interface CallRecord {
   /** The host's `tool_use_id`. */
@@ -1157,12 +1172,34 @@ function sameActor(a: CallRecord, b: CallRecord): boolean {
 /**
  * A snapshot whose diff never came, and never will: the host refused the call after flow allowed
  * it (a permission prompt said no), so it never ran. Read as in flight, it would narrow every
- * refusal in the worktree for a day. Its actor has moved on — a later call of the same session and
- * agent has already finished — so it is not waited on. A long read that is genuinely still running
- * beside its own agent's later calls is misread by this, and costs nothing: it writes nothing.
+ * refusal in the worktree for its first hour. Its actor has moved on — a later call of the same
+ * session and agent has already finished — so it is not waited on. A long read that is genuinely
+ * still running beside its own agent's later calls is misread by this, and costs nothing: it writes
+ * nothing.
  */
 function abandoned(call: CallRecord, log: readonly CallRecord[]): boolean {
   return call.done === undefined && log.some((other) => sameActor(other, call) && other.done !== undefined && other.at > call.at);
+}
+
+/**
+ * How long a tool call can run. The host stops a shell call after ten minutes and a command started
+ * in the background returns at once, so a call this long past its start with no finish is dead: its
+ * session was killed before the after-call hook ran, and the hook never will.
+ *
+ * The hour runs from the snapshot, which is taken before the host's permission prompt, so it counts
+ * the time the call waits there too. A call approved after an hour at the prompt runs as a dead one:
+ * never named as overlapping. Its own snapshot is kept all the same (see `forgettable`), so its diff
+ * is still taken when it finishes.
+ */
+export const CALL_LIFETIME_MS = 60 * 60 * 1000;
+
+/**
+ * Is the call still running at `time`: it stops at its finish, or, with none, at the end of its
+ * hour, when it is dead. A SPAWN with no finish never stops: it lasts as long as its subagent works,
+ * which can be hours, and its diff still comes.
+ */
+function runningAt(call: CallRecord, time: number): boolean {
+  return (call.done ?? (spawns(call) ? Number.POSITIVE_INFINITY : call.at + CALL_LIFETIME_MS)) > time;
 }
 
 /**
@@ -1182,7 +1219,8 @@ function isSpawn(tool: string): boolean {
 
 /**
  * The calls of OTHER actors that overlapped this one in time: started before this diff, and
- * finished after this snapshot or not finished at all.
+ * finished after this snapshot or not finished at all. A call with no finish counts while it is
+ * younger than {@link CALL_LIFETIME_MS} at this snapshot: dead by then, it ran none of this window.
  *
  * A call that finished inside this one's window counts as well as one still in flight: its write
  * landed between this snapshot and this diff just the same. Calls of the same session and agent
@@ -1195,17 +1233,20 @@ export function overlapping(me: CallRecord, log: readonly CallRecord[]): CallRec
       !sameActor(call, me) &&
       !spawns(call) &&
       !abandoned(call, log) &&
-      (call.done === undefined || call.done > me.at),
+      runningAt(call, me.at),
   );
 }
 
 /**
- * The finished calls the log can forget: no call still in flight started before one finished, so no
- * diff still to come can overlap it. Keeping every record for a day would make every diff read a
- * day of records.
+ * The finished calls the log can forget: no call still running started before one finished, so no
+ * diff still to come can overlap it. Keeping every record for a day would make every diff read a day
+ * of records. A dead call pins nothing — no diff still to come counts it — but it is never forgotten
+ * here: it may be waiting at a permission prompt, and its after-call hook still needs its snapshot.
+ * The day's sweep of the snapshots folder takes it. A call still running is kept even when its agent
+ * has moved past it: a read beside its agent's later calls still has its own after-call hook to come.
  */
-export function forgettable(log: readonly CallRecord[]): string[] {
-  const live = log.filter((call) => call.done === undefined && !abandoned(call, log)).map((call) => call.at);
+export function forgettable(log: readonly CallRecord[], now: number): string[] {
+  const live = log.filter((call) => call.done === undefined && !abandoned(call, log) && runningAt(call, now)).map((call) => call.at);
   const oldest = live.length === 0 ? Number.POSITIVE_INFINITY : Math.min(...live);
   return log.filter((call) => call.done !== undefined && call.done < oldest).map((call) => call.key);
 }
