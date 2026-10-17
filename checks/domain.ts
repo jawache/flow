@@ -375,11 +375,16 @@ export const SUBSTITUTION_MESSAGE = [
  * history and may never move while today's is the whole point of the folder. Absent means no
  * narrowing — every write to a protected path is refused — which is the empty value rather than a
  * default a reader has to know about.
+ *
+ * Either way, a file identical to the last commit's copy is not an edit, and passes. Only `flow
+ * hook commit --all` hands one over: it judges the whole tree, and a real commit never stages a
+ * file it leaves as it was.
  */
 export const protectedPath = defineCheck(
   (opts: { existingOnly?: boolean }): Check =>
     async (ctx) => {
       const { path } = touched(ctx);
+      if (ctx.moment !== "delete" && ctx.file?.unchanged === true) return ctx.ok();
       if (opts.existingOnly === true) {
         // "Already there" means before THIS change. Before an Edit the tree still answers that.
         // After a shell command, and at commit, the tree holds the file either way, so the event
@@ -1967,6 +1972,8 @@ export function readCase(c: Case): {
   readonly world: CaseWorld;
   /** commit: the staged paths the last commit does not have, when the case says. */
   readonly added?: readonly string[] | undefined;
+  /** commit: the staged paths identical to the last commit, when the case says. */
+  readonly unchanged?: readonly string[] | undefined;
   /** commit: the staged deletions, by path, with their content as the last commit has it. */
   readonly deleted?: Readonly<Record<string, string>> | undefined;
 } {
@@ -1980,7 +1987,8 @@ export function readCase(c: Case): {
     const existed = c.existed === undefined ? {} : { existed: c.existed };
     return { dialect: "write", facts: { file: { path: c.path, content: c.content, ...existed }, ...actor }, world };
   }
-  if ("staged" in c) return { dialect: "commit", facts: { staged: c.staged, ...actor }, world, added: c.added, deleted: c.deleted };
+  if ("staged" in c)
+    return { dialect: "commit", facts: { staged: c.staged, ...actor }, world, added: c.added, unchanged: c.unchanged, deleted: c.deleted };
   return { dialect: "turn-end", facts: { turn: c.actions, ...actor }, world };
 }
 
@@ -2008,8 +2016,8 @@ function cannedParts(
   c: Case,
   unanswered: Unanswered[],
 ): Omit<ReturnType<typeof readCase>, "dialect" | "world"> & { readonly world: World } {
-  const { world, facts, added, deleted } = readCase(c);
-  return { world: cannedWorld(world, facts.staged, unanswered), facts, added, deleted };
+  const { world, facts, added, unchanged, deleted } = readCase(c);
+  return { world: cannedWorld(world, facts.staged, unanswered), facts, added, unchanged, deleted };
 }
 
 /**
@@ -2020,8 +2028,8 @@ function cannedParts(
  * four answers the live gate would.
  */
 export async function caseCtxs(entry: LoadedEntry, moment: Moment, c: Case, unanswered: Unanswered[]): Promise<Ctx[]> {
-  const { world, facts, added, deleted } = cannedParts(c, unanswered);
-  const subjects = moment === "commit" ? await commitSubjects(entry, facts, world, added, deleted) : [facts];
+  const { world, facts, added, unchanged, deleted } = cannedParts(c, unanswered);
+  const subjects = moment === "commit" ? await commitSubjects(entry, facts, world, { added, unchanged, deleted }) : [facts];
   return subjects.map((subject) => makeCtx(subject.moment ?? moment, subject, world));
 }
 
@@ -2040,7 +2048,9 @@ export async function caseCtxs(entry: LoadedEntry, moment: Moment, c: Case, unan
  * content is a failure naming what to add rather than a silent pass.
  *
  * A case that lists `added` says which files the last commit does not have, as the live gate does,
- * and each file's `existed` follows from it. A case that lists none leaves `existed` unset.
+ * and each file's `existed` follows from it. A case that lists none leaves `existed` unset. A case
+ * that lists `unchanged` says which are identical to the last commit, as `--all` does, and each of
+ * those has `unchanged` set.
  *
  * A case's `deleted` files are asked of an entry that fires at `delete` as well as `commit`, each as
  * a delete — the same rule the live gate follows, for the same reason.
@@ -2049,8 +2059,7 @@ async function commitSubjects(
   entry: LoadedEntry,
   facts: Partial<Ctx>,
   world: World,
-  added: readonly string[] | undefined,
-  deleted: Readonly<Record<string, string>> | undefined,
+  { added, unchanged, deleted }: Omit<ReturnType<typeof readCase>, "dialect" | "facts" | "world">,
 ): Promise<Partial<Ctx>[]> {
   const staged = facts.staged ?? [];
   const { spec } = entry;
@@ -2060,7 +2069,8 @@ async function commitSubjects(
     if (!inScope(spec, path)) continue;
     if (!(await world.fs.exists(path))) continue;
     const existed = added === undefined ? {} : { existed: !added.includes(path) };
-    out.push({ file: { path, content: await world.fs.read(path), ...existed }, staged });
+    const same = unchanged?.includes(path) === true ? { unchanged: true } : {};
+    out.push({ file: { path, content: await world.fs.read(path), ...existed, ...same }, staged });
   }
   const atDelete = ((spec.at ?? []) as readonly string[]).includes("delete");
   for (const [path, content] of Object.entries(deleted ?? {})) {

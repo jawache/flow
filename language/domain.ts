@@ -1267,6 +1267,8 @@ export type Case =
       readonly staged: readonly string[];
       /** The staged paths the last commit does not have. Each file's `ctx.file.existed` says so. */
       readonly added?: readonly string[];
+      /** The staged paths identical to the last commit, as under `--all`. Each sets `ctx.file.unchanged`. */
+      readonly unchanged?: readonly string[];
       /**
        * Staged deletions, by path, each with its content as the last commit has it. An entry that
        * fires at `delete` as well as `commit` is asked about each one, as a delete.
