@@ -1961,13 +1961,20 @@ const SPEAKS: Readonly<Record<CaseDialect, readonly GuardrailMoment[]>> = {
 
 /**
  * What a commit says about its staged files beyond their paths — what a case lists, and what the
- * live gate's event carries. Written out rather than derived from `readCase`, so a field added to a
- * case's reading does not silently become an option of the fan-out.
+ * live gate's event carries (`GuardEvent` takes `added` and `unchanged` from here; its `deleted`
+ * holds the same facts as a list). Written out rather than derived from `readCase`, so a field
+ * added to a case's reading does not silently become an option of the fan-out.
  */
 export interface CommitFileFacts {
-  /** The staged paths the last commit does not have. Absent, each file's `existed` is left unset. */
+  /**
+   * The staged paths the last commit does not have, which become each file's `existed`. Absent
+   * when the shell could not ask git, or the case does not say, and then `existed` is left unset.
+   */
   readonly added?: readonly string[] | undefined;
-  /** The staged paths identical to the last commit, which only `--all` has. */
+  /**
+   * The staged paths identical to the last commit, which only `--all` has. Each one's
+   * `ctx.file.unchanged` is `true`.
+   */
   readonly unchanged?: readonly string[] | undefined;
   /** The staged deletions, by path, with their content as the last commit has it. */
   readonly deleted?: Readonly<Record<string, string>> | undefined;
@@ -2024,7 +2031,7 @@ export function cannedCtx(moment: Moment, c: Case, unanswered: Unanswered[]): Ct
 function cannedParts(
   c: Case,
   unanswered: Unanswered[],
-): Omit<ReturnType<typeof readCase>, "dialect" | "world"> & { readonly world: World } {
+): { readonly facts: Partial<Ctx>; readonly world: World } & CommitFileFacts {
   const { world, facts, added, unchanged, deleted } = readCase(c);
   return { world: cannedWorld(world, facts.staged, unanswered), facts, added, unchanged, deleted };
 }
@@ -2037,8 +2044,8 @@ function cannedParts(
  * four answers the live gate would.
  */
 export async function caseCtxs(entry: LoadedEntry, moment: Moment, c: Case, unanswered: Unanswered[]): Promise<Ctx[]> {
-  const { world, facts, added, unchanged, deleted } = cannedParts(c, unanswered);
-  const subjects = moment === "commit" ? await commitSubjects(entry, facts, world, { added, unchanged, deleted }) : [facts];
+  const { world, facts, ...commit } = cannedParts(c, unanswered);
+  const subjects = moment === "commit" ? await commitSubjects(entry, facts, world, commit) : [facts];
   return subjects.map((subject) => makeCtx(subject.moment ?? moment, subject, world));
 }
 
@@ -2095,14 +2102,14 @@ async function commitSubjects(
   entry: LoadedEntry,
   facts: Partial<Ctx>,
   world: World,
-  { added, unchanged, deleted }: CommitFileFacts,
+  commit: CommitFileFacts,
 ): Promise<Partial<Ctx>[]> {
   const staged = facts.staged ?? [];
   const { spec } = entry;
   if (!spec.on) return [facts];
-  const out: Partial<Ctx>[] = (await stagedFiles(spec, staged, world, { added, unchanged })).map((file) => ({ file, staged }));
+  const out: Partial<Ctx>[] = (await stagedFiles(spec, staged, world, commit)).map((file) => ({ file, staged }));
   const atDelete = ((spec.at ?? []) as readonly string[]).includes("delete");
-  for (const [path, content] of Object.entries(deleted ?? {})) {
+  for (const [path, content] of Object.entries(commit.deleted ?? {})) {
     if (!atDelete || !inScope(spec, path)) continue;
     out.push({ moment: "delete", file: { path, content, existed: true }, staged });
   }
