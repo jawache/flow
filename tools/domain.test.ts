@@ -34,6 +34,9 @@ import {
   kebab,
   literal,
   localLinks,
+  packedFiles,
+  shippedPages,
+  unshippedLinks,
   renderPackPage,
   renderPacksIndex,
   says,
@@ -823,5 +826,36 @@ describe("the release's migration guide — one page per version, named by the v
     const dry = "✔ bumping version in package.json from 0.2.1 to 0.2.2\n✔ bumping version in package-lock.json from 0.2.1 to 0.2.2\n";
     expect(nextVersion(dry)).toBe("0.2.2");
     expect(nextVersion("✔ outputting changes to CHANGELOG.md\n")).toBeNull();
+  });
+});
+
+describe("the package's own links — every page npm uploads, followed from inside the tarball", () => {
+  const shipped = ["README.md", "CHANGELOG.md", "docs/user/migrations/0.3.0.md", "docs/user/checks/ban-commands.md", "docs/user/how-to/a page.md"];
+
+  it("reads the uploaded paths off npm pack's report, and nothing from a report with no files list", () => {
+    const report = JSON.stringify([{ name: "@jawache/flow", files: [{ path: "README.md", size: 1, mode: 420 }, { path: "docs/user/index.md", size: 1, mode: 420 }] }]);
+    expect(packedFiles(report)).toStrictEqual(["README.md", "docs/user/index.md"]);
+    expect(packedFiles("[{}]")).toBeNull();
+    expect(packedFiles("npm warn not json")).toBeNull();
+  });
+
+  it("follows links from the markdown pages and nothing else", () => {
+    expect(shippedPages(["dist/flow.mjs", "README.md", "docs/user/index.md", "LICENCE"])).toStrictEqual(["README.md", "docs/user/index.md"]);
+  });
+
+  it("passes a page whose every link lands on a shipped file or a shipped folder", () => {
+    const guide = "[ban](../checks/ban-commands.md#how-a-command-is-matched) [checks](../checks/) [log](../../../CHANGELOG.md) [here](#top) [web](https://x.dev) [space](../how-to/a%20page.md)";
+    expect(unshippedLinks(shipped, new Map([["docs/user/migrations/0.3.0.md", guide]]))).toStrictEqual([]);
+  });
+
+  it("refuses a planted link to a file the package leaves out, naming the page, the link and where it lands", () => {
+    const guide = "[ctx](../reference/ctx.md#ctxcommands)\n\n[ok](../checks/ban-commands.md)";
+    expect(unshippedLinks(shipped, new Map([["docs/user/migrations/0.3.0.md", guide]]))).toStrictEqual([
+      "docs/user/migrations/0.3.0.md → ../reference/ctx.md (docs/user/reference/ctx.md is not in the package)",
+    ]);
+  });
+
+  it("refuses a link that climbs out of the package altogether", () => {
+    expect(unshippedLinks(shipped, new Map([["README.md", "[up](../elsewhere.md)"]]))).toStrictEqual(["README.md → ../elsewhere.md (outside the package)"]);
   });
 });
