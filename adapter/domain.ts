@@ -1178,18 +1178,17 @@ function abandoned(call: CallRecord, log: readonly CallRecord[]): boolean {
 export const CALL_LIFETIME_MS = 60 * 60 * 1000;
 
 /**
- * When a call stopped running: its finish, or, with none, the end of its hour, when it is dead. None
- * for a SPAWN with no finish: it lasts as long as its subagent works, which can be hours, and its
- * diff still comes.
+ * When a call stopped running: its finish, or, with none, the end of its hour, when it is dead.
+ * Never, for a SPAWN with no finish: it lasts as long as its subagent works, which can be hours, and
+ * its diff still comes.
  */
-function ended(call: CallRecord): number | undefined {
-  return call.done ?? (spawns(call) ? undefined : call.at + CALL_LIFETIME_MS);
+function ended(call: CallRecord): number {
+  return call.done ?? (spawns(call) ? Number.POSITIVE_INFINITY : call.at + CALL_LIFETIME_MS);
 }
 
 /** Is the call still running at `time`: not finished by then, and not dead. */
 function runningAt(call: CallRecord, time: number): boolean {
-  const end = ended(call);
-  return end === undefined || end > time;
+  return ended(call) > time;
 }
 
 /**
