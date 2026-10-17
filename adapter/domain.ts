@@ -3372,6 +3372,16 @@ export interface Registration {
 }
 
 /**
+ * One hook flow registers, as `REGISTERED` states it: the event, its matcher, and what goes
+ * unjudged without it. Not a settings file's entry, which is a `Registration`.
+ */
+interface FlowHook {
+  readonly hook: HookEvent;
+  readonly matcher?: string;
+  readonly unregistered: string;
+}
+
+/**
  * WHAT `flow init` WRITES, verbatim — and it follows DELIVERS, not HOOK_EVENTS.
  *
  * flow answers seven events and registers six. `Notification` is the one difference and it is
@@ -3402,7 +3412,7 @@ export interface Registration {
  * `unregisteredText`). Each event costs its own rails and no others, so a file missing one names
  * that one's cost, not the whole guard's.
  */
-const REGISTERED: readonly { readonly hook: HookEvent; readonly matcher?: string; readonly unregistered: string }[] = [
+const REGISTERED: readonly FlowHook[] = [
   { hook: "session-start", matcher: "startup|resume|clear|compact", unregistered: "no note is shown when a session starts" },
   { hook: "pre-tool-use", matcher: "*", unregistered: "no rule judges a tool call before it runs" },
   { hook: "post-tool-use", matcher: "*", unregistered: "no rule judges what a tool call changed" },
@@ -3410,9 +3420,6 @@ const REGISTERED: readonly { readonly hook: HookEvent; readonly matcher?: string
   { hook: "stop", unregistered: "no turn-end rule runs when the main chat hands back" },
   { hook: "subagent-stop", unregistered: "no turn-end rule runs when a subagent hands back" },
 ];
-
-/** One of flow's registrations, as `REGISTERED` states it. */
-type Registered = (typeof REGISTERED)[number];
 
 /**
  * The repo's bin folder, relative to the repo root. flow never runs a `flow` from here: any package
@@ -4722,12 +4729,12 @@ export interface Status {
  * for still runs flow, from there, so its cost is not stated as if no rule ran. The line stays red
  * either way, because the repo's file is what a fresh clone gets.
  */
-function unregisteredText(facts: StatusFacts, unregistered: readonly Registered[]): string {
-  const names = (rs: readonly Registered[]): string => rs.map((r) => HOST_EVENT[r.hook]).join(" · ");
+function unregisteredText(facts: StatusFacts, unregistered: readonly FlowHook[]): string {
+  const names = (rs: readonly FlowHook[]): string => rs.map((r) => HOST_EVENT[r.hook]).join(" · ");
   const machine = facts.machine;
   const elsewhere = new Set(machine === null ? [] : registeredEvents(machine.settings));
-  const covered: Registered[] = [];
-  const uncovered: Registered[] = [];
+  const covered: FlowHook[] = [];
+  const uncovered: FlowHook[] = [];
   for (const r of unregistered) (elsewhere.has(HOST_EVENT[r.hook]) ? covered : uncovered).push(r);
   // Every missing event covered reads back as "it" or "them"; only some, and they are named.
   const which = uncovered.length > 0 ? names(covered) : covered.length === 1 ? "it" : "them";
