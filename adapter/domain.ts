@@ -1173,11 +1173,18 @@ function abandoned(call: CallRecord, log: readonly CallRecord[]): boolean {
 export const CALL_LIFETIME_MS = 60 * 60 * 1000;
 
 /**
- * A call with no finish, started more than {@link CALL_LIFETIME_MS} before `now`. A SPAWN is never
- * dead by age: it lasts as long as its subagent works, which can be hours, and its diff still comes.
+ * When a call stopped running: its finish, or, with none, the end of its hour, when it is dead. None
+ * for a SPAWN with no finish: it lasts as long as its subagent works, which can be hours, and its
+ * diff still comes.
  */
-function dead(call: CallRecord, now: number): boolean {
-  return call.done === undefined && !spawns(call) && now - call.at > CALL_LIFETIME_MS;
+function ended(call: CallRecord): number | undefined {
+  return call.done ?? (spawns(call) ? undefined : call.at + CALL_LIFETIME_MS);
+}
+
+/** Is the call still running at `time`: not finished by then, and not dead. */
+function runningAt(call: CallRecord, time: number): boolean {
+  const end = ended(call);
+  return end === undefined || end > time;
 }
 
 /**
@@ -1211,20 +1218,21 @@ export function overlapping(me: CallRecord, log: readonly CallRecord[]): CallRec
       !sameActor(call, me) &&
       !spawns(call) &&
       !abandoned(call, log) &&
-      !dead(call, me.at) &&
-      (call.done === undefined || call.done > me.at),
+      runningAt(call, me.at),
   );
 }
 
 /**
- * The calls the log can forget. A finished call, once no call still in flight started before it
- * finished, so no diff still to come can overlap it: keeping every record for a day would make every
- * diff read a day of records. And a dead call, whose diff will never come.
+ * The calls the log can forget: those that stopped running — finished, or dead at the end of their
+ * hour — before any call still to diff started, so no diff still to come can overlap them. Keeping
+ * every record for a day would make every diff read a day of records. A call still running is kept
+ * even when its agent has moved past it: a read beside its agent's later calls still has its own
+ * after-call hook to come.
  */
 export function forgettable(log: readonly CallRecord[], now: number): string[] {
-  const live = log.filter((call) => call.done === undefined && !abandoned(call, log) && !dead(call, now)).map((call) => call.at);
+  const live = log.filter((call) => call.done === undefined && !abandoned(call, log) && runningAt(call, now)).map((call) => call.at);
   const oldest = live.length === 0 ? Number.POSITIVE_INFINITY : Math.min(...live);
-  return log.filter((call) => (call.done !== undefined && call.done < oldest) || dead(call, now)).map((call) => call.key);
+  return log.filter((call) => !runningAt(call, now) && (ended(call) ?? Number.POSITIVE_INFINITY) < oldest).map((call) => call.key);
 }
 
 /** How a call is named in a message: the tool, the host's id, and whose it was. */

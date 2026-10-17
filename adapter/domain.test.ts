@@ -4302,14 +4302,34 @@ describe("the call log — which other calls overlapped this one", () => {
 
   it("counts a call with no finish only for its first hour", () => {
     const me = call("me", "main", 10 * CALL_LIFETIME_MS);
-    const young = call("young", "sub1", me.at - CALL_LIFETIME_MS);
-    const old = call("old", "sub2", me.at - CALL_LIFETIME_MS - 1);
-    expect(overlapping(me, [me, young, old]).map((c) => c.key), "an hour to the millisecond is still in flight").toStrictEqual(["young"]);
+    const young = call("young", "sub1", me.at - CALL_LIFETIME_MS + 1);
+    const old = call("old", "sub2", me.at - CALL_LIFETIME_MS);
+    expect(overlapping(me, [me, young, old]).map((c) => c.key), "a call an hour old at this snapshot is dead").toStrictEqual(["young"]);
     expect(overlapping(me, [me, { ...old, done: me.at + 5 }]).map((c) => c.key), "a long call that did finish counts as ever").toStrictEqual(["old"]);
+    const gone = call("gone", "sub2", me.at - 3 * CALL_LIFETIME_MS);
+    expect(forgettable([young, gone, call("kept", "sub3", me.at - 10, me.at - 5)], me.at), "the young call still pins what finished after it began").toStrictEqual(["gone"]);
+  });
+
+  it("keeps a dead call while a call that began inside its hour has yet to diff", () => {
+    const x = call("x", "sub1", 0);
+    const me = call("me", "main", CALL_LIFETIME_MS - 60_000);
+    const now = CALL_LIFETIME_MS + 60_000;
+    expect(overlapping(me, [me, x]).map((c) => c.key), "x was 59 minutes old at me's snapshot").toStrictEqual(["x"]);
+    expect(forgettable([x, me], now), "me's diff, still to come, counts x").toStrictEqual([]);
+    expect(forgettable([x, { ...me, done: now }], now), "once me has diffed, nothing still to come can count x").toStrictEqual(["x", "me"]);
+  });
+
+  it("keeps a call under its hour that its own agent has moved past: it may be a read still running", () => {
+    const parallel = [call("slow", "main", 10), call("quick", "main", 20, 30)];
+    expect(forgettable(parallel, 40), "its after-call hook still needs its snapshot").toStrictEqual(["quick"]);
+    expect(forgettable(parallel, 10 + CALL_LIFETIME_MS + 1), "and once its hour is up, it goes").toStrictEqual(["slow", "quick"]);
+  });
+
+  it("never treats a spawn as dead by age: its subagent can work for hours", () => {
     const spawn = call("spawn", "main", 0, undefined, "Agent");
-    const pinned = call("pinned", "sub3", 1, 2);
-    expect(forgettable([spawn, pinned], me.at), "a spawn is never dead by age: its subagent can work for hours").toStrictEqual([]);
-    expect(forgettable([young, old, call("kept", "sub3", me.at - 10, me.at - 5)], me.at), "the young call still pins what finished after it began").toStrictEqual(["old"]);
+    const now = 10 * CALL_LIFETIME_MS;
+    expect(forgettable([spawn, call("pinned", "sub3", 1, 2)], now), "it still pins what finished after it began").toStrictEqual([]);
+    expect(forgettable([spawn], now), "and is kept itself").toStrictEqual([]);
   });
 
   it("forgets a finished call once no call still in flight began before it finished", () => {
