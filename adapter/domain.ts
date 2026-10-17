@@ -3372,6 +3372,16 @@ export interface Registration {
 }
 
 /**
+ * One hook flow registers, as `REGISTERED` states it: the event, its matcher, and what goes
+ * unjudged without it. Not a settings file's entry, which is a `Registration`.
+ */
+interface FlowHook {
+  readonly hook: HookEvent;
+  readonly matcher?: string;
+  readonly unregistered: string;
+}
+
+/**
  * WHAT `flow init` WRITES, verbatim — and it follows DELIVERS, not HOOK_EVENTS.
  *
  * flow answers seven events and registers six. `Notification` is the one difference and it is
@@ -3398,10 +3408,11 @@ export interface Registration {
  * register a command nothing answers.
  *
  * `unregistered` is what goes unjudged while that one registration is missing — what `flow status`
- * says beside the fix. Each event costs its own rails and no others, so a file missing one names
+ * says beside the fix, unless the machine-wide file calls flow for that event in the meantime (see
+ * `unregisteredText`). Each event costs its own rails and no others, so a file missing one names
  * that one's cost, not the whole guard's.
  */
-const REGISTERED: readonly { readonly hook: HookEvent; readonly matcher?: string; readonly unregistered: string }[] = [
+const REGISTERED: readonly FlowHook[] = [
   { hook: "session-start", matcher: "startup|resume|clear|compact", unregistered: "no note is shown when a session starts" },
   { hook: "pre-tool-use", matcher: "*", unregistered: "no rule judges a tool call before it runs" },
   { hook: "post-tool-use", matcher: "*", unregistered: "no rule judges what a tool call changed" },
@@ -3612,11 +3623,17 @@ export function withMachineCommandsUpToDate(settings: unknown): { settings: unkn
  * for that event. The host runs both, so each of those hooks fires twice. Split by the fix: `bare`
  * holds only old-shape commands, which `flow init` rewrites; `theirs` holds a command of somebody's
  * own (`FLOW_DEBUG=1 flow hook stop`), which init leaves as it is.
+ *
+ * ONLY AN EVENT BOTH FILES CALL FLOW FOR. Where the repo's own file does not call flow yet, the
+ * machine-wide command is the only one that runs, so nothing fires twice: that event is the
+ * "does not call flow" line's, and `flow init` writes the repo's command for it.
  */
 function machineDiffers(repo: unknown, machine: unknown): { bare: string[]; theirs: string[] } {
   const repoArrays = hookArrays(repo);
+  const repoCalls = new Set(registeredEvents(repo));
   const out = { bare: [] as string[], theirs: [] as string[] };
   for (const [event, entries] of Object.entries(hookArrays(machine))) {
+    if (!repoCalls.has(event)) continue;
     const repoCommands = new Set((repoArrays[event] ?? []).flatMap(commandsOf));
     const differ = entries.flatMap(commandsOf).filter((command) => ourHookCommand(command) && !repoCommands.has(command));
     if (differ.length === 0) continue;
@@ -4706,6 +4723,26 @@ export interface Status {
   readonly green: boolean;
 }
 
+/**
+ * The line for the events the repo's own settings file does not call flow for, and what that costs
+ * until `flow init` writes them. MEANWHILE IS NOT NOTHING: an event the machine-wide file calls flow
+ * for still runs flow, from there, so its cost is not stated as if no rule ran. The line stays red
+ * either way, because the repo's file is what a fresh clone gets.
+ */
+function unregisteredText(facts: StatusFacts, unregistered: readonly FlowHook[]): string {
+  const names = (rs: readonly FlowHook[]): string => rs.map((r) => HOST_EVENT[r.hook]).join(" · ");
+  const machine = facts.machine;
+  const elsewhere = new Set(machine === null ? [] : registeredEvents(machine.settings));
+  const covered: FlowHook[] = [];
+  const uncovered: FlowHook[] = [];
+  for (const r of unregistered) (elsewhere.has(HOST_EVENT[r.hook]) ? covered : uncovered).push(r);
+  // Every missing event covered reads back as "it" or "them"; only some, and they are named.
+  const which = uncovered.length > 0 ? names(covered) : covered.length === 1 ? "it" : "them";
+  const meanwhile = machine === null || covered.length === 0 ? [] : [`${machine.path} calls flow for ${which} in the meantime`];
+  const until = [...meanwhile, ...uncovered.map((r) => r.unregistered)].join("; ");
+  return `${facts.settingsPath} does not call flow for ${names(unregistered)} — re-run \`flow init\`. Until it does, ${until}.`;
+}
+
 function fittingsOf(facts: StatusFacts): Fitting[] {
   const registered = registeredEvents(facts.settings);
   const unregistered = REGISTERED.filter(({ hook }) => !registered.includes(HOST_EVENT[hook]));
@@ -4757,9 +4794,7 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
         unregistered.length === 0 && stale.length === 0 && once
           ? `${facts.settingsPath} — ${registered.join(" · ")}`
           : [
-              unregistered.length === 0
-                ? ""
-                : `${facts.settingsPath} does not call flow for ${unregistered.map((r) => HOST_EVENT[r.hook]).join(" · ")} — re-run \`flow init\`. Until it does, ${unregistered.map((r) => r.unregistered).join("; ")}.`,
+              unregistered.length === 0 ? "" : unregisteredText(facts, unregistered),
               stale.length === 0
                 ? ""
                 : `${facts.settingsPath} calls flow for ${stale.join(" · ")} on some tools only — an older flow registered ${stale.length === 1 ? "it" : "them"} that way, and a change another tool makes is not judged after it lands. Re-run \`flow init\` to widen ${stale.length === 1 ? "it" : "them"}.`,

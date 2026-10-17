@@ -33,7 +33,8 @@
     "dist/index.mjs",
     "dist/packs.mjs",
     "dist/types/",
-    "docs/user/migrations/"
+    "docs/user/",
+    "CHANGELOG.md"
   ],
   "engines": {
     "node": ">=24"

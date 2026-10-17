@@ -12,7 +12,7 @@
 
 import { describe, it, expect } from "vitest";
 import * as packs from "./index.ts";
-import { defineConfig, loadConfig, pack } from "../index.ts";
+import { defineConfig, loadConfig, pack, type Check, type Ctx } from "../index.ts";
 
 /** The entries a config loaded, or an empty list and the refusals in the failure message. */
 function loaded(result: ReturnType<typeof loadConfig>): { id: string; spec: unknown }[] {
@@ -65,7 +65,8 @@ describe("the packs surface", () => {
   // than a refusal count over ten prefixes, through the built package rather than the source. Two
   // tests of one claim means the weaker one is what fails first and the stronger one gets read as
   // a duplicate. What stays here is what that road does not cover: the door's export list, the
-  // parameters that reach a MESSAGE (no case can see one), and the flow pack's scopes.
+  // parameters that reach a MESSAGE (no case can see one), the detail a refusal adds, and the flow
+  // pack's scopes.
 
   // THE PARAMETERS, proved where they are meant to land: in the sentence a blocked person reads.
   //
@@ -202,5 +203,29 @@ describe("the packs surface", () => {
     // Whatever a repo passes, the package never puts a folder of its own into either scope.
     for (const scope of Object.values(theirs).concat(Object.values(inline)))
       for (const glob of scope) expect(glob.startsWith("guards/"), glob).toBe(false);
+  });
+
+  // THE DETAIL a refusal adds under its message is prose too, and a case cannot see it either: a
+  // case reads only the verdict. A bare `-f` once read "`-f` in `-f`" (#144).
+  it("names a bare -f once in the force-push refusal, and the bundle it sits in otherwise", async () => {
+    const entry = loaded(loadConfig(defineConfig([pack(packs.git, { release: "just release" })]))).find((e) => e.id === "git.noForcePush");
+    const check = (entry?.spec as { check: Check }).check;
+    // Only what the check reads: the command line and the two verdicts. The ctx carries no
+    // `commands` ON PURPOSE, so `gitCommands` takes its fallback and parses the line itself, with
+    // the same `parseCommandLine` the live rails hand over as `commands`. A pack may import only the
+    // public door, and the parse is not on it. Typed as the real ctx's own three fields, so the
+    // compiler refuses a stand-in that drifts from them; the one cast widens it to the whole ctx.
+    const detail = async (command: string): Promise<string | undefined> => {
+      const ctx: Pick<Ctx, "command" | "ok" | "fail"> = {
+        command,
+        ok: () => ({ ok: true }),
+        fail: (said) => (said === undefined ? { ok: false } : { ok: false, detail: said }),
+      };
+      const verdict = await check(ctx as Ctx);
+      return verdict.ok ? undefined : verdict.detail;
+    };
+    expect(await detail("git push -f")).toBe("`git push` forces the remote with `-f`");
+    expect(await detail("/usr/bin/git push -f nowhere main")).toBe("`git push` forces the remote with `-f`");
+    expect(await detail("git push -fu origin main")).toBe("`git push` forces the remote with `-f` in `-fu`");
   });
 });

@@ -2990,6 +2990,52 @@ describe("the machine-wide file, beside a dev dependency's own", () => {
     );
   });
 
+  // BEFORE `flow init`: the repo's own file calls flow for nothing, and the machine-wide file runs it
+  // for every event. The line is red, because a fresh clone has no registration, but it neither
+  // predicts a double fire nor claims that no rule runs.
+  const beforeInit = (machine: unknown, settings: unknown = null) =>
+    status(statusFacts({ settingsPath: ".claude/settings.json", settings, machine: { path: machinePath, settings: machine } })).fittings.find(
+      (f) => f.id === "hooks",
+    );
+
+  it("says the machine-wide file runs flow meanwhile, and stays red, before init (#144)", () => {
+    for (const machine of [withRegistrations({}).settings, older]) {
+      const fitting = beforeInit(machine);
+      expect(fitting?.ok, "red until the repo's own file calls flow").toBe(false);
+      expect(fitting?.detail).toBe(
+        `.claude/settings.json does not call flow for ${LISTED} — re-run \`flow init\`. Until it does, ${machinePath} calls flow for them in the meantime.`,
+      );
+    }
+  });
+
+  it("names the events the machine-wide file covers, and the cost of the rest", () => {
+    const stopOnly = { hooks: { Stop: [{ hooks: [{ type: "command", command: hookCommand("stop") }] }] } };
+    expect(beforeInit(stopOnly)?.detail).toBe(
+      `.claude/settings.json does not call flow for ${LISTED} — re-run \`flow init\`. Until it does, ${machinePath} calls flow for Stop in the meantime; ` +
+        "no note is shown when a session starts; no rule judges a tool call before it runs; no rule judges what a tool call changed; " +
+        "no rule judges what a failed tool call changed; no turn-end rule runs when a subagent hands back.",
+    );
+    expect(beforeInit({ theme: "dark" })?.detail, "a machine-wide file with none of flow's covers nothing").toContain(
+      "Until it does, no note is shown when a session starts;",
+    );
+  });
+
+  it("calls the one missing event \"it\" when the machine-wide file covers it", () => {
+    const subagentStopOnly = { hooks: { SubagentStop: [{ hooks: [{ type: "command", command: hookCommand("subagent-stop") }] }] } };
+    expect(beforeInit(subagentStopOnly, BEFORE_SUBAGENT_STOP)?.detail).toBe(
+      `.claude/settings.json does not call flow for SubagentStop — re-run \`flow init\`. Until it does, ${machinePath} calls flow for it in the meantime.`,
+    );
+  });
+
+  it("still names a double fire on an event both files call flow for", () => {
+    const repoStop = { hooks: { Stop: [{ hooks: [{ type: "command", command: hookCommand("stop") }] }] } };
+    const detail = beforeInit(older, repoStop)?.detail ?? "";
+    expect(detail).toContain(
+      `${machinePath} also calls flow for Stop the old way, as the bare \`flow hook <event>\`, so Claude Code runs it beside .claude/settings.json's command and each of those hooks fires twice.`,
+    );
+    expect(detail, "only Stop: the repo's file calls flow for no other event").not.toContain("also calls flow for SessionStart");
+  });
+
   it("is green when the machine-wide file has the same commands, none of flow's, or nothing", () => {
     for (const machine of [withMachineCommandsUpToDate(older).settings, withRegistrations({}).settings, { theme: "dark" }, null])
       expect(hooks(machine).fitting?.ok, JSON.stringify(machine)).toBe(true);
