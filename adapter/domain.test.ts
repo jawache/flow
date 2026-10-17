@@ -4320,12 +4320,6 @@ describe("the call log — which other calls overlapped this one", () => {
     expect(forgettable([x, { ...me, done: now }], now), "x has no finish, so it is never forgotten here").toStrictEqual(["me"]);
   });
 
-  it("never forgets a call with no finish: one approved after an hour at the prompt still needs its snapshot", () => {
-    const waited = call("waited", "main", 0);
-    const now = 2 * CALL_LIFETIME_MS;
-    expect(forgettable([waited, call("other", "sub1", now - 10, now - 5)], now), "dead, it pins nothing, and it stays").toStrictEqual(["other"]);
-  });
-
   it("does not name a call approved after an hour at the prompt while it runs, and names it once it has finished", () => {
     // The hour runs from the snapshot, taken before the permission prompt. A call that waited there
     // longer is dead by the rule while it runs: a refusal of another agent's write in that time can
@@ -4340,7 +4334,6 @@ describe("the call log — which other calls overlapped this one", () => {
   it("keeps a call under its hour that its own agent has moved past: it may be a read still running", () => {
     const parallel = [call("slow", "main", 10), call("quick", "main", 20, 30)];
     expect(forgettable(parallel, 40), "its after-call hook still needs its snapshot").toStrictEqual(["quick"]);
-    expect(forgettable(parallel, 10 + CALL_LIFETIME_MS + 1), "and once its hour is up, the day's sweep takes it").toStrictEqual(["quick"]);
   });
 
   it("never treats a spawn as dead by age: its subagent can work for hours", () => {

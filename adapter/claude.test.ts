@@ -19,7 +19,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -432,7 +432,7 @@ export default defineConfig([pack(demo)], { snapshotInclude: [".env"] });
     expect(callLog(repo), "nothing in flight any more, so the log empties").toStrictEqual([]);
   });
 
-  it("keeps a call an hour gone with no finish for the day's sweep, and it pins no other record", () => {
+  it("keeps a call an hour gone with no finish for the day's sweep, which takes it, and it pins no other record", () => {
     const dir = join(repo, ".flow", "snapshots");
     takeSnapshot(repo, "toolu_dead", [], { session: "killed", agent: "sub9", tool: "Bash" });
     const held = JSON.parse(readFileSync(join(dir, "toolu_dead.json"), "utf8")) as Record<string, unknown>;
@@ -442,6 +442,13 @@ export default defineConfig([pack(demo)], { snapshotInclude: [".env"] });
     expect(readdirSync(dir).sort(), "the dead call's snapshot stays; the call that finished after it goes").toStrictEqual([
       "toolu_dead.index",
       "toolu_dead.json",
+    ]);
+    const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000 - 60_000);
+    for (const name of ["toolu_dead.json", "toolu_dead.index"]) utimesSync(join(dir, name), dayAgo, dayAgo);
+    takeSnapshot(repo, "toolu_later", [], who);
+    expect(readdirSync(dir).sort(), "a day on, the next snapshot's sweep takes the dead call's files").toStrictEqual([
+      "toolu_later.index",
+      "toolu_later.json",
     ]);
   });
 
