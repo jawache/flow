@@ -1534,6 +1534,30 @@ describe("replay — a recorded session, run again with no repo and no harness",
     expect(failing.rows.filter((r) => r.kind === "guardrail").map((r) => r["id"])).toEqual(["rails.suitePasses"]);
   });
 
+  it("keeps which files a recorded --all commit held as committed, so an append-only rule passes them again", async () => {
+    const check = protectedPath({ existingOnly: true });
+    const appendOnly = guardrail()
+      .at(commit)
+      .on("m/**")
+      .check(check)
+      .message("history")
+      .test({ block: [{ staged: ["m/1.sql"], added: [], world: { fs: { "m/1.sql": "" } } }] });
+    const load = loadConfig(defineConfig([pack(definePack("log", { appendOnly }))]));
+    const step = (unchanged?: readonly string[]): RecordedStep => ({
+      rail: "guard",
+      moment: "commit",
+      staged: ["m/1.sql"],
+      added: [],
+      ...(unchanged === undefined ? {} : { unchanged }),
+      wearing: [],
+      world: { fs: { "m/1.sql": "old" } },
+    });
+    const denied = async (s: RecordedStep): Promise<unknown[]> =>
+      (await replay({ load, settings: {}, recording: recording([s]) })).rows.filter((r) => r.kind === "guardrail").map((r) => r["subject"]);
+    expect(await denied(step(["m/1.sql"])), "as committed").toEqual([]);
+    expect(await denied(step()), "the same step, edited").toEqual(["m/1.sql"]);
+  });
+
   it("a reach the recording never answered is REPORTED — a replay carrying one is not evidence", async () => {
     const result = await replay({
       load: regime,

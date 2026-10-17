@@ -350,7 +350,7 @@ export interface Ctx {
    * the order they appear. `null` when the line does not parse: read it as "cannot tell".
    */
   readonly commands?: readonly ShellCommand[] | null | undefined;
-  /** commit: the staged paths. */
+  /** commit: the staged paths. Under `flow hook commit --all`, every file in the tree. */
   readonly staged?: readonly string[] | undefined;
   /** turn-end: what the actor did this turn, in order. */
   readonly turn?: readonly TurnAction[] | undefined;

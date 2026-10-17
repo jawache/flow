@@ -1027,7 +1027,10 @@ export function pathLines(stdout: string | null): string[] {
  * no shape of its own.
  */
 export interface StagedChanges {
-  /** Every path the commit will hold that it changes — the subjects of a file rule. */
+  /**
+   * The subjects of a file rule: every path the commit will hold that it changes, or under `--all`
+   * every file in the tree, changed or not (`unchanged` says which are not).
+   */
   readonly files: readonly string[];
   /** The `files` the last commit does not have. Undefined when git could not say. */
   readonly added: readonly string[] | undefined;

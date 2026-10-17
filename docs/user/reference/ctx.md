@@ -32,7 +32,7 @@ A check declares no moments, no schema and no `kind`. The entry's `.at(…)` set
 | `ctx.file` | The file this moment is about, `{ path, content, existed }`, at a file moment. See [ctx.file](#ctxfile) |
 | `ctx.command` | The shell command line, at the command moment |
 | `ctx.commands` | The command line parsed as bash, at the command moment: one entry per simple command, or `null` when the line does not parse. See [ctx.commands](#ctxcommands) |
-| `ctx.staged` | The staged paths, at the commit moment, in every call that moment makes |
+| `ctx.staged` | The staged paths, at the commit moment, in every call that moment makes. Under `flow hook commit --all`, every file git lists |
 | `ctx.turn` | The turn's actions (edits and runs), at turn-end. For a subagent, they are that subagent's own actions |
 | `ctx.actor` | The category names that match the session making this change. Each name comes from evidence the host wrote about that session, never from a claim the session made about itself. The stock `oneWriter` check reads this field |
 | `ctx.moment` | Which moment this is, to branch on |
