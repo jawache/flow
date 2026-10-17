@@ -65,7 +65,8 @@ describe("the packs surface", () => {
   // than a refusal count over ten prefixes, through the built package rather than the source. Two
   // tests of one claim means the weaker one is what fails first and the stronger one gets read as
   // a duplicate. What stays here is what that road does not cover: the door's export list, the
-  // parameters that reach a MESSAGE (no case can see one), and the flow pack's scopes.
+  // parameters that reach a MESSAGE (no case can see one), the detail a refusal adds, and the flow
+  // pack's scopes.
 
   // THE PARAMETERS, proved where they are meant to land: in the sentence a blocked person reads.
   //
