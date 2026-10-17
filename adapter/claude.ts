@@ -349,7 +349,13 @@ function snapshotFiles(root: string, key: string): { readonly meta: string; read
   return { meta: `${base}.json`, index: `${base}.index`, after: `${base}.after.index` };
 }
 
-/** A snapshot left behind longer than this belongs to a call whose after-hook never came. */
+/**
+ * A file in the snapshots folder this old is left over, whatever it is. The call log forgets only a
+ * finished call (`forgettable`), so this is what takes a call that never finished: dead, with its
+ * session killed, or a spawn whose session died. A dead call is kept this long, not an hour, because
+ * it may still be waiting at a permission prompt, and its after-call hook then needs its snapshot.
+ * It is the backstop too for what no readable record accounts for.
+ */
 const STALE_SNAPSHOT_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -421,7 +427,7 @@ export function takeSnapshot(
   }
 }
 
-/** Snapshots whose after-hook never came — a call refused by the host's own permission prompt. */
+/** Files a day old the call log never forgot: a call that never finished, a half-written record. */
 function sweepSnapshots(dir: string): void {
   const now = Date.now();
   for (const name of readdirSync(dir)) {
@@ -571,11 +577,11 @@ export function finishSnapshot(root: string, key: string, now = Date.now()): voi
     if (me === undefined) rmSync(files.meta, { force: true });
     else writeFileSync(files.meta, JSON.stringify({ session: me.session, agent: me.agent, tool: me.tool, at: me.at, done: now }));
   } catch {
-    // A record that cannot be marked finished reads as in flight until the day's sweep: it narrows
+    // A record that cannot be marked finished reads as in flight for its first hour: it narrows
     // refusals, which is the safe direction, and never widens one.
   }
   const finished = log.map((call) => (call.key === key ? { ...call, done: now } : call));
-  for (const gone of forgettable(finished)) rmSync(snapshotFiles(root, gone).meta, { force: true });
+  for (const gone of forgettable(finished, now)) rmSync(snapshotFiles(root, gone).meta, { force: true });
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════

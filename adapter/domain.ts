@@ -1120,7 +1120,7 @@ export function preJudged(payload: HookPayload, root: string): { readonly writes
 
 /**
  * One tool call as flow's own log holds it: who made it, when its snapshot was taken, and when its
- * diff was, once it has been. A record with no `done` is a call still in flight.
+ * diff was, once it has been. A record with no `done` is a call still in flight, until it is dead.
  */
 export interface CallRecord {
   /** The host's `tool_use_id`. */
@@ -1157,12 +1157,34 @@ function sameActor(a: CallRecord, b: CallRecord): boolean {
 /**
  * A snapshot whose diff never came, and never will: the host refused the call after flow allowed
  * it (a permission prompt said no), so it never ran. Read as in flight, it would narrow every
- * refusal in the worktree for a day. Its actor has moved on — a later call of the same session and
- * agent has already finished — so it is not waited on. A long read that is genuinely still running
- * beside its own agent's later calls is misread by this, and costs nothing: it writes nothing.
+ * refusal in the worktree for its first hour. Its actor has moved on — a later call of the same
+ * session and agent has already finished — so it is not waited on. A long read that is genuinely
+ * still running beside its own agent's later calls is misread by this, and costs nothing: it writes
+ * nothing.
  */
 function abandoned(call: CallRecord, log: readonly CallRecord[]): boolean {
   return call.done === undefined && log.some((other) => sameActor(other, call) && other.done !== undefined && other.at > call.at);
+}
+
+/**
+ * How long a tool call can run. The host stops a shell call after ten minutes and a command started
+ * in the background returns at once, so a call this long past its start with no finish is dead: its
+ * session was killed before the after-call hook ran, and the hook never will.
+ *
+ * The hour runs from the snapshot, which is taken before the host's permission prompt, so it counts
+ * the time the call waits there too. A call approved after an hour at the prompt runs as a dead one:
+ * never named as overlapping. Its own snapshot is kept all the same (see `forgettable`), so its diff
+ * is still taken when it finishes.
+ */
+export const CALL_LIFETIME_MS = 60 * 60 * 1000;
+
+/**
+ * Is the call still running at `time`: it stops at its finish, or, with none, at the end of its
+ * hour, when it is dead. A SPAWN with no finish never stops: it lasts as long as its subagent works,
+ * which can be hours, and its diff still comes.
+ */
+function runningAt(call: CallRecord, time: number): boolean {
+  return (call.done ?? (spawns(call) ? Number.POSITIVE_INFINITY : call.at + CALL_LIFETIME_MS)) > time;
 }
 
 /**
@@ -1182,7 +1204,8 @@ function isSpawn(tool: string): boolean {
 
 /**
  * The calls of OTHER actors that overlapped this one in time: started before this diff, and
- * finished after this snapshot or not finished at all.
+ * finished after this snapshot or not finished at all. A call with no finish counts while it is
+ * younger than {@link CALL_LIFETIME_MS} at this snapshot: dead by then, it ran none of this window.
  *
  * A call that finished inside this one's window counts as well as one still in flight: its write
  * landed between this snapshot and this diff just the same. Calls of the same session and agent
@@ -1195,17 +1218,20 @@ export function overlapping(me: CallRecord, log: readonly CallRecord[]): CallRec
       !sameActor(call, me) &&
       !spawns(call) &&
       !abandoned(call, log) &&
-      (call.done === undefined || call.done > me.at),
+      runningAt(call, me.at),
   );
 }
 
 /**
- * The finished calls the log can forget: no call still in flight started before one finished, so no
- * diff still to come can overlap it. Keeping every record for a day would make every diff read a
- * day of records.
+ * The finished calls the log can forget: no call still running started before one finished, so no
+ * diff still to come can overlap it. Keeping every record for a day would make every diff read a day
+ * of records. A dead call pins nothing — no diff still to come counts it — but it is never forgotten
+ * here: it may be waiting at a permission prompt, and its after-call hook still needs its snapshot.
+ * The day's sweep of the snapshots folder takes it. A call still running is kept even when its agent
+ * has moved past it: a read beside its agent's later calls still has its own after-call hook to come.
  */
-export function forgettable(log: readonly CallRecord[]): string[] {
-  const live = log.filter((call) => call.done === undefined && !abandoned(call, log)).map((call) => call.at);
+export function forgettable(log: readonly CallRecord[], now: number): string[] {
+  const live = log.filter((call) => call.done === undefined && !abandoned(call, log) && runningAt(call, now)).map((call) => call.at);
   const oldest = live.length === 0 ? Number.POSITIVE_INFINITY : Math.min(...live);
   return log.filter((call) => call.done !== undefined && call.done < oldest).map((call) => call.key);
 }

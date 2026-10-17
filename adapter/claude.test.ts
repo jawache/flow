@@ -19,7 +19,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -36,7 +36,7 @@ import {
   runHook,
   takeSnapshot,
 } from "./claude.ts";
-import { overlapping } from "./domain.ts";
+import { CALL_LIFETIME_MS, overlapping } from "./domain.ts";
 
 let repo: string;
 
@@ -430,6 +430,59 @@ export default defineConfig([pack(demo)], { snapshotInclude: [".env"] });
     ]);
     finishSnapshot(repo, "toolu_long");
     expect(callLog(repo), "nothing in flight any more, so the log empties").toStrictEqual([]);
+  });
+
+  it("keeps a call an hour gone with no finish for the day's sweep, which takes it, and it pins no other record", () => {
+    const dir = join(repo, ".flow", "snapshots");
+    takeSnapshot(repo, "toolu_dead", [], { session: "killed", agent: "sub9", tool: "Bash" });
+    const held = JSON.parse(readFileSync(join(dir, "toolu_dead.json"), "utf8")) as Record<string, unknown>;
+    writeFileSync(join(dir, "toolu_dead.json"), JSON.stringify({ ...held, at: Date.now() - CALL_LIFETIME_MS - 60_000 }));
+    takeSnapshot(repo, "toolu_next", [], who);
+    finishSnapshot(repo, "toolu_next");
+    expect(readdirSync(dir).sort(), "the dead call's snapshot stays; the call that finished after it goes").toStrictEqual([
+      "toolu_dead.index",
+      "toolu_dead.json",
+    ]);
+    const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000 - 60_000);
+    for (const name of ["toolu_dead.json", "toolu_dead.index"]) utimesSync(join(dir, name), dayAgo, dayAgo);
+    takeSnapshot(repo, "toolu_later", [], who);
+    expect(readdirSync(dir).sort(), "a day on, the next snapshot's sweep takes the dead call's files").toStrictEqual([
+      "toolu_later.index",
+      "toolu_later.json",
+    ]);
+  });
+
+  it("checks a call approved after an hour at the prompt, though another agent's call finished while it waited", async () => {
+    const door = new URL("../index.ts", import.meta.url).pathname;
+    writeFileSync(
+      join(repo, "flow.config.ts"),
+      `import { defineConfig, definePack, guardrail, pack, protectedPath, write } from ${JSON.stringify(door)};
+const demo = definePack("demo", {
+  keepA: guardrail()
+    .at(write)
+    .on("a.ts")
+    .check(protectedPath({ existingOnly: true }))
+    .message("a.ts stays.")
+    .test({ pass: [{ path: "b.ts", content: "new" }], block: [{ path: "a.ts", content: "x", world: { fs: { "a.ts": "old" } } }] }),
+});
+export default defineConfig([pack(demo)]);
+`,
+    );
+    const dir = join(repo, ".flow", "snapshots");
+    const waited = { session_id: "s1", tool_name: "Bash", tool_input: { command: "echo late > a.ts" }, tool_use_id: "toolu_waited", cwd: repo };
+    expect((await runHook("pre-tool-use", waited, repo)).exitCode).toBe(0);
+    const held = JSON.parse(readFileSync(join(dir, "toolu_waited.json"), "utf8")) as Record<string, unknown>;
+    writeFileSync(join(dir, "toolu_waited.json"), JSON.stringify({ ...held, at: Date.now() - CALL_LIFETIME_MS - 60_000 }));
+    const other = { session_id: "s1", agent_id: "sub1", tool_name: "Bash", tool_input: { command: "true" }, tool_use_id: "toolu_other", cwd: repo };
+    expect((await runHook("pre-tool-use", other, repo)).exitCode).toBe(0);
+    expect((await runHook("post-tool-use", other, repo)).exitCode).toBe(0);
+    expect(existsSync(join(dir, "toolu_waited.json")), "the other call's finish leaves the waiting call's snapshot").toBe(true);
+    writeFileSync(join(repo, "a.ts"), "late\n");
+    const answer = await runHook("post-tool-use", waited, repo);
+    expect(answer.stderr).not.toContain("No snapshot was taken");
+    expect(answer.exitCode).toBe(2);
+    expect(answer.stderr).toContain("✗ demo.keepA · a.ts");
+    expect(read("a.ts"), "written back from its snapshot").toBe("export const a = 2; // staged\n");
   });
 
   it("leaves a record it cannot read out of the log rather than failing the diff", () => {
