@@ -4689,8 +4689,8 @@ export interface StatusFacts {
     readonly steer?: Steer | null | undefined;
   } | null;
   /**
-   * What git ignores here, one path per entry, a directory with its trailing `/` — plus any literal
-   * path a write or delete rule names that git would ignore though it does not exist yet (`.env`).
+   * Of the paths a write or delete rule names outright ({@link literalScopes}), the ones git ignores,
+   * whether or not the file exists yet (`.env`).
    */
   readonly ignored: readonly string[];
   /** The config's `snapshotInclude` globs: the ignored paths the snapshot records anyway. */
@@ -4714,12 +4714,6 @@ export function staticPrefix(glob: string): string {
   return at === -1 ? glob : glob.slice(0, glob.lastIndexOf("/", at) + 1);
 }
 
-/** Does this glob reach everything below `dir/` — a literal head at or above it, then `**`? */
-function reachesBelow(glob: string, dir: string): boolean {
-  const head = staticPrefix(glob);
-  return head !== "" && head !== glob && dir.startsWith(head) && glob.slice(head.length).startsWith("**");
-}
-
 /** The write and delete guardrails still live — the rules the snapshot's view decides the reach of. */
 function treeRules(entries: readonly Bound[]): Bound[] {
   return entries.filter(
@@ -4728,57 +4722,43 @@ function treeRules(entries: readonly Bound[]): Bound[] {
   );
 }
 
-/**
- * The paths those rules name OUTRIGHT — a glob with no wildcard, such as `.env`. A file that does
- * not exist yet is in no listing of ignored files, so status asks git about these by name.
- */
-export function literalScopes(load: LoadResult | null): string[] {
-  const rules = treeRules(universe(load?.ok === true ? load.entries : []));
-  return [...new Set(rules.flatMap((entry) => (entry.on ?? []).filter((glob) => staticPrefix(glob) === glob)))];
+/** The paths one rule names OUTRIGHT: each of its globs with no wildcard, such as `.env.keys`. */
+function namedOutright(entry: Bound): string[] {
+  return (entry.on ?? []).filter((glob) => staticPrefix(glob) === glob);
 }
 
 /**
- * THE SNAPSHOT'S BLIND SPOTS, as red lines: a write or delete rule whose scope reaches a path git
- * ignores, where `snapshotInclude` does not bring it back.
+ * The paths those rules name OUTRIGHT, across every rule: the only paths status asks git about, by
+ * name, so a `.env` that does not exist yet is asked about too.
+ */
+export function literalScopes(load: LoadResult | null): string[] {
+  return [...new Set(treeRules(universe(load?.ok === true ? load.entries : [])).flatMap(namedOutright))];
+}
+
+/**
+ * THE SNAPSHOT'S BLIND SPOTS, as red lines: a write or delete rule that names a path outright, which
+ * git ignores, where `snapshotInclude` does not bring it back.
  *
  * The snapshot is git's view, so a shell write to an ignored file is never in the diff and never
- * judged — and a rule guarding `.env` would load green and watch nothing. So the gap is said where a
- * person looks, naming the rule and the setting.
+ * judged, and a rule written for `.env.keys` would load green and watch nothing. So the gap is said
+ * where a person looks, naming the rule and the setting.
  *
- * WHAT "REACHES" MEANS, and why it is not "the glob could match something in there". An ignored
- * FILE is reached when the rule's globs match it. An ignored DIRECTORY is reached when a glob names
- * it — its literal head lies inside the directory (`dist/**` over an ignored `dist/`), or sits above
- * it and continues with `**` (`src/**` over an ignored `src/gen/`). A glob that is all wildcard,
- * `**` + `/*.ts`, does not reach `node_modules/` by this measure, though strictly it matches files in
- * there: every repo with such a rule would be red over a folder no rule was written about.
+ * ONLY A PATH THE RULE NAMES EXACTLY. A glob such as `src/**` that also matches an ignored
+ * `.DS_Store`, or reaches into an ignored `dist/`, gets no line: that is every broad glob in a
+ * normal repo, not a rule that wants an ignored file and cannot see it.
  */
 export function snapshotGaps(entries: readonly Bound[], ignored: readonly string[], include: readonly string[]): Fitting[] {
-  const covered = (path: string): boolean => matchAny(path, include) || include.some((glob) => reachesBelow(glob, path));
-  const out: Fitting[] = [];
-  for (const entry of treeRules(entries)) {
-    const on = entry.on ?? [];
-    const reached = new Set<string>();
-    for (const path of ignored) {
-      if (!path.endsWith("/")) {
-        if (matchAny(path, on) && !matchAny(path, entry.ignore ?? []) && !covered(path)) reached.add(path);
-        continue;
-      }
-      for (const glob of on) {
-        const head = staticPrefix(glob);
-        const at = head.startsWith(path) && head !== "" ? (head === glob ? glob : head) : reachesBelow(glob, path) ? path : null;
-        if (at !== null && !covered(at)) reached.add(at);
-      }
-    }
-    for (const path of reached)
-      out.push({
+  return treeRules(entries).flatMap((entry) =>
+    [...new Set(namedOutright(entry))]
+      .filter((path) => ignored.includes(path) && !matchAny(path, entry.ignore ?? []) && !matchAny(path, include))
+      .map((path) => ({
         id: "snapshot",
         ok: false,
         detail:
           `${entry.id} guards ${path}, which git ignores, so a change a shell command makes there is never seen or judged. ` +
           `List it in snapshotInclude in ${CONFIG_FILE}, or narrow the rule.`,
-      });
-  }
-  return out;
+      })),
+  );
 }
 
 /** The whole answer. */

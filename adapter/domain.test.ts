@@ -4011,8 +4011,8 @@ describe("status — the snapshot's edges and a registration an older flow wrote
   const guardsAt = (on: readonly string[], at: readonly string[] = ["write"]) =>
     loaded("house.env", { kind: "guardrail", at, on, message: "no" });
 
-  it("names a rule whose scope reaches an ignored path the snapshot leaves out, and the setting", () => {
-    const facts = { load: { ok: true as const, entries: [guardsAt([".env"])] }, ignored: [".env", "node_modules/"] };
+  it("names a rule that names an ignored path exactly, and the setting", () => {
+    const facts = { load: { ok: true as const, entries: [guardsAt([".env"])] }, ignored: [".env"] };
     const said = red(facts);
     expect(said).toContain("✗ snapshot: house.env guards .env, which git ignores");
     expect(said).toContain("snapshotInclude");
@@ -4020,19 +4020,22 @@ describe("status — the snapshot's edges and a registration an older flow wrote
     expect(status(statusFacts({ ...facts, snapshotInclude: [".env*"] })).green, "listed, so the snapshot holds it").toBe(true);
   });
 
-  it("reaches an ignored directory a glob names, and not one a wildcard only happens to cover", () => {
+  it("is said only for a path a rule names exactly, never for a broad glob over ignored files or directories", () => {
     const gaps = (on: readonly string[], ignored: readonly string[], include: readonly string[] = []): string[] =>
       status(statusFacts({ load: { ok: true, entries: [guardsAt(on)] }, ignored, snapshotInclude: include }))
         .fittings.filter((f) => f.id === "snapshot")
         .map((f) => f.detail.split(",")[0] ?? "");
-    expect(gaps(["dist/**"], ["dist/"])).toEqual(["house.env guards dist/"]);
-    expect(gaps(["src/**"], ["src/gen/"])).toEqual(["house.env guards src/gen/"]);
-    expect(gaps(["src/*.ts"], ["src/gen/"]), "one segment deep never reaches below it").toEqual([]);
-    expect(gaps(["**/*.ts"], ["node_modules/"]), "no rule was written about node_modules").toEqual([]);
-    expect(gaps(["**/*.log"], ["debug.log"]), "an ignored FILE the glob matches is reached").toEqual(["house.env guards debug.log"]);
-    expect(gaps(["src/**"], ["src/gen/"], ["src/gen/**"]), "brought back by snapshotInclude").toEqual([]);
-    expect(gaps(["dist/**"], ["dist/"], ["dist/**"])).toEqual([]);
-    expect(gaps(["dist/app.js"], ["dist/"])).toEqual(["house.env guards dist/app.js"]);
+    expect(gaps([".env.keys"], [".env.keys"])).toEqual(["house.env guards .env.keys"]);
+    expect(gaps(["dist/app.js"], ["dist/app.js"]), "a named path inside an ignored directory").toEqual(["house.env guards dist/app.js"]);
+    expect(gaps(["src/**"], ["src/.DS_Store"]), "a broad glob over an ignored file").toEqual([]);
+    expect(gaps(["**/*.log"], ["debug.log"]), "a wildcard that matches an ignored file").toEqual([]);
+    expect(gaps(["src/**"], ["src/gen/"]), "a broad glob into an ignored directory").toEqual([]);
+    expect(gaps(["dist/**"], ["dist/"])).toEqual([]);
+    expect(gaps([".env.keys", "src/**"], [".env.keys", "src/.DS_Store"]), "one rule, both kinds of glob").toEqual([
+      "house.env guards .env.keys",
+    ]);
+    expect(gaps([".env.keys"], []), "a named path git does not ignore").toEqual([]);
+    expect(gaps([".env.keys"], [".env.keys"], [".env*"]), "brought back by snapshotInclude").toEqual([]);
   });
 
   it("asks only about live write and delete guardrails — a note, a command rule or a disabled one has no stake", () => {
