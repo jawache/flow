@@ -4326,6 +4326,17 @@ describe("the call log — which other calls overlapped this one", () => {
     expect(forgettable([waited, call("other", "sub1", now - 10, now - 5)], now), "dead, it pins nothing, and it stays").toStrictEqual(["other"]);
   });
 
+  it("does not name a call approved after an hour at the prompt while it runs, and names it once it has finished", () => {
+    // The hour runs from the snapshot, taken before the permission prompt. A call that waited there
+    // longer is dead by the rule while it runs: a refusal of another agent's write in that time can
+    // put back under revert: "all" what this call wrote. Accepted on #157; pinned here.
+    const waited = call("waited", "main", 0);
+    const me = call("me", "sub1", CALL_LIFETIME_MS + 60_000);
+    expect(overlapping(me, [waited, me]), "running, but past its hour").toStrictEqual([]);
+    const after = call("after", "sub1", me.at + 1000);
+    expect(overlapping(after, [{ ...waited, done: after.at + 500 }, after]).map((c) => c.key), "its finish is inside this window").toStrictEqual(["waited"]);
+  });
+
   it("keeps a call under its hour that its own agent has moved past: it may be a read still running", () => {
     const parallel = [call("slow", "main", 10), call("quick", "main", 20, 30)];
     expect(forgettable(parallel, 40), "its after-call hook still needs its snapshot").toStrictEqual(["quick"]);
