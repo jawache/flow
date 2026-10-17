@@ -137,6 +137,7 @@ import {
   reversal,
   callName,
   callRecord,
+  CALL_LIFETIME_MS,
   forgettable,
   overlapping,
   pathLines,
@@ -4290,11 +4291,32 @@ describe("the call log — which other calls overlapped this one", () => {
     expect(overlapping(me, [me, denied, call("next", "sub1", 30, 40)])).toStrictEqual([]);
   });
 
+  it("#145: does not name a call whose after-hook never came, from a session a day gone", () => {
+    // The issue's own record: a subagent's Bash call of session e42a31ba, killed mid-call at 00:01Z.
+    const dead: CallRecord = { key: "toolu_01E5vnKWbskveeNuhHo2HjZ1", session: "e42a31ba-dead", agent: "aa87bd88ff0b87b33", tool: "Bash", at: 1792108910019 };
+    const me: CallRecord = { key: "today", session: "today-session", agent: "main", tool: "Bash", at: dead.at + 20 * 60 * 60 * 1000 };
+    expect(overlapping(me, [me, dead]).map((c) => c.key), "a call dead for 20 hours is not in flight").toStrictEqual([]);
+    const finished = call("finished", "sub1", me.at - 1000, me.at - 500);
+    expect(forgettable([dead, finished], me.at), "nor does it pin every later record, and it is forgotten itself").toStrictEqual([dead.key, "finished"]);
+  });
+
+  it("counts a call with no finish only for its first hour", () => {
+    const me = call("me", "main", 10 * CALL_LIFETIME_MS);
+    const young = call("young", "sub1", me.at - CALL_LIFETIME_MS);
+    const old = call("old", "sub2", me.at - CALL_LIFETIME_MS - 1);
+    expect(overlapping(me, [me, young, old]).map((c) => c.key), "an hour to the millisecond is still in flight").toStrictEqual(["young"]);
+    expect(overlapping(me, [me, { ...old, done: me.at + 5 }]).map((c) => c.key), "a long call that did finish counts as ever").toStrictEqual(["old"]);
+    const spawn = call("spawn", "main", 0, undefined, "Agent");
+    const pinned = call("pinned", "sub3", 1, 2);
+    expect(forgettable([spawn, pinned], me.at), "a spawn is never dead by age: its subagent can work for hours").toStrictEqual([]);
+    expect(forgettable([young, old, call("kept", "sub3", me.at - 10, me.at - 5)], me.at), "the young call still pins what finished after it began").toStrictEqual(["old"]);
+  });
+
   it("forgets a finished call once no call still in flight began before it finished", () => {
     const log = [call("live", "main", 100), call("old", "sub1", 10, 50), call("recent", "sub1", 60, 150)];
-    expect(forgettable(log), "recent finished after live began, so live's diff still needs it").toStrictEqual(["old"]);
-    expect(forgettable([...log, call("earliest", "sub2", 5)]), "a call in flight since before either pins both").toStrictEqual([]);
-    expect(forgettable([call("a", "main", 1, 2), call("b", "sub1", 3, 4)]), "nothing in flight").toStrictEqual(["a", "b"]);
+    expect(forgettable(log, 200), "recent finished after live began, so live's diff still needs it").toStrictEqual(["old"]);
+    expect(forgettable([...log, call("earliest", "sub2", 5)], 200), "a call in flight since before either pins both").toStrictEqual([]);
+    expect(forgettable([call("a", "main", 1, 2), call("b", "sub1", 3, 4)], 200), "nothing in flight").toStrictEqual(["a", "b"]);
   });
 
   it("names a call by its tool, its id and whose it was", () => {

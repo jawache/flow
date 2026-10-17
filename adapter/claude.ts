@@ -575,7 +575,7 @@ export function finishSnapshot(root: string, key: string, now = Date.now()): voi
     // refusals, which is the safe direction, and never widens one.
   }
   const finished = log.map((call) => (call.key === key ? { ...call, done: now } : call));
-  for (const gone of forgettable(finished)) rmSync(snapshotFiles(root, gone).meta, { force: true });
+  for (const gone of forgettable(finished, now)) rmSync(snapshotFiles(root, gone).meta, { force: true });
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════

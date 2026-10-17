@@ -1120,7 +1120,7 @@ export function preJudged(payload: HookPayload, root: string): { readonly writes
 
 /**
  * One tool call as flow's own log holds it: who made it, when its snapshot was taken, and when its
- * diff was, once it has been. A record with no `done` is a call still in flight.
+ * diff was, once it has been. A record with no `done` is a call still in flight, until it is dead.
  */
 export interface CallRecord {
   /** The host's `tool_use_id`. */
@@ -1166,6 +1166,21 @@ function abandoned(call: CallRecord, log: readonly CallRecord[]): boolean {
 }
 
 /**
+ * How long a tool call can run. The host stops a shell call after ten minutes and a command started
+ * in the background returns at once, so a call this long past its start with no finish is dead: its
+ * session was killed before the after-call hook ran, and the hook never will.
+ */
+export const CALL_LIFETIME_MS = 60 * 60 * 1000;
+
+/**
+ * A call with no finish, started more than {@link CALL_LIFETIME_MS} before `now`. A SPAWN is never
+ * dead by age: it lasts as long as its subagent works, which can be hours, and its diff still comes.
+ */
+function dead(call: CallRecord, now: number): boolean {
+  return call.done === undefined && !spawns(call) && now - call.at > CALL_LIFETIME_MS;
+}
+
+/**
  * Is this call's diff somebody else's work? A SPAWN — the Agent tool — writes nothing itself: the
  * subagent it started writes, through calls of its own that are in the log under their own agent.
  * Counted as a writer, one foreground builder would read as overlapping its own parent's spawn on
@@ -1182,7 +1197,8 @@ function isSpawn(tool: string): boolean {
 
 /**
  * The calls of OTHER actors that overlapped this one in time: started before this diff, and
- * finished after this snapshot or not finished at all.
+ * finished after this snapshot or not finished at all. A call with no finish counts while it is
+ * younger than {@link CALL_LIFETIME_MS} at this snapshot: dead by then, it ran none of this window.
  *
  * A call that finished inside this one's window counts as well as one still in flight: its write
  * landed between this snapshot and this diff just the same. Calls of the same session and agent
@@ -1195,19 +1211,20 @@ export function overlapping(me: CallRecord, log: readonly CallRecord[]): CallRec
       !sameActor(call, me) &&
       !spawns(call) &&
       !abandoned(call, log) &&
+      !dead(call, me.at) &&
       (call.done === undefined || call.done > me.at),
   );
 }
 
 /**
- * The finished calls the log can forget: no call still in flight started before one finished, so no
- * diff still to come can overlap it. Keeping every record for a day would make every diff read a
- * day of records.
+ * The calls the log can forget. A finished call, once no call still in flight started before it
+ * finished, so no diff still to come can overlap it: keeping every record for a day would make every
+ * diff read a day of records. And a dead call, whose diff will never come.
  */
-export function forgettable(log: readonly CallRecord[]): string[] {
-  const live = log.filter((call) => call.done === undefined && !abandoned(call, log)).map((call) => call.at);
+export function forgettable(log: readonly CallRecord[], now: number): string[] {
+  const live = log.filter((call) => call.done === undefined && !abandoned(call, log) && !dead(call, now)).map((call) => call.at);
   const oldest = live.length === 0 ? Number.POSITIVE_INFINITY : Math.min(...live);
-  return log.filter((call) => call.done !== undefined && call.done < oldest).map((call) => call.key);
+  return log.filter((call) => (call.done !== undefined && call.done < oldest) || dead(call, now)).map((call) => call.key);
 }
 
 /** How a call is named in a message: the tool, the host's id, and whose it was. */
