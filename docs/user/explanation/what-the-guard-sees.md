@@ -122,7 +122,7 @@ A `git stash pop`, a merge stopped on conflicts and a `cherry-pick --no-commit` 
 
 The **harness** is the coding-agent program flow plugs into, such as Claude Code. It runs one writing tool call at a time for each agent in a session, so the calls of one agent never overlap each other.
 
-A parent agent and its subagents are not ordered against each other that way, and their calls can overlap in time. flow works out the overlap from its own log of each call's snapshot and diff. Another agent's call overlaps this one if it started before this call's diff, and either has not finished or finished after this call's snapshot. When any call overlaps, flow writes back only the refused files, even where `revert: "all"` is set, and the message lists the overlapping calls.
+A parent agent and its subagents are not ordered against each other that way, and their calls can overlap in time. flow works out the overlap from its own log of each call's snapshot and diff. Another agent's call overlaps this one if it started before this call's diff, and either has not finished or finished after this call's snapshot. A call with no finish an hour after it started is treated as dead, and is not counted. When any call overlaps, flow writes back only the refused files, even where `revert: "all"` is set, and the message lists the overlapping calls.
 
 ## A command started in the background
 

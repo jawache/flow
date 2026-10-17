@@ -34,6 +34,8 @@ import {
   kebab,
   literal,
   localLinks,
+  packedFiles,
+  unshippedLinks,
   renderPackPage,
   renderPacksIndex,
   says,
@@ -823,5 +825,48 @@ describe("the release's migration guide — one page per version, named by the v
     const dry = "✔ bumping version in package.json from 0.2.1 to 0.2.2\n✔ bumping version in package-lock.json from 0.2.1 to 0.2.2\n";
     expect(nextVersion(dry)).toBe("0.2.2");
     expect(nextVersion("✔ outputting changes to CHANGELOG.md\n")).toBeNull();
+  });
+});
+
+describe("the package's own links — every page npm uploads, followed from inside the tarball", () => {
+  const shipped = ["README.md", "CHANGELOG.md", "LICENCE", "dist/flow.mjs", "docs/user/migrations/0.3.0.md", "docs/user/checks/ban-commands.md", "docs/user/how-to/a page.md"];
+  /** The shipped files' bodies: the guide under test, and a page with no links for every other one. */
+  const reading = (guide: string, page = "docs/user/migrations/0.3.0.md") => (file: string): string => (file === page ? guide : "no links here");
+
+  it("reads the uploaded paths off npm pack's report", () => {
+    const report = JSON.stringify([{ name: "@jawache/flow", files: [{ path: "README.md", size: 1, mode: 420 }, { path: "docs/user/index.md", size: 1, mode: 420 }] }]);
+    expect(packedFiles(report)).toStrictEqual(["README.md", "docs/user/index.md"]);
+  });
+
+  it("reads no path from a report it cannot read, and drops an entry with no path", () => {
+    expect(packedFiles("[{}]")).toStrictEqual([]);
+    expect(packedFiles("{}")).toStrictEqual([]);
+    expect(packedFiles("npm warn not json")).toStrictEqual([]);
+    expect(packedFiles(JSON.stringify([{ files: [{ size: 1 }, { path: 7 }, { path: "README.md" }] }]))).toStrictEqual(["README.md"]);
+  });
+
+  it("follows links from the markdown pages and nothing else", () => {
+    const read = (file: string): string => {
+      if (!file.endsWith(".md")) throw new Error(`read ${file}, which is not a page`);
+      return "[gone](./gone.md)";
+    };
+    expect(unshippedLinks(["dist/flow.mjs", "LICENCE", "README.md"], read)).toStrictEqual(["README.md → ./gone.md (gone.md is not in the package)"]);
+  });
+
+  it("passes a page whose every link lands on a shipped file or a shipped folder", () => {
+    const guide = "[ban](../checks/ban-commands.md#how-a-command-is-matched) [checks](../checks/) [log](../../../CHANGELOG.md) [here](#top) [web](https://x.dev) [space](../how-to/a%20page.md)";
+    expect(unshippedLinks(shipped, reading(guide))).toStrictEqual([]);
+  });
+
+  it("refuses a planted link to a file the package leaves out, naming the page, the link as written and where it lands", () => {
+    const guide = "[ctx](../reference/ctx.md#ctxcommands)\n\n[ok](../checks/ban-commands.md)\n\n[bad](../checks/a%ZZ.md)";
+    expect(unshippedLinks(shipped, reading(guide))).toStrictEqual([
+      "docs/user/migrations/0.3.0.md → ../reference/ctx.md (docs/user/reference/ctx.md is not in the package)",
+      "docs/user/migrations/0.3.0.md → ../checks/a%ZZ.md (docs/user/checks/a%ZZ.md is not in the package)",
+    ]);
+  });
+
+  it("refuses a link that climbs out of the package altogether", () => {
+    expect(unshippedLinks(shipped, reading("[up](../elsewhere.md)", "README.md"))).toStrictEqual(["README.md → ../elsewhere.md (outside the package)"]);
   });
 });

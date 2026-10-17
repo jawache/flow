@@ -54,6 +54,8 @@ import {
   type Verdict,
   type World,
 } from "../language/domain.ts";
+import { stagedFiles } from "../checks/domain.ts";
+import type { CommitFileFacts } from "../checks/domain.ts";
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // CATEGORIES — who a session is
@@ -209,8 +211,13 @@ export function identify(
 // engine's answer, and a fence that reads as armed and narrows nothing is the bug flow exists to
 // delete rather than to report.
 
-/** One event the guardrail rails carry. Facts only — who it happened to is `wearing`. */
-export interface GuardEvent {
+/**
+ * One event the guardrail rails carry. Facts only — who it happened to is `wearing`.
+ *
+ * commit: `added` and `unchanged` are the commit's file facts (`CommitFileFacts`), the same two a
+ * case lists.
+ */
+export interface GuardEvent extends Pick<CommitFileFacts, "added" | "unchanged"> {
   readonly moment: GuardrailMoment;
   /** write/delete: the would-be file, in memory, before disk. */
   readonly file?: Ctx["file"];
@@ -220,11 +227,6 @@ export interface GuardEvent {
   readonly commands?: Ctx["commands"];
   /** commit: the staged paths. */
   readonly staged?: readonly string[] | undefined;
-  /**
-   * commit: the staged paths the last commit does not have, which become each file's `existed`.
-   * Absent when the shell could not ask git, and then `existed` is left unset.
-   */
-  readonly added?: readonly string[] | undefined;
   /**
    * commit: the staged deletions an entry will judge (`judgedDeletions`), each with its content as
    * the last commit has it. A rename is a deletion of its old path plus an add of its new one.
@@ -345,13 +347,8 @@ async function subjectsOf(entry: LoadedEntry, event: GuardEvent, world: World): 
   if (event.moment === "commit") {
     const staged = event.staged ?? [];
     if (!spec.on) return [{ name: null, facts: { staged } }];
-    const out: Subject[] = [];
-    for (const path of staged) {
-      if (!inScope(spec, path)) continue;
-      if (!(await world.fs.exists(path))) continue;
-      const existed = event.added === undefined ? {} : { existed: !event.added.includes(path) };
-      out.push({ name: path, facts: { file: { path, content: await world.fs.read(path), ...existed }, staged } });
-    }
+    const files = await stagedFiles(spec, staged, world, event);
+    const out: Subject[] = files.map((file) => ({ name: file.path, facts: { file, staged } }));
     for (const gone of event.deleted ?? []) {
       if (!judgesDeletion(entry, gone.path)) continue;
       out.push({ name: gone.path, facts: { file: { ...gone, existed: true }, staged }, moment: "delete" });
@@ -1739,7 +1736,8 @@ export type RecordedStep =
       readonly file?: Ctx["file"];
       readonly command?: string | undefined;
       readonly staged?: readonly string[] | undefined;
-      readonly added?: readonly string[] | undefined;
+      readonly added?: GuardEvent["added"];
+      readonly unchanged?: GuardEvent["unchanged"];
       readonly deleted?: GuardEvent["deleted"];
       readonly turn?: readonly TurnAction[] | undefined;
       readonly wearing: readonly string[];
@@ -1860,6 +1858,7 @@ export async function replay({ load, recording, settings, marks = {} }: ReplayAr
           command: step.command,
           staged: step.staged,
           added: step.added,
+          unchanged: step.unchanged,
           deleted: step.deleted,
           turn: step.turn,
           wearing: step.wearing,

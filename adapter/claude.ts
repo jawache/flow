@@ -349,7 +349,13 @@ function snapshotFiles(root: string, key: string): { readonly meta: string; read
   return { meta: `${base}.json`, index: `${base}.index`, after: `${base}.after.index` };
 }
 
-/** A snapshot left behind longer than this belongs to a call whose after-hook never came. */
+/**
+ * A file in the snapshots folder this old is left over, whatever it is. The call log forgets only a
+ * finished call (`forgettable`), so this is what takes a call that never finished: dead, with its
+ * session killed, or a spawn whose session died. A dead call is kept this long, not an hour, because
+ * it may still be waiting at a permission prompt, and its after-call hook then needs its snapshot.
+ * It is the backstop too for what no readable record accounts for.
+ */
 const STALE_SNAPSHOT_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -421,7 +427,7 @@ export function takeSnapshot(
   }
 }
 
-/** Snapshots whose after-hook never came — a call refused by the host's own permission prompt. */
+/** Files a day old the call log never forgot: a call that never finished, a half-written record. */
 function sweepSnapshots(dir: string): void {
   const now = Date.now();
   for (const name of readdirSync(dir)) {
@@ -571,11 +577,11 @@ export function finishSnapshot(root: string, key: string, now = Date.now()): voi
     if (me === undefined) rmSync(files.meta, { force: true });
     else writeFileSync(files.meta, JSON.stringify({ session: me.session, agent: me.agent, tool: me.tool, at: me.at, done: now }));
   } catch {
-    // A record that cannot be marked finished reads as in flight until the day's sweep: it narrows
+    // A record that cannot be marked finished reads as in flight for its first hour: it narrows
     // refusals, which is the safe direction, and never widens one.
   }
   const finished = log.map((call) => (call.key === key ? { ...call, done: now } : call));
-  for (const gone of forgettable(finished)) rmSync(snapshotFiles(root, gone).meta, { force: true });
+  for (const gone of forgettable(finished, now)) rmSync(snapshotFiles(root, gone).meta, { force: true });
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -1059,7 +1065,7 @@ function askGit(command: string, root: string): ExecResult {
 
 /**
  * What the commit changes, asked of git ONCE, whoever called the gate — the files it will hold,
- * which of them are new, and which it removes.
+ * which of them are new, which are as the last commit has them (`--all` only), and which it removes.
  *
  * A git that cannot answer is a refusal, never an empty commit: a gate that read "nothing staged"
  * off a failed command would pass everything.
@@ -1076,7 +1082,8 @@ function readChanges(
   // The whole tree: every file git can see that is on disk, measured against the last commit.
   const present = [...new Set(listed.stdout.split("\0"))].filter((path) => path !== "" && existsSync(inRepo(root, path)));
   const tree = askGit("git ls-tree -r --name-only -z HEAD", root);
-  return { ok: true, staged: treeChanges(present, tree, () => askGit("git rev-parse -q --verify HEAD", root).code === 0) };
+  const differs = askGit("git diff --name-only --no-renames -z HEAD", root);
+  return { ok: true, staged: treeChanges(present, tree, differs, () => askGit("git rev-parse -q --verify HEAD", root).code === 0) };
 }
 
 /**
@@ -1105,7 +1112,7 @@ export async function runCommit(root: string, scope: CommitScope): Promise<HookR
   if (regime.kind === "broken") return refused([{ moment: "commit", block: fault(regime.message) }]) ?? ALLOW;
   const changes = readChanges(root, scope);
   if (!changes.ok) return refused([{ moment: "commit", block: fault(changes.why) }]) ?? ALLOW;
-  const { files, added, deleted } = changes.staged;
+  const { files, added, unchanged, deleted } = changes.staged;
   const { load } = regime;
   // Nothing to judge is a pass only for a config that loaded: one that did not refuses every commit,
   // empty or not, through `guard()`'s own `!load.ok` branch.
@@ -1124,7 +1131,7 @@ export async function runCommit(root: string, scope: CommitScope): Promise<HookR
   }));
   const outcome = await guard({
     load,
-    event: { moment: "commit", staged: files, added, deleted: gone, wearing },
+    event: { moment: "commit", staged: files, added, unchanged, deleted: gone, wearing },
     world: tape?.world ?? realWorld(root),
     off: false,
   });
@@ -1135,6 +1142,7 @@ export async function runCommit(root: string, scope: CommitScope): Promise<HookR
         moment: "commit",
         staged: files,
         ...(added === undefined ? {} : { added }),
+        ...(unchanged.length === 0 ? {} : { unchanged }),
         ...(gone.length === 0 ? {} : { deleted: gone }),
         wearing,
         world: tape.taken(),

@@ -52,6 +52,7 @@ import type {
   GuardrailMoment,
   LoadedEntry,
   Moment,
+  Scope,
   ShellCommand,
   ShellSubstitution,
   TurnAction,
@@ -375,11 +376,16 @@ export const SUBSTITUTION_MESSAGE = [
  * history and may never move while today's is the whole point of the folder. Absent means no
  * narrowing — every write to a protected path is refused — which is the empty value rather than a
  * default a reader has to know about.
+ *
+ * Either way, a file identical to the last commit's copy is not an edit, and passes. Only `flow
+ * hook commit --all` hands one over: it judges the whole tree, and a real commit never stages a
+ * file it leaves as it was.
  */
 export const protectedPath = defineCheck(
   (opts: { existingOnly?: boolean }): Check =>
     async (ctx) => {
       const { path } = touched(ctx);
+      if (ctx.file?.unchanged === true) return ctx.ok();
       if (opts.existingOnly === true) {
         // "Already there" means before THIS change. Before an Edit the tree still answers that.
         // After a shell command, and at commit, the tree holds the file either way, so the event
@@ -1954,6 +1960,27 @@ const SPEAKS: Readonly<Record<CaseDialect, readonly GuardrailMoment[]>> = {
 };
 
 /**
+ * What a commit says about its staged files beyond their paths — what a case lists, and what the
+ * live gate's event carries (`GuardEvent` takes `added` and `unchanged` from here; its `deleted`
+ * holds the same facts as a list). Written out rather than derived from `readCase`, so a field
+ * added to a case's reading does not silently become an option of the fan-out.
+ */
+export interface CommitFileFacts {
+  /**
+   * The staged paths the last commit does not have, which become each file's `existed`. Absent
+   * when the shell could not ask git, or the case does not say, and then `existed` is left unset.
+   */
+  readonly added?: readonly string[] | undefined;
+  /**
+   * The staged paths identical to the last commit, which only `--all` has. Each one's
+   * `ctx.file.unchanged` is `true`.
+   */
+  readonly unchanged?: readonly string[] | undefined;
+  /** The staged deletions, by path, with their content as the last commit has it. */
+  readonly deleted?: Readonly<Record<string, string>> | undefined;
+}
+
+/**
  * Read a case once: which dialect it speaks, the event facts it carries, and its recorded world.
  *
  * ONE ladder over the union, and it is the only one. There were three — this, a `caseMoment` that
@@ -1965,11 +1992,7 @@ export function readCase(c: Case): {
   readonly dialect: CaseDialect;
   readonly facts: Partial<Ctx>;
   readonly world: CaseWorld;
-  /** commit: the staged paths the last commit does not have, when the case says. */
-  readonly added?: readonly string[] | undefined;
-  /** commit: the staged deletions, by path, with their content as the last commit has it. */
-  readonly deleted?: Readonly<Record<string, string>> | undefined;
-} {
+} & CommitFileFacts {
   if (typeof c === "string") return { dialect: "command", facts: { command: c }, world: {} };
   const world = c.world ?? {};
   // The canned session's categories, the same field on every shape: a live rail hands every check
@@ -1980,7 +2003,8 @@ export function readCase(c: Case): {
     const existed = c.existed === undefined ? {} : { existed: c.existed };
     return { dialect: "write", facts: { file: { path: c.path, content: c.content, ...existed }, ...actor }, world };
   }
-  if ("staged" in c) return { dialect: "commit", facts: { staged: c.staged, ...actor }, world, added: c.added, deleted: c.deleted };
+  if ("staged" in c)
+    return { dialect: "commit", facts: { staged: c.staged, ...actor }, world, added: c.added, unchanged: c.unchanged, deleted: c.deleted };
   return { dialect: "turn-end", facts: { turn: c.actions, ...actor }, world };
 }
 
@@ -2007,9 +2031,9 @@ export function cannedCtx(moment: Moment, c: Case, unanswered: Unanswered[]): Ct
 function cannedParts(
   c: Case,
   unanswered: Unanswered[],
-): Omit<ReturnType<typeof readCase>, "dialect" | "world"> & { readonly world: World } {
-  const { world, facts, added, deleted } = readCase(c);
-  return { world: cannedWorld(world, facts.staged, unanswered), facts, added, deleted };
+): { readonly facts: Partial<Ctx>; readonly world: World } & CommitFileFacts {
+  const { world, facts, added, unchanged, deleted } = readCase(c);
+  return { world: cannedWorld(world, facts.staged, unanswered), facts, added, unchanged, deleted };
 }
 
 /**
@@ -2020,9 +2044,36 @@ function cannedParts(
  * four answers the live gate would.
  */
 export async function caseCtxs(entry: LoadedEntry, moment: Moment, c: Case, unanswered: Unanswered[]): Promise<Ctx[]> {
-  const { world, facts, added, deleted } = cannedParts(c, unanswered);
-  const subjects = moment === "commit" ? await commitSubjects(entry, facts, world, added, deleted) : [facts];
+  const { world, facts, ...commit } = cannedParts(c, unanswered);
+  const subjects = moment === "commit" ? await commitSubjects(entry, facts, world, commit) : [facts];
   return subjects.map((subject) => makeCtx(subject.moment ?? moment, subject, world));
+}
+
+/**
+ * Each staged file an entry that named `.on(…)` is asked about, as its `ctx.file` — the ONE rule
+ * for a commit's file subjects, which the live gate (`subjectsOf`) and a case both build through.
+ *
+ * A file out of the entry's scope, or not on disk, yields none. `existed` is set when `added` is
+ * given, and `unchanged` on each file `unchanged` names — which only `--all` has.
+ */
+export async function stagedFiles(
+  scope: Scope,
+  staged: readonly string[],
+  world: World,
+  { added, unchanged }: Pick<CommitFileFacts, "added" | "unchanged">,
+): Promise<NonNullable<Ctx["file"]>[]> {
+  // Sets, not lists: under `--all` nearly every file in the tree is unchanged, and before the
+  // first commit every one is added.
+  const fresh = added === undefined ? undefined : new Set(added);
+  const same = new Set(unchanged ?? []);
+  const out: NonNullable<Ctx["file"]>[] = [];
+  for (const path of staged) {
+    if (!inScope(scope, path)) continue;
+    if (!(await world.fs.exists(path))) continue;
+    const existed = fresh === undefined ? {} : { existed: !fresh.has(path) };
+    out.push({ path, content: await world.fs.read(path), ...existed, ...(same.has(path) ? { unchanged: true } : {}) });
+  }
+  return out;
 }
 
 /**
@@ -2040,7 +2091,9 @@ export async function caseCtxs(entry: LoadedEntry, moment: Moment, c: Case, unan
  * content is a failure naming what to add rather than a silent pass.
  *
  * A case that lists `added` says which files the last commit does not have, as the live gate does,
- * and each file's `existed` follows from it. A case that lists none leaves `existed` unset.
+ * and each file's `existed` follows from it. A case that lists none leaves `existed` unset. A case
+ * that lists `unchanged` says which are identical to the last commit, as `--all` does, and each of
+ * those has `unchanged` set.
  *
  * A case's `deleted` files are asked of an entry that fires at `delete` as well as `commit`, each as
  * a delete — the same rule the live gate follows, for the same reason.
@@ -2049,21 +2102,14 @@ async function commitSubjects(
   entry: LoadedEntry,
   facts: Partial<Ctx>,
   world: World,
-  added: readonly string[] | undefined,
-  deleted: Readonly<Record<string, string>> | undefined,
+  commit: CommitFileFacts,
 ): Promise<Partial<Ctx>[]> {
   const staged = facts.staged ?? [];
   const { spec } = entry;
   if (!spec.on) return [facts];
-  const out: Partial<Ctx>[] = [];
-  for (const path of staged) {
-    if (!inScope(spec, path)) continue;
-    if (!(await world.fs.exists(path))) continue;
-    const existed = added === undefined ? {} : { existed: !added.includes(path) };
-    out.push({ file: { path, content: await world.fs.read(path), ...existed }, staged });
-  }
+  const out: Partial<Ctx>[] = (await stagedFiles(spec, staged, world, commit)).map((file) => ({ file, staged }));
   const atDelete = ((spec.at ?? []) as readonly string[]).includes("delete");
-  for (const [path, content] of Object.entries(deleted ?? {})) {
+  for (const [path, content] of Object.entries(commit.deleted ?? {})) {
     if (!atDelete || !inScope(spec, path)) continue;
     out.push({ moment: "delete", file: { path, content, existed: true }, staged });
   }

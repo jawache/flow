@@ -105,7 +105,7 @@ A case is a canned `ctx`. Its shape picks which moment's dialect it speaks, and 
 | --- | --- |
 | `"a string"` or `{ command }` | command |
 | `{ path, content }` | write (a file rule). Add `existed: true` or `existed: false` to test a change a shell command made: it sets `ctx.file.existed` |
-| `{ staged }` | commit. Add `added: [...]` to list the staged paths the last commit does not have: it sets each file's `ctx.file.existed`. Add `deleted: { path: content }` to list the files the commit deletes, each with its content as the last commit has it: a rule bound at both `deletion` and `commit`, with paths in `.on(…)`, is called with each one, as a delete |
+| `{ staged }` | commit. Add `added: [...]` to list the staged paths the last commit does not have: it sets each file's `ctx.file.existed`. Add `unchanged: [...]` to list the staged paths identical to the last commit, as `flow hook commit --all` passes them: it sets each one's `ctx.file.unchanged`. Add `deleted: { path: content }` to list the files the commit deletes, each with its content as the last commit has it: a rule bound at both `deletion` and `commit`, with paths in `.on(…)`, is called with each one, as a delete |
 | `{ actions }` | turn-end |
 
 Any case may add `actor: [...]`, the category names of the canned session.

@@ -1150,3 +1150,50 @@ export function migrationGuide(version: string): string {
 export function nextVersion(dryRun: string): string | null {
   return /bumping version in package\.json from \S+ to (\S+)/.exec(dryRun)?.[1] ?? null;
 }
+
+// ══ THE PACKAGE'S OWN LINKS — every page npm uploads, followed inside it; why: tools/package.test.ts ══
+
+/** The paths `npm pack --dry-run --json` would upload, read off its report: none when it cannot be read, and no entry without a path. */
+export function packedFiles(report: string): string[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(report);
+  } catch {
+    return [];
+  }
+  const first: unknown = Array.isArray(parsed) ? parsed[0] : undefined;
+  const files: unknown = typeof first === "object" && first !== null && "files" in first ? first.files : undefined;
+  if (!Array.isArray(files)) return [];
+  return files.flatMap((file: unknown) => (typeof file === "object" && file !== null && "path" in file && typeof file.path === "string" ? [file.path] : []));
+}
+
+/**
+ * EVERY LINK A SHIPPED PAGE MAKES TO A FILE THE PACKAGE LEAVES OUT, one line each naming the page,
+ * the link as written and where it lands. The pages are the shipped markdown files, each read
+ * through `read`. A link to a folder holds when the package ships anything under it; a link that
+ * climbs out of the package never holds.
+ */
+export function unshippedLinks(shipped: readonly string[], read: (page: string) => string): string[] {
+  const files = new Set(shipped);
+  const lands = (target: string): boolean => files.has(target) || shipped.some((file) => file.startsWith(`${target}/`));
+  return shipped
+    .filter((file) => file.endsWith(".md"))
+    .flatMap((page) =>
+      localLinks(read(page))
+        .filter((link) => link.path !== "")
+        .flatMap((link) => {
+          const target = posix.normalize(posix.join(posix.dirname(page), decoded(link.path))).replace(/\/$/, "");
+          const outside = target === ".." || target.startsWith("../");
+          return !outside && lands(target) ? [] : [`${page} → ${link.path} (${outside ? "outside the package" : `${target} is not in the package`})`];
+        }),
+    );
+}
+
+/** A link's path with its %-escapes undone, or as written when they do not decode. */
+function decoded(path: string): string {
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
+}

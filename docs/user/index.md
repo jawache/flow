@@ -88,4 +88,4 @@ For you when you want to know why flow is built the way it is.
 ## Not here
 
 - What flow is and why you would use it: the repo's [README](../../README.md).
-- The research and the numbered decisions behind flow: [docs/agent](../agent/README.md).
+- The research and the numbered decisions behind flow: [docs/agent](https://github.com/jawache/flow/blob/main/docs/agent/README.md).

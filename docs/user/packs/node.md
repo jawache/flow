@@ -38,7 +38,7 @@ repo already has.
 ## Entries
 
 - [`node.dependencies`](#nodedependencies--breadcrumb) · breadcrumb · When to reach for a package, how to vet it, and what a commit that adds one owes.
-- [`node.newDependencyNeedsReason`](#nodenewdependencyneedsreason--guardrail) · guardrail · A commit that moves package.json must record why, and what else was checked.
+- [`node.newDependencyNeedsReason`](#nodenewdependencyneedsreason--guardrail) · guardrail · A commit made while package.json has uncommitted changes must record why, and what else was checked.
 - [`node.lockfileInStep`](#nodelockfileinstep--guardrail) · guardrail · A dependency move and the lockfile land in the same commit — deps stay exactly pinned.
 
 ## `node.dependencies` — breadcrumb
@@ -65,7 +65,7 @@ Pin the version; the lockfile change ships in the SAME commit.
 
 ## `node.newDependencyNeedsReason` — guardrail
 
-A commit that moves package.json must record why, and what else was checked.
+A commit made while package.json has uncommitted changes must record why, and what else was checked.
 
 - **Refuses at** a shell command is about to run
 - **Watches** not scoped by path
@@ -93,7 +93,7 @@ person to ask "why do we depend on this" has only the package name to go on.
 ### What the agent reads when refused
 
 ```
-This commit moves package.json with no reason recorded. A dependency is a supply-chain surface — put `new-dep: <name> — <why, and what else was checked>` on a line of its own in the commit message. Doing it is fine; doing it silently is not.
+package.json has changes since the last commit, staged or not, and this commit's message records no reason. If this commit adds or moves a dependency, put `new-dep: <name> — <why, and what else was checked>` on a line of its own in the message. If the package.json changes belong to another commit, commit them first with their own `new-dep:` line, or stash them, then commit again.
 ```
 
 ### Proved by
