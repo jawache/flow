@@ -1157,9 +1157,10 @@ function sameActor(a: CallRecord, b: CallRecord): boolean {
 /**
  * A snapshot whose diff never came, and never will: the host refused the call after flow allowed
  * it (a permission prompt said no), so it never ran. Read as in flight, it would narrow every
- * refusal in the worktree for a day. Its actor has moved on — a later call of the same session and
- * agent has already finished — so it is not waited on. A long read that is genuinely still running
- * beside its own agent's later calls is misread by this, and costs nothing: it writes nothing.
+ * refusal in the worktree for its first hour. Its actor has moved on — a later call of the same
+ * session and agent has already finished — so it is not waited on. A long read that is genuinely
+ * still running beside its own agent's later calls is misread by this, and costs nothing: it writes
+ * nothing.
  */
 function abandoned(call: CallRecord, log: readonly CallRecord[]): boolean {
   return call.done === undefined && log.some((other) => sameActor(other, call) && other.done !== undefined && other.at > call.at);
