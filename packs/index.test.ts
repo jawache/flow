@@ -12,7 +12,7 @@
 
 import { describe, it, expect } from "vitest";
 import * as packs from "./index.ts";
-import { defineConfig, loadConfig, pack } from "../index.ts";
+import { defineConfig, loadConfig, pack, type Check, type Ctx } from "../index.ts";
 
 /** The entries a config loaded, or an empty list and the refusals in the failure message. */
 function loaded(result: ReturnType<typeof loadConfig>): { id: string; spec: unknown }[] {
@@ -202,5 +202,21 @@ describe("the packs surface", () => {
     // Whatever a repo passes, the package never puts a folder of its own into either scope.
     for (const scope of Object.values(theirs).concat(Object.values(inline)))
       for (const glob of scope) expect(glob.startsWith("guards/"), glob).toBe(false);
+  });
+
+  // THE DETAIL a refusal adds under its message is prose too, and a case cannot see it either: a
+  // case reads only the verdict. A bare `-f` once read "`-f` in `-f`" (#144).
+  it("names a bare -f once in the force-push refusal, and the bundle it sits in otherwise", () => {
+    const entry = loaded(loadConfig(defineConfig([pack(packs.git, { release: "just release" })]))).find((e) => e.id === "git.noForcePush");
+    const check = (entry?.spec as { check: Check }).check;
+    // Only what the check reads: the command line, which `gitCommands` parses, and the two verdicts.
+    const detail = (command: string): string | undefined => {
+      const ctx = { command, ok: () => ({ ok: true }), fail: (said?: string) => ({ ok: false, detail: said }) } as unknown as Ctx;
+      const verdict = check(ctx) as { ok: boolean; detail?: string };
+      return verdict.ok ? undefined : verdict.detail;
+    };
+    expect(detail("git push -f")).toBe("`git push` forces the remote with `-f`");
+    expect(detail("/usr/bin/git push -f nowhere main")).toBe("`git push` forces the remote with `-f`");
+    expect(detail("git push -fu origin main")).toBe("`git push` forces the remote with `-f` in `-fu`");
   });
 });

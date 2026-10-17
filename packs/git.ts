@@ -261,7 +261,7 @@ const PUSH_TAKES_VALUE = new Set(["-o", "--push-option", "--repo", "--receive-pa
 /**
  * How this `git push` argument list forces the remote, or null when it does not: `--force`, `-f`
  * alone or in a bundle such as `-fu`, `--force-with-lease` with or without its value, or a refspec
- * that starts with `+`.
+ * that starts with `+`. A bundle is named as the word it is in, and a bare `-f` as itself alone.
  */
 function pushForce(args: readonly string[]): string | null {
   let refspecs = false; // past `--`, every word is the repository or a refspec
@@ -276,7 +276,7 @@ function pushForce(args: readonly string[]): string | null {
     else if (PUSH_TAKES_VALUE.has(arg)) i++;
     else if (!arg.startsWith("--"))
       for (const flag of arg.slice(1)) {
-        if (flag === "f") return `\`-f\` in \`${arg}\``;
+        if (flag === "f") return arg === "-f" ? "`-f`" : `\`-f\` in \`${arg}\``;
         if (flag === "o") {
           if (arg.endsWith("o")) i++; // `-o` last in the bundle takes the next word; otherwise the rest is its value
           break;
