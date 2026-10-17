@@ -29,7 +29,7 @@ A check declares no moments, no schema and no `kind`. The entry's `.at(…)` set
 
 | Field | Is |
 | --- | --- |
-| `ctx.file` | The file this moment is about, `{ path, content, existed }`, at a file moment. See [ctx.file](#ctxfile) |
+| `ctx.file` | The file this moment is about, `{ path, content, existed, unchanged }`, at a file moment. See [ctx.file](#ctxfile) |
 | `ctx.command` | The shell command line, at the command moment |
 | `ctx.commands` | The command line parsed as bash, at the command moment: one entry per simple command, or `null` when the line does not parse. See [ctx.commands](#ctxcommands) |
 | `ctx.staged` | The staged paths, at the commit moment, in every call that moment makes. Under `flow hook commit --all`, every file git lists |
@@ -82,7 +82,7 @@ const noBareGh = defineCheck((_opts: Record<string, never>) => (ctx) => {
 | --- | --- |
 | `write` | `ctx.file` = `{ path, content }`, plus `existed` when a shell command made the change |
 | `delete` | `ctx.file` = `{ path, content }`, where `content` is the file before it was removed |
-| `commit` (a file rule) | When the rule lists globs with `.on(…)`, the check is called once per staged file in scope that is on disk. `ctx.file` = `{ path, content, existed }`, and `ctx.staged` is the whole staged set |
+| `commit` (a file rule) | When the rule lists globs with `.on(…)`, the check is called once per staged file in scope that is on disk. `ctx.file` = `{ path, content, existed }`, and `ctx.staged` is the whole staged set. Under `flow hook commit --all`, `ctx.file` also has `unchanged: true` when the file is identical to the one in the last commit |
 | `command` | `ctx.command`: the line about to run, and `ctx.commands`: that line parsed |
 | `commit` (no `.on`) | `ctx.staged`: the whole staged set, in one call |
 | `commit`, for a deleted file | Only when the rule is bound at both `deletion` and `commit`, and lists globs with `.on(…)`. `ctx.moment` is `delete`, and `ctx.file` = `{ path, content, existed: true }`, where `content` is the file as the last commit has it. `ctx.staged` is the whole staged set |
