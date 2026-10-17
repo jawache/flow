@@ -3398,7 +3398,8 @@ export interface Registration {
  * register a command nothing answers.
  *
  * `unregistered` is what goes unjudged while that one registration is missing — what `flow status`
- * says beside the fix. Each event costs its own rails and no others, so a file missing one names
+ * says beside the fix, unless the machine-wide file calls flow for that event in the meantime (see
+ * `unregisteredText`). Each event costs its own rails and no others, so a file missing one names
  * that one's cost, not the whole guard's.
  */
 const REGISTERED: readonly { readonly hook: HookEvent; readonly matcher?: string; readonly unregistered: string }[] = [
