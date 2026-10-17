@@ -959,7 +959,7 @@ export type Delta =
       readonly ok: true;
       readonly changes: readonly Change[];
       /** Paths that entered the snapshot during the call (`visibility`): in no change, judged by nothing. */
-      readonly entered?: readonly string[];
+      readonly entered: readonly string[];
     }
   | { readonly ok: false; readonly fault: string };
 
@@ -985,8 +985,11 @@ function wasHidden(path: string, hidden: readonly string[]): boolean {
  *   and stays one, whatever the call did to what the snapshot sees. `hidden` is null when the
  *   snapshot recorded no list, and then flow cannot tell the two apart, so every new path is taken
  *   as entered: never deleting a file flow has no copy of outranks judging one.
- * - **Left.** A path the tree after does not hold that is still a file on disk (`onDisk`). It left
- *   the snapshot rather than the disk, so it leaves the changes too: no delete rule, nothing put back.
+ * - **Left.** A path the tree after does not hold that is still a file on disk (`onDisk` reads it,
+ *   null for none). It left the snapshot rather than the disk, so it is no removal and no delete
+ *   rule is called on it. Still as it was before the call, it leaves the changes. Different, it is
+ *   a change to that content: the call wrote it, so the write rules judge it and a refusal puts the
+ *   before back.
  *
  * `hidden` is what the snapshot BEFORE the call recorded, so the config the call may have just
  * edited decides nothing here.
@@ -994,14 +997,18 @@ function wasHidden(path: string, hidden: readonly string[]): boolean {
 export function visibility(
   changes: readonly Change[],
   hidden: readonly string[] | null,
-  onDisk: (path: string) => boolean,
+  onDisk: (path: string) => string | null,
 ): { readonly changes: readonly Change[]; readonly entered: readonly string[] } {
   const entered = changes.filter((change) => change.before === null && (hidden === null || wasHidden(change.path, hidden))).map((change) => change.path);
   const out = new Set(entered);
-  return {
-    changes: changes.filter((change) => !out.has(change.path) && !(change.after === null && onDisk(change.path))),
-    entered,
-  };
+  const kept = changes.flatMap((change): Change[] => {
+    if (out.has(change.path)) return [];
+    if (change.after !== null) return [change];
+    const disk = onDisk(change.path);
+    if (disk === null) return [change];
+    return disk === change.before ? [] : [{ ...change, after: disk }];
+  });
+  return { changes: kept, entered };
 }
 
 /** How many entered paths the line names before it counts the rest. */

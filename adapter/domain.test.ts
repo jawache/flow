@@ -4551,25 +4551,30 @@ describe("snapshotInclude — where git looks, and what it keeps", () => {
       { path: "new.ts", before: null, after: "export {};\n" },
       { path: "a.ts", before: "1\n", after: "2\n" },
     ];
-    const seen = visibility(changes, [".env", "tools/scratch/", "node_modules/"], () => false);
+    const seen = visibility(changes, [".env", "tools/scratch/", "node_modules/"], () => null);
     expect(seen.entered, "a file, and a file under a directory git ignored whole").toEqual([".env", "tools/scratch/notes.md"]);
     expect(seen.changes.map((change) => change.path), "a file that did not exist before is still the call's creation").toEqual(["new.ts", "a.ts"]);
-    expect(visibility(changes, [".env.keys", "tools/scratch"], () => false).entered, "a prefix that is not a directory entry hides nothing").toEqual([]);
+    expect(visibility(changes, [".env.keys", "tools/scratch"], () => null).entered, "a prefix that is not a directory entry hides nothing").toEqual([]);
   });
 
   it("takes every new path as entered when the snapshot recorded no hidden list — never a delete of a file flow has no copy of", () => {
-    const seen = visibility([{ path: "new.ts", before: null, after: "x\n" }, { path: "a.ts", before: "1\n", after: "2\n" }], null, () => false);
+    const seen = visibility([{ path: "new.ts", before: null, after: "x\n" }, { path: "a.ts", before: "1\n", after: "2\n" }], null, () => null);
     expect(seen.entered).toEqual(["new.ts"]);
     expect(seen.changes.map((change) => change.path)).toEqual(["a.ts"]);
   });
 
-  it("is no removal when the path left the snapshot but is still a file on disk", () => {
+  it("is no removal when the path left the snapshot but is still a file on disk: unchanged it leaves the diff, changed it is a write", () => {
     const changes = [
       { path: ".env", before: "TOKEN=old\n", after: null },
+      { path: ".env.local", before: "A=1\n", after: null },
       { path: "gone.ts", before: "x\n", after: null },
     ];
-    const seen = visibility(changes, [], (path) => path === ".env");
-    expect(seen.changes, "gone.ts is gone from disk too: that removal is judged").toEqual([{ path: "gone.ts", before: "x\n", after: null }]);
+    const disk: Record<string, string> = { ".env": "TOKEN=old\n", ".env.local": "A=2\n" };
+    const seen = visibility(changes, [], (path) => disk[path] ?? null);
+    expect(seen.changes, "gone.ts is gone from disk too: that removal is judged; .env.local was rewritten, so the write rules judge it").toEqual([
+      { path: ".env.local", before: "A=1\n", after: "A=2\n" },
+      { path: "gone.ts", before: "x\n", after: null },
+    ]);
     expect(seen.entered).toEqual([]);
   });
 

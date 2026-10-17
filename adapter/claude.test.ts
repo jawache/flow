@@ -359,9 +359,7 @@ export default defineConfig([pack(demo)], { snapshotInclude: [".env"] });
   });
 
   // #146: a call that changes what the snapshot can see. Each rule here refuses any write to .env.
-  const keepEnvConfig = (include: string): string => {
-    const door = new URL("../index.ts", import.meta.url).pathname;
-    return `import { defineConfig, definePack, deletion, guardrail, pack, protectedPath, write } from ${JSON.stringify(door)};
+  const keepEnvConfig = `import { defineConfig, definePack, deletion, guardrail, pack, protectedPath, write } from ${JSON.stringify(new URL("../index.ts", import.meta.url).pathname)};
 const demo = definePack("demo", {
   keepEnv: guardrail()
     .at(write, deletion)
@@ -370,9 +368,8 @@ const demo = definePack("demo", {
     .message("The .env stays.")
     .test({ pass: [{ path: "a.ts", content: "new" }], block: [{ path: ".env", content: "x" }] }),
 });
-export default defineConfig([pack(demo)], { snapshotInclude: [${include}] });
+export default defineConfig([pack(demo)]);
 `;
-  };
 
   /** One Bash call through both rails: the snapshot before it, `act` as the call, the judgement after. */
   const hookCall = async (key: string, act: () => void): Promise<Awaited<ReturnType<typeof runHook>>> => {
@@ -409,11 +406,11 @@ export default defineConfig([pack(demo)], { snapshotInclude: [${include}] });
     const delta = observeDelta(repo, "toolu_146d", [".env"]);
     if (!delta.ok) throw new Error(delta.fault);
     expect(delta.changes, "it was not on disk before the call").toStrictEqual([{ path: ".env", before: null, after: "TOKEN=new\n" }]);
-    expect(delta.entered).toBeUndefined();
+    expect(delta.entered).toStrictEqual([]);
   });
 
   it("#146: a call that un-ignores .env in .gitignore leaves the .env that was already there, and says so", async () => {
-    writeFileSync(join(repo, "flow.config.ts"), keepEnvConfig(""));
+    writeFileSync(join(repo, "flow.config.ts"), keepEnvConfig);
     const answer = await hookCall("toolu_146b", () => { writeFileSync(join(repo, ".gitignore"), "secret.key\nbuild/\n"); });
     expect(read(".env"), `the call never touched .env; flow said:\n${answer.stderr}`).toBe("TOKEN=old\n");
     expect(answer.exitCode, "nothing judged .env, so nothing refused it").toBe(0);
@@ -421,7 +418,7 @@ export default defineConfig([pack(demo)], { snapshotInclude: [${include}] });
   });
 
   it("#146: the next call's edit to a file that entered the snapshot is judged", async () => {
-    writeFileSync(join(repo, "flow.config.ts"), keepEnvConfig(""));
+    writeFileSync(join(repo, "flow.config.ts"), keepEnvConfig);
     expect((await hookCall("toolu_146e1", () => { writeFileSync(join(repo, ".gitignore"), "secret.key\nbuild/\n"); })).exitCode).toBe(0);
     const answer = await hookCall("toolu_146e2", () => { writeFileSync(join(repo, ".env"), "TOKEN=leaked\n"); });
     expect(answer.exitCode).toBe(2);
@@ -431,7 +428,7 @@ export default defineConfig([pack(demo)], { snapshotInclude: [${include}] });
   });
 
   it("#146: a call that un-ignores a .env it also creates is judged, and the creation undone", async () => {
-    writeFileSync(join(repo, "flow.config.ts"), keepEnvConfig(""));
+    writeFileSync(join(repo, "flow.config.ts"), keepEnvConfig);
     unlinkSync(join(repo, ".env"));
     const answer = await hookCall("toolu_146f", () => {
       writeFileSync(join(repo, ".gitignore"), "secret.key\nbuild/\n");
@@ -445,9 +442,23 @@ export default defineConfig([pack(demo)], { snapshotInclude: [${include}] });
 
   it("#146: a call that adds a visible .env to .gitignore leaves it on disk, and no delete rule is called on it", async () => {
     writeFileSync(join(repo, ".gitignore"), "secret.key\nbuild/\n");
-    writeFileSync(join(repo, "flow.config.ts"), keepEnvConfig(""));
+    writeFileSync(join(repo, "flow.config.ts"), keepEnvConfig);
     const answer = await hookCall("toolu_146g", () => { writeFileSync(join(repo, ".gitignore"), ".env\nsecret.key\nbuild/\n"); });
     expect(answer.exitCode, `the deletion rule on .env was not called; flow said:\n${answer.stderr}`).toBe(0);
+    expect(read(".env")).toBe("TOKEN=old\n");
+  });
+
+  it("#146: a call that adds .env to .gitignore and rewrites it has the rewrite judged by the write rules", async () => {
+    writeFileSync(join(repo, ".gitignore"), "secret.key\nbuild/\n");
+    writeFileSync(join(repo, "flow.config.ts"), keepEnvConfig);
+    const answer = await hookCall("toolu_146h", () => {
+      writeFileSync(join(repo, ".gitignore"), ".env\nsecret.key\nbuild/\n");
+      writeFileSync(join(repo, ".env"), "TOKEN=leaked\n");
+    });
+    expect(answer.exitCode, "hiding the file does not hide the edit").toBe(2);
+    expect(answer.stderr).toContain("flow — write reverted after it landed");
+    expect(answer.stderr).toContain("✗ demo.keepEnv · .env");
+    expect(answer.stderr, "a write put back, not a removal restored").toContain(".env is back to its previous content.");
     expect(read(".env")).toBe("TOKEN=old\n");
   });
 

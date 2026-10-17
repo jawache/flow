@@ -29,7 +29,7 @@
 //   direction.
 
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isatty } from "node:tty";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -499,7 +499,7 @@ export function observeDelta(root: string, key: string, include: readonly string
   const hidden = Array.isArray(meta.hidden) ? meta.hidden.filter((path): path is string => typeof path === "string") : null;
   const now = writeTree(root, files.after, files.index, include);
   if ("fault" in now) return { ok: false, fault: `The tree after this call could not be recorded: ${now.fault}.` };
-  if (now.tree === before) return { ok: true, changes: [], before };
+  if (now.tree === before) return { ok: true, changes: [], entered: [], before };
   // One entry per path, NUL-separated, never a human status format. Submodules are another
   // repository's business and are left out.
   const diffTree = (from: string, format: "--name-status" | "--name-only"): string | { why: string } => {
@@ -515,13 +515,14 @@ export function observeDelta(root: string, key: string, include: readonly string
     const content = blobs(root, paths.flatMap((path) => [`${before}:${path}`, `${now.tree}:${path}`]));
     if (content === null) return { ok: false, fault: "git could not read the changed files back out of the snapshot." };
     // What changed VIEW rather than content leaves here: a file that entered the snapshot during
-    // the call, and one that left it while still on disk (`visibility`).
+    // the call, and one that left it still on disk as it was (`visibility`). One that left it
+    // rewritten stays, as the write it is.
     const seen = visibility(
       paths.map((path, i) => ({ path, before: content[2 * i] ?? null, after: content[2 * i + 1] ?? null })),
       hidden,
-      (path) => isFileOnDisk(root, path),
+      (path) => readText(root, path),
     );
-    return { ok: true, changes: seen.changes, ...(seen.entered.length === 0 ? {} : { entered: seen.entered }), before };
+    return { ok: true, changes: seen.changes, entered: seen.entered, before };
   };
   // WHAT GIT PUT THERE leaves the diff here, before anything reads it: HEAD after the call and HEAD
   // before it, each against the tree after it, are one more tree comparison each (`authored`
@@ -540,15 +541,6 @@ export function observeDelta(root: string, key: string, include: readonly string
   const fromBefore = diffTree(headBefore, "--name-only");
   if (typeof fromBefore !== "string") return { ok: false, fault: `git could not compare the tree with HEAD before the call: ${fromBefore.why}.` };
   return delta(authored(changed, differsAfter, nulPaths(fromBefore)));
-}
-
-/** Is `path` a file on disk — a file or a link, never a directory a file was replaced by? */
-function isFileOnDisk(root: string, path: string): boolean {
-  try {
-    return !lstatSync(inRepo(root, path)).isDirectory();
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -913,7 +905,7 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
     const landed = answer.refused.some((refusal) => refusal.observed !== undefined);
     // A file that entered the snapshot was in no change, so nothing judged it and nothing put it
     // back; the agent is told its name, refused or not.
-    const told = delta.entered === undefined ? answer : { ...answer, entered: delta.entered };
+    const told = { ...answer, entered: delta.entered };
     return landed ? { ...told, undone: { restored: plan.revert, kept: plan.kept, failed, scope } } : told;
   };
 
