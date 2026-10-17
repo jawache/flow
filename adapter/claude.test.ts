@@ -358,6 +358,40 @@ export default defineConfig([pack(demo)], { snapshotInclude: [".env"] });
     expect(read(".env"), "written back, byte for byte").toBe("TOKEN=old\n");
   });
 
+  // #146: a call that changes what the snapshot can see. Each rule here refuses any write to .env.
+  const keepEnvConfig = (include: string): string => {
+    const door = new URL("../index.ts", import.meta.url).pathname;
+    return `import { defineConfig, definePack, deletion, guardrail, pack, protectedPath, write } from ${JSON.stringify(door)};
+const demo = definePack("demo", {
+  keepEnv: guardrail()
+    .at(write, deletion)
+    .on(".env")
+    .check(protectedPath({}))
+    .message("The .env stays.")
+    .test({ pass: [{ path: "a.ts", content: "new" }], block: [{ path: ".env", content: "x" }] }),
+});
+export default defineConfig([pack(demo)], { snapshotInclude: [${include}] });
+`;
+  };
+
+  it("#146: a call that adds .env to snapshotInclude does not see the .env that was already there as created", () => {
+    // In-process the config module is cached, so the include each side was taken with is passed
+    // directly: the snapshot before the call under the old config, the tree after it under the new.
+    takeSnapshot(repo, "toolu_146a", [], who);
+    const delta = observeDelta(repo, "toolu_146a", [".env"]);
+    if (!delta.ok) throw new Error(delta.fault);
+    expect(delta.changes, "the call never touched .env").toStrictEqual([]);
+  });
+
+  it("#146: a call that un-ignores .env in .gitignore leaves the .env that was already there", async () => {
+    writeFileSync(join(repo, "flow.config.ts"), keepEnvConfig(""));
+    const payload = { session_id: "s1", tool_name: "Bash", tool_input: { command: "edit gitignore" }, tool_use_id: "toolu_146b", cwd: repo };
+    expect((await runHook("pre-tool-use", payload, repo)).exitCode).toBe(0);
+    writeFileSync(join(repo, ".gitignore"), "secret.key\nbuild/\n");
+    const answer = await runHook("post-tool-use", payload, repo);
+    expect(read(".env"), `the call never touched .env; flow said:\n${answer.stderr}`).toBe("TOKEN=old\n");
+  });
+
   it("judges every change in a repo with no commit yet — there is no HEAD to match", () => {
     const fresh = mkdtempSync(join(tmpdir(), "flow-unborn-"));
     try {

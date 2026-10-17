@@ -954,7 +954,55 @@ export interface Change {
  * nothing changed" and "I could not look" must never be spelled the same way, or a snapshot that
  * failed would let every write through as clean.
  */
-export type Delta = { readonly ok: true; readonly changes: readonly Change[] } | { readonly ok: false; readonly fault: string };
+export type Delta =
+  | {
+      readonly ok: true;
+      readonly changes: readonly Change[];
+      /** Paths that entered the snapshot during the call (`visibility`): in no change, judged by nothing. */
+      readonly entered?: readonly string[];
+    }
+  | { readonly ok: false; readonly fault: string };
+
+/**
+ * Is `path` one the before-snapshot could not see? `hidden` is git's list of what it ignored then,
+ * from `git ls-files --others --ignored --directory`: a file by its path, a directory git ignores
+ * whole by its path and a trailing `/`, so one `node_modules/` stands for every file under it.
+ */
+function wasHidden(path: string, hidden: readonly string[]): boolean {
+  return hidden.some((entry) => entry === path || (entry.endsWith("/") && path.startsWith(entry)));
+}
+
+/**
+ * WHAT CHANGED VIEW IS NOT WHAT CHANGED ON DISK: a call can change what the snapshot sees as well as
+ * what is in it. One that edits `snapshotInclude` or `.gitignore` brings ignored files into the
+ * tree after it, and can take files out of it. Read as content, the first is a creation and the
+ * second a removal, and a refused creation is reverted by deleting the file — a file the call never
+ * wrote, and that flow has no copy of to put back (#146).
+ *
+ * - **Entered.** A path the tree before did not hold and the tree after does, which the
+ *   before-snapshot recorded as on disk and hidden. It leaves the changes: no rule judges it, it is
+ *   in no revert, and the agent is told its name. A file that did not exist before is a creation
+ *   and stays one, whatever the call did to what the snapshot sees. `hidden` is null when the
+ *   snapshot recorded no list, and then flow cannot tell the two apart, so every new path is taken
+ *   as entered: never deleting a file flow has no copy of outranks judging one.
+ * - **Left.** A path the tree after does not hold that is still a file on disk (`onDisk`). It left
+ *   the snapshot rather than the disk, so it leaves the changes too: no delete rule, nothing put back.
+ *
+ * `hidden` is what the snapshot BEFORE the call recorded, so the config the call may have just
+ * edited decides nothing here.
+ */
+export function visibility(
+  changes: readonly Change[],
+  hidden: readonly string[] | null,
+  onDisk: (path: string) => boolean,
+): { readonly changes: readonly Change[]; readonly entered: readonly string[] } {
+  const entered = changes.filter((change) => change.before === null && (hidden === null || wasHidden(change.path, hidden))).map((change) => change.path);
+  const out = new Set(entered);
+  return {
+    changes: changes.filter((change) => !out.has(change.path) && !(change.after === null && onDisk(change.path))),
+    entered,
+  };
+}
 
 /**
  * Where git should look for the ignored paths `snapshotInclude` names: each glob's literal head,

@@ -29,7 +29,7 @@
 //   direction.
 
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isatty } from "node:tty";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -121,6 +121,7 @@ import {
   authored,
   nulPaths,
   snapshotPathspecs,
+  visibility,
   type AdapterEvent,
   type Answer,
   type CallRecord,
@@ -484,15 +485,18 @@ function blobs(root: string, specs: readonly string[]): (string | null)[] | null
  */
 export function observeDelta(root: string, key: string, include: readonly string[]): Delta & { readonly before?: string } {
   const files = snapshotFiles(root, key);
-  let meta: { tree?: unknown; head?: unknown; known?: unknown; fault?: unknown };
+  let meta: { tree?: unknown; head?: unknown; known?: unknown; hidden?: unknown; fault?: unknown };
   try {
-    meta = JSON.parse(readFileSync(files.meta, "utf8")) as { tree?: unknown; head?: unknown; known?: unknown; fault?: unknown };
+    meta = JSON.parse(readFileSync(files.meta, "utf8")) as { tree?: unknown; head?: unknown; known?: unknown; hidden?: unknown; fault?: unknown };
   } catch {
     return { ok: false, fault: `No snapshot was taken before this call (tool_use_id ${key}), so there is nothing to compare the tree against.` };
   }
   if (typeof meta.fault === "string") return { ok: false, fault: `The snapshot before this call could not be taken: ${meta.fault}.` };
   if (typeof meta.tree !== "string") return { ok: false, fault: `The snapshot before this call (tool_use_id ${key}) is unreadable.` };
   const before = meta.tree;
+  // What the snapshot could not see, as it recorded it. A record with no list is one flow cannot
+  // read that from, and `visibility` then takes every new path as one that was already there.
+  const hidden = Array.isArray(meta.hidden) ? meta.hidden.filter((path): path is string => typeof path === "string") : null;
   const now = writeTree(root, files.after, files.index, include);
   if ("fault" in now) return { ok: false, fault: `The tree after this call could not be recorded: ${now.fault}.` };
   if (now.tree === before) return { ok: true, changes: [], before };
@@ -510,11 +514,14 @@ export function observeDelta(root: string, key: string, include: readonly string
       return { ok: false, fault: "A changed path has a newline in its name, which flow cannot ask git about safely." };
     const content = blobs(root, paths.flatMap((path) => [`${before}:${path}`, `${now.tree}:${path}`]));
     if (content === null) return { ok: false, fault: "git could not read the changed files back out of the snapshot." };
-    return {
-      ok: true,
-      changes: paths.map((path, i) => ({ path, before: content[2 * i] ?? null, after: content[2 * i + 1] ?? null })),
-      before,
-    };
+    // What changed VIEW rather than content leaves here: a file that entered the snapshot during
+    // the call, and one that left it while still on disk (`visibility`).
+    const seen = visibility(
+      paths.map((path, i) => ({ path, before: content[2 * i] ?? null, after: content[2 * i + 1] ?? null })),
+      hidden,
+      (path) => isFileOnDisk(root, path),
+    );
+    return { ok: true, changes: seen.changes, ...(seen.entered.length === 0 ? {} : { entered: seen.entered }), before };
   };
   // WHAT GIT PUT THERE leaves the diff here, before anything reads it: HEAD after the call and HEAD
   // before it, each against the tree after it, are one more tree comparison each (`authored`
@@ -533,6 +540,15 @@ export function observeDelta(root: string, key: string, include: readonly string
   const fromBefore = diffTree(headBefore, "--name-only");
   if (typeof fromBefore !== "string") return { ok: false, fault: `git could not compare the tree with HEAD before the call: ${fromBefore.why}.` };
   return delta(authored(changed, differsAfter, nulPaths(fromBefore)));
+}
+
+/** Is `path` a file on disk — a file or a link, never a directory a file was replaced by? */
+function isFileOnDisk(root: string, path: string): boolean {
+  try {
+    return !lstatSync(inRepo(root, path)).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 /**

@@ -131,6 +131,7 @@ import {
   deltaFault,
   included,
   authored,
+  visibility,
   nulPaths,
   literalScopes,
   preJudged,
@@ -4522,6 +4523,35 @@ describe("snapshotInclude — where git looks, and what it keeps", () => {
     expect(authored(diff, [], null), "no HEAD before the call: nothing was git's to remove").toEqual(["migrations/002.sql", ".env", "notes.md"]);
     // HEAD still holds 002.sql after the call, so the removal differs from it, whatever HEAD held before.
     expect(authored(diff, ["migrations/002.sql"], ["migrations/002.sql"])).toEqual(["migrations/002.sql", ".env", "notes.md"]);
+  });
+
+  it("takes a new path the snapshot recorded as hidden out of the changes as entered, and judges a new one it did not (#146)", () => {
+    const changes = [
+      { path: ".env", before: null, after: "TOKEN=old\n" },
+      { path: "tools/scratch/notes.md", before: null, after: "x\n" },
+      { path: "new.ts", before: null, after: "export {};\n" },
+      { path: "a.ts", before: "1\n", after: "2\n" },
+    ];
+    const seen = visibility(changes, [".env", "tools/scratch/", "node_modules/"], () => false);
+    expect(seen.entered, "a file, and a file under a directory git ignored whole").toEqual([".env", "tools/scratch/notes.md"]);
+    expect(seen.changes.map((change) => change.path), "a file that did not exist before is still the call's creation").toEqual(["new.ts", "a.ts"]);
+    expect(visibility(changes, [".env.keys", "tools/scratch"], () => false).entered, "a prefix that is not a directory entry hides nothing").toEqual([]);
+  });
+
+  it("takes every new path as entered when the snapshot recorded no hidden list — never a delete of a file flow has no copy of", () => {
+    const seen = visibility([{ path: "new.ts", before: null, after: "x\n" }, { path: "a.ts", before: "1\n", after: "2\n" }], null, () => false);
+    expect(seen.entered).toEqual(["new.ts"]);
+    expect(seen.changes.map((change) => change.path)).toEqual(["a.ts"]);
+  });
+
+  it("is no removal when the path left the snapshot but is still a file on disk", () => {
+    const changes = [
+      { path: ".env", before: "TOKEN=old\n", after: null },
+      { path: "gone.ts", before: "x\n", after: null },
+    ];
+    const seen = visibility(changes, [], (path) => path === ".env");
+    expect(seen.changes, "gone.ts is gone from disk too: that removal is judged").toEqual([{ path: "gone.ts", before: "x\n", after: null }]);
+    expect(seen.entered).toEqual([]);
   });
 
   it("reads git's -z answer as paths, with no quoting and no empty tail", () => {
