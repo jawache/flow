@@ -390,6 +390,10 @@ export default defineConfig([pack(demo)], { snapshotInclude: [${include}] });
     writeFileSync(join(repo, ".gitignore"), "secret.key\nbuild/\n");
     const answer = await runHook("post-tool-use", payload, repo);
     expect(read(".env"), `the call never touched .env; flow said:\n${answer.stderr}`).toBe("TOKEN=old\n");
+    expect(answer.exitCode, "nothing judged .env, so nothing refused it").toBe(0);
+    expect(answer.stdout, "the agent is told the file entered the snapshot unjudged").toContain(
+      "flow had no earlier copy of .env: it entered the snapshot during this call, so this call did not judge it.",
+    );
   });
 
   it("judges every change in a repo with no commit yet — there is no HEAD to match", () => {

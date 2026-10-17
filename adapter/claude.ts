@@ -902,8 +902,8 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
   };
 
   // THE WAY BACK, once the answer is known: the changes a rule refused are written back from the
-  // snapshot, and what that came to rides the answer so the refusal can say it. Then the call is
-  // over and its snapshot goes.
+  // snapshot, and what that came to rides the answer so the refusal can say it, with the files that
+  // entered the snapshot during the call. Then the call is over and its snapshot goes.
   const settle = (answer: Answer): Answer => {
     if (delta === null || key === null) return answer;
     const scope = scopeOf(delta.changes);
@@ -911,7 +911,10 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
     const failed = plan.revert.length === 0 ? [] : revertChanges(root, delta.before ?? "", plan.revert);
     finish();
     const landed = answer.refused.some((refusal) => refusal.observed !== undefined);
-    return landed ? { ...answer, undone: { restored: plan.revert, kept: plan.kept, failed, scope } } : answer;
+    // A file that entered the snapshot was in no change, so nothing judged it and nothing put it
+    // back; the agent is told its name, refused or not.
+    const told = delta.entered === undefined ? answer : { ...answer, entered: delta.entered };
+    return landed ? { ...told, undone: { restored: plan.revert, kept: plan.kept, failed, scope } } : told;
   };
 
   const entries = load.entries;

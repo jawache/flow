@@ -715,6 +715,25 @@ describe("toResult — one refusal spelling, one injection spelling", () => {
     expect(result.stderr).toContain("two");
   });
 
+  it("tells the agent, by name, each file that entered the snapshot during the call, on whichever channel the answer uses (#146)", () => {
+    const told = toResult("post-tool-use", { refused: [], shown: [], entered: [".env"] });
+    expect(told.exitCode).toBe(0);
+    expect(JSON.parse(told.stdout)).toEqual({
+      hookSpecificOutput: {
+        hookEventName: "PostToolUse",
+        additionalContext: "flow had no earlier copy of .env: it entered the snapshot during this call, so this call did not judge it. Later changes to it are judged.",
+      },
+    });
+    const refusal = toResult("post-tool-use", { refused: [{ moment: "write", block: block(), observed: "src/a.ts" }], shown: [], entered: [".env.keys", ".env"] });
+    expect(refusal.exitCode).toBe(2);
+    expect(refusal.stderr, "beside a refusal, after it").toMatch(/core\.noTodo[\s\S]*flow had no earlier copy of \.env\.keys and \.env: they entered the snapshot during this call, so this call did not judge them\./);
+    const many = Array.from({ length: 12 }, (_, i) => `node_modules/p${i}.js`);
+    expect(JSON.parse(toResult("post-tool-use", { refused: [], shown: [], entered: many }).stdout).hookSpecificOutput.additionalContext, "a long list is counted, not printed").toContain(
+      "node_modules/p8.js, node_modules/p9.js and 2 more: they entered",
+    );
+    expect(toResult("post-tool-use", { refused: [], shown: [], entered: [] }), "nothing entered, nothing said").toEqual(ALLOW);
+  });
+
   it("injects notes as the decision object the host reads, echoing its own event name", () => {
     const shown: Shown[] = [{ entry: "work.orientation", cause: "session", body: "This repo is guarded by flow." }];
     const result = toResult("session-start", { refused: [], shown });

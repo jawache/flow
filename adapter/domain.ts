@@ -1004,6 +1004,22 @@ export function visibility(
   };
 }
 
+/** How many entered paths the line names before it counts the rest. */
+const ENTERED_NAMED = 10;
+
+/**
+ * The one line the agent is told about the files that entered the snapshot during its call: their
+ * names, that this call did not judge them, and that every later change to them is judged.
+ */
+export function enteredLine(paths: readonly string[]): string {
+  const named = paths.length > ENTERED_NAMED ? [...paths.slice(0, ENTERED_NAMED), `${paths.length - ENTERED_NAMED} more`] : paths;
+  const one = paths.length === 1;
+  return (
+    `flow had no earlier copy of ${listed(named)}: ${one ? "it" : "they"} entered the snapshot during this call, ` +
+    `so this call did not judge ${one ? "it" : "them"}. Later changes to ${one ? "it" : "them"} are judged.`
+  );
+}
+
 /**
  * Where git should look for the ignored paths `snapshotInclude` names: each glob's literal head,
  * so git walks `config/` for `config/*.local.json` and not the whole repo. A glob with no literal
@@ -1485,6 +1501,8 @@ export interface Answer {
   readonly shown: readonly Shown[];
   /** What was put back, when a refusal was of changes that had already landed. */
   readonly undone?: Undone | undefined;
+  /** Files that entered the snapshot during the call, unjudged, which the agent is told by name. */
+  readonly entered?: readonly string[] | undefined;
 }
 
 /**
@@ -1606,7 +1624,9 @@ export function briefBlock(shown: readonly Shown[]): string {
  */
 export function toResult(hook: HookEvent, answer: Answer): HookResult {
   const refusal = refused(answer.refused, answer.undone);
-  const prose = briefBlock(answer.shown);
+  // The entered line rides whichever channel the answer already uses, after the notes.
+  const entered = answer.entered === undefined || answer.entered.length === 0 ? "" : enteredLine(answer.entered);
+  const prose = [briefBlock(answer.shown), entered].filter((part) => part !== "").join("\n\n");
   if (refusal !== null)
     return prose === "" ? refusal : { ...refusal, stderr: `${refusal.stderr}\n${prose}\n` };
   if (prose === "") return ALLOW;
