@@ -3410,6 +3410,9 @@ const REGISTERED: readonly { readonly hook: HookEvent; readonly matcher?: string
   { hook: "subagent-stop", unregistered: "no turn-end rule runs when a subagent hands back" },
 ];
 
+/** One of flow's registrations, as `REGISTERED` states it. */
+type Registered = (typeof REGISTERED)[number];
+
 /**
  * The repo's bin folder, relative to the repo root. flow never runs a `flow` from here: any package
  * can install one (Facebook's `flow-bin` does), and nothing guards the folder. `hostPath` drops it
@@ -4718,12 +4721,12 @@ export interface Status {
  * for still runs flow, from there, so its cost is not stated as if no rule ran. The line stays red
  * either way, because the repo's file is what a fresh clone gets.
  */
-function unregisteredText(facts: StatusFacts, unregistered: readonly (typeof REGISTERED)[number][]): string {
-  const names = (rs: readonly (typeof REGISTERED)[number][]): string => rs.map((r) => HOST_EVENT[r.hook]).join(" · ");
+function unregisteredText(facts: StatusFacts, unregistered: readonly Registered[]): string {
+  const names = (rs: readonly Registered[]): string => rs.map((r) => HOST_EVENT[r.hook]).join(" · ");
   const machine = facts.machine;
   const elsewhere = new Set(machine === null ? [] : registeredEvents(machine.settings));
-  const covered: (typeof REGISTERED)[number][] = [];
-  const uncovered: (typeof REGISTERED)[number][] = [];
+  const covered: Registered[] = [];
+  const uncovered: Registered[] = [];
   for (const r of unregistered) (elsewhere.has(HOST_EVENT[r.hook]) ? covered : uncovered).push(r);
   // Every missing event covered reads back as "it" or "them"; only some, and they are named.
   const which = uncovered.length > 0 ? names(covered) : covered.length === 1 ? "it" : "them";
