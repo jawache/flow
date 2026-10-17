@@ -38,7 +38,7 @@ repo already has.
 ## Entries
 
 - [`node.dependencies`](#nodedependencies--breadcrumb) · breadcrumb · When to reach for a package, how to vet it, and what a commit that adds one owes.
-- [`node.newDependencyNeedsReason`](#nodenewdependencyneedsreason--guardrail) · guardrail · A commit that moves package.json must record why, and what else was checked.
+- [`node.newDependencyNeedsReason`](#nodenewdependencyneedsreason--guardrail) · guardrail · A commit made while package.json has uncommitted changes must record why, and what else was checked.
 - [`node.lockfileInStep`](#nodelockfileinstep--guardrail) · guardrail · A dependency move and the lockfile land in the same commit — deps stay exactly pinned.
 
 ## `node.dependencies` — breadcrumb
@@ -65,7 +65,7 @@ Pin the version; the lockfile change ships in the SAME commit.
 
 ## `node.newDependencyNeedsReason` — guardrail
 
-A commit that moves package.json must record why, and what else was checked.
+A commit made while package.json has uncommitted changes must record why, and what else was checked.
 
 - **Refuses at** a shell command is about to run
 - **Watches** not scoped by path
