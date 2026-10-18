@@ -146,9 +146,9 @@ export default defineConfig([pack(demo), pack(house)]);
 `;
 
 /** Run the built binary in the temp repo, with a payload on stdin exactly as the host sends it. */
-const run = (args: readonly string[], stdin: string): Ran => runFlow(repo, args, {}, stdin);
+const run = (args: readonly string[], stdin: string, cwd = repo): Ran => runFlow(cwd, args, {}, stdin);
 
-const hook = (event: string, payload: unknown): Ran => run(["hook", event], JSON.stringify(payload));
+const hook = (event: string, payload: unknown, cwd = repo): Ran => run(["hook", event], JSON.stringify(payload), cwd);
 
 /** Every row `.flow/` recorded for one session, in the repo given. */
 function rows(where: string, session: string): Record<string, unknown>[] {
@@ -202,19 +202,20 @@ let calls = 0;
 /**
  * One tool call as the host brackets it: PreToolUse, the tool, then PostToolUse — both carrying the
  * same `tool_use_id`, which is how the after-call rail finds the snapshot the first one took. The
- * after-call answer is what comes back.
+ * after-call answer is what comes back. Both hooks run in `cwd`, the suite's repo unless a test
+ * has one of its own.
  */
-function called(payload: Record<string, unknown>, tool: () => void = () => undefined, event = "post-tool-use"): Ran {
+function called(payload: Record<string, unknown>, tool: () => void = () => undefined, event = "post-tool-use", cwd = repo): Ran {
   const keyed = { ...payload, tool_use_id: `toolu_live_${++calls}` };
-  const before = hook("pre-tool-use", keyed);
+  const before = hook("pre-tool-use", keyed, cwd);
   expect(before.code, `the call was refused before it ran: ${before.stderr}`).toBe(0);
   tool();
-  return hook(event, keyed);
+  return hook(event, keyed, cwd);
 }
 
-/** Run a command in the temp repo the way the Bash tool would — the tool, between the two hooks. */
-function shell(command: string): number {
-  return spawnSync("bash", ["-c", command], { cwd: repo }).status ?? -1;
+/** Run a command in a repo, the suite's unless given, the way the Bash tool would — the tool, between the two hooks. */
+function shell(command: string, cwd = repo): number {
+  return spawnSync("bash", ["-c", command], { cwd }).status ?? -1;
 }
 
 describe("the write rail", () => {
@@ -1203,11 +1204,7 @@ export default defineConfig([pack(demo)]${include});
       writeFileSync(join(elsewhere, "flow.config.ts"), config(`, { snapshotInclude: [".env"] }`));
 
       const command = `cp ${JSON.stringify(join(elsewhere, "flow.config.ts"))} flow.config.ts`;
-      const payload = { ...pre("Bash", { command }, "include"), cwd: where, tool_use_id: "toolu_include_1" };
-      const before = runFlow(where, ["hook", "pre-tool-use"], {}, JSON.stringify(payload));
-      expect(before.code, `the call was refused before it ran: ${before.stderr}`).toBe(0);
-      expect(spawnSync("bash", ["-c", command], { cwd: where }).status).toBe(0);
-      const answer = runFlow(where, ["hook", "post-tool-use"], {}, JSON.stringify(payload));
+      const answer = called({ ...pre("Bash", { command }, "include"), cwd: where }, () => { expect(shell(command, where)).toBe(0); }, "post-tool-use", where);
 
       expect(answer.code, `nothing judged .env, so nothing refused it; flow said:\n${answer.stderr}`).toBe(0);
       expect(readFileSync(join(where, ".env"), "utf8"), "the file the call never touched is still there").toBe("TOKEN=old\n");
