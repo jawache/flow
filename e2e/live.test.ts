@@ -1173,6 +1173,51 @@ export default defineConfig([pack(demo)]);
   });
 });
 
+describe("a call that widens snapshotInclude — a file already on disk enters, never deleted (#146)", () => {
+  // THE HEADLINE BUG, as it happened: the two hooks are two processes, so the after-call rail loads
+  // the config the call just edited. A gitignored .env, guarded, was on disk before the call; the
+  // call adds it to snapshotInclude. Read as content it is a creation, and the refusal deleted it.
+  it("keeps the .env, answers 0, and names it as entered", () => {
+    const where = newRepo("flow-include-");
+    const elsewhere = mkdtempSync(join(tmpdir(), "flow-include-next-"));
+    try {
+      const config = (include: string): string => `
+import { definePack, defineConfig, deletion, guardrail, pack, protectedPath, write } from ${JSON.stringify(join(PACKAGE, "index.ts"))};
+
+const demo = definePack("demo", {
+  keepEnv: guardrail()
+    .at(write, deletion)
+    .on(".env")
+    .check(protectedPath({}))
+    .message("The .env stays.")
+    .test({ pass: [{ path: "a.ts", content: "new" }], block: [{ path: ".env", content: "x" }] }),
+});
+
+export default defineConfig([pack(demo)]${include});
+`;
+      writeFileSync(join(where, "flow.config.ts"), config(""));
+      writeFileSync(join(where, ".gitignore"), ".env\n");
+      writeFileSync(join(where, ".env"), "TOKEN=old\n");
+      expect(runGit(where, ["add", "-A"]).code).toBe(0);
+      expect(runGit(where, ["commit", "-qm", "init"]).code).toBe(0);
+      writeFileSync(join(elsewhere, "flow.config.ts"), config(`, { snapshotInclude: [".env"] }`));
+
+      const command = `cp ${JSON.stringify(join(elsewhere, "flow.config.ts"))} flow.config.ts`;
+      const payload = { ...pre("Bash", { command }, "include"), cwd: where, tool_use_id: "toolu_include_1" };
+      const before = runFlow(where, ["hook", "pre-tool-use"], {}, JSON.stringify(payload));
+      expect(before.code, `the call was refused before it ran: ${before.stderr}`).toBe(0);
+      expect(spawnSync("bash", ["-c", command], { cwd: where }).status).toBe(0);
+      const answer = runFlow(where, ["hook", "post-tool-use"], {}, JSON.stringify(payload));
+
+      expect(answer.code, `nothing judged .env, so nothing refused it; flow said:\n${answer.stderr}`).toBe(0);
+      expect(readFileSync(join(where, ".env"), "utf8"), "the file the call never touched is still there").toBe("TOKEN=old\n");
+      expect(answer.stdout).toContain("flow had no earlier copy of .env: it entered the snapshot during this call");
+    } finally {
+      for (const dir of [where, elsewhere]) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("a subagent's drift and turn, read from its own transcript — never its parent's", () => {
   // The hook message for a subagent's call carries the PARENT's transcript_path (#7). Its brief is
   // pinned above; these pin the other two things read from the same file. The two transcripts are
