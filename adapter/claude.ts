@@ -408,6 +408,24 @@ function hiddenPaths(root: string, index: string): { hidden: string[] } | { faul
 }
 
 /**
+ * The tree and what it left out, or the first fault. The after-call rail needs both to tell a file
+ * the call created from one that was already on disk and hidden (#146), so a tree with no list is a
+ * snapshot that failed.
+ */
+function treeAndHidden(
+  root: string,
+  index: string,
+  seed: string,
+  include: readonly string[],
+): { tree: string; hidden: string[] } | { fault: string } {
+  const written = writeTree(root, index, seed, include);
+  if ("fault" in written) return written;
+  const hidden = hiddenPaths(root, index);
+  if ("fault" in hidden) return hidden;
+  return { tree: written.tree, hidden: hidden.hidden };
+}
+
+/**
  * RECORD THE TREE BEFORE A CALL, filed under the host's `tool_use_id`.
  *
  * A snapshot that cannot be taken is RECORDED as a fault rather than skipped, so the after-call rail
@@ -429,11 +447,7 @@ export function takeSnapshot(
     // The write below reports what went wrong, if anything did; a sweep that failed costs nothing.
   }
   const dir = gitDir(root);
-  const written = dir === null ? { fault: `${root} is not a git checkout, so there is no tree to snapshot` } : writeTree(root, files.index, join(dir, "index"), include);
-  // What the tree left out, beside it: the after-call rail needs it to tell a file the call
-  // created from one that was already on disk and hidden (#146).
-  const hidden = "tree" in written ? hiddenPaths(root, files.index) : null;
-  const taken = hidden !== null && "fault" in hidden ? hidden : { ...written, ...hidden };
+  const taken = dir === null ? { fault: `${root} is not a git checkout, so there is no tree to snapshot` } : treeAndHidden(root, files.index, join(dir, "index"), include);
   // HEAD before the call, beside the tree: a file the call removed is git's only if HEAD held it.
   // And every tip the repo has, so the after-call rail can tell a commit it lands on from one it made.
   const head = "tree" in taken ? headCommit(root) : null;
