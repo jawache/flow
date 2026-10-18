@@ -4562,12 +4562,6 @@ describe("snapshotInclude — where git looks, and what it keeps", () => {
     expect(visibility(changes, [".env.keys", "tools/scratch"], () => null).entered, "a prefix that is not a directory entry hides nothing").toEqual([]);
   });
 
-  it("takes every new path as entered when the snapshot recorded no hidden list — never a delete of a file flow has no copy of", () => {
-    const seen = visibility([{ path: "new.ts", before: null, after: "x\n" }, { path: "a.ts", before: "1\n", after: "2\n" }], null, () => null);
-    expect(seen.entered).toEqual(["new.ts"]);
-    expect(seen.changes.map((change) => change.path)).toEqual(["a.ts"]);
-  });
-
   it("is no removal when the path left the snapshot but is still a file on disk: unchanged it leaves the diff, changed it is a write", () => {
     const changes = [
       { path: ".env", before: "TOKEN=old\n", after: null },

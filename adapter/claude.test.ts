@@ -497,6 +497,18 @@ export default defineConfig([pack(demo)]);
     if (!never.ok) expect(never.fault).toContain("No snapshot was taken before this call");
   });
 
+  it("reports a snapshot recorded with no hidden list as unreadable — it cannot tell a creation from a file that entered (#146)", () => {
+    takeSnapshot(repo, "toolu_nolist", [], who);
+    const record = join(repo, ".flow", "snapshots", "toolu_nolist.json");
+    const { hidden, ...meta } = JSON.parse(readFileSync(record, "utf8")) as Record<string, unknown>;
+    expect(Array.isArray(hidden), "the snapshot records the list beside the tree").toBe(true);
+    writeFileSync(record, JSON.stringify(meta));
+    writeFileSync(join(repo, "new.ts"), "x\n");
+    const delta = observeDelta(repo, "toolu_nolist", []);
+    expect(delta.ok).toBe(false);
+    if (!delta.ok) expect(delta.fault).toContain("is unreadable");
+  });
+
   it("says which file it could not put back, rather than claiming it did", () => {
     takeSnapshot(repo, "toolu_6", [], who);
     writeFileSync(join(repo, "a.ts"), "changed\n");

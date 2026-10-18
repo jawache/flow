@@ -982,9 +982,7 @@ function wasHidden(path: string, hidden: readonly string[]): boolean {
  * - **Entered.** A path the tree before did not hold and the tree after does, which the
  *   before-snapshot recorded as on disk and hidden. It leaves the changes: no rule judges it, it is
  *   in no revert, and the agent is told its name. A file that did not exist before is a creation
- *   and stays one, whatever the call did to what the snapshot sees. `hidden` is null when the
- *   snapshot recorded no list, and then flow cannot tell the two apart, so every new path is taken
- *   as entered: never deleting a file flow has no copy of outranks judging one.
+ *   and stays one, whatever the call did to what the snapshot sees.
  * - **Left.** A path the tree after does not hold that is still a file on disk (`onDisk` reads it,
  *   null for none). It left the snapshot rather than the disk, so it is no removal and no delete
  *   rule is called on it. Still as it was before the call, it leaves the changes. Different, it is
@@ -996,10 +994,10 @@ function wasHidden(path: string, hidden: readonly string[]): boolean {
  */
 export function visibility(
   changes: readonly Change[],
-  hidden: readonly string[] | null,
+  hidden: readonly string[],
   onDisk: (path: string) => string | null,
 ): { readonly changes: readonly Change[]; readonly entered: readonly string[] } {
-  const entered = changes.filter((change) => change.before === null && (hidden === null || wasHidden(change.path, hidden))).map((change) => change.path);
+  const entered = changes.filter((change) => change.before === null && wasHidden(change.path, hidden)).map((change) => change.path);
   const out = new Set(entered);
   const kept = changes.flatMap((change): Change[] => {
     if (out.has(change.path)) return [];

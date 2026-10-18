@@ -506,11 +506,12 @@ export function observeDelta(root: string, key: string, include: readonly string
     return { ok: false, fault: `No snapshot was taken before this call (tool_use_id ${key}), so there is nothing to compare the tree against.` };
   }
   if (typeof meta.fault === "string") return { ok: false, fault: `The snapshot before this call could not be taken: ${meta.fault}.` };
-  if (typeof meta.tree !== "string") return { ok: false, fault: `The snapshot before this call (tool_use_id ${key}) is unreadable.` };
+  // The tree, and what the snapshot could not see beside it. A record without both cannot tell a
+  // file the call created from one that entered the snapshot, so it is unreadable, like any other.
+  if (typeof meta.tree !== "string" || !Array.isArray(meta.hidden))
+    return { ok: false, fault: `The snapshot before this call (tool_use_id ${key}) is unreadable.` };
   const before = meta.tree;
-  // What the snapshot could not see, as it recorded it. A record with no list is one flow cannot
-  // read that from, and `visibility` then takes every new path as one that was already there.
-  const hidden = Array.isArray(meta.hidden) ? meta.hidden.filter((path): path is string => typeof path === "string") : null;
+  const hidden = meta.hidden.filter((path): path is string => typeof path === "string");
   const now = writeTree(root, files.after, files.index, include);
   if ("fault" in now) return { ok: false, fault: `The tree after this call could not be recorded: ${now.fault}.` };
   if (now.tree === before) return { ok: true, changes: [], entered: [], before };
