@@ -1624,8 +1624,9 @@ export function briefBlock(shown: readonly Shown[]): string {
  * Injection stays the decision object, because there is no other channel for it — with one
  * exception. Notes beside a refusal go on stderr after it: the host reads that stderr as the
  * agent's next instruction, and its hooks reference says no JSON field on stdout can override an
- * exit 2, so stderr is the one place both are sure to arrive. Only a held turn has any: before a
- * call, the shell judges no notes once something refused (`ridesRefusal`).
+ * exit 2, so stderr is the one place both are sure to arrive. A held turn has notes: before a
+ * call, the shell judges no notes once something refused (`ridesRefusal`). After a call, a refusal
+ * can carry the line naming the files that entered the snapshot (`enteredLine`).
  */
 export function toResult(hook: HookEvent, answer: Answer): HookResult {
   const refusal = refused(answer.refused, answer.undone);
