@@ -494,7 +494,9 @@ function blobs(root: string, specs: readonly string[]): (string | null)[] | null
 
 /**
  * WHAT THE CALL CHANGED: the tree now against the tree its snapshot recorded, path by path, with
- * the content either side, less each path git put there (see `authored`). The before-snapshot is
+ * the content either side, less each path git put there (see `authored`), and less each path whose
+ * VIEW changed rather than its content (see `visibility`): one that left the snapshot still on disk
+ * as it was, and one that entered it, which comes back in `entered` instead. The before-snapshot is
  * kept — a revert reads from it — until `forget`.
  */
 export function observeDelta(root: string, key: string, include: readonly string[]): Delta & { readonly before?: string } {
