@@ -440,6 +440,19 @@ export default defineConfig([pack(demo)]);
     expect(existsSync(join(repo, ".env"))).toBe(false);
   });
 
+  // Pinned on #173 (row 1 skipped): flow has no copy of the hidden .env, so judging the rewrite
+  // could only end in deleting it. It enters unjudged, as rewritten; the next change is judged.
+  it("#146: a call that un-ignores an existing .env and rewrites it lets it enter unjudged, as rewritten", async () => {
+    writeFileSync(join(repo, "flow.config.ts"), keepEnvConfig);
+    const answer = await hookCall("toolu_146i", () => {
+      writeFileSync(join(repo, ".gitignore"), "secret.key\nbuild/\n");
+      writeFileSync(join(repo, ".env"), "TOKEN=new\n");
+    });
+    expect(answer.exitCode, `nothing judged .env; flow said:\n${answer.stderr}`).toBe(0);
+    expect(answer.stdout, "the agent is told the file entered the snapshot unjudged").toContain(unjudged);
+    expect(read(".env"), "the call's content stays: flow had nothing to put back").toBe("TOKEN=new\n");
+  });
+
   it("#146: a call that adds a visible .env to .gitignore leaves it on disk, and no delete rule is called on it", async () => {
     writeFileSync(join(repo, ".gitignore"), "secret.key\nbuild/\n");
     writeFileSync(join(repo, "flow.config.ts"), keepEnvConfig);
