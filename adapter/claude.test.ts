@@ -440,8 +440,9 @@ export default defineConfig([pack(demo)]);
     expect(existsSync(join(repo, ".env"))).toBe(false);
   });
 
-  // Pinned on #173 (row 1 skipped): flow has no copy of the hidden .env, so judging the rewrite
-  // could only end in deleting it. It enters unjudged, as rewritten; the next change is judged.
+  // Decided: an existing ignored file that a call un-ignores and rewrites enters unjudged, as
+  // rewritten. flow has no earlier copy of it to put back, so a refusal could only delete it. The
+  // next change to it is judged.
   it("#146: a call that un-ignores an existing .env and rewrites it lets it enter unjudged, as rewritten", async () => {
     writeFileSync(join(repo, "flow.config.ts"), keepEnvConfig);
     const answer = await hookCall("toolu_146i", () => {
