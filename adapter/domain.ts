@@ -954,7 +954,76 @@ export interface Change {
  * nothing changed" and "I could not look" must never be spelled the same way, or a snapshot that
  * failed would let every write through as clean.
  */
-export type Delta = { readonly ok: true; readonly changes: readonly Change[] } | { readonly ok: false; readonly fault: string };
+export type Delta =
+  | {
+      readonly ok: true;
+      readonly changes: readonly Change[];
+      /** Paths that entered the snapshot during the call (`visibility`): in no change, judged by nothing. */
+      readonly entered: readonly string[];
+    }
+  | { readonly ok: false; readonly fault: string };
+
+/**
+ * Is `path` one the before-snapshot could not see? `hidden` is git's list of what it ignored then,
+ * from `git ls-files --others --ignored --directory`: a file by its path, a directory git ignores
+ * whole by its path and a trailing `/`, so one `node_modules/` stands for every file under it.
+ */
+function wasHidden(path: string, hidden: readonly string[]): boolean {
+  return hidden.some((entry) => entry === path || (entry.endsWith("/") && path.startsWith(entry)));
+}
+
+/**
+ * WHAT CHANGED VIEW IS NOT WHAT CHANGED ON DISK: a call can change what the snapshot sees as well as
+ * what is in it. One that edits `snapshotInclude` or `.gitignore` brings ignored files into the
+ * tree after it, and can take files out of it. Read as content, the first is a creation and the
+ * second a removal, and a refused creation is reverted by deleting the file — a file the call never
+ * wrote, and that flow has no copy of to put back (#146).
+ *
+ * - **Entered.** A path the tree before did not hold and the tree after does, which the
+ *   before-snapshot recorded as on disk and hidden. It leaves the changes: no rule judges it, it is
+ *   in no revert, and the agent is told its name. A file that did not exist before is a creation
+ *   and stays one, whatever the call did to what the snapshot sees.
+ * - **Left.** A path the tree after does not hold that is still a file on disk (`onDisk` reads it,
+ *   null for none). It left the snapshot rather than the disk, so it is no removal and no delete
+ *   rule is called on it. Still as it was before the call, it leaves the changes. Different, it is
+ *   a change to that content: the call wrote it, so the write rules judge it and a refusal puts the
+ *   before back.
+ *
+ * `hidden` is what the snapshot BEFORE the call recorded, so the config the call may have just
+ * edited decides nothing here.
+ */
+export function visibility(
+  changes: readonly Change[],
+  hidden: readonly string[],
+  onDisk: (path: string) => string | null,
+): { readonly changes: readonly Change[]; readonly entered: readonly string[] } {
+  const entered = changes.filter((change) => change.before === null && wasHidden(change.path, hidden)).map((change) => change.path);
+  const out = new Set(entered);
+  const kept = changes.flatMap((change): Change[] => {
+    if (out.has(change.path)) return [];
+    if (change.after !== null) return [change];
+    const disk = onDisk(change.path);
+    if (disk === null) return [change];
+    return disk === change.before ? [] : [{ ...change, after: disk }];
+  });
+  return { changes: kept, entered };
+}
+
+/** How many entered paths the line names before it counts the rest. */
+const ENTERED_NAMED = 10;
+
+/**
+ * The one line the agent is told about the files that entered the snapshot during its call: their
+ * names, that this call did not judge them, and that every later change to them is judged.
+ */
+export function enteredLine(paths: readonly string[]): string {
+  const named = paths.length > ENTERED_NAMED ? [...paths.slice(0, ENTERED_NAMED), `${paths.length - ENTERED_NAMED} more`] : paths;
+  const one = paths.length === 1;
+  return (
+    `flow had no earlier copy of ${listed(named)}: ${one ? "it" : "they"} entered the snapshot during this call, ` +
+    `so this call did not judge ${one ? "it" : "them"}. Later changes to ${one ? "it" : "them"} are judged.`
+  );
+}
 
 /**
  * Where git should look for the ignored paths `snapshotInclude` names: each glob's literal head,
@@ -1437,6 +1506,8 @@ export interface Answer {
   readonly shown: readonly Shown[];
   /** What was put back, when a refusal was of changes that had already landed. */
   readonly undone?: Undone | undefined;
+  /** Files that entered the snapshot during the call, unjudged, which the agent is told by name. */
+  readonly entered?: readonly string[] | undefined;
 }
 
 /**
@@ -1553,12 +1624,16 @@ export function briefBlock(shown: readonly Shown[]): string {
  * Injection stays the decision object, because there is no other channel for it — with one
  * exception. Notes beside a refusal go on stderr after it: the host reads that stderr as the
  * agent's next instruction, and its hooks reference says no JSON field on stdout can override an
- * exit 2, so stderr is the one place both are sure to arrive. Only a held turn has any: before a
- * call, the shell judges no notes once something refused (`ridesRefusal`).
+ * exit 2, so stderr is the one place both are sure to arrive. Two refusals carry them. Before a
+ * call, only a held turn's does: the shell judges no notes once something refused (`ridesRefusal`).
+ * After a call, a refusal carries the line naming the files that entered the snapshot
+ * (`enteredLine`).
  */
 export function toResult(hook: HookEvent, answer: Answer): HookResult {
   const refusal = refused(answer.refused, answer.undone);
-  const prose = briefBlock(answer.shown);
+  // The entered line rides whichever channel the answer already uses, after the notes.
+  const entered = answer.entered === undefined || answer.entered.length === 0 ? "" : enteredLine(answer.entered);
+  const prose = [briefBlock(answer.shown), entered].filter((part) => part !== "").join("\n\n");
   if (refusal !== null)
     return prose === "" ? refusal : { ...refusal, stderr: `${refusal.stderr}\n${prose}\n` };
   if (prose === "") return ALLOW;
@@ -4614,8 +4689,8 @@ export interface StatusFacts {
     readonly steer?: Steer | null | undefined;
   } | null;
   /**
-   * What git ignores here, one path per entry, a directory with its trailing `/` — plus any literal
-   * path a write or delete rule names that git would ignore though it does not exist yet (`.env`).
+   * Of the paths a write or delete rule names outright ({@link literalScopes}, which leaves out
+   * flow's own `.flow/`), the ones git ignores, whether or not the file exists yet (`.env`).
    */
   readonly ignored: readonly string[];
   /** The config's `snapshotInclude` globs: the ignored paths the snapshot records anyway. */
@@ -4639,12 +4714,6 @@ export function staticPrefix(glob: string): string {
   return at === -1 ? glob : glob.slice(0, glob.lastIndexOf("/", at) + 1);
 }
 
-/** Does this glob reach everything below `dir/` — a literal head at or above it, then `**`? */
-function reachesBelow(glob: string, dir: string): boolean {
-  const head = staticPrefix(glob);
-  return head !== "" && head !== glob && dir.startsWith(head) && glob.slice(head.length).startsWith("**");
-}
-
 /** The write and delete guardrails still live — the rules the snapshot's view decides the reach of. */
 function treeRules(entries: readonly Bound[]): Bound[] {
   return entries.filter(
@@ -4653,57 +4722,45 @@ function treeRules(entries: readonly Bound[]): Bound[] {
   );
 }
 
-/**
- * The paths those rules name OUTRIGHT — a glob with no wildcard, such as `.env`. A file that does
- * not exist yet is in no listing of ignored files, so status asks git about these by name.
- */
-export function literalScopes(load: LoadResult | null): string[] {
-  const rules = treeRules(universe(load?.ok === true ? load.entries : []));
-  return [...new Set(rules.flatMap((entry) => (entry.on ?? []).filter((glob) => staticPrefix(glob) === glob)))];
+/** The paths one rule names OUTRIGHT: each of its globs with no wildcard, such as `.env.keys`. */
+function namedOutright(entry: Bound): string[] {
+  return (entry.on ?? []).filter((glob) => staticPrefix(glob) === glob);
 }
 
 /**
- * THE SNAPSHOT'S BLIND SPOTS, as red lines: a write or delete rule whose scope reaches a path git
- * ignores, where `snapshotInclude` does not bring it back.
+ * The paths those rules name OUTRIGHT, across every rule: the only paths status asks git about, by
+ * name, so a `.env` that does not exist yet is asked about too. flow's own `.flow/` is left out: it
+ * ignores itself, and the snapshot never holds it, so no `snapshotInclude` could bring it back.
+ */
+export function literalScopes(load: LoadResult | null): string[] {
+  const named = treeRules(universe(load?.ok === true ? load.entries : [])).flatMap(namedOutright);
+  return [...new Set(named)].filter((path) => path !== FLOW_DIR && !path.startsWith(`${FLOW_DIR}/`));
+}
+
+/**
+ * THE SNAPSHOT'S BLIND SPOTS, as red lines: a write or delete rule that names a path outright, which
+ * git ignores, where `snapshotInclude` does not bring it back.
  *
  * The snapshot is git's view, so a shell write to an ignored file is never in the diff and never
- * judged — and a rule guarding `.env` would load green and watch nothing. So the gap is said where a
- * person looks, naming the rule and the setting.
+ * judged, and a rule written for `.env.keys` would load green and watch nothing. So the gap is said
+ * where a person looks, naming the rule and the setting.
  *
- * WHAT "REACHES" MEANS, and why it is not "the glob could match something in there". An ignored
- * FILE is reached when the rule's globs match it. An ignored DIRECTORY is reached when a glob names
- * it — its literal head lies inside the directory (`dist/**` over an ignored `dist/`), or sits above
- * it and continues with `**` (`src/**` over an ignored `src/gen/`). A glob that is all wildcard,
- * `**` + `/*.ts`, does not reach `node_modules/` by this measure, though strictly it matches files in
- * there: every repo with such a rule would be red over a folder no rule was written about.
+ * ONLY A PATH THE RULE NAMES EXACTLY. A glob such as `src/**` that also matches an ignored
+ * `.DS_Store`, or reaches into an ignored `dist/`, gets no line: that is every broad glob in a
+ * normal repo, not a rule that wants an ignored file and cannot see it.
  */
 export function snapshotGaps(entries: readonly Bound[], ignored: readonly string[], include: readonly string[]): Fitting[] {
-  const covered = (path: string): boolean => matchAny(path, include) || include.some((glob) => reachesBelow(glob, path));
-  const out: Fitting[] = [];
-  for (const entry of treeRules(entries)) {
-    const on = entry.on ?? [];
-    const reached = new Set<string>();
-    for (const path of ignored) {
-      if (!path.endsWith("/")) {
-        if (matchAny(path, on) && !matchAny(path, entry.ignore ?? []) && !covered(path)) reached.add(path);
-        continue;
-      }
-      for (const glob of on) {
-        const head = staticPrefix(glob);
-        const at = head.startsWith(path) && head !== "" ? (head === glob ? glob : head) : reachesBelow(glob, path) ? path : null;
-        if (at !== null && !covered(at)) reached.add(at);
-      }
-    }
-    for (const path of reached)
-      out.push({
+  return treeRules(entries).flatMap((entry) =>
+    [...new Set(namedOutright(entry))]
+      .filter((path) => ignored.includes(path) && !matchAny(path, entry.ignore ?? []) && !matchAny(path, include))
+      .map((path) => ({
         id: "snapshot",
         ok: false,
         detail:
           `${entry.id} guards ${path}, which git ignores, so a change a shell command makes there is never seen or judged. ` +
           `List it in snapshotInclude in ${CONFIG_FILE}, or narrow the rule.`,
-      });
-  }
-  return out;
+      })),
+  );
 }
 
 /** The whole answer. */

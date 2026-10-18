@@ -121,6 +121,7 @@ import {
   authored,
   nulPaths,
   snapshotPathspecs,
+  visibility,
   type AdapterEvent,
   type Answer,
   type CallRecord,
@@ -394,6 +395,37 @@ function writeTree(root: string, index: string, seed: string | null, include: re
 }
 
 /**
+ * WHAT THE SNAPSHOT COULD NOT SEE: every path on disk that git ignored and `index` does not hold,
+ * names only. It is what tells a file that entered the snapshot during a call from one the call
+ * created (`visibility`), and it is taken before the call, so the config the call may edit decides
+ * nothing. `--directory` names a directory git ignores whole once, `node_modules/`, so git never
+ * walks it and the list stays short.
+ */
+function hiddenPaths(root: string, index: string): { hidden: string[] } | { fault: string } {
+  const listed = runGit(root, ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"], { index });
+  if (!listed.ok) return { fault: `git could not list the ignored paths the snapshot leaves out: ${listed.stderr}` };
+  return { hidden: nulPaths(listed.stdout.toString("utf8")) };
+}
+
+/**
+ * The tree and what it left out, or the first fault. The after-call rail needs both to tell a file
+ * the call created from one that was already on disk and hidden (#146), so a tree with no list is a
+ * snapshot that failed.
+ */
+function treeAndHidden(
+  root: string,
+  index: string,
+  seed: string,
+  include: readonly string[],
+): { tree: string; hidden: string[] } | { fault: string } {
+  const written = writeTree(root, index, seed, include);
+  if ("fault" in written) return written;
+  const hidden = hiddenPaths(root, index);
+  if ("fault" in hidden) return hidden;
+  return { tree: written.tree, hidden: hidden.hidden };
+}
+
+/**
  * RECORD THE TREE BEFORE A CALL, filed under the host's `tool_use_id`.
  *
  * A snapshot that cannot be taken is RECORDED as a fault rather than skipped, so the after-call rail
@@ -415,7 +447,7 @@ export function takeSnapshot(
     // The write below reports what went wrong, if anything did; a sweep that failed costs nothing.
   }
   const dir = gitDir(root);
-  const taken = dir === null ? { fault: `${root} is not a git checkout, so there is no tree to snapshot` } : writeTree(root, files.index, join(dir, "index"), include);
+  const taken = dir === null ? { fault: `${root} is not a git checkout, so there is no tree to snapshot` } : treeAndHidden(root, files.index, join(dir, "index"), include);
   // HEAD before the call, beside the tree: a file the call removed is git's only if HEAD held it.
   // And every tip the repo has, so the after-call rail can tell a commit it lands on from one it made.
   const head = "tree" in taken ? headCommit(root) : null;
@@ -462,23 +494,29 @@ function blobs(root: string, specs: readonly string[]): (string | null)[] | null
 
 /**
  * WHAT THE CALL CHANGED: the tree now against the tree its snapshot recorded, path by path, with
- * the content either side, less each path git put there (see `authored`). The before-snapshot is
+ * the content either side, less each path git put there (see `authored`), and less each path whose
+ * VIEW changed rather than its content (see `visibility`): one that left the snapshot still on disk
+ * as it was, and one that entered it, which comes back in `entered` instead. The before-snapshot is
  * kept — a revert reads from it — until `forget`.
  */
 export function observeDelta(root: string, key: string, include: readonly string[]): Delta & { readonly before?: string } {
   const files = snapshotFiles(root, key);
-  let meta: { tree?: unknown; head?: unknown; known?: unknown; fault?: unknown };
+  let meta: { tree?: unknown; head?: unknown; known?: unknown; hidden?: unknown; fault?: unknown };
   try {
-    meta = JSON.parse(readFileSync(files.meta, "utf8")) as { tree?: unknown; head?: unknown; known?: unknown; fault?: unknown };
+    meta = JSON.parse(readFileSync(files.meta, "utf8")) as { tree?: unknown; head?: unknown; known?: unknown; hidden?: unknown; fault?: unknown };
   } catch {
     return { ok: false, fault: `No snapshot was taken before this call (tool_use_id ${key}), so there is nothing to compare the tree against.` };
   }
   if (typeof meta.fault === "string") return { ok: false, fault: `The snapshot before this call could not be taken: ${meta.fault}.` };
-  if (typeof meta.tree !== "string") return { ok: false, fault: `The snapshot before this call (tool_use_id ${key}) is unreadable.` };
+  // The tree, and what the snapshot could not see beside it. A record without both cannot tell a
+  // file the call created from one that entered the snapshot, so it is unreadable, like any other.
+  if (typeof meta.tree !== "string" || !Array.isArray(meta.hidden))
+    return { ok: false, fault: `The snapshot before this call (tool_use_id ${key}) is unreadable.` };
   const before = meta.tree;
+  const hidden = meta.hidden.filter((path): path is string => typeof path === "string");
   const now = writeTree(root, files.after, files.index, include);
   if ("fault" in now) return { ok: false, fault: `The tree after this call could not be recorded: ${now.fault}.` };
-  if (now.tree === before) return { ok: true, changes: [], before };
+  if (now.tree === before) return { ok: true, changes: [], entered: [], before };
   // One entry per path, NUL-separated, never a human status format. Submodules are another
   // repository's business and are left out.
   const diffTree = (from: string, format: "--name-status" | "--name-only"): string | { why: string } => {
@@ -493,11 +531,15 @@ export function observeDelta(root: string, key: string, include: readonly string
       return { ok: false, fault: "A changed path has a newline in its name, which flow cannot ask git about safely." };
     const content = blobs(root, paths.flatMap((path) => [`${before}:${path}`, `${now.tree}:${path}`]));
     if (content === null) return { ok: false, fault: "git could not read the changed files back out of the snapshot." };
-    return {
-      ok: true,
-      changes: paths.map((path, i) => ({ path, before: content[2 * i] ?? null, after: content[2 * i + 1] ?? null })),
-      before,
-    };
+    // What changed VIEW rather than content leaves here: a file that entered the snapshot during
+    // the call, and one that left it still on disk as it was (`visibility`). One that left it
+    // rewritten stays, as the write it is.
+    const seen = visibility(
+      paths.map((path, i) => ({ path, before: content[2 * i] ?? null, after: content[2 * i + 1] ?? null })),
+      hidden,
+      (path) => readText(root, path),
+    );
+    return { ok: true, changes: seen.changes, entered: seen.entered, before };
   };
   // WHAT GIT PUT THERE leaves the diff here, before anything reads it: HEAD after the call and HEAD
   // before it, each against the tree after it, are one more tree comparison each (`authored`
@@ -869,8 +911,8 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
   };
 
   // THE WAY BACK, once the answer is known: the changes a rule refused are written back from the
-  // snapshot, and what that came to rides the answer so the refusal can say it. Then the call is
-  // over and its snapshot goes.
+  // snapshot, and what that came to rides the answer so the refusal can say it, with the files that
+  // entered the snapshot during the call. Then the call is over and its snapshot goes.
   const settle = (answer: Answer): Answer => {
     if (delta === null || key === null) return answer;
     const scope = scopeOf(delta.changes);
@@ -878,7 +920,10 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
     const failed = plan.revert.length === 0 ? [] : revertChanges(root, delta.before ?? "", plan.revert);
     finish();
     const landed = answer.refused.some((refusal) => refusal.observed !== undefined);
-    return landed ? { ...answer, undone: { restored: plan.revert, kept: plan.kept, failed, scope } } : answer;
+    // A file that entered the snapshot was in no change, so nothing judged it and nothing put it
+    // back; the agent is told its name, refused or not.
+    const told = { ...answer, entered: delta.entered };
+    return landed ? { ...told, undone: { restored: plan.revert, kept: plan.kept, failed, scope } } : told;
   };
 
   const entries = load.entries;

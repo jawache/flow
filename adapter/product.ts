@@ -204,24 +204,15 @@ function hooksFolder(root: string): HooksFolder | null {
 }
 
 /**
- * What git ignores in this repo — the edge of the snapshot, which is git's view of the tree.
- *
- * Two questions, both answered one path per line: the ignored paths that exist (a whole ignored
- * directory is one line, with its trailing `/`, so `node_modules/` costs one line and not a walk),
- * and which of the paths the rules name outright git WOULD ignore, which catches a `.env` that has
- * not been written yet. flow's own `.flow/` is left out: it ignores itself, and no rule is about it.
- * Not a git repo, or git unable to answer, is an empty list — status has its own lines for those.
+ * Which of the paths the rules name outright git ignores — the edge of the snapshot, which is git's
+ * view of the tree. `git check-ignore` answers by name, so a `.env` that has not been written yet is
+ * caught, and a path inside an ignored directory is too. No names, not a git repo, or git unable to
+ * answer, is an empty list — status has its own lines for those.
  */
 function ignoredPaths(root: string, literals: readonly string[]): string[] {
-  const listed = spawnSync("git", ["-C", root, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"], {
-    encoding: "utf8",
-  });
-  const named =
-    literals.length === 0
-      ? null
-      : spawnSync("git", ["-C", root, "check-ignore", "--stdin"], { encoding: "utf8", input: `${literals.join("\n")}\n` });
-  const all = [...(listed.status === 0 ? pathLines(listed.stdout) : []), ...pathLines(named?.stdout ?? null)];
-  return [...new Set(all)].filter((path) => path !== `${FLOW_DIR}/` && !path.startsWith(`${FLOW_DIR}/`));
+  if (literals.length === 0) return [];
+  const named = spawnSync("git", ["-C", root, "check-ignore", "--stdin"], { encoding: "utf8", input: `${literals.join("\n")}\n` });
+  return pathLines(named.stdout);
 }
 
 /**

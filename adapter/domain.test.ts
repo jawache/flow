@@ -131,6 +131,7 @@ import {
   deltaFault,
   included,
   authored,
+  visibility,
   nulPaths,
   literalScopes,
   preJudged,
@@ -712,6 +713,25 @@ describe("toResult — one refusal spelling, one injection spelling", () => {
     });
     expect(result.stderr).toContain("one");
     expect(result.stderr).toContain("two");
+  });
+
+  it("tells the agent, by name, each file that entered the snapshot during the call, on whichever channel the answer uses (#146)", () => {
+    const told = toResult("post-tool-use", { refused: [], shown: [], entered: [".env"] });
+    expect(told.exitCode).toBe(0);
+    expect(JSON.parse(told.stdout)).toEqual({
+      hookSpecificOutput: {
+        hookEventName: "PostToolUse",
+        additionalContext: "flow had no earlier copy of .env: it entered the snapshot during this call, so this call did not judge it. Later changes to it are judged.",
+      },
+    });
+    const refusal = toResult("post-tool-use", { refused: [{ moment: "write", block: block(), observed: "src/a.ts" }], shown: [], entered: [".env.keys", ".env"] });
+    expect(refusal.exitCode).toBe(2);
+    expect(refusal.stderr, "beside a refusal, after it").toMatch(/core\.noTodo[\s\S]*flow had no earlier copy of \.env\.keys and \.env: they entered the snapshot during this call, so this call did not judge them\./);
+    const many = Array.from({ length: 12 }, (_, i) => `node_modules/p${i}.js`);
+    expect(JSON.parse(toResult("post-tool-use", { refused: [], shown: [], entered: many }).stdout).hookSpecificOutput.additionalContext, "a long list is counted, not printed").toContain(
+      "node_modules/p8.js, node_modules/p9.js and 2 more: they entered",
+    );
+    expect(toResult("post-tool-use", { refused: [], shown: [], entered: [] }), "nothing entered, nothing said").toEqual(ALLOW);
   });
 
   it("injects notes as the decision object the host reads, echoing its own event name", () => {
@@ -3991,8 +4011,8 @@ describe("status — the snapshot's edges and a registration an older flow wrote
   const guardsAt = (on: readonly string[], at: readonly string[] = ["write"]) =>
     loaded("house.env", { kind: "guardrail", at, on, message: "no" });
 
-  it("names a rule whose scope reaches an ignored path the snapshot leaves out, and the setting", () => {
-    const facts = { load: { ok: true as const, entries: [guardsAt([".env"])] }, ignored: [".env", "node_modules/"] };
+  it("names a rule that names an ignored path exactly, and the setting", () => {
+    const facts = { load: { ok: true as const, entries: [guardsAt([".env"])] }, ignored: [".env"] };
     const said = red(facts);
     expect(said).toContain("✗ snapshot: house.env guards .env, which git ignores");
     expect(said).toContain("snapshotInclude");
@@ -4000,19 +4020,22 @@ describe("status — the snapshot's edges and a registration an older flow wrote
     expect(status(statusFacts({ ...facts, snapshotInclude: [".env*"] })).green, "listed, so the snapshot holds it").toBe(true);
   });
 
-  it("reaches an ignored directory a glob names, and not one a wildcard only happens to cover", () => {
+  it("is said only for a path a rule names exactly, never for a broad glob over ignored files or directories", () => {
     const gaps = (on: readonly string[], ignored: readonly string[], include: readonly string[] = []): string[] =>
       status(statusFacts({ load: { ok: true, entries: [guardsAt(on)] }, ignored, snapshotInclude: include }))
         .fittings.filter((f) => f.id === "snapshot")
         .map((f) => f.detail.split(",")[0] ?? "");
-    expect(gaps(["dist/**"], ["dist/"])).toEqual(["house.env guards dist/"]);
-    expect(gaps(["src/**"], ["src/gen/"])).toEqual(["house.env guards src/gen/"]);
-    expect(gaps(["src/*.ts"], ["src/gen/"]), "one segment deep never reaches below it").toEqual([]);
-    expect(gaps(["**/*.ts"], ["node_modules/"]), "no rule was written about node_modules").toEqual([]);
-    expect(gaps(["**/*.log"], ["debug.log"]), "an ignored FILE the glob matches is reached").toEqual(["house.env guards debug.log"]);
-    expect(gaps(["src/**"], ["src/gen/"], ["src/gen/**"]), "brought back by snapshotInclude").toEqual([]);
-    expect(gaps(["dist/**"], ["dist/"], ["dist/**"])).toEqual([]);
-    expect(gaps(["dist/app.js"], ["dist/"])).toEqual(["house.env guards dist/app.js"]);
+    expect(gaps([".env.keys"], [".env.keys"])).toEqual(["house.env guards .env.keys"]);
+    expect(gaps(["dist/app.js"], ["dist/app.js"]), "a named path inside an ignored directory").toEqual(["house.env guards dist/app.js"]);
+    expect(gaps(["src/**"], ["src/.DS_Store"]), "a broad glob over an ignored file").toEqual([]);
+    expect(gaps(["**/*.log"], ["debug.log"]), "a wildcard that matches an ignored file").toEqual([]);
+    expect(gaps(["src/**"], ["src/gen/"]), "a broad glob into an ignored directory").toEqual([]);
+    expect(gaps(["dist/**"], ["dist/"])).toEqual([]);
+    expect(gaps([".env.keys", "src/**"], [".env.keys", "src/.DS_Store"]), "one rule, both kinds of glob").toEqual([
+      "house.env guards .env.keys",
+    ]);
+    expect(gaps([".env.keys"], []), "a named path git does not ignore").toEqual([]);
+    expect(gaps([".env.keys"], [".env.keys"], [".env*"]), "brought back by snapshotInclude").toEqual([]);
   });
 
   it("asks only about live write and delete guardrails — a note, a command rule or a disabled one has no stake", () => {
@@ -4029,6 +4052,8 @@ describe("status — the snapshot's edges and a registration an older flow wrote
     const load = { ok: true as const, entries: [guardsAt([".env", "src/**", "config/app.json"]), guardsAt([".env"], ["delete"])] };
     expect(literalScopes(load)).toEqual([".env", "config/app.json"]);
     expect(literalScopes(null)).toEqual([]);
+    const own = { ok: true as const, entries: [guardsAt([".env", ".flow/state.json", ".flow"])] };
+    expect(literalScopes(own), "flow's own state ignores itself, and no rule is about it").toEqual([".env"]);
   });
 
   it("goes red on an older flow's narrow PostToolUse, and says re-running init widens it", () => {
@@ -4522,6 +4547,34 @@ describe("snapshotInclude — where git looks, and what it keeps", () => {
     expect(authored(diff, [], null), "no HEAD before the call: nothing was git's to remove").toEqual(["migrations/002.sql", ".env", "notes.md"]);
     // HEAD still holds 002.sql after the call, so the removal differs from it, whatever HEAD held before.
     expect(authored(diff, ["migrations/002.sql"], ["migrations/002.sql"])).toEqual(["migrations/002.sql", ".env", "notes.md"]);
+  });
+
+  it("takes a new path the snapshot recorded as hidden out of the changes as entered, and judges a new one it did not (#146)", () => {
+    const changes = [
+      { path: ".env", before: null, after: "TOKEN=old\n" },
+      { path: "tools/scratch/notes.md", before: null, after: "x\n" },
+      { path: "new.ts", before: null, after: "export {};\n" },
+      { path: "a.ts", before: "1\n", after: "2\n" },
+    ];
+    const seen = visibility(changes, [".env", "tools/scratch/", "node_modules/"], () => null);
+    expect(seen.entered, "a file, and a file under a directory git ignored whole").toEqual([".env", "tools/scratch/notes.md"]);
+    expect(seen.changes.map((change) => change.path), "a file that did not exist before is still the call's creation").toEqual(["new.ts", "a.ts"]);
+    expect(visibility(changes, [".env.keys", "tools/scratch"], () => null).entered, "a prefix that is not a directory entry hides nothing").toEqual([]);
+  });
+
+  it("is no removal when the path left the snapshot but is still a file on disk: unchanged it leaves the diff, changed it is a write", () => {
+    const changes = [
+      { path: ".env", before: "TOKEN=old\n", after: null },
+      { path: ".env.local", before: "A=1\n", after: null },
+      { path: "gone.ts", before: "x\n", after: null },
+    ];
+    const disk: Record<string, string> = { ".env": "TOKEN=old\n", ".env.local": "A=2\n" };
+    const seen = visibility(changes, [], (path) => disk[path] ?? null);
+    expect(seen.changes, "gone.ts is gone from disk too: that removal is judged; .env.local was rewritten, so the write rules judge it").toEqual([
+      { path: ".env.local", before: "A=1\n", after: "A=2\n" },
+      { path: "gone.ts", before: "x\n", after: null },
+    ]);
+    expect(seen.entered).toEqual([]);
   });
 
   it("reads git's -z answer as paths, with no quoting and no empty tail", () => {

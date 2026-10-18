@@ -172,6 +172,46 @@ describe("flow status", () => {
     expect(read.fittings.every((f) => f.ok)).toBe(true);
   });
 
+  // THE SNAPSHOT'S EDGE, as git answers it. Two rules name an ignored path outright, and neither
+  // file exists: `.env.keys`, which `.gitignore` names, and `dist/app.js`, inside an ignored `dist/`.
+  // Git is asked about each by name, so both are red lines. A third rule reaches an ignored
+  // `src/.DS_Store` with a broad glob: no rule wants that file, so it is no line. `snapshotInclude`
+  // clears the two.
+  it("goes red on a rule that names an ignored path exactly, written or not, and says nothing of a broad glob over one", () => {
+    const edge = newRepo();
+    try {
+      expect(flow(edge, ["init", "--empty"]).code).toBe(0);
+      writeFileSync(join(edge, ".gitignore"), ".env.keys\n.DS_Store\ndist/\n");
+      mkdirSync(join(edge, "src"));
+      writeFileSync(join(edge, "src", ".DS_Store"), "x");
+      const config = (settings: string): string => `import { defineConfig, definePack, guardrail, pack, protectedPath, write } from "@jawache/flow";
+const edge = definePack("edge", {
+  keys: guardrail().at(write).on(".env.keys").check(protectedPath({})).message("no").test({ pass: [], block: [{ path: ".env.keys", content: "x" }] }),
+  app: guardrail().at(write).on("dist/app.js").check(protectedPath({})).message("no").test({ pass: [], block: [{ path: "dist/app.js", content: "x" }] }),
+  src: guardrail().at(write).on("src/**").check(protectedPath({})).message("no").test({ pass: [], block: [{ path: "src/a.ts", content: "x" }] }),
+});
+export default defineConfig([pack(edge)]${settings});
+`;
+      writeFileSync(join(edge, "flow.config.ts"), config(""));
+      expect(existsSync(join(edge, ".env.keys")) || existsSync(join(edge, "dist")), "neither named file is written").toBe(false);
+      const said = flow(edge, ["status"]);
+      const lines = said.stdout.split("\n").filter((line) => line.includes("snapshot:"));
+      expect(lines, said.stdout).toEqual([
+        expect.stringContaining("✗ snapshot: edge.keys guards .env.keys, which git ignores"),
+        expect.stringContaining("✗ snapshot: edge.app guards dist/app.js, which git ignores"),
+      ]);
+      expect(said.stdout).not.toContain(".DS_Store");
+      expect(said.code).toBe(1);
+
+      writeFileSync(join(edge, "flow.config.ts"), config(`, { snapshotInclude: [".env*", "dist/app.js"] }`));
+      const listed = flow(edge, ["status"]);
+      expect(listed.stdout, "listed, so the snapshot holds them").not.toContain("snapshot:");
+      expect(listed.code).toBe(0);
+    } finally {
+      rmSync(edge, { recursive: true, force: true });
+    }
+  });
+
   it("goes red, with the fix, when the gate is not armed", () => {
     const bare = newRepo();
     try {

@@ -358,6 +358,124 @@ export default defineConfig([pack(demo)], { snapshotInclude: [".env"] });
     expect(read(".env"), "written back, byte for byte").toBe("TOKEN=old\n");
   });
 
+  // #146: a call that changes what the snapshot can see. Each rule here refuses any write to .env.
+  const keepEnvConfig = `import { defineConfig, definePack, deletion, guardrail, pack, protectedPath, write } from ${JSON.stringify(new URL("../index.ts", import.meta.url).pathname)};
+const demo = definePack("demo", {
+  keepEnv: guardrail()
+    .at(write, deletion)
+    .on(".env")
+    .check(protectedPath({}))
+    .message("The .env stays.")
+    .test({ pass: [{ path: "a.ts", content: "new" }], block: [{ path: ".env", content: "x" }] }),
+});
+export default defineConfig([pack(demo)]);
+`;
+
+  /** One Bash call through both rails: the snapshot before it, `act` as the call, the judgement after. */
+  const hookCall = async (key: string, act: () => void): Promise<Awaited<ReturnType<typeof runHook>>> => {
+    const payload = { session_id: "s1", tool_name: "Bash", tool_input: { command: "a shell edit" }, tool_use_id: key, cwd: repo };
+    expect((await runHook("pre-tool-use", payload, repo)).exitCode).toBe(0);
+    act();
+    return runHook("post-tool-use", payload, repo);
+  };
+  const unjudged = "flow had no earlier copy of .env: it entered the snapshot during this call, so this call did not judge it.";
+
+  // In-process the config module is cached, so a call that edits snapshotInclude is driven through
+  // the snapshot itself, with the include each side was taken with: the old before, the new after.
+  it("#146: a call that adds .env to snapshotInclude does not see the .env that was already there as created", () => {
+    takeSnapshot(repo, "toolu_146a", [], who);
+    const delta = observeDelta(repo, "toolu_146a", [".env"]);
+    if (!delta.ok) throw new Error(delta.fault);
+    expect(delta.changes, "the call never touched .env").toStrictEqual([]);
+    expect(delta.entered, "it entered the snapshot").toStrictEqual([".env"]);
+    expect(read(".env")).toBe("TOKEN=old\n");
+  });
+
+  it("#146: a call that takes .env out of snapshotInclude does not remove it", () => {
+    takeSnapshot(repo, "toolu_146c", [".env"], who);
+    const delta = observeDelta(repo, "toolu_146c", []);
+    if (!delta.ok) throw new Error(delta.fault);
+    expect(delta.changes, "no removal for a delete rule to judge").toStrictEqual([]);
+    expect(read(".env"), "still on disk").toBe("TOKEN=old\n");
+  });
+
+  it("#146: a call that adds .env to snapshotInclude and creates it still makes a creation", () => {
+    unlinkSync(join(repo, ".env"));
+    takeSnapshot(repo, "toolu_146d", [], who);
+    writeFileSync(join(repo, ".env"), "TOKEN=new\n");
+    const delta = observeDelta(repo, "toolu_146d", [".env"]);
+    if (!delta.ok) throw new Error(delta.fault);
+    expect(delta.changes, "it was not on disk before the call").toStrictEqual([{ path: ".env", before: null, after: "TOKEN=new\n" }]);
+    expect(delta.entered).toStrictEqual([]);
+  });
+
+  it("#146: a call that un-ignores .env in .gitignore leaves the .env that was already there, and says so", async () => {
+    writeFileSync(join(repo, "flow.config.ts"), keepEnvConfig);
+    const answer = await hookCall("toolu_146b", () => { writeFileSync(join(repo, ".gitignore"), "secret.key\nbuild/\n"); });
+    expect(read(".env"), `the call never touched .env; flow said:\n${answer.stderr}`).toBe("TOKEN=old\n");
+    expect(answer.exitCode, "nothing judged .env, so nothing refused it").toBe(0);
+    expect(answer.stdout, "the agent is told the file entered the snapshot unjudged").toContain(unjudged);
+  });
+
+  it("#146: the next call's edit to a file that entered the snapshot is judged", async () => {
+    writeFileSync(join(repo, "flow.config.ts"), keepEnvConfig);
+    expect((await hookCall("toolu_146e1", () => { writeFileSync(join(repo, ".gitignore"), "secret.key\nbuild/\n"); })).exitCode).toBe(0);
+    const answer = await hookCall("toolu_146e2", () => { writeFileSync(join(repo, ".env"), "TOKEN=leaked\n"); });
+    expect(answer.exitCode).toBe(2);
+    expect(answer.stderr).toContain("✗ demo.keepEnv · .env");
+    expect(answer.stderr).not.toContain("no earlier copy");
+    expect(read(".env"), "put back to the copy the first call recorded").toBe("TOKEN=old\n");
+  });
+
+  it("#146: a call that un-ignores a .env it also creates is judged, and the creation undone", async () => {
+    writeFileSync(join(repo, "flow.config.ts"), keepEnvConfig);
+    unlinkSync(join(repo, ".env"));
+    const answer = await hookCall("toolu_146f", () => {
+      writeFileSync(join(repo, ".gitignore"), "secret.key\nbuild/\n");
+      writeFileSync(join(repo, ".env"), "TOKEN=new\n");
+    });
+    expect(answer.exitCode).toBe(2);
+    expect(answer.stderr).toContain("✗ demo.keepEnv · .env");
+    expect(answer.stderr).toContain(".env is gone again — the call created it.");
+    expect(existsSync(join(repo, ".env"))).toBe(false);
+  });
+
+  // Decided: an existing ignored file that a call un-ignores and rewrites enters unjudged, as
+  // rewritten. flow has no earlier copy of it to put back, so a refusal could only delete it. The
+  // next change to it is judged.
+  it("#146: a call that un-ignores an existing .env and rewrites it lets it enter unjudged, as rewritten", async () => {
+    writeFileSync(join(repo, "flow.config.ts"), keepEnvConfig);
+    const answer = await hookCall("toolu_146i", () => {
+      writeFileSync(join(repo, ".gitignore"), "secret.key\nbuild/\n");
+      writeFileSync(join(repo, ".env"), "TOKEN=new\n");
+    });
+    expect(answer.exitCode, `nothing judged .env; flow said:\n${answer.stderr}`).toBe(0);
+    expect(answer.stdout, "the agent is told the file entered the snapshot unjudged").toContain(unjudged);
+    expect(read(".env"), "the call's content stays: flow had nothing to put back").toBe("TOKEN=new\n");
+  });
+
+  it("#146: a call that adds a visible .env to .gitignore leaves it on disk, and no delete rule is called on it", async () => {
+    writeFileSync(join(repo, ".gitignore"), "secret.key\nbuild/\n");
+    writeFileSync(join(repo, "flow.config.ts"), keepEnvConfig);
+    const answer = await hookCall("toolu_146g", () => { writeFileSync(join(repo, ".gitignore"), ".env\nsecret.key\nbuild/\n"); });
+    expect(answer.exitCode, `the deletion rule on .env was not called; flow said:\n${answer.stderr}`).toBe(0);
+    expect(read(".env")).toBe("TOKEN=old\n");
+  });
+
+  it("#146: a call that adds .env to .gitignore and rewrites it has the rewrite judged by the write rules", async () => {
+    writeFileSync(join(repo, ".gitignore"), "secret.key\nbuild/\n");
+    writeFileSync(join(repo, "flow.config.ts"), keepEnvConfig);
+    const answer = await hookCall("toolu_146h", () => {
+      writeFileSync(join(repo, ".gitignore"), ".env\nsecret.key\nbuild/\n");
+      writeFileSync(join(repo, ".env"), "TOKEN=leaked\n");
+    });
+    expect(answer.exitCode, "hiding the file does not hide the edit").toBe(2);
+    expect(answer.stderr).toContain("flow — write reverted after it landed");
+    expect(answer.stderr).toContain("✗ demo.keepEnv · .env");
+    expect(answer.stderr, "a write put back, not a removal restored").toContain(".env is back to its previous content.");
+    expect(read(".env")).toBe("TOKEN=old\n");
+  });
+
   it("judges every change in a repo with no commit yet — there is no HEAD to match", () => {
     const fresh = mkdtempSync(join(tmpdir(), "flow-unborn-"));
     try {
@@ -391,6 +509,18 @@ export default defineConfig([pack(demo)], { snapshotInclude: [".env"] });
     const never = observeDelta(repo, "toolu_never", []);
     expect(never.ok).toBe(false);
     if (!never.ok) expect(never.fault).toContain("No snapshot was taken before this call");
+  });
+
+  it("reports a snapshot recorded with no hidden list as unreadable — it cannot tell a creation from a file that entered (#146)", () => {
+    takeSnapshot(repo, "toolu_nolist", [], who);
+    const record = join(repo, ".flow", "snapshots", "toolu_nolist.json");
+    const { hidden, ...meta } = JSON.parse(readFileSync(record, "utf8")) as Record<string, unknown>;
+    expect(Array.isArray(hidden), "the snapshot records the list beside the tree").toBe(true);
+    writeFileSync(record, JSON.stringify(meta));
+    writeFileSync(join(repo, "new.ts"), "x\n");
+    const delta = observeDelta(repo, "toolu_nolist", []);
+    expect(delta.ok).toBe(false);
+    if (!delta.ok) expect(delta.fault).toContain("is unreadable");
   });
 
   it("says which file it could not put back, rather than claiming it did", () => {
