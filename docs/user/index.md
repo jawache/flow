@@ -28,7 +28,6 @@ For you if flow already runs and you have one task to finish: each guide gives t
 - [How to require a sibling test](./how-to/require-a-sibling-test.md)
 - [How to require a reason in the commit message](./how-to/require-a-reason-in-the-commit-message.md)
 - [How to let only some agents write](./how-to/let-only-some-agents-write.md)
-- [How to work in a git worktree](./how-to/work-in-a-git-worktree.md)
 - [How to steer without blocking](./how-to/steer-without-blocking.md)
 - [How to test your rules](./how-to/test-your-rules.md)
 - [How to write your own check](./how-to/write-your-own-check.md)
@@ -39,6 +38,12 @@ For you if flow already runs and you have one task to finish: each guide gives t
 ### Upgrading flow
 
 [The migration guides](./migrations/index.md) have one page per release: what a repo that uses flow must change to upgrade to that version, as steps an agent can follow.
+
+## When something goes wrong
+
+For you when flow stops the agent, refuses something you expected to pass, or says something is wrong: each page starts from what you see, says why, and gives the fix.
+
+- [flow says it does not guard this worktree](./troubleshooting/flow-does-not-guard-this-worktree.md)
 
 ## Look something up
 

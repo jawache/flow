@@ -161,7 +161,7 @@ The snapshot holds what git holds: every tracked file, and every untracked file 
 ## Another worktree of the same repository
 
 > [!WARNING]
-> A session that works in a worktree it did not start in is unguarded there. No guardrail judges its changes in that worktree and no breadcrumb is shown for them. Only the commit gate judges them, when they are committed. [How to work in a git worktree](../how-to/work-in-a-git-worktree.md) gives the fix: start the session in the worktree.
+> A session that works in a worktree it did not start in is unguarded there. No guardrail judges its changes in that worktree and no breadcrumb is shown for them. Only the commit gate judges them, when they are committed. [flow says it does not guard this worktree](../troubleshooting/flow-does-not-guard-this-worktree.md) gives the fix: start the session in the worktree.
 
 flow guards one folder: the folder the session started in. Claude Code passes that folder to every hook as `CLAUDE_PROJECT_DIR`. The snapshot, the log and the state in `.flow/` all belong to it.
 
