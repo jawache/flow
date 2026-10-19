@@ -1215,30 +1215,41 @@ export default defineConfig([pack(demo)]${include});
   });
 });
 
-describe("a write into another worktree of the repository — told once to stop, never refused (#174)", () => {
-  it("tells the agent once per worktree, a subagent for itself, a worktree nested under .claude/worktrees too, and nothing for a folder outside the repository", () => {
-    const parent = mkdtempSync(join(tmpdir(), "flow-worktree-"));
-    const where = join(parent, "app");
-    const worktree = join(parent, "app-feature");
-    const outside = join(parent, "scratch");
-    mkdirSync(where);
-    mkdirSync(outside);
-    try {
-      expect(runGit(where, ["init", "-q"]).code).toBe(0);
-      writeFileSync(join(where, "flow.config.ts"), `
+/**
+ * A throwaway parent folder holding a guarded repo, `app`, with a config; a linked worktree of it,
+ * `app-feature`; and `scratch`, a folder outside the repository. The caller removes `parent`.
+ */
+function repoWithWorktree(): { parent: string; where: string; worktree: string; outside: string } {
+  const parent = mkdtempSync(join(tmpdir(), "flow-worktree-"));
+  const where = join(parent, "app");
+  const worktree = join(parent, "app-feature");
+  const outside = join(parent, "scratch");
+  mkdirSync(where);
+  mkdirSync(outside);
+  expect(runGit(where, ["init", "-q"]).code).toBe(0);
+  writeFileSync(join(where, "flow.config.ts"), `
 import { breadcrumb, defineConfig, definePack, pack, session } from ${JSON.stringify(join(PACKAGE, "index.ts"))};
 
 export default defineConfig([pack(definePack("demo", { hello: breadcrumb().at(session).text("Guarded.") }))]);
 `);
-      expect(runGit(where, ["add", "-A"]).code).toBe(0);
-      expect(runGit(where, ["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "init"]).code).toBe(0);
-      expect(runGit(where, ["worktree", "add", "-q", "-b", "feature", worktree]).code).toBe(0);
+  expect(runGit(where, ["add", "-A"]).code).toBe(0);
+  expect(runGit(where, ["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "init"]).code).toBe(0);
+  expect(runGit(where, ["worktree", "add", "-q", "-b", "feature", worktree]).code).toBe(0);
+  return { parent, where, worktree, outside };
+}
 
+/** Did flow's answer tell the agent it does not guard this worktree? */
+const toldAbout = (answer: Ran, folder: string): boolean => answer.stdout.includes(`It does not guard the git worktree ${realpathSync(folder)}`);
+
+describe("a write into another worktree of the repository — told once to stop, never refused (#174)", () => {
+  it("tells the agent once per worktree, a subagent for itself, a worktree nested under .claude/worktrees too, and nothing for a folder outside the repository", () => {
+    const { parent, where, worktree, outside } = repoWithWorktree();
+    try {
       const write = (path: string, agent?: string): Ran => {
         const payload = { ...pre("Write", { file_path: path, content: "x\n" }, "worktree"), ...(agent === undefined ? {} : { agent_id: agent, agent_type: "general-purpose" }) };
         return called(payload, () => { writeFileSync(path, "x\n"); }, "post-tool-use", where);
       };
-      const told = (answer: Ran, folder = worktree): boolean => answer.stdout.includes(`It does not guard the git worktree ${realpathSync(folder)}`);
+      const told = (answer: Ran, folder = worktree): boolean => toldAbout(answer, folder);
 
       const first = write(join(worktree, "a.ts"));
       expect(first.code, first.stderr).toBe(0);
@@ -1269,6 +1280,45 @@ export default defineConfig([pack(definePack("demo", { hello: breadcrumb().at(se
       const inRoot = write(join(where, "g.ts"), "agent-2");
       expect(inRoot.code, inRoot.stderr).toBe(0);
       expect(inRoot.stdout, "a write in the guarded folder itself is not told").toBe("");
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("a command run in another worktree of the repository — told once to stop, never refused (#174)", () => {
+  it("tells the agent once for a cd into the worktree, once for a session folder there, and nothing for a cd outside the repository or a worktree a write already told", () => {
+    const { parent, where, worktree, outside } = repoWithWorktree();
+    try {
+      let ids = 0;
+      const command = (line: string, who: string, cwd = where): Ran =>
+        called({ ...pre("Bash", { command: line }, who), cwd, tool_use_id: `toolu_wt_cmd_${++ids}` }, () => { spawnSync("bash", ["-c", line], { cwd }); }, "post-tool-use", where);
+
+      const first = command(`cd ${worktree} && touch a.ts`, "worktree-cmd");
+      expect(first.code, first.stderr).toBe(0);
+      expect(toldAbout(first, worktree), `a cd into the worktree tells the agent; flow said:\n${first.stdout}`).toBe(true);
+      expect(first.stdout).toContain(`flow guards ${realpathSync(where)}, the folder this session started in.`);
+      expect(existsSync(join(worktree, "a.ts")), "the call went through").toBe(true);
+
+      const second = command(`cd ${worktree} && touch b.ts`, "worktree-cmd");
+      expect(second.code, second.stderr).toBe(0);
+      expect(toldAbout(second, worktree), "a second command in the same worktree is not told again").toBe(false);
+
+      const sessionThere = command("touch c.ts", "worktree-cwd", worktree);
+      expect(sessionThere.code, sessionThere.stderr).toBe(0);
+      expect(toldAbout(sessionThere, worktree), `a command whose session folder is in the worktree tells the agent; flow said:\n${sessionThere.stdout}`).toBe(true);
+      expect(toldAbout(command("touch d.ts", "worktree-cwd", worktree), worktree), "and only once").toBe(false);
+
+      const elsewhere = command(`cd ${outside} && touch e.ts`, "worktree-cmd-out");
+      expect(elsewhere.code, elsewhere.stderr).toBe(0);
+      expect(elsewhere.stdout, "a folder outside the repository is not a worktree of it").toBe("");
+
+      const path = join(worktree, "f.ts");
+      const wrote = called({ ...pre("Write", { file_path: path, content: "x\n" }, "worktree-write") }, () => { writeFileSync(path, "x\n"); }, "post-tool-use", where);
+      expect(toldAbout(wrote, worktree), "the Edit or Write tool tells it first").toBe(true);
+      const after = command(`cd ${worktree} && ls`, "worktree-write");
+      expect(after.code, after.stderr).toBe(0);
+      expect(toldAbout(after, worktree), "a worktree a write already told is not told again by a command").toBe(false);
     } finally {
       rmSync(parent, { recursive: true, force: true });
     }

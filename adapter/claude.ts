@@ -125,7 +125,7 @@ import {
   reachesAnotherWorktree,
   untoldWorktrees,
   worktreeFolders,
-  writtenPaths,
+  workedPaths,
   type AdapterEvent,
   type Answer,
   type CallRecord,
@@ -837,11 +837,12 @@ function identityOf(session: Session, payload: HookPayload, categories: readonly
 /**
  * The other worktrees of the repository this call worked in that this session and agent has not
  * been told about, now remembered as told; null when there are none. The paths are the file an edit
- * tool wrote. git is asked only when one of them may be in another worktree.
+ * tool wrote, or the folders a shell command ran in (`workedPaths`). git is asked only when one of
+ * them may be in another worktree.
  */
 function worktreesToTell(session: Session, payload: HookPayload): { root: string; worktrees: string[] } | null {
   const root = realPath(session.root);
-  const paths = writtenPaths(payload, session.root).map(realPath);
+  const paths = workedPaths(payload, session.root, homedir()).map(realPath);
   if (!reachesAnotherWorktree(paths, root, holdsGitFile)) return null;
   const stored = loadState(session.root, session.id, session.who.agent);
   const told = stored.worktrees ?? [];
