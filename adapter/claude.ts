@@ -29,10 +29,10 @@
 //   direction.
 
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, readSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isatty } from "node:tty";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   loadConfig,
@@ -122,6 +122,7 @@ import {
   nulPaths,
   snapshotPathspecs,
   visibility,
+  worktreeFolders,
   type AdapterEvent,
   type Answer,
   type CallRecord,
@@ -624,6 +625,41 @@ export function finishSnapshot(root: string, key: string, now = Date.now()): voi
   }
   const finished = log.map((call) => (call.key === key ? { ...call, done: now } : call));
   for (const gone of forgettable(finished, now)) rmSync(snapshotFiles(root, gone).meta, { force: true });
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// ANOTHER WORKTREE — the folders git lists for this repository, read only when a call leaves root
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * A path with its links resolved, as far as it exists on disk, and the rest as named. git lists a
+ * worktree by its real path, and a temp folder on macOS is reached through a link (`/var` is
+ * `/private/var`), so both sides are made real before they are compared.
+ */
+export function realPath(path: string): string {
+  const tail: string[] = [];
+  let head = path;
+  for (;;) {
+    try {
+      return join(realpathSync(head), ...tail);
+    } catch {
+      const up = dirname(head);
+      if (up === head) return path;
+      tail.unshift(basename(head));
+      head = up;
+    }
+  }
+}
+
+/**
+ * Every working folder of the guarded folder's repository, as `git worktree list` lists them, made
+ * real. None when git cannot say, such as outside a repository: then no path is in a worktree, and
+ * nothing is told. The caller asks only for a call that reaches outside the guarded folder
+ * (`reachesOutside`), so an ordinary call never pays for this git call.
+ */
+export function repoWorktrees(root: string): string[] {
+  const listed = runGit(root, ["worktree", "list", "--porcelain"]);
+  return listed.ok ? worktreeFolders(listed.stdout.toString("utf8")).map(realPath) : [];
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
