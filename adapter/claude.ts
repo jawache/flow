@@ -669,7 +669,7 @@ function holdsGitFile(dir: string): boolean {
  * nothing is told. The caller asks only for a call that may reach another worktree
  * (`reachesAnotherWorktree`), so an ordinary call never pays for this git call.
  */
-export function repoWorktrees(root: string): string[] {
+function repoWorktrees(root: string): string[] {
   const listed = runGit(root, ["worktree", "list", "--porcelain"]);
   return listed.ok ? worktreeFolders(listed.stdout.toString("utf8")).map(realPath) : [];
 }

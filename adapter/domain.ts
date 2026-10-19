@@ -941,12 +941,18 @@ function within(path: string, dir: string): boolean {
   return path === dir || path.startsWith(dir.endsWith("/") ? dir : `${dir}/`);
 }
 
-/** The file an edit tool's call names (`EDIT_TOOLS`), absolute, or none for any other call. */
-export function writtenPaths(payload: HookPayload, root: string): string[] {
-  if (!EDIT_TOOLS.has(text(payload.tool_name))) return [];
+/** The file an edit tool's call (`EDIT_TOOLS`) names, as named; null for any other call, or none named. */
+export function editedFile(payload: HookPayload): string | null {
+  if (!EDIT_TOOLS.has(text(payload.tool_name))) return null;
   const input = payload.tool_input ?? {};
   const named = text(input["file_path"] ?? input["notebook_path"]);
-  return named === "" ? [] : [posix.resolve(root, named)];
+  return named === "" ? null : named;
+}
+
+/** The file an edit tool's call names, absolute, or none for any other call. */
+export function writtenPaths(payload: HookPayload, root: string): string[] {
+  const named = editedFile(payload);
+  return named === null ? [] : [posix.resolve(root, named)];
 }
 
 /** The folders between a path and the guarded folder that holds it, nearest first; neither end. */
@@ -979,9 +985,10 @@ export function worktreeFolders(porcelain: string): string[] {
 
 /**
  * THE DECISION: the worktrees to tell the agent about now. Each path is placed in the worktree that
- * holds it, the deepest when worktrees nest. The worktree that holds the guarded folder is the
- * session's own; one already in `told` was said before, to this session and agent. Each is named
- * once, in the order the paths came.
+ * holds it, the deepest when worktrees nest. The session's own worktree is the deepest one holding
+ * the guarded folder, and only that one is skipped: a session started in a nested worktree is told
+ * about the one around it. One already in `told` was said before, to this session and agent. Each
+ * is named once, in the order the paths came.
  */
 export function untoldWorktrees(args: {
   readonly paths: readonly string[];
@@ -990,10 +997,13 @@ export function untoldWorktrees(args: {
   readonly told: readonly string[];
 }): string[] {
   const { paths, root, worktrees, told } = args;
+  const holding = (path: string): string | undefined =>
+    worktrees.filter((worktree) => within(path, worktree)).sort((a, b) => b.length - a.length)[0];
+  const own = holding(root);
   const out: string[] = [];
   for (const path of paths) {
-    const holder = worktrees.filter((worktree) => within(path, worktree)).sort((a, b) => b.length - a.length)[0];
-    if (holder === undefined || within(root, holder) || told.includes(holder) || out.includes(holder)) continue;
+    const holder = holding(path);
+    if (holder === undefined || holder === own || told.includes(holder) || out.includes(holder)) continue;
     out.push(holder);
   }
   return out;
@@ -2156,8 +2166,8 @@ function changeOf(change: Change): "created" | "modified" | "deleted" {
 export function writeRows(payload: HookPayload, changes: readonly Change[], root: string): Row[] {
   const tool = text(payload.tool_name);
   if (isSpawn(tool)) return [];
-  const input = payload.tool_input ?? {};
-  const named = EDIT_TOOLS.has(tool) ? relativise(text(input["file_path"] ?? input["notebook_path"]), root) : null;
+  const edited = editedFile(payload);
+  const named = edited === null ? null : relativise(edited, root);
   return changes
     .filter((change) => change.path !== named)
     .map((change) => ({ kind: "write", tool, path: change.path, change: changeOf(change) }));

@@ -19,7 +19,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -30,6 +30,7 @@ import {
   observeDelta,
   projectRoot,
   readText,
+  realPath,
   realWorld,
   revertChanges,
   runCommand,
@@ -134,6 +135,18 @@ describe("which branch this checkout has out", () => {
     const bare = mkdtempSync(join(tmpdir(), "flow-nogit-"));
     expect(currentBranch(bare)).toBeNull();
     rmSync(bare, { recursive: true, force: true });
+  });
+});
+
+describe("a path made real, as far as it exists", () => {
+  it("resolves the links in the part on disk and keeps the missing tail as named", () => {
+    const dir = mkdtempSync(join(tmpdir(), "flow-real-"));
+    try {
+      expect(realPath(join(dir, "not", "yet.ts"))).toBe(join(realpathSync(dir), "not", "yet.ts"));
+      expect(realPath(dir)).toBe(realpathSync(dir));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

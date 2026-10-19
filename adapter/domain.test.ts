@@ -4615,6 +4615,12 @@ describe("another worktree of the repository — told once, never refused", () =
     expect(untoldWorktrees({ paths: ["/code/app/lib/x.ts"], root: "/code/app/packages/web", worktrees, told: [] })).toEqual([]);
   });
 
+  it("tells a session started in a nested worktree about the worktree around it", () => {
+    expect(
+      untoldWorktrees({ paths: ["/code/app/src/a.ts"], root: "/code/app/.claude/worktrees/agent-1", worktrees: [...worktrees, "/code/app/.claude/worktrees/agent-1"], told: [] }),
+    ).toEqual(["/code/app"]);
+  });
+
   it("places a path in the deepest worktree that holds it, and names each worktree once", () => {
     const nested = [...worktrees, "/code/app.worktrees/feature/.claude/worktrees/agent-1"];
     expect(
@@ -4681,6 +4687,20 @@ describe("another worktree of the repository — told once, never refused", () =
     const context = (JSON.parse(answer.stdout) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } }).hookSpecificOutput;
     expect(context.hookEventName).toBe("PostToolUse");
     expect(context.additionalContext).toBe(`${worktreeLine(root, "/code/app.worktrees/feature")}\n\n# breadcrumb: a.b (first-touch)\na note`);
+  });
+
+  it("rides beside a refusal on stderr, before the notes", () => {
+    const block: Block = { do: "block", entry: "demo.noTodo", message: "No TODOs.", subject: "src/a.ts", detail: "" };
+    const answer = toResult("post-tool-use", {
+      refused: [{ moment: "write", block }],
+      shown: [{ entry: "a.b", cause: "first-touch", body: "a note" }],
+      unguarded: { root, worktrees: ["/code/app.worktrees/feature"] },
+    });
+    expect(answer.exitCode).toBe(2);
+    const line = worktreeLine(root, "/code/app.worktrees/feature");
+    expect(answer.stderr).toContain(line);
+    expect(answer.stderr.indexOf(line)).toBeLessThan(answer.stderr.indexOf("# breadcrumb: a.b (first-touch)"));
+    expect(answer.stderr.indexOf("No TODOs.")).toBeLessThan(answer.stderr.indexOf(line));
   });
 
   it("tells the agent both folders, to stop, and to have a session started there", () => {
