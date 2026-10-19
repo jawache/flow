@@ -657,6 +657,15 @@ export interface BashReads {
   readonly searched: readonly string[];
 }
 
+/** What the walk of a Bash command finds: what it reads, and where it moves the shell. */
+interface BashWalk extends BashReads {
+  /**
+   * The folders a `cd` or `pushd` moved the shell to, absolute, in order, each once, inside the
+   * repo or not. One that only running the line could tell, such as `cd "$DIR"`, is left out.
+   */
+  readonly folders: readonly string[];
+}
+
 /**
  * One word of the parse as the shell would expand it, from what the line itself holds: an unquoted
  * leading `~`, `$HOME`, and a variable the line assigned. Quoted or escaped text is passed as is,
@@ -699,8 +708,15 @@ function xargsList(wrappers: readonly (string | null)[]): string | null {
  * open: see the section head. A line that does not parse names nothing.
  */
 export function bashReads(steps: readonly ShellStep[] | null, where: BashWhere): BashReads {
+  const { reads, searched } = walkBash(steps, where);
+  return { reads, searched };
+}
+
+/** The walk behind `bashReads`, which also keeps each folder a `cd` moved the shell to. */
+function walkBash(steps: readonly ShellStep[] | null, where: BashWhere): BashWalk {
   const reads: string[] = [];
   const searched: string[] = [];
+  const folders: string[] = [];
   const at = (path: string, base: string | null): string | null =>
     path.startsWith("/") ? posix.resolve(path) : base === null ? null : posix.resolve(base, path);
   const add = (list: string[], path: string | null): void => {
@@ -729,6 +745,7 @@ export function bashReads(steps: readonly ShellStep[] | null, where: BashWhere):
       const next = target === undefined ? (where.home ?? null) : target === null ? null : target === "-" ? scope.old : at(target, scope.cwd);
       scope.old = scope.cwd;
       scope.cwd = next;
+      if (next !== null && !folders.includes(next)) folders.push(next);
       return;
     }
     const found = argvReads(argv);
@@ -756,7 +773,7 @@ export function bashReads(steps: readonly ShellStep[] | null, where: BashWhere):
     }
   };
   walk(steps ?? [], { cwd: where.cwd, old: null, vars: new Map() });
-  return { reads, searched };
+  return { reads, searched, folders };
 }
 
 /**
@@ -932,9 +949,9 @@ export function touchedPath(payload: HookPayload, root: string): string | null {
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 //
 // flow guards the folder the session started in. A call that writes into another worktree of the
-// same repository works where no guardrail and no breadcrumb reaches, so the agent is told, once
-// per worktree, to stop and have a session started there. Nothing is refused: the message rides
-// beside the call's result. docs/user/explanation/what-the-guard-sees.md § Another worktree.
+// same repository, or a command that runs in one, works where no guardrail and no breadcrumb
+// reaches, so the agent is told, once per worktree, to stop and have a session started there.
+// Nothing is refused: the message rides beside the call's result. docs/user/explanation/what-the-guard-sees.md § Another worktree.
 
 /** Is `path` the folder `dir`, or inside it? Both absolute. */
 function within(path: string, dir: string): boolean {
@@ -955,6 +972,26 @@ export function writtenPaths(payload: HookPayload, root: string): string[] {
   return named === null ? [] : [posix.resolve(root, named)];
 }
 
+/**
+ * The folders a shell command runs in, absolute: where the shell stood when the call started (the
+ * payload's `cwd`, the guarded folder when absent), and each folder a `cd` or `pushd` in the line
+ * moved it to, as the one parse reads it (`walkBash`). None for any other call.
+ */
+export function commandFolders(payload: HookPayload, root: string, home: string | undefined): string[] {
+  if (text(payload.tool_name) !== "Bash") return [];
+  const cwd = posix.resolve(root, text(payload["cwd"]) || root);
+  const { folders } = walkBash(parseShellSteps(text((payload.tool_input ?? {})["command"])), { cwd, root, home });
+  return [cwd, ...folders.filter((folder) => folder !== cwd)];
+}
+
+/**
+ * Every place a call worked, absolute: the file an edit tool wrote, or the folders a shell command
+ * ran in. What the decision (`untoldWorktrees`) places in a worktree.
+ */
+export function workedPaths(payload: HookPayload, root: string, home: string | undefined): string[] {
+  return [...writtenPaths(payload, root), ...commandFolders(payload, root, home)];
+}
+
 /** The folders between a path and the guarded folder that holds it, nearest first; neither end. */
 export function foldersBetween(path: string, root: string): string[] {
   const out: string[] = [];
@@ -971,7 +1008,9 @@ export function foldersBetween(path: string, root: string): string[] {
  * whether a folder holds one.
  */
 export function reachesAnotherWorktree(paths: readonly string[], root: string, gitFileIn: (dir: string) => boolean): boolean {
-  return paths.some((path) => !within(path, root) || foldersBetween(path, root).some(gitFileIn));
+  // A path may itself be a folder a command ran in, so it is asked too; the guarded folder never
+  // is, since a session started in a worktree holds a `.git` file there on every call.
+  return paths.some((path) => !within(path, root) || [path, ...foldersBetween(path, root)].some((dir) => dir !== root && gitFileIn(dir)));
 }
 
 /** The working folders `git worktree list --porcelain` lists; a bare repository has none. */

@@ -77,6 +77,8 @@ import {
   worktreeFolders,
   worktreeLine,
   writtenPaths,
+  commandFolders,
+  workedPaths,
   CONFIG_FILE,
   configImports,
   statusCode,
@@ -4666,6 +4668,33 @@ describe("another worktree of the repository — told once, never refused", () =
     expect(writtenPaths({ tool_name: "NotebookEdit", tool_input: { notebook_path: "/n.ipynb" } }, root)).toEqual(["/n.ipynb"]);
     expect(writtenPaths({ tool_name: "Read", tool_input: { file_path: "/code/app.worktrees/feature/a.ts" } }, root)).toEqual([]);
     expect(writtenPaths({ tool_name: "Write", tool_input: {} }, root)).toEqual([]);
+  });
+
+  it("reads the folders a command runs in: the payload's cwd, then each cd the parse reads, absolute, each once", () => {
+    const bash = (command: string, cwd?: string): HookPayload => ({ tool_name: "Bash", tool_input: { command }, ...(cwd === undefined ? {} : { cwd }) });
+    expect(commandFolders(bash("ls", "/code/app.worktrees/feature"), root, "/home/me")).toEqual(["/code/app.worktrees/feature"]);
+    expect(commandFolders(bash("ls"), root, "/home/me"), "no cwd: the guarded folder").toEqual(["/code/app"]);
+    expect(commandFolders(bash("cd ../app.worktrees/feature && npm test", root), root, "/home/me")).toEqual(["/code/app", "/code/app.worktrees/feature"]);
+    expect(commandFolders(bash("(cd /tmp/x && ls); pushd ~/y; cd -", root), root, "/home/me")).toEqual(["/code/app", "/tmp/x", "/home/me/y"]);
+    expect(commandFolders(bash('cd "$DIR" && ls', root), root, "/home/me"), "a folder only running the line could tell").toEqual(["/code/app"]);
+    expect(commandFolders({ tool_name: "Write", tool_input: { file_path: "/code/app.worktrees/feature/a.ts" }, cwd: "/code/app.worktrees/fix" }, root, "/home/me")).toEqual([]);
+  });
+
+  it("tells a command run in another worktree, by its cwd or a cd, once, and nothing for a cd outside the repository", () => {
+    const ran = (command: string, cwd = root, told: readonly string[] = []): string[] =>
+      tell(workedPaths({ tool_name: "Bash", tool_input: { command }, cwd }, root, "/home/me"), told);
+    expect(ran("npm test", "/code/app.worktrees/feature"), "the session's folder is in the worktree").toEqual(["/code/app.worktrees/feature"]);
+    expect(ran("cd /code/app.worktrees/fix/src && npm test"), "a cd into it").toEqual(["/code/app.worktrees/fix"]);
+    expect(ran("cd /tmp/scratch && ls; cd ../../code/app-other"), "a cd outside the repository, to none of its worktrees").toEqual([]);
+    expect(ran("cd src && ls"), "a cd inside the guarded folder").toEqual([]);
+    expect(ran("cd /code/app.worktrees/feature && ls", root, ["/code/app.worktrees/feature"]), "already told, by a write or a command").toEqual([]);
+  });
+
+  it("asks git for a folder a command ran in that is itself a nested worktree, and never for the guarded folder", () => {
+    const nested = (dir: string): boolean => dir === "/code/app/.claude/worktrees/agent-1";
+    expect(reachesAnotherWorktree(["/code/app/.claude/worktrees/agent-1"], root, nested)).toBe(true);
+    const startedInWorktree = (dir: string): boolean => dir === root;
+    expect(reachesAnotherWorktree([root, "/code/app/src"], root, startedInWorktree), "the guarded folder holds a .git file in a linked worktree").toBe(false);
   });
 
   it("reads git's worktree list, leaving out a bare repository", () => {
