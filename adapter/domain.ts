@@ -1580,6 +1580,8 @@ export interface Answer {
   readonly undone?: Undone | undefined;
   /** Files that entered the snapshot during the call, unjudged, which the agent is told by name. */
   readonly entered?: readonly string[] | undefined;
+  /** The other worktrees the call worked in that the agent is told, now, flow does not guard. */
+  readonly unguarded?: { readonly root: string; readonly worktrees: readonly string[] } | undefined;
 }
 
 /**
@@ -1699,13 +1701,16 @@ export function briefBlock(shown: readonly Shown[]): string {
  * exit 2, so stderr is the one place both are sure to arrive. Two refusals carry them. Before a
  * call, only a held turn's does: the shell judges no notes once something refused (`ridesRefusal`).
  * After a call, a refusal carries the line naming the files that entered the snapshot
- * (`enteredLine`).
+ * (`enteredLine`), and the line for each other worktree the call worked in (`worktreeLine`).
  */
 export function toResult(hook: HookEvent, answer: Answer): HookResult {
   const refusal = refused(answer.refused, answer.undone);
-  // The entered line rides whichever channel the answer already uses, after the notes.
+  // The worktree lines come first, because they tell the agent to stop; the entered line rides
+  // after the notes. Both ride whichever channel the answer already uses.
+  const { unguarded: other } = answer;
+  const unguarded = other === undefined ? [] : other.worktrees.map((worktree) => worktreeLine(other.root, worktree));
   const entered = answer.entered === undefined || answer.entered.length === 0 ? "" : enteredLine(answer.entered);
-  const prose = [briefBlock(answer.shown), entered].filter((part) => part !== "").join("\n\n");
+  const prose = [...unguarded, briefBlock(answer.shown), entered].filter((part) => part !== "").join("\n\n");
   if (refusal !== null)
     return prose === "" ? refusal : { ...refusal, stderr: `${refusal.stderr}\n${prose}\n` };
   if (prose === "") return ALLOW;

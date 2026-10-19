@@ -4648,6 +4648,19 @@ describe("another worktree of the repository — told once, never refused", () =
     expect(worktreeFolders("")).toEqual([]);
   });
 
+  it("rides beside the call's result and refuses nothing, before the notes", () => {
+    const answer = toResult("post-tool-use", {
+      refused: [],
+      shown: [{ entry: "a.b", cause: "first-touch", body: "a note" }],
+      unguarded: { root, worktrees: ["/code/app.worktrees/feature"] },
+    });
+    expect(answer.exitCode).toBe(0);
+    expect(answer.stderr).toBe("");
+    const context = (JSON.parse(answer.stdout) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } }).hookSpecificOutput;
+    expect(context.hookEventName).toBe("PostToolUse");
+    expect(context.additionalContext).toBe(`${worktreeLine(root, "/code/app.worktrees/feature")}\n\n# breadcrumb: a.b (first-touch)\na note`);
+  });
+
   it("tells the agent both folders, to stop, and to have a session started there", () => {
     const line = worktreeLine(root, "/code/app.worktrees/feature");
     expect(line).toContain("flow guards /code/app, the folder this session started in.");

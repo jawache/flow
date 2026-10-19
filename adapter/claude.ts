@@ -122,7 +122,10 @@ import {
   nulPaths,
   snapshotPathspecs,
   visibility,
+  reachesOutside,
+  untoldWorktrees,
   worktreeFolders,
+  writtenPaths,
   type AdapterEvent,
   type Answer,
   type CallRecord,
@@ -822,6 +825,23 @@ function identityOf(session: Session, payload: HookPayload, categories: readonly
   return stickyIdentity(session.root, session.id, session.who.agent, facts, categories);
 }
 
+/**
+ * The other worktrees of the repository this call worked in that this session and agent has not
+ * been told about, now remembered as told; null when there are none. The paths are the file an edit
+ * tool wrote. git is asked only when one of them is outside the guarded folder.
+ */
+function worktreesToTell(session: Session, payload: HookPayload): { root: string; worktrees: string[] } | null {
+  const root = realPath(session.root);
+  const paths = writtenPaths(payload, session.root).map(realPath);
+  if (!reachesOutside(paths, root)) return null;
+  const stored = loadState(session.root, session.id, session.who.agent);
+  const told = stored.worktrees ?? [];
+  const worktrees = untoldWorktrees({ paths, root, worktrees: repoWorktrees(session.root), told });
+  if (worktrees.length === 0) return null;
+  saveState(session.root, session.id, session.who.agent, { ...stored, worktrees: [...told, ...worktrees] });
+  return { root, worktrees };
+}
+
 /** The world a payload is read against — disk, and the turn, asked only if the moment needs them. */
 function eventWorld(root: string, session: Session, changes?: readonly Change[]): EventWorld {
   return {
@@ -964,6 +984,9 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
 
   const entries = load.entries;
   const identity = identityOf(session, payload, categoriesIn(entries));
+  // ANOTHER WORKTREE, after the call: the agent is told once that flow does not guard it. Asked
+  // before `judge`, which reads the state this writes and saves it again with its marks.
+  const unguarded = afterCall ? worktreesToTell(session, payload) : null;
 
   const events = toEvent(hook, payload, eventWorld(root, session, changes));
   const rows: Row[] = [];
@@ -988,7 +1011,8 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
   const answer = await judge({ events, session, load, settings: config.settings, identity, off, hook, payload, rows, steps: taping ? steps : null });
   if (!off) appendRows({ root, session: session.id, branch: session.branch, who: session.who }, rows);
   if (taping) appendSteps(root, session.id, steps);
-  return snapshotted(toResult(hook, settle(answer)));
+  const settled = settle(answer);
+  return snapshotted(toResult(hook, unguarded === null ? settled : { ...settled, unguarded }));
 }
 
 /** The middle of the run: every event through the engine, and the rows that record what happened. */

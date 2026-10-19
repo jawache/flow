@@ -1215,6 +1215,53 @@ export default defineConfig([pack(demo)]${include});
   });
 });
 
+describe("a write into another worktree of the repository — told once to stop, never refused (#174)", () => {
+  it("tells the agent once per worktree, a subagent for itself, and nothing for a folder outside the repository", () => {
+    const parent = mkdtempSync(join(tmpdir(), "flow-worktree-"));
+    const where = join(parent, "app");
+    const worktree = join(parent, "app-feature");
+    const outside = join(parent, "scratch");
+    mkdirSync(where);
+    mkdirSync(outside);
+    try {
+      expect(runGit(where, ["init", "-q"]).code).toBe(0);
+      writeFileSync(join(where, "flow.config.ts"), `
+import { breadcrumb, defineConfig, definePack, pack, session } from ${JSON.stringify(join(PACKAGE, "index.ts"))};
+
+export default defineConfig([pack(definePack("demo", { hello: breadcrumb().at(session).text("Guarded.") }))]);
+`);
+      expect(runGit(where, ["add", "-A"]).code).toBe(0);
+      expect(runGit(where, ["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "init"]).code).toBe(0);
+      expect(runGit(where, ["worktree", "add", "-q", "-b", "feature", worktree]).code).toBe(0);
+
+      const write = (path: string, agent?: string): Ran => {
+        const payload = { ...pre("Write", { file_path: path, content: "x\n" }, "worktree"), ...(agent === undefined ? {} : { agent_id: agent, agent_type: "general-purpose" }) };
+        return called(payload, () => { writeFileSync(path, "x\n"); }, "post-tool-use", where);
+      };
+      const told = (answer: Ran): boolean => answer.stdout.includes(`It does not guard the git worktree ${realpathSync(worktree)}`);
+
+      const first = write(join(worktree, "a.ts"));
+      expect(first.code, first.stderr).toBe(0);
+      expect(told(first), `the first write into the worktree tells the agent; flow said:\n${first.stdout}`).toBe(true);
+      expect(first.stdout).toContain(`flow guards ${realpathSync(where)}, the folder this session started in.`);
+      expect(readFileSync(join(worktree, "a.ts"), "utf8"), "the call went through and nothing was written back").toBe("x\n");
+
+      const second = write(join(worktree, "b.ts"));
+      expect(second.code).toBe(0);
+      expect(told(second), "a second write into the same worktree is not told again").toBe(false);
+
+      const subagent = write(join(worktree, "c.ts"), "agent-1");
+      expect(told(subagent), "a subagent is told for itself").toBe(true);
+
+      const elsewhere = write(join(outside, "d.ts"));
+      expect(elsewhere.code).toBe(0);
+      expect(elsewhere.stdout, "a folder outside the repository is not a worktree of it").toBe("");
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("a subagent's drift and turn, read from its own transcript — never its parent's", () => {
   // The hook message for a subagent's call carries the PARENT's transcript_path (#7). Its brief is
   // pinned above; these pin the other two things read from the same file. The two transcripts are
