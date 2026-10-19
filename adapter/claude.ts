@@ -122,7 +122,7 @@ import {
   nulPaths,
   snapshotPathspecs,
   visibility,
-  reachesOutside,
+  reachesAnotherWorktree,
   untoldWorktrees,
   worktreeFolders,
   writtenPaths,
@@ -654,11 +654,20 @@ export function realPath(path: string): string {
   }
 }
 
+/** Does this folder hold a `.git` FILE, the mark of a linked worktree's own folder? */
+function holdsGitFile(dir: string): boolean {
+  try {
+    return statSync(join(dir, ".git")).isFile();
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Every working folder of the guarded folder's repository, as `git worktree list` lists them, made
  * real. None when git cannot say, such as outside a repository: then no path is in a worktree, and
- * nothing is told. The caller asks only for a call that reaches outside the guarded folder
- * (`reachesOutside`), so an ordinary call never pays for this git call.
+ * nothing is told. The caller asks only for a call that may reach another worktree
+ * (`reachesAnotherWorktree`), so an ordinary call never pays for this git call.
  */
 export function repoWorktrees(root: string): string[] {
   const listed = runGit(root, ["worktree", "list", "--porcelain"]);
@@ -828,12 +837,12 @@ function identityOf(session: Session, payload: HookPayload, categories: readonly
 /**
  * The other worktrees of the repository this call worked in that this session and agent has not
  * been told about, now remembered as told; null when there are none. The paths are the file an edit
- * tool wrote. git is asked only when one of them is outside the guarded folder.
+ * tool wrote. git is asked only when one of them may be in another worktree.
  */
 function worktreesToTell(session: Session, payload: HookPayload): { root: string; worktrees: string[] } | null {
   const root = realPath(session.root);
   const paths = writtenPaths(payload, session.root).map(realPath);
-  if (!reachesOutside(paths, root)) return null;
+  if (!reachesAnotherWorktree(paths, root, holdsGitFile)) return null;
   const stored = loadState(session.root, session.id, session.who.agent);
   const told = stored.worktrees ?? [];
   const worktrees = untoldWorktrees({ paths, root, worktrees: repoWorktrees(session.root), told });

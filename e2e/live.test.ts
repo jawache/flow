@@ -1216,7 +1216,7 @@ export default defineConfig([pack(demo)]${include});
 });
 
 describe("a write into another worktree of the repository — told once to stop, never refused (#174)", () => {
-  it("tells the agent once per worktree, a subagent for itself, and nothing for a folder outside the repository", () => {
+  it("tells the agent once per worktree, a subagent for itself, a worktree nested under .claude/worktrees too, and nothing for a folder outside the repository", () => {
     const parent = mkdtempSync(join(tmpdir(), "flow-worktree-"));
     const where = join(parent, "app");
     const worktree = join(parent, "app-feature");
@@ -1238,7 +1238,7 @@ export default defineConfig([pack(definePack("demo", { hello: breadcrumb().at(se
         const payload = { ...pre("Write", { file_path: path, content: "x\n" }, "worktree"), ...(agent === undefined ? {} : { agent_id: agent, agent_type: "general-purpose" }) };
         return called(payload, () => { writeFileSync(path, "x\n"); }, "post-tool-use", where);
       };
-      const told = (answer: Ran): boolean => answer.stdout.includes(`It does not guard the git worktree ${realpathSync(worktree)}`);
+      const told = (answer: Ran, folder = worktree): boolean => answer.stdout.includes(`It does not guard the git worktree ${realpathSync(folder)}`);
 
       const first = write(join(worktree, "a.ts"));
       expect(first.code, first.stderr).toBe(0);
@@ -1256,6 +1256,19 @@ export default defineConfig([pack(definePack("demo", { hello: breadcrumb().at(se
       const elsewhere = write(join(outside, "d.ts"));
       expect(elsewhere.code).toBe(0);
       expect(elsewhere.stdout, "a folder outside the repository is not a worktree of it").toBe("");
+
+      // A worktree NESTED inside the guarded folder, where Claude Code puts a subagent's own with
+      // `isolation: "worktree"`: its `.git` file is what makes flow ask git.
+      const nested = join(where, ".claude", "worktrees", "agent-2");
+      expect(runGit(where, ["worktree", "add", "-q", "-b", "agent-2", nested]).code).toBe(0);
+      const inNested = write(join(nested, "e.ts"), "agent-2");
+      expect(inNested.code, inNested.stderr).toBe(0);
+      expect(told(inNested, nested), `a write into the nested worktree tells the subagent; flow said:\n${inNested.stdout}`).toBe(true);
+      expect(readFileSync(join(nested, "e.ts"), "utf8")).toBe("x\n");
+      expect(told(write(join(nested, "f.ts"), "agent-2"), nested), "and only once").toBe(false);
+      const inRoot = write(join(where, "g.ts"), "agent-2");
+      expect(inRoot.code, inRoot.stderr).toBe(0);
+      expect(inRoot.stdout, "a write in the guarded folder itself is not told").toBe("");
     } finally {
       rmSync(parent, { recursive: true, force: true });
     }

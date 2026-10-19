@@ -71,7 +71,8 @@ import {
   writeRows,
   mismatchRow,
   touchedPath,
-  reachesOutside,
+  foldersBetween,
+  reachesAnotherWorktree,
   untoldWorktrees,
   worktreeFolders,
   worktreeLine,
@@ -4626,10 +4627,31 @@ describe("another worktree of the repository — told once, never refused", () =
     ).toEqual(["/code/app.worktrees/feature/.claude/worktrees/agent-1", "/code/app.worktrees/feature"]);
   });
 
-  it("asks git only for a call that reaches outside the guarded folder", () => {
-    expect(reachesOutside(["/code/app/src/a.ts", "/code/app"], root)).toBe(false);
-    expect(reachesOutside(["/code/app/src/a.ts", "/code/app.worktrees/feature/a.ts"], root)).toBe(true);
-    expect(reachesOutside([], root)).toBe(false);
+  it("asks git only for a call that reaches outside the guarded folder, or under a folder holding a .git file", () => {
+    const none = (): boolean => false;
+    expect(reachesAnotherWorktree(["/code/app/src/a.ts", "/code/app"], root, none)).toBe(false);
+    expect(reachesAnotherWorktree(["/code/app/src/a.ts", "/code/app.worktrees/feature/a.ts"], root, none)).toBe(true);
+    expect(reachesAnotherWorktree([], root, none)).toBe(false);
+    const nested = (dir: string): boolean => dir === "/code/app/.claude/worktrees/agent-1";
+    expect(reachesAnotherWorktree(["/code/app/.claude/worktrees/agent-1/src/a.ts"], root, nested)).toBe(true);
+    expect(reachesAnotherWorktree(["/code/app/src/a.ts"], root, nested)).toBe(false);
+  });
+
+  it("names a worktree nested inside the guarded folder, as Claude Code makes for a subagent", () => {
+    expect(
+      untoldWorktrees({ paths: ["/code/app/.claude/worktrees/agent-1/a.ts"], root, worktrees: [...worktrees, "/code/app/.claude/worktrees/agent-1"], told: [] }),
+    ).toEqual(["/code/app/.claude/worktrees/agent-1"]);
+  });
+
+  it("walks the folders between a path and the guarded folder, nearest first, neither end", () => {
+    expect(foldersBetween("/code/app/.claude/worktrees/agent-1/a.ts", root)).toEqual([
+      "/code/app/.claude/worktrees/agent-1",
+      "/code/app/.claude/worktrees",
+      "/code/app/.claude",
+    ]);
+    expect(foldersBetween("/code/app/a.ts", root)).toEqual([]);
+    expect(foldersBetween("/code/app", root)).toEqual([]);
+    expect(foldersBetween("/elsewhere/a.ts", root)).toEqual([]);
   });
 
   it("reads the path an edit tool writes, absolute, and none from any other tool", () => {

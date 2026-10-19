@@ -949,12 +949,23 @@ export function writtenPaths(payload: HookPayload, root: string): string[] {
   return named === "" ? [] : [posix.resolve(root, named)];
 }
 
+/** The folders between a path and the guarded folder that holds it, nearest first; neither end. */
+export function foldersBetween(path: string, root: string): string[] {
+  const out: string[] = [];
+  if (!within(path, root)) return out;
+  for (let dir = posix.dirname(path); dir !== root && within(dir, root); dir = posix.dirname(dir)) out.push(dir);
+  return out;
+}
+
 /**
- * Does any of these paths lie outside the guarded folder? Only then is git asked for the worktree
- * list, so a call that stays inside the folder costs nothing more.
+ * May any of these paths be in another worktree? Only then is git asked for the worktree list, so
+ * an ordinary call costs nothing more. A path outside the guarded folder may be. So may one inside
+ * it under a folder holding a `.git` FILE, which is how a linked worktree marks its own folder:
+ * Claude Code puts a subagent's worktree there, under `.claude/worktrees/`. `gitFileIn` answers
+ * whether a folder holds one.
  */
-export function reachesOutside(paths: readonly string[], root: string): boolean {
-  return paths.some((path) => !within(path, root));
+export function reachesAnotherWorktree(paths: readonly string[], root: string, gitFileIn: (dir: string) => boolean): boolean {
+  return paths.some((path) => !within(path, root) || foldersBetween(path, root).some(gitFileIn));
 }
 
 /** The working folders `git worktree list --porcelain` lists; a bare repository has none. */
