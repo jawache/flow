@@ -160,11 +160,14 @@ The snapshot holds what git holds: every tracked file, and every untracked file 
 
 ## Another worktree of the same repository
 
+> [!WARNING]
+> A session that works in a worktree it did not start in is unguarded there. No guardrail judges its changes in that worktree and no breadcrumb is shown for them. Only the commit gate judges them, when they are committed. [How to work in a git worktree](../how-to/work-in-a-git-worktree.md) gives the fix: start the session in the worktree.
+
 flow guards one folder: the folder the session started in. Claude Code passes that folder to every hook as `CLAUDE_PROJECT_DIR`. The snapshot, the log and the state in `.flow/` all belong to it.
 
 A git **worktree** is another working folder of the same repository, with its own branch checked out. A session can work in one without starting there, by running `cd` in its commands. The files it changes there are outside the folder flow guards, so no write rule judges them and no breadcrumb is shown for them.
 
-flow tells the session when this happens. A tool call works in another worktree when:
+flow cannot guard that work, so it tells the agent to stop. A tool call works in another worktree when:
 
 - **The Edit or Write tool** writes a file inside it.
 - **A shell command** runs inside it, because the session's own folder is there or because the command runs `cd` into it.
