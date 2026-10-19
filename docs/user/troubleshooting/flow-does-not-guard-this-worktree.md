@@ -15,6 +15,12 @@ The agent stops its work and tells you two folders:
 
 It asks you to start a session in that worktree. flow passed the agent this message at the first tool call that worked in the worktree: an Edit or Write of a file there, or a shell command run there.
 
+**The message:** a session started in `/Users/Shared/code/my-repo` ran `cd ../my-repo-feature && npm test`, and flow passed the agent this beside the command's result:
+
+```
+flow guards /Users/Shared/code/my-repo, the folder this session started in. It does not guard the git worktree /Users/Shared/code/my-repo-feature: no guardrail judges what you change there and no breadcrumb is shown for it, until the commit gate runs. Stop your work in /Users/Shared/code/my-repo-feature and tell the user to start a Claude Code session in that folder, because flow guards a worktree only from a session started in it. If you are a subagent, stop and report this to the agent that started you.
+```
+
 ## Why
 
 flow guards only the folder a Claude Code session started in. The agent reached the worktree by running `cd` into it, or by editing a file there. Its changes in that worktree are unguarded:
