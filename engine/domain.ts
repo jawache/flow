@@ -738,7 +738,7 @@ export function logFile(root: string, session: string): string {
   return join(flowDir(root), "log", `${sanitise(session)}.jsonl`);
 }
 
-/** One session × agent's own state: the categories it wears, and its breadcrumb marks. */
+/** One session × agent's own state: the categories it wears, its breadcrumb marks, and the worktrees it was told about. */
 export function statePath(root: string, session: string, agent: string): string {
   return join(flowDir(root), "state", `${sanitise(session)}-${sanitise(agent)}.json`);
 }
