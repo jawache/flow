@@ -646,7 +646,7 @@ export interface BashWhere {
   readonly home?: string | undefined;
 }
 
-/** What a Bash command reads in the repo, repo-relative, in order, each once. */
+/** What a Bash command reads in the repo, repo-relative, in order, each once, and the folders it moves to. */
 export interface BashReads {
   /** Files it reads by name — `cat`, `head`, `sed -n`, `grep` on a file, a `<` redirect. */
   readonly reads: readonly string[];
@@ -655,10 +655,6 @@ export interface BashReads {
    * directories. They touch an area; they are not a file the session read.
    */
   readonly searched: readonly string[];
-}
-
-/** What the walk of a Bash command finds: what it reads, and where it moves the shell. */
-interface BashWalk extends BashReads {
   /**
    * The folders a `cd` or `pushd` moved the shell to, absolute, in order, each once, inside the
    * repo or not. One that only running the line could tell, such as `cd "$DIR"`, is left out.
@@ -704,16 +700,11 @@ function xargsList(wrappers: readonly (string | null)[]): string | null {
 /**
  * The repo paths a Bash command reads or searches — the `READERS` table, a `<` redirect, a `git`
  * pathspec — read from the parse's steps, and followed through `cd`, `VAR=`, `for` loops and the
- * commands a `$(…)` runs. The repo root itself is not an area and is left out. Best-effort, failing
- * open: see the section head. A line that does not parse names nothing.
+ * commands a `$(…)` runs. The repo root itself is not an area and is left out. The same walk keeps
+ * each folder a `cd` moves the shell to (`folders`). Best-effort, failing open: see the section
+ * head. A line that does not parse names nothing.
  */
 export function bashReads(steps: readonly ShellStep[] | null, where: BashWhere): BashReads {
-  const { reads, searched } = walkBash(steps, where);
-  return { reads, searched };
-}
-
-/** The walk behind `bashReads`, which also keeps each folder a `cd` moved the shell to. */
-function walkBash(steps: readonly ShellStep[] | null, where: BashWhere): BashWalk {
   const reads: string[] = [];
   const searched: string[] = [];
   const folders: string[] = [];
@@ -975,12 +966,12 @@ export function writtenPaths(payload: HookPayload, root: string): string[] {
 /**
  * The folders a shell command runs in, absolute: where the shell stood when the call started (the
  * payload's `cwd`, the guarded folder when absent), and each folder a `cd` or `pushd` in the line
- * moved it to, as the one parse reads it (`walkBash`). None for any other call.
+ * moved it to, as the one parse reads it (`bashReads`). None for any other call.
  */
 export function commandFolders(payload: HookPayload, root: string, home: string | undefined): string[] {
   if (text(payload.tool_name) !== "Bash") return [];
   const cwd = posix.resolve(root, text(payload["cwd"]) || root);
-  const { folders } = walkBash(parseShellSteps(text((payload.tool_input ?? {})["command"])), { cwd, root, home });
+  const { folders } = bashReads(parseShellSteps(text((payload.tool_input ?? {})["command"])), { cwd, root, home });
   return [cwd, ...folders.filter((folder) => folder !== cwd)];
 }
 

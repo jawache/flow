@@ -1249,20 +1249,19 @@ describe("a write into another worktree of the repository — told once to stop,
         const payload = { ...pre("Write", { file_path: path, content: "x\n" }, "worktree"), ...(agent === undefined ? {} : { agent_id: agent, agent_type: "general-purpose" }) };
         return called(payload, () => { writeFileSync(path, "x\n"); }, "post-tool-use", where);
       };
-      const told = (answer: Ran, folder = worktree): boolean => toldAbout(answer, folder);
 
       const first = write(join(worktree, "a.ts"));
       expect(first.code, first.stderr).toBe(0);
-      expect(told(first), `the first write into the worktree tells the agent; flow said:\n${first.stdout}`).toBe(true);
+      expect(toldAbout(first, worktree), `the first write into the worktree tells the agent; flow said:\n${first.stdout}`).toBe(true);
       expect(first.stdout).toContain(`flow guards ${realpathSync(where)}, the folder this session started in.`);
       expect(readFileSync(join(worktree, "a.ts"), "utf8"), "the call went through and nothing was written back").toBe("x\n");
 
       const second = write(join(worktree, "b.ts"));
       expect(second.code).toBe(0);
-      expect(told(second), "a second write into the same worktree is not told again").toBe(false);
+      expect(toldAbout(second, worktree), "a second write into the same worktree is not told again").toBe(false);
 
       const subagent = write(join(worktree, "c.ts"), "agent-1");
-      expect(told(subagent), "a subagent is told for itself").toBe(true);
+      expect(toldAbout(subagent, worktree), "a subagent is told for itself").toBe(true);
 
       const elsewhere = write(join(outside, "d.ts"));
       expect(elsewhere.code).toBe(0);
@@ -1274,9 +1273,9 @@ describe("a write into another worktree of the repository — told once to stop,
       expect(runGit(where, ["worktree", "add", "-q", "-b", "agent-2", nested]).code).toBe(0);
       const inNested = write(join(nested, "e.ts"), "agent-2");
       expect(inNested.code, inNested.stderr).toBe(0);
-      expect(told(inNested, nested), `a write into the nested worktree tells the subagent; flow said:\n${inNested.stdout}`).toBe(true);
+      expect(toldAbout(inNested, nested), `a write into the nested worktree tells the subagent; flow said:\n${inNested.stdout}`).toBe(true);
       expect(readFileSync(join(nested, "e.ts"), "utf8")).toBe("x\n");
-      expect(told(write(join(nested, "f.ts"), "agent-2"), nested), "and only once").toBe(false);
+      expect(toldAbout(write(join(nested, "f.ts"), "agent-2"), nested), "and only once").toBe(false);
       const inRoot = write(join(where, "g.ts"), "agent-2");
       expect(inRoot.code, inRoot.stderr).toBe(0);
       expect(inRoot.stdout, "a write in the guarded folder itself is not told").toBe("");

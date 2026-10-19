@@ -374,8 +374,11 @@ describe("a Bash line's delete targets", () => {
 
 describe("bashReads — the files a Bash command reads, before it runs", () => {
   const HOME = "/home/me";
-  const at = (command: string, cwd = ROOT, home: string | undefined = HOME): { reads: readonly string[]; searched: readonly string[] } =>
-    bashReads(parseShellSteps(command), { cwd, root: ROOT, home });
+  // The reads and searches only: where a `cd` moved the shell is `folders`, pinned with the worktrees.
+  const at = (command: string, cwd = ROOT, home: string | undefined = HOME): { reads: readonly string[]; searched: readonly string[] } => {
+    const { reads, searched } = bashReads(parseShellSteps(command), { cwd, root: ROOT, home });
+    return { reads, searched };
+  };
   const reads = (command: string, cwd = ROOT): readonly string[] => at(command, cwd).reads;
   const searched = (command: string, cwd = ROOT): readonly string[] => at(command, cwd).searched;
 
