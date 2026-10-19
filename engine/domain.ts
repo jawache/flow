@@ -754,6 +754,11 @@ export interface SessionState {
   /** The sticky classification verdict. Absent means it has not been read yet. */
   readonly categories?: readonly string[] | undefined;
   readonly marks: Marks;
+  /**
+   * The other worktrees of the repository this session × agent has been told flow does not guard,
+   * by absolute path. Each is told once; absent means none has been.
+   */
+  readonly worktrees?: readonly string[] | undefined;
 }
 
 /**
@@ -773,16 +778,20 @@ export function readState(text: string | null | undefined): SessionState {
     return { marks: {} };
   }
   if (typeof raw !== "object" || raw === null) return { marks: {} };
-  const held = raw as { categories?: unknown; marks?: unknown };
-  const categories =
-    Array.isArray(held.categories) && held.categories.every((c) => typeof c === "string")
-      ? held.categories
-      : undefined;
+  const held = raw as { categories?: unknown; marks?: unknown; worktrees?: unknown };
+  const strings = (value: unknown): string[] | undefined =>
+    Array.isArray(value) && value.every((item) => typeof item === "string") ? value : undefined;
+  const categories = strings(held.categories);
+  const worktrees = strings(held.worktrees);
   const marks: Record<string, number> = {};
   if (typeof held.marks === "object" && held.marks !== null)
     for (const [id, at] of Object.entries(held.marks as Record<string, unknown>))
       if (typeof at === "number" && Number.isFinite(at)) marks[id] = at;
-  return categories === undefined ? { marks } : { categories, marks };
+  return {
+    ...(categories === undefined ? {} : { categories }),
+    marks,
+    ...(worktrees === undefined || worktrees.length === 0 ? {} : { worktrees }),
+  };
 }
 
 /**
