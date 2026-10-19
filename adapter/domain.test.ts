@@ -71,6 +71,11 @@ import {
   writeRows,
   mismatchRow,
   touchedPath,
+  reachesOutside,
+  untoldWorktrees,
+  worktreeFolders,
+  worktreeLine,
+  writtenPaths,
   CONFIG_FILE,
   configImports,
   statusCode,
@@ -4580,5 +4585,74 @@ describe("snapshotInclude — where git looks, and what it keeps", () => {
   it("reads git's -z answer as paths, with no quoting and no empty tail", () => {
     expect(nulPaths("src/a b.ts\0src/\"q\".ts\0")).toEqual(["src/a b.ts", 'src/"q".ts']);
     expect(nulPaths("")).toEqual([]);
+  });
+});
+
+describe("another worktree of the repository — told once, never refused", () => {
+  const root = "/code/app";
+  const worktrees = ["/code/app", "/code/app.worktrees/feature", "/code/app.worktrees/fix"];
+  const tell = (paths: readonly string[], told: readonly string[] = []): string[] => untoldWorktrees({ paths, root, worktrees, told });
+
+  it("names the worktree a path in another worktree is in", () => {
+    expect(tell(["/code/app.worktrees/feature/src/a.ts"])).toEqual(["/code/app.worktrees/feature"]);
+  });
+
+  it("names it no more once this session and agent was told", () => {
+    expect(tell(["/code/app.worktrees/feature/src/a.ts"], ["/code/app.worktrees/feature"])).toEqual([]);
+    expect(tell(["/code/app.worktrees/fix/b.ts"], ["/code/app.worktrees/feature"]), "another worktree is its own").toEqual(["/code/app.worktrees/fix"]);
+  });
+
+  it("names nothing for a path outside the repository that is none of its worktrees", () => {
+    expect(tell(["/tmp/scratch.txt", "/code/app-other/a.ts", "/code/app.worktrees/featured/a.ts"])).toEqual([]);
+  });
+
+  it("names nothing for a path inside the guarded folder", () => {
+    expect(tell(["/code/app/src/a.ts"])).toEqual([]);
+  });
+
+  it("counts the worktree that holds the guarded folder as the session's own", () => {
+    expect(untoldWorktrees({ paths: ["/code/app/lib/x.ts"], root: "/code/app/packages/web", worktrees, told: [] })).toEqual([]);
+  });
+
+  it("places a path in the deepest worktree that holds it, and names each worktree once", () => {
+    const nested = [...worktrees, "/code/app.worktrees/feature/.claude/worktrees/agent-1"];
+    expect(
+      untoldWorktrees({
+        paths: ["/code/app.worktrees/feature/.claude/worktrees/agent-1/a.ts", "/code/app.worktrees/feature/a.ts", "/code/app.worktrees/feature/b.ts"],
+        root,
+        worktrees: nested,
+        told: [],
+      }),
+    ).toEqual(["/code/app.worktrees/feature/.claude/worktrees/agent-1", "/code/app.worktrees/feature"]);
+  });
+
+  it("asks git only for a call that reaches outside the guarded folder", () => {
+    expect(reachesOutside(["/code/app/src/a.ts", "/code/app"], root)).toBe(false);
+    expect(reachesOutside(["/code/app/src/a.ts", "/code/app.worktrees/feature/a.ts"], root)).toBe(true);
+    expect(reachesOutside([], root)).toBe(false);
+  });
+
+  it("reads the path an edit tool writes, absolute, and none from any other tool", () => {
+    expect(writtenPaths({ tool_name: "Write", tool_input: { file_path: "/code/app.worktrees/feature/a.ts" } }, root)).toEqual(["/code/app.worktrees/feature/a.ts"]);
+    expect(writtenPaths({ tool_name: "Edit", tool_input: { file_path: "src/a.ts" } }, root)).toEqual(["/code/app/src/a.ts"]);
+    expect(writtenPaths({ tool_name: "NotebookEdit", tool_input: { notebook_path: "/n.ipynb" } }, root)).toEqual(["/n.ipynb"]);
+    expect(writtenPaths({ tool_name: "Read", tool_input: { file_path: "/code/app.worktrees/feature/a.ts" } }, root)).toEqual([]);
+    expect(writtenPaths({ tool_name: "Write", tool_input: {} }, root)).toEqual([]);
+  });
+
+  it("reads git's worktree list, leaving out a bare repository", () => {
+    const porcelain =
+      "worktree /code/app.git\nbare\n\nworktree /code/app\nHEAD abc\nbranch refs/heads/main\n\n" +
+      "worktree /code/app.worktrees/feature\nHEAD def\ndetached\nprunable gitdir file points to non-existent location\n";
+    expect(worktreeFolders(porcelain)).toEqual(["/code/app", "/code/app.worktrees/feature"]);
+    expect(worktreeFolders("")).toEqual([]);
+  });
+
+  it("tells the agent both folders, to stop, and to have a session started there", () => {
+    const line = worktreeLine(root, "/code/app.worktrees/feature");
+    expect(line).toContain("flow guards /code/app, the folder this session started in.");
+    expect(line).toContain("It does not guard the git worktree /code/app.worktrees/feature");
+    expect(line).toContain("Stop your work in /code/app.worktrees/feature and tell the user to start a Claude Code session in that folder");
+    expect(line).toContain("If you are a subagent, stop and report this to the agent that started you.");
   });
 });

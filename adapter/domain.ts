@@ -928,6 +928,78 @@ export function touchedPath(payload: HookPayload, root: string): string | null {
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
+// ANOTHER WORKTREE — a call that works outside the folder flow guards, in the same repository
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+//
+// flow guards the folder the session started in. A call that writes into another worktree of the
+// same repository works where no guardrail and no breadcrumb reaches, so the agent is told, once
+// per worktree, to stop and have a session started there. Nothing is refused: the message rides
+// beside the call's result. docs/user/explanation/what-the-guard-sees.md § Another worktree.
+
+/** Is `path` the folder `dir`, or inside it? Both absolute. */
+function within(path: string, dir: string): boolean {
+  return path === dir || path.startsWith(dir.endsWith("/") ? dir : `${dir}/`);
+}
+
+/** The file an edit tool's call names (`EDIT_TOOLS`), absolute, or none for any other call. */
+export function writtenPaths(payload: HookPayload, root: string): string[] {
+  if (!EDIT_TOOLS.has(text(payload.tool_name))) return [];
+  const input = payload.tool_input ?? {};
+  const named = text(input["file_path"] ?? input["notebook_path"]);
+  return named === "" ? [] : [posix.resolve(root, named)];
+}
+
+/**
+ * Does any of these paths lie outside the guarded folder? Only then is git asked for the worktree
+ * list, so a call that stays inside the folder costs nothing more.
+ */
+export function reachesOutside(paths: readonly string[], root: string): boolean {
+  return paths.some((path) => !within(path, root));
+}
+
+/** The working folders `git worktree list --porcelain` lists; a bare repository has none. */
+export function worktreeFolders(porcelain: string): string[] {
+  return porcelain
+    .split(/\n\n+/)
+    .map((block) => block.split("\n"))
+    .filter((lines) => !lines.includes("bare"))
+    .flatMap((lines) => lines.filter((line) => line.startsWith("worktree ")).map((line) => line.slice("worktree ".length)));
+}
+
+/**
+ * THE DECISION: the worktrees to tell the agent about now. Each path is placed in the worktree that
+ * holds it, the deepest when worktrees nest. The worktree that holds the guarded folder is the
+ * session's own; one already in `told` was said before, to this session and agent. Each is named
+ * once, in the order the paths came.
+ */
+export function untoldWorktrees(args: {
+  readonly paths: readonly string[];
+  readonly root: string;
+  readonly worktrees: readonly string[];
+  readonly told: readonly string[];
+}): string[] {
+  const { paths, root, worktrees, told } = args;
+  const out: string[] = [];
+  for (const path of paths) {
+    const holder = worktrees.filter((worktree) => within(path, worktree)).sort((a, b) => b.length - a.length)[0];
+    if (holder === undefined || within(root, holder) || told.includes(holder) || out.includes(holder)) continue;
+    out.push(holder);
+  }
+  return out;
+}
+
+/** What the agent is told about one worktree flow does not guard. */
+export function worktreeLine(root: string, worktree: string): string {
+  return (
+    `flow guards ${root}, the folder this session started in. It does not guard the git worktree ${worktree}: ` +
+    `no guardrail judges what you change there and no breadcrumb is shown for it, until the commit gate runs. ` +
+    `Stop your work in ${worktree} and tell the user to start a Claude Code session in that folder, ` +
+    `because flow guards a worktree only from a session started in it. ` +
+    `If you are a subagent, stop and report this to the agent that started you.`
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE DELTA — what a call changed in the tree, judged the same way however it was changed
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 //
