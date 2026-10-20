@@ -35,6 +35,7 @@ import {
   git as runGit,
   type Ran,
 } from "./harness.ts";
+import { worktreeLine } from "../adapter/domain.ts";
 
 let home: string;
 /**
@@ -1481,6 +1482,14 @@ describe("the Getting started tutorial's transcripts", () => {
     } finally {
       for (const dir of [mine, firstTime]) rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("the troubleshooting page for a worktree flow does not guard", () => {
+  it("quotes the message flow passes the agent, word for word", () => {
+    // The page's folders are the real ones it was captured in, from the built binary.
+    const page = paged(join("troubleshooting", "flow-does-not-guard-this-worktree.md"), "flow guards /Users/Shared/code/my-repo,");
+    expect(page).toBe(worktreeLine("/Users/Shared/code/my-repo", "/Users/Shared/code/my-repo-feature"));
   });
 });
 

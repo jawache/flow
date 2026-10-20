@@ -422,7 +422,7 @@ export function deleteTargets(commands: readonly ShellCommand[] | null): string[
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// BASH READS — the files a shell command reads, for the touch breadcrumb
+// BASH READS — the files a shell command reads, for the touch breadcrumb, and the folders it moves to
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 //
 // Under auto mode most contact with an area is a `cat`, a `grep` or a `sed -n` whose payload names
@@ -443,6 +443,11 @@ export function deleteTargets(commands: readonly ShellCommand[] | null): string[
 // cannot be settled from the line — a `$(…)`, an unknown variable — is left out rather than
 // guessed at, and a line that does not parse names nothing. What it misses the working-tree delta
 // catches later: a file changed before any read of it was seen gets its note at the change.
+//
+// THE SAME WALK KEEPS `folders`: each folder a `cd` or `pushd` moves the shell to, inside the repo
+// or not. Those are not reads; they are where the command works, and the worktree message reads
+// them (`commandFolders`, § ANOTHER WORKTREE below) to tell a command run in another worktree of
+// the repository. Failing open there too: a `cd` only running the line could resolve is left out.
 
 /** Which arguments of one read command are files. */
 interface ReadSpec {
@@ -646,7 +651,7 @@ export interface BashWhere {
   readonly home?: string | undefined;
 }
 
-/** What a Bash command reads in the repo, repo-relative, in order, each once. */
+/** What a Bash command reads in the repo, repo-relative, in order, each once, and the folders it moves to. */
 export interface BashReads {
   /** Files it reads by name — `cat`, `head`, `sed -n`, `grep` on a file, a `<` redirect. */
   readonly reads: readonly string[];
@@ -655,6 +660,11 @@ export interface BashReads {
    * directories. They touch an area; they are not a file the session read.
    */
   readonly searched: readonly string[];
+  /**
+   * The folders a `cd` or `pushd` moved the shell to, absolute, in order, each once, inside the
+   * repo or not. One that only running the line could tell, such as `cd "$DIR"`, is left out.
+   */
+  readonly folders: readonly string[];
 }
 
 /**
@@ -695,12 +705,14 @@ function xargsList(wrappers: readonly (string | null)[]): string | null {
 /**
  * The repo paths a Bash command reads or searches — the `READERS` table, a `<` redirect, a `git`
  * pathspec — read from the parse's steps, and followed through `cd`, `VAR=`, `for` loops and the
- * commands a `$(…)` runs. The repo root itself is not an area and is left out. Best-effort, failing
- * open: see the section head. A line that does not parse names nothing.
+ * commands a `$(…)` runs. The repo root itself is not an area and is left out. The same walk keeps
+ * each folder a `cd` moves the shell to (`folders`). Best-effort, failing open: see the section
+ * head. A line that does not parse names nothing.
  */
 export function bashReads(steps: readonly ShellStep[] | null, where: BashWhere): BashReads {
   const reads: string[] = [];
   const searched: string[] = [];
+  const folders: string[] = [];
   const at = (path: string, base: string | null): string | null =>
     path.startsWith("/") ? posix.resolve(path) : base === null ? null : posix.resolve(base, path);
   const add = (list: string[], path: string | null): void => {
@@ -729,6 +741,7 @@ export function bashReads(steps: readonly ShellStep[] | null, where: BashWhere):
       const next = target === undefined ? (where.home ?? null) : target === null ? null : target === "-" ? scope.old : at(target, scope.cwd);
       scope.old = scope.cwd;
       scope.cwd = next;
+      if (next !== null && !folders.includes(next)) folders.push(next);
       return;
     }
     const found = argvReads(argv);
@@ -756,7 +769,7 @@ export function bashReads(steps: readonly ShellStep[] | null, where: BashWhere):
     }
   };
   walk(steps ?? [], { cwd: where.cwd, old: null, vars: new Map() });
-  return { reads, searched };
+  return { reads, searched, folders };
 }
 
 /**
@@ -925,6 +938,116 @@ export function touchedPath(payload: HookPayload, root: string): string | null {
   const input = payload.tool_input ?? {};
   const named = input["file_path"] ?? input["notebook_path"] ?? input["path"] ?? input["glob"];
   return named ? relativise(text(named), root) : null;
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// ANOTHER WORKTREE — a call that works in another worktree of the repository, even a nested one
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+//
+// flow guards the folder the session started in. A call that writes into another worktree of the
+// same repository, or a command that runs in one, works where no guardrail and no breadcrumb
+// reaches, so the agent is told, once per worktree, to stop and have a session started there.
+// Nothing is refused: the message rides beside the call's result. docs/user/explanation/what-the-guard-sees.md § Another worktree.
+
+/** Is `path` the folder `dir`, or inside it? Both absolute. */
+function within(path: string, dir: string): boolean {
+  return path === dir || path.startsWith(dir.endsWith("/") ? dir : `${dir}/`);
+}
+
+/** The file an edit tool's call (`EDIT_TOOLS`) names, as named; null for any other call, or none named. */
+export function editedFile(payload: HookPayload): string | null {
+  if (!EDIT_TOOLS.has(text(payload.tool_name))) return null;
+  const input = payload.tool_input ?? {};
+  const named = text(input["file_path"] ?? input["notebook_path"]);
+  return named === "" ? null : named;
+}
+
+/**
+ * The folders a shell command runs in, absolute: where the shell stood when the call started (the
+ * payload's `cwd`, the guarded folder when absent), and each folder a `cd` or `pushd` in the line
+ * moved it to, as the one parse reads it (`bashReads`). None for any other call.
+ */
+export function commandFolders(payload: HookPayload, root: string, home: string | undefined): string[] {
+  if (text(payload.tool_name) !== "Bash") return [];
+  const cwd = posix.resolve(root, text(payload["cwd"]));
+  const { folders } = bashReads(parseShellSteps(text((payload.tool_input ?? {})["command"])), { cwd, root, home });
+  return [cwd, ...folders];
+}
+
+/**
+ * Every place a call worked, absolute: the file an edit tool wrote, or the folders a shell command
+ * ran in (`commandFolders`). What the decision (`untoldWorktrees`) places in a worktree.
+ */
+export function workedPaths(payload: HookPayload, root: string, home: string | undefined): string[] {
+  const written = editedFile(payload);
+  return written === null ? commandFolders(payload, root, home) : [posix.resolve(root, written)];
+}
+
+/** The folders between a path and the guarded folder that holds it, nearest first; neither end. */
+export function foldersBetween(path: string, root: string): string[] {
+  const out: string[] = [];
+  if (!within(path, root)) return out;
+  for (let dir = posix.dirname(path); dir !== root && within(dir, root); dir = posix.dirname(dir)) out.push(dir);
+  return out;
+}
+
+/**
+ * May any of these paths be in another worktree? Only then is git asked for the worktree list, so
+ * an ordinary call costs nothing more. A path outside the guarded folder may be. So may one inside
+ * it under a folder holding a `.git` FILE, which is how a linked worktree marks its own folder:
+ * Claude Code puts a subagent's worktree there, under `.claude/worktrees/`. `gitFileIn` answers
+ * whether a folder holds one.
+ */
+export function reachesAnotherWorktree(paths: readonly string[], root: string, gitFileIn: (dir: string) => boolean): boolean {
+  // A path may itself be a folder a command ran in, so it is asked too; the guarded folder never
+  // is, since a session started in a worktree holds a `.git` file there on every call.
+  return paths.some((path) => !within(path, root) || [path, ...foldersBetween(path, root)].some((dir) => dir !== root && gitFileIn(dir)));
+}
+
+/** The working folders `git worktree list --porcelain` lists; a bare repository has none. */
+export function worktreeFolders(porcelain: string): string[] {
+  return porcelain
+    .split(/\n\n+/)
+    .map((block) => block.split("\n"))
+    .filter((lines) => !lines.includes("bare"))
+    .flatMap((lines) => lines.filter((line) => line.startsWith("worktree ")).map((line) => line.slice("worktree ".length)));
+}
+
+/**
+ * THE DECISION: the worktrees to tell the agent about now. Each path is placed in the worktree that
+ * holds it, the deepest when worktrees nest. The session's own worktree is the deepest one holding
+ * the guarded folder, and only that one is skipped: a session started in a nested worktree is told
+ * about the one around it. One already in `told` was said before, to this session and agent. Each
+ * is named once, in the order the paths came.
+ */
+export function untoldWorktrees(args: {
+  readonly paths: readonly string[];
+  readonly root: string;
+  readonly worktrees: readonly string[];
+  readonly told: readonly string[];
+}): string[] {
+  const { paths, root, worktrees, told } = args;
+  const holding = (path: string): string | undefined =>
+    worktrees.filter((worktree) => within(path, worktree)).sort((a, b) => b.length - a.length)[0];
+  const own = holding(root);
+  const out: string[] = [];
+  for (const path of paths) {
+    const holder = holding(path);
+    if (holder === undefined || holder === own || told.includes(holder) || out.includes(holder)) continue;
+    out.push(holder);
+  }
+  return out;
+}
+
+/** What the agent is told about one worktree flow does not guard. */
+export function worktreeLine(root: string, worktree: string): string {
+  return (
+    `flow guards ${root}, the folder this session started in. It does not guard the git worktree ${worktree}: ` +
+    `no guardrail judges what you change there and no breadcrumb is shown for it, until the commit gate runs. ` +
+    `Stop your work in ${worktree} and tell the user to start a Claude Code session in that folder, ` +
+    `because flow guards a worktree only from a session started in it. ` +
+    `If you are a subagent, stop and report this to the agent that started you.`
+  );
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -1508,6 +1631,8 @@ export interface Answer {
   readonly undone?: Undone | undefined;
   /** Files that entered the snapshot during the call, unjudged, which the agent is told by name. */
   readonly entered?: readonly string[] | undefined;
+  /** The other worktrees the call worked in that the agent is told, now, flow does not guard. */
+  readonly unguarded?: { readonly root: string; readonly worktrees: readonly string[] } | undefined;
 }
 
 /**
@@ -1627,13 +1752,16 @@ export function briefBlock(shown: readonly Shown[]): string {
  * exit 2, so stderr is the one place both are sure to arrive. Two refusals carry them. Before a
  * call, only a held turn's does: the shell judges no notes once something refused (`ridesRefusal`).
  * After a call, a refusal carries the line naming the files that entered the snapshot
- * (`enteredLine`).
+ * (`enteredLine`), and the line for each other worktree the call worked in (`worktreeLine`).
  */
 export function toResult(hook: HookEvent, answer: Answer): HookResult {
   const refusal = refused(answer.refused, answer.undone);
-  // The entered line rides whichever channel the answer already uses, after the notes.
+  // The worktree lines come first, because they tell the agent to stop; the entered line rides
+  // after the notes. Both ride whichever channel the answer already uses.
+  const { unguarded: other } = answer;
+  const unguarded = other === undefined ? [] : other.worktrees.map((worktree) => worktreeLine(other.root, worktree));
   const entered = answer.entered === undefined || answer.entered.length === 0 ? "" : enteredLine(answer.entered);
-  const prose = [briefBlock(answer.shown), entered].filter((part) => part !== "").join("\n\n");
+  const prose = [...unguarded, briefBlock(answer.shown), entered].filter((part) => part !== "").join("\n\n");
   if (refusal !== null)
     return prose === "" ? refusal : { ...refusal, stderr: `${refusal.stderr}\n${prose}\n` };
   if (prose === "") return ALLOW;
@@ -2068,8 +2196,8 @@ function changeOf(change: Change): "created" | "modified" | "deleted" {
 export function writeRows(payload: HookPayload, changes: readonly Change[], root: string): Row[] {
   const tool = text(payload.tool_name);
   if (isSpawn(tool)) return [];
-  const input = payload.tool_input ?? {};
-  const named = EDIT_TOOLS.has(tool) ? relativise(text(input["file_path"] ?? input["notebook_path"]), root) : null;
+  const edited = editedFile(payload);
+  const named = edited === null ? null : relativise(edited, root);
   return changes
     .filter((change) => change.path !== named)
     .map((change) => ({ kind: "write", tool, path: change.path, change: changeOf(change) }));

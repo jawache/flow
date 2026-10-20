@@ -984,6 +984,12 @@ describe("a session × agent's own state", () => {
     expect(readState('{"marks":{}}').categories).toBeUndefined();
     expect(readState('{"categories":[],"marks":{}}').categories).toEqual([]);
   });
+
+  it("keeps the worktrees the agent was told flow does not guard, beside the marks", () => {
+    expect(readState('{"marks":{},"worktrees":["/r/wt"]}')).toEqual({ marks: {}, worktrees: ["/r/wt"] });
+    expect(readState('{"marks":{},"worktrees":["/r/wt",7]}')).toEqual({ marks: {} });
+    expect(readState('{"marks":{},"worktrees":[]}')).toEqual({ marks: {} });
+  });
 });
 
 describe("the commit gate's session marker", () => {

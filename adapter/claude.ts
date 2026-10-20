@@ -29,10 +29,10 @@
 //   direction.
 
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, readSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isatty } from "node:tty";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   loadConfig,
@@ -122,6 +122,10 @@ import {
   nulPaths,
   snapshotPathspecs,
   visibility,
+  reachesAnotherWorktree,
+  untoldWorktrees,
+  worktreeFolders,
+  workedPaths,
   type AdapterEvent,
   type Answer,
   type CallRecord,
@@ -627,6 +631,50 @@ export function finishSnapshot(root: string, key: string, now = Date.now()): voi
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
+// ANOTHER WORKTREE — the folders git lists for this repository, read only when a call leaves root
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * A path with its links resolved, as far as it exists on disk, and the rest as named. git lists a
+ * worktree by its real path, and a temp folder on macOS is reached through a link (`/var` is
+ * `/private/var`), so both sides are made real before they are compared.
+ */
+export function realPath(path: string): string {
+  const tail: string[] = [];
+  let head = path;
+  for (;;) {
+    try {
+      return join(realpathSync(head), ...tail);
+    } catch {
+      const up = dirname(head);
+      if (up === head) return path;
+      tail.unshift(basename(head));
+      head = up;
+    }
+  }
+}
+
+/** Does this folder hold a `.git` FILE, the mark of a linked worktree's own folder? */
+function holdsGitFile(dir: string): boolean {
+  try {
+    return statSync(join(dir, ".git")).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Every working folder of the guarded folder's repository, as `git worktree list` lists them, made
+ * real. None when git cannot say, such as outside a repository: then no path is in a worktree, and
+ * nothing is told. The caller asks only for a call that may reach another worktree
+ * (`reachesAnotherWorktree`), so an ordinary call never pays for this git call.
+ */
+function repoWorktrees(root: string): string[] {
+  const listed = runGit(root, ["worktree", "list", "--porcelain"]);
+  return listed.ok ? worktreeFolders(listed.stdout.toString("utf8")).map(realPath) : [];
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE CONFIG — which repo this is, and what it has turned on
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
@@ -786,6 +834,25 @@ function identityOf(session: Session, payload: HookPayload, categories: readonly
   return stickyIdentity(session.root, session.id, session.who.agent, facts, categories);
 }
 
+/**
+ * The other worktrees of the repository this call worked in that this session and agent has not
+ * been told about, now remembered as told; null when there are none. The paths are the file an edit
+ * tool wrote, or the folders a shell command ran in (`workedPaths`). git is asked only when one of
+ * them may be in another worktree.
+ */
+function worktreesToTell(session: Session, payload: HookPayload): { root: string; worktrees: string[] } | null {
+  const root = realPath(session.root);
+  // Each folder once: a command can return to one with `cd -`, and two names can be one folder.
+  const paths = [...new Set([...new Set(workedPaths(payload, session.root, homedir()))].map(realPath))];
+  if (!reachesAnotherWorktree(paths, root, holdsGitFile)) return null;
+  const stored = loadState(session.root, session.id, session.who.agent);
+  const told = stored.worktrees ?? [];
+  const worktrees = untoldWorktrees({ paths, root, worktrees: repoWorktrees(session.root), told });
+  if (worktrees.length === 0) return null;
+  saveState(session.root, session.id, session.who.agent, { ...stored, worktrees: [...told, ...worktrees] });
+  return { root, worktrees };
+}
+
 /** The world a payload is read against — disk, and the turn, asked only if the moment needs them. */
 function eventWorld(root: string, session: Session, changes?: readonly Change[]): EventWorld {
   return {
@@ -928,6 +995,9 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
 
   const entries = load.entries;
   const identity = identityOf(session, payload, categoriesIn(entries));
+  // ANOTHER WORKTREE, after the call: the agent is told once that flow does not guard it. Asked
+  // before `judge`, which reads the state this writes and saves it again with its marks.
+  const unguarded = afterCall ? worktreesToTell(session, payload) : null;
 
   const events = toEvent(hook, payload, eventWorld(root, session, changes));
   const rows: Row[] = [];
@@ -952,7 +1022,8 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
   const answer = await judge({ events, session, load, settings: config.settings, identity, off, hook, payload, rows, steps: taping ? steps : null });
   if (!off) appendRows({ root, session: session.id, branch: session.branch, who: session.who }, rows);
   if (taping) appendSteps(root, session.id, steps);
-  return snapshotted(toResult(hook, settle(answer)));
+  const settled = settle(answer);
+  return snapshotted(toResult(hook, unguarded === null ? settled : { ...settled, unguarded }));
 }
 
 /** The middle of the run: every event through the engine, and the rows that record what happened. */

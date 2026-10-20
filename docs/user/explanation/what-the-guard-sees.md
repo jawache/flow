@@ -154,8 +154,37 @@ The snapshot holds what git holds: every tracked file, and every untracked file 
 - **A file that enters the snapshot during a call** has no earlier copy in it. This happens when the call adds the file to `snapshotInclude`, or edits `.gitignore` so git stops ignoring it. flow records the file as it stands, does not judge it for that call, and prints one line naming it. Every later change to the file is judged. So flow never deletes a file it has no earlier copy of.
 - **A file that leaves the snapshot during a call** was not removed, so no delete rule is called on it. This happens when the call removes the file from `snapshotInclude`, or adds it to `.gitignore`. If the call left the file as it was, nothing is judged. If the call also rewrote it, the write rules judge that change, and a refused rewrite is put back.
 - **Files outside the repository** are never recorded.
+- **Files in another worktree of the same repository** are not guarded either, even a worktree nested inside the guarded folder, such as a subagent's under `.claude/worktrees/`. flow tells the session when it works there. See [Another worktree of the same repository](#another-worktree-of-the-same-repository).
 - **A file that one command creates and then deletes** leaves nothing in the diff, so no rule is called on it.
 - **A command you type yourself with `!`** is your own work rather than the agent's, and it is not put through the guard.
+
+## Another worktree of the same repository
+
+> [!WARNING]
+> A session that works in a worktree it did not start in is unguarded there. No guardrail judges its changes in that worktree and no breadcrumb is shown for them. Only the commit gate judges them, when they are committed. [flow says it does not guard this worktree](../troubleshooting/flow-does-not-guard-this-worktree.md) gives the fix: start the session in the worktree.
+
+flow guards one folder: the folder the session started in. Claude Code passes that folder to every hook as `CLAUDE_PROJECT_DIR`. The snapshot, the log and the state in `.flow/` all belong to it.
+
+A git **worktree** is another working folder of the same repository, with its own branch checked out. A session can work in one without starting there, by running `cd` in its commands. The files it changes there are not in the snapshot, even when the worktree is nested inside the guarded folder, because git lists a nested worktree as one folder and not its files. So no write rule judges them and no breadcrumb is shown for them.
+
+flow cannot guard that work, so it tells the agent to stop. A tool call works in another worktree when:
+
+- **The Edit or Write tool** writes a file inside it.
+- **A shell command** runs inside it, because the shell already stands in it when the call starts, or because the command runs `cd` into it.
+
+At the first such call, flow passes the agent a message beside the call's result. The message names the folder flow guards and the worktree it does not guard. It tells the agent to stop its work in the worktree and tell you to start a session there, because flow guards that worktree only from a session started in it.
+
+- **Once per worktree.** flow tells a session once for each worktree it works in.
+- **A subagent** that Claude Code starts in its own worktree, with `isolation: "worktree"`, is told the same way, and reports back to the agent that started it.
+- **The call goes through.** The message steers the agent and is not a refusal.
+- **The worktrees counted** are the ones `git worktree list` lists for the guarded folder.
+
+The commit gate still runs in the worktree, because git runs it from the worktree's own folder, with that worktree's config.
+
+### Why flow tells, rather than follows or refuses
+
+- **Following the work** would judge each call against whichever worktree it changed, with that worktree's config. One command can change files in both folders, and would need two snapshots and two sets of rules. A guard whose folder moves during a session is harder to reason about than one that names its folder.
+- **Refusing** works only for the Edit and Write tools. A shell write in the worktree is outside the snapshot, so flow cannot write it back. Refusing one route and not the other would leave the worktree no better guarded.
 
 ---
 

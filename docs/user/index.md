@@ -7,6 +7,7 @@ summary: "flow's human-facing docs"
 **flow** guards a repo that coding agents work in. Your whole guard is one TypeScript file, `flow.config.ts`, and these pages are how to write it. Every example on these pages is run against the shipped binary.
 
 Each page is one of four kinds: a lesson, a guide to one task, a description to look things up in, or an explanation of why.
+A troubleshooting page is a guide to one task that starts from what you see.
 
 ## Learn it
 
@@ -38,6 +39,12 @@ For you if flow already runs and you have one task to finish: each guide gives t
 ### Upgrading flow
 
 [The migration guides](./migrations/index.md) have one page per release: what a repo that uses flow must change to upgrade to that version, as steps an agent can follow.
+
+## When something goes wrong
+
+For you when flow stops the agent, refuses something you expected to pass, or says something is wrong: each page starts from what you see, says why, and gives the fix.
+
+- [flow says it does not guard this worktree](./troubleshooting/flow-does-not-guard-this-worktree.md)
 
 ## Look something up
 

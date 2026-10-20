@@ -71,6 +71,13 @@ import {
   writeRows,
   mismatchRow,
   touchedPath,
+  foldersBetween,
+  reachesAnotherWorktree,
+  untoldWorktrees,
+  worktreeFolders,
+  worktreeLine,
+  commandFolders,
+  workedPaths,
   CONFIG_FILE,
   configImports,
   statusCode,
@@ -366,8 +373,11 @@ describe("a Bash line's delete targets", () => {
 
 describe("bashReads — the files a Bash command reads, before it runs", () => {
   const HOME = "/home/me";
-  const at = (command: string, cwd = ROOT, home: string | undefined = HOME): { reads: readonly string[]; searched: readonly string[] } =>
-    bashReads(parseShellSteps(command), { cwd, root: ROOT, home });
+  // The reads and searches only: where a `cd` moved the shell is `folders`, pinned with the worktrees.
+  const at = (command: string, cwd = ROOT, home: string | undefined = HOME): { reads: readonly string[]; searched: readonly string[] } => {
+    const { reads, searched } = bashReads(parseShellSteps(command), { cwd, root: ROOT, home });
+    return { reads, searched };
+  };
   const reads = (command: string, cwd = ROOT): readonly string[] => at(command, cwd).reads;
   const searched = (command: string, cwd = ROOT): readonly string[] => at(command, cwd).searched;
 
@@ -4580,5 +4590,156 @@ describe("snapshotInclude — where git looks, and what it keeps", () => {
   it("reads git's -z answer as paths, with no quoting and no empty tail", () => {
     expect(nulPaths("src/a b.ts\0src/\"q\".ts\0")).toEqual(["src/a b.ts", 'src/"q".ts']);
     expect(nulPaths("")).toEqual([]);
+  });
+});
+
+describe("another worktree of the repository — told once, never refused", () => {
+  const root = "/code/app";
+  const worktrees = ["/code/app", "/code/app.worktrees/feature", "/code/app.worktrees/fix"];
+  const tell = (paths: readonly string[], told: readonly string[] = []): string[] => untoldWorktrees({ paths, root, worktrees, told });
+
+  it("names the worktree a path in another worktree is in", () => {
+    expect(tell(["/code/app.worktrees/feature/src/a.ts"])).toEqual(["/code/app.worktrees/feature"]);
+  });
+
+  it("names it no more once this session and agent was told", () => {
+    expect(tell(["/code/app.worktrees/feature/src/a.ts"], ["/code/app.worktrees/feature"])).toEqual([]);
+    expect(tell(["/code/app.worktrees/fix/b.ts"], ["/code/app.worktrees/feature"]), "another worktree is its own").toEqual(["/code/app.worktrees/fix"]);
+  });
+
+  it("names nothing for a path outside the repository that is none of its worktrees", () => {
+    expect(tell(["/tmp/scratch.txt", "/code/app-other/a.ts", "/code/app.worktrees/featured/a.ts"])).toEqual([]);
+  });
+
+  it("names nothing for a path inside the guarded folder", () => {
+    expect(tell(["/code/app/src/a.ts"])).toEqual([]);
+  });
+
+  it("counts the worktree that holds the guarded folder as the session's own", () => {
+    expect(untoldWorktrees({ paths: ["/code/app/lib/x.ts"], root: "/code/app/packages/web", worktrees, told: [] })).toEqual([]);
+  });
+
+  it("tells a session started in a nested worktree about the worktree around it", () => {
+    expect(
+      untoldWorktrees({ paths: ["/code/app/src/a.ts"], root: "/code/app/.claude/worktrees/agent-1", worktrees: [...worktrees, "/code/app/.claude/worktrees/agent-1"], told: [] }),
+    ).toEqual(["/code/app"]);
+  });
+
+  it("places a path in the deepest worktree that holds it, and names each worktree once", () => {
+    const nested = [...worktrees, "/code/app.worktrees/feature/.claude/worktrees/agent-1"];
+    expect(
+      untoldWorktrees({
+        paths: ["/code/app.worktrees/feature/.claude/worktrees/agent-1/a.ts", "/code/app.worktrees/feature/a.ts", "/code/app.worktrees/feature/b.ts"],
+        root,
+        worktrees: nested,
+        told: [],
+      }),
+    ).toEqual(["/code/app.worktrees/feature/.claude/worktrees/agent-1", "/code/app.worktrees/feature"]);
+  });
+
+  it("asks git only for a call that reaches outside the guarded folder, or under a folder holding a .git file", () => {
+    const none = (): boolean => false;
+    expect(reachesAnotherWorktree(["/code/app/src/a.ts", "/code/app"], root, none)).toBe(false);
+    expect(reachesAnotherWorktree(["/code/app/src/a.ts", "/code/app.worktrees/feature/a.ts"], root, none)).toBe(true);
+    expect(reachesAnotherWorktree([], root, none)).toBe(false);
+    const nested = (dir: string): boolean => dir === "/code/app/.claude/worktrees/agent-1";
+    expect(reachesAnotherWorktree(["/code/app/.claude/worktrees/agent-1/src/a.ts"], root, nested)).toBe(true);
+    expect(reachesAnotherWorktree(["/code/app/src/a.ts"], root, nested)).toBe(false);
+  });
+
+  it("names a worktree nested inside the guarded folder, as Claude Code makes for a subagent", () => {
+    expect(
+      untoldWorktrees({ paths: ["/code/app/.claude/worktrees/agent-1/a.ts"], root, worktrees: [...worktrees, "/code/app/.claude/worktrees/agent-1"], told: [] }),
+    ).toEqual(["/code/app/.claude/worktrees/agent-1"]);
+  });
+
+  it("walks the folders between a path and the guarded folder, nearest first, neither end", () => {
+    expect(foldersBetween("/code/app/.claude/worktrees/agent-1/a.ts", root)).toEqual([
+      "/code/app/.claude/worktrees/agent-1",
+      "/code/app/.claude/worktrees",
+      "/code/app/.claude",
+    ]);
+    expect(foldersBetween("/code/app/a.ts", root)).toEqual([]);
+    expect(foldersBetween("/code/app", root)).toEqual([]);
+    expect(foldersBetween("/elsewhere/a.ts", root)).toEqual([]);
+  });
+
+  it("works where an edit tool writes, absolute, and nowhere for another tool that names a file", () => {
+    const worked = (payload: HookPayload): string[] => workedPaths(payload, root, "/home/me");
+    expect(worked({ tool_name: "Write", tool_input: { file_path: "/code/app.worktrees/feature/a.ts" } })).toEqual(["/code/app.worktrees/feature/a.ts"]);
+    expect(worked({ tool_name: "Edit", tool_input: { file_path: "src/a.ts" } })).toEqual(["/code/app/src/a.ts"]);
+    expect(worked({ tool_name: "NotebookEdit", tool_input: { notebook_path: "/n.ipynb" } })).toEqual(["/n.ipynb"]);
+    expect(worked({ tool_name: "Read", tool_input: { file_path: "/code/app.worktrees/feature/a.ts" } })).toEqual([]);
+    expect(worked({ tool_name: "Write", tool_input: {} })).toEqual([]);
+  });
+
+  it("reads the folders a command runs in: the payload's cwd, then each cd the parse reads, absolute", () => {
+    const bash = (command: string, cwd?: string): HookPayload => ({ tool_name: "Bash", tool_input: { command }, ...(cwd === undefined ? {} : { cwd }) });
+    expect(commandFolders(bash("ls", "/code/app.worktrees/feature"), root, "/home/me")).toEqual(["/code/app.worktrees/feature"]);
+    expect(commandFolders(bash("ls"), root, "/home/me"), "no cwd: the guarded folder").toEqual(["/code/app"]);
+    expect(commandFolders(bash("cd ../app.worktrees/feature && npm test", root), root, "/home/me")).toEqual(["/code/app", "/code/app.worktrees/feature"]);
+    expect(commandFolders(bash("(cd /tmp/x && ls); pushd ~/y", root), root, "/home/me")).toEqual(["/code/app", "/tmp/x", "/home/me/y"]);
+    expect(commandFolders(bash('cd "$DIR" && ls', root), root, "/home/me"), "a folder only running the line could tell").toEqual(["/code/app"]);
+    expect(commandFolders({ tool_name: "Write", tool_input: { file_path: "/code/app.worktrees/feature/a.ts" }, cwd: "/code/app.worktrees/fix" }, root, "/home/me")).toEqual([]);
+  });
+
+  it("tells a command run in another worktree, by its cwd or a cd, once, and nothing for a cd outside the repository", () => {
+    const ran = (command: string, cwd = root, told: readonly string[] = []): string[] =>
+      tell(workedPaths({ tool_name: "Bash", tool_input: { command }, cwd }, root, "/home/me"), told);
+    expect(ran("npm test", "/code/app.worktrees/feature"), "the session's folder is in the worktree").toEqual(["/code/app.worktrees/feature"]);
+    expect(ran("cd /code/app.worktrees/fix/src && npm test"), "a cd into it").toEqual(["/code/app.worktrees/fix"]);
+    expect(ran("cd /tmp/scratch && ls; cd ../../code/app-other"), "a cd outside the repository, to none of its worktrees").toEqual([]);
+    expect(ran("cd src && ls"), "a cd inside the guarded folder").toEqual([]);
+    expect(ran("cd /code/app.worktrees/feature && ls", root, ["/code/app.worktrees/feature"]), "already told, by a write or a command").toEqual([]);
+  });
+
+  it("asks git for a folder a command ran in that is itself a nested worktree, and never for the guarded folder", () => {
+    const nested = (dir: string): boolean => dir === "/code/app/.claude/worktrees/agent-1";
+    expect(reachesAnotherWorktree(["/code/app/.claude/worktrees/agent-1"], root, nested)).toBe(true);
+    const startedInWorktree = (dir: string): boolean => dir === root;
+    expect(reachesAnotherWorktree([root, "/code/app/src"], root, startedInWorktree), "the guarded folder holds a .git file in a linked worktree").toBe(false);
+  });
+
+  it("reads git's worktree list, leaving out a bare repository", () => {
+    const porcelain =
+      "worktree /code/app.git\nbare\n\nworktree /code/app\nHEAD abc\nbranch refs/heads/main\n\n" +
+      "worktree /code/app.worktrees/feature\nHEAD def\ndetached\nprunable gitdir file points to non-existent location\n";
+    expect(worktreeFolders(porcelain)).toEqual(["/code/app", "/code/app.worktrees/feature"]);
+    expect(worktreeFolders("")).toEqual([]);
+  });
+
+  it("rides beside the call's result and refuses nothing, before the notes", () => {
+    const answer = toResult("post-tool-use", {
+      refused: [],
+      shown: [{ entry: "a.b", cause: "first-touch", body: "a note" }],
+      unguarded: { root, worktrees: ["/code/app.worktrees/feature"] },
+    });
+    expect(answer.exitCode).toBe(0);
+    expect(answer.stderr).toBe("");
+    const context = (JSON.parse(answer.stdout) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } }).hookSpecificOutput;
+    expect(context.hookEventName).toBe("PostToolUse");
+    expect(context.additionalContext).toBe(`${worktreeLine(root, "/code/app.worktrees/feature")}\n\n# breadcrumb: a.b (first-touch)\na note`);
+  });
+
+  it("rides beside a refusal on stderr, before the notes", () => {
+    const block: Block = { do: "block", entry: "demo.noTodo", message: "No TODOs.", subject: "src/a.ts", detail: "" };
+    const answer = toResult("post-tool-use", {
+      refused: [{ moment: "write", block }],
+      shown: [{ entry: "a.b", cause: "first-touch", body: "a note" }],
+      unguarded: { root, worktrees: ["/code/app.worktrees/feature"] },
+    });
+    expect(answer.exitCode).toBe(2);
+    const line = worktreeLine(root, "/code/app.worktrees/feature");
+    expect(answer.stderr).toContain(line);
+    expect(answer.stderr.indexOf(line)).toBeLessThan(answer.stderr.indexOf("# breadcrumb: a.b (first-touch)"));
+    expect(answer.stderr.indexOf("No TODOs.")).toBeLessThan(answer.stderr.indexOf(line));
+  });
+
+  it("tells the agent both folders, to stop, and to have a session started there", () => {
+    const line = worktreeLine(root, "/code/app.worktrees/feature");
+    expect(line).toContain("flow guards /code/app, the folder this session started in.");
+    expect(line).toContain("It does not guard the git worktree /code/app.worktrees/feature");
+    expect(line).toContain("Stop your work in /code/app.worktrees/feature and tell the user to start a Claude Code session in that folder");
+    expect(line).toContain("If you are a subagent, stop and report this to the agent that started you.");
   });
 });
