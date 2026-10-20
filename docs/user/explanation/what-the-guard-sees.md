@@ -165,7 +165,7 @@ The snapshot holds what git holds: every tracked file, and every untracked file 
 
 flow guards one folder: the folder the session started in. Claude Code passes that folder to every hook as `CLAUDE_PROJECT_DIR`. The snapshot, the log and the state in `.flow/` all belong to it.
 
-A git **worktree** is another working folder of the same repository, with its own branch checked out. A session can work in one without starting there, by running `cd` in its commands. The files it changes there are outside the folder flow guards, so no write rule judges them and no breadcrumb is shown for them.
+A git **worktree** is another working folder of the same repository, with its own branch checked out. A session can work in one without starting there, by running `cd` in its commands. The files it changes there are not in the snapshot, even when the worktree is nested inside the guarded folder, because git lists a nested worktree as one folder and not its files. So no write rule judges them and no breadcrumb is shown for them.
 
 flow cannot guard that work, so it tells the agent to stop. A tool call works in another worktree when:
 

@@ -941,7 +941,7 @@ export function touchedPath(payload: HookPayload, root: string): string | null {
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// ANOTHER WORKTREE — a call that works outside the folder flow guards, in the same repository
+// ANOTHER WORKTREE — a call that works in another worktree of the repository, even a nested one
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 //
 // flow guards the folder the session started in. A call that writes into another worktree of the
