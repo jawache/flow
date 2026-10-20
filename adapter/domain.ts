@@ -422,7 +422,7 @@ export function deleteTargets(commands: readonly ShellCommand[] | null): string[
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// BASH READS — the files a shell command reads, for the touch breadcrumb
+// BASH READS — the files a shell command reads, for the touch breadcrumb, and the folders it moves to
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 //
 // Under auto mode most contact with an area is a `cat`, a `grep` or a `sed -n` whose payload names
@@ -443,6 +443,11 @@ export function deleteTargets(commands: readonly ShellCommand[] | null): string[
 // cannot be settled from the line — a `$(…)`, an unknown variable — is left out rather than
 // guessed at, and a line that does not parse names nothing. What it misses the working-tree delta
 // catches later: a file changed before any read of it was seen gets its note at the change.
+//
+// THE SAME WALK KEEPS `folders`: each folder a `cd` or `pushd` moves the shell to, inside the repo
+// or not. Those are not reads; they are where the command works, and the worktree message reads
+// them (`commandFolders`, § ANOTHER WORKTREE below) to tell a command run in another worktree of
+// the repository. Failing open there too: a `cd` only running the line could resolve is left out.
 
 /** Which arguments of one read command are files. */
 interface ReadSpec {
