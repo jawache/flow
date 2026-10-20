@@ -7,6 +7,7 @@ summary: "flow's human-facing docs"
 **flow** guards a repo that coding agents work in. Your whole guard is one TypeScript file, `flow.config.ts`, and these pages are how to write it. Every example on these pages is run against the shipped binary.
 
 Each page is one of four kinds: a lesson, a guide to one task, a description to look things up in, or an explanation of why.
+A troubleshooting page is a guide to one task that starts from what you see.
 
 ## Learn it
 

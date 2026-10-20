@@ -154,7 +154,7 @@ The snapshot holds what git holds: every tracked file, and every untracked file 
 - **A file that enters the snapshot during a call** has no earlier copy in it. This happens when the call adds the file to `snapshotInclude`, or edits `.gitignore` so git stops ignoring it. flow records the file as it stands, does not judge it for that call, and prints one line naming it. Every later change to the file is judged. So flow never deletes a file it has no earlier copy of.
 - **A file that leaves the snapshot during a call** was not removed, so no delete rule is called on it. This happens when the call removes the file from `snapshotInclude`, or adds it to `.gitignore`. If the call left the file as it was, nothing is judged. If the call also rewrote it, the write rules judge that change, and a refused rewrite is put back.
 - **Files outside the repository** are never recorded.
-- **Files in another worktree of the same repository** are outside the folder flow guards too. flow tells the session when it works there. See [Another worktree of the same repository](#another-worktree-of-the-same-repository).
+- **Files in another worktree of the same repository** are not guarded either, even a worktree nested inside the guarded folder, such as a subagent's under `.claude/worktrees/`. flow tells the session when it works there. See [Another worktree of the same repository](#another-worktree-of-the-same-repository).
 - **A file that one command creates and then deletes** leaves nothing in the diff, so no rule is called on it.
 - **A command you type yourself with `!`** is your own work rather than the agent's, and it is not put through the guard.
 
@@ -170,7 +170,7 @@ A git **worktree** is another working folder of the same repository, with its ow
 flow cannot guard that work, so it tells the agent to stop. A tool call works in another worktree when:
 
 - **The Edit or Write tool** writes a file inside it.
-- **A shell command** runs inside it, because the session's own folder is there or because the command runs `cd` into it.
+- **A shell command** runs inside it, because the shell already stands in it when the call starts, or because the command runs `cd` into it.
 
 At the first such call, flow passes the agent a message beside the call's result. The message names the folder flow guards and the worktree it does not guard. It tells the agent to stop its work in the worktree and tell you to start a session there, because flow guards that worktree only from a session started in it.
 
