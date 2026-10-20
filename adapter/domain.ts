@@ -957,12 +957,6 @@ export function editedFile(payload: HookPayload): string | null {
   return named === "" ? null : named;
 }
 
-/** The file an edit tool's call names, absolute, or none for any other call. */
-export function writtenPaths(payload: HookPayload, root: string): string[] {
-  const named = editedFile(payload);
-  return named === null ? [] : [posix.resolve(root, named)];
-}
-
 /**
  * The folders a shell command runs in, absolute: where the shell stood when the call started (the
  * payload's `cwd`, the guarded folder when absent), and each folder a `cd` or `pushd` in the line
@@ -970,17 +964,18 @@ export function writtenPaths(payload: HookPayload, root: string): string[] {
  */
 export function commandFolders(payload: HookPayload, root: string, home: string | undefined): string[] {
   if (text(payload.tool_name) !== "Bash") return [];
-  const cwd = posix.resolve(root, text(payload["cwd"]) || root);
+  const cwd = posix.resolve(root, text(payload["cwd"]));
   const { folders } = bashReads(parseShellSteps(text((payload.tool_input ?? {})["command"])), { cwd, root, home });
-  return [cwd, ...folders.filter((folder) => folder !== cwd)];
+  return [cwd, ...folders];
 }
 
 /**
  * Every place a call worked, absolute: the file an edit tool wrote, or the folders a shell command
- * ran in. What the decision (`untoldWorktrees`) places in a worktree.
+ * ran in (`commandFolders`). What the decision (`untoldWorktrees`) places in a worktree.
  */
 export function workedPaths(payload: HookPayload, root: string, home: string | undefined): string[] {
-  return [...writtenPaths(payload, root), ...commandFolders(payload, root, home)];
+  const written = editedFile(payload);
+  return written === null ? commandFolders(payload, root, home) : [posix.resolve(root, written)];
 }
 
 /** The folders between a path and the guarded folder that holds it, nearest first; neither end. */

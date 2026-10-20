@@ -76,7 +76,6 @@ import {
   untoldWorktrees,
   worktreeFolders,
   worktreeLine,
-  writtenPaths,
   commandFolders,
   workedPaths,
   CONFIG_FILE,
@@ -4665,20 +4664,21 @@ describe("another worktree of the repository — told once, never refused", () =
     expect(foldersBetween("/elsewhere/a.ts", root)).toEqual([]);
   });
 
-  it("reads the path an edit tool writes, absolute, and none from any other tool", () => {
-    expect(writtenPaths({ tool_name: "Write", tool_input: { file_path: "/code/app.worktrees/feature/a.ts" } }, root)).toEqual(["/code/app.worktrees/feature/a.ts"]);
-    expect(writtenPaths({ tool_name: "Edit", tool_input: { file_path: "src/a.ts" } }, root)).toEqual(["/code/app/src/a.ts"]);
-    expect(writtenPaths({ tool_name: "NotebookEdit", tool_input: { notebook_path: "/n.ipynb" } }, root)).toEqual(["/n.ipynb"]);
-    expect(writtenPaths({ tool_name: "Read", tool_input: { file_path: "/code/app.worktrees/feature/a.ts" } }, root)).toEqual([]);
-    expect(writtenPaths({ tool_name: "Write", tool_input: {} }, root)).toEqual([]);
+  it("works where an edit tool writes, absolute, and nowhere for another tool that names a file", () => {
+    const worked = (payload: HookPayload): string[] => workedPaths(payload, root, "/home/me");
+    expect(worked({ tool_name: "Write", tool_input: { file_path: "/code/app.worktrees/feature/a.ts" } })).toEqual(["/code/app.worktrees/feature/a.ts"]);
+    expect(worked({ tool_name: "Edit", tool_input: { file_path: "src/a.ts" } })).toEqual(["/code/app/src/a.ts"]);
+    expect(worked({ tool_name: "NotebookEdit", tool_input: { notebook_path: "/n.ipynb" } })).toEqual(["/n.ipynb"]);
+    expect(worked({ tool_name: "Read", tool_input: { file_path: "/code/app.worktrees/feature/a.ts" } })).toEqual([]);
+    expect(worked({ tool_name: "Write", tool_input: {} })).toEqual([]);
   });
 
-  it("reads the folders a command runs in: the payload's cwd, then each cd the parse reads, absolute, each once", () => {
+  it("reads the folders a command runs in: the payload's cwd, then each cd the parse reads, absolute", () => {
     const bash = (command: string, cwd?: string): HookPayload => ({ tool_name: "Bash", tool_input: { command }, ...(cwd === undefined ? {} : { cwd }) });
     expect(commandFolders(bash("ls", "/code/app.worktrees/feature"), root, "/home/me")).toEqual(["/code/app.worktrees/feature"]);
     expect(commandFolders(bash("ls"), root, "/home/me"), "no cwd: the guarded folder").toEqual(["/code/app"]);
     expect(commandFolders(bash("cd ../app.worktrees/feature && npm test", root), root, "/home/me")).toEqual(["/code/app", "/code/app.worktrees/feature"]);
-    expect(commandFolders(bash("(cd /tmp/x && ls); pushd ~/y; cd -", root), root, "/home/me")).toEqual(["/code/app", "/tmp/x", "/home/me/y"]);
+    expect(commandFolders(bash("(cd /tmp/x && ls); pushd ~/y; cd -", root), root, "/home/me")).toEqual(["/code/app", "/tmp/x", "/home/me/y", "/code/app"]);
     expect(commandFolders(bash('cd "$DIR" && ls', root), root, "/home/me"), "a folder only running the line could tell").toEqual(["/code/app"]);
     expect(commandFolders({ tool_name: "Write", tool_input: { file_path: "/code/app.worktrees/feature/a.ts" }, cwd: "/code/app.worktrees/fix" }, root, "/home/me")).toEqual([]);
   });
