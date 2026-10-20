@@ -842,7 +842,8 @@ function identityOf(session: Session, payload: HookPayload, categories: readonly
  */
 function worktreesToTell(session: Session, payload: HookPayload): { root: string; worktrees: string[] } | null {
   const root = realPath(session.root);
-  const paths = workedPaths(payload, session.root, homedir()).map(realPath);
+  // Each folder once: a command can return to one with `cd -`, and two names can be one folder.
+  const paths = [...new Set([...new Set(workedPaths(payload, session.root, homedir()))].map(realPath))];
   if (!reachesAnotherWorktree(paths, root, holdsGitFile)) return null;
   const stored = loadState(session.root, session.id, session.who.agent);
   const told = stored.worktrees ?? [];

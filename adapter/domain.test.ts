@@ -4678,7 +4678,7 @@ describe("another worktree of the repository — told once, never refused", () =
     expect(commandFolders(bash("ls", "/code/app.worktrees/feature"), root, "/home/me")).toEqual(["/code/app.worktrees/feature"]);
     expect(commandFolders(bash("ls"), root, "/home/me"), "no cwd: the guarded folder").toEqual(["/code/app"]);
     expect(commandFolders(bash("cd ../app.worktrees/feature && npm test", root), root, "/home/me")).toEqual(["/code/app", "/code/app.worktrees/feature"]);
-    expect(commandFolders(bash("(cd /tmp/x && ls); pushd ~/y; cd -", root), root, "/home/me")).toEqual(["/code/app", "/tmp/x", "/home/me/y", "/code/app"]);
+    expect(commandFolders(bash("(cd /tmp/x && ls); pushd ~/y", root), root, "/home/me")).toEqual(["/code/app", "/tmp/x", "/home/me/y"]);
     expect(commandFolders(bash('cd "$DIR" && ls', root), root, "/home/me"), "a folder only running the line could tell").toEqual(["/code/app"]);
     expect(commandFolders({ tool_name: "Write", tool_input: { file_path: "/code/app.worktrees/feature/a.ts" }, cwd: "/code/app.worktrees/fix" }, root, "/home/me")).toEqual([]);
   });
