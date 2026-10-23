@@ -23,17 +23,17 @@ labels:                                              # the daemon mirrors each s
   needs_you: needs-you                               # on while a Needs you the app posted waits on the human's answer
   ended:     ended
 
-worktree:                                            # flow guards itself through dist/, which git does not carry: install and build before the session starts, or every tool call is refused
-  create: "git -C {repo} worktree add {path} -b {branch} origin/{base} && cd {path} && just install && just build"
-  existing: "git -C {repo} worktree prune && git -C {repo} worktree add {path} {branch} && cd {path} && just install && just build"
-  remove: "git -C {repo} worktree remove {path} && git -C {repo} branch -D {branch}"
+environment:                                         # flow guards itself through dist/, which git does not carry: install and build before the session starts, or every tool call is refused
+  create: "git -C {repo} worktree add {path} -b {branch} origin/{base} && cd {path} && just install && just build && echo {path}"
+  existing: "git -C {repo} worktree prune && git -C {repo} worktree add {path} {branch} && cd {path} && just install && just build && echo {path}"
+  remove: "git -C {repo} worktree remove {folder} && git -C {repo} branch -D {branch}"
 
 events:                                              # each `send` is the text typed into the issue's session when the event happens
 
   from: []                                           # logins relayed besides the repo's owner, members and collaborators
 
   created: |
-    [work] You are the session for issue #{issue} in {repo_name}, on branch {branch} in {worktree}.
+    [work] You are the session for issue #{issue} in {repo_name}, on branch {branch} in {folder}.
     You act on GitHub as @{app}, only through `work gh`, never a bare gh; the human is @{human}, @mention them when you need them.
     Lines starting with [work] relay GitHub activity on this issue, its sub-issues and its pull request.
 
