@@ -4,7 +4,8 @@
 # `work init --template default` writes `board:` with the board it creates, and `base:` with this repo's
 # default branch; edit `base` if worktrees should branch from another. `branch` and `worktree.path`
 # are left out so the machine-wide naming in ~/.work/config.yml applies.
-board: https://github.com/users/jawache/projects/16
+name: flow                                           # the project's name; its issues' ids are flow-1, flow-2 …
+record: ~/Development/jawache/flow.record            # the folder its issues live in, one folder each; .work links here
 base: main
 
 agents:                                              # the model each agent runs on; one left out, or with no model, runs on Claude Code's default
@@ -15,44 +16,29 @@ agents:                                              # the model each agent runs
   docops:   { model: opus }
   devops:   { model: opus }
 permissions: auto                                    # passed to claude as --permission-mode
-field: Status                                        # the single-select field whose value is the card's state
 teardown: archived                                   # archiving the card tears the session and its worktree down
-labels:                                              # the daemon mirrors each session's state onto its issue as one of these four labels
-  running:   running
-  idle:      idle
-  needs_you: needs-you                               # on while a Needs you the app posted waits on the human's answer
-  ended:     ended
 
 environment:                                         # flow guards itself through dist/, which git does not carry: install and build before the session starts, or every tool call is refused
   create: "git -C {repo} worktree add {path} -b {branch} origin/{base} && cd {path} && just install && just build && echo {path}"
   existing: "git -C {repo} worktree prune && git -C {repo} worktree add {path} {branch} && cd {path} && just install && just build && echo {path}"
   remove: "git -C {repo} worktree remove {folder} && git -C {repo} branch -D {branch}"
 
+fields:                                              # every field is a key in each issue's front matter; status is the one the daemon acts on
+  status:
+    default: Backlog
+    values:                                          # icon is shown in the TUI's rows; send is typed when an issue enters the value, a list as one message per item, a line starting with ! run as a shell command
+      - { name: Backlog, icon: "📥" }
+      - { name: Triage, icon: "🔍", send: "[work] /work triage {issue}" }
+      - { name: Plan, icon: "📝", send: "[work] /work plan {issue}" }
+      - { name: Build, icon: "🔨", send: "[work] /work start {issue}: open every message that ends your turn with the recap" }
+      - { name: Demo, icon: "🎬", send: "[work] /work demo {issue}: write the recap of the build first" }
+      - { name: Review, icon: "👀", send: "[work] /work review {issue}" }
+      - { name: Merge, icon: "🔀", send: "[work] /work merge {issue}" }
+      - { name: Done, icon: "✅" }
+
 events:                                              # each `send` is the text typed into the issue's session when the event happens
 
   from: []                                           # logins relayed besides the repo's owner, members and collaborators
-
-  created: |
-    [work] You are the session for issue #{issue} in {repo_name}, on branch {branch} in {folder}.
-    You act on GitHub as @{app}, only through `work gh`, never a bare gh; the human is @{human}, @mention them when you need them.
-    Lines starting with [work] relay GitHub activity on this issue, its sub-issues and its pull request.
-
-  resumed: |
-    [work] This session was resumed. Re-read issue #{issue} on GitHub, including its sub-issues and pull request, and continue from where it stands.
-
-  status:                                            # one entry per Status value; `icon` is shown in the TUI's rows, `send` is typed when a card enters the value, a list as one message per item
-    Backlog: { icon: "📥" }
-    Triage:  { icon: "🔍", send: "[work] /work triage {issue}" }
-    Plan:    { icon: "📝", send: "[work] /work plan {issue}" }
-    Build:   { icon: "🔨", send: "[work] /work start {issue}: open every message that ends your turn with the recap" }
-    Demo:    { icon: "🎬", send: "[work] /work demo {issue}: write the recap of the build first" }
-    Review:  { icon: "👀", send: "[work] /work review {issue}" }
-    Merge:   { icon: "🔀", send: "[work] /work merge {issue}" }
-    Done:    { icon: "✅" }
-
-  comment: |
-    [work] @{author} commented on issue #{number}{parent} ({url})
-    {body}
 
   review: |
     [work] @{author} {state} PR #{pr} ({url})
