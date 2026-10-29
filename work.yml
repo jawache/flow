@@ -5,7 +5,6 @@
 # default branch; edit `base` if worktrees should branch from another. `branch` and `worktree.path`
 # are left out so the machine-wide naming in ~/.work/config.yml applies.
 name: flow                                           # the project's name; its issues' ids are flow-1, flow-2 …
-record: ~/Development/jawache/flow.record            # the folder its issues live in, one folder each; .work links here
 base: main
 
 agents:                                              # the model each agent runs on; one left out, or with no model, runs on Claude Code's default
