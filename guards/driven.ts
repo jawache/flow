@@ -1,56 +1,52 @@
 // examples/default/guards/driven.ts — the flow pack a repo driven by work binds.
 //
-// Three entries: a breadcrumb that tells every session how a driven repo works, the guardrail that
-// keeps the agent on `work gh`, and the one that keeps the verifier from writing. The daemon
-// enforces none of them; a driven repo turns them on in its own flow.config.ts:
+// Four entries: a breadcrumb that tells every session how a driven repo works, the guardrail that
+// keeps an issue's issue.md and tasks in the record's shape, the one that leaves an issue's log to
+// the daemon, and the one that keeps the four reviewers from writing. The daemon enforces none of
+// them; a driven repo turns them on in its own flow.config.ts:
 //
 //   import { driven } from "./guards/driven.ts";
 //   export default defineConfig([ …, pack(driven) ]);
 //
 // `work init --template` copies this file into the repo's guards/ folder, never links it: the
 // import of @jawache/flow resolves from the repo's own node_modules, which a copy under ~/.work has
-// none of. It needs @jawache/flow 0.3.0 or later: it imports the parse's readers (`shellCommands`,
-// `gitCommand`, `programName`), which an older flow does not export, and there the file fails to load.
+// none of.
+//
+// The guardrails on a command read the parse flow makes of each command line (`ctx.commands`, one
+// entry per simple command, nested ones included): a program is compared without its path, a
+// `$( )`, a `bash -c` string, an `eval` and a `sudo` are stepped into, and a heredoc body or a
+// quoted argument is text, never a command. Needs @jawache/flow 0.3.0 or later, and the `yaml` package,
+// which reads an issue's front matter and work.yml's fields.
 
 import {
   breadcrumb,
   type Check,
   command,
+  defineCategory,
+  deletion,
   definePack,
   gitCommand,
   guardrail,
   programName,
   session,
-  shellCommands,
   type ShellCommand,
-  type ShellRedirect,
-  defineCategory,
+  shellCommands,
   spawnedAs,
+  write,
 } from "@jawache/flow";
+import { parse } from "yaml";
 
-// ── what runs gh ──
+// ── what a reviewer may not run ──
 //
-// Each command in the parse whose program is `gh`, by name or by path: the parse has already
-// stepped past `FOO=1`, `sudo`, `env`, `command` and `xargs`, and lists the commands inside
-// `$( … )`, `if`, a pipeline and a `sh -c` string, so a `gh` in any of them is found, and a `gh`
-// in a quoted argument or a heredoc body is not a command. A line that does not parse is not
-// judged: bash refuses to run it, so no `gh` in it runs.
-const bareGh: Check = (ctx) => {
-  const bare = (shellCommands(ctx) ?? []).find((c) => programName(c.program) === "gh");
-  return bare === undefined ? ctx.ok() : ctx.fail(`\`${bare.text}\` runs gh directly`);
-};
-
-// ── what a checker may not run ──
-//
-// The checkers are the agents spawned to judge, never to build: the verifier `/work start` spawns
-// at every sub-issue, the deduper beside it when the phase added logic, and the four review lenses
-// `/work review` spawns. Each is recognised by the agent type Claude Code records for the spawn;
-// the skill spawns every one by name. This pack lists them itself, with flow's public
-// defineCategory and spawnedAs. The lenses' tool lists allow only git diff, show and log, so for
-// them this rule is a backstop.
-const checker = defineCategory(
-  "checker",
-  spawnedAs({ types: ["verifier", "deduper", "secops", "codeops", "docops", "devops"] }),
+// The reviewers are the four lenses spawned to judge, never to build: codeops, which `/work start`
+// spawns at every phase boundary and `/work review` spawns again, and secops, docops and devops,
+// which `/work review` spawns. Each is recognised by the agent type Claude Code records for the
+// spawn; the skill spawns every one by name. This pack lists them itself, with flow's public
+// defineCategory and spawnedAs. Their tool lists allow only git diff, show and log, so this rule
+// is a backstop.
+const reviewer = defineCategory(
+  "reviewer",
+  spawnedAs({ types: ["secops", "codeops", "docops", "devops"] }),
 );
 
 /** Programs that change files. */
@@ -59,36 +55,28 @@ const WRITE_PROGRAMS = new Set(["tee", "cp", "mv", "rm", "rmdir", "mkdir", "touc
 const IN_PLACE = new Set(["sed", "perl", "ruby"]);
 /** git subcommands that change the history, the branches, the index or the working tree. */
 const GIT_WRITES = new Set(["commit", "push", "pull", "add", "rm", "mv", "checkout", "switch", "restore", "reset", "merge", "rebase", "cherry-pick", "revert", "apply", "am", "clean", "init", "clone", "update-ref", "notes"]);
-/** The `work gh <noun> <verb>` pairs that post to or change GitHub. */
-const GH_WRITES: Readonly<Record<string, ReadonlySet<string>>> = {
-  issue: new Set(["comment", "close", "create", "edit", "reopen", "lock", "unlock", "delete", "transfer", "pin", "unpin", "develop"]),
-  pr: new Set(["comment", "close", "create", "edit", "reopen", "merge", "ready", "review", "lock", "unlock", "checkout"]),
-  project: new Set(["item-add", "item-archive", "item-create", "item-delete", "item-edit", "field-create", "field-delete", "create", "edit", "delete", "close", "copy", "link", "unlink", "mark-template"]),
-  label: new Set(["create", "edit", "delete", "clone"]),
-  release: new Set(["create", "edit", "delete", "upload"]),
-  repo: new Set(["create", "edit", "delete", "fork", "rename", "archive", "sync"]),
-};
-/** The redirect operators that write their target. `<` reads it; `>&` and `<&` duplicate a descriptor. */
-const WRITES = new Set([">", ">>", ">|", "&>", "&>>", "<>"]);
-/** Targets that are no file: a device. */
-const NO_FILE = /^\/dev\/(?:null|stdout|stderr|tty)$/;
-
-/** Does this redirect write a file? `>&` writes one only when its target is not a descriptor. */
-function writesFile(r: ShellRedirect): boolean {
-  if (NO_FILE.test(r.target)) return false;
-  return WRITES.has(r.operator) || (r.operator === ">&" && !/^(?:\d+|-)$/.test(r.target));
-}
-
 /**
- * What one parsed command writes, or null. The parse has already stepped past the wrappers and
- * lists every command a `$( )`, a `bash -c` or an `eval` string runs, so each is judged here.
+ * An issue's folder in the record, named by its id, `<name>-<n>` (docs/user/reference/record.md
+ * § Ids), at the start of a path or after a `/`: reached through `.work` or the record's own path.
  */
-function writeOf(cmd: ShellCommand): string | null {
-  const prog = programName(cmd.program);
-  const { args } = cmd;
+const ID_DIR = String.raw`(?:^|/)[A-Za-z][A-Za-z0-9-]*-[0-9]+/`;
+/** An issue's log: `log.jsonl` in its folder (§ log.jsonl). */
+const LOG = new RegExp(ID_DIR + String.raw`log\.jsonl$`);
+/** Programs among WRITE_PROGRAMS that read every argument but the last, the one they write. */
+const COPIES = new Set(["cp", "install", "rsync", "ln"]);
+/** Redirect operators that write a file. `>&` duplicates a descriptor (`2>&1`, `>&2`) and writes none. */
+const WRITE_REDIRECTS = new Set([">", ">>", ">|", "&>", "&>>"]);
+/** Redirect targets that write no file: a device. */
+const NO_FILE = new Set(["/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"]);
+
+/** What one parsed command writes, or null. */
+function writeOf(c: ShellCommand): string | null {
+  const prog = programName(c.program);
+  const { args } = c;
+  if (c.redirects.some((r) => WRITE_REDIRECTS.has(r.operator) && !NO_FILE.has(r.target))) return "a `>` or `>>` redirect writes a file";
   if (WRITE_PROGRAMS.has(prog)) return `\`${prog}\` changes files`;
   if (IN_PLACE.has(prog) && args.some((a) => /^-[A-Za-z]*i/.test(a) || a.startsWith("--in-place"))) return `\`${prog} -i\` edits a file in place`;
-  const g = gitCommand(cmd);
+  const g = gitCommand(c);
   if (g !== null) {
     const [first = ""] = g.args;
     if (
@@ -100,123 +88,250 @@ function writeOf(cmd: ShellCommand): string | null {
     )
       return `\`git ${g.subcommand}\` changes the branch, the history or the working tree`;
   }
-  if (prog === "work" && args[0] === "gh") {
-    const [noun = "", verb = ""] = args.slice(1);
-    if (GH_WRITES[noun]?.has(verb) === true) return `\`work gh ${noun} ${verb}\` posts to or changes GitHub`;
-    if (noun === "api") {
-      const rest = args.slice(2);
-      const flag = rest.findIndex((a) => a === "-X" || a === "--method");
-      const glued = rest.map((a) => /^(?:-X|--method=)(.+)$/.exec(a)?.[1]).find((v) => v !== undefined);
-      const method = (glued ?? (flag >= 0 ? rest[flag + 1] : undefined))?.toUpperCase();
-      const fields = rest.some((a) => /^(?:-[fF]|--field|--raw-field|--input)(?:=|$)/.test(a) || /^-[fF]./.test(a));
-      if (method !== undefined ? method !== "GET" : fields) return "`work gh api` with a method other than GET, or with fields (which make it a POST), changes GitHub";
-    }
-  }
+  if (prog === "work" && args[0] === "log") return "`work log` writes a line into the issue's log";
   return null;
 }
 
-/** Every way the parsed line writes, each said once; null when it only reads and runs. */
-function whatWrites(commands: readonly ShellCommand[]): string | null {
-  const found = new Set<string>();
-  for (const c of commands) {
-    if (c.redirects.some(writesFile)) found.add("a `>` or `>>` redirect writes a file");
-    const w = writeOf(c);
-    if (w !== null) found.add(w);
-  }
-  return found.size === 0 ? null : [...found].join("; ");
+/** Whether one parsed command writes an issue's log: a redirect into it, or a program that changes files given it. */
+function writesLog(c: ShellCommand): boolean {
+  if (c.redirects.some((r) => WRITE_REDIRECTS.has(r.operator) && LOG.test(r.target))) return true;
+  const prog = programName(c.program);
+  const changes = WRITE_PROGRAMS.has(prog) || (IN_PLACE.has(prog) && c.args.some((a) => /^-[A-Za-z]*i/.test(a) || a.startsWith("--in-place")));
+  if (!changes) return false;
+  // A copy reads its sources and writes only its last argument; every other program writes, or removes, what it is given.
+  const written = COPIES.has(prog) ? c.args.filter((a) => !a.startsWith("-")).slice(-1) : c.args;
+  return written.some((a) => LOG.test(a));
 }
 
+/** An issue's log is the daemon's: a write, a delete, or a shell command that writes one is refused. */
+const logByDaemon: Check = (ctx) => {
+  if (ctx.file !== undefined) return LOG.test(ctx.file.path) ? ctx.fail(ctx.file.path) : ctx.ok();
+  const commands = shellCommands(ctx);
+  if (commands === null) return ctx.ok(); // flow's convention: a line it cannot parse is not judged
+  return commands.some(writesLog) ? ctx.fail() : ctx.ok();
+};
+
+/** An issue's issue.md, and one of its task files, in its folder. */
+const ISSUE = new RegExp(ID_DIR + String.raw`issue\.md$`);
+const TASK = new RegExp(ID_DIR + String.raw`tasks/[0-9]+\.md$`);
+/**
+ * The keys of issue.md's front matter besides the fields work.yml names (docs/user/reference/record.md § issue.md):
+ * an issue's `from`, and a chat's `kind`, `summary` and `folder` (§ A chat).
+ */
+const ISSUE_KEYS = ["id", "title", "status", "archived", "refs", "from", "kind", "summary", "folder"];
+/** The keys of a task file's front matter, all three and no other (§ tasks/). */
+const TASK_KEYS = ["id", "title", "done"];
+
+/** The mapping a file's front matter holds, or why it holds none. */
+function frontMatter(content: string): Record<string, unknown> | string {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(content);
+  if (m === null) return "it has no front matter between --- lines";
+  let v: unknown;
+  try {
+    v = parse(m[1] ?? "");
+  } catch (e) {
+    return `its front matter is not YAML: ${(e as Error).message.split("\n")[0]}`;
+  }
+  return v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : "its front matter is not a mapping of keys";
+}
+
+/** work.yml's fields: each field's name, and the status field's values; null when it cannot be read. */
+async function fieldsOf(ctx: Parameters<Check>[0]): Promise<{ names: string[]; status: string[] } | null> {
+  if (!(await ctx.fs.exists("work.yml"))) return null;
+  let doc: unknown;
+  try {
+    doc = parse(await ctx.fs.read("work.yml"));
+  } catch {
+    return null;
+  }
+  const fields = (doc as { fields?: unknown } | null)?.fields;
+  if (fields === null || typeof fields !== "object") return null;
+  const values = (fields as { status?: { values?: unknown } }).status?.values;
+  const status = Array.isArray(values) ? values.map((v) => String(typeof v === "object" && v !== null ? (v as { name?: unknown }).name : v)) : [];
+  return { names: Object.keys(fields), status };
+}
+
+/** issue.md and a task file are written in the record's shape: their front matter's keys, and the issue's status. */
+const recordShape: Check = async (ctx) => {
+  const file = ctx.file;
+  if (file === undefined) return ctx.ok();
+  const task = TASK.test(file.path);
+  if (!task && !ISSUE.test(file.path)) return ctx.ok();
+  const front = frontMatter(file.content);
+  if (typeof front === "string") return ctx.fail(`${file.path}: ${front}`);
+  const keys = Object.keys(front);
+  if (task) {
+    const wrong = keys.filter((k) => !TASK_KEYS.includes(k));
+    const missing = TASK_KEYS.filter((k) => !keys.includes(k));
+    if (wrong.length + missing.length === 0) return ctx.ok();
+    return ctx.fail(`${file.path}: a task's front matter is id, title and done${wrong.length > 0 ? `; ${wrong.join(", ")} is not one` : ""}${missing.length > 0 ? `; ${missing.join(", ")} is missing` : ""}`);
+  }
+  const fields = await fieldsOf(ctx);
+  if (fields === null) return ctx.ok(); // with no work.yml to read, the fields cannot be judged
+  const allowed = [...ISSUE_KEYS, ...fields.names];
+  const wrong = keys.filter((k) => !allowed.includes(k));
+  if (wrong.length > 0) return ctx.fail(`${file.path}: ${wrong.join(", ")} is not a key of an issue's front matter, which holds ${allowed.join(", ")}`);
+  if ("status" in front && !fields.status.includes(String(front.status))) {
+    return ctx.fail(`${file.path}: status ${JSON.stringify(front.status)} is not a value of fields.status in work.yml: ${fields.status.join(", ")}`);
+  }
+  return ctx.ok();
+};
+
+/** Every way the line writes, each said once; null when it only reads and runs, or cannot be parsed. */
 const readAndRun: Check = (ctx) => {
   const commands = shellCommands(ctx);
   if (commands === null) return ctx.ok(); // flow's convention: a line it cannot parse is not judged
-  const why = whatWrites(commands);
-  return why === null ? ctx.ok() : ctx.fail(why);
+  const found = new Set<string>();
+  for (const c of commands) {
+    const w = writeOf(c);
+    if (w !== null) found.add(w);
+  }
+  return found.size === 0 ? ctx.ok() : ctx.fail([...found].join("; "));
 };
 
 /**
  * A repo driven by work: the daemon types `[work]` lines into one Claude Code session per issue,
- * and the session reaches GitHub only through `work gh`.
+ * and the session tells the human with `work log`.
  *
- * @setup `work` on the PATH (it provides `work gh`), and a `work.yml` at the repo root.
+ * @setup `work` on the PATH (it provides `work log`), and a `work.yml` at the repo root.
  */
 export const driven = definePack("driven", {
   /**
-   * Without it, a session in a driven repo reads `[work]` lines as a stranger's chatter, answers
-   * in the terminal where nobody is reading, and reaches for the `gh` it already knows.
+   * Without it, a session in a driven repo reads `[work]` lines as a stranger's chatter, and
+   * answers in the terminal where nobody is reading.
    */
   orientation: breadcrumb()
     .at(session)
     .text(
       [
-        "This repo is driven by work. Each GitHub issue on its board has one Claude Code session in its own worktree; the work daemon types lines starting with `[work]` into it. `[work] /work <verb> <issue>` is the card entering a Status: invoke the `work` skill, which dispatches the verb. Any other `[work]` line relays a comment, review, check or merge on the issue, its sub-issues or its pull request.",
-        "GitHub is the record and the human reads it there, not in this terminal: ask in a comment that starts with `<!-- work:agent -->` and @mentions them, then stop. Every GitHub call is `work gh …`, which acts as the GitHub App, and as the human for `gh project`. Move the card only where the skill says; when stuck, post a Needs you on the parent issue and stop. A Needs you is the only comment that @mentions the human; the daemon labels the issue from it, so never add or remove a state label yourself.",
+        "This repo is driven by work. Each issue is a folder in the record, `.work/<id>/`, with one Claude Code session in its own worktree; the work daemon types lines starting with `[work]` into it. `[work] /work <verb> <issue>` is the issue entering a status: invoke the `work` skill, which dispatches the verb. Any other `[work]` line relays the daemon, such as a merge of the issue's branch.",
+        "The record is `.work/<id>/`: `issue.md`, `tasks/`, `log.jsonl` and `artifacts/`. You edit `issue.md` and the tasks as Markdown; a move is the `status:` line, and only where the skill says. Only the daemon writes `log.jsonl`: ask the human with `work log question --ask \"…\"` and its body on stdin as a quoted heredoc, then stop; tell them with `work log fyi`. One question is open at a time. Never record a session's state in the record.",
       ].join("\n"),
     )
-    .description("How a repo driven by work works: [work] lines, the work skill, work gh, GitHub as the record."),
+    .description("How a repo driven by work works: [work] lines, the work skill, the record in .work, work log."),
 
   /**
-   * Without it, an agent falls back to the `gh` it knows: its comments and pull requests are
-   * posted as the human, the daemon cannot tell them from the human's own, and a `project` call
-   * as the App fails because an App cannot see a user's board.
+   * Without it, a session could write `issue.md` or a task with a key the daemon does not read, or
+   * move an issue to a status `fields.status` does not have, which the daemon logs as an error and
+   * acts on not at all, and nobody sees the move did nothing.
+   *
+   * The entry is the path: an issue folder's `issue.md` or `tasks/<n>.md`, through `.work` or the
+   * record's own path. The issue's keys are those of record.md § issue.md and every field work.yml
+   * names; a task's are `id`, `title` and `done`.
    */
-  noBareGh: guardrail()
-    .at(command)
-    .check(bareGh)
+  recordShape: guardrail()
+    .at(write)
+    .check(recordShape)
     .message(
-      "Bare `gh` in a repo driven by work. Run the same command as `work gh …`: it runs `gh project …` as you, so the board can be read and moved, and everything else as the GitHub App, so comments and pull requests are the App's and the daemon can tell them from yours. Bare `gh` would post as you.",
+      "An issue's `issue.md` or task file whose front matter is not the record's shape (docs/user/reference/record.md § issue.md, § tasks/). Keep the front matter's keys to the ones the page lists, the issue's `status` to a value of `fields.status` in work.yml, and a task's to `id`, `title` and `done`; write anything else in the body.",
     )
-    .description("Every GitHub call in a driven repo is `work gh`; a bare `gh` is refused before it runs.")
+    .description("An issue's issue.md has only the record's keys and a status of fields.status; a task file's front matter is id, title and done.")
     .test({
-      pass: [
-        "work gh issue list",
-        "work gh issue view 42 --comments",
-        "cd sub && work gh pr create --draft --base dev --title x --body-file .work/tmp/pr.md",
-        "/Users/me/go/bin/work gh project item-list 3 --owner me --format json",
-        "bin/work gh api repos/me/app/issues/42/sub_issues",
-        "pid=$(work gh project view 3 --owner me --format json --jq .id)",
-        "git checkout -b fix-gh-login",
-        'grep -rn "gh issue" docs',
-        "which gh",
-        "brew upgrade gh",
-        "ls ~/.config/gh",
-        "ghq get github.com/me/app",
-        "cat > notes.md <<'EOF'\ngh issue list\nEOF",
-        // Named inside another command's argument, gh is prose, not a call.
-        "echo 'gh issue list'",
-        'work gh issue comment 42 --body "ran gh issue list by mistake"',
-        // A line that does not parse is not judged: bash refuses to run it.
-        'gh issue comment 42 --body "unclosed',
-      ],
       block: [
-        "gh issue list",
-        "gh pr create --draft --base dev",
-        "cd sub && gh issue view 42 --comments",
-        "git status\ngh issue list",
-        "GH_TOKEN=x gh api user",
-        "echo hi | gh issue comment 42 --body-file -",
-        "n=$(gh pr view --json number -q .number)",
-        "/opt/homebrew/bin/gh issue list",
-        "command gh auth status",
-        "xargs -n1 gh issue close",
-        "sh -c 'gh issue list'",
-        "if gh pr view; then echo open; fi",
+        { path: ".work/app-42/tasks/3.md", content: "---\nid: app-42/3\ntitle: x\ndone: false\nowner: builder\n---\n- [ ] a box\n" },
+        { path: ".work/app-42/tasks/3.md", content: "---\nid: app-42/3\ntitle: x\n---\n" },
+        { path: ".work/app-42/tasks/4.md", content: "- [ ] a box with no front matter\n" },
+        {
+          path: ".work/app-42/issue.md",
+          content: "---\nid: app-42\ntitle: x\nstatus: Doing\n---\nbody\n",
+          world: { fs: { "work.yml": "name: app\nfields:\n  status:\n    values:\n      - { name: Backlog }\n      - { name: Build }\n" } },
+        },
+        {
+          path: "/Users/me/src/app.record/app-42/issue.md",
+          content: "---\nid: app-42\ntitle: x\nstatus: Build\nassignee: me\n---\n",
+          world: { fs: { "work.yml": "fields:\n  status:\n    values: [{ name: Build }]\n  priority:\n    values: [low, high]\n" } },
+        },
+        {
+          path: ".work/app-42/issue.md",
+          content: "---\nid: app-42\ntitle: [x\n---\n",
+          world: { fs: { "work.yml": "fields:\n  status:\n    values: [{ name: Build }]\n" } },
+        },
+      ],
+      pass: [
+        { path: ".work/app-42/tasks/3.md", content: "---\nid: app-42/3\ntitle: \"[B] x\"\ndone: true\n---\n- [x] a box\n" },
+        {
+          path: ".work/app-42/issue.md",
+          content: "---\nid: app-42\ntitle: x\nstatus: Build\npriority: high\narchived: true\nrefs:\n  pr: me/app#57\n---\nyour text\n\n<!-- work:agent -->\n\n## Triage\n",
+          world: { fs: { "work.yml": "fields:\n  status:\n    values: [{ name: Backlog }, { name: Build }]\n  priority:\n    values: [low, high]\n" } },
+        },
+        {
+          path: ".work/app-12/issue.md",
+          content: "---\nid: app-12\nkind: chat\ntitle: Decide how the index stays in step\nfolder: /Users/you/src/app\n---\n",
+          world: { fs: { "work.yml": "fields:\n  status:\n    values: [{ name: Build }]\n" } },
+        },
+        {
+          path: ".work/app-12/issue.md",
+          content:
+            "---\nid: app-12\nkind: chat\ntitle: The index\nsummary: |\n  We weighed a watcher against indexing as the daemon writes.\n  The index lives in ~/.work.\nfolder: /Users/you/src/app/internal\narchived: true\n---\n",
+          world: { fs: { "work.yml": "fields:\n  status:\n    values: [{ name: Build }]\n" } },
+        },
+        {
+          path: ".work/app-13/issue.md",
+          content: "---\nid: app-13\ntitle: Search\nstatus: Build\nfrom: app-12\n---\nWhat the chat decided.\n",
+          world: { fs: { "work.yml": "fields:\n  status:\n    values: [{ name: Build }]\n" } },
+        },
+        { path: ".work/app-42/issue.md", content: "---\nstatus: Anything\n---\n" },
+        { path: ".work/app-42/artifacts/notes.md", content: "no front matter\n" },
+        { path: "docs/user/reference/record.md", content: "---\nsummary: x\n---\n" },
+        { path: ".work/dark-mode.md", content: "# A new issue\n" },
       ],
     }),
 
   /**
-   * Without it, the verifier's unrestricted Bash is a builder's: it can fix the defect it was sent
-   * to find, commit it, or post its own verdict, and the leader then records a pass on evidence the
-   * verifier made. Its tool list withholds Edit and Write; this holds the shell to the same line,
-   * for the deduper and the review lenses too.
+   * Without it, a session could write its issue's log as a file: a line in a shape the daemon does
+   * not read, an answer that names no question, or a line rewritten, when the log is append-only and
+   * a question is open until an answer names it. A session adds a line with `work log`, which the
+   * daemon appends; the session never opens the file.
+   *
+   * The entry is the path: `log.jsonl` in an issue's folder, written or deleted with a tool, or named
+   * by a shell command that writes it. Reading it, with `cat`, `tail` or `jq`, is no write.
    */
-  verifierReadsAndRuns: guardrail()
+  logByDaemon: guardrail()
+    .at(write, deletion, command)
+    .check(logByDaemon)
+    .message(
+      "Only the daemon writes an issue's `log.jsonl` (docs/user/reference/record.md § log.jsonl). Ask with `work log question --ask \"…\"`, or tell with `work log fyi`, the body on stdin as a quoted heredoc, `<<'WORKLOG'`: the daemon appends the line. A line already in the log is never changed.",
+    )
+    .description("An issue's log.jsonl is written by the daemon alone: a session's write, delete or shell write of one is refused, and `work log` adds a line.")
+    .test({
+      pass: [
+        { path: ".work/app-42/issue.md", content: "---\nid: app-42\n---\n" },
+        { path: "internal/record/testdata/log.jsonl", content: "{}\n" },
+        "tail -5 .work/app-42/log.jsonl",
+        "jq -c 'select(.kind == \"question\")' .work/app-42/log.jsonl",
+        "work log fyi --on 3 <<'WORKLOG'\nAppended to .work/app-42/log.jsonl by the daemon.\nWORKLOG",
+        "cp .work/app-42/log.jsonl /tmp/before.jsonl",
+        "gh pr list",
+        "gh api repos/{owner}/{repo}/pulls/57/comments --jq '.[].body'",
+        'grep -c "" .work/app-42/log.jsonl > /dev/null',
+      ],
+      block: [
+        { path: ".work/app-42/log.jsonl", content: '{"kind":"answer"}\n' },
+        { path: "/Users/me/src/app.record/app-42/log.jsonl", content: "" },
+        "echo '{\"kind\":\"fyi\"}' >> .work/app-42/log.jsonl",
+        "printf '%s\\n' x | tee -a .work/work-7/log.jsonl",
+        "sed -i '' '$d' .work/app-42/log.jsonl",
+        "rm .work/app-42/log.jsonl",
+        "cp /tmp/before.jsonl .work/app-42/log.jsonl",
+        "mv .work/app-42/log.jsonl /tmp/gone.jsonl",
+        "cd .work && cat > app-42/log.jsonl <<'EOF'\n{}\nEOF",
+      ],
+    }),
+
+  /**
+   * Without it, a reviewer that reached a shell would have a builder's hands: it could fix the
+   * defect it was sent to find, commit it, or write its own finding into the issue's log, and the
+   * leader would then act on a review the reviewer made true. The four tool lists withhold Edit and Write; this holds the
+   * shell to the same line.
+   */
+  reviewersReadAndRun: guardrail()
     .at(command)
-    .for(checker)
+    .for(reviewer)
     .check(readAndRun)
     .message(
-      "You were spawned to check this work, as the verifier, the deduper or a review lens: you read and you run, and you change nothing. No file, no commit, no push, no post on GitHub. Run the proofs and the tests as the branch has them, and read their output through a pipe (`| tail`, `| grep`) rather than a file. When a proof needs a change, or a state the worktree is not in, say so in your report: the leader owns the code and records the verdict.",
+      "You were spawned to review this work, as secops, codeops, docops or devops: you read the change, and you change nothing. No file, no commit, no push, no line in the issue's log. Read it with `git diff`, `git show` and `git log`, and filter their output through a pipe (`| grep`, `| head`) rather than a file. When a finding needs a change, say so in your report: the leader owns the code and decides what to change.",
     )
-    .description("The verifier, the deduper and the review lenses read and run: a shell command that writes a file, changes git or posts to GitHub is refused.")
+    .description("The four reviewers, secops, codeops, docops and devops, read the change with git diff, show and log: a shell command that writes a file, changes git or writes the issue's log is refused.")
     .test({
       pass: [
         "go test ./...",
@@ -230,10 +345,9 @@ export const driven = definePack("driven", {
         "git branch --show-current",
         "git tag --list",
         "git -C ../app log -1",
-        "work gh issue view 44 --comments",
-        "work gh pr view --comments",
-        "work gh api repos/{owner}/{repo}/issues/42/sub_issues --jq '.[].number'",
-        "work gh api -X GET search/issues -f q=repo:me/app",
+        "gh pr view 57 --comments",
+        "cat .work/app-42/issue.md",
+        "tail -3 .work/app-42/log.jsonl",
         'grep -rn "a > b" docs',
         "rg -n 'rm -rf|git push' .",
         "which tee",
@@ -244,13 +358,12 @@ export const driven = definePack("driven", {
         "body=$(cat <<'EOF'\ngit commit -am x > out.md\nEOF\n)\necho \"$body\" | head -1",
         'grep -n "> " notes.md',
         "git log --oneline -3 | xargs -n1 echo",
-        "wc -l < notes.md",
-        "go test ./... 2>&1 >/dev/null | tail -5",
-        "go test 2>&-",
+        "echo done >&2",
       ],
       block: [
         "echo x > notes.md",
         "go test ./... > out.log 2>&1",
+        "go test ./... &> out.log",
         "cat <<'EOF' >> README.md\nmore\nEOF",
         "go test ./... | tee out.log",
         "sed -i '' 's/a/b/' main.go",
@@ -259,6 +372,8 @@ export const driven = definePack("driven", {
         "cp a.go b.go",
         "mv a.go b.go",
         "rm -rf internal/x",
+        "/bin/rm -rf internal/x",
+        "sudo rm -rf internal/x",
         "mkdir -p out",
         "touch x.go",
         'git commit -m "fix(cli): the flag #44"',
@@ -271,27 +386,17 @@ export const driven = definePack("driven", {
         "git reset --hard HEAD~1",
         "git restore main.go",
         "git branch -D old",
+        "git worktree add ../x",
         "sh -c 'echo x > f'",
-        "work gh issue comment 44 --body-file .work/tmp/v.md",
-        "work gh issue close 44",
-        "work gh pr ready 57",
-        "work gh project item-edit --id x --project-id y --field-id z --single-select-option-id w",
-        "work gh api -X PATCH repos/{owner}/{repo}/issues/44 -f body=x",
-        "work gh api repos/{owner}/{repo}/issues/42/sub_issues -F sub_issue_id=1",
+        "bash <<< 'rm -rf build'",
+        "work log fyi <<'WORKLOG'\nThe review found nothing.\nWORKLOG",
+        "work log question --ask 'Keep the cache?' <<'WORKLOG'\nx\nWORKLOG",
         "cat <<-EOF > notes.md\n\tx\n\tEOF",
         "x=$(cat <<'EOF'\nok\nEOF\n) && rm -f out.md",
         "if git push; then echo ok; fi",
         "git log --format=%h | xargs -n1 rm",
         'eval "rm -rf internal"',
         'n=$(git commit -m "fix (#44)")',
-        "work gh api -XPATCH repos/{owner}/{repo}/issues/44",
-        // A group's or a loop's redirect writes for every command inside it.
-        "{ go test ./...; go vet ./...; } > out.log",
-        "while read l; do echo $l; done < in.txt >> out.txt",
-        "go test ./... &> out.log",
-        "echo x >&out.txt",
-        "echo x >| f",
-        "go test &>> f",
       ],
     }),
 });

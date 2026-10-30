@@ -14,7 +14,7 @@ agents:                                              # the model each agent runs
   codeops:  { model: opus }
   docops:   { model: opus }
   devops:   { model: opus }
-permissions: auto                                    # passed to claude as --permission-mode
+permissions: bypassPermissions                       # passed to claude as --permission-mode
 teardown: archived                                   # archiving the card tears the session and its worktree down
 
 environment:                                         # flow guards itself through dist/, which git does not carry: install and build before the session starts, or every tool call is refused
@@ -37,23 +37,5 @@ fields:                                              # every field is a key in e
 
 events:                                              # each `send` is the text typed into the issue's session when the event happens
 
-  from: []                                           # logins relayed besides the repo's owner, members and collaborators
-
-  review: |
-    [work] @{author} {state} PR #{pr} ({url})
-    {comments}
-    Overall: {body}
-
-  review_comment: |
-    [work] @{author} commented on PR #{pr}, {path} line {line} ({url})
-    {body}
-
-  pr_comment: |
-    [work] @{author} commented on PR #{pr} ({url})
-    {body}
-
-  check: |
-    [work] check "{name}" {conclusion} on PR #{pr} ({url})
-
   merged: |
-    [work] PR #{pr} merged into {base}
+    [work] Merged into {base}

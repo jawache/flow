@@ -140,7 +140,7 @@ export default defineConfig([
   // ── driven by the work daemon ──
   //
   // `guards/driven.ts` is the default workflow's pack, copied in by `work init --template` rather
-  // than written here: each issue's session acts on GitHub through `work gh`, never a bare gh.
+  // than written here.
   pack(driven),
 
   // ── this repo's own terrain ──
