@@ -886,6 +886,8 @@ export const git = definePack("git", (repo: Release) => {
         "gh api -iXDELETE /repos/a/b",
         // `gh` sends the last method, but a line that names DELETE is not worth reading further.
         "gh api -X DELETE -X GET /repos/a/b",
+        // `api` is found anywhere in the arguments, as the other four commands are.
+        "gh -X DELETE api /repos/a/b",
         // The program that runs, wherever the line runs it.
         "/opt/homebrew/bin/gh repo delete me/x",
         "/opt/homebrew/bin/gh api -X DELETE /repos/a/b",
@@ -897,7 +899,9 @@ export const git = definePack("git", (repo: Release) => {
         "gh repo delete me/x 'unclosed",
         "gh api -X DELETE /repos/a/b 'unclosed",
         "gh api -XDELETE /repos/a/b 'unclosed",
+        "gh api -X=DELETE /repos/a/b 'unclosed",
         "gh api -iX=DELETE /repos/a/b 'unclosed",
+        "gh api --method DELETE /repos/a/b 'unclosed",
         "gh api --method=DELETE /repos/a/b 'unclosed",
         "/opt/homebrew/bin/gh api -X Delete /repos/a/b 'unclosed",
       ],

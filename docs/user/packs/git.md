@@ -376,6 +376,7 @@ EOF`
 - running `gh api -iX DELETE /repos/a/b`
 - running `gh api -iXDELETE /repos/a/b`
 - running `gh api -X DELETE -X GET /repos/a/b`
+- running `gh -X DELETE api /repos/a/b`
 - running `/opt/homebrew/bin/gh repo delete me/x`
 - running `/opt/homebrew/bin/gh api -X DELETE /repos/a/b`
 - running `git status && gh repo delete me/x`
@@ -385,7 +386,9 @@ EOF`
 - running `gh repo delete me/x 'unclosed`
 - running `gh api -X DELETE /repos/a/b 'unclosed`
 - running `gh api -XDELETE /repos/a/b 'unclosed`
+- running `gh api -X=DELETE /repos/a/b 'unclosed`
 - running `gh api -iX=DELETE /repos/a/b 'unclosed`
+- running `gh api --method DELETE /repos/a/b 'unclosed`
 - running `gh api --method=DELETE /repos/a/b 'unclosed`
 - running `/opt/homebrew/bin/gh api -X Delete /repos/a/b 'unclosed`
 
