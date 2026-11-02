@@ -324,7 +324,7 @@ function apiDeletes(args: readonly string[]): boolean {
 }
 
 /**
- * Refuses the `gh` commands that delete or move something on GitHub for good. Four are a command in
+ * Refuses the `gh` commands that delete, archive or move something on GitHub. Four are a command in
  * words, for `banCommands`. `gh api` is not: `banCommands` reads `-XDELETE` letter by letter and
  * `--method=DELETE` as one whole word, so its method is read from the parse here. A line that does
  * not parse has no method to read, so `banCommands` looks for the method's spellings in it as whole
@@ -569,7 +569,7 @@ export const git = definePack("git", (repo: Release) => {
         "Commit headers speak Conventional Commits — `type(scope)!: description`. The TYPE is your judgement: `fix` patches behaviour, `feat` adds it, `refactor` changes neither (and must not change test expectations); a `!` or a `BREAKING CHANGE:` footer drives the SemVer major. The grammar is enforced; the choice is yours.",
         `The version number is computed from this history at release (\`${repo.release}\`) — never hand-edit a version field or a changelog.`,
         "A `git checkout` / `git restore` / `reset --hard` / `clean -f` that would silently wipe uncommitted work is blocked outright — there is no bypass token. Use `git stash` instead; it is recoverable.",
-        "`gh repo delete` / `archive` / `rename`, `gh release delete` and `gh api` with the DELETE method are refused. Every other `gh` call runs, under the person's own login.",
+        "`gh repo delete` / `archive` / `rename`, `gh release delete` and `gh api` with the DELETE method are refused. So is a call that only names those words, such as `gh repo view delete`. Every other `gh` call runs, under the person's own login.",
       ].join("\n"),
     ),
 
@@ -832,7 +832,7 @@ export const git = definePack("git", (repo: Release) => {
     .description("Blocks `gh repo delete`, `archive` and `rename`, `gh release delete`, and `gh api` with the DELETE method.")
     .check(noDestructiveGh({}))
     .message(
-      "That `gh` command deletes or moves something on GitHub that other people and clones rely on, and a session never runs it. If it is wanted, ask the person to run it in their own terminal. A repo that lets sessions run it disables this entry in flow.config.ts, visibly.",
+      "That `gh` command deletes, archives or moves something on GitHub that other people and clones rely on, and a session never runs it. If it is wanted, ask the person to run it in their own terminal. A repo that lets sessions run it disables this entry in flow.config.ts, visibly.",
     )
     .test({
       pass: [
