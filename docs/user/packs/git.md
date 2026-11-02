@@ -345,6 +345,7 @@ That `gh` command deletes or moves something on GitHub that other people and clo
 - running `gh api -X POST -f x=DELETE /repos/a/b`
 - running `gh api -f x=DELETE /repos/a/b`
 - running `gh api -fX=DELETE /repos/a/b`
+- running `gh pr list -X DELETE`
 - running `git commit -m "docs: never run gh repo delete"`
 - running `git commit -m "docs: never run gh api -X DELETE /x"`
 - running `cat > notes.md <<'EOF'
@@ -353,6 +354,8 @@ gh api -X DELETE /x
 EOF`
 - running `gh issue create --title x --body "gh api -X DELETE /x"`
 - running `gh api /repos/a/b; curl -X DELETE http://localhost/x`
+- running `curl api -X DELETE http://x 'unclosed`
+- running `gh api -X GET /repos/a/b 'unclosed`
 
 **blocks**
 
@@ -381,6 +384,10 @@ EOF`
 - running `echo $(gh api -X DELETE /repos/a/b)`
 - running `gh repo delete me/x 'unclosed`
 - running `gh api -X DELETE /repos/a/b 'unclosed`
+- running `gh api -XDELETE /repos/a/b 'unclosed`
+- running `gh api -iX=DELETE /repos/a/b 'unclosed`
+- running `gh api --method=DELETE /repos/a/b 'unclosed`
+- running `/opt/homebrew/bin/gh api -X Delete /repos/a/b 'unclosed`
 
 ## `git.noGateSkip` — guardrail
 
