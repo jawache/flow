@@ -3,13 +3,14 @@
 //
 // Subtlety: the release RECIPE is a mandatory parameter, not `just release` written into the pack — which command cuts a release is the repo's fact, and it is named in the sentence a blocked person reads.
 //
-// NO BYPASSES: `noGitDiscard` and `noForcePush` have no marker escape. The strictest variant in the
+// NO BYPASSES: `noGitDiscard`, `noForcePush` and `noDestructiveGh` have no marker escape. The strictest variant in the
 // fleet is the one that shipped; a repo that wants out disables the entry in its config, visibly.
 //
 // The `node/` sub-group is nested rather than flattened because `git.node.versionIsSemver` is what
 // the entry is called, and a pack's shape is what a reader navigates it by.
 
 import {
+  banCommands,
   breadcrumb,
   command,
   commit,
@@ -302,6 +303,48 @@ const noForcePush = defineCheck(
     },
 );
 
+/**
+ * A word that gives `gh api` its method, and the value when it is attached: `--method`, `-X` and
+ * the bundle `-iX`, the one short flag of `gh api` that takes no value being `-i`. So `-fX=DELETE`
+ * is a field and no method.
+ */
+const GH_API_METHOD = /^(?:--method(?:=|$)|-i*X=?)(.*)$/;
+
+/** Do these arguments of `gh` run `gh api` and name DELETE as its method? `gh` takes the method in any letter case and sends the last one given; naming DELETE at all is enough. */
+function apiDeletes(args: readonly string[]): boolean {
+  return (
+    args.includes("api") &&
+    args.some((arg, i) => {
+      const flag = GH_API_METHOD.exec(arg);
+      if (flag === null) return false;
+      const value = flag[1] === "" ? args[i + 1] : flag[1];
+      return value?.toLowerCase() === "delete";
+    })
+  );
+}
+
+/**
+ * Refuses the `gh` commands that delete, archive or move something on GitHub. Four are a command in
+ * words, for `banCommands`. `gh api` is not: `banCommands` reads `-XDELETE` letter by letter and
+ * `--method=DELETE` as one whole word, so its method is read from the parse here. A line that does
+ * not parse has no method to read, so `banCommands` looks for the method's spellings in it as whole
+ * words, the line lowered first because `gh` takes the method in any letter case.
+ */
+const noDestructiveGh = defineCheck((_opts: Record<string, never>): Check => {
+  const named = banCommands({ ban: ["gh repo delete", "gh repo archive", "gh repo rename", "gh release delete"] });
+  const unparsedApi = banCommands({
+    ban: ["gh api -x delete", "gh api -xdelete", "gh api -x=delete", "gh api -ix=delete", "gh api --method delete", "gh api --method=delete"],
+  });
+  return async (ctx) => {
+    const verdict = await named(ctx);
+    if (!verdict.ok) return verdict;
+    const parsed = shellCommands(ctx);
+    if (parsed === null) return unparsedApi({ ...ctx, command: (ctx.command ?? "").toLowerCase() });
+    const deletes = parsed.some((c) => programName(c.program) === "gh" && apiDeletes(c.args));
+    return deletes ? ctx.fail("`gh api` with the DELETE method") : ctx.ok();
+  };
+});
+
 /** Does this header line speak Conventional Commits for the given type set? */
 export function isConventional(header: string, types: readonly string[]): boolean {
   const alt = types.map(escapeRe).join("|");
@@ -526,6 +569,7 @@ export const git = definePack("git", (repo: Release) => {
         "Commit headers speak Conventional Commits — `type(scope)!: description`. The TYPE is your judgement: `fix` patches behaviour, `feat` adds it, `refactor` changes neither (and must not change test expectations); a `!` or a `BREAKING CHANGE:` footer drives the SemVer major. The grammar is enforced; the choice is yours.",
         `The version number is computed from this history at release (\`${repo.release}\`) — never hand-edit a version field or a changelog.`,
         "A `git checkout` / `git restore` / `reset --hard` / `clean -f` that would silently wipe uncommitted work is blocked outright — there is no bypass token. Use `git stash` instead; it is recoverable.",
+        "`gh repo delete` / `archive` / `rename`, `gh release delete` and `gh api` with the DELETE method are refused. So is a call that only names those words, such as `gh repo view delete`. Every other `gh` call runs, under the person's own login.",
       ].join("\n"),
     ),
 
@@ -775,6 +819,89 @@ export const git = definePack("git", (repo: Release) => {
         "/usr/bin/git push --force",
         // A force-push chained behind another command is a command of its own.
         "git status && git push --force origin main",
+      ],
+    }),
+
+  /**
+   * A session runs with no permission prompts and under the person's own GitHub login, so nothing
+   * else stands between it and a `gh` command that deletes something for good. A deletion that is
+   * wanted is one the person runs themselves.
+   */
+  noDestructiveGh: guardrail()
+    .at(command)
+    .description("Blocks `gh repo delete`, `archive` and `rename`, `gh release delete`, and `gh api` with the DELETE method.")
+    .check(noDestructiveGh({}))
+    .message(
+      "That `gh` command deletes, archives or moves something on GitHub that other people and clones rely on, and a session never runs it. If it is wanted, ask the person to run it in their own terminal. A repo that lets sessions run it disables this entry in flow.config.ts, visibly.",
+    )
+    .test({
+      pass: [
+        "gh repo view",
+        "gh repo view me/delete",
+        "gh pr create --title x --body y",
+        // Deletions outside the five stay allowed, and `delete-asset` is a word of its own.
+        "gh issue delete 1",
+        "gh gist delete abc",
+        "gh release delete-asset v1 a.zip",
+        "gh api graphql -f query='mutation { deleteRepository(input: {}) { clientMutationId } }'",
+        // `gh api` with another method, or with DELETE as a value and not the method.
+        "gh api /repos/a/b",
+        "gh api -X GET /repos/a/b",
+        "gh api -X POST -f x=DELETE /repos/a/b",
+        "gh api -f x=DELETE /repos/a/b",
+        "gh api -fX=DELETE /repos/a/b",
+        // The method flag means nothing without `api`.
+        "gh pr list -X DELETE",
+        // A command named in text is no command: a commit message, a heredoc body, a quoted body.
+        'git commit -m "docs: never run gh repo delete"',
+        'git commit -m "docs: never run gh api -X DELETE /x"',
+        "cat > notes.md <<'EOF'\ngh repo delete me/x\ngh api -X DELETE /x\nEOF",
+        'gh issue create --title x --body "gh api -X DELETE /x"',
+        // The flag belongs to the command after the call.
+        "gh api /repos/a/b; curl -X DELETE http://localhost/x",
+        // A line that does not parse needs `gh` and the DELETE method among its words.
+        "curl api -X DELETE http://x 'unclosed",
+        "gh api -X GET /repos/a/b 'unclosed",
+      ],
+      block: [
+        "gh repo delete me/x --yes",
+        "gh repo archive me/x",
+        "gh repo rename y",
+        "gh release delete v1",
+        // A call that only names the word is refused: a wrong refusal is cheaper than a wrong pass.
+        "gh repo view delete",
+        "gh release view delete",
+        // Every spelling `gh` accepts, each one seen reaching a server as DELETE.
+        "gh api -X DELETE /repos/a/b",
+        "gh api -XDELETE /repos/a/b",
+        "gh api -X=DELETE /repos/a/b",
+        "gh api --method DELETE /repos/a/b",
+        "gh api --method=DELETE /repos/a/b",
+        "gh api -X delete /repos/a/b",
+        "gh api -Xdelete /repos/a/b",
+        "gh api --method=delete /repos/a/b",
+        "gh api -iX DELETE /repos/a/b",
+        "gh api -iXDELETE /repos/a/b",
+        // `gh` sends the last method, but a line that names DELETE is not worth reading further.
+        "gh api -X DELETE -X GET /repos/a/b",
+        // `api` is found anywhere in the arguments, as the other four commands are.
+        "gh -X DELETE api /repos/a/b",
+        // The program that runs, wherever the line runs it.
+        "/opt/homebrew/bin/gh repo delete me/x",
+        "/opt/homebrew/bin/gh api -X DELETE /repos/a/b",
+        "git status && gh repo delete me/x",
+        "sudo gh api -X DELETE /repos/a/b",
+        "bash -c 'gh api -X DELETE /repos/a/b'",
+        "echo $(gh api -X DELETE /repos/a/b)",
+        // A line that does not parse is refused on its words.
+        "gh repo delete me/x 'unclosed",
+        "gh api -X DELETE /repos/a/b 'unclosed",
+        "gh api -XDELETE /repos/a/b 'unclosed",
+        "gh api -X=DELETE /repos/a/b 'unclosed",
+        "gh api -iX=DELETE /repos/a/b 'unclosed",
+        "gh api --method DELETE /repos/a/b 'unclosed",
+        "gh api --method=DELETE /repos/a/b 'unclosed",
+        "/opt/homebrew/bin/gh api -X Delete /repos/a/b 'unclosed",
       ],
     }),
 

@@ -1,5 +1,5 @@
 ---
-summary: "8 guardrails · 1 breadcrumb · fires at: session · command · write · commit · takes 3 parameters"
+summary: "9 guardrails · 1 breadcrumb · fires at: session · command · write · commit · takes 3 parameters"
 ---
 
 # The `git` pack
@@ -52,6 +52,7 @@ refuse the first few commits while everyone re-learns the format — that is the
 - [`git.noAiAttributionInCommits`](#gitnoaiattributionincommits--guardrail) · guardrail · Blocks Claude/Anthropic attribution in commits, PRs and issues.
 - [`git.noGitDiscard`](#gitnogitdiscard--guardrail) · guardrail · Blocks a git command that would wipe uncommitted work — checkout/restore/reset --hard/clean -f. No bypass; use git stash.
 - [`git.noForcePush`](#gitnoforcepush--guardrail) · guardrail · Blocks a force-push — rewriting pushed history is the one loss a stash cannot undo.
+- [`git.noDestructiveGh`](#gitnodestructivegh--guardrail) · guardrail · Blocks `gh repo delete`, `archive` and `rename`, `gh release delete`, and `gh api` with the DELETE method.
 - [`git.noGateSkip`](#gitnogateskip--guardrail) · guardrail · Blocks a commit the commit gate never runs on — --no-verify, -c core.hooksPath=…, commit-tree, update-ref, hash-object -w.
 - [`git.conventionalCommitFormat`](#gitconventionalcommitformat--guardrail) · guardrail · The commit header must speak Conventional Commits v1.0.0 (checked before git commit runs).
 - [`git.noShellSubstitutionInProse`](#gitnoshellsubstitutioninprose--guardrail) · guardrail · A backtick the shell would run in a commit message or a PR or issue body (double-quoted, bare, or in an unquoted heredoc) is live command substitution, not Markdown.
@@ -79,6 +80,7 @@ Commits, PRs and issues carry NO Claude/Anthropic attribution — no Co-Authored
 Commit headers speak Conventional Commits — `type(scope)!: description`. The TYPE is your judgement: `fix` patches behaviour, `feat` adds it, `refactor` changes neither (and must not change test expectations); a `!` or a `BREAKING CHANGE:` footer drives the SemVer major. The grammar is enforced; the choice is yours.
 The version number is computed from this history at release (`./ci.sh release`) — never hand-edit a version field or a changelog.
 A `git checkout` / `git restore` / `reset --hard` / `clean -f` that would silently wipe uncommitted work is blocked outright — there is no bypass token. Use `git stash` instead; it is recoverable.
+`gh repo delete` / `archive` / `rename`, `gh release delete` and `gh api` with the DELETE method are refused. So is a call that only names those words, such as `gh repo view delete`. Every other `gh` call runs, under the person's own login.
 ```
 
 ## `git.noAiAttributionInCommits` — guardrail
@@ -305,6 +307,90 @@ EOF`
 - running `git --no-pager push -f`
 - running `/usr/bin/git push --force`
 - running `git status && git push --force origin main`
+
+## `git.noDestructiveGh` — guardrail
+
+Blocks `gh repo delete`, `archive` and `rename`, `gh release delete`, and `gh api` with the DELETE method.
+
+- **Refuses at** a shell command is about to run
+- **Watches** not scoped by path
+- **Categories** every session
+- **Check** `noDestructiveGh` *(written in this pack)* — no options
+
+### Why it exists
+
+A session runs with no permission prompts and under the person's own GitHub login, so nothing
+else stands between it and a `gh` command that deletes something for good. A deletion that is
+wanted is one the person runs themselves.
+
+### What the agent reads when refused
+
+```
+That `gh` command deletes, archives or moves something on GitHub that other people and clones rely on, and a session never runs it. If it is wanted, ask the person to run it in their own terminal. A repo that lets sessions run it disables this entry in flow.config.ts, visibly.
+```
+
+### Proved by
+
+**passes**
+
+- running `gh repo view`
+- running `gh repo view me/delete`
+- running `gh pr create --title x --body y`
+- running `gh issue delete 1`
+- running `gh gist delete abc`
+- running `gh release delete-asset v1 a.zip`
+- running `gh api graphql -f query='mutation { deleteRepository(input: {}) { clientMutationId } }'`
+- running `gh api /repos/a/b`
+- running `gh api -X GET /repos/a/b`
+- running `gh api -X POST -f x=DELETE /repos/a/b`
+- running `gh api -f x=DELETE /repos/a/b`
+- running `gh api -fX=DELETE /repos/a/b`
+- running `gh pr list -X DELETE`
+- running `git commit -m "docs: never run gh repo delete"`
+- running `git commit -m "docs: never run gh api -X DELETE /x"`
+- running `cat > notes.md <<'EOF'
+gh repo delete me/x
+gh api -X DELETE /x
+EOF`
+- running `gh issue create --title x --body "gh api -X DELETE /x"`
+- running `gh api /repos/a/b; curl -X DELETE http://localhost/x`
+- running `curl api -X DELETE http://x 'unclosed`
+- running `gh api -X GET /repos/a/b 'unclosed`
+
+**blocks**
+
+- running `gh repo delete me/x --yes`
+- running `gh repo archive me/x`
+- running `gh repo rename y`
+- running `gh release delete v1`
+- running `gh repo view delete`
+- running `gh release view delete`
+- running `gh api -X DELETE /repos/a/b`
+- running `gh api -XDELETE /repos/a/b`
+- running `gh api -X=DELETE /repos/a/b`
+- running `gh api --method DELETE /repos/a/b`
+- running `gh api --method=DELETE /repos/a/b`
+- running `gh api -X delete /repos/a/b`
+- running `gh api -Xdelete /repos/a/b`
+- running `gh api --method=delete /repos/a/b`
+- running `gh api -iX DELETE /repos/a/b`
+- running `gh api -iXDELETE /repos/a/b`
+- running `gh api -X DELETE -X GET /repos/a/b`
+- running `gh -X DELETE api /repos/a/b`
+- running `/opt/homebrew/bin/gh repo delete me/x`
+- running `/opt/homebrew/bin/gh api -X DELETE /repos/a/b`
+- running `git status && gh repo delete me/x`
+- running `sudo gh api -X DELETE /repos/a/b`
+- running `bash -c 'gh api -X DELETE /repos/a/b'`
+- running `echo $(gh api -X DELETE /repos/a/b)`
+- running `gh repo delete me/x 'unclosed`
+- running `gh api -X DELETE /repos/a/b 'unclosed`
+- running `gh api -XDELETE /repos/a/b 'unclosed`
+- running `gh api -X=DELETE /repos/a/b 'unclosed`
+- running `gh api -iX=DELETE /repos/a/b 'unclosed`
+- running `gh api --method DELETE /repos/a/b 'unclosed`
+- running `gh api --method=DELETE /repos/a/b 'unclosed`
+- running `/opt/homebrew/bin/gh api -X Delete /repos/a/b 'unclosed`
 
 ## `git.noGateSkip` — guardrail
 
