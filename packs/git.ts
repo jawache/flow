@@ -339,10 +339,8 @@ const noDestructiveGh = defineCheck((_opts: Record<string, never>): Check => {
     const verdict = await named(ctx);
     if (!verdict.ok) return verdict;
     const parsed = shellCommands(ctx);
-    const deletes =
-      parsed === null
-        ? !(await unparsedApi({ ...ctx, command: (ctx.command ?? "").toLowerCase() })).ok
-        : parsed.some((c) => programName(c.program) === "gh" && apiDeletes(c.args));
+    if (parsed === null) return unparsedApi({ ...ctx, command: (ctx.command ?? "").toLowerCase() });
+    const deletes = parsed.some((c) => programName(c.program) === "gh" && apiDeletes(c.args));
     return deletes ? ctx.fail("`gh api` with the DELETE method") : ctx.ok();
   };
 });
