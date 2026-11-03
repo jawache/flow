@@ -145,4 +145,6 @@ export default defineConfig([
 
   // ── this repo's own terrain ──
   pack(house, { pure: PURE }),
-]);
+], {
+  driftTokens: 400_000,
+});
