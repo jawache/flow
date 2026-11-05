@@ -143,7 +143,7 @@ If you uninstalled the package first, `flow uninstall` is not there to run. Remo
    - **A dev dependency:** the repo's `.claude/settings.json`.
    - **A global install:** `~/.claude/settings.json`, or `$CLAUDE_CONFIG_DIR/settings.json` when that variable is set.
 
-   Under `hooks`, remove each entry whose command ends with `flow hook session-start`, `flow hook pre-tool-use`, `flow hook post-tool-use`, `flow hook post-tool-use-failure`, `flow hook stop` or `flow hook subagent-stop`.
+   Under `hooks`, remove each entry whose command ends with `flow hook session-start`, `flow hook subagent-start`, `flow hook pre-tool-use`, `flow hook post-tool-use`, `flow hook post-tool-use-failure`, `flow hook stop` or `flow hook subagent-stop`.
 
 ---
 
