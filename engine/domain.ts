@@ -360,12 +360,11 @@ interface Subject {
  *
  * WORK OUTSIDE THE REPOSITORY is no subject of a rule unless it is marked `.everywhere()`: a file
  * outside is not asked about, and a command line is asked about with only its commands inside, or
- * not at all when none is. `commands` is the line's one parse.
+ * not at all when none is. A command with no folder (`null`), or a line that does not parse, counts
+ * as inside. `commands` is the line's one parse.
  */
 async function subjectsOf(entry: LoadedEntry, event: GuardEvent, world: World, commands: readonly ShellCommand[] | null): Promise<Subject[]> {
   const { spec } = entry;
-  // WORK OUTSIDE THE REPOSITORY reaches only a rule marked `.everywhere()`. A command whose folder
-  // the line does not settle (`null`) counts as inside, and so does a line that does not parse.
   const outside = everywhere(entry) ? [] : (event.outside ?? []);
   if (event.moment === "commit") {
     const staged = event.staged ?? [];
@@ -523,7 +522,7 @@ export async function guard({ load, event, world, faults = [], off = false }: Gu
   const tallies: Tally[] = [];
   // The line is parsed ONCE per hook, however many entries fire on it, and every ctx carries it:
   // the adapter's parse rides the event, and a caller that made none has it made here.
-  const parsed = event.command === undefined ? null : event.commands === undefined ? parseCommandLine(event.command) : event.commands ?? null;
+  const parsed = event.command === undefined ? null : event.commands === undefined ? parseCommandLine(event.command) : event.commands;
   for (const entry of load.entries) {
     if (entry.spec.kind !== "guardrail" || !fires(entry.spec, event.moment)) continue;
     if (!bindsTo(entry, event.wearing)) {

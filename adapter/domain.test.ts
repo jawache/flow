@@ -4810,6 +4810,10 @@ describe("outsideOf — where a call works outside the repository", () => {
 
   it("counts every worktree of this repository as inside", () => {
     expect(outsideOf(ran("cd /code/app.worktrees/feature && git commit -m bad"), root, none, same)).toEqual([]);
+    // One nested inside the guarded folder holds a `.git`, so git is asked, and names this repository.
+    const nested = "/code/app/.claude/worktrees/x";
+    const sameOrNested = (folder: string): boolean => folder === nested || same(folder);
+    expect(outsideOf(ran("cd .claude/worktrees/x && git commit -m bad"), root, (dir) => dir === nested, sameOrNested)).toEqual([]);
   });
 
   it("counts a repository made under the guarded folder as outside", () => {

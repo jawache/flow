@@ -658,15 +658,6 @@ export function realPath(path: string): string {
   }
 }
 
-/** Does this folder hold a `.git` FILE, the mark of a linked worktree's own folder? */
-function holdsGitFile(dir: string): boolean {
-  try {
-    return statSync(join(dir, ".git")).isFile();
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Every working folder of the guarded folder's repository, as `git worktree list` lists them, made
  * real. None when git cannot say, such as outside a repository: then no path is in a worktree, and
@@ -880,7 +871,7 @@ function worktreesToTell(session: Session, payload: HookPayload): { root: string
   const root = realPath(session.root);
   // Each folder once: a command can return to one with `cd -`, and two names can be one folder.
   const paths = [...new Set([...new Set(workedPaths(payload, session.root, homedir()))].map(realPath))];
-  if (!reachesAnotherWorktree(paths, root, holdsGitFile)) return null;
+  if (!reachesAnotherWorktree(paths, root, holdsGit)) return null;
   const stored = loadState(session.root, session.id, session.who.agent);
   const told = stored.worktrees ?? [];
   const worktrees = untoldWorktrees({ paths, root, worktrees: repoWorktrees(session.root), told });

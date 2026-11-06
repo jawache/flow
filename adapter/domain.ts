@@ -982,12 +982,13 @@ export function foldersBetween(path: string, root: string): string[] {
 /**
  * May any of these paths be in another worktree? Only then is git asked for the worktree list, so
  * an ordinary call costs nothing more. A path outside the guarded folder may be. So may one inside
- * it under a folder holding a `.git` FILE, which is how a linked worktree marks its own folder:
- * Claude Code puts a subagent's worktree there, under `.claude/worktrees/`. `gitFileIn` answers
- * whether a folder holds one.
+ * it under a folder holding a `.git`: a linked worktree marks its own folder with a `.git` file, and
+ * Claude Code puts a subagent's worktree there, under `.claude/worktrees/`. A repository made inside
+ * it holds a `.git` folder, and costs the same one question. `gitIn` answers whether a folder holds
+ * either.
  */
-export function reachesAnotherWorktree(paths: readonly string[], root: string, gitFileIn: (dir: string) => boolean): boolean {
-  return paths.some((path) => beyondRoot(path, root, gitFileIn));
+export function reachesAnotherWorktree(paths: readonly string[], root: string, gitIn: (dir: string) => boolean): boolean {
+  return paths.some((path) => beyondRoot(path, root, gitIn));
 }
 
 /**
