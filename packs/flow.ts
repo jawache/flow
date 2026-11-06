@@ -199,6 +199,7 @@ export const flow = definePack("flow", (repo: Home) => {
      */
     noUninstall: guardrail()
       .at(command)
+      .everywhere()
       .description("Refuses `flow uninstall` when an agent runs it. Taking flow off a repo or a machine is the user's call, made in their own terminal.")
       .check(noFlowUninstall({}))
       .message(

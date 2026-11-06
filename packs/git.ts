@@ -648,6 +648,7 @@ export const git = definePack("git", (repo: Release) => {
 
   noGitDiscard: guardrail()
     .at(command)
+    .everywhere()
     .description("Blocks a git command that would wipe uncommitted work — checkout/restore/reset --hard/clean -f. No bypass; use git stash.")
     .check(noGitDiscard({}))
     .message(
@@ -771,6 +772,7 @@ export const git = definePack("git", (repo: Release) => {
 
   noForcePush: guardrail()
     .at(command)
+    .everywhere()
     .description("Blocks a force-push — rewriting pushed history is the one loss a stash cannot undo.")
     // Read from the parsed git command: the `-f` must be an argument of the push itself, never of
     // the command after it (`git push origin main; ls -f`), and the words in a note or a heredoc a
@@ -829,6 +831,7 @@ export const git = definePack("git", (repo: Release) => {
    */
   noDestructiveGh: guardrail()
     .at(command)
+    .everywhere()
     .description("Blocks `gh repo delete`, `archive` and `rename`, `gh release delete`, and `gh api` with the DELETE method.")
     .check(noDestructiveGh({}))
     .message(
