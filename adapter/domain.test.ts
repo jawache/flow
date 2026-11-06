@@ -17,6 +17,7 @@
 import { describe, it, expect } from "vitest";
 import {
   breadcrumb,
+  defineCategory,
   defineConfig,
   definePack,
   guardrail,
@@ -24,6 +25,7 @@ import {
   override,
   pack,
   session,
+  spawnedAs,
   turnEnd,
   type LoadedEntry,
   type LoadResult,
@@ -57,6 +59,8 @@ import {
   sessionFactsFrom,
   agentSettingOf,
   nothingBound,
+  awaitsBrief,
+  holdsForBrief,
   ridesRefusal,
   agentOf,
   toEvent,
@@ -239,10 +243,11 @@ function only(events: readonly AdapterEvent[]): AdapterEvent {
 // WHAT THIS ADAPTER ANSWERS TO
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-describe("the seven events, and the moments honestly delivered", () => {
-  it("answers to seven events, named by the event and never by the job", () => {
+describe("the eight events, and the moments honestly delivered", () => {
+  it("answers to eight events, named by the event and never by the job", () => {
     expect([...HOOK_EVENTS]).toStrictEqual([
       "session-start",
+      "subagent-start",
       "pre-tool-use",
       "post-tool-use",
       "post-tool-use-failure",
@@ -587,6 +592,40 @@ describe("toEvent — one payload, every moment it carries", () => {
     expect(toEvent("session-start", { source: "startup" }, world())).toStrictEqual([
       { rail: "brief", moment: "session" },
     ]);
+  });
+
+  it("turns a subagent's start into the session moment, and an internal agent's into nothing", () => {
+    const started = { session_id: "s1", agent_id: "a1", agent_type: "general-purpose", hook_event_name: "SubagentStart" };
+    expect(toEvent("subagent-start", started, world())).toStrictEqual([{ rail: "brief", moment: "session" }]);
+    expect(JSON.parse(decision("subagent-start", "x"))).toStrictEqual({
+      hookSpecificOutput: { hookEventName: "SubagentStart", additionalContext: "x" },
+    });
+    expect(toEvent("subagent-start", { ...started, agent_type: "" }, world()), "an empty type").toStrictEqual([]);
+    expect(toEvent("subagent-start", { ...started, agent_type: "leader" }, { ...world(), sessionAgent: () => "leader" }), "the session's own agent").toStrictEqual([]);
+  });
+
+  it("adds the session notes held for the brief to a subagent's call, after its guard events and before its notes", () => {
+    const held = { ...world(), heldForBrief: true };
+    expect(toEvent("pre-tool-use", pre("Read", { file_path: "/repo/src/a.ts" }), held)).toStrictEqual([{ rail: "brief", moment: "session" }]);
+    const bash = toEvent("pre-tool-use", pre("Bash", { command: "git status" }), held).map((event) => `${event.rail}:${event.moment}`);
+    expect(bash).toStrictEqual(["guard:command", "brief:session", "brief:command"]);
+    expect(toEvent("pre-tool-use", pre("Read", { file_path: "/repo/src/a.ts" }), world()), "nothing held").toStrictEqual([]);
+  });
+
+  it("holds a subagent's session notes only when its brief is unread and a session note is bound to a category", () => {
+    const entries = (load: LoadResult): readonly LoadedEntry[] => {
+      if (!load.ok) throw new Error(JSON.stringify(load.refusals));
+      return load.entries;
+    };
+    const briefed = defineCategory("briefed", spawnedAs({ generic: ["general-purpose"], brief: ["MARK"] }));
+    const bound = entries(loadConfig(defineConfig([pack(definePack("t", { n: breadcrumb().at(session).for(briefed).text("n") }))])));
+    const unbound = entries(loadConfig(defineConfig([pack(definePack("t", { n: breadcrumb().at(session).text("n") }))])));
+    expect(holdsForBrief("subagent-start", null, bound)).toBe(true);
+    expect(holdsForBrief("subagent-start", "{}", bound), "a resumed subagent's brief can be read").toBe(false);
+    expect(holdsForBrief("subagent-start", null, unbound), "nothing bound to a category").toBe(false);
+    expect(holdsForBrief("session-start", null, bound), "the main session has no brief to wait for").toBe(false);
+    expect(awaitsBrief("subagent-start", null)).toBe(true);
+    expect(awaitsBrief("pre-tool-use", null)).toBe(false);
   });
 
   it("turns an Edit into a write event carrying the would-be file", () => {

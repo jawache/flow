@@ -178,6 +178,7 @@ export function configImports(configText: string): readonly string[] {
 
 export const HOOK_EVENTS = [
   "session-start",
+  "subagent-start",
   "pre-tool-use",
   "post-tool-use",
   "post-tool-use-failure",
@@ -194,6 +195,7 @@ export function isHookEvent(word: string): word is HookEvent {
 /** The host's own name for each event — what a decision object has to echo back. */
 const HOST_EVENT: Record<HookEvent, string> = {
   "session-start": "SessionStart",
+  "subagent-start": "SubagentStart",
   "pre-tool-use": "PreToolUse",
   "post-tool-use": "PostToolUse",
   "post-tool-use-failure": "PostToolUseFailure",
@@ -313,6 +315,11 @@ export interface EventWorld {
    * costs the parent's transcript: it is how an internal agent's hand-back is told from a subagent's.
    */
   readonly sessionAgent?: (() => string | null) | undefined;
+  /**
+   * The session notes this subagent's start held until its brief could be read (`holdsForBrief`).
+   * True only on a subagent's tool call before one has judged them; its PreToolUse then judges them.
+   */
+  readonly heldForBrief?: boolean | undefined;
   /** The home directory, for a Bash read through `~`. Absent, such a path is simply not named. */
   readonly home?: string | undefined;
   /**
@@ -788,47 +795,19 @@ export function toEvent(hook: HookEvent, payload: HookPayload, world: EventWorld
     case "session-start":
       return [{ rail: "brief", moment: "session" }];
 
+    case "subagent-start":
+      // A START NOBODY SPAWNED gets no note, as its hand-back runs no rule.
+      return internalAgent(payload, world.sessionAgent ?? (() => null)) ? [] : [{ rail: "brief", moment: "session" }];
+
     case "pre-tool-use": {
-      const tool = text(payload.tool_name);
-      const input = payload.tool_input ?? {};
-      if (!tool) return [];
-      if (tool === "Bash") {
-        const command = text(input["command"]);
-        if (!command) return [];
-        // TWO RAILS OFF ONE BASH CALL, and they are different questions: the guard rail decides
-        // whether the command may run, and the brief rail says what the agent should know before it
-        // does. The note rides the same PreToolUse answer the block would have used — it is the
-        // `additionalContext` channel this hook already carries — so a repo can attach a warning to
-        // a command (`npm install …` corrupting a running dev server's cache) without inventing a
-        // rule that refuses it.
-        //
-        // Every guard event comes before every brief event: a refusal carries no notes, and the
-        // shell stops judging notes once something has refused, so they are not marked shown.
-        // The line is parsed once here: the command rules read it, and so do the files it removes
-        // and the files it reads.
-        const steps = parseShellSteps(command);
-        const commands = steps === null ? null : stepCommands(steps);
-        const events: AdapterEvent[] = [{ rail: "guard", moment: "command", command, commands }];
-        for (const target of deleteTargets(commands)) {
-          // The file is still there at PreToolUse, so a content rule can ask what is about to be
-          // lost ("this matched X — did you move the code first?"). One that is already gone yields
-          // no event: there is nothing to judge, and an invented empty file would let a content
-          // check pass on a fiction.
-          const path = relativise(target, world.root);
-          const content = world.read(path);
-          if (content !== null) events.push({ rail: "guard", moment: "delete", file: { path, content } });
-        }
-        events.push({ rail: "brief", moment: "command", command });
-        // THE FILES IT READS, as touches on this same answer — so an area's note arrives with the
-        // command briefing, before the output does, rather than never (a Bash payload names no
-        // path for the post-tool-use rail to steer on). The host's `cwd` is where the shell stands.
-        const cwd = text(payload["cwd"]) || world.root;
-        const { reads, searched } = bashReads(steps, { cwd, root: world.root, home: world.home });
-        for (const path of new Set([...reads, ...searched])) events.push({ rail: "brief", moment: "touch", path });
-        return events;
-      }
-      const file = wouldBeFile(tool, input, world);
-      return file === null ? [] : [{ rail: "guard", moment: "write", file }];
+      // THE NOTES HELD FOR THE BRIEF ride the first call the subagent makes, first of its notes:
+      // the brief is in its own transcript by now, so a note bound to a category it recognises can
+      // match. Every guard event still comes first, so a refused call leaves them held.
+      const events = callEvents(payload, world);
+      if (world.heldForBrief !== true) return events;
+      const at = events.findIndex((event) => event.rail === "brief");
+      const held: AdapterEvent = { rail: "brief", moment: "session" };
+      return at === -1 ? [...events, held] : [...events.slice(0, at), held, ...events.slice(at)];
     }
 
     case "post-tool-use":
@@ -839,7 +818,7 @@ export function toEvent(hook: HookEvent, payload: HookPayload, world: EventWorld
       const judged = preJudged(payload, world.root);
       const events: AdapterEvent[] = [];
       // THE DELTA, as the write and delete rails. Every guard event comes before every brief event,
-      // as on the Bash arm above: a refusal carries no notes, and the shell stops judging notes once
+      // as on a Bash call's (`callEvents`): a refusal carries no notes, and the shell stops judging notes once
       // something has refused. A change the PreToolUse rail already judged is not judged twice — it
       // passed there on the same content, or the call would never have run — but only AS WHAT it was
       // judged: an Edit's file that now holds content was judged as that write, and an `rm` target
@@ -897,7 +876,53 @@ export function toEvent(hook: HookEvent, payload: HookPayload, world: EventWorld
 }
 
 /**
- * Is this SubagentStop an internal agent's — one the host runs for its own features (prompt
+ * The events of one PreToolUse: the call about to run, as `toEvent` reads it.
+ */
+function callEvents(payload: HookPayload, world: EventWorld): AdapterEvent[] {
+  const tool = text(payload.tool_name);
+  const input = payload.tool_input ?? {};
+  if (!tool) return [];
+  if (tool === "Bash") {
+    const command = text(input["command"]);
+    if (!command) return [];
+    // TWO RAILS OFF ONE BASH CALL, and they are different questions: the guard rail decides
+    // whether the command may run, and the brief rail says what the agent should know before it
+    // does. The note rides the same PreToolUse answer the block would have used — it is the
+    // `additionalContext` channel this hook already carries — so a repo can attach a warning to
+    // a command (`npm install …` corrupting a running dev server's cache) without inventing a
+    // rule that refuses it.
+    //
+    // Every guard event comes before every brief event: a refusal carries no notes, and the
+    // shell stops judging notes once something has refused, so they are not marked shown.
+    // The line is parsed once here: the command rules read it, and so do the files it removes
+    // and the files it reads.
+    const steps = parseShellSteps(command);
+    const commands = steps === null ? null : stepCommands(steps);
+    const events: AdapterEvent[] = [{ rail: "guard", moment: "command", command, commands }];
+    for (const target of deleteTargets(commands)) {
+      // The file is still there at PreToolUse, so a content rule can ask what is about to be
+      // lost ("this matched X — did you move the code first?"). One that is already gone yields
+      // no event: there is nothing to judge, and an invented empty file would let a content
+      // check pass on a fiction.
+      const path = relativise(target, world.root);
+      const content = world.read(path);
+      if (content !== null) events.push({ rail: "guard", moment: "delete", file: { path, content } });
+    }
+    events.push({ rail: "brief", moment: "command", command });
+    // THE FILES IT READS, as touches on this same answer — so an area's note arrives with the
+    // command briefing, before the output does, rather than never (a Bash payload names no
+    // path for the post-tool-use rail to steer on). The host's `cwd` is where the shell stands.
+    const cwd = text(payload["cwd"]) || world.root;
+    const { reads, searched } = bashReads(steps, { cwd, root: world.root, home: world.home });
+    for (const path of new Set([...reads, ...searched])) events.push({ rail: "brief", moment: "touch", path });
+    return events;
+  }
+  const file = wouldBeFile(tool, input, world);
+  return file === null ? [] : [{ rail: "guard", moment: "write", file }];
+}
+
+/**
+ * Is this SubagentStart or SubagentStop an internal agent's — one the host runs for its own features (prompt
  * suggestions, `/btw` side questions) rather than a subagent the session spawned?
  *
  * The host's hooks reference says how to tell: such a payload's `agent_type` is the agent name the
@@ -915,6 +940,32 @@ function internalAgent(payload: HookPayload, sessionAgent: () => string | null):
   const type = text(payload.agent_type);
   if (type === "") return true;
   return type === sessionAgent();
+}
+
+/**
+ * Is this a subagent starting before its brief can be read?
+ *
+ * At `SubagentStart` the host has not yet written the subagent's own transcript, so the brief at its
+ * head is not there: a category recognised by it cannot match yet. A resumed subagent's is there.
+ * Its classification is then read without being remembered, or the sticky verdict would be one
+ * reached without the brief.
+ */
+export function awaitsBrief(hook: HookEvent, transcript: string | null): boolean {
+  return hook === "subagent-start" && transcript === null;
+}
+
+/**
+ * Does this subagent's start hold its session notes for its brief — to be judged again at its first
+ * tool call, once the brief can be read?
+ *
+ * Only a note bound with `.for(…)` can wait on a category, so a config with none holds nothing. One
+ * shown at the start is marked there, and judged again shows nothing.
+ */
+export function holdsForBrief(hook: HookEvent, transcript: string | null, entries: readonly LoadedEntry[]): boolean {
+  return (
+    awaitsBrief(hook, transcript) &&
+    entries.some((entry) => entry.spec.kind === "breadcrumb" && fires(entry.spec, "session") && (entry.spec.for ?? []).length > 0)
+  );
 }
 
 /**
@@ -3587,9 +3638,9 @@ interface FlowHook {
 /**
  * WHAT `flow init` WRITES, verbatim — and it follows DELIVERS, not HOOK_EVENTS.
  *
- * flow answers seven events and registers six. `Notification` is the one difference and it is
- * deliberate (ruled at F4): flow has no notification moment, so a registration there would spawn a
- * process on every banner to answer nothing — cost with no function, and a line contradicting the
+ * flow answers eight events and registers six: `SubagentStart` is not registered yet, and
+ * `Notification` is the deliberate difference (ruled at F4): flow has no notification moment, so
+ * a registration there would spawn a process on every banner to answer nothing — cost with no function, and a line contradicting the
  * honest moment list this file publishes. The day a notification moment earns its way into the grammar, the
  * registration arrives with it.
  *

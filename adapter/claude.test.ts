@@ -642,3 +642,65 @@ export default defineConfig([pack(demo)]);
     expect(callLog(join(repo, "nowhere"))).toStrictEqual([]);
   });
 });
+
+describe("a subagent's session notes, when its brief cannot be read at its start", () => {
+  // At SubagentStart the host has not written the subagent's own transcript yet, so a note bound to
+  // a category its brief recognises waits for its first tool call, which can read the brief.
+  const notesConfig = `import { breadcrumb, defineCategory, defineConfig, definePack, guardrail, pack, session, spawnedAs, write } from ${JSON.stringify(new URL("../index.ts", import.meta.url).pathname)};
+const briefed = defineCategory("briefed", spawnedAs({ generic: ["general-purpose"], brief: ["BUILD-MARKER"] }));
+const demo = definePack("demo", {
+  everyone: breadcrumb().at(session).text("For every agent."),
+  briefedOnly: breadcrumb().at(session).for(briefed).text("For the briefed agent."),
+  noTodo: guardrail()
+    .at(write)
+    .check((ctx) => (ctx.file?.content.includes("TODO") ? ctx.fail("TODO") : ctx.ok()))
+    .message("No TODOs.")
+    .test({ pass: [{ path: "a.ts", content: "ok" }], block: [{ path: "a.ts", content: "TODO" }] }),
+});
+export default defineConfig([pack(demo)]);
+`;
+  const parent = (): string => join(repo, ".t", "s1.jsonl");
+  const briefOf = (agent: string, brief: string): void => {
+    mkdirSync(join(repo, ".t", "s1", "subagents"), { recursive: true });
+    writeFileSync(join(repo, ".t", "s1", "subagents", `agent-${agent}.jsonl`), `${JSON.stringify({ type: "user", message: { content: brief } })}\n`);
+  };
+  const start = (agent: string): Promise<Awaited<ReturnType<typeof runHook>>> =>
+    runHook("subagent-start", { session_id: "s1", transcript_path: parent(), cwd: repo, agent_id: agent, agent_type: "general-purpose", hook_event_name: "SubagentStart" }, repo);
+  const call = (agent: string, tool: string, input: Record<string, unknown>, key: string): Promise<Awaited<ReturnType<typeof runHook>>> =>
+    runHook("pre-tool-use", { session_id: "s1", transcript_path: parent(), cwd: repo, agent_id: agent, agent_type: "general-purpose", tool_name: tool, tool_input: input, tool_use_id: key }, repo);
+
+  beforeEach(() => {
+    writeFileSync(join(repo, "flow.config.ts"), notesConfig);
+  });
+
+  it("holds a note bound to a brief-recognised category at the start, and shows it once at the first tool call", async () => {
+    const started = await start("abrief");
+    expect(started.stdout).toContain('"hookEventName":"SubagentStart"');
+    expect(started.stdout).toContain("demo.everyone");
+    expect(started.stdout, "the brief is not there to recognise").not.toContain("demo.briefedOnly");
+    briefOf("abrief", "Build the task. BUILD-MARKER");
+    const first = await call("abrief", "Read", { file_path: join(repo, "a.ts") }, "toolu_b1");
+    expect(first.stdout).toContain('"hookEventName":"PreToolUse"');
+    expect(first.stdout).toContain("# breadcrumb: demo.briefedOnly (session)\\nFor the briefed agent.");
+    expect(first.stdout, "shown at the start already").not.toContain("demo.everyone");
+    const second = await call("abrief", "Read", { file_path: join(repo, "a.ts") }, "toolu_b2");
+    expect(second.stdout, "shown once").not.toContain("demo.briefedOnly");
+  });
+
+  it("keeps the note held past a first call that is refused, and shows it on the call that runs", async () => {
+    await start("arefused");
+    briefOf("arefused", "BUILD-MARKER");
+    const refused = await call("arefused", "Write", { file_path: join(repo, "a.ts"), content: "TODO" }, "toolu_r1");
+    expect(refused.exitCode).toBe(2);
+    expect(refused.stderr).not.toContain("demo.briefedOnly");
+    const runs = await call("arefused", "Read", { file_path: join(repo, "a.ts") }, "toolu_r2");
+    expect(runs.stdout).toContain("demo.briefedOnly");
+  });
+
+  it("does not show the note to a subagent whose brief does not recognise the category", async () => {
+    await start("aother");
+    briefOf("aother", "Look something up.");
+    const first = await call("aother", "Read", { file_path: join(repo, "a.ts") }, "toolu_o1");
+    expect(first.stdout).not.toContain("demo.briefedOnly");
+  });
+});

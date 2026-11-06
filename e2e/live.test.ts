@@ -293,9 +293,47 @@ describe("the session and turn rails", () => {
   });
 });
 
+describe("a subagent's start", () => {
+  /** A SubagentStart payload, shaped like the one the host sent (flow-5's artifacts/subagent-start-payload.json). */
+  const started = (agent: string, type = "general-purpose"): Record<string, unknown> => ({
+    session_id: "live-sub",
+    transcript_path: join(repo, ".t", "live-sub.jsonl"),
+    cwd: repo,
+    prompt_id: "ee479102-7ec4-4b7f-a09f-730b929fbde1",
+    agent_id: agent,
+    agent_type: type,
+    hook_event_name: "SubagentStart",
+  });
+
+  it("answers SubagentStart with every session breadcrumb, as the decision object the host injects", () => {
+    const answer = hook("subagent-start", started("asub1"));
+    expect(answer.code).toBe(0);
+    expect(answer.stderr).toBe("");
+    const decision = JSON.parse(answer.stdout) as {
+      hookSpecificOutput: { hookEventName: string; additionalContext: string };
+    };
+    expect(decision.hookSpecificOutput.hookEventName).toBe("SubagentStart");
+    expect(decision.hookSpecificOutput.additionalContext).toBe(
+      "# breadcrumb: demo.orientation (session)\nThis repo is guarded by flow.",
+    );
+  });
+
+  it("shows them once per agent — the same agent's second start is quiet, a new agent's is not", () => {
+    expect(hook("subagent-start", started("asub2")).stdout).toContain("demo.orientation");
+    expect(hook("subagent-start", started("asub2")).stdout, "the same agent, started again").toBe("");
+    expect(hook("subagent-start", started("asub3")).stdout, "another agent of the same session").toContain("demo.orientation");
+  });
+
+  it("shows no note to an internal agent, which starts with no agent type", () => {
+    const answer = hook("subagent-start", started("asub4", ""));
+    expect(answer.code).toBe(0);
+    expect(answer.stdout + answer.stderr).toBe("");
+  });
+});
+
 describe("what a broken or empty call does", () => {
   it("passes an empty payload safely, on every rail", () => {
-    for (const event of ["session-start", "pre-tool-use", "post-tool-use", "post-tool-use-failure", "stop", "subagent-stop", "notification"]) {
+    for (const event of ["session-start", "subagent-start", "pre-tool-use", "post-tool-use", "post-tool-use-failure", "stop", "subagent-stop", "notification"]) {
       const answer = run(["hook", event], "");
       expect(answer.code, `${event} on an empty payload`).toBe(0);
       expect(answer.stderr, `${event} said something about nothing`).toBe("");
@@ -1727,6 +1765,20 @@ describe("a config that will not load", () => {
       const greeting = hook("session-start", { session_id: "live-3", source: "startup" });
       expect(greeting.code, "refusing the opening greeting would wedge the session before anyone read why").toBe(0);
       expect(context(greeting)).toMatch(LOAD_ERROR);
+    });
+  });
+
+  it.each(Object.entries(BREAKS))("starts a subagent with the load error — %s", (_how, breaker) => {
+    withBrokenConfig(breaker, () => {
+      const start = hook("subagent-start", {
+        session_id: "live-3",
+        hook_event_name: "SubagentStart",
+        agent_id: "abroken",
+        agent_type: "general-purpose",
+      });
+      expect(start.code, "a subagent refused at its start would never read why").toBe(0);
+      expect((JSON.parse(start.stdout) as { hookSpecificOutput: { hookEventName: string } }).hookSpecificOutput.hookEventName).toBe("SubagentStart");
+      expect(context(start)).toMatch(LOAD_ERROR);
     });
   });
 

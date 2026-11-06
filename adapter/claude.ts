@@ -55,6 +55,7 @@ import {
   fault,
   judgedDeletions,
   guard,
+  identify,
   recorder,
   runRows,
   UNNAMED_COMMIT,
@@ -66,6 +67,7 @@ import {
   type Outcome,
   type RecordedStep,
   type Row,
+  type SessionState,
 } from "../engine/domain.ts";
 import { quoteArg, useGrammars } from "../checks/domain.ts";
 import {
@@ -115,6 +117,8 @@ import {
   turnActions,
   agentSettingOf,
   nothingBound,
+  awaitsBrief,
+  holdsForBrief,
   ridesRefusal,
   whileBroken,
   included,
@@ -827,10 +831,15 @@ function sessionOf(payload: HookPayload, root: string): Session {
  * never opened and no state file is written to remember an empty answer — which is the common case
  * in a repo whose rules are not actor-scoped, and it is the difference between a hook that reads
  * two megabytes per tool call and one that reads nothing.
+ *
+ * A subagent starting before its brief can be read is classified without it, and that reading is
+ * not remembered (`awaitsBrief`): its first tool call reads the brief and settles who it is.
  */
-function identityOf(session: Session, payload: HookPayload, categories: readonly Category[]): Identity {
+function identityOf(session: Session, payload: HookPayload, categories: readonly Category[], hook: HookEvent): Identity {
   if (categories.length === 0) return { wearing: [], faults: [], fresh: false };
   const facts = sessionFactsFrom({ payload, transcript: session.transcript() });
+  if (awaitsBrief(hook, session.transcript()))
+    return identify(loadState(session.root, session.id, session.who.agent).categories, facts, categories);
   return stickyIdentity(session.root, session.id, session.who.agent, facts, categories);
 }
 
@@ -854,7 +863,7 @@ function worktreesToTell(session: Session, payload: HookPayload): { root: string
 }
 
 /** The world a payload is read against — disk, and the turn, asked only if the moment needs them. */
-function eventWorld(root: string, session: Session, changes?: readonly Change[]): EventWorld {
+function eventWorld(root: string, session: Session, changes?: readonly Change[], heldForBrief?: boolean): EventWorld {
   return {
     root,
     read: (path: string) => readText(root, path),
@@ -862,6 +871,7 @@ function eventWorld(root: string, session: Session, changes?: readonly Change[])
     sessionAgent: session.sessionAgent,
     home: homedir(),
     changes,
+    heldForBrief,
   };
 }
 
@@ -994,12 +1004,17 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
   };
 
   const entries = load.entries;
-  const identity = identityOf(session, payload, categoriesIn(entries));
+  const identity = identityOf(session, payload, categoriesIn(entries), hook);
   // ANOTHER WORKTREE, after the call: the agent is told once that flow does not guard it. Asked
-  // before `judge`, which reads the state this writes and saves it again with its marks.
+  // before the state is read, which `judge` saves again with its marks.
   const unguarded = afterCall ? worktreesToTell(session, payload) : null;
+  // READ AFTER the identity was settled, deliberately: `stickyIdentity` writes the classification
+  // into this same file, and `judge` saves `stored` forward whole. A read taken before it would
+  // write the categories back out of existence on the next breadcrumb.
+  const stored = loadState(root, session.id, session.who.agent);
+  const holding = holdsForBrief(hook, hook === "subagent-start" ? session.transcript() : null, entries);
 
-  const events = toEvent(hook, payload, eventWorld(root, session, changes));
+  const events = toEvent(hook, payload, eventWorld(root, session, changes, stored.awaitingBrief === true));
   const rows: Row[] = [];
 
   // The flight recorder goes FIRST, so the tool row precedes the guardrail rows about the same call
@@ -1019,7 +1034,7 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
 
   const steps: RecordedStep[] = [];
 
-  const answer = await judge({ events, session, load, settings: config.settings, identity, off, hook, payload, rows, steps: taping ? steps : null });
+  const answer = await judge({ events, session, stored, holding, load, settings: config.settings, identity, off, hook, payload, rows, steps: taping ? steps : null });
   if (!off) appendRows({ root, session: session.id, branch: session.branch, who: session.who }, rows);
   if (taping) appendSteps(root, session.id, steps);
   const settled = settle(answer);
@@ -1030,6 +1045,10 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
 async function judge(args: {
   readonly events: readonly AdapterEvent[];
   readonly session: Session;
+  /** This session × agent's state, as it stood once the identity was settled. */
+  readonly stored: SessionState;
+  /** This subagent's start holds its session notes for its brief (`holdsForBrief`); false at every other hook. */
+  readonly holding: boolean;
   readonly load: LoadResult;
   readonly settings: Settings;
   readonly identity: Identity;
@@ -1040,7 +1059,7 @@ async function judge(args: {
   /** Where the replayable steps go, or null when this repo is not recording. */
   readonly steps: RecordedStep[] | null;
 }): Promise<Answer> {
-  const { events, session, load, settings, identity, off, hook, payload, rows, steps } = args;
+  const { events, session, stored, holding, load, settings, identity, off, hook, payload, rows, steps } = args;
   const blocked: Refused[] = [];
   const shown: Shown[] = [];
   const world = realWorld(session.root);
@@ -1050,10 +1069,9 @@ async function judge(args: {
   // is why flow registers no compaction hook of its own — a second registration on one moment is
   // the duplicate the hook grammar exists to prevent.
   const compacted = hook === "session-start" && payload.source === "compact";
-  // READ AFTER the identity was settled, deliberately: `stickyIdentity` writes the classification
-  // into this same file, and the save at the end of this function carries `stored` forward whole. A
-  // read taken before it would write the categories back out of existence on the next breadcrumb.
-  const stored = loadState(session.root, session.id, session.who.agent);
+  // THE NOTES HELD FOR THE BRIEF: held by a subagent's start that judged them without it, and let
+  // go by the first call that judges them again. A refused call judges none, so they stay held.
+  let awaiting = stored.awaitingBrief === true;
   let marks: Marks = compacted && load.ok ? afterCompaction(stored.marks, load.entries) : stored.marks;
   if (compacted && !off) rows.push({ kind: "compaction" });
   if (compacted) steps?.push({ rail: "compaction" });
@@ -1107,6 +1125,7 @@ async function judge(args: {
     // retry, which is the call that runs. A held TURN is the exception: its note is judged, and
     // `toResult` passes it to the agent with the refusal.
     if (blocked.length > 0 && !ridesRefusal(event.moment)) continue;
+    if (event.moment === "session") awaiting = holding;
     steps?.push({
       rail: "brief",
       moment: event.moment,
@@ -1149,7 +1168,8 @@ async function judge(args: {
       rows.push(...runRows(event.moment, { effects: notices, tallies: [] } satisfies Outcome, 1));
   }
 
-  if (!off && marks !== stored.marks) saveState(session.root, session.id, session.who.agent, { ...stored, marks });
+  if (!off && (marks !== stored.marks || awaiting !== (stored.awaitingBrief === true)))
+    saveState(session.root, session.id, session.who.agent, { ...stored, marks, awaitingBrief: awaiting ? true : undefined });
   return { refused: blocked, shown };
 }
 
