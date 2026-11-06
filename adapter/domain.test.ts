@@ -2000,12 +2000,18 @@ const REGISTERED_EVENTS = HOOK_REGISTRATIONS.map((r) => r.event);
 /** The same, as init and status print a list of them. */
 const LISTED = REGISTERED_EVENTS.join(" · ");
 
-/** The settings file an init before 0.3.0 wrote: every registration today's writes, but SubagentStop. */
-const BEFORE_SUBAGENT_STOP = {
+/** A settings file holding every registration today's init writes, but `event`'s. */
+const without = (event: string): { hooks: Record<string, unknown> } => ({
   hooks: Object.fromEntries(
-    Object.entries((withRegistrations({}).settings as { hooks: Record<string, unknown> }).hooks).filter(([event]) => event !== "SubagentStop"),
+    Object.entries((withRegistrations({}).settings as { hooks: Record<string, unknown> }).hooks).filter(([e]) => e !== event),
   ),
-};
+});
+
+/** An init before 0.3.0 wrote neither subagent event; this one lacks only SubagentStop. */
+const BEFORE_SUBAGENT_STOP = without("SubagentStop");
+
+/** The settings file an init before SubagentStart was registered wrote: every registration but that one. */
+const BEFORE_SUBAGENT_START = without("SubagentStart");
 
 /** flow's registrations, each running the command `as` makes of today's one. */
 const registrationsAs = (as: (command: string) => string): { hooks: Record<string, unknown[]> } => ({
@@ -2022,7 +2028,7 @@ const BARE_SETTINGS = registrationsAs((command) => command.replace(/^.* flow /, 
 
 describe("the hook registrations flow writes", () => {
   it("names exactly the events it answers, and Notification is not one", () => {
-    expect(HOOK_REGISTRATIONS.map((r) => r.event)).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"]);
+    expect(HOOK_REGISTRATIONS.map((r) => r.event)).toEqual(["SessionStart", "SubagentStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"]);
     expect(HOOK_REGISTRATIONS.map((r) => r.event)).not.toContain("Notification");
   });
 
@@ -2151,6 +2157,19 @@ describe("the hook registrations flow writes", () => {
     expect(withRegistrations(settings).added, "and a second run finds nothing to do").toEqual([]);
   });
 
+  // THE FILE AN INIT BEFORE SubagentStart WAS REGISTERED WROTE. Re-running init adds that one,
+  // running `flow hook subagent-start` on every subagent, and rewrites nothing else.
+  it("adds SubagentStart to a file holding every other registration, and keeps every other key", () => {
+    const { settings, added } = withRegistrations(BEFORE_SUBAGENT_START);
+    expect(added).toEqual(["SubagentStart"]);
+    const after = settings as { hooks: Record<string, unknown> };
+    expect(after.hooks["SubagentStart"], "no matcher: every agent type").toEqual([{ hooks: [{ type: "command", command: hookCommand("subagent-start") }] }]);
+    expect({ hooks: { ...after.hooks, SubagentStart: undefined } }, "nothing else in the file changes").toEqual({
+      hooks: { ...BEFORE_SUBAGENT_START.hooks, SubagentStart: undefined },
+    });
+    expect(withRegistrations(settings).added, "and a second run finds nothing to do").toEqual([]);
+  });
+
   it("rewrites only flow's command inside an entry it shares, and widens an old narrow one in the same pass", () => {
     const older = {
       hooks: {
@@ -2222,6 +2241,7 @@ describe("the hook registrations flow writes", () => {
     });
     expect(Object.keys(after.hooks), "added at the end; every key already there keeps its place").toEqual([
       "SessionStart",
+      "SubagentStart",
       "PreToolUse",
       "PostToolUse",
       "PostToolUseFailure",
@@ -3088,7 +3108,8 @@ describe("the machine-wide file, beside a dev dependency's own", () => {
     const stopOnly = { hooks: { Stop: [{ hooks: [{ type: "command", command: hookCommand("stop") }] }] } };
     expect(beforeInit(stopOnly)?.detail).toBe(
       `.claude/settings.json does not call flow for ${LISTED} — re-run \`flow init\`. Until it does, ${machinePath} calls flow for Stop in the meantime; ` +
-        "no note is shown when a session starts; no rule judges a tool call before it runs; no rule judges what a tool call changed; " +
+        "no note is shown when a session starts; no note is shown when a subagent starts; no rule judges a tool call before it runs; " +
+        "no rule judges what a tool call changed; " +
         "no rule judges what a failed tool call changed; no turn-end rule runs when a subagent hands back.",
     );
     expect(beforeInit({ theme: "dark" })?.detail, "a machine-wide file with none of flow's covers nothing").toContain(
@@ -3156,7 +3177,7 @@ describe("withoutRegistrations — flow's hooks taken out of a settings file", (
 
   it("removes flow's six registrations, and the hooks key with them when nothing else is in it", () => {
     const { settings, removed } = withoutRegistrations(withRegistrations({ theme: "dark" }).settings);
-    expect(removed).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"]);
+    expect(removed).toEqual(["SessionStart", "SubagentStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"]);
     expect(settings).toEqual({ theme: "dark" });
   });
 
@@ -3173,7 +3194,7 @@ describe("withoutRegistrations — flow's hooks taken out of a settings file", (
     };
     const before = structuredClone(mixed);
     const { settings, removed } = withoutRegistrations(mixed);
-    expect(removed).toEqual(["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"]);
+    expect(removed).toEqual(["SessionStart", "SubagentStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"]);
     expect(settings).toEqual({
       permissions: { allow: ["Bash(ls:*)"] },
       hooks: { Stop: [{ hooks: [theirs] }, { hooks: [theirs] }], Notification: mixed.hooks.Notification },
@@ -3304,7 +3325,7 @@ describe("planUninstall — a dev dependency", () => {
     expect(plan.settings?.value).toEqual({ permissions: { allow: [] } });
     expect(plan.link, "an installed package is npm's to remove").toBe(false);
     const said = uninstallLines(plan, []).join("\n");
-    expect(said).toContain("  - .claude/settings.json — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop · SubagentStop");
+    expect(said).toContain("  - .claude/settings.json — SessionStart · SubagentStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop · SubagentStop");
     expect(said).toContain("next: `npm uninstall @jawache/flow`");
   });
 
@@ -3343,10 +3364,10 @@ describe("planUninstall — the machine-wide settings file", () => {
     expect(plan.machine).toEqual({
       path: MACHINE_SETTINGS,
       value: { theme: "dark", hooks: { Stop: [theirs] } },
-      removed: ["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"],
+      removed: ["SessionStart", "SubagentStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"],
     });
     expect(uninstallLines(plan, []).join("\n")).toContain(
-      `  - ${MACHINE_SETTINGS} — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop · SubagentStop`,
+      `  - ${MACHINE_SETTINGS} — SessionStart · SubagentStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop · SubagentStop`,
     );
     expect(uninstallCode(plan, [])).toBe(0);
   });
@@ -4129,6 +4150,16 @@ describe("status — the snapshot's edges and a registration an older flow wrote
     expect(both).toContain("on some tools only");
   });
 
+  // A file without SubagentStart guards every tool call and hand-back, and shows a subagent no note.
+  it("goes red on a file without SubagentStart, and names what goes unshown", () => {
+    const s = status(statusFacts({ settings: BEFORE_SUBAGENT_START }));
+    expect(s.fittings.find((f) => f.id === "hooks")?.ok).toBe(false);
+    expect(s.green).toBe(false);
+    expect(s.fittings.find((f) => f.id === "hooks")?.detail).toBe(
+      "/home/.claude/settings.json does not call flow for SubagentStart — re-run `flow init`. Until it does, no note is shown when a subagent starts.",
+    );
+  });
+
   // An init before 0.3.0 wrote every registration but SubagentStop. Status checks it like the rest.
   it("goes red on a file without SubagentStop, and says re-running init adds it", () => {
     const s = status(statusFacts({ settings: BEFORE_SUBAGENT_STOP }));
@@ -4154,7 +4185,7 @@ describe("status — the snapshot's edges and a registration an older flow wrote
     );
     const none = status(statusFacts({ settings: {} })).fittings.find((f) => f.id === "hooks")?.detail ?? "";
     for (const registration of HOOK_REGISTRATIONS) expect(none, "a file with none names every cost").toContain(registration.event);
-    expect(none).toContain("no note is shown when a session starts; no rule judges a tool call before it runs;");
+    expect(none).toContain("no note is shown when a session starts; no note is shown when a subagent starts; no rule judges a tool call before it runs;");
   });
 });
 

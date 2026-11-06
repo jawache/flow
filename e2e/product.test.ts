@@ -57,7 +57,7 @@ const settings = (): Record<string, unknown> =>
   JSON.parse(readFileSync(join(home, "settings.json"), "utf8")) as Record<string, unknown>;
 
 /** The events flow init registers, in the order it writes and prints them. */
-const REGISTERED = ["SessionStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"];
+const REGISTERED = ["SessionStart", "SubagentStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"];
 
 /** The same, as init and status print them. */
 const LISTED = REGISTERED.join(" · ");
@@ -1022,7 +1022,7 @@ describe("flow uninstall", () => {
 
       const said = flow(listed, ["uninstall"], machine);
       expect(said.code, said.stdout + said.stderr).toBe(0);
-      expect(said.stdout).toContain("  - .claude/settings.json — SessionStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop · SubagentStop");
+      expect(said.stdout).toContain("  - .claude/settings.json — SessionStart · SubagentStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop · SubagentStop");
       expect(said.stdout.trim().split("\n").at(-1)).toBe("  next: `npm uninstall @jawache/flow` — removes the package.");
       const after = JSON.parse(readFileSync(join(listed, ".claude", "settings.json"), "utf8")) as Record<string, unknown>;
       expect(after, "flow's six are gone, the empty events with them, and every other key and hook stays").toEqual({

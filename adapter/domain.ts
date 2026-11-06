@@ -3641,10 +3641,10 @@ interface FlowHook {
 /**
  * WHAT `flow init` WRITES, verbatim — and it follows DELIVERS, not HOOK_EVENTS.
  *
- * flow answers eight events and registers six: `SubagentStart` is not registered yet, and
- * `Notification` is the deliberate difference (ruled at F4): flow has no notification moment, so
- * a registration there would spawn a process on every banner to answer nothing — cost with no function, and a line contradicting the
- * honest moment list this file publishes. The day a notification moment earns its way into the grammar, the
+ * flow answers eight events and registers seven: `Notification` is the deliberate difference (ruled
+ * at F4). flow has no notification moment, so a registration there would spawn a process on every
+ * banner to answer nothing — cost with no function, and a line contradicting the honest moment list
+ * this file publishes. The day a notification moment earns its way into the grammar, the
  * registration arrives with it.
  *
  * ONE PER EVENT. Two registrations on one event fire twice, and when they point at different
@@ -3671,6 +3671,7 @@ interface FlowHook {
  */
 const REGISTERED: readonly FlowHook[] = [
   { hook: "session-start", matcher: "startup|resume|clear|compact", unregistered: "no note is shown when a session starts" },
+  { hook: "subagent-start", unregistered: "no note is shown when a subagent starts" },
   { hook: "pre-tool-use", matcher: "*", unregistered: "no rule judges a tool call before it runs" },
   { hook: "post-tool-use", matcher: "*", unregistered: "no rule judges what a tool call changed" },
   { hook: "post-tool-use-failure", matcher: "*", unregistered: "no rule judges what a failed tool call changed" },
