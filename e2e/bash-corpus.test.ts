@@ -29,7 +29,7 @@ const RECORDED_HOME = "/Users/jawache";
  * count a directory listed or walked as read.
  */
 function shipped(command: string, cwd: string): Targets {
-  const got = bashReads(parseShellSteps(command), { cwd, root: "", home: RECORDED_HOME });
+  const got = bashReads(parseShellSteps(command, { cwd, home: RECORDED_HOME }), { cwd, root: "", home: RECORDED_HOME });
   return { reads: [...got.reads, ...got.searched].map((path) => `/${path}`), writes: [] };
 }
 

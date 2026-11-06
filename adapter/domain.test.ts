@@ -380,7 +380,7 @@ describe("a Bash line's delete targets", () => {
 describe("bashReads — the files a Bash command reads, before it runs", () => {
   const HOME = "/home/me";
   const at = (command: string, cwd = ROOT, home: string | undefined = HOME): { reads: readonly string[]; searched: readonly string[] } =>
-    bashReads(parseShellSteps(command), { cwd, root: ROOT, home });
+    bashReads(parseShellSteps(command, { cwd, home }), { cwd, root: ROOT, home });
   const reads = (command: string, cwd = ROOT): readonly string[] => at(command, cwd).reads;
   const searched = (command: string, cwd = ROOT): readonly string[] => at(command, cwd).searched;
 
@@ -548,6 +548,9 @@ describe("bashReads — the files a Bash command reads, before it runs", () => {
     expect(searched("git --config-env a.b=HOME status pkg/x.ts")).toStrictEqual(["pkg/x.ts"]);
     expect(searched("git commit -m 'src/a.ts'")).toStrictEqual([]);
     expect(searched("git -C lib")).toStrictEqual([]);
+    // `-C` is the parse's: chained after a `cd`, and after another `-C`.
+    expect(searched("cd sub && git -C a diff -- x")).toStrictEqual(["sub/a/x"]);
+    expect(searched("git -C a -C b diff -- x")).toStrictEqual(["a/b/x"]);
   });
 
   it("reads ffmpeg's inputs", () => {

@@ -546,16 +546,15 @@ const GIT_LOOKS = new Set(["diff", "log", "show", "status", "add", "blame", "ls-
 /** An argument after expansion, or null when it could not be known without running the line. */
 type Arg = string | null;
 
-/** What one simple command reads, as written: files, the paths a search walks, and `git -C`'s dir. */
+/** What one simple command reads, as written: files, and the paths a search walks. */
 interface ArgvReads {
   readonly reads: string[];
   readonly searched: string[];
-  readonly base?: string;
 }
 
 /**
- * The paths one simple command reads, as written, and the directory they are relative to when the
- * command moves it (`git -C`). An unknown argument is skipped, never guessed at.
+ * The paths one simple command reads, as written, relative to the folder it runs in. An unknown
+ * argument is skipped, never guessed at.
  */
 function argvReads(argv: readonly Arg[]): ArgvReads {
   const reads: string[] = [];
@@ -616,20 +615,15 @@ function argvReads(argv: readonly Arg[]): ArgvReads {
 }
 
 /**
- * `git [-C dir] <look> … [-- paths]` → the pathspecs, and the directory `-C` moved it to. A
- * pathspec may name a directory, so it is a search.
+ * `git [options] <look> … [-- paths]` → the pathspecs. A pathspec may name a directory, so it is a
+ * search. Where `-C` moved git is the parse's, in the command's `folder`.
  */
 function gitReads(args: readonly Arg[], reads: string[]): ArgvReads {
   const searched: string[] = [];
-  let base: string | undefined;
   let i = 0;
-  for (let opt = args[0] ?? null; isOption(opt); opt = args[i] ?? null) {
-    const value = args[i + 1];
-    if (opt === "-C" && typeof value === "string") base = value;
-    i += GIT_VALUE_OPTS.has(opt as string) ? 2 : 1;
-  }
+  for (let opt = args[0] ?? null; isOption(opt); opt = args[i] ?? null) i += GIT_VALUE_OPTS.has(opt as string) ? 2 : 1;
   const sub = args[i];
-  const found = base === undefined ? { reads, searched } : { reads, searched, base };
+  const found = { reads, searched };
   if (typeof sub !== "string" || !GIT_LOOKS.has(sub)) return found;
   const rest = args.slice(i + 1);
   const dash = rest.indexOf("--");
@@ -685,7 +679,8 @@ function xargsList(wrappers: readonly (string | null)[]): string | null {
  * pathspec — read from the parse's steps, and followed through `cd`, `VAR=`, `for` loops and the
  * commands a `$(…)` runs, by the parse's own walk (`followSteps`). The repo root itself is not an
  * area and is left out. Best-effort, failing open: see the section head. A line that does not
- * parse names nothing.
+ * parse names nothing. The steps are parsed from where the call ran, `where.cwd` and `where.home`,
+ * since a git command's reads are relative to the folder the parse gave it.
  */
 export function bashReads(steps: readonly ShellStep[] | null, where: BashWhere): BashReads {
   const reads: string[] = [];
@@ -706,7 +701,8 @@ export function bashReads(steps: readonly ShellStep[] | null, where: BashWhere):
     if (moves) return;
     const argv = step.words.slice(step.at).map(expand);
     const found = argvReads(argv);
-    const from = found.base === undefined ? cwd : resolveFrom(found.base, cwd);
+    // A git command's own `-C` moves it, and the parse has already followed it into its `folder`.
+    const from = gitCommand(step.command) === null ? cwd : step.command.folder;
     for (const path of found.reads) add(reads, resolveFrom(path, from));
     for (const path of found.searched) add(searched, resolveFrom(path, from));
   });
@@ -2203,7 +2199,8 @@ export function toolRow(payload: HookPayload, root = ""): Row | null {
 export function shellReadRows(payload: HookPayload, root: string, home?: string): Row[] {
   const command = text(payload.tool_input?.["command"]);
   if (text(payload.tool_name) !== "Bash" || command === "") return [];
-  return bashReads(parseShellSteps(command), { cwd: shellCwd(payload, root), root, home }).reads.map((path) => ({ kind: "read", tool: "Bash", path }));
+  const cwd = shellCwd(payload, root);
+  return bashReads(parseShellSteps(command, { cwd, home }), { cwd, root, home }).reads.map((path) => ({ kind: "read", tool: "Bash", path }));
 }
 
 /** How a path changed across one call. */
@@ -2610,9 +2607,10 @@ export function parseEvents(jsonl: string, root = "", home?: string): Transcript
       const input = block.input ?? {};
       const name = text(block.name);
       // A Bash call's reads need a repo to be relative to; with no root there is none to count in.
+      const cwd = text(line.record["cwd"]) || root;
       const reads =
         name === "Bash" && root !== ""
-          ? bashReads(parseShellSteps(text(input["command"])), { cwd: text(line.record["cwd"]) || root, root, home }).reads
+          ? bashReads(parseShellSteps(text(input["command"]), { cwd, home }), { cwd, root, home }).reads
           : [];
       out.push({
         line: line.line,
