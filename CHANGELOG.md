@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.3.2](https://github.com/jawache/flow/compare/v0.3.1...v0.3.2) (2026-11-06)
+
+### Features
+
+* **adapter:** a folder is inside when git names this repository for it (flow-6/3) ([a48fb80](https://github.com/jawache/flow/commit/a48fb805d639c03003022126c5db2d8aead334d9))
+* **engine:** a rule not marked everywhere is passed only the work inside the repository (flow-6/3) ([df4ea7c](https://github.com/jawache/flow/commit/df4ea7ca11bbf125712754b99fefcdce5d4b45c9))
+* **guards:** driven.reviewersReadAndRun says .everywhere() (flow-6/2) ([e0395b9](https://github.com/jawache/flow/commit/e0395b955c13f37db6d03ea645c1c619ce9cc306))
+* **language:** a guardrail can say .everywhere() (flow-6/2) ([6b92078](https://github.com/jawache/flow/commit/6b920788a7893fe74b71958e3a36cae2c01dd5fe))
+* **packs:** the shipped rules that protect more than the repo say .everywhere() (flow-6/2) ([c61f322](https://github.com/jawache/flow/commit/c61f322f6c73b81df83e2ae0f1fd1cfb3c3c311a))
+* **parse:** each command carries the folder it runs in (flow-6/1) ([d8f81f3](https://github.com/jawache/flow/commit/d8f81f34dbf25cf14db3b12d520255ac1e7f03f5))
+
+### Bug Fixes
+
+* **guards:** the record's own rules judge it by its real path too (flow-6/6) ([210971f](https://github.com/jawache/flow/commit/210971f6bfeb38736d258cabf9ad3d3d0952b411))
+* **language:** a git command that names its repository itself has no folder (flow-6/6) ([a08bd56](https://github.com/jawache/flow/commit/a08bd56c705c2bb6c97d2e2050f5c52ff6cd2db7))
 ## [0.3.1](https://github.com/jawache/flow/compare/v0.3.0...v0.3.1) (2026-11-06)
 
 ### Features
