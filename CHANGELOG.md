@@ -2,6 +2,48 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.3.1](https://github.com/jawache/flow/compare/v0.3.0...v0.3.1) (2026-11-06)
+
+### Features
+
+* **adapter:** a command run in another worktree passes the agent the message beside its result, once ([#177](https://github.com/jawache/flow/issues/177)) ([ede79d8](https://github.com/jawache/flow/commit/ede79d818965780a26b6af53547da470048f1788))
+* **adapter:** a write into a worktree nested in the guarded folder, as under .claude/worktrees, tells the agent too ([#176](https://github.com/jawache/flow/issues/176)) ([11883e0](https://github.com/jawache/flow/commit/11883e0c4eb0b4d0a09f42a86846b04d14b58a12))
+* **adapter:** an Edit or Write into another worktree passes the agent the message beside its result, once ([#176](https://github.com/jawache/flow/issues/176)) ([c4dc7b8](https://github.com/jawache/flow/commit/c4dc7b879c8815b7b8ab54ff2cd0bae22f454a3d))
+* **adapter:** decide which other worktree of the repository a write tells the agent about, once ([#176](https://github.com/jawache/flow/issues/176)) ([3b1d2ff](https://github.com/jawache/flow/commit/3b1d2ffec43ea5cdc67a79d8c126dae8f436c319))
+* **adapter:** flow hook commit --all marks a file identical to the last commit as unchanged ([#150](https://github.com/jawache/flow/issues/150)) ([721a2f5](https://github.com/jawache/flow/commit/721a2f5a16f114cfcbb9359bd1ed3e548b270aa8))
+* **adapter:** flow hook subagent-start shows a subagent every session breadcrumb (flow-5/1) ([fd44407](https://github.com/jawache/flow/commit/fd44407fbb4ddc2f889343eca61d8e38904b0889))
+* **adapter:** flow init registers SubagentStart, and flow status names it when missing (flow-5/2) ([ccacf52](https://github.com/jawache/flow/commit/ccacf52330d8f197a001da5d3fa2cc5331e1062d))
+* **adapter:** read the repository's worktrees from git, made real, for a call that leaves the guarded folder ([#176](https://github.com/jawache/flow/issues/176)) ([760ca8f](https://github.com/jawache/flow/commit/760ca8f9157bf153c63907bae027e0a6944f4ea9))
+* **adapter:** the after-call rail names each file that entered the snapshot, in one line ([#169](https://github.com/jawache/flow/issues/169)) ([4da1124](https://github.com/jawache/flow/commit/4da11249a671528b84e4b44eac8d7292d71d1b9f))
+* **adapter:** the folders a shell command runs in, its cwd and each cd the parse reads, placed in another worktree ([#177](https://github.com/jawache/flow/issues/177)) ([683a916](https://github.com/jawache/flow/commit/683a9165d8d54c9c28cf4316a98b2109d227719a))
+* **adapter:** the snapshot before a call records the ignored paths it could not see ([#169](https://github.com/jawache/flow/issues/169)) ([f371a29](https://github.com/jawache/flow/commit/f371a2948d3688b08a66bb5dc23d7fb018a38e01))
+* **engine:** session state remembers the worktrees an agent was told flow does not guard ([#176](https://github.com/jawache/flow/issues/176)) ([d3c7d54](https://github.com/jawache/flow/commit/d3c7d545ea1532d39f87cb83a925517419429b7f))
+* **git:** refuse the gh commands that can't be undone (flow-2/1) ([f623b21](https://github.com/jawache/flow/commit/f623b21ec5ac810b8bceb1cdf9de43e763f54d10))
+* **tools:** a checker that follows every link in a shipped page against npm pack's file list ([#147](https://github.com/jawache/flow/issues/147)) ([8c2ed93](https://github.com/jawache/flow/commit/8c2ed9357490185017b6483c276f4c12bfc2eac2))
+
+### Bug Fixes
+
+* **adapter:** a call with no finish an hour after it started is dead, never overlapping and never pinning the log ([#152](https://github.com/jawache/flow/issues/152)) ([4c71b86](https://github.com/jawache/flow/commit/4c71b863a461deb1eb96bbe85eaed1bf1b39a6a9))
+* **adapter:** a dead call's own snapshot stays for the day's sweep, so a call approved after an hour at the prompt is still checked ([#157](https://github.com/jawache/flow/issues/157)) ([392bbcb](https://github.com/jawache/flow/commit/392bbcbfc3461a93c1bdab566b90cfba69ac3238))
+* **adapter:** a dead call's snapshot files go when the next call finishes, not after a day ([#152](https://github.com/jawache/flow/issues/152)) ([456873d](https://github.com/jawache/flow/commit/456873d825ad5c6892c8160a9334ce773746cce9))
+* **adapter:** a file that entered the snapshot during a call is not a creation, and one that left it is not a removal ([#169](https://github.com/jawache/flow/issues/169)) ([9e2635a](https://github.com/jawache/flow/commit/9e2635a7c329b1ffe909bdede120096f394824f7)), references [#146](https://github.com/jawache/flow/issues/146)
+* **adapter:** a file that left the snapshot rewritten is a write the rules judge, never dropped ([#169](https://github.com/jawache/flow/issues/169)) ([2986c71](https://github.com/jawache/flow/commit/2986c71d69f0d13d33116783fe82579b4d9253b9))
+* **adapter:** a snapshot with no hidden list is unreadable, never a pass for every new file ([#173](https://github.com/jawache/flow/issues/173)) ([7f95682](https://github.com/jawache/flow/commit/7f9568279173027f1fb744b7a7e5f94096ccf9f8))
+* **adapter:** bashReads keeps the cd folders itself, the live test calls toldAbout, and a test pins the troubleshooting page's message ([#177](https://github.com/jawache/flow/issues/177)) ([7e6ff63](https://github.com/jawache/flow/commit/7e6ff63c937b7bee264f56d6a107df6b5eaa48bc))
+* **adapter:** flow status flags only a rule that names an ignored path exactly ([#170](https://github.com/jawache/flow/issues/170)) ([4eeb92b](https://github.com/jawache/flow/commit/4eeb92bd6eac9f91812b4b7795e6d2cc68174dea))
+* **adapter:** flow status reports a double fire only where both settings files call flow, and credits the machine-wide file before init ([#148](https://github.com/jawache/flow/issues/148)) ([c68dcd0](https://github.com/jawache/flow/commit/c68dcd057c5e850f9cfd5e60a07ecf87146d1c67))
+* **adapter:** one rule for a call still running, so the log keeps a dead call a diff still to come counts ([#152](https://github.com/jawache/flow/issues/152)) ([83e529b](https://github.com/jawache/flow/commit/83e529b953ca466352bc85b5d265fe088e66f71d))
+* **adapter:** skip only the session's own worktree, share the edited-file read, and test realPath and a refusal's worktree line ([#176](https://github.com/jawache/flow/issues/176)) ([49fd110](https://github.com/jawache/flow/commit/49fd110f0a9bd3f8f19eb21acb61b7f71626fe43))
+* **adapter:** worktreesToTell reads each worked folder once, and the commandFolders test no longer pins a repeated folder ([#180](https://github.com/jawache/flow/issues/180)) ([1e50857](https://github.com/jawache/flow/commit/1e5085753cd12907370f1bcfba961abb08691ee9))
+* **checks:** protectedPath passes a file identical to the last commit ([#150](https://github.com/jawache/flow/issues/150)) ([f754819](https://github.com/jawache/flow/commit/f754819727c84320ec90e8cdc0f83737dc7347d2))
+* **git:** read an unparsed gh api line through banCommands (flow-2/1) ([db55cd2](https://github.com/jawache/flow/commit/db55cd260c4745f7aa818d3b2549ced055274a39))
+* **git:** the orientation line and the refusal say what the rule refuses (flow-2/4) ([94f07af](https://github.com/jawache/flow/commit/94f07af9a0f2f31472b9cbcc5ed6a325b7333958))
+* **guard:** a reviewer may list tags with git tag's listing flags (flow-5/5) ([2b2d561](https://github.com/jawache/flow/commit/2b2d561fd575602623142b08cee086be6ab746a1))
+* **package:** ship all of docs/user/ and CHANGELOG.md, so a migration guide's links resolve in the package ([#147](https://github.com/jawache/flow/issues/147)) ([e037706](https://github.com/jawache/flow/commit/e03770656a96309e591d097c6bc7baf91dbefd8a))
+* **packs:** git.noForcePush names a bare -f once, and keeps the bundle for -fu ([#148](https://github.com/jawache/flow/issues/148)) ([8887a0e](https://github.com/jawache/flow/commit/8887a0ee871dca4bf2d4ec0163803cef78641ac2))
+* **packs:** the new-dep refusal says package.json has changes since the last commit, and how to commit or stash them ([#143](https://github.com/jawache/flow/issues/143)) ([b56887e](https://github.com/jawache/flow/commit/b56887e4bad9d6ff6de1af4abbe876f101b441f2))
+* **packs:** the new-dep rule's description says it fires while package.json has uncommitted changes ([#163](https://github.com/jawache/flow/issues/163)) ([f904700](https://github.com/jawache/flow/commit/f904700d9e9e6db6309200074e37f389105eb820))
+* **work:** worktree is environment now; create and existing print the folder, remove and created take {folder} ([d46c73b](https://github.com/jawache/flow/commit/d46c73b053baf46a0627514cc04aae13299700da))
 ## [0.3.0](https://github.com/jawache/flow/compare/v0.2.3...v0.3.0) (2026-10-16)
 
 ### ⚠ BREAKING CHANGES
