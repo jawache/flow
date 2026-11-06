@@ -2010,9 +2010,6 @@ const without = (event: string): { hooks: Record<string, unknown> } => ({
 /** An init before 0.3.0 wrote neither subagent event; this one lacks only SubagentStop. */
 const BEFORE_SUBAGENT_STOP = without("SubagentStop");
 
-/** The settings file an init before SubagentStart was registered wrote: every registration but that one. */
-const BEFORE_SUBAGENT_START = without("SubagentStart");
-
 /** flow's registrations, each running the command `as` makes of today's one. */
 const registrationsAs = (as: (command: string) => string): { hooks: Record<string, unknown[]> } => ({
   hooks: Object.fromEntries(
@@ -2157,19 +2154,6 @@ describe("the hook registrations flow writes", () => {
     expect(withRegistrations(settings).added, "and a second run finds nothing to do").toEqual([]);
   });
 
-  // THE FILE AN INIT BEFORE SubagentStart WAS REGISTERED WROTE. Re-running init adds that one,
-  // running `flow hook subagent-start` on every subagent, and rewrites nothing else.
-  it("adds SubagentStart to a file holding every other registration, and keeps every other key", () => {
-    const { settings, added } = withRegistrations(BEFORE_SUBAGENT_START);
-    expect(added).toEqual(["SubagentStart"]);
-    const after = settings as { hooks: Record<string, unknown> };
-    expect(after.hooks["SubagentStart"], "no matcher: every agent type").toEqual([{ hooks: [{ type: "command", command: hookCommand("subagent-start") }] }]);
-    expect({ hooks: { ...after.hooks, SubagentStart: undefined } }, "nothing else in the file changes").toEqual({
-      hooks: { ...BEFORE_SUBAGENT_START.hooks, SubagentStart: undefined },
-    });
-    expect(withRegistrations(settings).added, "and a second run finds nothing to do").toEqual([]);
-  });
-
   it("rewrites only flow's command inside an entry it shares, and widens an old narrow one in the same pass", () => {
     const older = {
       hooks: {
@@ -2227,27 +2211,24 @@ describe("the hook registrations flow writes", () => {
     ]);
   });
 
-  // THE FILE AN INIT BEFORE 0.3.0 WROTE: every registration but SubagentStop. Re-running init adds
-  // that one, beside everything already in the file, and rewrites nothing.
-  it("adds SubagentStop to a file holding every other registration, and keeps every other key", () => {
-    const older = { model: "opus", permissions: { allow: ["Bash(git:*)"] }, hooks: { ...BEFORE_SUBAGENT_STOP.hooks, Notification: [{ hooks: [{ type: "command", command: "say done" }] }] } };
+  // A FILE AN OLDER INIT WROTE: every registration but one subagent event — SubagentStop before
+  // 0.3.0, SubagentStart before flow-5. Re-running init adds that one at the end, beside everything
+  // already in the file, and rewrites nothing.
+  it.each(["SubagentStart", "SubagentStop"])("adds %s to a file holding every other registration, and keeps every other key", (event) => {
+    const older = { model: "opus", permissions: { allow: ["Bash(git:*)"] }, hooks: { ...without(event).hooks, Notification: [{ hooks: [{ type: "command", command: "say done" }] }] } };
     const { settings, added } = withRegistrations(older);
-    expect(added).toEqual(["SubagentStop"]);
+    expect(added).toEqual([event]);
     const after = settings as typeof older & { hooks: Record<string, unknown> };
-    expect(after.hooks["SubagentStop"]).toEqual([{ hooks: [{ type: "command", command: hookCommand("subagent-stop") }] }]);
-    expect({ ...after, hooks: { ...after.hooks, SubagentStop: undefined } }, "nothing else in the file changes").toEqual({
+    const command = HOOK_REGISTRATIONS.find((r) => r.event === event)?.command;
+    expect(after.hooks[event], "no matcher: every agent type").toEqual([{ hooks: [{ type: "command", command }] }]);
+    expect({ ...after, hooks: { ...after.hooks, [event]: undefined } }, "nothing else in the file changes").toEqual({
       ...older,
-      hooks: { ...older.hooks, SubagentStop: undefined },
+      hooks: { ...older.hooks, [event]: undefined },
     });
     expect(Object.keys(after.hooks), "added at the end; every key already there keeps its place").toEqual([
-      "SessionStart",
-      "SubagentStart",
-      "PreToolUse",
-      "PostToolUse",
-      "PostToolUseFailure",
-      "Stop",
+      ...REGISTERED_EVENTS.filter((e) => e !== event),
       "Notification",
-      "SubagentStop",
+      event,
     ]);
     expect(withRegistrations(settings).added, "and a second run finds nothing to do").toEqual([]);
   });
@@ -3175,7 +3156,7 @@ const PATH_ONLY_GATE = PRE_COMMIT.replace(`${GATE_LOCAL_LINE}\n`, "");
 describe("withoutRegistrations — flow's hooks taken out of a settings file", () => {
   const theirs = { type: "command", command: "lint-on-stop" };
 
-  it("removes flow's six registrations, and the hooks key with them when nothing else is in it", () => {
+  it("removes flow's registrations, and the hooks key with them when nothing else is in it", () => {
     const { settings, removed } = withoutRegistrations(withRegistrations({ theme: "dark" }).settings);
     expect(removed).toEqual(["SessionStart", "SubagentStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"]);
     expect(settings).toEqual({ theme: "dark" });
@@ -4150,34 +4131,25 @@ describe("status — the snapshot's edges and a registration an older flow wrote
     expect(both).toContain("on some tools only");
   });
 
-  // A file without SubagentStart guards every tool call and hand-back, and shows a subagent no note.
-  it("goes red on a file without SubagentStart, and names what goes unshown", () => {
-    const s = status(statusFacts({ settings: BEFORE_SUBAGENT_START }));
+  // A file without one subagent event still guards every tool call; status names that one and its cost.
+  it.each([
+    ["SubagentStart", "no note is shown when a subagent starts"],
+    ["SubagentStop", "no turn-end rule runs when a subagent hands back"],
+  ])("goes red on a file without %s, and names what goes unjudged", (event, unregistered) => {
+    const s = status(statusFacts({ settings: without(event) }));
     expect(s.fittings.find((f) => f.id === "hooks")?.ok).toBe(false);
     expect(s.green).toBe(false);
     expect(s.fittings.find((f) => f.id === "hooks")?.detail).toBe(
-      "/home/.claude/settings.json does not call flow for SubagentStart — re-run `flow init`. Until it does, no note is shown when a subagent starts.",
+      `/home/.claude/settings.json does not call flow for ${event} — re-run \`flow init\`. Until it does, ${unregistered}.`,
     );
-  });
-
-  // An init before 0.3.0 wrote every registration but SubagentStop. Status checks it like the rest.
-  it("goes red on a file without SubagentStop, and says re-running init adds it", () => {
-    const s = status(statusFacts({ settings: BEFORE_SUBAGENT_STOP }));
-    expect(s.fittings.find((f) => f.id === "hooks")?.ok).toBe(false);
-    expect(s.green).toBe(false);
-    expect(red({ settings: BEFORE_SUBAGENT_STOP })).toContain("/home/.claude/settings.json does not call flow for SubagentStop — re-run `flow init`.");
     expect(status(statusFacts()).fittings.find((f) => f.id === "hooks")?.detail, "every one, and it is green").toBe(
       `/home/.claude/settings.json — ${LISTED}`,
     );
   });
 
   // Each event carries its own rails, so a missing one costs those and no others: a file without
-  // SubagentStop still guards every tool call and the main chat's hand-back.
+  // PreToolUse and SubagentStop still judges what a tool call changed and the main chat's hand-back.
   it("names only the rails of the missing events as not firing", () => {
-    const only = status(statusFacts({ settings: BEFORE_SUBAGENT_STOP })).fittings.find((f) => f.id === "hooks")?.detail;
-    expect(only).toBe(
-      "/home/.claude/settings.json does not call flow for SubagentStop — re-run `flow init`. Until it does, no turn-end rule runs when a subagent hands back.",
-    );
     const hooks = { ...BEFORE_SUBAGENT_STOP.hooks, PreToolUse: undefined };
     expect(status(statusFacts({ settings: { hooks } })).fittings.find((f) => f.id === "hooks")?.detail).toBe(
       "/home/.claude/settings.json does not call flow for PreToolUse · SubagentStop — re-run `flow init`. " +

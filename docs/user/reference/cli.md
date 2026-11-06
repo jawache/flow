@@ -82,7 +82,7 @@ Once the `pre-commit` hook git runs calls flow, and is executable when git runs 
 | `core.hooksPath` | Unset when it is `.githooks` and the folder holds no other hook. `.githooks/` is then deleted if it is empty. When the folder holds another hook, `core.hooksPath` stays `.githooks` |
 | `.flow/` | Deleted, with its logs, recordings and switch files |
 | `node_modules/@jawache/flow` | Deleted when it is a link, which `flow init` writes when the repo does not install `@jawache/flow` itself |
-| The repo's `.claude/settings.json` | When the repo's `package.json` lists `@jawache/flow`: each hook entry whose command ends with `flow hook <event>` is removed, for the six events `flow init` registers. An event left with no entry is removed. Every other key in the file is kept |
+| The repo's `.claude/settings.json` | When the repo's `package.json` lists `@jawache/flow`: each hook entry whose command ends with `flow hook <event>` is removed, for each event `flow init` registers. An event left with no entry is removed. Every other key in the file is kept |
 | The machine-wide settings file | With `--machine` only: the same entries are removed from `~/.claude/settings.json`, or from `$CLAUDE_CONFIG_DIR/settings.json` when that variable is set |
 
 `flow uninstall` leaves `flow.config.ts` and the packs it imports. Run `flow init` to wire the repo again.

@@ -1025,7 +1025,7 @@ describe("flow uninstall", () => {
       expect(said.stdout).toContain("  - .claude/settings.json — SessionStart · SubagentStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop · SubagentStop");
       expect(said.stdout.trim().split("\n").at(-1)).toBe("  next: `npm uninstall @jawache/flow` — removes the package.");
       const after = JSON.parse(readFileSync(join(listed, ".claude", "settings.json"), "utf8")) as Record<string, unknown>;
-      expect(after, "flow's six are gone, the empty events with them, and every other key and hook stays").toEqual({
+      expect(after, "flow's registrations are gone, the empty events with them, and every other key and hook stays").toEqual({
         permissions: { allow: ["Bash(ls:*)"] },
         hooks: { Stop: [theirs] },
       });
@@ -1243,7 +1243,7 @@ describe("flow uninstall", () => {
 
   // THE MACHINE-WIDE FILE: every repo on the machine reads it, so only `--machine` writes it. Each
   // case points CLAUDE_CONFIG_DIR at its own throwaway folder, holding a hook of the user's own
-  // beside the six flow init registers there.
+  // beside the ones flow init registers there.
   describe("--machine", () => {
     const theirs = { hooks: [{ type: "command", command: "say done" }] };
     const own = { permissions: { allow: ["Bash(ls:*)"] }, hooks: { Stop: [theirs] } };
@@ -1258,11 +1258,11 @@ describe("flow uninstall", () => {
       } finally {
         rmSync(global, { recursive: true, force: true });
       }
-      expect(Object.keys((JSON.parse(readFileSync(file, "utf8")) as { hooks: object }).hooks).sort(), "flow's six are in it").toEqual([...REGISTERED].sort());
+      expect(Object.keys((JSON.parse(readFileSync(file, "utf8")) as { hooks: object }).hooks).sort(), "flow's registrations are in it").toEqual([...REGISTERED].sort());
       return { machine, file };
     };
 
-    it("a global install: a plain run leaves the machine-wide file byte for byte and names --machine; --machine then takes flow's six out and keeps the user's hook", () => {
+    it("a global install: a plain run leaves the machine-wide file byte for byte and names --machine; --machine then takes flow's registrations out and keeps the user's hook", () => {
       const global = newRepo();
       const { machine, file } = machineWithFlow();
       try {
@@ -1281,7 +1281,7 @@ describe("flow uninstall", () => {
         expect(said.code, said.stdout + said.stderr).toBe(0);
         expect(said.stdout).toContain(`  - ${file} — ${LISTED}`);
         expect(said.stdout.trim().split("\n").at(-1)).toBe("  next: `npm uninstall -g @jawache/flow` — removes the package.");
-        expect(JSON.parse(readFileSync(file, "utf8")), "flow's six are gone, and the user's hook and keys stay").toEqual(own);
+        expect(JSON.parse(readFileSync(file, "utf8")), "flow's registrations are gone, and the user's hook and keys stay").toEqual(own);
         expect(flow(global, ["uninstall", "--machine"], machine).stdout, "a second run").toContain("nothing of flow's here to remove");
       } finally {
         for (const dir of [global, machine]) rmSync(dir, { recursive: true, force: true });
@@ -1307,7 +1307,7 @@ describe("flow uninstall", () => {
         expect(said.code, said.stdout + said.stderr).toBe(0);
         expect(said.stdout).toContain(`  - .claude/settings.json — ${LISTED}`);
         expect(said.stdout).toContain(`  - ${file} — ${LISTED}`);
-        expect(JSON.parse(readFileSync(file, "utf8")), "flow's six are gone, and the user's hook and keys stay").toEqual(own);
+        expect(JSON.parse(readFileSync(file, "utf8")), "flow's registrations are gone, and the user's hook and keys stay").toEqual(own);
       } finally {
         for (const dir of [listed, machine]) rmSync(dir, { recursive: true, force: true });
       }

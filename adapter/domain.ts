@@ -4480,7 +4480,7 @@ function machineRewrite(file: InitFacts["machine"]): InitPlan["machine"] {
 export function planInit(facts: InitFacts): InitPlan {
   // A file we could not read is a file we may not write. `withRegistrations` builds a NEW object
   // from whatever it is handed, so handing it the null an unparseable file produces would emit a
-  // settings file holding flow's six registrations and NOTHING ELSE — permissions, model, theme,
+  // settings file holding flow's registrations and NOTHING ELSE — permissions, model, theme,
   // every other tool's hooks, gone. There is no safe merge into bytes nobody parsed, so init
   // registers nothing and says which file to fix.
   const registration = facts.settingsUnreadable ? { settings: facts.settings, added: [] } : withRegistrations(facts.settings);
