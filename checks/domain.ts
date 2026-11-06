@@ -917,9 +917,9 @@ export function quoteArg(value: string): string {
  * THE FIRST git command decides: a line that walks two trees is beyond what one answer can
  * honestly describe. In a line whose start nobody knows, as in a case, the folder is relative to
  * where it started, and `.` — the start itself — needs no `-C`: the read lands where `ctx.exec`
- * runs. A folder the parse could not settle, such as after `cd "$(mktemp -d)"`, is "" too, and
- * every caller treats a failed read as "not a repo, git owns that error" and passes: a false
- * negative, which is this pack's stated trade.
+ * runs. A folder the parse could not settle, such as after `cd "$(mktemp -d)"`, or a git command
+ * that names its repository itself with `--git-dir`, gets no `-C` either, so the read is of this
+ * repository, where `ctx.exec` runs.
  */
 export function gitDirPrefix(facts: CommandFacts): string {
   const folder = gitCommands(facts)[0]?.command.folder ?? null;

@@ -434,7 +434,7 @@ export function deleteTargets(commands: readonly ShellCommand[] | null): string[
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// BASH READS — the files a shell command reads, for the touch breadcrumb, and the folders it moves to
+// BASH READS — the files a shell command reads, for the touch breadcrumb
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 //
 // Under auto mode most contact with an area is a `cat`, a `grep` or a `sed -n` whose payload names
@@ -954,8 +954,13 @@ function shellCwd(payload: HookPayload, root: string): string {
 export function commandFolders(payload: HookPayload, root: string, home: string | undefined): string[] {
   if (text(payload.tool_name) !== "Bash") return [];
   const cwd = shellCwd(payload, root);
-  const commands = parseCommandLine(text((payload.tool_input ?? {})["command"]), { cwd, home }) ?? [];
-  return [...new Set([cwd, ...commands.flatMap((c) => (c.folder === null ? [] : [c.folder]))])];
+  const commands = parseCommandLine(text((payload.tool_input ?? {})["command"]), { cwd, home });
+  return [...new Set([cwd, ...knownFolders(commands)])];
+}
+
+/** The folders the parse settled for these commands, each once; a command with none adds nothing. */
+function knownFolders(commands: readonly ShellCommand[] | null): string[] {
+  return [...new Set((commands ?? []).flatMap((c) => (c.folder === null ? [] : [c.folder])))];
 }
 
 /**
@@ -1020,7 +1025,7 @@ export function outsideOf(
 ): string[] {
   const out = (folder: string): boolean => beyondRoot(folder, root, gitIn) && !sameRepository(folder);
   if (event.rail === "guard" && event.moment === "command")
-    return [...new Set((event.commands ?? []).flatMap((c) => (c.folder === null ? [] : [c.folder])))].filter(out);
+    return knownFolders(event.commands ?? null).filter(out);
   const path = event.rail === "guard" ? event.file?.path : event.path;
   if (path === undefined) return [];
   const absolute = posix.resolve(root, path);

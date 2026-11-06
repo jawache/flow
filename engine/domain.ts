@@ -268,7 +268,7 @@ export function fires(spec: EntrySpec, moment: Moment): boolean {
  * Does this entry judge work outside the repository? Only a guardrail marked `.everywhere()` does.
  * Decided here, once, for every rule: no check asks where its work is.
  */
-function everywhere(entry: LoadedEntry): boolean {
+export function everywhere(entry: LoadedEntry): boolean {
   return entry.spec.kind === "guardrail" && entry.spec.everywhere === true;
 }
 
@@ -387,7 +387,7 @@ async function subjectsOf(entry: LoadedEntry, event: GuardEvent, world: World, c
     if (commands === null || outside.length === 0) return [{ name: command, facts: { command, commands } }];
     // A line that works in two places hands the rule its commands here, and the raw line unchanged.
     const inside = commands.filter((c) => c.folder === null || !outside.includes(c.folder));
-    if (commands.length > 0 && inside.length === 0) return [];
+    if (inside.length === 0) return [];
     return [{ name: command, facts: { command, commands: inside } }];
   }
   return [{ name: null, facts: { turn: event.turn ?? [] } }];
@@ -520,7 +520,8 @@ export async function guard({ load, event, world, faults = [], off = false }: Gu
 
   const effects: Effect[] = [];
   const tallies: Tally[] = [];
-  // The line is parsed ONCE per hook, however many entries fire on it, and every ctx carries it:
+  // The line is parsed ONCE per hook, however many entries fire on it, and every ctx carries it,
+  // less the commands outside the repository for a rule not marked `.everywhere()` (`subjectsOf`):
   // the adapter's parse rides the event, and a caller that made none has it made here.
   const parsed = event.command === undefined ? null : event.commands === undefined ? parseCommandLine(event.command) : event.commands;
   for (const entry of load.entries) {

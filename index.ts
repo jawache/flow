@@ -134,6 +134,10 @@ export { commitMessage, gitCommands, gitDirPrefix, givesReason, quoteArg, shellC
 // facts => …)` remains the escape hatch; this is the path that cannot be got wrong.
 export { spawnedAs, type SpawnRecipe } from "./engine/domain.ts";
 
+// Whether a loaded entry judges work outside the repository: the engine's one answer, which a page
+// that lists the rules marked `.everywhere()` reads too, so the two cannot come to disagree.
+export { everywhere } from "./engine/domain.ts";
+
 export {
   write,
   command,

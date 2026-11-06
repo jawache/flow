@@ -32,6 +32,7 @@ describe("the public surface", () => {
       "depcruise",
       "entriesOrThrow",
       "escapeRe",
+      "everywhere",
       "execPasses",
       "faultsOf",
       "gitCommand",
