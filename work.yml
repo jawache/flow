@@ -17,9 +17,9 @@ agents:                                              # the model each agent runs
 permissions: bypassPermissions                       # passed to claude as --permission-mode
 teardown: archived                                   # archiving the card tears the session and its worktree down
 
-environment:                                         # flow guards itself through dist/, which git does not carry: install and build before the session starts, or every tool call is refused
-  create: "git -C {repo} worktree add {path} -b {branch} origin/{base} && cd {path} && just install && just build && echo {path}"
-  existing: "git -C {repo} worktree prune && git -C {repo} worktree add {path} {branch} && cd {path} && just install && just build && echo {path}"
+environment:                                         # flow guards itself through dist/, which git does not carry: install and build before the session starts, or every tool call is refused. The hooks run node_modules/@jawache/flow/dist/flow.mjs when it exists, so the link makes them run this worktree's own build rather than an older `flow` on PATH
+  create: "git -C {repo} worktree add {path} -b {branch} origin/{base} && cd {path} && just install && mkdir -p node_modules/@jawache && ln -sfn ../.. node_modules/@jawache/flow && just build && echo {path}"
+  existing: "git -C {repo} worktree prune && git -C {repo} worktree add {path} {branch} && cd {path} && just install && mkdir -p node_modules/@jawache && ln -sfn ../.. node_modules/@jawache/flow && just build && echo {path}"
   remove: "git -C {repo} worktree remove {folder} && git -C {repo} branch -D {branch}"
 
 fields:                                              # every field is a key in each issue's front matter; status is the one the daemon acts on
