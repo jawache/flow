@@ -1128,8 +1128,8 @@ async function judge(args: {
         ...(event.command === undefined ? {} : { command: event.command }),
         ...(event.staged === undefined ? {} : { staged: event.staged }),
         ...(event.turn === undefined ? {} : { turn: event.turn }),
-        // The parse rides with the answer, since a replay's own parse has no folder to match it to.
-        ...(outside.length === 0 ? {} : { outside, commands: event.commands }),
+        // Where the line started rides with the answer, so a replay parses it to the same folders.
+        ...(outside.length === 0 ? {} : { outside, ...(event.start === undefined ? {} : { start: event.start }) }),
         wearing: identity.wearing,
         world: tape?.taken() ?? {},
       });

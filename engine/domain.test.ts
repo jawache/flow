@@ -788,7 +788,7 @@ describe("work outside the repository", () => {
       recording: {
         v: RECORDING_VERSION,
         session: "s1",
-        steps: [{ rail: "guard", moment: "command", command: line, commands: parseCommandLine(line, { cwd: "/repo" }), outside: ["/tmp/r"], wearing: [] }],
+        steps: [{ rail: "guard", moment: "command", command: line, start: { cwd: "/repo" }, outside: ["/tmp/r"], wearing: [] }],
       },
     });
     expect(seen["here"]).toEqual([["git commit -m bad"]]);

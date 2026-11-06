@@ -646,7 +646,7 @@ describe("toEvent — one payload, every moment it carries", () => {
     const events = toEvent("pre-tool-use", pre("Bash", { command: "rm secret/a.ts" }), w);
     // Every guard event comes first: a refusal carries no notes, so none is judged after one.
     expect(events).toStrictEqual([
-      { rail: "guard", moment: "command", command: "rm secret/a.ts", commands: parseCommandLine("rm secret/a.ts", { cwd: "/repo" }) },
+      { rail: "guard", moment: "command", command: "rm secret/a.ts", commands: parseCommandLine("rm secret/a.ts", { cwd: "/repo" }), start: { cwd: "/repo", home: undefined } },
       { rail: "guard", moment: "delete", file: { path: "secret/a.ts", content: "the content" } },
       { rail: "brief", moment: "command", command: "rm secret/a.ts" },
     ]);
@@ -658,7 +658,7 @@ describe("toEvent — one payload, every moment it carries", () => {
     const command = "cat a.ts && rg x lib ~/n.md";
     const events = toEvent("pre-tool-use", { ...pre("Bash", { command }), cwd: "/repo/src" }, { ...world(), home: "/repo/home" });
     expect(events).toStrictEqual([
-      { rail: "guard", moment: "command", command, commands: parseCommandLine(command, { cwd: "/repo/src", home: "/repo/home" }) },
+      { rail: "guard", moment: "command", command, commands: parseCommandLine(command, { cwd: "/repo/src", home: "/repo/home" }), start: { cwd: "/repo/src", home: "/repo/home" } },
       { rail: "brief", moment: "command", command },
       { rail: "brief", moment: "touch", path: "src/a.ts" },
       { rail: "brief", moment: "touch", path: "src/lib" },
@@ -674,7 +674,7 @@ describe("toEvent — one payload, every moment it carries", () => {
   it("raises no delete moment for a file that is already gone", () => {
     const events = toEvent("pre-tool-use", pre("Bash", { command: "rm nowhere.ts" }), world());
     expect(events).toStrictEqual([
-      { rail: "guard", moment: "command", command: "rm nowhere.ts", commands: parseCommandLine("rm nowhere.ts", { cwd: "/repo" }) },
+      { rail: "guard", moment: "command", command: "rm nowhere.ts", commands: parseCommandLine("rm nowhere.ts", { cwd: "/repo" }), start: { cwd: "/repo", home: undefined } },
       { rail: "brief", moment: "command", command: "rm nowhere.ts" },
     ]);
   });

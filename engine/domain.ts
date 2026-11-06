@@ -49,6 +49,7 @@ import {
   type Moment,
   type SessionFacts,
   type ShellCommand,
+  type ShellStart,
   type Settings,
   type TurnAction,
   type Unanswered,
@@ -1786,9 +1787,9 @@ export type RecordedStep =
       readonly turn?: readonly TurnAction[] | undefined;
       readonly wearing: readonly string[];
       readonly world?: CaseWorld | undefined;
-      /** Where the step worked outside the repository; with it, a command's parse, whose folders it names. */
+      /** Where the step worked outside the repository; with it, where a command line started, which its folders are followed from. */
       readonly outside?: GuardEvent["outside"];
-      readonly commands?: Ctx["commands"];
+      readonly start?: ShellStart | undefined;
     }
   | {
       readonly rail: "brief";
@@ -1911,7 +1912,7 @@ export async function replay({ load, recording, settings, marks = {} }: ReplayAr
           turn: step.turn,
           wearing: step.wearing,
           outside: step.outside,
-          ...(step.commands === undefined ? {} : { commands: step.commands }),
+          ...(step.start === undefined || step.command === undefined ? {} : { commands: parseCommandLine(step.command, step.start) }),
         },
         world: cannedWorld(step.world ?? {}, step.staged, unanswered),
       });

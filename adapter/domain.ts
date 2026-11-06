@@ -55,6 +55,7 @@ import {
   type Refusal,
   type SessionFacts,
   type ShellCommand,
+  type ShellStart,
   type ShellStep,
   type TurnAction,
 } from "../language/domain.ts";
@@ -283,6 +284,8 @@ export type AdapterEvent =
       readonly command?: string | undefined;
       /** command: the line's parse, made once here and handed to the engine with the line. */
       readonly commands?: Ctx["commands"];
+      /** command: where the line started, which the parse followed each command's folder from. */
+      readonly start?: ShellStart | undefined;
       readonly staged?: readonly string[] | undefined;
       readonly turn?: readonly TurnAction[] | undefined;
       /**
@@ -830,7 +833,7 @@ function callEvents(payload: HookPayload, world: EventWorld): AdapterEvent[] {
     const cwd = shellCwd(payload, world.root);
     const steps = parseShellSteps(command, { cwd, home: world.home });
     const commands = steps === null ? null : stepCommands(steps);
-    const events: AdapterEvent[] = [{ rail: "guard", moment: "command", command, commands }];
+    const events: AdapterEvent[] = [{ rail: "guard", moment: "command", command, commands, start: { cwd, home: world.home } }];
     for (const target of deleteTargets(commands)) {
       // The file is still there at PreToolUse, so a content rule can ask what is about to be
       // lost ("this matched X — did you move the code first?"). One that is already gone yields
