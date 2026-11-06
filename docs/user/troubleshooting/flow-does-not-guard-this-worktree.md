@@ -23,7 +23,7 @@ flow guards /Users/Shared/code/my-repo, the folder this session started in. It d
 
 ## Why
 
-flow guards only the folder a Claude Code session started in. The agent reached the worktree by running `cd` into it, or by editing a file there. Its changes in that worktree are unguarded:
+flow guards only the folder a Claude Code session started in. The agent reached the worktree by running `cd` into it, by running `git -C` with it, or by editing a file there. Its changes in that worktree are unguarded:
 
 - **No guardrail** judges a write or a delete there, and nothing is written back.
 - **No breadcrumb** is shown for a file there.

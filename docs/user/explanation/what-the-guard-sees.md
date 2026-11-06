@@ -182,7 +182,7 @@ A git **worktree** is another working folder of the same repository, with its ow
 flow cannot guard that work, so it tells the agent to stop. A tool call works in another worktree when:
 
 - **The Edit or Write tool** writes a file inside it.
-- **A shell command** runs inside it, because the shell already stands in it when the call starts, or because the command runs `cd` into it.
+- **A shell command** runs inside it, because the shell already stands in it when the call starts, or because a command in the line runs there after a `cd` into it, or with `git -C`.
 
 At the first such call, flow passes the agent a message beside the call's result. The message names the folder flow guards and the worktree it does not guard. It tells the agent to stop its work in the worktree and tell you to start a session there, because flow guards that worktree only from a session started in it.
 
