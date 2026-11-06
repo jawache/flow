@@ -68,6 +68,19 @@ const WRITE_REDIRECTS = new Set([">", ">>", ">|", "&>", "&>>"]);
 /** Redirect targets that write no file: a device. */
 const NO_FILE = new Set(["/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"]);
 
+/** `git tag` flags that put it in list mode: `--list` itself, and those git says imply it. */
+const TAG_LIST = /^(?:-l|--list|-n[0-9]*|--contains|--no-contains|--merged|--no-merged|--points-at)(?:=|$)/;
+/** `git tag` flags that only shape a listing, and make one when no tag is named. */
+const TAG_SHAPE = /^(?:--sort|--format|--column|--no-column|-i|--ignore-case|--color|--no-color|--omit-empty)(?:=|$)/;
+/** `git tag` flags that create, delete or move a tag. */
+const TAG_WRITE = /^(?:-[adfsuemF]|--delete|--annotate|--sign|--force|--local-user|--message|--file|--edit|--create-reflog)(?:=|$)/;
+
+/** Whether `git tag` with these arguments only lists: no argument, a list-mode flag, or nothing but shaping flags; never a write flag. */
+function tagLists(args: readonly string[]): boolean {
+  if (args.some((a) => TAG_WRITE.test(a))) return false;
+  return args.some((a) => TAG_LIST.test(a)) || args.every((a) => TAG_SHAPE.test(a));
+}
+
 /** What one parsed command writes, or null. */
 function writeOf(c: ShellCommand): string | null {
   const prog = programName(c.program);
@@ -82,7 +95,7 @@ function writeOf(c: ShellCommand): string | null {
       (g.subcommand !== null && GIT_WRITES.has(g.subcommand)) ||
       (g.subcommand === "worktree" && ["add", "remove", "move", "prune"].includes(first)) ||
       (g.subcommand === "stash" && !["list", "show"].includes(first)) ||
-      (g.subcommand === "tag" && g.args.length > 0 && !["-l", "--list"].includes(first)) ||
+      (g.subcommand === "tag" && !tagLists(g.args)) ||
       (g.subcommand === "branch" && g.args.some((a) => /^-[dDmMcCf]$/.test(a) || ["--delete", "--move", "--copy", "--force"].includes(a)))
     )
       return `\`git ${g.subcommand}\` changes the branch, the history or the working tree`;
@@ -444,6 +457,11 @@ export const driven = definePack("driven", {
         "git stash list",
         "git branch --show-current",
         "git tag --list",
+        "git tag",
+        "git tag --sort=-v:refname | head -3",
+        "git tag --contains HEAD",
+        "git tag -n --points-at HEAD",
+        "git tag --merged main --format='%(refname:short)'",
         "git -C ../app log -1",
         "gh pr view 57 --comments",
         "cat .work/app-42/issue.md",
@@ -486,6 +504,10 @@ export const driven = definePack("driven", {
         "git reset --hard HEAD~1",
         "git restore main.go",
         "git branch -D old",
+        "git tag v1.0.0",
+        "git tag -d v1.0.0",
+        "git tag --sort=-v:refname v1.0.0",
+        "git tag -a v1.0.0 -m x --contains HEAD",
         "git worktree add ../x",
         "sh -c 'echo x > f'",
         "bash <<< 'rm -rf build'",

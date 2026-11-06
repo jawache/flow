@@ -990,6 +990,12 @@ describe("a session × agent's own state", () => {
     expect(readState('{"marks":{},"worktrees":["/r/wt",7]}')).toEqual({ marks: {} });
     expect(readState('{"marks":{},"worktrees":[]}')).toEqual({ marks: {} });
   });
+
+  it("keeps a subagent's notes held for its brief, beside the marks", () => {
+    expect(readState('{"marks":{},"heldForBrief":true}')).toEqual({ marks: {}, heldForBrief: true });
+    expect(readState('{"marks":{},"heldForBrief":"yes"}')).toEqual({ marks: {} });
+    expect(readState('{"marks":{},"heldForBrief":false}')).toEqual({ marks: {} });
+  });
 });
 
 describe("the commit gate's session marker", () => {

@@ -81,6 +81,7 @@ just install && just link    # run `flow` from your checkout
 just                         # every recipe, with what it does
 just test-commit             # what the commit gate runs: the rule cases, the typecheck, the suite
 just test-packs              # the ten shipped packs, bound in a throwaway repo
+just test-tutorial           # the Getting started tutorial against the built binary, outside the commit gate
 ```
 
 flow guards its own repo. `flow.config.ts` binds the ten shipped packs, plus one pack this repo writes, `guards/house.ts`, so a change that breaks a rule, an export or the build is refused at this repo's own next commit.

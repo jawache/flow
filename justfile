@@ -90,6 +90,10 @@ test-commit:
     just typecheck
     just test
 
+[doc("Pin the Getting started tutorial to the binary: every transcript on docs/user/tutorials/getting-started.md is what the built flow prints. Outside the commit gate, since the docs land before the code that prints them; the full suite and `just release-check` run it.")]
+test-tutorial:
+    FLOW_TUTORIAL=1 npx vitest run e2e/product.test.ts -t "the Getting started tutorial's transcripts"
+
 [doc("Run the full commit gate over every file git can see, tracked or not, as if all of it were staged — the same guardrails .githooks/pre-commit runs on the staged changes, plus every file the last commit has that is now gone.")]
 gate:
     flow hook commit --all
@@ -135,6 +139,7 @@ release-dry:
 release-check:
     just gate
     just test-commit
+    just test-tutorial
     just build-release
     npm pack --dry-run
     # READ THE FILE LIST ABOVE before typing the publish line. It is the whole of what strangers
