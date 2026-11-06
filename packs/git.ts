@@ -667,12 +667,11 @@ export const git = definePack("git", (repo: Release) => {
         // A NEW branch named after a folder that exists: `-b` swallows its value, so `docs` is
         // never offered to `ls-files` and the folder underneath it is never mistaken for a target.
         "git checkout -b docs",
-        // A `cd` into ANOTHER repo whose tree is clean. The reads carry `-C /work/other`, so the
-        // answer is about the tree the command is aimed at rather than about the session's. A
-        // case's line starts in no known folder, so the folder it moves to is an absolute one.
+        // A `cd` into ANOTHER repo whose tree is clean. The reads carry `-C ../other`, so the
+        // answer is about the tree the command is aimed at rather than about the session's.
         {
-          command: "cd /work/other && git checkout -- src/x.ts",
-          world: { exec: { "git -C '/work/other' status --porcelain": { stdout: "" } } },
+          command: "cd ../other && git checkout -- src/x.ts",
+          world: { exec: { "git -C '../other' status --porcelain": { stdout: "" } } },
         },
         "git status",
         // `git restore --staged` touches the INDEX, not the tree — nothing is lost, so nothing is
@@ -715,11 +714,11 @@ export const git = definePack("git", (repo: Release) => {
         // SESSION's tree, where the path does not exist — so the check found nothing to lose and
         // let the discard through. The F3 builder did exactly this to its own uncommitted work.
         {
-          command: "cd /work/other && git checkout src/x.ts",
+          command: "cd ../other && git checkout src/x.ts",
           world: {
             exec: {
-              "git -C '/work/other' ls-files": { stdout: "src/x.ts" },
-              "git -C '/work/other' status --porcelain": { stdout: " M src/x.ts" },
+              "git -C '../other' ls-files": { stdout: "src/x.ts" },
+              "git -C '../other' status --porcelain": { stdout: " M src/x.ts" },
             },
           },
         },
@@ -764,8 +763,8 @@ export const git = definePack("git", (repo: Release) => {
         // answered and fail saying so — which is what makes this case evidence about the routing
         // rather than about the checkout.
         {
-          command: "git -C /work/other checkout -- src/x.ts",
-          world: { exec: { "git -C '/work/other' status --porcelain": { stdout: " M src/x.ts" } } },
+          command: "git -C ../other checkout -- src/x.ts",
+          world: { exec: { "git -C '../other' status --porcelain": { stdout: " M src/x.ts" } } },
         },
       ],
     }),
@@ -1144,10 +1143,10 @@ export const git = definePack("git", (repo: Release) => {
           // so a check that diffed this repo would ask a question the case never answered and fail
           // naming it — the case is about which repo is read, not about the version.
           {
-            command: 'git -C /work/other commit -m "fix: a thing"',
+            command: 'git -C ../other commit -m "fix: a thing"',
             world: {
               exec: {
-                [`git -C '/work/other' diff HEAD -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' },
+                [`git -C '../other' diff HEAD -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' },
               },
             },
           },

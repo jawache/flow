@@ -378,11 +378,8 @@ describe("a Bash line's delete targets", () => {
 
 describe("bashReads — the files a Bash command reads, before it runs", () => {
   const HOME = "/home/me";
-  // The reads and searches only: where a `cd` moved the shell is `folders`, pinned with the worktrees.
-  const at = (command: string, cwd = ROOT, home: string | undefined = HOME): { reads: readonly string[]; searched: readonly string[] } => {
-    const { reads, searched } = bashReads(parseShellSteps(command), { cwd, root: ROOT, home });
-    return { reads, searched };
-  };
+  const at = (command: string, cwd = ROOT, home: string | undefined = HOME): { reads: readonly string[]; searched: readonly string[] } =>
+    bashReads(parseShellSteps(command), { cwd, root: ROOT, home });
   const reads = (command: string, cwd = ROOT): readonly string[] => at(command, cwd).reads;
   const searched = (command: string, cwd = ROOT): readonly string[] => at(command, cwd).searched;
 
@@ -4712,12 +4709,15 @@ describe("another worktree of the repository — told once, never refused", () =
     expect(worked({ tool_name: "Write", tool_input: {} })).toEqual([]);
   });
 
-  it("reads the folders a command runs in: the payload's cwd, then each cd the parse reads, absolute", () => {
+  it("reads the folders a command runs in: the payload's cwd, then each command's folder from the parse, absolute", () => {
     const bash = (command: string, cwd?: string): HookPayload => ({ tool_name: "Bash", tool_input: { command }, ...(cwd === undefined ? {} : { cwd }) });
     expect(commandFolders(bash("ls", "/code/app.worktrees/feature"), root, "/home/me")).toEqual(["/code/app.worktrees/feature"]);
     expect(commandFolders(bash("ls"), root, "/home/me"), "no cwd: the guarded folder").toEqual(["/code/app"]);
     expect(commandFolders(bash("cd ../app.worktrees/feature && npm test", root), root, "/home/me")).toEqual(["/code/app", "/code/app.worktrees/feature"]);
-    expect(commandFolders(bash("(cd /tmp/x && ls); pushd ~/y", root), root, "/home/me")).toEqual(["/code/app", "/tmp/x", "/home/me/y"]);
+    // A folder counts once a command runs in it: the trailing `pushd` moves the shell, and runs nothing there.
+    expect(commandFolders(bash("(cd /tmp/x && ls); pushd ~/y", root), root, "/home/me")).toEqual(["/code/app", "/tmp/x"]);
+    expect(commandFolders(bash("pushd ~/y && ls", root), root, "/home/me")).toEqual(["/code/app", "/home/me/y"]);
+    expect(commandFolders(bash("git -C ../app.worktrees/feature status", root), root, "/home/me"), "git's own -C").toEqual(["/code/app", "/code/app.worktrees/feature"]);
     expect(commandFolders(bash('cd "$DIR" && ls', root), root, "/home/me"), "a folder only running the line could tell").toEqual(["/code/app"]);
     expect(commandFolders({ tool_name: "Write", tool_input: { file_path: "/code/app.worktrees/feature/a.ts" }, cwd: "/code/app.worktrees/fix" }, root, "/home/me")).toEqual([]);
   });

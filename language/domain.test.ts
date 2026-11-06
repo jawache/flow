@@ -48,6 +48,7 @@ import {
   overlay,
   override,
   pack,
+  isOption,
   parseCommandLine,
   programName,
   elideHeredocBodies,
@@ -493,7 +494,7 @@ describe("parseCommandLine — the six fields", () => {
       heredocs: [],
       substitutions: [],
       redirects: [],
-      folder: null,
+      folder: ".",
       nested: false,
     });
   });
@@ -846,7 +847,7 @@ describe("parseShellSteps — the same parse, in the order the shell runs it", (
 
 describe("parseCommandLine — the folder each command runs in", () => {
   /** Each command's program and folder, from a line that starts in `/work/repo`. */
-  const placed = (line: string, start: { cwd: string | null; home?: string } = { cwd: "/work/repo" }): [string, string | null][] =>
+  const placed = (line: string, start: { cwd: string; home?: string } = { cwd: "/work/repo" }): [string, string | null][] =>
     (parseCommandLine(line, start) ?? []).map((c) => [c.program, c.folder]);
 
   it("is where the line started, for a command nothing moved", () => {
@@ -900,6 +901,9 @@ describe("parseCommandLine — the folder each command runs in", () => {
     expect(placed("git -c -C status")).toEqual([["git", "/work/repo"]]);
     // `git commit -C HEAD` reuses a message: an option of the subcommand, not of git.
     expect(placed("git commit -C HEAD")).toEqual([["git", "/work/repo"]]);
+    // A wrapper and an assignment in front: `-C`'s value is found past them.
+    expect(placed("env FOO=1 git -C sub status")).toEqual([["git", "/work/repo/sub"]]);
+    expect(placed("FOO=1 timeout 5 git -C sub status")).toEqual([["git", "/work/repo/sub"]]);
   });
 
   it("follows a variable the line sets itself", () => {
@@ -909,16 +913,10 @@ describe("parseCommandLine — the folder each command runs in", () => {
   });
 
   it("places the git commit of the flow-5 line in the scratch repo it made", () => {
-    const S = "/private/tmp/claude-501/-Users-asim-dev-jawache-flow-worktrees-flow-5-a-subagent-gets-every-breadcrumb-when-it-starts/b91dc200-9fa6-448d-b21a-31edd924448a/scratchpad";
-    const line =
-      "W=/Users/asim/dev/jawache/flow.worktrees/flow-5-a-subagent-gets-every-breadcrumb-when-it-starts; " +
-      `S=${S}; R=$S/f52-repo; H=$S/f52-home; rm -rf $R $H; mkdir -p $R $H; cd $R && git init -q && git commit -q --allow-empty -m init; ` +
-      "export CLAUDE_CONFIG_DIR=$H; echo '$ flow init'; node $W/dist/flow.mjs init; echo; " +
-      "echo '$ jq .hooks.SubagentStart $CLAUDE_CONFIG_DIR/settings.json'; jq .hooks.SubagentStart $H/settings.json";
-    const commands = parseCommandLine(line, { cwd: "/Users/asim/dev/jawache/flow.worktrees/flow-5-a-subagent-gets-every-breadcrumb-when-it-starts" }) ?? [];
-    const commit = commands.find((c) => c.program === "git" && c.args[0] === "commit");
-    expect(commit?.folder).toBe(`${S}/f52-repo`);
-    expect(commands.find((c) => c.program === "rm")?.folder).toBe("/Users/asim/dev/jawache/flow.worktrees/flow-5-a-subagent-gets-every-breadcrumb-when-it-starts");
+    const line = "W=/w; S=/s; R=$S/r; H=$S/h; rm -rf $R $H; mkdir -p $R $H; cd $R && git init -q && git commit -q --allow-empty -m init; export CLAUDE_CONFIG_DIR=$H; node $W/dist/flow.mjs init";
+    const commands = parseCommandLine(line, { cwd: "/w" }) ?? [];
+    expect(commands.find((c) => c.program === "git" && c.args[0] === "commit")?.folder).toBe("/s/r");
+    expect(commands.find((c) => c.program === "rm")?.folder).toBe("/w");
   });
 
   it("leaves every command after cd \"$(mktemp -d)\" with no folder", () => {
@@ -957,14 +955,25 @@ describe("parseCommandLine — the folder each command runs in", () => {
     expect(placed("for d in x y; do git status; done")).toEqual([["git", "/work/repo"]]);
   });
 
-  it("knows only an absolute move when the line's start is not known, as in a case", () => {
-    expect(placed("git status; cd ../x; git status; cd /a && git status", { cwd: null })).toEqual([
-      ["git", null],
-      ["cd", null],
-      ["git", null],
-      ["cd", null],
+  it("keeps each folder relative to where the line started, when that is not known, as in a case", () => {
+    expect(placed("git status; cd ../x; git status; cd /a && git status; git -C b status", { cwd: "." })).toEqual([
+      ["git", "."],
+      ["cd", "."],
+      ["git", "../x"],
+      ["cd", "../x"],
       ["git", "/a"],
+      ["git", "/a/b"],
     ]);
+    expect(parseCommandLine("cd ../other && git checkout -- x")?.[1]?.folder, "no start given is the same").toBe("../other");
+    expect(placed('cd "$(mktemp -d)" && git status', { cwd: "." })[2], "only running the line could tell").toEqual(["git", null]);
+  });
+
+  it("reads an option word as one, and a lone dash as an operand", () => {
+    expect(isOption("-P")).toBe(true);
+    expect(isOption("--git-dir")).toBe(true);
+    expect(isOption("-")).toBe(false);
+    expect(isOption("dir")).toBe(false);
+    expect(isOption(null)).toBe(false);
   });
 });
 

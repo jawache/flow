@@ -34,8 +34,11 @@
 
 import {
   followSteps,
+  GIT_VALUE_OPTS,
+  gitCommand,
   isBreadcrumbMoment,
   isGuardrailMoment,
+  isOption,
   parseCommandLine,
   parseShellSteps,
   programName,
@@ -76,8 +79,8 @@ import {
 } from "../engine/domain.ts";
 // Git read from the parse, borrowed rather than copied. Reading `git rm src/x.ts` for the paths it
 // would remove is event ASSEMBLY — the adapter's job — but where git's own options stop and its
-// subcommand starts is a question the checks layer already answers.
-import { GIT_VALUE_OPTS, gitCommand, gitCommands, missingGrammarText, quoteArg } from "../checks/domain.ts";
+// subcommand starts is a question the parse (`gitCommand`) and the checks layer already answer.
+import { gitCommands, missingGrammarText, quoteArg } from "../checks/domain.ts";
 // String algebra only — a Bash read is resolved against the directory the shell was in.
 import { posix } from "node:path";
 // The one glob engine. A coverage question asked with a second matcher is a coverage answer about
@@ -454,11 +457,7 @@ export function deleteTargets(commands: readonly ShellCommand[] | null): string[
 // catches later: a file changed before any read of it was seen gets its note at the change.
 //
 // THE WALK IS THE PARSE'S (`followSteps` in language/), the same one that gives every command in
-// `ctx.commands` its `folder`, so where a `cd` leaves the shell is worked out in one place. It also
-// returns `folders`: each folder a `cd`, `pushd` or `popd` moves the shell to, inside the repo
-// or not. Those are not reads; they are where the command works, and the worktree message reads
-// them (`commandFolders`, § ANOTHER WORKTREE below) to tell a command run in another worktree of
-// the repository. Failing open there too: a `cd` only running the line could resolve is left out.
+// `ctx.commands` its `folder`, so where a `cd` leaves the shell is worked out in one place.
 
 /** Which arguments of one read command are files. */
 interface ReadSpec {
@@ -546,9 +545,6 @@ const GIT_LOOKS = new Set(["diff", "log", "show", "status", "add", "blame", "ls-
 
 /** An argument after expansion, or null when it could not be known without running the line. */
 type Arg = string | null;
-
-/** An option word: a dash and something after it. `-` alone is stdin, and an unknown is not one. */
-const isOption = (arg: Arg): boolean => arg !== null && arg.startsWith("-") && arg !== "-";
 
 /** What one simple command reads, as written: files, the paths a search walks, and `git -C`'s dir. */
 interface ArgvReads {
@@ -656,7 +652,7 @@ export interface BashWhere {
   readonly home?: string | undefined;
 }
 
-/** What a Bash command reads in the repo, repo-relative, in order, each once, and the folders it moves to. */
+/** What a Bash command reads in the repo, repo-relative, in order, each once. */
 export interface BashReads {
   /** Files it reads by name — `cat`, `head`, `sed -n`, `grep` on a file, a `<` redirect. */
   readonly reads: readonly string[];
@@ -665,11 +661,6 @@ export interface BashReads {
    * directories. They touch an area; they are not a file the session read.
    */
   readonly searched: readonly string[];
-  /**
-   * The folders a `cd`, `pushd` or `popd` moved the shell to, absolute, in order, each once, inside
-   * the repo or not. One that only running the line could tell, such as `cd "$DIR"`, is left out.
-   */
-  readonly folders: readonly string[];
 }
 
 /**
@@ -692,9 +683,9 @@ function xargsList(wrappers: readonly (string | null)[]): string | null {
 /**
  * The repo paths a Bash command reads or searches — the `READERS` table, a `<` redirect, a `git`
  * pathspec — read from the parse's steps, and followed through `cd`, `VAR=`, `for` loops and the
- * commands a `$(…)` runs. The repo root itself is not an area and is left out. The same walk keeps
- * each folder a `cd` moves the shell to (`folders`). Best-effort, failing open: see the section
- * head. A line that does not parse names nothing.
+ * commands a `$(…)` runs, by the parse's own walk (`followSteps`). The repo root itself is not an
+ * area and is left out. Best-effort, failing open: see the section head. A line that does not
+ * parse names nothing.
  */
 export function bashReads(steps: readonly ShellStep[] | null, where: BashWhere): BashReads {
   const reads: string[] = [];
@@ -704,23 +695,22 @@ export function bashReads(steps: readonly ShellStep[] | null, where: BashWhere):
     if (rel !== null && !list.includes(rel)) list.push(rel);
   };
   // The parse's own walk keeps the shell's folder and variables; this reads each command's files from it.
-  const folders = followSteps(steps ?? [], { cwd: where.cwd, home: where.home }, (step, scope, expand) => {
+  followSteps(steps ?? [], { cwd: where.cwd, home: where.home }, (step, cwd, expand, moves) => {
     for (const { operator, target } of step.redirects) {
       if (operator !== "<" && operator !== "<>") continue;
       const path = expand(target);
-      add(reads, path === null ? null : resolveFrom(path, scope.cwd));
+      add(reads, path === null ? null : resolveFrom(path, cwd));
     }
     const list = xargsList(step.words.slice(0, step.at).map(expand));
-    if (list !== null) add(reads, resolveFrom(list, scope.cwd));
-    const name = step.command.program;
-    if (name === "cd" || name === "pushd" || name === "popd") return;
+    if (list !== null) add(reads, resolveFrom(list, cwd));
+    if (moves) return;
     const argv = step.words.slice(step.at).map(expand);
     const found = argvReads(argv);
-    const from = found.base === undefined ? scope.cwd : resolveFrom(found.base, scope.cwd);
+    const from = found.base === undefined ? cwd : resolveFrom(found.base, cwd);
     for (const path of found.reads) add(reads, resolveFrom(path, from));
     for (const path of found.searched) add(searched, resolveFrom(path, from));
   });
-  return { reads, searched, folders };
+  return { reads, searched };
 }
 
 /**
@@ -841,7 +831,7 @@ function callEvents(payload: HookPayload, world: EventWorld): AdapterEvent[] {
     // The line is parsed once here: the command rules read it, and so do the files it removes
     // and the files it reads. The host's `cwd` is where the shell stands, which is where each
     // command's folder is followed from.
-    const cwd = text(payload["cwd"]) || world.root;
+    const cwd = shellCwd(payload, world.root);
     const steps = parseShellSteps(command, { cwd, home: world.home });
     const commands = steps === null ? null : stepCommands(steps);
     const events: AdapterEvent[] = [{ rail: "guard", moment: "command", command, commands }];
@@ -955,16 +945,21 @@ export function editedFile(payload: HookPayload): string | null {
   return named === "" ? null : named;
 }
 
+/** Where the shell stood when a call started: the payload's `cwd`, against the guarded folder, which it is when absent. */
+function shellCwd(payload: HookPayload, root: string): string {
+  return posix.resolve(root, text(payload["cwd"]));
+}
+
 /**
- * The folders a shell command runs in, absolute: where the shell stood when the call started (the
- * payload's `cwd`, the guarded folder when absent), and each folder a `cd` or `pushd` in the line
- * moved it to, as the one parse reads it (`bashReads`). None for any other call.
+ * The folders a shell command runs in, absolute: where the shell stood when the call started, and
+ * each command's `folder` from the one parse, `git -C` included, each once. A folder only running
+ * the line could tell is left out. None for any other call.
  */
 export function commandFolders(payload: HookPayload, root: string, home: string | undefined): string[] {
   if (text(payload.tool_name) !== "Bash") return [];
-  const cwd = posix.resolve(root, text(payload["cwd"]));
-  const { folders } = bashReads(parseShellSteps(text((payload.tool_input ?? {})["command"])), { cwd, root, home });
-  return [cwd, ...folders];
+  const cwd = shellCwd(payload, root);
+  const commands = parseCommandLine(text((payload.tool_input ?? {})["command"]), { cwd, home }) ?? [];
+  return [...new Set([cwd, ...commands.flatMap((c) => (c.folder === null ? [] : [c.folder]))])];
 }
 
 /**
@@ -2168,8 +2163,7 @@ export function toolRow(payload: HookPayload, root = ""): Row | null {
 export function shellReadRows(payload: HookPayload, root: string, home?: string): Row[] {
   const command = text(payload.tool_input?.["command"]);
   if (text(payload.tool_name) !== "Bash" || command === "") return [];
-  const cwd = text(payload["cwd"]) || root;
-  return bashReads(parseShellSteps(command), { cwd, root, home }).reads.map((path) => ({ kind: "read", tool: "Bash", path }));
+  return bashReads(parseShellSteps(command), { cwd: shellCwd(payload, root), root, home }).reads.map((path) => ({ kind: "read", tool: "Bash", path }));
 }
 
 /** How a path changed across one call. */

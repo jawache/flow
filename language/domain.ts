@@ -460,9 +460,10 @@ export interface ShellCommand {
   /** Its redirects, and those of every group or loop it sits in. A heredoc or here-string is not one. */
   readonly redirects: readonly ShellRedirect[];
   /**
-   * The absolute folder it runs in: where the line started, moved by each `cd`, `pushd` and `popd`
-   * before it and by its own `git -C`. Null when the line does not settle it — `cd "$(mktemp -d)"`,
-   * or a line whose start is not known.
+   * The folder it runs in: where the line started, moved by each `cd`, `pushd` and `popd` before it
+   * and by its own `git -C`. Absolute when the start is known; for a line whose start is not, as in
+   * a case, relative to it — `.` for the start itself, `../other` after `cd ../other`. Null when only
+   * running the line could tell, such as after `cd "$(mktemp -d)"` or `cd "$DIR"`.
    */
   readonly folder: string | null;
   /** Inside a substitution, a `<( … )`, a `bash -c` or `eval` string, or a heredoc or here-string fed to a shell. */
@@ -742,26 +743,33 @@ function textBefore(w: Word): string | null {
 // sets. `placeSteps` reads it to give every command its `folder`; the adapter's read detection
 // reads the same walk for the files a command names. Best-effort and failing open: a move only
 // running the line could resolve, such as `cd "$DIR"` with `DIR` set elsewhere, leaves the folder
-// unknown (null) rather than guessed.
+// unknown (null) rather than guessed. A line whose start is not known starts at `.`, and every
+// folder after is relative to it.
 
 /** Where a line starts: the shell's folder, and what `~` and `$HOME` mean. */
 export interface ShellStart {
-  /** The folder the shell stands in when the line starts, absolute; null when it is not known. */
-  readonly cwd: string | null;
+  /** The folder the shell stands in when the line starts: absolute, or `.` when it is not known. */
+  readonly cwd: string;
   /** What `~` and `$HOME` mean; absent, a path through them is not known. */
   readonly home?: string | undefined;
 }
 
 /** The shell as the walk has it at one step. Copied into a subshell, so a move inside stays inside. */
-export interface ShellScope {
+interface ShellScope {
   cwd: string | null;
   old: string | null;
   readonly stack: (string | null)[];
   readonly vars: Map<string, string>;
 }
 
-/** A line nobody knows the start of: every relative move is unknown, and an absolute one is followed. */
-const UNKNOWN_START: ShellStart = { cwd: null };
+/** A line nobody knows the start of: each folder is relative to where it started, `.`. */
+const UNKNOWN_START: ShellStart = { cwd: "." };
+
+/** An option word — `-P`, `--x` — and not `-`, which is an operand: `cd -`, or stdin. */
+export const isOption = (arg: string | null): boolean => arg !== null && arg.startsWith("-") && arg !== "-";
+
+/** The programs that move the shell itself, which `followSteps` follows. */
+const MOVERS: ReadonlySet<string> = new Set(["cd", "pushd", "popd"]);
 
 /**
  * One word of the parse as the shell would expand it, from what the line itself holds: an unquoted
@@ -770,7 +778,7 @@ const UNKNOWN_START: ShellStart = { cwd: null };
  * variable, a `${…}` with an operation in it, or a substitution, whose commands are read as steps
  * of their own.
  */
-export function expandWord(word: ShellWord, vars: ReadonlyMap<string, string>, home: string | undefined): string | null {
+function expandWord(word: ShellWord, vars: ReadonlyMap<string, string>, home: string | undefined): string | null {
   let out = "";
   for (const piece of word) {
     const value =
@@ -781,40 +789,42 @@ export function expandWord(word: ShellWord, vars: ReadonlyMap<string, string>, h
   return out;
 }
 
-/** A path as the shell resolves it from `base`: an absolute one as given, a relative one only when `base` is known. */
+/**
+ * A path as the shell resolves it from `base`: an absolute one as given, a relative one only when
+ * `base` is known. String arithmetic only — never the process's own folder — so a relative `base`
+ * gives a relative answer: `../other` from `.`.
+ */
 export function resolveFrom(path: string, base: string | null): string | null {
-  return path.startsWith("/") ? posix.resolve(path) : base === null ? null : posix.resolve(base, path);
+  const joined = path.startsWith("/") ? posix.normalize(path) : base === null ? null : posix.join(base, path);
+  return joined !== null && joined.length > 1 && joined.endsWith("/") ? joined.slice(0, -1) : joined;
 }
 
 /** One command step, as the walk hands it to a reader. */
-export type CommandStep = Extract<ShellStep, { kind: "command" }>;
+type CommandStep = Extract<ShellStep, { kind: "command" }>;
 
 /**
  * Follow the steps as the shell runs them. `visit` is called on every command, after the
- * substitutions that build it and before its own move, with the scope as it stands then and that
- * scope's expansion of a word. A `for` body is followed once per value, so its commands can be
- * visited more than once. Returns each folder a `cd`, `pushd` or `popd` moved the shell to, in
- * order, each once, wherever it is.
+ * substitutions that build it and before its own move, with the folder the shell stands in then,
+ * that scope's expansion of a word, and whether the command moves the shell itself (`cd`, `pushd`,
+ * `popd`). A `for` body is followed once per value, so its commands can be visited more than once.
  */
 export function followSteps(
   steps: readonly ShellStep[],
   start: ShellStart,
-  visit: (step: CommandStep, scope: ShellScope, expand: (word: ShellWord) => string | null) => void,
-): string[] {
-  const moves: string[] = [];
-  const option = (arg: string | null): boolean => arg !== null && arg.startsWith("-") && arg !== "-";
+  visit: (step: CommandStep, cwd: string | null, expand: (word: ShellWord) => string | null, moves: boolean) => void,
+): void {
   const move = (scope: ShellScope, next: string | null): void => {
     scope.old = scope.cwd;
     scope.cwd = next;
-    if (next !== null && !moves.includes(next)) moves.push(next);
   };
   const run = (step: CommandStep, scope: ShellScope): void => {
     const expand = (word: ShellWord): string | null => expandWord(word, scope.vars, start.home);
-    visit(step, scope, expand);
+    const moves = MOVERS.has(step.command.program);
+    visit(step, scope.cwd, expand, moves);
+    if (!moves) return;
     const name = step.command.program;
-    if (name !== "cd" && name !== "pushd" && name !== "popd") return;
     const operands = step.words.slice(step.at + 1).map(expand);
-    const target = operands.find((arg) => !option(arg));
+    const target = operands.find((arg) => !isOption(arg));
     if (name === "popd") {
       // A `popd +N` names a slot in the stack, which this does not keep by number.
       move(scope, target === undefined ? (scope.stack.pop() ?? null) : null);
@@ -856,16 +866,15 @@ export function followSteps(
     }
   };
   walk(steps, { cwd: start.cwd, old: null, stack: [], vars: new Map() });
-  return moves;
 }
 
 /**
  * The folder one command runs in: the shell's, moved by the command's own `git -C`, which git
  * chains exactly as a shell chains `cd` — `cd /a && git -C b status` runs in `/a/b`.
  */
-function commandFolder(step: CommandStep, scope: ShellScope, expand: (word: ShellWord) => string | null): string | null {
+function commandFolder(step: CommandStep, cwd: string | null, expand: (word: ShellWord) => string | null): string | null {
   const git = gitCommand(step.command);
-  let folder = scope.cwd;
+  let folder = cwd;
   if (git === null) return folder;
   for (let i = 0; i < git.globals.length; i += GIT_VALUE_OPTS.has(git.globals[i] as string) ? 2 : 1) {
     if (git.globals[i] !== "-C") continue;
@@ -882,10 +891,10 @@ function commandFolder(step: CommandStep, scope: ShellScope, expand: (word: Shel
  * The steps with every command's `folder` settled by the walk — the commands a substitution runs
  * included. A command a `for` body runs in two different folders has none.
  */
-export function placeSteps(steps: readonly ShellStep[], start: ShellStart): ShellStep[] {
+function placeSteps(steps: readonly ShellStep[], start: ShellStart): ShellStep[] {
   const folders = new Map<ShellCommand, string | null>();
-  followSteps(steps, start, (step, scope, expand) => {
-    const folder = commandFolder(step, scope, expand);
+  followSteps(steps, start, (step, cwd, expand) => {
+    const folder = commandFolder(step, cwd, expand);
     folders.set(step.command, !folders.has(step.command) || folders.get(step.command) === folder ? folder : null);
   });
   const placed = new Map<ShellCommand, ShellCommand>();
@@ -911,7 +920,7 @@ export function placeSteps(steps: readonly ShellStep[], start: ShellStart): Shel
 /**
  * Parse one shell command line as bash: every simple command in it, nested ones included, in the
  * order they appear — or `null` when the line, or any script nested inside it, does not parse.
- * Each command's `folder` is followed from `start`; with none, only an absolute move is known.
+ * Each command's `folder` is followed from `start`; with none, it is relative to where the line started.
  */
 export function parseCommandLine(line: string, start: ShellStart = UNKNOWN_START): ShellCommand[] | null {
   const steps = parseShellSteps(line, start);

@@ -792,10 +792,6 @@ export const changeTogether = defineCheck(
 // of it about git or a commit. None of them splits or lexes a line by hand: where a quote closes,
 // where a command ends and whose heredoc a body is are the parser's to find.
 
-// Read as git by the parse itself, which needs `-C` to place a command in its folder; re-exported
-// here so the readers below and everything that already reaches for them keep one door.
-export { GIT_VALUE_OPTS, gitCommand, type GitCommand } from "../language/domain.ts";
-
 /** What a command reader is handed: the line, and its parse when the engine made one. */
 type CommandFacts = Pick<Ctx, "command" | "commands">;
 
@@ -919,14 +915,15 @@ export function quoteArg(value: string): string {
  * did not exist — so the discard found nothing to lose, and went through.
  *
  * THE FIRST git command decides: a line that walks two trees is beyond what one answer can
- * honestly describe. A folder the parse could not settle — `cd "$(mktemp -d)"`, or a line whose
- * start nobody knows, as in a case — is "", the read lands where `ctx.exec` runs, and every caller
- * treats a failed read as "not a repo, git owns that error" and passes: a false negative, which
- * is this pack's stated trade.
+ * honestly describe. In a line whose start nobody knows, as in a case, the folder is relative to
+ * where it started, and `.` — the start itself — needs no `-C`: the read lands where `ctx.exec`
+ * runs. A folder the parse could not settle, such as after `cd "$(mktemp -d)"`, is "" too, and
+ * every caller treats a failed read as "not a repo, git owns that error" and passes: a false
+ * negative, which is this pack's stated trade.
  */
 export function gitDirPrefix(facts: CommandFacts): string {
   const folder = gitCommands(facts)[0]?.command.folder ?? null;
-  return folder === null ? "" : `-C ${quoteArg(folder)}`;
+  return folder === null || folder === "." ? "" : `-C ${quoteArg(folder)}`;
 }
 
 /**

@@ -208,8 +208,8 @@ This git command would discard uncommitted edits with no undo. Use `git stash` i
 - running `git checkout src/x.ts`
   - given `git ls-files` exits 0 and says `src/x.ts` · `git status --porcelain` exits 0
 - running `git checkout -b docs`
-- running `cd /work/other && git checkout -- src/x.ts`
-  - given `git -C '/work/other' status --porcelain` exits 0
+- running `cd ../other && git checkout -- src/x.ts`
+  - given `git -C '../other' status --porcelain` exits 0
 - running `git status`
 - running `git restore --staged src/x.ts`
   - given `git status --porcelain` exits 0 and says `M src/x.ts`
@@ -231,8 +231,8 @@ EOF`
   - given `git status --porcelain` exits 0 and says `M src/x.ts`
 - running `git checkout src/x.ts`
   - given `git ls-files` exits 0 and says `src/x.ts` · `git status --porcelain` exits 0 and says `M src/x.ts`
-- running `cd /work/other && git checkout src/x.ts`
-  - given `git -C '/work/other' ls-files` exits 0 and says `src/x.ts` · `git -C '/work/other' status --porcelain` exits 0 and says `M src/x.ts`
+- running `cd ../other && git checkout src/x.ts`
+  - given `git -C '../other' ls-files` exits 0 and says `src/x.ts` · `git -C '../other' status --porcelain` exits 0 and says `M src/x.ts`
 - running `git restore src/x.ts`
   - given `git status --porcelain` exits 0 and says `M src/x.ts`
 - running `git restore --staged --worktree src/x.ts`
@@ -248,8 +248,8 @@ git checkout -- a.ts`
   - given `git status --porcelain` exits 0 and says `M a.ts`
 - running `bash -c 'git checkout -- a.ts'`
   - given `git status --porcelain` exits 0 and says `M a.ts`
-- running `git -C /work/other checkout -- src/x.ts`
-  - given `git -C '/work/other' status --porcelain` exits 0 and says `M src/x.ts`
+- running `git -C ../other checkout -- src/x.ts`
+  - given `git -C '../other' status --porcelain` exits 0 and says `M src/x.ts`
 
 ## `git.noForcePush` — guardrail
 
@@ -709,8 +709,8 @@ release: 1.2.3'`
   - given `git diff HEAD -- 'package.json'` exits 0 and says `+ "version": "0.1.0"`
 - running `git commit -m "fix: a thing"`
   - given `git diff HEAD -- 'package.json'` exits 0 and says `- "version": "1.0.0" + "version": "1.0.0-rc.1"`
-- running `git -C /work/other commit -m "fix: a thing"`
-  - given `git -C '/work/other' diff HEAD -- 'package.json'` exits 0 and says `- "version": "1.2.2" + "version": "1.2.3"`
+- running `git -C ../other commit -m "fix: a thing"`
+  - given `git -C '../other' diff HEAD -- 'package.json'` exits 0 and says `- "version": "1.2.2" + "version": "1.2.3"`
 
 ## Where each part of this page comes from
 

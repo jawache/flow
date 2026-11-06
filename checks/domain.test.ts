@@ -18,7 +18,7 @@ import {
   type Unanswered,
 } from "../language/domain.ts";
 import { existsSync } from "node:fs";
-import { faultsOf, parseCommandLine } from "../language/domain.ts";
+import { faultsOf, gitCommand, parseCommandLine, type GitCommand } from "../language/domain.ts";
 import { globToRegExp, notAGlob } from "../glob.ts";
 import {
   addedNames,
@@ -43,7 +43,6 @@ import {
   execPasses,
   exportedNames,
   failureExcerpt,
-  gitCommand,
   gitCommands,
   gitDirPrefix,
   givesReason,
@@ -78,7 +77,6 @@ import {
   type ChangeGroup,
   type Dialect,
   type ForbidEdge,
-  type GitCommand,
   type JsonAssert,
   type Matcher,
   type NativeConfig,
@@ -802,11 +800,11 @@ const prefixOf = (command: string): string => gitDirPrefix({ command });
 const messageOf = (command: string): string | null => commitMessage({ command });
 
 describe("gitDirPrefix and quoteArg", () => {
-  // The prefix is the first git command's `folder`, which the parse settles: these lines are
-  // parsed with no known start, the way a case is, so only an absolute move names a folder.
+  // The prefix is the first git command's `folder`, which the parse settles. These lines are parsed
+  // with no known start, the way a case is, so each folder is relative to where the line started.
   it("puts the git command's folder on the read, from its -C", () => {
-    expect(prefixOf("git -C /work/other commit -m x")).toBe("-C '/work/other'");
-    expect(prefixOf("git commit -m x")).toBe("");
+    expect(prefixOf("git -C ../other commit -m x")).toBe("-C '../other'");
+    expect(prefixOf("git commit -m x"), "the start itself needs no -C").toBe("");
     expect(prefixOf("ls -la")).toBe("");
   });
 
@@ -814,23 +812,24 @@ describe("gitDirPrefix and quoteArg", () => {
   // option was read, so `cd other && git checkout x` was judged against the SESSION's tree — where
   // the path does not exist, so there was nothing to lose and the discard went through.
   it("reads a `cd <path>` before the git command as the working tree it is about", () => {
-    expect(prefixOf("cd /work/other && git checkout -- x")).toBe("-C '/work/other'");
-    expect(prefixOf("cd /work/other; git checkout -- x")).toBe("-C '/work/other'");
+    expect(prefixOf("cd ../other && git checkout -- x")).toBe("-C '../other'");
+    expect(prefixOf("cd ../other; git checkout -- x")).toBe("-C '../other'");
+    expect(prefixOf("git status && cd /a && git checkout -- x"), "the first git command decides").toBe("");
   });
 
   it("chains both, in the order the shell applies them — git chains -C exactly as a shell chains cd", () => {
     expect(prefixOf("cd /a && git -C b status")).toBe("-C '/a/b'");
   });
 
-  it("reads the folder the parse followed from where the line started", () => {
+  it("reads the folder the parse followed from where the line started, when that is known", () => {
     const commands = parseCommandLine("cd ../other && git checkout -- x", { cwd: "/work/repo" });
     expect(gitDirPrefix({ commands })).toBe("-C '/work/other'");
+    expect(gitDirPrefix({ commands: parseCommandLine("git status", { cwd: "/work/repo" }) })).toBe("-C '/work/repo'");
   });
 
   it("guesses at no folder the line does not settle", () => {
     expect(prefixOf("cd && git status"), "a bare cd goes home, and home is not knowable here").toBe("");
     expect(prefixOf("cd - && git status"), "the previous directory is not known").toBe("");
-    expect(prefixOf("cd ../other && git status"), "a relative move from a start nobody knows").toBe("");
     expect(prefixOf('cd "$(mktemp -d)" && git status')).toBe("");
     expect(prefixOf("x=$(cd /a && pwd); git status"), "a cd inside a substitution moves nothing").toBe("");
   });
@@ -1126,9 +1125,9 @@ describe("commitReason", () => {
 
   it("carries a -C through to the git it runs, so another repo's commit is judged there", async () => {
     const missing: Unanswered[] = [];
-    const ctx = cannedCtx("command", { command: "git -C /work/other commit -m x" }, missing);
+    const ctx = cannedCtx("command", { command: "git -C ../other commit -m x" }, missing);
     await commitReason(opts)(ctx);
-    expect(missing.every((m) => m.asked.includes("-C '/work/other'"))).toBe(true);
+    expect(missing.every((m) => m.asked.includes("-C '../other'"))).toBe(true);
   });
 
   // ── the third condition, driven through the same door ──
