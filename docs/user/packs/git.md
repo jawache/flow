@@ -438,6 +438,10 @@ That git command makes a commit, or moves a ref, without the commit gate judging
 - running `git add -A && git commit -nm 'fix: a thing'`
 - running `git -c core.hooksPath=/dev/null commit -m 'fix: a thing'`
 - running `git -C ../other -c core.hookspath=.nohooks commit -m 'fix: a thing'`
+- running `cd /tmp && git --git-dir=/r/.git --work-tree=/r commit --no-verify -m 'fix: a thing'`
+- running `cd /tmp && git --git-dir /r/.git --work-tree /r commit --no-verify -m 'fix: a thing'`
+- running `cd /tmp && GIT_DIR=/r/.git git commit --no-verify -m 'fix: a thing'`
+- running `cd /tmp && GIT_WORK_TREE=/r git commit --no-verify -m 'fix: a thing'`
 - running `git commit-tree HEAD^{tree} -p HEAD -m "fix: a thing"`
 - running `git update-ref refs/heads/main abc123`
 - running `echo hi | git hash-object -w --stdin`

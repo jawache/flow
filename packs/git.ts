@@ -942,6 +942,11 @@ export const git = definePack("git", (repo: Release) => {
         "git add -A && git commit -nm 'fix: a thing'",
         "git -c core.hooksPath=/dev/null commit -m 'fix: a thing'",
         "git -C ../other -c core.hookspath=.nohooks commit -m 'fix: a thing'",
+        // Run from another folder and pointed at this repository: still this repository's commit.
+        "cd /tmp && git --git-dir=/r/.git --work-tree=/r commit --no-verify -m 'fix: a thing'",
+        "cd /tmp && git --git-dir /r/.git --work-tree /r commit --no-verify -m 'fix: a thing'",
+        "cd /tmp && GIT_DIR=/r/.git git commit --no-verify -m 'fix: a thing'",
+        "cd /tmp && GIT_WORK_TREE=/r git commit --no-verify -m 'fix: a thing'",
         'git commit-tree HEAD^{tree} -p HEAD -m "fix: a thing"',
         "git update-ref refs/heads/main abc123",
         "echo hi | git hash-object -w --stdin",

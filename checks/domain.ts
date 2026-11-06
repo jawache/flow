@@ -252,7 +252,7 @@ function commandInWords(entry: string): CommandInWords | null {
   if (entry.includes("\\")) return null;
   const steps = parseShellSteps(entry);
   const [step] = steps ?? [];
-  if (steps?.length !== 1 || step?.kind !== "command" || step.at !== 0 || step.assigned || stepCommands(steps).length !== 1) return null;
+  if (steps?.length !== 1 || step?.kind !== "command" || step.at !== 0 || step.env.length > 0 || stepCommands(steps).length !== 1) return null;
   const c = step.command;
   const program = programName(c.program);
   if (program === "" || isWrapper(program) || c.heredocs.length > 0 || c.substitutions.length > 0 || c.redirects.length > 0) return null;

@@ -463,7 +463,8 @@ export interface ShellCommand {
    * The folder it runs in: where the line started, moved by each `cd`, `pushd` and `popd` before it
    * and by its own `git -C`. Absolute when the start is known; for a line whose start is not, as in
    * a case, relative to it — `.` for the start itself, `../other` after `cd ../other`. Null when only
-   * running the line could tell, such as after `cd "$(mktemp -d)"` or `cd "$DIR"`.
+   * running the line could tell, such as after `cd "$(mktemp -d)"` or `cd "$DIR"`, and for a git
+   * command that names its repository itself, with `--git-dir`, `--work-tree`, `GIT_DIR` or `GIT_WORK_TREE`.
    */
   readonly folder: string | null;
   /** Inside a substitution, a `<( … )`, a `bash -c` or `eval` string, or a heredoc or here-string fed to a shell. */
@@ -501,8 +502,8 @@ export type ShellStep =
        */
       readonly words: readonly ShellWord[];
       readonly at: number;
-      /** Whether a `NAME=value` assignment stands in front of it, as its env: `FOO=1 rm`. Not one of its words. */
-      readonly assigned: boolean;
+      /** The names of the `NAME=value` assignments in front of it, as its env: `FOO` for `FOO=1 rm`. Not one of its words. */
+      readonly env: readonly string[];
       /** `command.redirects` with each target as written, so a reader expands `< $F` and leaves `< '$F'` alone. */
       readonly redirects: readonly StepRedirect[];
       /** The substitutions that build its words, which run before it does. */
@@ -868,14 +869,48 @@ export function followSteps(
   walk(steps, { cwd: start.cwd, old: null, stack: [], vars: new Map() });
 }
 
+/** The variables that point git at a repository other than the folder's own. */
+const GIT_REPO_VARS: ReadonlySet<string> = new Set(["GIT_DIR", "GIT_WORK_TREE"]);
+
+/** Does git's own option, as written, point it at a repository: `--git-dir x`, `--work-tree=x`? */
+const namesRepository = (option: string): boolean => /^--(?:git-dir|work-tree)(?:=|$)/.test(option);
+
+/**
+ * Does this git command name its repository itself, rather than the folder it runs in: `--git-dir`
+ * or `--work-tree`, a `GIT_DIR=` or `GIT_WORK_TREE=` in front of it or after `env`, or one the line
+ * sets anywhere (`assigned`)? Then the folder says nothing about which repository it works on.
+ */
+function namesItsRepository(step: CommandStep, git: GitCommand, assigned: ReadonlySet<string>): boolean {
+  const before = step.words.slice(0, step.at).map((word) => (word[0]?.kind === "text" ? word[0].text : ""));
+  return (
+    git.globals.some(namesRepository) ||
+    [...step.env, ...assigned].some((name) => GIT_REPO_VARS.has(name)) ||
+    before.some((word) => [...GIT_REPO_VARS].some((name) => word.startsWith(`${name}=`)))
+  );
+}
+
+/** Every variable name the steps assign, as a step of their own or in front of a command, however deep. */
+function assignedNames(steps: readonly ShellStep[], into = new Set<string>()): Set<string> {
+  for (const step of steps) {
+    if (step.kind === "assign") into.add(step.name);
+    else if (step.kind === "command") {
+      for (const name of step.env) into.add(name);
+      assignedNames(step.before, into);
+    } else assignedNames(step.body, into);
+  }
+  return into;
+}
+
 /**
  * The folder one command runs in: the shell's, moved by the command's own `git -C`, which git
- * chains exactly as a shell chains `cd` — `cd /a && git -C b status` runs in `/a/b`.
+ * chains exactly as a shell chains `cd` — `cd /a && git -C b status` runs in `/a/b`. A git command
+ * that names its repository itself has none: where it runs is not where it works.
  */
-function commandFolder(step: CommandStep, cwd: string | null, expand: (word: ShellWord) => string | null): string | null {
+function commandFolder(step: CommandStep, cwd: string | null, expand: (word: ShellWord) => string | null, assigned: ReadonlySet<string>): string | null {
   const git = gitCommand(step.command);
   let folder = cwd;
   if (git === null) return folder;
+  if (namesItsRepository(step, git, assigned)) return null;
   for (let i = 0; i < git.globals.length; i += GIT_VALUE_OPTS.has(git.globals[i] as string) ? 2 : 1) {
     if (git.globals[i] !== "-C") continue;
     // `args[k]` is `words[at + 1 + k]`: the wrappers and the program come first, so `-C`'s value is two on.
@@ -893,8 +928,9 @@ function commandFolder(step: CommandStep, cwd: string | null, expand: (word: She
  */
 function placeSteps(steps: readonly ShellStep[], start: ShellStart): ShellStep[] {
   const folders = new Map<ShellCommand, string | null>();
+  const assigned = assignedNames(steps);
   followSteps(steps, start, (step, cwd, expand) => {
-    const folder = commandFolder(step, cwd, expand);
+    const folder = commandFolder(step, cwd, expand, assigned);
     folders.set(step.command, !folders.has(step.command) || folders.get(step.command) === folder ? folder : null);
   });
   const placed = new Map<ShellCommand, ShellCommand>();
@@ -1327,8 +1363,8 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
       // Its folder is the walk's to settle once the whole line is read (`placeSteps`): a `cd` moves
       // only the commands after it, which this one cannot see yet.
       const command = { program, args, text: [program, ...args].join(" "), heredocs, substitutions, redirects: redirects.map(publicRedirect), folder: null, nested };
-      const assigned = c.prefix.some((p) => p.type === "Assignment");
-      out.push({ kind: "command", command, words, at, assigned, redirects: redirects.map(stepRedirect), before: inner });
+      const env = c.prefix.flatMap((p) => (p.type === "Assignment" ? [p.name] : []));
+      out.push({ kind: "command", command, words, at, env, redirects: redirects.map(stepRedirect), before: inner });
       // `export A=b`: the parse gives a declaration's arguments as assignments, which set the
       // shell's variables once it has run. One that appends or sets an element is not followed.
       for (const s of c.suffix)

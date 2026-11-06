@@ -769,16 +769,16 @@ describe("parseShellSteps — the same parse, in the order the shell runs it", (
     expect(steps("F=$(pick)")).toEqual([{ scope: ["pick"] }, "F={?}"]);
   });
 
-  it("marks a command with an assignment in front as assigned, its program still the first word after it", () => {
-    const [front] = parseShellSteps("FOO=1 rm") ?? [];
+  it("names the assignments in front of a command as its env, its program still the first word after it", () => {
+    const [front] = parseShellSteps("FOO=1 BAR=2 rm") ?? [];
     if (front?.kind !== "command") throw new Error("no command step");
-    expect(front.assigned).toBe(true);
+    expect(front.env).toEqual(["FOO", "BAR"]);
     expect(front.at).toBe(0);
     expect(front.command.program).toBe("rm");
     expect(front.words.map(written)).toEqual(["rm"]);
     const [bare] = parseShellSteps("rm FOO=1") ?? [];
     if (bare?.kind !== "command") throw new Error("no command step");
-    expect(bare.assigned).toBe(false);
+    expect(bare.env).toEqual([]);
   });
 
   it("lists each assignment a declaration makes as a step after it, and nothing for one that appends or sets an element", () => {
@@ -904,6 +904,21 @@ describe("parseCommandLine — the folder each command runs in", () => {
     // A wrapper and an assignment in front: `-C`'s value is found past them.
     expect(placed("env FOO=1 git -C sub status")).toEqual([["git", "/work/repo/sub"]]);
     expect(placed("FOO=1 timeout 5 git -C sub status")).toEqual([["git", "/work/repo/sub"]]);
+  });
+
+  it("has no folder for a git command that names its repository itself, however it names it", () => {
+    const at = (line: string): (string | null)[] => placed(line).filter(([p]) => p === "git").map(([, folder]) => folder);
+    expect(at("cd /tmp && git --git-dir=/r/.git --work-tree=/r commit -m x")).toEqual([null]);
+    expect(at("cd /tmp && git --git-dir /r/.git commit -m x")).toEqual([null]);
+    expect(at("cd /tmp && git --work-tree /r commit -m x")).toEqual([null]);
+    expect(at("cd /tmp && git --work-tree=/r status")).toEqual([null]);
+    expect(at("cd /tmp && GIT_DIR=/r/.git git commit -m x")).toEqual([null]);
+    expect(at("cd /tmp && GIT_WORK_TREE=/r git commit -m x")).toEqual([null]);
+    expect(at("cd /tmp && env GIT_DIR=/r/.git git commit -m x")).toEqual([null]);
+    expect(at("export GIT_DIR=/r/.git; cd /tmp && git commit -m x")).toEqual([null]);
+    // Only git is pointed elsewhere: the other commands keep their folder, and so does a git that is not.
+    expect(placed("cd /tmp && GIT_DIR=/r/.git ls")[1]).toEqual(["ls", "/tmp"]);
+    expect(at("cd /tmp && FOO=1 git -C sub status")).toEqual(["/tmp/sub"]);
   });
 
   it("follows a variable the line sets itself", () => {
