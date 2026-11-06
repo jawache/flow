@@ -311,8 +311,9 @@ export interface EventWorld {
   readonly turn?: (() => readonly TurnAction[]) | undefined;
   /**
    * The agent the SESSION itself runs as (`--agent`, or the `agent` setting), or null when it runs
-   * as none. Only `subagent-stop` asks, and only of a payload that names an agent type, because it
-   * costs the parent's transcript: it is how an internal agent's hand-back is told from a subagent's.
+   * as none. Only `subagent-start` and `subagent-stop` ask, and only of a payload that names an
+   * agent type, because it costs the parent's transcript: it is how an internal agent's start or
+   * hand-back is told from a subagent's.
    */
   readonly sessionAgent?: (() => string | null) | undefined;
   /**
@@ -955,20 +956,14 @@ export function awaitsBrief(hook: HookEvent, transcript: string | null): boolean
 }
 
 /**
- * Does this subagent's start hold its session notes for its brief — to be judged again at its first
- * tool call, once the brief can be read?
+ * Does this config hold a subagent's session notes for its brief, when the brief cannot be read at
+ * its start (`awaitsBrief`)?
  *
  * Only a note bound with `.for(…)` can wait on a category, so a config with none holds nothing. One
- * shown at the start is marked there, and judged again shows nothing. `transcript` is the subagent's
- * own, asked for only once the rest has said yes.
+ * shown at the start is marked there, and judged again at the first tool call shows nothing.
  */
-export function holdsForBrief(hook: HookEvent, entries: readonly LoadedEntry[], transcript: () => string | null): boolean {
-  // The transcript last, and only asked for: it is a file read, and most configs bind no such note.
-  return (
-    hook === "subagent-start" &&
-    entries.some((entry) => entry.spec.kind === "breadcrumb" && fires(entry.spec, "session") && (entry.spec.for ?? []).length > 0) &&
-    awaitsBrief(hook, transcript())
-  );
+export function holdsForBrief(entries: readonly LoadedEntry[]): boolean {
+  return entries.some((entry) => entry.spec.kind === "breadcrumb" && fires(entry.spec, "session") && (entry.spec.for ?? []).length > 0);
 }
 
 /**

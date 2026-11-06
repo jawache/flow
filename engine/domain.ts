@@ -763,7 +763,7 @@ export interface SessionState {
    * A subagent's session notes, held at its start until its brief can be read, and judged at its
    * first tool call that runs. Absent means nothing is held.
    */
-  readonly awaitingBrief?: true | undefined;
+  readonly heldForBrief?: true | undefined;
 }
 
 /**
@@ -783,7 +783,7 @@ export function readState(text: string | null | undefined): SessionState {
     return { marks: {} };
   }
   if (typeof raw !== "object" || raw === null) return { marks: {} };
-  const held = raw as { categories?: unknown; marks?: unknown; worktrees?: unknown; awaitingBrief?: unknown };
+  const held = raw as { categories?: unknown; marks?: unknown; worktrees?: unknown; heldForBrief?: unknown };
   const strings = (value: unknown): string[] | undefined =>
     Array.isArray(value) && value.every((item) => typeof item === "string") ? value : undefined;
   const categories = strings(held.categories);
@@ -796,7 +796,7 @@ export function readState(text: string | null | undefined): SessionState {
     ...(categories === undefined ? {} : { categories }),
     marks,
     ...(worktrees === undefined || worktrees.length === 0 ? {} : { worktrees }),
-    ...(held.awaitingBrief === true ? { awaitingBrief: true } : {}),
+    ...(held.heldForBrief === true ? { heldForBrief: true } : {}),
   };
 }
 

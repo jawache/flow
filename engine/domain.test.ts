@@ -992,9 +992,9 @@ describe("a session × agent's own state", () => {
   });
 
   it("keeps a subagent's notes held for its brief, beside the marks", () => {
-    expect(readState('{"marks":{},"awaitingBrief":true}')).toEqual({ marks: {}, awaitingBrief: true });
-    expect(readState('{"marks":{},"awaitingBrief":"yes"}')).toEqual({ marks: {} });
-    expect(readState('{"marks":{},"awaitingBrief":false}')).toEqual({ marks: {} });
+    expect(readState('{"marks":{},"heldForBrief":true}')).toEqual({ marks: {}, heldForBrief: true });
+    expect(readState('{"marks":{},"heldForBrief":"yes"}')).toEqual({ marks: {} });
+    expect(readState('{"marks":{},"heldForBrief":false}')).toEqual({ marks: {} });
   });
 });
 

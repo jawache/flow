@@ -612,7 +612,7 @@ describe("toEvent — one payload, every moment it carries", () => {
     expect(toEvent("pre-tool-use", pre("Read", { file_path: "/repo/src/a.ts" }), world()), "nothing held").toStrictEqual([]);
   });
 
-  it("holds a subagent's session notes only when its brief is unread and a session note is bound to a category", () => {
+  it("holds a subagent's session notes for its brief only when a session note is bound to a category, and only before the brief is written", () => {
     const entries = (load: LoadResult): readonly LoadedEntry[] => {
       if (!load.ok) throw new Error(JSON.stringify(load.refusals));
       return load.entries;
@@ -620,18 +620,11 @@ describe("toEvent — one payload, every moment it carries", () => {
     const briefed = defineCategory("briefed", spawnedAs({ generic: ["general-purpose"], brief: ["MARK"] }));
     const bound = entries(loadConfig(defineConfig([pack(definePack("t", { n: breadcrumb().at(session).for(briefed).text("n") }))])));
     const unbound = entries(loadConfig(defineConfig([pack(definePack("t", { n: breadcrumb().at(session).text("n") }))])));
-    const read: string[] = [];
-    const none = (): null => {
-      read.push("transcript");
-      return null;
-    };
-    expect(holdsForBrief("subagent-start", bound, none)).toBe(true);
-    expect(holdsForBrief("subagent-start", bound, () => "{}"), "a resumed subagent's brief can be read").toBe(false);
-    read.length = 0;
-    expect(holdsForBrief("subagent-start", unbound, none), "nothing bound to a category").toBe(false);
-    expect(holdsForBrief("session-start", bound, none), "the main session has no brief to wait for").toBe(false);
-    expect(read, "neither reads the transcript").toStrictEqual([]);
+    expect(holdsForBrief(bound)).toBe(true);
+    expect(holdsForBrief(unbound), "nothing bound to a category").toBe(false);
     expect(awaitsBrief("subagent-start", null)).toBe(true);
+    expect(awaitsBrief("subagent-start", "{}"), "a resumed subagent's brief can be read").toBe(false);
+    expect(awaitsBrief("session-start", null), "the main session has no brief to wait for").toBe(false);
     expect(awaitsBrief("pre-tool-use", null)).toBe(false);
   });
 
@@ -2007,9 +2000,6 @@ const without = (event: string): { hooks: Record<string, unknown> } => ({
   ),
 });
 
-/** An init before 0.3.0 wrote neither subagent event; this one lacks only SubagentStop. */
-const BEFORE_SUBAGENT_STOP = without("SubagentStop");
-
 /** flow's registrations, each running the command `as` makes of today's one. */
 const registrationsAs = (as: (command: string) => string): { hooks: Record<string, unknown[]> } => ({
   hooks: Object.fromEntries(
@@ -3100,7 +3090,7 @@ describe("the machine-wide file, beside a dev dependency's own", () => {
 
   it("calls the one missing event \"it\" when the machine-wide file covers it", () => {
     const subagentStopOnly = { hooks: { SubagentStop: [{ hooks: [{ type: "command", command: hookCommand("subagent-stop") }] }] } };
-    expect(beforeInit(subagentStopOnly, BEFORE_SUBAGENT_STOP)?.detail).toBe(
+    expect(beforeInit(subagentStopOnly, without("SubagentStop"))?.detail).toBe(
       `.claude/settings.json does not call flow for SubagentStop — re-run \`flow init\`. Until it does, ${machinePath} calls flow for it in the meantime.`,
     );
   });
@@ -4150,7 +4140,7 @@ describe("status — the snapshot's edges and a registration an older flow wrote
   // Each event carries its own rails, so a missing one costs those and no others: a file without
   // PreToolUse and SubagentStop still judges what a tool call changed and the main chat's hand-back.
   it("names only the rails of the missing events as not firing", () => {
-    const hooks = { ...BEFORE_SUBAGENT_STOP.hooks, PreToolUse: undefined };
+    const hooks = { ...without("SubagentStop").hooks, PreToolUse: undefined };
     expect(status(statusFacts({ settings: { hooks } })).fittings.find((f) => f.id === "hooks")?.detail).toBe(
       "/home/.claude/settings.json does not call flow for PreToolUse · SubagentStop — re-run `flow init`. " +
         "Until it does, no rule judges a tool call before it runs; no turn-end rule runs when a subagent hands back.",
