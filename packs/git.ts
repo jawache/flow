@@ -152,7 +152,7 @@ const noGitDiscard = defineCheck(
       // or written into a heredoc is not one, and a line that does not parse has none.
       const gits = gitCommands(ctx);
       const cleaning = gits.some((g) => g.subcommand === "clean");
-      // THE COMMAND'S OWN `-C`, copied onto every read, exactly as `commitReason` copies it: a
+      // THE COMMAND'S OWN FOLDER, put on every read as `-C`, exactly as `commitReason` puts it: a
       // `git -C ~/other-repo checkout -- x` is about THAT repo's tree, and a status read here would
       // answer about files the command was never aimed at — clean ones, so the loss goes through.
       const git = `git ${gitDirPrefix(ctx)}`.trimEnd();
@@ -415,7 +415,7 @@ const noHandEditedVersion = defineCheck(
       if (message === null) return ctx.ok();
       if (isReleaseCommit(message)) return ctx.ok(); // the one shape that may write it
       // `git diff HEAD` — staged AND unstaged, because `git commit -a` sweeps the second lot in.
-      // Prefixed with the command's own `-C`, the way `commitReason` is: a commit aimed at another
+      // Prefixed with the command's own folder, the way `commitReason` is: a commit aimed at another
       // repo has to be judged against that repo's diff, or this vetoes it over a version field it
       // cannot see.
       const git = `git ${gitDirPrefix(ctx)}`.trimEnd();
@@ -667,11 +667,12 @@ export const git = definePack("git", (repo: Release) => {
         // A NEW branch named after a folder that exists: `-b` swallows its value, so `docs` is
         // never offered to `ls-files` and the folder underneath it is never mistaken for a target.
         "git checkout -b docs",
-        // A `cd` into ANOTHER repo whose tree is clean. The reads carry `-C ../other`, so the
-        // answer is about the tree the command is aimed at rather than about the session's.
+        // A `cd` into ANOTHER repo whose tree is clean. The reads carry `-C /work/other`, so the
+        // answer is about the tree the command is aimed at rather than about the session's. A
+        // case's line starts in no known folder, so the folder it moves to is an absolute one.
         {
-          command: "cd ../other && git checkout -- src/x.ts",
-          world: { exec: { "git -C '../other' status --porcelain": { stdout: "" } } },
+          command: "cd /work/other && git checkout -- src/x.ts",
+          world: { exec: { "git -C '/work/other' status --porcelain": { stdout: "" } } },
         },
         "git status",
         // `git restore --staged` touches the INDEX, not the tree — nothing is lost, so nothing is
@@ -714,11 +715,11 @@ export const git = definePack("git", (repo: Release) => {
         // SESSION's tree, where the path does not exist — so the check found nothing to lose and
         // let the discard through. The F3 builder did exactly this to its own uncommitted work.
         {
-          command: "cd ../other && git checkout src/x.ts",
+          command: "cd /work/other && git checkout src/x.ts",
           world: {
             exec: {
-              "git -C '../other' ls-files": { stdout: "src/x.ts" },
-              "git -C '../other' status --porcelain": { stdout: " M src/x.ts" },
+              "git -C '/work/other' ls-files": { stdout: "src/x.ts" },
+              "git -C '/work/other' status --porcelain": { stdout: " M src/x.ts" },
             },
           },
         },
@@ -763,8 +764,8 @@ export const git = definePack("git", (repo: Release) => {
         // answered and fail saying so — which is what makes this case evidence about the routing
         // rather than about the checkout.
         {
-          command: "git -C ../other checkout -- src/x.ts",
-          world: { exec: { "git -C '../other' status --porcelain": { stdout: " M src/x.ts" } } },
+          command: "git -C /work/other checkout -- src/x.ts",
+          world: { exec: { "git -C '/work/other' status --porcelain": { stdout: " M src/x.ts" } } },
         },
       ],
     }),
@@ -1143,10 +1144,10 @@ export const git = definePack("git", (repo: Release) => {
           // so a check that diffed this repo would ask a question the case never answered and fail
           // naming it — the case is about which repo is read, not about the version.
           {
-            command: 'git -C ../other commit -m "fix: a thing"',
+            command: 'git -C /work/other commit -m "fix: a thing"',
             world: {
               exec: {
-                [`git -C '../other' diff HEAD -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' },
+                [`git -C '/work/other' diff HEAD -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' },
               },
             },
           },

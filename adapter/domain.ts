@@ -33,11 +33,13 @@
 // variable, the edit-tool name set, and the flight recorder's row.
 
 import {
+  followSteps,
   isBreadcrumbMoment,
   isGuardrailMoment,
   parseCommandLine,
   parseShellSteps,
   programName,
+  resolveFrom,
   stepCommands,
   type BreadcrumbMoment,
   type Ctx,
@@ -51,7 +53,6 @@ import {
   type SessionFacts,
   type ShellCommand,
   type ShellStep,
-  type ShellWord,
   type TurnAction,
 } from "../language/domain.ts";
 import {
@@ -452,7 +453,9 @@ export function deleteTargets(commands: readonly ShellCommand[] | null): string[
 // guessed at, and a line that does not parse names nothing. What it misses the working-tree delta
 // catches later: a file changed before any read of it was seen gets its note at the change.
 //
-// THE SAME WALK KEEPS `folders`: each folder a `cd` or `pushd` moves the shell to, inside the repo
+// THE WALK IS THE PARSE'S (`followSteps` in language/), the same one that gives every command in
+// `ctx.commands` its `folder`, so where a `cd` leaves the shell is worked out in one place. It also
+// returns `folders`: each folder a `cd`, `pushd` or `popd` moves the shell to, inside the repo
 // or not. Those are not reads; they are where the command works, and the worktree message reads
 // them (`commandFolders`, § ANOTHER WORKTREE below) to tell a command run in another worktree of
 // the repository. Failing open there too: a `cd` only running the line could resolve is left out.
@@ -643,12 +646,6 @@ function gitReads(args: readonly Arg[], reads: string[]): ArgvReads {
 
 // ── the walk ────────────────────────────────────────────────────────────────
 
-interface ShellScope {
-  cwd: string | null;
-  old: string | null;
-  readonly vars: Map<string, string>;
-}
-
 /** Where a Bash call ran, and the two directories its paths are judged against. */
 export interface BashWhere {
   /** The shell's working directory when the call started. */
@@ -669,28 +666,10 @@ export interface BashReads {
    */
   readonly searched: readonly string[];
   /**
-   * The folders a `cd` or `pushd` moved the shell to, absolute, in order, each once, inside the
-   * repo or not. One that only running the line could tell, such as `cd "$DIR"`, is left out.
+   * The folders a `cd`, `pushd` or `popd` moved the shell to, absolute, in order, each once, inside
+   * the repo or not. One that only running the line could tell, such as `cd "$DIR"`, is left out.
    */
   readonly folders: readonly string[];
-}
-
-/**
- * One word of the parse as the shell would expand it, from what the line itself holds: an unquoted
- * leading `~`, `$HOME`, and a variable the line assigned. Quoted or escaped text is passed as is,
- * so `'$F'` stays `$F`. Null when only running the line could tell — an unknown or special
- * variable, a `${…}` with an operation in it, or a substitution, whose commands are read as steps
- * of their own.
- */
-function expandWord(word: ShellWord, vars: ReadonlyMap<string, string>, home: string | undefined): string | null {
-  let out = "";
-  for (const piece of word) {
-    const value =
-      piece.kind === "text" ? piece.text : piece.kind === "tilde" ? home : piece.kind === "variable" ? (piece.name === "HOME" ? home : vars.get(piece.name)) : undefined;
-    if (value === undefined) return null;
-    out += value;
-  }
-  return out;
 }
 
 /**
@@ -720,63 +699,27 @@ function xargsList(wrappers: readonly (string | null)[]): string | null {
 export function bashReads(steps: readonly ShellStep[] | null, where: BashWhere): BashReads {
   const reads: string[] = [];
   const searched: string[] = [];
-  const folders: string[] = [];
-  const at = (path: string, base: string | null): string | null =>
-    path.startsWith("/") ? posix.resolve(path) : base === null ? null : posix.resolve(base, path);
   const add = (list: string[], path: string | null): void => {
     const rel = path !== null && path.startsWith(`${where.root}/`) ? path.slice(where.root.length + 1) : null;
     if (rel !== null && !list.includes(rel)) list.push(rel);
   };
-  const assign = (name: string, value: ShellWord, scope: ShellScope): void => {
-    const expanded = expandWord(value, scope.vars, where.home);
-    if (expanded === null) scope.vars.delete(name);
-    else scope.vars.set(name, expanded);
-  };
-  const run = (step: Extract<ShellStep, { kind: "command" }>, scope: ShellScope): void => {
+  // The parse's own walk keeps the shell's folder and variables; this reads each command's files from it.
+  const folders = followSteps(steps ?? [], { cwd: where.cwd, home: where.home }, (step, scope, expand) => {
     for (const { operator, target } of step.redirects) {
       if (operator !== "<" && operator !== "<>") continue;
-      const path = expandWord(target, scope.vars, where.home);
-      add(reads, path === null ? null : at(path, scope.cwd));
+      const path = expand(target);
+      add(reads, path === null ? null : resolveFrom(path, scope.cwd));
     }
-    const expand = (word: ShellWord): string | null => expandWord(word, scope.vars, where.home);
     const list = xargsList(step.words.slice(0, step.at).map(expand));
-    if (list !== null) add(reads, at(list, scope.cwd));
+    if (list !== null) add(reads, resolveFrom(list, scope.cwd));
     const name = step.command.program;
-    const words = step.words.slice(step.at + 1);
-    const argv = [expand(step.words[step.at] ?? []), ...words.map(expand)];
-    if (name === "cd" || name === "pushd") {
-      const target = argv.slice(1).find((arg) => !isOption(arg));
-      const next = target === undefined ? (where.home ?? null) : target === null ? null : target === "-" ? scope.old : at(target, scope.cwd);
-      scope.old = scope.cwd;
-      scope.cwd = next;
-      if (next !== null && !folders.includes(next)) folders.push(next);
-      return;
-    }
+    if (name === "cd" || name === "pushd" || name === "popd") return;
+    const argv = step.words.slice(step.at).map(expand);
     const found = argvReads(argv);
-    const from = found.base === undefined ? scope.cwd : at(found.base, scope.cwd);
-    for (const path of found.reads) add(reads, at(path, from));
-    for (const path of found.searched) add(searched, at(path, from));
-  };
-  const walk = (body: readonly ShellStep[], scope: ShellScope): void => {
-    for (const step of body) {
-      if (step.kind === "command") {
-        // The substitutions that build its words run first, each in a scope of its own.
-        walk(step.before, scope);
-        run(step, scope);
-      }
-      else if (step.kind === "assign") assign(step.name, step.value, scope);
-      else if (step.kind === "scope") walk(step.body, { cwd: scope.cwd, old: scope.old, vars: new Map(scope.vars) });
-      else {
-        const values = step.values.map((value) => expandWord(value, scope.vars, where.home));
-        for (const value of values.length > 0 ? values : [null]) {
-          if (value === null) scope.vars.delete(step.name);
-          else scope.vars.set(step.name, value);
-          walk(step.body, scope);
-        }
-      }
-    }
-  };
-  walk(steps ?? [], { cwd: where.cwd, old: null, vars: new Map() });
+    const from = found.base === undefined ? scope.cwd : resolveFrom(found.base, scope.cwd);
+    for (const path of found.reads) add(reads, resolveFrom(path, from));
+    for (const path of found.searched) add(searched, resolveFrom(path, from));
+  });
   return { reads, searched, folders };
 }
 
@@ -896,8 +839,10 @@ function callEvents(payload: HookPayload, world: EventWorld): AdapterEvent[] {
     // Every guard event comes before every brief event: a refusal carries no notes, and the
     // shell stops judging notes once something has refused, so they are not marked shown.
     // The line is parsed once here: the command rules read it, and so do the files it removes
-    // and the files it reads.
-    const steps = parseShellSteps(command);
+    // and the files it reads. The host's `cwd` is where the shell stands, which is where each
+    // command's folder is followed from.
+    const cwd = text(payload["cwd"]) || world.root;
+    const steps = parseShellSteps(command, { cwd, home: world.home });
     const commands = steps === null ? null : stepCommands(steps);
     const events: AdapterEvent[] = [{ rail: "guard", moment: "command", command, commands }];
     for (const target of deleteTargets(commands)) {
@@ -912,8 +857,7 @@ function callEvents(payload: HookPayload, world: EventWorld): AdapterEvent[] {
     events.push({ rail: "brief", moment: "command", command });
     // THE FILES IT READS, as touches on this same answer — so an area's note arrives with the
     // command briefing, before the output does, rather than never (a Bash payload names no
-    // path for the post-tool-use rail to steer on). The host's `cwd` is where the shell stands.
-    const cwd = text(payload["cwd"]) || world.root;
+    // path for the post-tool-use rail to steer on).
     const { reads, searched } = bashReads(steps, { cwd, root: world.root, home: world.home });
     for (const path of new Set([...reads, ...searched])) events.push({ rail: "brief", moment: "touch", path });
     return events;

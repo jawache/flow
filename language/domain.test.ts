@@ -493,6 +493,7 @@ describe("parseCommandLine — the six fields", () => {
       heredocs: [],
       substitutions: [],
       redirects: [],
+      folder: null,
       nested: false,
     });
   });
@@ -840,6 +841,130 @@ describe("parseShellSteps — the same parse, in the order the shell runs it", (
 
   it("is null for a line that does not parse", () => {
     expect(parseShellSteps('echo "oops')).toBeNull();
+  });
+});
+
+describe("parseCommandLine — the folder each command runs in", () => {
+  /** Each command's program and folder, from a line that starts in `/work/repo`. */
+  const placed = (line: string, start: { cwd: string | null; home?: string } = { cwd: "/work/repo" }): [string, string | null][] =>
+    (parseCommandLine(line, start) ?? []).map((c) => [c.program, c.folder]);
+
+  it("is where the line started, for a command nothing moved", () => {
+    expect(placed("git status")).toEqual([["git", "/work/repo"]]);
+  });
+
+  it("follows each cd before it, and a cd's own folder is where it was run", () => {
+    expect(placed("cd ../other && git status; cd sub; ls")).toEqual([
+      ["cd", "/work/repo"],
+      ["git", "/work/other"],
+      ["cd", "/work/other"],
+      ["ls", "/work/other/sub"],
+    ]);
+    expect(placed("cd /tmp/r && git commit -m init")).toEqual([
+      ["cd", "/work/repo"],
+      ["git", "/tmp/r"],
+    ]);
+  });
+
+  it("goes home for a bare cd, when home is known", () => {
+    expect(placed("cd && ls", { cwd: "/work/repo", home: "/home/me" })[1]).toEqual(["ls", "/home/me"]);
+    expect(placed("cd ~/x && ls", { cwd: "/work/repo", home: "/home/me" })[1]).toEqual(["ls", "/home/me/x"]);
+    expect(placed("cd && ls")[1]).toEqual(["ls", null]);
+  });
+
+  it("follows cd - back to the folder before", () => {
+    expect(placed("cd /a && cd /b && cd - && ls")[3]).toEqual(["ls", "/a"]);
+  });
+
+  it("follows pushd and popd as a stack", () => {
+    expect(placed("pushd /a && git status && pushd /b && popd && git status && popd && git status")).toEqual([
+      ["pushd", "/work/repo"],
+      ["git", "/a"],
+      ["pushd", "/a"],
+      ["popd", "/b"],
+      ["git", "/a"],
+      ["popd", "/a"],
+      ["git", "/work/repo"],
+    ]);
+    expect(placed("popd && git status")[1], "a popd with nothing pushed").toEqual(["git", null]);
+  });
+
+  it("moves a git command by its own -C, chained after the shell's cd, and moves nothing after it", () => {
+    expect(placed("git -C ../other status")).toEqual([["git", "/work/other"]]);
+    expect(placed("cd /a && git -C b -C c status && ls")).toEqual([
+      ["cd", "/work/repo"],
+      ["git", "/a/b/c"],
+      ["ls", "/a"],
+    ]);
+    // `-c` takes a value too, so a `-C` there is the value and not a folder.
+    expect(placed("git -c -C status")).toEqual([["git", "/work/repo"]]);
+    // `git commit -C HEAD` reuses a message: an option of the subcommand, not of git.
+    expect(placed("git commit -C HEAD")).toEqual([["git", "/work/repo"]]);
+  });
+
+  it("follows a variable the line sets itself", () => {
+    expect(placed("R=/tmp/r; cd $R && git status")[1]).toEqual(["git", "/tmp/r"]);
+    expect(placed('D=sub; git -C "$D" status')).toEqual([["git", "/work/repo/sub"]]);
+    expect(placed("cd $ELSEWHERE && git status")[1], "a variable the line never set").toEqual(["git", null]);
+  });
+
+  it("places the git commit of the flow-5 line in the scratch repo it made", () => {
+    const S = "/private/tmp/claude-501/-Users-asim-dev-jawache-flow-worktrees-flow-5-a-subagent-gets-every-breadcrumb-when-it-starts/b91dc200-9fa6-448d-b21a-31edd924448a/scratchpad";
+    const line =
+      "W=/Users/asim/dev/jawache/flow.worktrees/flow-5-a-subagent-gets-every-breadcrumb-when-it-starts; " +
+      `S=${S}; R=$S/f52-repo; H=$S/f52-home; rm -rf $R $H; mkdir -p $R $H; cd $R && git init -q && git commit -q --allow-empty -m init; ` +
+      "export CLAUDE_CONFIG_DIR=$H; echo '$ flow init'; node $W/dist/flow.mjs init; echo; " +
+      "echo '$ jq .hooks.SubagentStart $CLAUDE_CONFIG_DIR/settings.json'; jq .hooks.SubagentStart $H/settings.json";
+    const commands = parseCommandLine(line, { cwd: "/Users/asim/dev/jawache/flow.worktrees/flow-5-a-subagent-gets-every-breadcrumb-when-it-starts" }) ?? [];
+    const commit = commands.find((c) => c.program === "git" && c.args[0] === "commit");
+    expect(commit?.folder).toBe(`${S}/f52-repo`);
+    expect(commands.find((c) => c.program === "rm")?.folder).toBe("/Users/asim/dev/jawache/flow.worktrees/flow-5-a-subagent-gets-every-breadcrumb-when-it-starts");
+  });
+
+  it("leaves every command after cd \"$(mktemp -d)\" with no folder", () => {
+    expect(placed('cd "$(mktemp -d)" && git init && git commit -m init')).toEqual([
+      ["cd", "/work/repo"],
+      ["mktemp", "/work/repo"],
+      ["git", null],
+      ["git", null],
+    ]);
+  });
+
+  it("keeps a cd inside a subshell or a substitution inside it", () => {
+    expect(placed("(cd /a && git status); git status")).toEqual([
+      ["cd", "/work/repo"],
+      ["git", "/a"],
+      ["git", "/work/repo"],
+    ]);
+    expect(placed("x=$(cd /a && pwd); git status")).toEqual([
+      ["cd", "/work/repo"],
+      ["pwd", "/a"],
+      ["git", "/work/repo"],
+    ]);
+  });
+
+  it("places the commands a substitution runs, on the substitution too", () => {
+    const [echo] = parseCommandLine('cd /a && echo "$(git status)"', { cwd: "/work/repo" })?.slice(1) ?? [];
+    expect(echo?.folder).toBe("/a");
+    expect(echo?.substitutions[0]?.commands[0]?.folder).toBe("/a");
+  });
+
+  it("has no folder for a command a for loop runs in two folders", () => {
+    expect(placed("for d in /a /b; do cd $d; git status; done")).toEqual([
+      ["cd", null],
+      ["git", null],
+    ]);
+    expect(placed("for d in x y; do git status; done")).toEqual([["git", "/work/repo"]]);
+  });
+
+  it("knows only an absolute move when the line's start is not known, as in a case", () => {
+    expect(placed("git status; cd ../x; git status; cd /a && git status", { cwd: null })).toEqual([
+      ["git", null],
+      ["cd", null],
+      ["git", null],
+      ["cd", null],
+      ["git", "/a"],
+    ]);
   });
 });
 
