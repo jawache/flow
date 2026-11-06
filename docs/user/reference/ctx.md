@@ -53,7 +53,7 @@ Read `existed` when it is set.
 
 ### ctx.commands
 
-`ctx.commands` lists every simple command in the line, in the order they appear, including commands nested inside another. [The parse](../explanation/what-the-guard-sees.md#the-parse-what-a-command-is) explains how the line is read. Each entry has these fields:
+`ctx.commands` lists every simple command in the line, in the order they appear, including commands nested inside another. A rule without `.everywhere()` is passed only the commands inside the repository. See [what each moment fills in](#what-each-moment-fills-in). [The parse](../explanation/what-the-guard-sees.md#the-parse-what-a-command-is) explains how the line is read. Each entry has these fields:
 
 | Field | Is |
 | --- | --- |

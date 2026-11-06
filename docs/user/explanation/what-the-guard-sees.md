@@ -162,10 +162,7 @@ The snapshot holds what git holds: every tracked file, and every untracked file 
 
 A rule judges only work inside the repository, unless the rule is marked with `.everywhere()`. So an agent can make a throwaway repository in a scratch folder without this repository's rules judging it.
 
-flow works out where each piece of work is:
-
-- **A shell command** runs in a folder. That folder is where the shell stood when the call started, moved by each `cd` or `pushd` earlier in the line, and by `git -C`. A variable the line sets itself, such as `R=/tmp/r; cd $R`, is followed.
-- **A file the Edit or Write tool writes** is at the path the tool names.
+A shell command runs in a folder. That folder is where the shell stood when the call started, moved by each `cd` or `pushd` earlier in the line, and by `git -C`. A variable the line sets itself, such as `R=/tmp/r; cd $R`, is followed.
 
 A folder is inside the repository when git names this repository for it. Every worktree of this repository is inside. A folder git does not know, and a folder of another repository, are outside.
 
@@ -177,7 +174,7 @@ A rule marked `.everywhere()` judges work in every folder. These shipped rules a
 
 - `git.noGitDiscard`, `git.noForcePush` and `git.noDestructiveGh`
 - `flow.noUninstall`
-- `work.planIsTheParent`, `work.ticksAreTheChilds`, `work.noAgentInboxItems`, `work.noShellSubstitutionInProse` and `work.checkersDoNotWrite`
+- `work.planIsTheParents`, `work.ticksAreTheChilds`, `work.noAgentInboxItems`, `work.noShellSubstitutionInProse` and `work.checkersDoNotWrite`
 
 ## Another worktree of the same repository
 

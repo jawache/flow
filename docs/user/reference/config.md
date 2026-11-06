@@ -111,6 +111,8 @@ A case is a canned `ctx`. Its shape picks which moment's dialect it speaks, and 
 
 Any case may add `actor: [...]`, the category names of the canned session.
 
+In a case, every command and every file counts as inside the repository.
+
 Any case may include a `world`, for a rule that reaches past its facts. A reach the world does not answer fails the case.
 
 | `world` key | Answers |
