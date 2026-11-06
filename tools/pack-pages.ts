@@ -19,7 +19,7 @@
 
 import { existsSync, readFileSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { defineConfig, everywhere, loadConfig, pack, type PackBinding } from "../index.ts";
+import { defineConfig, loadConfig, pack, type PackBinding } from "../index.ts";
 import { docs, fcis, flow, git, justfile, node, secrets, tdd, typescript, work } from "../packs/index.ts";
 import {
   bindLine,
@@ -87,7 +87,7 @@ function read(shipped: Shipped): PackDoc {
       on: entry.spec.on ?? [],
       ignore: entry.spec.ignore ?? [],
       categories: entry.categories,
-      everywhere: everywhere(entry),
+      everywhere: entry.spec.kind === "guardrail" && entry.spec.everywhere === true,
       settings: settingsJson(entry.settings),
       checkName: named,
       reference: REFERENCED.has(kebab(named)),

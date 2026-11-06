@@ -781,14 +781,15 @@ describe("work outside the repository", () => {
   });
 
   it("replays a recorded step that worked outside the same way", async () => {
-    const line = "git -C /tmp/r commit -m init && git commit -m bad";
+    // Relative, so only the recorded start puts the first commit in /tmp/r.
+    const line = "git -C r commit -m init && git commit -m bad";
     await replay({
       load,
       settings: {},
       recording: {
         v: RECORDING_VERSION,
         session: "s1",
-        steps: [{ rail: "guard", moment: "command", command: line, start: { cwd: "/repo" }, outside: ["/tmp/r"], wearing: [] }],
+        steps: [{ rail: "guard", moment: "command", command: line, start: { cwd: "/tmp" }, outside: ["/tmp/r"], wearing: [] }],
       },
     });
     expect(seen["here"]).toEqual([["git commit -m bad"]]);

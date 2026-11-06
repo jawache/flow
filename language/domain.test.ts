@@ -918,6 +918,8 @@ describe("parseCommandLine — the folder each command runs in", () => {
     expect(at("export GIT_DIR=/r/.git; cd /tmp && git commit -m x")).toEqual([null]);
     // Only git is pointed elsewhere: the other commands keep their folder, and so does a git that is not.
     expect(placed("cd /tmp && GIT_DIR=/r/.git ls")[1]).toEqual(["ls", "/tmp"]);
+    // An assignment in front of another command is that command's env alone.
+    expect(at("GIT_DIR=/r/.git ls; cd /tmp && git commit -m x")).toEqual(["/tmp"]);
     expect(at("cd /tmp && FOO=1 git -C sub status")).toEqual(["/tmp/sub"]);
   });
 

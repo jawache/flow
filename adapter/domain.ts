@@ -2207,8 +2207,8 @@ export function toolRow(payload: HookPayload, root = ""): Row | null {
 export function shellReadRows(payload: HookPayload, root: string, home?: string): Row[] {
   const command = text(payload.tool_input?.["command"]);
   if (text(payload.tool_name) !== "Bash" || command === "") return [];
-  const cwd = shellCwd(payload, root);
-  return bashReads(parseShellSteps(command, { cwd, home }), { cwd, root, home }).reads.map((path) => ({ kind: "read", tool: "Bash", path }));
+  const where = { cwd: shellCwd(payload, root), root, home };
+  return bashReads(parseShellSteps(command, where), where).reads.map((path) => ({ kind: "read", tool: "Bash", path }));
 }
 
 /** How a path changed across one call. */
@@ -2615,10 +2615,10 @@ export function parseEvents(jsonl: string, root = "", home?: string): Transcript
       const input = block.input ?? {};
       const name = text(block.name);
       // A Bash call's reads need a repo to be relative to; with no root there is none to count in.
-      const cwd = text(line.record["cwd"]) || root;
+      const where = { cwd: text(line.record["cwd"]) || root, root, home };
       const reads =
         name === "Bash" && root !== ""
-          ? bashReads(parseShellSteps(text(input["command"]), { cwd, home }), { cwd, root, home }).reads
+          ? bashReads(parseShellSteps(text(input["command"]), where), where).reads
           : [];
       out.push({
         line: line.line,

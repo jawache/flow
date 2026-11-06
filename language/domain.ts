@@ -889,14 +889,14 @@ function namesItsRepository(step: CommandStep, git: GitCommand, assigned: Readon
   );
 }
 
-/** Every variable name the steps assign, as a step of their own or in front of a command, however deep. */
+/**
+ * Every variable name the line sets as a shell variable, however deep. An assignment in front of a
+ * command is that command's env alone, and is read on the command (`step.env`), not here.
+ */
 function assignedNames(steps: readonly ShellStep[], into = new Set<string>()): Set<string> {
   for (const step of steps) {
     if (step.kind === "assign") into.add(step.name);
-    else if (step.kind === "command") {
-      for (const name of step.env) into.add(name);
-      assignedNames(step.before, into);
-    } else assignedNames(step.body, into);
+    else assignedNames(step.kind === "command" ? step.before : step.body, into);
   }
   return into;
 }

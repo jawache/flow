@@ -269,7 +269,7 @@ export function fires(spec: EntrySpec, moment: Moment): boolean {
  * Does this entry judge work outside the repository? Only a guardrail marked `.everywhere()` does.
  * Decided here, once, for every rule: no check asks where its work is.
  */
-export function everywhere(entry: LoadedEntry): boolean {
+function everywhere(entry: LoadedEntry): boolean {
   return entry.spec.kind === "guardrail" && entry.spec.everywhere === true;
 }
 
