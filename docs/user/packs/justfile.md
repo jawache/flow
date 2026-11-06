@@ -250,7 +250,7 @@ npx vitest`
 | --- | --- | --- |
 | Lead, and the parameters table | The doc comment on `definePack`, and the doc comment on each member of the parameter interface | JSDoc, read with the TypeScript compiler API |
 | The named sections above the entries | An `@install`, `@setup` or `@adopt` tag on that same doc comment. A tag nobody uses renders nothing. | JSDoc tags |
-| Entry id, kind, moments, globs, categories, description | The entry itself — `.at()` `.on()` `.description()` | Loaded: the same data the engine runs |
+| Entry id, kind, moments, globs, categories, outside the repository, description | The entry itself — `.at()` `.on()` `.for()` `.everywhere()` `.description()` | Loaded: the same data the engine runs |
 | Why it exists | The doc comment on the entry's key. Required on a breadcrumb; optional on a guardrail whose message already gives the reason. | JSDoc |
 | What the agent reads | `.text()` or `.message()`, verbatim | Loaded |
 | Check and its settings | The check the entry asks, and the options it was given | The name from the pack's source. The settings are read off the check, so they are the values a parameter supplied. |

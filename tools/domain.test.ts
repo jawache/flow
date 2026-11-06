@@ -73,6 +73,7 @@ const rail: EntryDoc = {
   on: ["docs/**"],
   ignore: ["docs/user/legacy/**"],
   categories: ["supervised"],
+  everywhere: true,
   settings: settingsJson({ root: "docs", allow: [], folders: ["user", "agent"] }),
   checkName: "canonicalFiles",
   reference: true,
@@ -95,6 +96,7 @@ const crumb: EntryDoc = {
   on: [],
   ignore: [],
   categories: [],
+  everywhere: false,
   settings: "",
   checkName: "",
   reference: false,
@@ -327,6 +329,11 @@ describe("a pack's page", () => {
     expect(html).toContain("`supervised`");
     expect(html).toContain("every session");
     expect(html).toContain("shipped off — nothing to watch until a repo has both doors");
+  });
+
+  it("says which entries judge work outside the repository, and only those", () => {
+    expect(html.match(/\*\*Outside the repository\*\* judged as well/g)).toHaveLength(1);
+    expect(html).toContain("(../explanation/what-the-guard-sees.md#work-outside-the-repository)");
   });
 
   it("says an entry is not path-scoped rather than leaving the line blank", () => {
