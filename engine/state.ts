@@ -123,6 +123,9 @@ export function saveState(root: string, session: string, agent: string, state: S
  * there is no second spelling of "look it up, and if it was fresh, write it down". A caller that
  * assembled it by hand would eventually be a caller that forgot the write, and a classification
  * that silently re-derives every hook is the flapping identity the sticky rule exists to prevent.
+ *
+ * `remember` false reads the verdict without writing it down: the caller knows the evidence is not
+ * all there yet, such as a subagent starting before its brief is written.
  */
 export function stickyIdentity(
   root: string,
@@ -130,12 +133,13 @@ export function stickyIdentity(
   agent: string,
   facts: SessionFacts,
   categories: readonly Category[],
+  remember = true,
 ): Identity {
   const stored = loadState(root, session, agent);
   const seen = identify(stored.categories, facts, categories);
   // A fault means we do not know, so nothing is stored: the next hook tries again rather than
   // inheriting an answer that was never reached.
-  if (seen.fresh && seen.faults.length === 0)
+  if (remember && seen.fresh && seen.faults.length === 0)
     saveState(root, session, agent, { ...stored, categories: seen.wearing });
   return seen;
 }

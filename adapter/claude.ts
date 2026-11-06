@@ -55,7 +55,6 @@ import {
   fault,
   judgedDeletions,
   guard,
-  identify,
   recorder,
   runRows,
   UNNAMED_COMMIT,
@@ -838,9 +837,7 @@ function sessionOf(payload: HookPayload, root: string): Session {
 function identityOf(session: Session, payload: HookPayload, categories: readonly Category[], hook: HookEvent): Identity {
   if (categories.length === 0) return { wearing: [], faults: [], fresh: false };
   const facts = sessionFactsFrom({ payload, transcript: session.transcript() });
-  if (awaitsBrief(hook, session.transcript()))
-    return identify(loadState(session.root, session.id, session.who.agent).categories, facts, categories);
-  return stickyIdentity(session.root, session.id, session.who.agent, facts, categories);
+  return stickyIdentity(session.root, session.id, session.who.agent, facts, categories, !awaitsBrief(hook, session.transcript()));
 }
 
 /**
@@ -1012,7 +1009,6 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
   // into this same file, and `judge` saves `stored` forward whole. A read taken before it would
   // write the categories back out of existence on the next breadcrumb.
   const stored = loadState(root, session.id, session.who.agent);
-  const holding = holdsForBrief(hook, hook === "subagent-start" ? session.transcript() : null, entries);
 
   const events = toEvent(hook, payload, eventWorld(root, session, changes, stored.awaitingBrief === true));
   const rows: Row[] = [];
@@ -1034,7 +1030,7 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
 
   const steps: RecordedStep[] = [];
 
-  const answer = await judge({ events, session, stored, holding, load, settings: config.settings, identity, off, hook, payload, rows, steps: taping ? steps : null });
+  const answer = await judge({ events, session, stored, load, settings: config.settings, identity, off, hook, payload, rows, steps: taping ? steps : null });
   if (!off) appendRows({ root, session: session.id, branch: session.branch, who: session.who }, rows);
   if (taping) appendSteps(root, session.id, steps);
   const settled = settle(answer);
@@ -1047,8 +1043,6 @@ async function judge(args: {
   readonly session: Session;
   /** This session × agent's state, as it stood once the identity was settled. */
   readonly stored: SessionState;
-  /** This subagent's start holds its session notes for its brief (`holdsForBrief`); false at every other hook. */
-  readonly holding: boolean;
   readonly load: LoadResult;
   readonly settings: Settings;
   readonly identity: Identity;
@@ -1059,7 +1053,7 @@ async function judge(args: {
   /** Where the replayable steps go, or null when this repo is not recording. */
   readonly steps: RecordedStep[] | null;
 }): Promise<Answer> {
-  const { events, session, stored, holding, load, settings, identity, off, hook, payload, rows, steps } = args;
+  const { events, session, stored, load, settings, identity, off, hook, payload, rows, steps } = args;
   const blocked: Refused[] = [];
   const shown: Shown[] = [];
   const world = realWorld(session.root);
@@ -1125,7 +1119,7 @@ async function judge(args: {
     // retry, which is the call that runs. A held TURN is the exception: its note is judged, and
     // `toResult` passes it to the agent with the refusal.
     if (blocked.length > 0 && !ridesRefusal(event.moment)) continue;
-    if (event.moment === "session") awaiting = holding;
+    if (event.moment === "session") awaiting = load.ok && holdsForBrief(hook, load.entries, session.transcript);
     steps?.push({
       rail: "brief",
       moment: event.moment,

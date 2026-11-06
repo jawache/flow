@@ -620,10 +620,17 @@ describe("toEvent — one payload, every moment it carries", () => {
     const briefed = defineCategory("briefed", spawnedAs({ generic: ["general-purpose"], brief: ["MARK"] }));
     const bound = entries(loadConfig(defineConfig([pack(definePack("t", { n: breadcrumb().at(session).for(briefed).text("n") }))])));
     const unbound = entries(loadConfig(defineConfig([pack(definePack("t", { n: breadcrumb().at(session).text("n") }))])));
-    expect(holdsForBrief("subagent-start", null, bound)).toBe(true);
-    expect(holdsForBrief("subagent-start", "{}", bound), "a resumed subagent's brief can be read").toBe(false);
-    expect(holdsForBrief("subagent-start", null, unbound), "nothing bound to a category").toBe(false);
-    expect(holdsForBrief("session-start", null, bound), "the main session has no brief to wait for").toBe(false);
+    const read: string[] = [];
+    const none = (): null => {
+      read.push("transcript");
+      return null;
+    };
+    expect(holdsForBrief("subagent-start", bound, none)).toBe(true);
+    expect(holdsForBrief("subagent-start", bound, () => "{}"), "a resumed subagent's brief can be read").toBe(false);
+    read.length = 0;
+    expect(holdsForBrief("subagent-start", unbound, none), "nothing bound to a category").toBe(false);
+    expect(holdsForBrief("session-start", bound, none), "the main session has no brief to wait for").toBe(false);
+    expect(read, "neither reads the transcript").toStrictEqual([]);
     expect(awaitsBrief("subagent-start", null)).toBe(true);
     expect(awaitsBrief("pre-tool-use", null)).toBe(false);
   });

@@ -959,12 +959,15 @@ export function awaitsBrief(hook: HookEvent, transcript: string | null): boolean
  * tool call, once the brief can be read?
  *
  * Only a note bound with `.for(…)` can wait on a category, so a config with none holds nothing. One
- * shown at the start is marked there, and judged again shows nothing.
+ * shown at the start is marked there, and judged again shows nothing. `transcript` is the subagent's
+ * own, asked for only once the rest has said yes.
  */
-export function holdsForBrief(hook: HookEvent, transcript: string | null, entries: readonly LoadedEntry[]): boolean {
+export function holdsForBrief(hook: HookEvent, entries: readonly LoadedEntry[], transcript: () => string | null): boolean {
+  // The transcript last, and only asked for: it is a file read, and most configs bind no such note.
   return (
-    awaitsBrief(hook, transcript) &&
-    entries.some((entry) => entry.spec.kind === "breadcrumb" && fires(entry.spec, "session") && (entry.spec.for ?? []).length > 0)
+    hook === "subagent-start" &&
+    entries.some((entry) => entry.spec.kind === "breadcrumb" && fires(entry.spec, "session") && (entry.spec.for ?? []).length > 0) &&
+    awaitsBrief(hook, transcript())
   );
 }
 
