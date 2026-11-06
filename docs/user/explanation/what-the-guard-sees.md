@@ -158,6 +158,27 @@ The snapshot holds what git holds: every tracked file, and every untracked file 
 - **A file that one command creates and then deletes** leaves nothing in the diff, so no rule is called on it.
 - **A command you type yourself with `!`** is your own work rather than the agent's, and it is not put through the guard.
 
+## Work outside the repository
+
+A rule judges only work inside the repository, unless the rule is marked with `.everywhere()`. So an agent can make a throwaway repository in a scratch folder without this repository's rules judging it.
+
+flow works out where each piece of work is:
+
+- **A shell command** runs in a folder. That folder is where the shell stood when the call started, moved by each `cd` or `pushd` earlier in the line, and by `git -C`. A variable the line sets itself, such as `R=/tmp/r; cd $R`, is followed.
+- **A file the Edit or Write tool writes** is at the path the tool names.
+
+A folder is inside the repository when git names this repository for it. Every worktree of this repository is inside. A folder git does not know, and a folder of another repository, are outside.
+
+- **A command outside the repository** is not passed to the rule. In `mkdir /tmp/r; cd /tmp/r && git init && git commit -m init`, the commit-header rule is passed no commit, so the line runs.
+- **A file outside the repository** is not passed to the rule. A breadcrumb bound to paths is not shown for it.
+- **A folder flow cannot work out**, such as the one `cd "$(mktemp -d)"` moves to, counts as inside.
+
+A rule marked `.everywhere()` judges work in every folder. These shipped rules are marked, because what they protect is not this repository's files:
+
+- `git.noGitDiscard`, `git.noForcePush` and `git.noDestructiveGh`
+- `flow.noUninstall`
+- `work.planIsTheParent`, `work.ticksAreTheChilds`, `work.noAgentInboxItems`, `work.noShellSubstitutionInProse` and `work.checkersDoNotWrite`
+
 ## Another worktree of the same repository
 
 > [!WARNING]
@@ -180,6 +201,8 @@ At the first such call, flow passes the agent a message beside the call's result
 - **The worktrees counted** are the ones `git worktree list` lists for the guarded folder.
 
 The commit gate still runs in the worktree, because git runs it from the worktree's own folder, with that worktree's config.
+
+The command rules still judge a command that runs in the worktree, because the worktree is inside the repository. See [Work outside the repository](#work-outside-the-repository).
 
 ### Why flow tells, rather than follows or refuses
 

@@ -74,9 +74,10 @@ A guardrail is a rule that refuses a write, a command or a commit. Every verb is
 | Verb | Value | Meaning |
 | --- | --- | --- |
 | `.at(…moments)` | moments | **Mandatory.** When it runs. See [moments](./moments.md) |
-| `.on(…globs)` | globs | The files it watches. With no `.on(…)`, a file rule watches every path. `.on()` with no globs is refused. A command rule takes none |
+| `.on(…globs)` | globs | The files it watches. With no `.on(…)`, a file rule watches every path in the repository. `.on()` with no globs is refused. A command rule takes none |
 | `.ignore(…globs)` | globs | Carve-outs from `.on(…)`. `.ignore()` with no globs is refused |
 | `.for(…categories)` | categories | Binds the rule to actors. It runs only for a session that has at least one of the categories. With no `.for(…)`, it runs for every session |
+| `.everywhere()` | none | Runs the rule on work outside the repository too. With no `.everywhere()`, it judges only work inside the repository. See [work outside the repository](../explanation/what-the-guard-sees.md#work-outside-the-repository) |
 | `.check(fn)` | a check | **Mandatory.** A function of `ctx`, or a stock check such as `textBan({…})` |
 | `.message(str)` | string | **Mandatory.** What the blocked person reads |
 | `.description(str)` | string | What the entry is for, for the reader |

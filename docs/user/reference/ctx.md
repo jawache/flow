@@ -63,6 +63,7 @@ Read `existed` when it is set.
 | `heredocs` | Each heredoc the command is fed, as `{ body, quoted }`. `quoted` is `true` for a delimiter in quotes or after a backslash, such as `<<'EOF'`, where the shell runs nothing in the body |
 | `substitutions` | Each `$( … )` or backtick substitution the shell runs while building this command's arguments and unquoted heredocs, as `{ text, backtick, commands, argument, prefix }`. `commands` lists the commands it runs, nested ones included, as `ctx.commands` lists them. `argument` is the index in `args` of the argument the substitution ends, when only plain text comes before it in that argument. `prefix` is that text: `""` for `-m "$(cat <<'EOF' … EOF)"`, and `--message=` for `--message="$( … )"`. Both are `null` otherwise |
 | `redirects` | Each redirect on the command, as `{ operator, target }`, such as `{ operator: ">", target: "notes.md" }`. A redirect on a group or a loop, such as `{ …; } > out.log`, is listed on each command inside it |
+| `folder` | The absolute folder the command runs in: where the shell stood when the call started, moved by each `cd` or `pushd` earlier in the line, and by `git -C`. `null` when the line does not settle it, such as after `cd "$(mktemp -d)"`. See [work outside the repository](../explanation/what-the-guard-sees.md#work-outside-the-repository) |
 | `nested` | `true` for a command inside a substitution, a `<( … )`, or a string given to `bash -c`, `sh -c` or `eval`. Also `true` for each line of a heredoc a shell reads, such as `bash <<'EOF'` or `cat <<'EOF' \| sh`, and of a here-string a shell reads, such as `bash <<< 'ls'` |
 
 `ctx.commands` is `null` when the line does not parse, for example when a quote never closes. A check reads `null` as "cannot tell", and the stock checks then pass, except `banCommands`, which refuses the line when the program and every argument it names appear in it as whole words.
@@ -77,6 +78,8 @@ const noBareGh = defineCheck((_opts: Record<string, never>) => (ctx) => {
 ```
 
 ## What each moment fills in
+
+A rule without `.everywhere()` is passed only the work inside the repository. `ctx.commands` then lists only the commands whose `folder` is inside it or `null`, and `ctx.command` is still the whole line. The rule is not called when no command in the line is inside, or when `ctx.file` is outside.
 
 | At | The check reads |
 | --- | --- |
