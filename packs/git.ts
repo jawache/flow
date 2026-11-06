@@ -152,7 +152,7 @@ const noGitDiscard = defineCheck(
       // or written into a heredoc is not one, and a line that does not parse has none.
       const gits = gitCommands(ctx);
       const cleaning = gits.some((g) => g.subcommand === "clean");
-      // THE COMMAND'S OWN `-C`, copied onto every read, exactly as `commitReason` copies it: a
+      // THE COMMAND'S OWN FOLDER, put on every read as `-C`, exactly as `commitReason` puts it: a
       // `git -C ~/other-repo checkout -- x` is about THAT repo's tree, and a status read here would
       // answer about files the command was never aimed at — clean ones, so the loss goes through.
       const git = `git ${gitDirPrefix(ctx)}`.trimEnd();
@@ -415,7 +415,7 @@ const noHandEditedVersion = defineCheck(
       if (message === null) return ctx.ok();
       if (isReleaseCommit(message)) return ctx.ok(); // the one shape that may write it
       // `git diff HEAD` — staged AND unstaged, because `git commit -a` sweeps the second lot in.
-      // Prefixed with the command's own `-C`, the way `commitReason` is: a commit aimed at another
+      // Prefixed with the command's own folder, the way `commitReason` is: a commit aimed at another
       // repo has to be judged against that repo's diff, or this vetoes it over a version field it
       // cannot see.
       const git = `git ${gitDirPrefix(ctx)}`.trimEnd();
@@ -648,6 +648,7 @@ export const git = definePack("git", (repo: Release) => {
 
   noGitDiscard: guardrail()
     .at(command)
+    .everywhere()
     .description("Blocks a git command that would wipe uncommitted work — checkout/restore/reset --hard/clean -f. No bypass; use git stash.")
     .check(noGitDiscard({}))
     .message(
@@ -771,6 +772,7 @@ export const git = definePack("git", (repo: Release) => {
 
   noForcePush: guardrail()
     .at(command)
+    .everywhere()
     .description("Blocks a force-push — rewriting pushed history is the one loss a stash cannot undo.")
     // Read from the parsed git command: the `-f` must be an argument of the push itself, never of
     // the command after it (`git push origin main; ls -f`), and the words in a note or a heredoc a
@@ -829,6 +831,7 @@ export const git = definePack("git", (repo: Release) => {
    */
   noDestructiveGh: guardrail()
     .at(command)
+    .everywhere()
     .description("Blocks `gh repo delete`, `archive` and `rename`, `gh release delete`, and `gh api` with the DELETE method.")
     .check(noDestructiveGh({}))
     .message(
@@ -939,6 +942,11 @@ export const git = definePack("git", (repo: Release) => {
         "git add -A && git commit -nm 'fix: a thing'",
         "git -c core.hooksPath=/dev/null commit -m 'fix: a thing'",
         "git -C ../other -c core.hookspath=.nohooks commit -m 'fix: a thing'",
+        // Run from another folder and pointed at this repository: still this repository's commit.
+        "cd /tmp && git --git-dir=/r/.git --work-tree=/r commit --no-verify -m 'fix: a thing'",
+        "cd /tmp && git --git-dir /r/.git --work-tree /r commit --no-verify -m 'fix: a thing'",
+        "cd /tmp && GIT_DIR=/r/.git git commit --no-verify -m 'fix: a thing'",
+        "cd /tmp && GIT_WORK_TREE=/r git commit --no-verify -m 'fix: a thing'",
         'git commit-tree HEAD^{tree} -p HEAD -m "fix: a thing"',
         "git update-ref refs/heads/main abc123",
         "echo hi | git hash-object -w --stdin",

@@ -18,7 +18,7 @@ import {
   type Unanswered,
 } from "../language/domain.ts";
 import { existsSync } from "node:fs";
-import { faultsOf, parseCommandLine } from "../language/domain.ts";
+import { faultsOf, gitCommand, parseCommandLine, type GitCommand } from "../language/domain.ts";
 import { globToRegExp, notAGlob } from "../glob.ts";
 import {
   addedNames,
@@ -43,7 +43,6 @@ import {
   execPasses,
   exportedNames,
   failureExcerpt,
-  gitCommand,
   gitCommands,
   gitDirPrefix,
   givesReason,
@@ -78,7 +77,6 @@ import {
   type ChangeGroup,
   type Dialect,
   type ForbidEdge,
-  type GitCommand,
   type JsonAssert,
   type Matcher,
   type NativeConfig,
@@ -802,32 +800,37 @@ const prefixOf = (command: string): string => gitDirPrefix({ command });
 const messageOf = (command: string): string | null => commitMessage({ command });
 
 describe("gitDirPrefix and quoteArg", () => {
-  it("copies -C through verbatim, so the shell resolves it exactly as git would", () => {
+  // The prefix is the first git command's `folder`, which the parse settles. These lines are parsed
+  // with no known start, the way a case is, so each folder is relative to where the line started.
+  it("puts the git command's folder on the read, from its -C", () => {
     expect(prefixOf("git -C ../other commit -m x")).toBe("-C '../other'");
-    expect(prefixOf("git commit -m x")).toBe("");
+    expect(prefixOf("git commit -m x"), "the start itself needs no -C").toBe("");
     expect(prefixOf("ls -la")).toBe("");
   });
 
   // THE OTHER WAY OUT OF THIS REPO, and the one a person actually types. Until F3 only git's own
   // option was read, so `cd other && git checkout x` was judged against the SESSION's tree — where
   // the path does not exist, so there was nothing to lose and the discard went through.
-  it("reads a leading `cd <path> &&` as the working tree the command is about", () => {
+  it("reads a `cd <path>` before the git command as the working tree it is about", () => {
     expect(prefixOf("cd ../other && git checkout -- x")).toBe("-C '../other'");
     expect(prefixOf("cd ../other; git checkout -- x")).toBe("-C '../other'");
+    expect(prefixOf("git status && cd /a && git checkout -- x"), "the first git command decides").toBe("");
   });
 
   it("chains both, in the order the shell applies them — git chains -C exactly as a shell chains cd", () => {
-    // `cd /a && git -C b status` runs in /a/b, and this says precisely that.
-    expect(prefixOf("cd /a && git -C b status")).toBe("-C '/a' -C 'b'");
+    expect(prefixOf("cd /a && git -C b status")).toBe("-C '/a/b'");
   });
 
-  it("guesses at no `cd` it cannot name", () => {
+  it("reads the folder the parse followed from where the line started, when that is known", () => {
+    const commands = parseCommandLine("cd ../other && git checkout -- x", { cwd: "/work/repo" });
+    expect(gitDirPrefix({ commands })).toBe("-C '/work/other'");
+    expect(gitDirPrefix({ commands: parseCommandLine("git status", { cwd: "/work/repo" }) })).toBe("-C '/work/repo'");
+  });
+
+  it("guesses at no folder the line does not settle", () => {
     expect(prefixOf("cd && git status"), "a bare cd goes home, and home is not knowable here").toBe("");
-    expect(prefixOf("cd - && git status"), "the previous directory is not a path").toBe("");
-    expect(prefixOf("cd /a"), "no operator after the path, so nothing was chained to it").toBe("");
-    // Only a LEADING cd: one in the middle of a chain may follow another that already moved, and a
-    // line that walks two trees is beyond what one answer can honestly describe.
-    expect(prefixOf("git status && cd /a && git checkout -- x")).toBe("");
+    expect(prefixOf("cd - && git status"), "the previous directory is not known").toBe("");
+    expect(prefixOf('cd "$(mktemp -d)" && git status')).toBe("");
     expect(prefixOf("x=$(cd /a && pwd); git status"), "a cd inside a substitution moves nothing").toBe("");
   });
 

@@ -16,4 +16,13 @@ export default definePack("rogue", {
     .check(passes)
     .message("m")
     .test({ block: ["x"] }),
+
+  noForce: guardrail()
+    .at(commit)
+    .everywhere()
+    // @refusal This expression is not callable
+    .everywhere()
+    .check(passes)
+    .message("m")
+    .test({ block: ["x"] }),
 });

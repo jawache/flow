@@ -71,6 +71,7 @@ A builder owns its phase, not the plan — the verdict, the amendment and the co
 - **Refuses at** a shell command is about to run
 - **Watches** not scoped by path
 - **Categories** `builder`
+- **Outside the repository** judged as well, `.everywhere()`. See [work outside the repository](../explanation/what-the-guard-sees.md#work-outside-the-repository)
 - **Check** [`banCommands`](../checks/ban-commands.md)
 
 <details><summary>settings</summary>
@@ -125,6 +126,7 @@ A verifier and the review lenses sit at a boundary they must not write to.
 - **Refuses at** a file is written or edited
 - **Watches** not scoped by path
 - **Categories** `checker`
+- **Outside the repository** judged as well, `.everywhere()`. See [work outside the repository](../explanation/what-the-guard-sees.md#work-outside-the-repository)
 - **Check** written inline in this pack
 
 ### What the agent reads when refused
@@ -150,6 +152,7 @@ The parent records verdicts; a box is ticked by the child that built it, with it
 - **Refuses at** a shell command is about to run
 - **Watches** not scoped by path
 - **Categories** `parent`
+- **Outside the repository** judged as well, `.everywhere()`. See [work outside the repository](../explanation/what-the-guard-sees.md#work-outside-the-repository)
 - **Check** [`banCommands`](../checks/ban-commands.md)
 
 <details><summary>settings</summary>
@@ -194,6 +197,7 @@ The inbox is the human's speccing queue — an agent raises a finding in chat, n
 - **Refuses at** a shell command is about to run
 - **Watches** not scoped by path
 - **Categories** every session
+- **Outside the repository** judged as well, `.everywhere()`. See [work outside the repository](../explanation/what-the-guard-sees.md#work-outside-the-repository)
 - **Check** [`banCommands`](../checks/ban-commands.md)
 
 <details><summary>settings</summary>
@@ -243,6 +247,7 @@ A backtick the shell would run in a work verb that records prose (double-quoted,
 - **Refuses at** a shell command is about to run
 - **Watches** not scoped by path
 - **Categories** every session
+- **Outside the repository** judged as well, `.everywhere()`. See [work outside the repository](../explanation/what-the-guard-sees.md#work-outside-the-repository)
 - **Check** [`substitutionInProse`](../checks/substitution-in-prose.md)
 
 <details><summary>settings</summary>
@@ -336,7 +341,7 @@ Only the builder changes files in this worktree — hand your finding back inste
 | --- | --- | --- |
 | Lead, and the parameters table | The doc comment on `definePack`, and the doc comment on each member of the parameter interface | JSDoc, read with the TypeScript compiler API |
 | The named sections above the entries | An `@install`, `@setup` or `@adopt` tag on that same doc comment. A tag nobody uses renders nothing. | JSDoc tags |
-| Entry id, kind, moments, globs, categories, description | The entry itself — `.at()` `.on()` `.description()` | Loaded: the same data the engine runs |
+| Entry id, kind, moments, globs, categories, outside the repository, description | The entry itself — `.at()` `.on()` `.for()` `.everywhere()` `.description()` | Loaded: the same data the engine runs |
 | Why it exists | The doc comment on the entry's key. Required on a breadcrumb; optional on a guardrail whose message already gives the reason. | JSDoc |
 | What the agent reads | `.text()` or `.message()`, verbatim | Loaded |
 | Check and its settings | The check the entry asks, and the options it was given | The name from the pack's source. The settings are read off the check, so they are the values a parameter supplied. |

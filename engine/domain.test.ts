@@ -724,6 +724,78 @@ describe("the off switch", () => {
   });
 });
 
+describe("work outside the repository", () => {
+  // One rule unmarked and one marked `.everywhere()`, each recording the commands it was passed.
+  const seen: Record<string, (readonly string[])[]> = { here: [], everywhere: [] };
+  const spying = (id: string) =>
+    guardrail()
+      .at(command, write)
+      .check((ctx) => {
+        seen[id]?.push(ctx.commands?.map((c) => c.text) ?? [ctx.file?.path ?? ""]);
+        return ctx.command === "boom" ? ctx.fail("boom") : ctx.ok();
+      })
+      .message("x")
+      .test({ pass: ["ls"], block: ["boom"] });
+  const load = loadConfig(defineConfig([pack(definePack("spy", { here: spying("here"), everywhere: spying("everywhere").everywhere() }))]));
+  const ran = (line: string, outside: readonly string[]) =>
+    guard({ load, event: { moment: "command", command: line, commands: parseCommandLine(line, { cwd: "/repo" }), outside, wearing: [] }, world: world() });
+  beforeEach(() => {
+    seen["here"] = [];
+    seen["everywhere"] = [];
+  });
+
+  it("does not call an unmarked rule for a line with no command inside", async () => {
+    const outcome = await ran("cd /tmp/r && git init && git commit -m init", ["/tmp/r"]);
+    // The `cd` itself runs where the line started, so it is the one command inside.
+    expect(seen["here"]).toEqual([["cd /tmp/r"]]);
+    const none = await ran("git -C /tmp/r commit -m init", ["/tmp/r"]);
+    expect(seen["here"]).toEqual([["cd /tmp/r"]]);
+    expect(tallyFor(none, "spy.here")).toEqual({ id: "spy.here", evaluated: 0, hits: 0, silenced: 0 });
+    expect(tallyFor(outcome, "spy.everywhere")?.evaluated).toBe(1);
+  });
+
+  it("passes an unmarked rule only the commands inside, in a line that works in both places", async () => {
+    await ran("git -C /tmp/r commit -m init && git commit -m bad", ["/tmp/r"]);
+    expect(seen["here"]).toEqual([["git commit -m bad"]]);
+  });
+
+  it("counts a command with no folder as inside", async () => {
+    await ran('cd "$(mktemp -d)" && git commit -m init', ["/tmp/r"]);
+    expect(seen["here"]).toEqual([["cd $(mktemp -d)", "mktemp -d", "git commit -m init"]]);
+  });
+
+  it("passes a marked rule every command", async () => {
+    await ran("git -C /tmp/r commit -m init && git commit -m bad", ["/tmp/r"]);
+    expect(seen["everywhere"]).toEqual([["git -C /tmp/r commit -m init", "git commit -m bad"]]);
+  });
+
+  it("does not pass an unmarked rule a file outside, and passes a marked one it", async () => {
+    await guard({ load, event: { ...wrote("/tmp/r/a.ts", "x"), outside: ["/tmp/r/a.ts"] }, world: world() });
+    expect(seen["here"]).toEqual([]);
+    expect(seen["everywhere"]).toEqual([["/tmp/r/a.ts"]]);
+  });
+
+  it("judges everything as inside when the event names nothing outside, as in a case", async () => {
+    await ran("cd /tmp/r && git commit -m init", []);
+    expect(seen["here"]).toEqual([["cd /tmp/r", "git commit -m init"]]);
+  });
+
+  it("replays a recorded step that worked outside the same way", async () => {
+    // Relative, so only the recorded start puts the first commit in /tmp/r.
+    const line = "git -C r commit -m init && git commit -m bad";
+    await replay({
+      load,
+      settings: {},
+      recording: {
+        v: RECORDING_VERSION,
+        session: "s1",
+        steps: [{ rail: "guard", moment: "command", command: line, start: { cwd: "/tmp" }, outside: ["/tmp/r"], wearing: [] }],
+      },
+    });
+    expect(seen["here"]).toEqual([["git commit -m bad"]]);
+  });
+});
+
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // BRIEFING — the drift arithmetic, across a simulated session
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -792,6 +864,27 @@ describe("a breadcrumb across one session", () => {
       marks: first.marks,
     });
     expect(again.notices).toEqual([]);
+  });
+
+  it("shows no note bound to paths for a file outside the repository, and still one bound to none", () => {
+    const load = loadConfig(
+      defineConfig([
+        pack(
+          definePack("notes", {
+            /** Bound to paths, which an absolute path outside matches too. */
+            typescript: breadcrumb().at(touch).on("**/*.ts").text("ts"),
+            /** Bound to none. */
+            everyTouch: breadcrumb().at(touch).text("any"),
+          }),
+        ),
+      ]),
+    );
+    const path = "/tmp/r/src/a.ts";
+    expect(noticeIds(brief({ load, settings: {}, event: { ...touched(path, 10), outside: [path] }, marks: {} }))).toEqual(["notes.everyTouch"]);
+    expect(noticeIds(brief({ load, settings: {}, event: touched(path, 10), marks: {} })), "the same path, inside").toEqual([
+      "notes.typescript",
+      "notes.everyTouch",
+    ]);
   });
 
   it("never shows a note for an area this touch is not in", () => {

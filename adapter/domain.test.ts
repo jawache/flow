@@ -77,6 +77,7 @@ import {
   touchedPath,
   foldersBetween,
   reachesAnotherWorktree,
+  outsideOf,
   untoldWorktrees,
   worktreeFolders,
   worktreeLine,
@@ -378,10 +379,9 @@ describe("a Bash line's delete targets", () => {
 
 describe("bashReads — the files a Bash command reads, before it runs", () => {
   const HOME = "/home/me";
-  // The reads and searches only: where a `cd` moved the shell is `folders`, pinned with the worktrees.
   const at = (command: string, cwd = ROOT, home: string | undefined = HOME): { reads: readonly string[]; searched: readonly string[] } => {
-    const { reads, searched } = bashReads(parseShellSteps(command), { cwd, root: ROOT, home });
-    return { reads, searched };
+    const where = { cwd, root: ROOT, home };
+    return bashReads(parseShellSteps(command, where), where);
   };
   const reads = (command: string, cwd = ROOT): readonly string[] => at(command, cwd).reads;
   const searched = (command: string, cwd = ROOT): readonly string[] => at(command, cwd).searched;
@@ -550,6 +550,9 @@ describe("bashReads — the files a Bash command reads, before it runs", () => {
     expect(searched("git --config-env a.b=HOME status pkg/x.ts")).toStrictEqual(["pkg/x.ts"]);
     expect(searched("git commit -m 'src/a.ts'")).toStrictEqual([]);
     expect(searched("git -C lib")).toStrictEqual([]);
+    // `-C` is the parse's: chained after a `cd`, and after another `-C`.
+    expect(searched("cd sub && git -C a diff -- x")).toStrictEqual(["sub/a/x"]);
+    expect(searched("git -C a -C b diff -- x")).toStrictEqual(["a/b/x"]);
   });
 
   it("reads ffmpeg's inputs", () => {
@@ -645,7 +648,7 @@ describe("toEvent — one payload, every moment it carries", () => {
     const events = toEvent("pre-tool-use", pre("Bash", { command: "rm secret/a.ts" }), w);
     // Every guard event comes first: a refusal carries no notes, so none is judged after one.
     expect(events).toStrictEqual([
-      { rail: "guard", moment: "command", command: "rm secret/a.ts", commands: parseCommandLine("rm secret/a.ts") },
+      { rail: "guard", moment: "command", command: "rm secret/a.ts", commands: parseCommandLine("rm secret/a.ts", { cwd: "/repo" }), start: { cwd: "/repo", home: undefined } },
       { rail: "guard", moment: "delete", file: { path: "secret/a.ts", content: "the content" } },
       { rail: "brief", moment: "command", command: "rm secret/a.ts" },
     ]);
@@ -657,7 +660,7 @@ describe("toEvent — one payload, every moment it carries", () => {
     const command = "cat a.ts && rg x lib ~/n.md";
     const events = toEvent("pre-tool-use", { ...pre("Bash", { command }), cwd: "/repo/src" }, { ...world(), home: "/repo/home" });
     expect(events).toStrictEqual([
-      { rail: "guard", moment: "command", command, commands: parseCommandLine(command) },
+      { rail: "guard", moment: "command", command, commands: parseCommandLine(command, { cwd: "/repo/src", home: "/repo/home" }), start: { cwd: "/repo/src", home: "/repo/home" } },
       { rail: "brief", moment: "command", command },
       { rail: "brief", moment: "touch", path: "src/a.ts" },
       { rail: "brief", moment: "touch", path: "src/lib" },
@@ -673,7 +676,7 @@ describe("toEvent — one payload, every moment it carries", () => {
   it("raises no delete moment for a file that is already gone", () => {
     const events = toEvent("pre-tool-use", pre("Bash", { command: "rm nowhere.ts" }), world());
     expect(events).toStrictEqual([
-      { rail: "guard", moment: "command", command: "rm nowhere.ts", commands: parseCommandLine("rm nowhere.ts") },
+      { rail: "guard", moment: "command", command: "rm nowhere.ts", commands: parseCommandLine("rm nowhere.ts", { cwd: "/repo" }), start: { cwd: "/repo", home: undefined } },
       { rail: "brief", moment: "command", command: "rm nowhere.ts" },
     ]);
   });
@@ -4712,12 +4715,15 @@ describe("another worktree of the repository — told once, never refused", () =
     expect(worked({ tool_name: "Write", tool_input: {} })).toEqual([]);
   });
 
-  it("reads the folders a command runs in: the payload's cwd, then each cd the parse reads, absolute", () => {
+  it("reads the folders a command runs in: the payload's cwd, then each command's folder from the parse, absolute", () => {
     const bash = (command: string, cwd?: string): HookPayload => ({ tool_name: "Bash", tool_input: { command }, ...(cwd === undefined ? {} : { cwd }) });
     expect(commandFolders(bash("ls", "/code/app.worktrees/feature"), root, "/home/me")).toEqual(["/code/app.worktrees/feature"]);
     expect(commandFolders(bash("ls"), root, "/home/me"), "no cwd: the guarded folder").toEqual(["/code/app"]);
     expect(commandFolders(bash("cd ../app.worktrees/feature && npm test", root), root, "/home/me")).toEqual(["/code/app", "/code/app.worktrees/feature"]);
-    expect(commandFolders(bash("(cd /tmp/x && ls); pushd ~/y", root), root, "/home/me")).toEqual(["/code/app", "/tmp/x", "/home/me/y"]);
+    // A folder counts once a command runs in it: the trailing `pushd` moves the shell, and runs nothing there.
+    expect(commandFolders(bash("(cd /tmp/x && ls); pushd ~/y", root), root, "/home/me")).toEqual(["/code/app", "/tmp/x"]);
+    expect(commandFolders(bash("pushd ~/y && ls", root), root, "/home/me")).toEqual(["/code/app", "/home/me/y"]);
+    expect(commandFolders(bash("git -C ../app.worktrees/feature status", root), root, "/home/me"), "git's own -C").toEqual(["/code/app", "/code/app.worktrees/feature"]);
     expect(commandFolders(bash('cd "$DIR" && ls', root), root, "/home/me"), "a folder only running the line could tell").toEqual(["/code/app"]);
     expect(commandFolders({ tool_name: "Write", tool_input: { file_path: "/code/app.worktrees/feature/a.ts" }, cwd: "/code/app.worktrees/fix" }, root, "/home/me")).toEqual([]);
   });
@@ -4780,5 +4786,55 @@ describe("another worktree of the repository — told once, never refused", () =
     expect(line).toContain("It does not guard the git worktree /code/app.worktrees/feature");
     expect(line).toContain("Stop your work in /code/app.worktrees/feature and tell the user to start a Claude Code session in that folder");
     expect(line).toContain("If you are a subagent, stop and report this to the agent that started you.");
+  });
+});
+
+describe("outsideOf — where a call works outside the repository", () => {
+  const root = "/code/app";
+  // git names this repository for the guarded folder and its sibling worktree, and not for the
+  // repository made inside it with `git init`.
+  const repository = ["/code/app", "/code/app.worktrees/feature"];
+  const asked: string[] = [];
+  const under = (folder: string, top: string): boolean => folder === top || folder.startsWith(`${top}/`);
+  const same = (folder: string): boolean => {
+    asked.push(folder);
+    return !under(folder, "/code/app/.work/tmp/r") && repository.some((top) => under(folder, top));
+  };
+  const nestedRepo = (dir: string): boolean => dir === "/code/app/.work/tmp/r";
+  const none = (): boolean => false;
+  const ran = (line: string) => ({ rail: "guard" as const, moment: "command" as const, command: line, commands: parseCommandLine(line, { cwd: root }) });
+
+  it("names the folder of each command outside, once, and asks git of nothing inside", () => {
+    asked.length = 0;
+    expect(outsideOf(ran("cd /tmp/r && git init && git commit -m init; git -C /tmp/r log"), root, none, same)).toEqual(["/tmp/r"]);
+    expect(asked).toEqual(["/tmp/r"]);
+    asked.length = 0;
+    expect(outsideOf(ran("git status && cd src && ls"), root, none, same)).toEqual([]);
+    expect(asked, "inside the guarded folder, with no .git under it").toEqual([]);
+  });
+
+  it("counts every worktree of this repository as inside", () => {
+    expect(outsideOf(ran("cd /code/app.worktrees/feature && git commit -m bad"), root, none, same)).toEqual([]);
+    // One nested inside the guarded folder holds a `.git`, so git is asked, and names this repository.
+    const nested = "/code/app/.claude/worktrees/x";
+    const sameOrNested = (folder: string): boolean => folder === nested || same(folder);
+    expect(outsideOf(ran("cd .claude/worktrees/x && git commit -m bad"), root, (dir) => dir === nested, sameOrNested)).toEqual([]);
+  });
+
+  it("counts a repository made under the guarded folder as outside", () => {
+    expect(outsideOf(ran("cd .work/tmp/r && git commit -m init"), root, nestedRepo, same)).toEqual(["/code/app/.work/tmp/r"]);
+  });
+
+  it("names nothing for a command with no folder", () => {
+    expect(outsideOf(ran('cd "$(mktemp -d)" && git commit -m init'), root, none, same)).toEqual([]);
+  });
+
+  it("names a file outside by its own path, for a write and for a touch", () => {
+    const wrote = { rail: "guard" as const, moment: "write" as const, file: { path: "/tmp/r/a.ts", content: "" } };
+    expect(outsideOf(wrote, root, none, same)).toEqual(["/tmp/r/a.ts"]);
+    expect(outsideOf({ rail: "brief", moment: "touch", path: "/tmp/r/a.ts" }, root, none, same)).toEqual(["/tmp/r/a.ts"]);
+    expect(outsideOf({ rail: "brief", moment: "touch", path: "src/a.ts" }, root, none, same)).toEqual([]);
+    expect(outsideOf({ rail: "brief", moment: "touch", path: ".work/tmp/r/a.ts" }, root, nestedRepo, same)).toEqual([".work/tmp/r/a.ts"]);
+    expect(outsideOf({ rail: "brief", moment: "session" }, root, none, same)).toEqual([]);
   });
 });

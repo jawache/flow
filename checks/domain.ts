@@ -33,6 +33,7 @@ import {
   cannedWorld,
   defineCheck,
   elideHeredocBodies,
+  gitCommand,
   inScope,
   isWrapper,
   makeCtx,
@@ -48,6 +49,7 @@ import type {
   Check,
   Ctx,
   ExecResult,
+  GitCommand,
   Grammar,
   GuardrailMoment,
   LoadedEntry,
@@ -250,7 +252,7 @@ function commandInWords(entry: string): CommandInWords | null {
   if (entry.includes("\\")) return null;
   const steps = parseShellSteps(entry);
   const [step] = steps ?? [];
-  if (steps?.length !== 1 || step?.kind !== "command" || step.at !== 0 || step.assigned || stepCommands(steps).length !== 1) return null;
+  if (steps?.length !== 1 || step?.kind !== "command" || step.at !== 0 || step.env.length > 0 || stepCommands(steps).length !== 1) return null;
   const c = step.command;
   const program = programName(c.program);
   if (program === "" || isWrapper(program) || c.heredocs.length > 0 || c.substitutions.length > 0 || c.redirects.length > 0) return null;
@@ -790,25 +792,6 @@ export const changeTogether = defineCheck(
 // of it about git or a commit. None of them splits or lexes a line by hand: where a quote closes,
 // where a command ends and whose heredoc a body is are the parser's to find.
 
-/**
- * git's own options that TAKE A VALUE, and therefore swallow the token after them.
- *
- * They have to be known by name to find where the subcommand starts: `git -C ~/repo commit -m x`
- * puts two tokens between `git` and `commit`, and a scan that took the first argument as the
- * subcommand saw `-C` and walked away. Knowing them by name is also what keeps `git commit -C
- * HEAD` — the reuse-this-message flag, nothing to do with directories — from reading as a command
- * aimed at a directory called HEAD.
- */
-export const GIT_VALUE_OPTS: ReadonlySet<string> = new Set([
-  "-C",
-  "-c",
-  "--git-dir",
-  "--work-tree",
-  "--namespace",
-  "--exec-path",
-  "--config-env",
-]);
-
 /** What a command reader is handed: the line, and its parse when the engine made one. */
 type CommandFacts = Pick<Ctx, "command" | "commands">;
 
@@ -819,38 +802,6 @@ type CommandFacts = Pick<Ctx, "command" | "commands">;
  */
 export function shellCommands(facts: CommandFacts): readonly ShellCommand[] | null {
   return facts.commands === undefined ? parseCommandLine(facts.command ?? "") : facts.commands;
-}
-
-/** One `git` command in the parse, split where git's own options stop and its subcommand starts. */
-export interface GitCommand {
-  /** git's OWN options, before the subcommand — where `-C` counts and only there. */
-  readonly globals: readonly string[];
-  /** The subcommand word (`commit`, `status`), or null when the command carries none. */
-  readonly subcommand: string | null;
-  /** Everything after the subcommand — its own flags and arguments. */
-  readonly args: readonly string[];
-  /** Where `args` starts in `command.args`: `args[i]` is `command.args[argsAt + i]`. */
-  readonly argsAt: number;
-  /** The parsed command it was read from: its heredocs are what `git commit -F -` reads. */
-  readonly command: ShellCommand;
-}
-
-/**
- * One parsed command read as git, or null when its program is not git. The parse has already
- * found the program, so a `git` inside a quoted message, a heredoc body or another command's
- * arguments is never one, and a `git` inside `$( … )` or a `bash -c` string is.
- */
-export function gitCommand(command: ShellCommand): GitCommand | null {
-  if (programName(command.program) !== "git") return null;
-  const { args } = command;
-  let k = 0;
-  while (k < args.length) {
-    const a = args[k] as string;
-    if (GIT_VALUE_OPTS.has(a)) k += 2;
-    else if (a.startsWith("-")) k += 1;
-    else break; // the subcommand
-  }
-  return { globals: args.slice(0, k), subcommand: args[k] ?? null, args: args.slice(k + 1), argsAt: k + 1, command };
 }
 
 /** Every git command the line runs, in the order the parse lists them; none when it does not parse. */
@@ -950,54 +901,29 @@ export function quoteArg(value: string): string {
 }
 
 /**
- * WHICH WORKING TREE THIS COMMAND IS ABOUT, as a `-C` prefix to copy onto every read — or "".
+ * WHICH WORKING TREE THIS COMMAND IS ABOUT, as a `-C` prefix to put on every read — or "".
  *
- * It is COPIED rather than resolved. Resolving it to an absolute root needs a root and a cwd to
- * point at one, and a check has neither: inventing a `root` on ctx would put a filesystem fact into
- * a contract whose whole promise is that there is no filesystem in it. Copying the tokens through
- * means the shell resolves them exactly as git would have, relative to wherever `ctx.exec` runs —
- * which is the repo.
+ * It is the first git command's `folder`, from the parse: where the line started, moved by each
+ * `cd` and `pushd` before it and by its own `git -C`. The check works none of that out itself —
+ * the parse followed the line once, for every reader — so `cd ../other && git checkout x` and
+ * `git -C ../other checkout x` are both read against `../other`, the tree they are aimed at, and
+ * never against the session's.
  *
- * TWO WAYS A COMMAND LEAVES THIS REPO, and until F3 only one of them was read.
+ * Two ways a command leaves this repo, and a rule that reads the wrong tree does not fail loudly;
+ * it passes quietly. The F3 builder ran `git checkout <path>` from a session rooted in another
+ * worktree, and every git read the check made answered about the session's tree, where the path
+ * did not exist — so the discard found nothing to lose, and went through.
  *
- *   · `git -C <path> …`   — git's own option.
- *   · `cd <path> && git …` — the shell's, and the one a person actually types.
- *
- * The second was found the way the first was: live, by a guard allowing what it existed to refuse.
- * The F3 builder ran `git checkout <path>` from a session rooted in another worktree, and every
- * git read the check made answered about the session's tree, where the path did not exist — so the
- * discard was judged against a repo it was never aimed at, found nothing to lose, and went through.
- * A rule that reads the wrong tree does not fail loudly; it passes quietly, which is the whole
- * failure this package is about.
- *
- * BOTH ARE EMITTED, in the order the shell would apply them, because git chains multiple `-C`
- * options exactly as a shell chains directory changes: `cd /a && git -C b status` runs in `/a/b`,
- * and `-C '/a' -C 'b'` says precisely that. Nothing has to decide which of the two wins.
- *
- * ONLY A LEADING `cd`, and only when a command follows it. A `cd` in the middle of a chain can be
- * preceded by another that already moved, and a command line that walks two trees is beyond what
- * one answer can honestly describe — the same reason the FIRST git command decides below. Both are
- * read from the parse, so a `cd` or a `git` inside a quoted argument or a heredoc body is neither.
- *
- * A path the SHELL would have expanded — `~`, a variable — is quoted here and so reaches git
- * literally, which makes the read fail rather than lie. Every caller treats a failed read as "not
- * a repo, git owns that error" and passes: a false negative, which is this pack's stated trade.
+ * THE FIRST git command decides: a line that walks two trees is beyond what one answer can
+ * honestly describe. In a line whose start nobody knows, as in a case, the folder is relative to
+ * where it started, and `.` — the start itself — needs no `-C`: the read lands where `ctx.exec`
+ * runs. A folder the parse could not settle, such as after `cd "$(mktemp -d)"`, or a git command
+ * that names its repository itself with `--git-dir`, gets no `-C` either, so the read is of this
+ * repository, where `ctx.exec` runs.
  */
 export function gitDirPrefix(facts: CommandFacts): string {
-  const out: string[] = [];
-  const commands = shellCommands(facts) ?? [];
-  const [head] = commands;
-  const path = head?.args[0];
-  // `cd <path> && …` or `cd <path>; …` at the head of the line. A bare `cd`, a `cd -`, or a `cd`
-  // nothing follows is not a move this can name, so none of them is guessed at.
-  if (head?.program === "cd" && !head.nested && head.args.length === 1 && path !== undefined && !path.startsWith("-") && commands.slice(1).some((c) => !c.nested))
-    out.push("-C", quoteArg(path));
-  const first = gitCommands(facts)[0];
-  if (!first) return out.join(" ");
-  for (let i = 0; i < first.globals.length - 1; i++) {
-    if (first.globals[i] === "-C") out.push("-C", quoteArg(first.globals[i + 1] as string));
-  }
-  return out.join(" ");
+  const folder = gitCommands(facts)[0]?.command.folder ?? null;
+  return folder === null || folder === "." ? "" : `-C ${quoteArg(folder)}`;
 }
 
 /**

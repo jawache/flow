@@ -48,6 +48,8 @@ import {
   type LoadedEntry,
   type Moment,
   type SessionFacts,
+  type ShellCommand,
+  type ShellStart,
   type Settings,
   type TurnAction,
   type Unanswered,
@@ -236,6 +238,11 @@ export interface GuardEvent extends Pick<CommitFileFacts, "added" | "unchanged">
   readonly turn?: readonly TurnAction[] | undefined;
   /** Every category this session × agent wears. Empty means it wears none, not "all of them". */
   readonly wearing: readonly string[];
+  /**
+   * Where this event works outside the repository (`outsideOf`), by the names it already uses: a
+   * command's `folder`, and the file's `path`. Absent, everything is inside, as in a case.
+   */
+  readonly outside?: readonly string[] | undefined;
 }
 
 /** One event the breadcrumb rails carry. A note has no rail to block, so it has no world either. */
@@ -248,12 +255,22 @@ export interface BriefEvent {
   readonly wearing: readonly string[];
   /** How far this session has drifted, in context tokens. The adapter measures it. */
   readonly tokens: number;
+  /** Where this event works outside the repository, as on a `GuardEvent`: here, the `path`. */
+  readonly outside?: readonly string[] | undefined;
 }
 
 /** Does this entry fire at this moment at all? A disabled entry is inert and never does. */
 export function fires(spec: EntrySpec, moment: Moment): boolean {
   if (spec.disabled) return false;
   return ((spec.at ?? []) as readonly string[]).includes(moment);
+}
+
+/**
+ * Does this entry judge work outside the repository? Only a guardrail marked `.everywhere()` does.
+ * Decided here, once, for every rule: no check asks where its work is.
+ */
+function everywhere(entry: LoadedEntry): boolean {
+  return entry.spec.kind === "guardrail" && entry.spec.everywhere === true;
 }
 
 /**
@@ -341,9 +358,15 @@ interface Subject {
  * asked as the delete it is — the same ctx the live delete rail builds, with the file as the last
  * commit has it. An entry bound at `commit` alone judges what the commit will contain, and a deleted
  * file is not in it: a content check would block the removal of the very text it bans.
+ *
+ * WORK OUTSIDE THE REPOSITORY is no subject of a rule unless it is marked `.everywhere()`: a file
+ * outside is not asked about, and a command line is asked about with only its commands inside, or
+ * not at all when none is. A command with no folder (`null`), or a line that does not parse, counts
+ * as inside. `commands` is the line's one parse.
  */
-async function subjectsOf(entry: LoadedEntry, event: GuardEvent, world: World): Promise<Subject[]> {
+async function subjectsOf(entry: LoadedEntry, event: GuardEvent, world: World, commands: readonly ShellCommand[] | null): Promise<Subject[]> {
   const { spec } = entry;
+  const outside = everywhere(entry) ? [] : (event.outside ?? []);
   if (event.moment === "commit") {
     const staged = event.staged ?? [];
     if (!spec.on) return [{ name: null, facts: { staged } }];
@@ -357,12 +380,16 @@ async function subjectsOf(entry: LoadedEntry, event: GuardEvent, world: World): 
   }
   if (event.moment === "write" || event.moment === "delete") {
     const file = event.file;
-    if (!file || !inScope(spec, file.path)) return [];
+    if (!file || !inScope(spec, file.path) || outside.includes(file.path)) return [];
     return [{ name: file.path, facts: { file } }];
   }
   if (event.moment === "command") {
     const command = event.command ?? "";
-    return [{ name: command, facts: { command } }];
+    if (commands === null || outside.length === 0) return [{ name: command, facts: { command, commands } }];
+    // A line that works in two places hands the rule its commands here, and the raw line unchanged.
+    const inside = commands.filter((c) => c.folder === null || !outside.includes(c.folder));
+    if (inside.length === 0) return [];
+    return [{ name: command, facts: { command, commands: inside } }];
   }
   return [{ name: null, facts: { turn: event.turn ?? [] } }];
 }
@@ -494,9 +521,10 @@ export async function guard({ load, event, world, faults = [], off = false }: Gu
 
   const effects: Effect[] = [];
   const tallies: Tally[] = [];
-  // The line is parsed ONCE per hook, however many entries fire on it, and every ctx carries it:
+  // The line is parsed ONCE per hook, however many entries fire on it, and every ctx carries it,
+  // less the commands outside the repository for a rule not marked `.everywhere()` (`subjectsOf`):
   // the adapter's parse rides the event, and a caller that made none has it made here.
-  const parsed = event.command === undefined ? {} : { commands: event.commands === undefined ? parseCommandLine(event.command) : event.commands };
+  const parsed = event.command === undefined ? null : event.commands === undefined ? parseCommandLine(event.command) : event.commands;
   for (const entry of load.entries) {
     if (entry.spec.kind !== "guardrail" || !fires(entry.spec, event.moment)) continue;
     if (!bindsTo(entry, event.wearing)) {
@@ -514,9 +542,9 @@ export async function guard({ load, event, world, faults = [], off = false }: Gu
     }
     let evaluated = 0;
     let hits = 0;
-    for (const subject of await subjectsOf(entry, event, world)) {
+    for (const subject of await subjectsOf(entry, event, world, parsed)) {
       evaluated += 1;
-      const answer = await ask(check, makeCtx(subject.moment ?? event.moment, { ...subject.facts, ...(subject.facts.command === undefined ? {} : parsed), actor: event.wearing }, world));
+      const answer = await ask(check, makeCtx(subject.moment ?? event.moment, { ...subject.facts, actor: event.wearing }, world));
       if (answer.ok) continue;
       hits += 1;
       effects.push({
@@ -625,6 +653,8 @@ export function brief({ load, event, marks, settings, off = false }: BriefArgs):
     // A path narrows only when the event carries one: `session` and `turn-end` are about the whole
     // session, so an entry scoped with `on` at those moments is simply not narrowed by it.
     if (event.path !== undefined && !inScope(entry.spec, event.path)) continue;
+    // A note bound to paths is about this repository's files, so a file outside it shows none.
+    if (event.path !== undefined && entry.spec.on !== undefined && (event.outside ?? []).includes(event.path)) continue;
     // AT `command`, THE SUBJECT IS THE COMMAND LINE, and the scope is not optional in practice: a
     // command note without one would show on every shell call in the session. An unscoped one is
     // still legal and still shows — the grammar refuses a scope that narrows nothing, never a
@@ -1757,6 +1787,9 @@ export type RecordedStep =
       readonly turn?: readonly TurnAction[] | undefined;
       readonly wearing: readonly string[];
       readonly world?: CaseWorld | undefined;
+      /** Where the step worked outside the repository; with it, where a command line started, which its folders are followed from. */
+      readonly outside?: GuardEvent["outside"];
+      readonly start?: ShellStart | undefined;
     }
   | {
       readonly rail: "brief";
@@ -1765,6 +1798,7 @@ export type RecordedStep =
       readonly command?: string | undefined;
       readonly wearing: readonly string[];
       readonly tokens: number;
+      readonly outside?: BriefEvent["outside"];
     }
   /** The host compacted: every area mark is cleared, the session marks hold. */
   | { readonly rail: "compaction" };
@@ -1877,6 +1911,8 @@ export async function replay({ load, recording, settings, marks = {} }: ReplayAr
           deleted: step.deleted,
           turn: step.turn,
           wearing: step.wearing,
+          outside: step.outside,
+          ...(step.start === undefined || step.command === undefined ? {} : { commands: parseCommandLine(step.command, step.start) }),
         },
         world: cannedWorld(step.world ?? {}, step.staged, unanswered),
       });
@@ -1887,7 +1923,7 @@ export async function replay({ load, recording, settings, marks = {} }: ReplayAr
     }
     const briefing = brief({
       load,
-      event: { moment: step.moment, path: step.path, command: step.command, wearing: step.wearing, tokens: step.tokens },
+      event: { moment: step.moment, path: step.path, command: step.command, wearing: step.wearing, tokens: step.tokens, outside: step.outside },
       marks: held,
       settings,
     });

@@ -126,17 +126,8 @@ export { substitutionInProse, SUBSTITUTION_MESSAGE } from "./checks/domain.ts";
 // command as git — its own options, its subcommand, its arguments — and `gitCommands` every git
 // command a line runs. `programName` is a command's program without its path, the one way flow
 // reads it.
-export { programName } from "./language/domain.ts";
-export {
-  commitMessage,
-  gitCommand,
-  gitCommands,
-  gitDirPrefix,
-  givesReason,
-  quoteArg,
-  shellCommands,
-  type GitCommand,
-} from "./checks/domain.ts";
+export { gitCommand, programName, type GitCommand } from "./language/domain.ts";
+export { commitMessage, gitCommands, gitDirPrefix, givesReason, quoteArg, shellCommands } from "./checks/domain.ts";
 
 // The stock way to write a classifier — the engine's, because the ORDER host-written evidence must
 // be read in is engine knowledge (and was measured, not chosen). A bespoke `defineCategory(name,

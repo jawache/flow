@@ -87,6 +87,7 @@ function read(shipped: Shipped): PackDoc {
       on: entry.spec.on ?? [],
       ignore: entry.spec.ignore ?? [],
       categories: entry.categories,
+      everywhere: entry.spec.kind === "guardrail" && entry.spec.everywhere === true,
       settings: settingsJson(entry.settings),
       checkName: named,
       reference: REFERENCED.has(kebab(named)),

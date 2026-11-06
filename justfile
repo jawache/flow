@@ -10,9 +10,14 @@ export PATH := (justfile_directory() / "node_modules" / ".bin") + ":" + env_var(
 default:
     @just --list
 
-[doc("Install dependencies from the lockfile — run this first in a fresh clone.")]
+[doc("Install dependencies from the lockfile, and link `@jawache/flow` back to this checkout — run this first in a fresh clone or worktree.")]
 install:
     npm ci
+    # AFTER `npm ci`, which wipes node_modules. The hooks run node_modules/@jawache/flow/dist/flow.mjs
+    # when it exists and fall back to the `flow` on PATH, so without this link a checkout's hooks run
+    # whatever older flow is installed, and the config this checkout's packs write may not load there.
+    mkdir -p node_modules/@jawache
+    ln -sfn ../.. node_modules/@jawache/flow
 
 [doc("Build the package — the `flow` binary (dist/flow.mjs), the library a flow.config.ts imports (dist/index.mjs), the packs behind their own subpath export (dist/packs.mjs), and the types for all of it (dist/types/). All four are what `exports` and `files` promise; a bundle without the types would ship a config grammar the editor cannot check.")]
 build:

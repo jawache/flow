@@ -30,10 +30,12 @@
 // The PUBLIC surface is ../index.ts, not this file. A pack or a config imports from there — which
 // is what leaves this layout free to move again.
 
-// TWO imports. `../glob.ts`, the package's single shared file, because a scope's `on` / `ignore`
-// keys are glob-shaped and the dialect they speak has exactly one parser. And `unbash`, a bash
-// parser with no dependencies and no I/O, because `ctx.commands` is a shell line read as code and
-// shell has exactly one parser here too — see THE PARSE.
+// THREE imports. `../glob.ts`, the package's single shared file, because a scope's `on` / `ignore`
+// keys are glob-shaped and the dialect they speak has exactly one parser. `unbash`, a bash parser
+// with no dependencies and no I/O, because `ctx.commands` is a shell line read as code and shell
+// has exactly one parser here too — see THE PARSE. And `node:path`'s posix half, pure string
+// arithmetic, which resolves the folder each command runs in — see WHERE EACH COMMAND RUNS.
+import { posix } from "node:path";
 import { parse as parseBash } from "unbash";
 import type {
   ArithmeticExpression,
@@ -457,6 +459,14 @@ export interface ShellCommand {
   readonly substitutions: readonly ShellSubstitution[];
   /** Its redirects, and those of every group or loop it sits in. A heredoc or here-string is not one. */
   readonly redirects: readonly ShellRedirect[];
+  /**
+   * The folder it runs in: where the line started, moved by each `cd`, `pushd` and `popd` before it
+   * and by its own `git -C`. Absolute when the start is known; for a line whose start is not, as in
+   * a case, relative to it — `.` for the start itself, `../other` after `cd ../other`. Null when only
+   * running the line could tell, such as after `cd "$(mktemp -d)"` or `cd "$DIR"`, and for a git
+   * command that names its repository itself, with `--git-dir`, `--work-tree`, `GIT_DIR` or `GIT_WORK_TREE`.
+   */
+  readonly folder: string | null;
   /** Inside a substitution, a `<( … )`, a `bash -c` or `eval` string, or a heredoc or here-string fed to a shell. */
   readonly nested: boolean;
 }
@@ -492,8 +502,8 @@ export type ShellStep =
        */
       readonly words: readonly ShellWord[];
       readonly at: number;
-      /** Whether a `NAME=value` assignment stands in front of it, as its env: `FOO=1 rm`. Not one of its words. */
-      readonly assigned: boolean;
+      /** The names of the `NAME=value` assignments in front of it, as its env: `FOO` for `FOO=1 rm`. Not one of its words. */
+      readonly env: readonly string[];
       /** `command.redirects` with each target as written, so a reader expands `< $F` and leaves `< '$F'` alone. */
       readonly redirects: readonly StepRedirect[];
       /** The substitutions that build its words, which run before it does. */
@@ -727,18 +737,287 @@ function textBefore(w: Word): string | null {
   return text;
 }
 
+// ── WHERE EACH COMMAND RUNS — the line followed the way the shell runs it ──
+//
+// One walk over the steps, in the order the shell runs them, keeping what the shell keeps: the
+// folder it stands in, the one `cd -` returns to, the `pushd` stack, and the variables the line
+// sets. `placeSteps` reads it to give every command its `folder`; the adapter's read detection
+// reads the same walk for the files a command names. Best-effort and failing open: a move only
+// running the line could resolve, such as `cd "$DIR"` with `DIR` set elsewhere, leaves the folder
+// unknown (null) rather than guessed. A line whose start is not known starts at `.`, and every
+// folder after is relative to it.
+
+/** Where a line starts: the shell's folder, and what `~` and `$HOME` mean. */
+export interface ShellStart {
+  /** The folder the shell stands in when the line starts: absolute, or `.` when it is not known. */
+  readonly cwd: string;
+  /** What `~` and `$HOME` mean; absent, a path through them is not known. */
+  readonly home?: string | undefined;
+}
+
+/** The shell as the walk has it at one step. Copied into a subshell, so a move inside stays inside. */
+interface ShellScope {
+  cwd: string | null;
+  old: string | null;
+  readonly stack: (string | null)[];
+  readonly vars: Map<string, string>;
+}
+
+/** A line nobody knows the start of: each folder is relative to where it started, `.`. */
+const UNKNOWN_START: ShellStart = { cwd: "." };
+
+/** An option word — `-P`, `--x` — and not `-`, which is an operand: `cd -`, or stdin. */
+export const isOption = (arg: string | null): boolean => arg !== null && arg.startsWith("-") && arg !== "-";
+
+/** The programs that move the shell itself, which `followSteps` follows. */
+const MOVERS: ReadonlySet<string> = new Set(["cd", "pushd", "popd"]);
+
+/**
+ * One word of the parse as the shell would expand it, from what the line itself holds: an unquoted
+ * leading `~`, `$HOME`, and a variable the line assigned. Quoted or escaped text is passed as is,
+ * so `'$F'` stays `$F`. Null when only running the line could tell — an unknown or special
+ * variable, a `${…}` with an operation in it, or a substitution, whose commands are read as steps
+ * of their own.
+ */
+function expandWord(word: ShellWord, vars: ReadonlyMap<string, string>, home: string | undefined): string | null {
+  let out = "";
+  for (const piece of word) {
+    const value =
+      piece.kind === "text" ? piece.text : piece.kind === "tilde" ? home : piece.kind === "variable" ? (piece.name === "HOME" ? home : vars.get(piece.name)) : undefined;
+    if (value === undefined) return null;
+    out += value;
+  }
+  return out;
+}
+
+/**
+ * A path as the shell resolves it from `base`: an absolute one as given, a relative one only when
+ * `base` is known. String arithmetic only — never the process's own folder — so a relative `base`
+ * gives a relative answer: `../other` from `.`.
+ */
+export function resolveFrom(path: string, base: string | null): string | null {
+  const joined = path.startsWith("/") ? posix.normalize(path) : base === null ? null : posix.join(base, path);
+  return joined !== null && joined.length > 1 && joined.endsWith("/") ? joined.slice(0, -1) : joined;
+}
+
+/** One command step, as the walk hands it to a reader. */
+type CommandStep = Extract<ShellStep, { kind: "command" }>;
+
+/**
+ * Follow the steps as the shell runs them. `visit` is called on every command, after the
+ * substitutions that build it and before its own move, with the folder the shell stands in then,
+ * that scope's expansion of a word, and whether the command moves the shell itself (`cd`, `pushd`,
+ * `popd`). A `for` body is followed once per value, so its commands can be visited more than once.
+ */
+export function followSteps(
+  steps: readonly ShellStep[],
+  start: ShellStart,
+  visit: (step: CommandStep, cwd: string | null, expand: (word: ShellWord) => string | null, moves: boolean) => void,
+): void {
+  const move = (scope: ShellScope, next: string | null): void => {
+    scope.old = scope.cwd;
+    scope.cwd = next;
+  };
+  const run = (step: CommandStep, scope: ShellScope): void => {
+    const expand = (word: ShellWord): string | null => expandWord(word, scope.vars, start.home);
+    const moves = MOVERS.has(step.command.program);
+    visit(step, scope.cwd, expand, moves);
+    if (!moves) return;
+    const name = step.command.program;
+    const operands = step.words.slice(step.at + 1).map(expand);
+    const target = operands.find((arg) => !isOption(arg));
+    if (name === "popd") {
+      // A `popd +N` names a slot in the stack, which this does not keep by number.
+      move(scope, target === undefined ? (scope.stack.pop() ?? null) : null);
+      return;
+    }
+    if (name === "pushd") {
+      // A bare `pushd` swaps the folder with the top of the stack; a `pushd +N` rotates it.
+      if (target === undefined) {
+        const top = scope.stack.pop() ?? null;
+        scope.stack.push(scope.cwd);
+        move(scope, top);
+      } else {
+        scope.stack.push(scope.cwd);
+        move(scope, target === null || /^[+-]\d+$/.test(target) ? null : resolveFrom(target, scope.cwd));
+      }
+      return;
+    }
+    move(scope, target === undefined ? (start.home ?? null) : target === null ? null : target === "-" ? scope.old : resolveFrom(target, scope.cwd));
+  };
+  const walk = (body: readonly ShellStep[], scope: ShellScope): void => {
+    for (const step of body) {
+      if (step.kind === "command") {
+        // The substitutions that build its words run first, each in a scope of its own.
+        walk(step.before, scope);
+        run(step, scope);
+      } else if (step.kind === "assign") {
+        const value = expandWord(step.value, scope.vars, start.home);
+        if (value === null) scope.vars.delete(step.name);
+        else scope.vars.set(step.name, value);
+      } else if (step.kind === "scope") walk(step.body, { cwd: scope.cwd, old: scope.old, stack: [...scope.stack], vars: new Map(scope.vars) });
+      else {
+        const values = step.values.map((value) => expandWord(value, scope.vars, start.home));
+        for (const value of values.length > 0 ? values : [null]) {
+          if (value === null) scope.vars.delete(step.name);
+          else scope.vars.set(step.name, value);
+          walk(step.body, scope);
+        }
+      }
+    }
+  };
+  walk(steps, { cwd: start.cwd, old: null, stack: [], vars: new Map() });
+}
+
+/** The variables that point git at a repository other than the folder's own. */
+const GIT_REPO_VARS: ReadonlySet<string> = new Set(["GIT_DIR", "GIT_WORK_TREE"]);
+
+/** Does git's own option, as written, point it at a repository: `--git-dir x`, `--work-tree=x`? */
+const namesRepository = (option: string): boolean => /^--(?:git-dir|work-tree)(?:=|$)/.test(option);
+
+/**
+ * Does this git command name its repository itself, rather than the folder it runs in: `--git-dir`
+ * or `--work-tree`, a `GIT_DIR=` or `GIT_WORK_TREE=` in front of it or after `env`, or one the line
+ * sets anywhere (`assigned`)? Then the folder says nothing about which repository it works on.
+ */
+function namesItsRepository(step: CommandStep, git: GitCommand, assigned: ReadonlySet<string>): boolean {
+  const before = step.words.slice(0, step.at).map((word) => (word[0]?.kind === "text" ? word[0].text : ""));
+  return (
+    git.globals.some(namesRepository) ||
+    [...step.env, ...assigned].some((name) => GIT_REPO_VARS.has(name)) ||
+    before.some((word) => [...GIT_REPO_VARS].some((name) => word.startsWith(`${name}=`)))
+  );
+}
+
+/**
+ * Every variable name the line sets as a shell variable, however deep. An assignment in front of a
+ * command is that command's env alone, and is read on the command (`step.env`), not here.
+ */
+function assignedNames(steps: readonly ShellStep[], into = new Set<string>()): Set<string> {
+  for (const step of steps) {
+    if (step.kind === "assign") into.add(step.name);
+    else assignedNames(step.kind === "command" ? step.before : step.body, into);
+  }
+  return into;
+}
+
+/**
+ * The folder one command runs in: the shell's, moved by the command's own `git -C`, which git
+ * chains exactly as a shell chains `cd` — `cd /a && git -C b status` runs in `/a/b`. A git command
+ * that names its repository itself has none: where it runs is not where it works.
+ */
+function commandFolder(step: CommandStep, cwd: string | null, expand: (word: ShellWord) => string | null, assigned: ReadonlySet<string>): string | null {
+  const git = gitCommand(step.command);
+  let folder = cwd;
+  if (git === null) return folder;
+  if (namesItsRepository(step, git, assigned)) return null;
+  for (let i = 0; i < git.globals.length; i += GIT_VALUE_OPTS.has(git.globals[i] as string) ? 2 : 1) {
+    if (git.globals[i] !== "-C") continue;
+    // `args[k]` is `words[at + 1 + k]`: the wrappers and the program come first, so `-C`'s value is two on.
+    const written = step.words[step.at + 2 + i];
+    const dir = written === undefined ? null : expand(written);
+    // `git -C ""` leaves git where it is.
+    folder = dir === null ? null : dir === "" ? folder : resolveFrom(dir, folder);
+  }
+  return folder;
+}
+
+/**
+ * The steps with every command's `folder` settled by the walk — the commands a substitution runs
+ * included. A command a `for` body runs in two different folders has none.
+ */
+function placeSteps(steps: readonly ShellStep[], start: ShellStart): ShellStep[] {
+  const folders = new Map<ShellCommand, string | null>();
+  const assigned = assignedNames(steps);
+  followSteps(steps, start, (step, cwd, expand) => {
+    const folder = commandFolder(step, cwd, expand, assigned);
+    folders.set(step.command, !folders.has(step.command) || folders.get(step.command) === folder ? folder : null);
+  });
+  const placed = new Map<ShellCommand, ShellCommand>();
+  const place = (c: ShellCommand): ShellCommand => {
+    const known = placed.get(c);
+    if (known !== undefined) return known;
+    const substitutions = c.substitutions.map((s) => ({ ...s, commands: s.commands.map(place) }));
+    const out = { ...c, substitutions, folder: folders.get(c) ?? null };
+    placed.set(c, out);
+    return out;
+  };
+  const rebuild = (body: readonly ShellStep[]): ShellStep[] =>
+    body.map((step): ShellStep =>
+      step.kind === "command"
+        ? { ...step, command: place(step.command), before: rebuild(step.before) }
+        : step.kind === "assign"
+          ? step
+          : { ...step, body: rebuild(step.body) },
+    );
+  return rebuild(steps);
+}
+
 /**
  * Parse one shell command line as bash: every simple command in it, nested ones included, in the
  * order they appear — or `null` when the line, or any script nested inside it, does not parse.
+ * Each command's `folder` is followed from `start`; with none, it is relative to where the line started.
  */
-export function parseCommandLine(line: string): ShellCommand[] | null {
-  const walked = walkLine(line);
-  return walked === null ? null : stepCommands(walked.steps);
+export function parseCommandLine(line: string, start: ShellStart = UNKNOWN_START): ShellCommand[] | null {
+  const steps = parseShellSteps(line, start);
+  return steps === null ? null : stepCommands(steps);
 }
 
 /** The same parse as its steps, in the order the shell runs them — or `null` when it does not parse. */
-export function parseShellSteps(line: string): readonly ShellStep[] | null {
-  return walkLine(line)?.steps ?? null;
+export function parseShellSteps(line: string, start: ShellStart = UNKNOWN_START): readonly ShellStep[] | null {
+  const walked = walkLine(line);
+  return walked === null ? null : placeSteps(walked.steps, start);
+}
+
+/**
+ * git's own options that TAKE A VALUE, and therefore swallow the token after them.
+ *
+ * They have to be known by name to find where the subcommand starts: `git -C ~/repo commit -m x`
+ * puts two tokens between `git` and `commit`, and a scan that took the first argument as the
+ * subcommand saw `-C` and walked away. Knowing them by name is also what keeps `git commit -C
+ * HEAD` — the reuse-this-message flag, nothing to do with directories — from reading as a command
+ * aimed at a directory called HEAD.
+ */
+export const GIT_VALUE_OPTS: ReadonlySet<string> = new Set([
+  "-C",
+  "-c",
+  "--git-dir",
+  "--work-tree",
+  "--namespace",
+  "--exec-path",
+  "--config-env",
+]);
+
+/** One `git` command in the parse, split where git's own options stop and its subcommand starts. */
+export interface GitCommand {
+  /** git's OWN options, before the subcommand — where `-C` counts and only there. */
+  readonly globals: readonly string[];
+  /** The subcommand word (`commit`, `status`), or null when the command carries none. */
+  readonly subcommand: string | null;
+  /** Everything after the subcommand — its own flags and arguments. */
+  readonly args: readonly string[];
+  /** Where `args` starts in `command.args`: `args[i]` is `command.args[argsAt + i]`. */
+  readonly argsAt: number;
+  /** The parsed command it was read from: its heredocs are what `git commit -F -` reads. */
+  readonly command: ShellCommand;
+}
+
+/**
+ * One parsed command read as git, or null when its program is not git. The parse has already
+ * found the program, so a `git` inside a quoted message, a heredoc body or another command's
+ * arguments is never one, and a `git` inside `$( … )` or a `bash -c` string is.
+ */
+export function gitCommand(command: ShellCommand): GitCommand | null {
+  if (programName(command.program) !== "git") return null;
+  const { args } = command;
+  let k = 0;
+  while (k < args.length) {
+    const a = args[k] as string;
+    if (GIT_VALUE_OPTS.has(a)) k += 2;
+    else if (a.startsWith("-")) k += 1;
+    else break; // the subcommand
+  }
+  return { globals: args.slice(0, k), subcommand: args[k] ?? null, args: args.slice(k + 1), argsAt: k + 1, command };
 }
 
 /**
@@ -1081,9 +1360,11 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
         return argument < 0 || end === undefined ? sub : { ...sub, argument, prefix: end.prefix };
       };
       const substitutions = subs.map(placed);
-      const command = { program, args, text: [program, ...args].join(" "), heredocs, substitutions, redirects: redirects.map(publicRedirect), nested };
-      const assigned = c.prefix.some((p) => p.type === "Assignment");
-      out.push({ kind: "command", command, words, at, assigned, redirects: redirects.map(stepRedirect), before: inner });
+      // Its folder is the walk's to settle once the whole line is read (`placeSteps`): a `cd` moves
+      // only the commands after it, which this one cannot see yet.
+      const command = { program, args, text: [program, ...args].join(" "), heredocs, substitutions, redirects: redirects.map(publicRedirect), folder: null, nested };
+      const env = c.prefix.flatMap((p) => (p.type === "Assignment" ? [p.name] : []));
+      out.push({ kind: "command", command, words, at, env, redirects: redirects.map(stepRedirect), before: inner });
       // `export A=b`: the parse gives a declaration's arguments as assignments, which set the
       // shell's variables once it has run. One that appends or sets an element is not followed.
       for (const s of c.suffix)
@@ -1355,7 +1636,7 @@ export function cannedWorld(
 
 // The grammar is closed and final:
 //
-//   at · for · on · ignore · check · message | text | file · disabled · test · description
+//   at · for · everywhere · on · ignore · check · message | text | file · disabled · test · description
 //
 // and it rests on the three rules the YAML format died holding, now enforced by the compiler
 // rather than by a validator nobody reached:
@@ -1396,6 +1677,11 @@ interface SpecCommon {
 export interface GuardrailSpec extends SpecCommon {
   readonly kind: "guardrail";
   readonly at?: readonly GuardrailMoment[];
+  /**
+   * `.everywhere()`: the rule also judges work outside the repository. A guardrail's alone — a
+   * breadcrumb is about this repository's files, and an override never says it.
+   */
+  readonly everywhere?: true;
   readonly check?: Check;
   readonly message?: string;
   readonly test?: Cases;
@@ -1446,6 +1732,7 @@ export function inScope(scope: Scope, path: string): boolean {
 export const GUARDRAIL_KEYS = [
   "at",
   "for",
+  "everywhere",
   "on",
   "ignore",
   "check",
@@ -1473,7 +1760,7 @@ export type BreadcrumbKey = (typeof BREADCRUMB_KEYS)[number];
 //
 // `Spoken` is the phantom: it grows by one word per chain call, and every verb already in it is
 // typed `never`, so saying it twice is not a call the compiler will make. It costs nothing at run
-// time — the object underneath carries all nine methods and always did.
+// time — the object underneath carries every verb of the grammar and always did.
 
 /**
  * A verb, until it is spoken.
@@ -1557,6 +1844,7 @@ export interface GuardrailSentence<Spoken extends GuardrailKey = never, At exten
     <M extends GuardrailMoment[]>(...moments: M) => GuardrailSentence<Spoken | "at", M[number]>
   >;
   readonly for: Once<Spoken, "for", (...categories: Category[]) => GuardrailSentence<Spoken | "for", At>>;
+  readonly everywhere: Once<Spoken, "everywhere", () => GuardrailSentence<Spoken | "everywhere", At>>;
   readonly on: Once<Spoken, "on", Scoping<At, Globs<GuardrailSentence<Spoken | "on", At>>>>;
   readonly ignore: Once<Spoken, "ignore", Scoping<At, Globs<GuardrailSentence<Spoken | "ignore", At>>>>;
   readonly check: Once<Spoken, "check", (check: Check) => GuardrailSentence<Spoken | "check", At>>;
@@ -1654,7 +1942,7 @@ export type CompleteEntry<B> =
  * interfaces above and in packs.ts — an override has no `.check` because its chain type does not
  * declare one, not because a different builder withheld it. That is the same reason this works
  * over an untyped record: the chain types are a PROJECTION of this one object, a shrinking subset
- * of eleven verbs, and no signature can describe that from the inside. The casts at each entry
+ * of twelve verbs, and no signature can describe that from the inside. The casts at each entry
  * point are the seam.
  */
 export function chain<Exposed extends object>(
@@ -1666,6 +1954,7 @@ export function chain<Exposed extends object>(
     ...expose(spoken),
     at: (...moments: string[]) => next({ at: moments }),
     for: (...categories: Category[]) => next({ for: categories }),
+    everywhere: () => next({ everywhere: true }),
     on: (...globs: string[]) => next({ on: globs }),
     ignore: (...globs: string[]) => next({ ignore: globs }),
     check: (check: Check) => next({ check }),
@@ -1984,14 +2273,15 @@ export function pack(definition: object, ...params: readonly unknown[]): PackBin
 // ── override() ───────────────────────────────────────────────────────────────
 
 /**
- * What an override may speak: BOTH entry grammars, minus the two verbs it must never reach.
+ * What an override may speak: BOTH entry grammars, minus the verbs it must never reach.
  *
  * Derived rather than listed, and the subtraction is the whole statement — "an override moves an
  * entry, rewords it or switches it off, and can never touch what the entry ASKS" is said once,
  * here, in a form that cannot drift from the key sets it is subtracting from. A third hand-typed
- * listing of the grammar would be a third place to forget a verb.
+ * listing of the grammar would be a third place to forget a verb. `everywhere` is the pack's to
+ * say: where a rule's protection reaches is part of what it asks.
  */
-type OverrideKey = Exclude<GuardrailKey | BreadcrumbKey, "check" | "test">;
+type OverrideKey = Exclude<GuardrailKey | BreadcrumbKey, "check" | "test" | "everywhere">;
 
 interface OverrideChain<Kind extends EntrySpec["kind"], Spoken extends OverrideKey> {
   readonly binding: OverrideBinding;

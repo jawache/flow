@@ -126,6 +126,7 @@ export const work = definePack("work", (repo: Rungs = {}) => ({
   planIsTheParents: guardrail()
     .at(command)
     .for(builder)
+    .everywhere()
     .description("A builder owns its phase, not the plan — the verdict, the amendment and the cost record are the parent's.")
     .check(
       banCommands({
@@ -161,6 +162,7 @@ export const work = definePack("work", (repo: Rungs = {}) => ({
   checkersDoNotWrite: guardrail()
     .at(write)
     .for(checker)
+    .everywhere()
     .description("A verifier and the review lenses sit at a boundary they must not write to.")
     .check((ctx) => ctx.fail(`${ctx.file?.path ?? "a file"} — a checker reads`))
     .message(
@@ -171,6 +173,7 @@ export const work = definePack("work", (repo: Rungs = {}) => ({
   ticksAreTheChilds: guardrail()
     .at(command)
     .for(parent)
+    .everywhere()
     .description("The parent records verdicts; a box is ticked by the child that built it, with its evidence.")
     .check(banCommands({ ban: ["work plan tick"] }))
     .message(
@@ -191,6 +194,7 @@ export const work = definePack("work", (repo: Rungs = {}) => ({
 
   noAgentInboxItems: guardrail()
     .at(command)
+    .everywhere()
     .description("The inbox is the human's speccing queue — an agent raises a finding in chat, never files one.")
     // Matched against the program that runs and its arguments, so prose that merely mentions the
     // verb — an echo, a heredoc being written — is not an invocation.
@@ -225,6 +229,7 @@ export const work = definePack("work", (repo: Rungs = {}) => ({
   // to an APPEND-ONLY journal, which is the half of the rule with no undo of any kind.
   noShellSubstitutionInProse: guardrail()
     .at(command)
+    .everywhere()
     .description("A backtick the shell would run in a work verb that records prose (double-quoted, bare, or in an unquoted heredoc) is live command substitution, not Markdown.")
     .check(substitutionInProse({ heads: ["work plan", "work task", "work recap", "work record", "work spec", "work complete"] }))
     .message(SUBSTITUTION_MESSAGE)

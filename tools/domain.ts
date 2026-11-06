@@ -68,6 +68,8 @@ export interface EntryDoc {
   readonly ignore: readonly string[];
   /** Empty means every category. */
   readonly categories: readonly string[];
+  /** Did it say `.everywhere()`: does it judge work outside the repository as well? */
+  readonly everywhere: boolean;
   /**
    * The options the check was configured with, resolved and pretty-printed as JSON. Empty when the
    * check took none, or was not made by `defineCheck` at all.
@@ -619,6 +621,9 @@ function entrySection(entry: EntryDoc): string {
     `**Watches** ${globs(entry.on)}`,
     entry.ignore.length === 0 ? "" : `**Ignores** ${globs(entry.ignore)}`,
     `**Categories** ${entry.categories.length === 0 ? "every session" : entry.categories.map((one) => `\`${one}\``).join(" · ")}`,
+    entry.everywhere
+      ? "**Outside the repository** judged as well, `.everywhere()`. See [work outside the repository](../explanation/what-the-guard-sees.md#work-outside-the-repository)"
+      : "",
     entry.disabled === "" ? "" : `**Off by default** ${entry.disabled}`,
     rail ? checkFact(entry) : "",
   ].filter((line) => line !== "");
@@ -744,8 +749,8 @@ const PROVENANCE = [
         "JSDoc tags",
       ],
       [
-        "Entry id, kind, moments, globs, categories, description",
-        "The entry itself — `.at()` `.on()` `.description()`",
+        "Entry id, kind, moments, globs, categories, outside the repository, description",
+        "The entry itself — `.at()` `.on()` `.for()` `.everywhere()` `.description()`",
         "Loaded: the same data the engine runs",
       ],
       [

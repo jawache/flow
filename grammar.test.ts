@@ -142,6 +142,10 @@ describe("the complete valid config", () => {
     expect(scoped?.categories).toEqual(["builder"]);
     expect(scoped?.spec.disabled).toEqual({ reason: "no supervised runs happen in this repo yet" });
 
+    const pushes = entries.find((e) => e.id === "house.noPushToMain")?.spec;
+    expect(pushes?.kind === "guardrail" && pushes.everywhere).toBe(true);
+    expect(noTodo && "everywhere" in noTodo.spec).toBe(false);
+
     const tests = entries.find((e) => e.id === "tdd.commitRunsTests");
     expect(tests?.spec.at).toEqual(["write", "commit"]);
     expect(tests?.phases).toEqual(["edit", "commit"]);

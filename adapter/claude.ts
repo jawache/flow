@@ -126,6 +126,7 @@ import {
   snapshotPathspecs,
   visibility,
   reachesAnotherWorktree,
+  outsideOf,
   untoldWorktrees,
   worktreeFolders,
   workedPaths,
@@ -657,15 +658,6 @@ export function realPath(path: string): string {
   }
 }
 
-/** Does this folder hold a `.git` FILE, the mark of a linked worktree's own folder? */
-function holdsGitFile(dir: string): boolean {
-  try {
-    return statSync(join(dir, ".git")).isFile();
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Every working folder of the guarded folder's repository, as `git worktree list` lists them, made
  * real. None when git cannot say, such as outside a repository: then no path is in a worktree, and
@@ -675,6 +667,35 @@ function holdsGitFile(dir: string): boolean {
 function repoWorktrees(root: string): string[] {
   const listed = runGit(root, ["worktree", "list", "--porcelain"]);
   return listed.ok ? worktreeFolders(listed.stdout.toString("utf8")).map(realPath) : [];
+}
+
+/** Does this folder hold a `.git`, file or folder: the mark of a repository's own working folder? */
+function holdsGit(dir: string): boolean {
+  return existsSync(join(dir, ".git"));
+}
+
+/**
+ * Does git name the guarded folder's repository for this folder? Asked of the nearest folder that
+ * exists, since a command may run in one it is about to make. A folder git does not know is not.
+ * Each answer, and the guarded folder's own, is asked once per hook.
+ */
+function sameRepository(root: string): (folder: string) => boolean {
+  const common = (dir: string): string | null => {
+    let at = dir;
+    while (!existsSync(at) && dirname(at) !== at) at = dirname(at);
+    const asked = runGit(at, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    return asked.ok ? realPath(asked.stdout.toString("utf8").trim()) : null;
+  };
+  let own: string | null | undefined;
+  const answers = new Map<string, boolean>();
+  return (folder) => {
+    own ??= common(root);
+    const known = answers.get(folder);
+    if (known !== undefined) return known;
+    const answer = own !== null && common(folder) === own;
+    answers.set(folder, answer);
+    return answer;
+  };
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -850,7 +871,7 @@ function worktreesToTell(session: Session, payload: HookPayload): { root: string
   const root = realPath(session.root);
   // Each folder once: a command can return to one with `cd -`, and two names can be one folder.
   const paths = [...new Set([...new Set(workedPaths(payload, session.root, homedir()))].map(realPath))];
-  if (!reachesAnotherWorktree(paths, root, holdsGitFile)) return null;
+  if (!reachesAnotherWorktree(paths, root, holdsGit)) return null;
   const stored = loadState(session.root, session.id, session.who.agent);
   const told = stored.worktrees ?? [];
   const worktrees = untoldWorktrees({ paths, root, worktrees: repoWorktrees(session.root), told });
@@ -1062,6 +1083,7 @@ async function judge(args: {
   const blocked: Refused[] = [];
   const shown: Shown[] = [];
   const world = realWorld(session.root);
+  const inRepository = sameRepository(session.root);
 
   // A COMPACTION is the boundary where the agent stops knowing what it was told, so every area note
   // has to be earned again. The host announces it on the session rail (`source: "compact"`), which
@@ -1082,6 +1104,7 @@ async function judge(args: {
       // because re-deriving it tomorrow answers differently, and a recording that cannot reproduce
       // yesterday's block is not a recording.
       const tape = steps === null ? null : recorder(world);
+      const outside = outsideOf(event, session.root, holdsGit, inRepository);
       const outcome = await guard({
         load,
         event: {
@@ -1092,6 +1115,7 @@ async function judge(args: {
           staged: event.staged,
           turn: event.turn,
           wearing: identity.wearing,
+          outside,
         },
         world: tape?.world ?? world,
         faults: identity.faults,
@@ -1104,6 +1128,8 @@ async function judge(args: {
         ...(event.command === undefined ? {} : { command: event.command }),
         ...(event.staged === undefined ? {} : { staged: event.staged }),
         ...(event.turn === undefined ? {} : { turn: event.turn }),
+        // Where the line started rides with the answer, so a replay parses it to the same folders.
+        ...(outside.length === 0 ? {} : { outside, ...(event.start === undefined ? {} : { start: event.start }) }),
         wearing: identity.wearing,
         world: tape?.taken() ?? {},
       });
@@ -1125,11 +1151,13 @@ async function judge(args: {
     // `toResult` passes it to the agent with the refusal.
     if (blocked.length > 0 && !ridesRefusal(event.moment)) continue;
     if (event.moment === "session") held = briefPending && load.ok && holdsForBrief(load.entries);
+    const outside = outsideOf(event, session.root, holdsGit, inRepository);
     steps?.push({
       rail: "brief",
       moment: event.moment,
       ...(event.path === undefined ? {} : { path: event.path }),
       ...(event.command === undefined ? {} : { command: event.command }),
+      ...(outside.length === 0 ? {} : { outside }),
       wearing: identity.wearing,
       tokens: session.tokens(),
     });
@@ -1141,6 +1169,7 @@ async function judge(args: {
         command: event.command,
         wearing: identity.wearing,
         tokens: session.tokens(),
+        outside,
       },
       marks,
       settings,

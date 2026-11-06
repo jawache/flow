@@ -191,6 +191,7 @@ Blocks a git command that would wipe uncommitted work — checkout/restore/reset
 - **Refuses at** a shell command is about to run
 - **Watches** not scoped by path
 - **Categories** every session
+- **Outside the repository** judged as well, `.everywhere()`. See [work outside the repository](../explanation/what-the-guard-sees.md#work-outside-the-repository)
 - **Check** `noGitDiscard` *(written in this pack)* — no options
 
 ### What the agent reads when refused
@@ -258,6 +259,7 @@ Blocks a force-push — rewriting pushed history is the one loss a stash cannot 
 - **Refuses at** a shell command is about to run
 - **Watches** not scoped by path
 - **Categories** every session
+- **Outside the repository** judged as well, `.everywhere()`. See [work outside the repository](../explanation/what-the-guard-sees.md#work-outside-the-repository)
 - **Check** `noForcePush` *(written in this pack)* — no options
 
 ### What the agent reads when refused
@@ -315,6 +317,7 @@ Blocks `gh repo delete`, `archive` and `rename`, `gh release delete`, and `gh ap
 - **Refuses at** a shell command is about to run
 - **Watches** not scoped by path
 - **Categories** every session
+- **Outside the repository** judged as well, `.everywhere()`. See [work outside the repository](../explanation/what-the-guard-sees.md#work-outside-the-repository)
 - **Check** `noDestructiveGh` *(written in this pack)* — no options
 
 ### Why it exists
@@ -435,6 +438,10 @@ That git command makes a commit, or moves a ref, without the commit gate judging
 - running `git add -A && git commit -nm 'fix: a thing'`
 - running `git -c core.hooksPath=/dev/null commit -m 'fix: a thing'`
 - running `git -C ../other -c core.hookspath=.nohooks commit -m 'fix: a thing'`
+- running `cd /tmp && git --git-dir=/r/.git --work-tree=/r commit --no-verify -m 'fix: a thing'`
+- running `cd /tmp && git --git-dir /r/.git --work-tree /r commit --no-verify -m 'fix: a thing'`
+- running `cd /tmp && GIT_DIR=/r/.git git commit --no-verify -m 'fix: a thing'`
+- running `cd /tmp && GIT_WORK_TREE=/r git commit --no-verify -m 'fix: a thing'`
 - running `git commit-tree HEAD^{tree} -p HEAD -m "fix: a thing"`
 - running `git update-ref refs/heads/main abc123`
 - running `echo hi | git hash-object -w --stdin`
@@ -718,7 +725,7 @@ release: 1.2.3'`
 | --- | --- | --- |
 | Lead, and the parameters table | The doc comment on `definePack`, and the doc comment on each member of the parameter interface | JSDoc, read with the TypeScript compiler API |
 | The named sections above the entries | An `@install`, `@setup` or `@adopt` tag on that same doc comment. A tag nobody uses renders nothing. | JSDoc tags |
-| Entry id, kind, moments, globs, categories, description | The entry itself — `.at()` `.on()` `.description()` | Loaded: the same data the engine runs |
+| Entry id, kind, moments, globs, categories, outside the repository, description | The entry itself — `.at()` `.on()` `.for()` `.everywhere()` `.description()` | Loaded: the same data the engine runs |
 | Why it exists | The doc comment on the entry's key. Required on a breadcrumb; optional on a guardrail whose message already gives the reason. | JSDoc |
 | What the agent reads | `.text()` or `.message()`, verbatim | Loaded |
 | Check and its settings | The check the entry asks, and the options it was given | The name from the pack's source. The settings are read off the check, so they are the values a parameter supplied. |

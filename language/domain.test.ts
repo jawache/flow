@@ -48,6 +48,7 @@ import {
   overlay,
   override,
   pack,
+  isOption,
   parseCommandLine,
   programName,
   elideHeredocBodies,
@@ -493,6 +494,7 @@ describe("parseCommandLine — the six fields", () => {
       heredocs: [],
       substitutions: [],
       redirects: [],
+      folder: ".",
       nested: false,
     });
   });
@@ -767,16 +769,16 @@ describe("parseShellSteps — the same parse, in the order the shell runs it", (
     expect(steps("F=$(pick)")).toEqual([{ scope: ["pick"] }, "F={?}"]);
   });
 
-  it("marks a command with an assignment in front as assigned, its program still the first word after it", () => {
-    const [front] = parseShellSteps("FOO=1 rm") ?? [];
+  it("names the assignments in front of a command as its env, its program still the first word after it", () => {
+    const [front] = parseShellSteps("FOO=1 BAR=2 rm") ?? [];
     if (front?.kind !== "command") throw new Error("no command step");
-    expect(front.assigned).toBe(true);
+    expect(front.env).toEqual(["FOO", "BAR"]);
     expect(front.at).toBe(0);
     expect(front.command.program).toBe("rm");
     expect(front.words.map(written)).toEqual(["rm"]);
     const [bare] = parseShellSteps("rm FOO=1") ?? [];
     if (bare?.kind !== "command") throw new Error("no command step");
-    expect(bare.assigned).toBe(false);
+    expect(bare.env).toEqual([]);
   });
 
   it("lists each assignment a declaration makes as a step after it, and nothing for one that appends or sets an element", () => {
@@ -840,6 +842,155 @@ describe("parseShellSteps — the same parse, in the order the shell runs it", (
 
   it("is null for a line that does not parse", () => {
     expect(parseShellSteps('echo "oops')).toBeNull();
+  });
+});
+
+describe("parseCommandLine — the folder each command runs in", () => {
+  /** Each command's program and folder, from a line that starts in `/work/repo`. */
+  const placed = (line: string, start: { cwd: string; home?: string } = { cwd: "/work/repo" }): [string, string | null][] =>
+    (parseCommandLine(line, start) ?? []).map((c) => [c.program, c.folder]);
+
+  it("is where the line started, for a command nothing moved", () => {
+    expect(placed("git status")).toEqual([["git", "/work/repo"]]);
+  });
+
+  it("follows each cd before it, and a cd's own folder is where it was run", () => {
+    expect(placed("cd ../other && git status; cd sub; ls")).toEqual([
+      ["cd", "/work/repo"],
+      ["git", "/work/other"],
+      ["cd", "/work/other"],
+      ["ls", "/work/other/sub"],
+    ]);
+    expect(placed("cd /tmp/r && git commit -m init")).toEqual([
+      ["cd", "/work/repo"],
+      ["git", "/tmp/r"],
+    ]);
+  });
+
+  it("goes home for a bare cd, when home is known", () => {
+    expect(placed("cd && ls", { cwd: "/work/repo", home: "/home/me" })[1]).toEqual(["ls", "/home/me"]);
+    expect(placed("cd ~/x && ls", { cwd: "/work/repo", home: "/home/me" })[1]).toEqual(["ls", "/home/me/x"]);
+    expect(placed("cd && ls")[1]).toEqual(["ls", null]);
+  });
+
+  it("follows cd - back to the folder before", () => {
+    expect(placed("cd /a && cd /b && cd - && ls")[3]).toEqual(["ls", "/a"]);
+  });
+
+  it("follows pushd and popd as a stack", () => {
+    expect(placed("pushd /a && git status && pushd /b && popd && git status && popd && git status")).toEqual([
+      ["pushd", "/work/repo"],
+      ["git", "/a"],
+      ["pushd", "/a"],
+      ["popd", "/b"],
+      ["git", "/a"],
+      ["popd", "/a"],
+      ["git", "/work/repo"],
+    ]);
+    expect(placed("popd && git status")[1], "a popd with nothing pushed").toEqual(["git", null]);
+  });
+
+  it("moves a git command by its own -C, chained after the shell's cd, and moves nothing after it", () => {
+    expect(placed("git -C ../other status")).toEqual([["git", "/work/other"]]);
+    expect(placed("cd /a && git -C b -C c status && ls")).toEqual([
+      ["cd", "/work/repo"],
+      ["git", "/a/b/c"],
+      ["ls", "/a"],
+    ]);
+    // `-c` takes a value too, so a `-C` there is the value and not a folder.
+    expect(placed("git -c -C status")).toEqual([["git", "/work/repo"]]);
+    // `git commit -C HEAD` reuses a message: an option of the subcommand, not of git.
+    expect(placed("git commit -C HEAD")).toEqual([["git", "/work/repo"]]);
+    // A wrapper and an assignment in front: `-C`'s value is found past them.
+    expect(placed("env FOO=1 git -C sub status")).toEqual([["git", "/work/repo/sub"]]);
+    expect(placed("FOO=1 timeout 5 git -C sub status")).toEqual([["git", "/work/repo/sub"]]);
+  });
+
+  it("has no folder for a git command that names its repository itself, however it names it", () => {
+    const at = (line: string): (string | null)[] => placed(line).filter(([p]) => p === "git").map(([, folder]) => folder);
+    expect(at("cd /tmp && git --git-dir=/r/.git --work-tree=/r commit -m x")).toEqual([null]);
+    expect(at("cd /tmp && git --git-dir /r/.git commit -m x")).toEqual([null]);
+    expect(at("cd /tmp && git --work-tree /r commit -m x")).toEqual([null]);
+    expect(at("cd /tmp && git --work-tree=/r status")).toEqual([null]);
+    expect(at("cd /tmp && GIT_DIR=/r/.git git commit -m x")).toEqual([null]);
+    expect(at("cd /tmp && GIT_WORK_TREE=/r git commit -m x")).toEqual([null]);
+    expect(at("cd /tmp && env GIT_DIR=/r/.git git commit -m x")).toEqual([null]);
+    expect(at("export GIT_DIR=/r/.git; cd /tmp && git commit -m x")).toEqual([null]);
+    // Only git is pointed elsewhere: the other commands keep their folder, and so does a git that is not.
+    expect(placed("cd /tmp && GIT_DIR=/r/.git ls")[1]).toEqual(["ls", "/tmp"]);
+    // An assignment in front of another command is that command's env alone.
+    expect(at("GIT_DIR=/r/.git ls; cd /tmp && git commit -m x")).toEqual(["/tmp"]);
+    expect(at("cd /tmp && FOO=1 git -C sub status")).toEqual(["/tmp/sub"]);
+  });
+
+  it("follows a variable the line sets itself", () => {
+    expect(placed("R=/tmp/r; cd $R && git status")[1]).toEqual(["git", "/tmp/r"]);
+    expect(placed('D=sub; git -C "$D" status')).toEqual([["git", "/work/repo/sub"]]);
+    expect(placed("cd $ELSEWHERE && git status")[1], "a variable the line never set").toEqual(["git", null]);
+  });
+
+  it("places the git commit of the flow-5 line in the scratch repo it made", () => {
+    const line = "W=/w; S=/s; R=$S/r; H=$S/h; rm -rf $R $H; mkdir -p $R $H; cd $R && git init -q && git commit -q --allow-empty -m init; export CLAUDE_CONFIG_DIR=$H; node $W/dist/flow.mjs init";
+    const commands = parseCommandLine(line, { cwd: "/w" }) ?? [];
+    expect(commands.find((c) => c.program === "git" && c.args[0] === "commit")?.folder).toBe("/s/r");
+    expect(commands.find((c) => c.program === "rm")?.folder).toBe("/w");
+  });
+
+  it("leaves every command after cd \"$(mktemp -d)\" with no folder", () => {
+    expect(placed('cd "$(mktemp -d)" && git init && git commit -m init')).toEqual([
+      ["cd", "/work/repo"],
+      ["mktemp", "/work/repo"],
+      ["git", null],
+      ["git", null],
+    ]);
+  });
+
+  it("keeps a cd inside a subshell or a substitution inside it", () => {
+    expect(placed("(cd /a && git status); git status")).toEqual([
+      ["cd", "/work/repo"],
+      ["git", "/a"],
+      ["git", "/work/repo"],
+    ]);
+    expect(placed("x=$(cd /a && pwd); git status")).toEqual([
+      ["cd", "/work/repo"],
+      ["pwd", "/a"],
+      ["git", "/work/repo"],
+    ]);
+  });
+
+  it("places the commands a substitution runs, on the substitution too", () => {
+    const [echo] = parseCommandLine('cd /a && echo "$(git status)"', { cwd: "/work/repo" })?.slice(1) ?? [];
+    expect(echo?.folder).toBe("/a");
+    expect(echo?.substitutions[0]?.commands[0]?.folder).toBe("/a");
+  });
+
+  it("has no folder for a command a for loop runs in two folders", () => {
+    expect(placed("for d in /a /b; do cd $d; git status; done")).toEqual([
+      ["cd", null],
+      ["git", null],
+    ]);
+    expect(placed("for d in x y; do git status; done")).toEqual([["git", "/work/repo"]]);
+  });
+
+  it("keeps each folder relative to where the line started, when that is not known, as in a case", () => {
+    expect(placed("git status; cd ../x; git status; cd /a && git status; git -C b status", { cwd: "." })).toEqual([
+      ["git", "."],
+      ["cd", "."],
+      ["git", "../x"],
+      ["cd", "../x"],
+      ["git", "/a"],
+      ["git", "/a/b"],
+    ]);
+    expect(parseCommandLine("cd ../other && git checkout -- x")?.[1]?.folder, "no start given is the same").toBe("../other");
+    expect(placed('cd "$(mktemp -d)" && git status', { cwd: "." })[2], "only running the line could tell").toEqual(["git", null]);
+  });
+
+  it("reads an option word as one, and a lone dash as an operand", () => {
+    expect(isOption("-P")).toBe(true);
+    expect(isOption("--git-dir")).toBe(true);
+    expect(isOption("-")).toBe(false);
+    expect(isOption("dir")).toBe(false);
+    expect(isOption(null)).toBe(false);
   });
 });
 
@@ -1084,6 +1235,7 @@ describe("the closed key sets", () => {
     expect(GUARDRAIL_KEYS).toEqual([
       "at",
       "for",
+      "everywhere",
       "on",
       "ignore",
       "check",
@@ -1098,7 +1250,7 @@ describe("the closed key sets", () => {
   it("differ only where the two entry types genuinely do", () => {
     const g = new Set<string>(GUARDRAIL_KEYS);
     const b = new Set<string>(BREADCRUMB_KEYS);
-    expect(GUARDRAIL_KEYS.filter((k) => !b.has(k))).toEqual(["check", "message", "test"]);
+    expect(GUARDRAIL_KEYS.filter((k) => !b.has(k))).toEqual(["everywhere", "check", "message", "test"]);
     expect(BREADCRUMB_KEYS.filter((k) => !g.has(k))).toEqual(["text", "file"]);
   });
 });

@@ -158,6 +158,18 @@ The snapshot holds what git holds: every tracked file, and every untracked file 
 - **A file that one command creates and then deletes** leaves nothing in the diff, so no rule is called on it.
 - **A command you type yourself with `!`** is your own work rather than the agent's, and it is not put through the guard.
 
+## Work outside the repository
+
+A rule judges only work inside the repository, unless it is marked `.everywhere()`.
+
+- **A command** is inside when the folder it runs in is. flow follows `cd`, `pushd`, `git -C` and the variables the line sets.
+- **A file** is inside when its path is.
+- **A folder** is inside when git names this repository for it, so every worktree of this repository is inside. A folder flow cannot work out, such as after `cd "$(mktemp -d)"`, counts as inside.
+
+So `cd /tmp/r && git init && git commit -m init` runs, because the commit-header rule is not passed the commit. A breadcrumb bound to paths is not shown for a file outside.
+
+The shipped rules marked `.everywhere()` are `git.noGitDiscard`, `git.noForcePush`, `git.noDestructiveGh`, `flow.noUninstall`, `work.planIsTheParents`, `work.ticksAreTheChilds`, `work.noAgentInboxItems`, `work.noShellSubstitutionInProse` and `work.checkersDoNotWrite`.
+
 ## Another worktree of the same repository
 
 > [!WARNING]
@@ -170,7 +182,7 @@ A git **worktree** is another working folder of the same repository, with its ow
 flow cannot guard that work, so it tells the agent to stop. A tool call works in another worktree when:
 
 - **The Edit or Write tool** writes a file inside it.
-- **A shell command** runs inside it, because the shell already stands in it when the call starts, or because the command runs `cd` into it.
+- **A shell command** runs inside it, because the shell already stands in it when the call starts, or because a command in the line runs there after a `cd` into it, or with `git -C`.
 
 At the first such call, flow passes the agent a message beside the call's result. The message names the folder flow guards and the worktree it does not guard. It tells the agent to stop its work in the worktree and tell you to start a session there, because flow guards that worktree only from a session started in it.
 
