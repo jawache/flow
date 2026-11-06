@@ -987,9 +987,48 @@ export function foldersBetween(path: string, root: string): string[] {
  * whether a folder holds one.
  */
 export function reachesAnotherWorktree(paths: readonly string[], root: string, gitFileIn: (dir: string) => boolean): boolean {
+  return paths.some((path) => beyondRoot(path, root, gitFileIn));
+}
+
+/**
+ * May this path belong to a repository other than the guarded folder's own? Only when it is outside
+ * the guarded folder, or under a folder inside it that `marked` answers yes for: one holding a
+ * `.git`. Anything else is in the guarded folder's repository, and git is not asked.
+ */
+function beyondRoot(path: string, root: string, marked: (dir: string) => boolean): boolean {
   // A path may itself be a folder a command ran in, so it is asked too; the guarded folder never
   // is, since a session started in a worktree holds a `.git` file there on every call.
-  return paths.some((path) => !within(path, root) || [path, ...foldersBetween(path, root)].some((dir) => dir !== root && gitFileIn(dir)));
+  return !within(path, root) || [path, ...foldersBetween(path, root)].some((dir) => dir !== root && marked(dir));
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// OUTSIDE THE REPOSITORY — work a rule not marked `.everywhere()` is not passed
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+//
+// A folder is inside when git names this repository for it, so every worktree of it is inside. The
+// engine decides which rules are passed what; this says where the event works outside.
+// docs/user/explanation/what-the-guard-sees.md § Work outside the repository.
+
+/**
+ * Where an event works outside the repository, by the names the engine reads (`GuardEvent.outside`):
+ * the `folder` of each command that runs outside, and the path of a file outside. A command with no
+ * folder is inside. `gitIn` answers whether a folder holds a `.git`, and `sameRepository` whether git
+ * names this repository for a folder; it is asked only of a folder `gitIn` cannot clear.
+ */
+export function outsideOf(
+  event: AdapterEvent,
+  root: string,
+  gitIn: (dir: string) => boolean,
+  sameRepository: (folder: string) => boolean,
+): string[] {
+  const out = (folder: string): boolean => beyondRoot(folder, root, gitIn) && !sameRepository(folder);
+  if (event.rail === "guard" && event.moment === "command")
+    return [...new Set((event.commands ?? []).flatMap((c) => (c.folder === null ? [] : [c.folder])))].filter(out);
+  const path = event.rail === "guard" ? event.file?.path : event.path;
+  if (path === undefined) return [];
+  const absolute = posix.resolve(root, path);
+  // The file itself may not exist yet, nor its folder: the folder is what is placed.
+  return beyondRoot(absolute, root, gitIn) && !sameRepository(posix.dirname(absolute)) ? [path] : [];
 }
 
 /** The working folders `git worktree list --porcelain` lists; a bare repository has none. */

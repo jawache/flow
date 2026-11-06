@@ -126,6 +126,7 @@ import {
   snapshotPathspecs,
   visibility,
   reachesAnotherWorktree,
+  outsideOf,
   untoldWorktrees,
   worktreeFolders,
   workedPaths,
@@ -677,6 +678,35 @@ function repoWorktrees(root: string): string[] {
   return listed.ok ? worktreeFolders(listed.stdout.toString("utf8")).map(realPath) : [];
 }
 
+/** Does this folder hold a `.git`, file or folder: the mark of a repository's own working folder? */
+function holdsGit(dir: string): boolean {
+  return existsSync(join(dir, ".git"));
+}
+
+/**
+ * Does git name the guarded folder's repository for this folder? Asked of the nearest folder that
+ * exists, since a command may run in one it is about to make. A folder git does not know is not.
+ * Each answer, and the guarded folder's own, is asked once per hook.
+ */
+function sameRepository(root: string): (folder: string) => boolean {
+  const common = (dir: string): string | null => {
+    let at = dir;
+    while (!existsSync(at) && dirname(at) !== at) at = dirname(at);
+    const asked = runGit(at, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    return asked.ok ? realPath(asked.stdout.toString("utf8").trim()) : null;
+  };
+  let own: string | null | undefined;
+  const answers = new Map<string, boolean>();
+  return (folder) => {
+    own ??= common(root);
+    const known = answers.get(folder);
+    if (known !== undefined) return known;
+    const answer = own !== null && common(folder) === own;
+    answers.set(folder, answer);
+    return answer;
+  };
+}
+
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE CONFIG — which repo this is, and what it has turned on
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -1062,6 +1092,7 @@ async function judge(args: {
   const blocked: Refused[] = [];
   const shown: Shown[] = [];
   const world = realWorld(session.root);
+  const inRepository = sameRepository(session.root);
 
   // A COMPACTION is the boundary where the agent stops knowing what it was told, so every area note
   // has to be earned again. The host announces it on the session rail (`source: "compact"`), which
@@ -1082,6 +1113,7 @@ async function judge(args: {
       // because re-deriving it tomorrow answers differently, and a recording that cannot reproduce
       // yesterday's block is not a recording.
       const tape = steps === null ? null : recorder(world);
+      const outside = outsideOf(event, session.root, holdsGit, inRepository);
       const outcome = await guard({
         load,
         event: {
@@ -1092,6 +1124,7 @@ async function judge(args: {
           staged: event.staged,
           turn: event.turn,
           wearing: identity.wearing,
+          outside,
         },
         world: tape?.world ?? world,
         faults: identity.faults,
@@ -1104,6 +1137,8 @@ async function judge(args: {
         ...(event.command === undefined ? {} : { command: event.command }),
         ...(event.staged === undefined ? {} : { staged: event.staged }),
         ...(event.turn === undefined ? {} : { turn: event.turn }),
+        // The parse rides with the answer, since a replay's own parse has no folder to match it to.
+        ...(outside.length === 0 ? {} : { outside, commands: event.commands }),
         wearing: identity.wearing,
         world: tape?.taken() ?? {},
       });
@@ -1125,11 +1160,13 @@ async function judge(args: {
     // `toResult` passes it to the agent with the refusal.
     if (blocked.length > 0 && !ridesRefusal(event.moment)) continue;
     if (event.moment === "session") held = briefPending && load.ok && holdsForBrief(load.entries);
+    const outside = outsideOf(event, session.root, holdsGit, inRepository);
     steps?.push({
       rail: "brief",
       moment: event.moment,
       ...(event.path === undefined ? {} : { path: event.path }),
       ...(event.command === undefined ? {} : { command: event.command }),
+      ...(outside.length === 0 ? {} : { outside }),
       wearing: identity.wearing,
       tokens: session.tokens(),
     });
@@ -1141,6 +1178,7 @@ async function judge(args: {
         command: event.command,
         wearing: identity.wearing,
         tokens: session.tokens(),
+        outside,
       },
       marks,
       settings,

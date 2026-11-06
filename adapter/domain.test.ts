@@ -77,6 +77,7 @@ import {
   touchedPath,
   foldersBetween,
   reachesAnotherWorktree,
+  outsideOf,
   untoldWorktrees,
   worktreeFolders,
   worktreeLine,
@@ -4780,5 +4781,51 @@ describe("another worktree of the repository — told once, never refused", () =
     expect(line).toContain("It does not guard the git worktree /code/app.worktrees/feature");
     expect(line).toContain("Stop your work in /code/app.worktrees/feature and tell the user to start a Claude Code session in that folder");
     expect(line).toContain("If you are a subagent, stop and report this to the agent that started you.");
+  });
+});
+
+describe("outsideOf — where a call works outside the repository", () => {
+  const root = "/code/app";
+  // git names this repository for the guarded folder and its sibling worktree, and not for the
+  // repository made inside it with `git init`.
+  const repository = ["/code/app", "/code/app.worktrees/feature"];
+  const asked: string[] = [];
+  const under = (folder: string, top: string): boolean => folder === top || folder.startsWith(`${top}/`);
+  const same = (folder: string): boolean => {
+    asked.push(folder);
+    return !under(folder, "/code/app/.work/tmp/r") && repository.some((top) => under(folder, top));
+  };
+  const nestedRepo = (dir: string): boolean => dir === "/code/app/.work/tmp/r";
+  const none = (): boolean => false;
+  const ran = (line: string) => ({ rail: "guard" as const, moment: "command" as const, command: line, commands: parseCommandLine(line, { cwd: root }) });
+
+  it("names the folder of each command outside, once, and asks git of nothing inside", () => {
+    asked.length = 0;
+    expect(outsideOf(ran("cd /tmp/r && git init && git commit -m init; git -C /tmp/r log"), root, none, same)).toEqual(["/tmp/r"]);
+    expect(asked).toEqual(["/tmp/r"]);
+    asked.length = 0;
+    expect(outsideOf(ran("git status && cd src && ls"), root, none, same)).toEqual([]);
+    expect(asked, "inside the guarded folder, with no .git under it").toEqual([]);
+  });
+
+  it("counts every worktree of this repository as inside", () => {
+    expect(outsideOf(ran("cd /code/app.worktrees/feature && git commit -m bad"), root, none, same)).toEqual([]);
+  });
+
+  it("counts a repository made under the guarded folder as outside", () => {
+    expect(outsideOf(ran("cd .work/tmp/r && git commit -m init"), root, nestedRepo, same)).toEqual(["/code/app/.work/tmp/r"]);
+  });
+
+  it("names nothing for a command with no folder", () => {
+    expect(outsideOf(ran('cd "$(mktemp -d)" && git commit -m init'), root, none, same)).toEqual([]);
+  });
+
+  it("names a file outside by its own path, for a write and for a touch", () => {
+    const wrote = { rail: "guard" as const, moment: "write" as const, file: { path: "/tmp/r/a.ts", content: "" } };
+    expect(outsideOf(wrote, root, none, same)).toEqual(["/tmp/r/a.ts"]);
+    expect(outsideOf({ rail: "brief", moment: "touch", path: "/tmp/r/a.ts" }, root, none, same)).toEqual(["/tmp/r/a.ts"]);
+    expect(outsideOf({ rail: "brief", moment: "touch", path: "src/a.ts" }, root, none, same)).toEqual([]);
+    expect(outsideOf({ rail: "brief", moment: "touch", path: ".work/tmp/r/a.ts" }, root, nestedRepo, same)).toEqual([".work/tmp/r/a.ts"]);
+    expect(outsideOf({ rail: "brief", moment: "session" }, root, none, same)).toEqual([]);
   });
 });

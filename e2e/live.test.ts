@@ -1413,6 +1413,35 @@ describe("a command run in another worktree of the repository — told once to s
   });
 });
 
+describe("work outside the repository — judged only by a rule marked .everywhere()", () => {
+  it("refuses a bad commit header from a linked worktree, passes it in a scratch repo outside, and still refuses a force-push there", () => {
+    const { parent, where, worktree, outside } = repoWithWorktree();
+    try {
+      writeFileSync(join(where, "flow.config.ts"), `
+import { defineConfig, pack } from ${JSON.stringify(join(PACKAGE, "index.ts"))};
+import { git } from ${JSON.stringify(join(PACKAGE, "packs", "index.ts"))};
+
+export default defineConfig([pack(git, {})]);
+`);
+      let ids = 0;
+      const command = (line: string): Ran => hook("pre-tool-use", { ...pre("Bash", { command: line }, "outside"), cwd: where, tool_use_id: `toolu_out_${++ids}` }, where);
+
+      const fromWorktree = command(`cd ${worktree} && git commit --allow-empty -m bad`);
+      expect(fromWorktree.code, `a worktree of this repository is inside; flow said:\n${fromWorktree.stderr}`).toBe(2);
+      expect(fromWorktree.stderr).toContain("git.conventionalCommitFormat");
+
+      const scratch = command(`cd ${outside} && git init -q && git commit -q --allow-empty -m bad`);
+      expect(scratch.code, `a scratch repo outside is not this repository's; flow said:\n${scratch.stderr}`).toBe(0);
+
+      const forced = command(`cd ${outside} && git push --force origin main`);
+      expect(forced.code, "git.noForcePush is marked .everywhere()").toBe(2);
+      expect(forced.stderr).toContain("git.noForcePush");
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("a subagent's drift and turn, read from its own transcript — never its parent's", () => {
   // The hook message for a subagent's call carries the PARENT's transcript_path (#7). Its brief is
   // pinned above; these pin the other two things read from the same file. The two transcripts are
