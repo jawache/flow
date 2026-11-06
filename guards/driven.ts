@@ -2,7 +2,7 @@
 //
 // Four entries: a breadcrumb that tells every session how a driven repo works, the guardrail that
 // keeps an issue's issue.md and tasks in the record's shape, the one that leaves an issue's log to
-// the daemon, and the one that keeps the four reviewers from writing. The daemon enforces none of
+// the daemon, and the one that keeps the reviewers from writing. The daemon enforces none of
 // them; a driven repo turns them on in its own flow.config.ts:
 //
 //   import { driven } from "./guards/driven.ts";
@@ -38,16 +38,16 @@ import { parse } from "yaml";
 
 // ── what a reviewer may not run ──
 //
-// The reviewers are the four lenses spawned to judge, never to build: codeops, which `/work start`
-// spawns at every phase boundary and `/work review` spawns again, and secops, docops and devops,
-// which `/work review` spawns. Each is recognised by the agent type Claude Code records for the
-// spawn; the skill spawns every one by name. This pack lists them itself, with flow's public
-// defineCategory and spawnedAs. Their tool lists allow only git diff, show and log, so this rule
-// is a backstop.
-const reviewer = defineCategory(
-  "reviewer",
-  spawnedAs({ types: ["secops", "codeops", "docops", "devops"] }),
-);
+// The reviewers are the review lenses spawned to judge, never to build, at `/work docs`, at each
+// task of `/work start` that added code, and at `/work review`. Each is recognised by the agent type
+// Claude Code records for the spawn; the skill spawns every one by name. REVIEWERS is the one list
+// of them: the category and the rule's message are built from it, with flow's public
+// defineCategory and spawnedAs. Their tool lists allow only git diff, show and log, so this rule is
+// a backstop.
+const REVIEWERS = ["secops", "codeops", "docops", "devops", "coach"];
+const reviewer = defineCategory("reviewer", spawnedAs({ types: REVIEWERS }));
+/** The reviewers' names as a sentence lists them: `a, b or c`. */
+const REVIEWER_NAMES = `${REVIEWERS.slice(0, -1).join(", ")} or ${REVIEWERS[REVIEWERS.length - 1]}`;
 
 /** Programs that change files. */
 const WRITE_PROGRAMS = new Set(["tee", "cp", "mv", "rm", "rmdir", "mkdir", "touch", "ln", "chmod", "chown", "truncate", "dd", "install", "unlink", "patch", "rsync"]);
@@ -55,11 +55,10 @@ const WRITE_PROGRAMS = new Set(["tee", "cp", "mv", "rm", "rmdir", "mkdir", "touc
 const IN_PLACE = new Set(["sed", "perl", "ruby"]);
 /** git subcommands that change the history, the branches, the index or the working tree. */
 const GIT_WRITES = new Set(["commit", "push", "pull", "add", "rm", "mv", "checkout", "switch", "restore", "reset", "merge", "rebase", "cherry-pick", "revert", "apply", "am", "clean", "init", "clone", "update-ref", "notes"]);
-/**
- * An issue's folder in the record, named by its id, `<name>-<n>` (docs/user/reference/record.md
- * § Ids), at the start of a path or after a `/`: reached through `.work` or the record's own path.
- */
-const ID_DIR = String.raw`(?:^|/)[A-Za-z][A-Za-z0-9-]*-[0-9]+/`;
+/** An issue's id, `<name>-<n>` (docs/user/reference/record.md § Ids). */
+const ID = String.raw`[A-Za-z][A-Za-z0-9-]*-[0-9]+`;
+/** An issue's folder in the record, at the start of a path or after a `/`: reached through `.work` or the record's own path. */
+const ID_DIR = String.raw`(?:^|/)${ID}/`;
 /** An issue's log: `log.jsonl` in its folder (§ log.jsonl). */
 const LOG = new RegExp(ID_DIR + String.raw`log\.jsonl$`);
 /** Programs among WRITE_PROGRAMS that read every argument but the last, the one they write. */
@@ -116,9 +115,9 @@ const ISSUE = new RegExp(ID_DIR + String.raw`issue\.md$`);
 const TASK = new RegExp(ID_DIR + String.raw`tasks/[0-9]+\.md$`);
 /**
  * The keys of issue.md's front matter besides the fields work.yml names (docs/user/reference/record.md § issue.md):
- * an issue's `from`, and a chat's `kind`, `summary` and `folder` (§ A chat).
+ * an issue's `from`, `rank`, `agent` and `depends`, and a chat's `kind`, `summary` and `folder` (§ A chat).
  */
-const ISSUE_KEYS = ["id", "title", "status", "archived", "refs", "from", "kind", "summary", "folder"];
+const ISSUE_KEYS = ["id", "title", "status", "archived", "refs", "from", "rank", "agent", "depends", "kind", "summary", "folder"];
 /** The keys of a task file's front matter, all three and no other (§ tasks/). */
 const TASK_KEYS = ["id", "title", "done"];
 
@@ -151,7 +150,29 @@ async function fieldsOf(ctx: Parameters<Check>[0]): Promise<{ names: string[]; s
   return { names: Object.keys(fields), status };
 }
 
-/** issue.md and a task file are written in the record's shape: their front matter's keys, and the issue's status. */
+/** A value that is an issue's id and nothing else. */
+const ISSUE_ID = new RegExp(`^${ID}$`);
+
+/** Why the issue.md at path cannot hold depends, naming the id; null when it is a list, or empty, of other issues' ids. A chat's record is no issue. */
+async function dependsWrong(ctx: Parameters<Check>[0], path: string, depends: unknown): Promise<string | null> {
+  if (depends === null || depends === undefined) return null;
+  if (typeof depends === "string" || typeof depends === "number") return `depends is ${JSON.stringify(depends)}, one value rather than a list; write it as depends: [${depends}]`;
+  if (!Array.isArray(depends)) return `depends is ${JSON.stringify(depends)}, which is not a list of ids`;
+  const own = path.split("/").at(-2) ?? "";
+  const record = path.slice(0, path.length - `${own}/issue.md`.length);
+  for (const item of depends) {
+    const id = String(item);
+    const holds = `depends holds ${JSON.stringify(item)}`;
+    if (id === own) return `${holds}, this issue's own id`;
+    const other = `${record}${id}/issue.md`;
+    if (!ISSUE_ID.test(id) || !(await ctx.fs.exists(other))) return `${holds}, which has no issue`;
+    const front = frontMatter(await ctx.fs.read(other));
+    if (typeof front !== "string" && front.kind === "chat") return `${holds}, which is a chat, not an issue`;
+  }
+  return null;
+}
+
+/** issue.md and a task file are written in the record's shape: their front matter's keys, the issue's status, and its depends. */
 const recordShape: Check = async (ctx) => {
   const file = ctx.file;
   if (file === undefined) return ctx.ok();
@@ -174,7 +195,8 @@ const recordShape: Check = async (ctx) => {
   if ("status" in front && !fields.status.includes(String(front.status))) {
     return ctx.fail(`${file.path}: status ${JSON.stringify(front.status)} is not a value of fields.status in work.yml: ${fields.status.join(", ")}`);
   }
-  return ctx.ok();
+  const depends = await dependsWrong(ctx, file.path, front.depends);
+  return depends === null ? ctx.ok() : ctx.fail(`${file.path}: ${depends}`);
 };
 
 /** Every way the line writes, each said once; null when it only reads and runs, or cannot be parsed. */
@@ -205,7 +227,8 @@ export const driven = definePack("driven", {
     .text(
       [
         "This repo is driven by work. Each issue is a folder in the record, `.work/<id>/`, with one Claude Code session in its own worktree; the work daemon types lines starting with `[work]` into it. `[work] /work <verb> <issue>` is the issue entering a status: invoke the `work` skill, which dispatches the verb. Any other `[work]` line relays the daemon, such as a merge of the issue's branch.",
-        "The record is `.work/<id>/`: `issue.md`, `tasks/`, `log.jsonl` and `artifacts/`. You edit `issue.md` and the tasks as Markdown; a move is the `status:` line, and only where the skill says. Only the daemon writes `log.jsonl`: ask the human with `work log question --ask \"…\"` and its body on stdin as a quoted heredoc, then stop; tell them with `work log fyi`. One question is open at a time. Never record a session's state in the record.",
+        "The record is `.work/<id>/`: `issue.md`, `tasks/`, `log.jsonl` and `artifacts/`. You edit `issue.md` and the tasks as Markdown; a move is the `status:` line, and only where the skill says. Only the daemon writes `log.jsonl`: ask the human with `work log question --ask \"…\"` and its body on stdin as a quoted heredoc, then stop; tell them with `work log fyi`. Never record a session's state in the record.",
+        "Print every link as a Markdown link, so the terminal opens it: `[tasks/3.md](http://localhost:4242/work-3/3)`, the port being `web:` in `~/.work/config.yml`.",
       ].join("\n"),
     )
     .description("How a repo driven by work works: [work] lines, the work skill, the record in .work, work log."),
@@ -217,15 +240,15 @@ export const driven = definePack("driven", {
    *
    * The entry is the path: an issue folder's `issue.md` or `tasks/<n>.md`, through `.work` or the
    * record's own path. The issue's keys are those of record.md § issue.md and every field work.yml
-   * names; a task's are `id`, `title` and `done`.
+   * names; a task's are `id`, `title` and `done`. An issue's `depends` is a list of other issues' ids.
    */
   recordShape: guardrail()
     .at(write)
     .check(recordShape)
     .message(
-      "An issue's `issue.md` or task file whose front matter is not the record's shape (docs/user/reference/record.md § issue.md, § tasks/). Keep the front matter's keys to the ones the page lists, the issue's `status` to a value of `fields.status` in work.yml, and a task's to `id`, `title` and `done`; write anything else in the body.",
+      "An issue's `issue.md` or task file whose front matter is not the record's shape (docs/user/reference/record.md § issue.md, § tasks/). Keep the front matter's keys to the ones the page lists, the issue's `status` to a value of `fields.status` in work.yml, its `depends` to a list of other issues' ids, and a task's to `id`, `title` and `done`; write anything else in the body.",
     )
-    .description("An issue's issue.md has only the record's keys and a status of fields.status; a task file's front matter is id, title and done.")
+    .description("An issue's issue.md has only the record's keys, a status of fields.status and a depends that is a list of other issues' ids; a task file's front matter is id, title and done.")
     .test({
       block: [
         { path: ".work/app-42/tasks/3.md", content: "---\nid: app-42/3\ntitle: x\ndone: false\nowner: builder\n---\n- [ ] a box\n" },
@@ -242,9 +265,55 @@ export const driven = definePack("driven", {
           world: { fs: { "work.yml": "fields:\n  status:\n    values: [{ name: Build }]\n  priority:\n    values: [low, high]\n" } },
         },
         {
+          path: ".work/app-14/issue.md",
+          content: "---\nid: app-14\ntitle: x\nstatus: Build\nrank: 3.5\nplace: 2\n---\n",
+          world: { fs: { "work.yml": "fields:\n  status:\n    values: [{ name: Build }]\n" } },
+        },
+        {
+          path: ".work/app-15/issue.md",
+          content: "---\nid: app-15\ntitle: Daily\nstatus: Build\nagent: triage\nrole: triage\n---\n",
+          world: { fs: { "work.yml": "fields:\n  status:\n    values: [{ name: Build }]\n" } },
+        },
+        {
           path: ".work/app-42/issue.md",
           content: "---\nid: app-42\ntitle: [x\n---\n",
           world: { fs: { "work.yml": "fields:\n  status:\n    values: [{ name: Build }]\n" } },
+        },
+        // depends: its own id, an id with no issue, written as a list or as a path; one id rather than a list; a mapping; a chat's id
+        {
+          path: ".work/app-34/issue.md",
+          content: "---\nid: app-34\nstatus: Build\ndepends: [app-33, app-34]\n---\n",
+          world: { fs: { "work.yml": "fields:\n  status:\n    values: [{ name: Build }]\n", ".work/app-33/issue.md": "---\nid: app-33\ntitle: x\nstatus: Build\n---\n", ".work/app-34/issue.md": "---\nid: app-34\n---\n" } },
+        },
+        {
+          path: ".work/app-34/issue.md",
+          content: "---\nid: app-34\nstatus: Build\ndepends: [app-33, app-9999]\n---\n",
+          world: { fs: { "work.yml": "fields:\n  status:\n    values: [{ name: Build }]\n", ".work/app-33/issue.md": "---\nid: app-33\ntitle: x\nstatus: Build\n---\n" } },
+        },
+        {
+          path: ".work/app-34/issue.md",
+          content: "---\nid: app-34\nstatus: Build\ndepends: app-33\n---\n",
+          world: { fs: { "work.yml": "fields:\n  status:\n    values: [{ name: Build }]\n", ".work/app-33/issue.md": "---\nid: app-33\ntitle: x\nstatus: Build\n---\n" } },
+        },
+        {
+          path: ".work/app-34/issue.md",
+          content: "---\nid: app-34\nstatus: Build\ndepends: { app-33: x }\n---\n",
+          world: { fs: { "work.yml": "fields:\n  status:\n    values: [{ name: Build }]\n", ".work/app-33/issue.md": "---\nid: app-33\ntitle: x\nstatus: Build\n---\n" } },
+        },
+        {
+          path: ".work/app-34/issue.md",
+          content: "---\nid: app-34\nstatus: Build\ndepends: [./app-33]\n---\n",
+          world: { fs: { "work.yml": "fields:\n  status:\n    values: [{ name: Build }]\n", ".work/./app-33/issue.md": "---\nid: app-33\n---\n" } },
+        },
+        {
+          path: "/Users/me/src/app.record/app-34/issue.md",
+          content: "---\nid: app-34\nstatus: Build\ndepends: [app-33]\n---\n",
+          world: { fs: { "work.yml": "fields:\n  status:\n    values: [{ name: Build }]\n", ".work/app-33/issue.md": "---\nid: app-33\ntitle: x\nstatus: Build\n---\n" } },
+        },
+        {
+          path: ".work/app-34/issue.md",
+          content: "---\nid: app-34\nstatus: Build\ndepends: [app-12]\n---\n",
+          world: { fs: { "work.yml": "fields:\n  status:\n    values: [{ name: Build }]\n", ".work/app-12/issue.md": "---\nid: app-12\nkind: chat\ntitle: x\nfolder: /x\n---\n" } },
         },
       ],
       pass: [
@@ -269,6 +338,37 @@ export const driven = definePack("driven", {
           path: ".work/app-13/issue.md",
           content: "---\nid: app-13\ntitle: Search\nstatus: Build\nfrom: app-12\n---\nWhat the chat decided.\n",
           world: { fs: { "work.yml": "fields:\n  status:\n    values: [{ name: Build }]\n" } },
+        },
+        {
+          path: ".work/app-14/issue.md",
+          content: "---\nid: app-14\ntitle: x\nstatus: Build\nrank: 3.5\n---\n",
+          world: { fs: { "work.yml": "fields:\n  status:\n    values: [{ name: Build }]\n" } },
+        },
+        {
+          path: ".work/app-15/issue.md",
+          content: "---\nid: app-15\ntitle: Daily\nstatus: Build\nagent: triage\n---\n",
+          world: { fs: { "work.yml": "fields:\n  status:\n    values: [{ name: Build }]\n" } },
+        },
+        {
+          path: ".work/app-34/issue.md",
+          content: "---\nid: app-34\nstatus: Build\ndepends: [app-33, app-35]\n---\n",
+          world: { fs: { "work.yml": "fields:\n  status:\n    values: [{ name: Build }]\n", ".work/app-33/issue.md": "---\nid: app-33\ntitle: x\nstatus: Build\n---\n", ".work/app-35/issue.md": "---\nid: app-35\narchived: true\n---\n" } },
+        },
+        {
+          path: "/Users/me/src/app.record/app-34/issue.md",
+          content: "---\nid: app-34\nstatus: Build\ndepends: [app-33]\n---\n",
+          world: { fs: { "work.yml": "fields:\n  status:\n    values: [{ name: Build }]\n", "/Users/me/src/app.record/app-33/issue.md": "---\nid: app-33\n---\n" } },
+        },
+        {
+          path: ".work/app-34/issue.md",
+          content: "---\nid: app-34\nstatus: Build\ndepends:\n---\n",
+          world: { fs: { "work.yml": "fields:\n  status:\n    values: [{ name: Build }]\n" } },
+        },
+        {
+          // one broken file blocks no write to the issues that depend on it, where `work issue set` refuses it
+          path: ".work/app-34/issue.md",
+          content: "---\nid: app-34\nstatus: Build\ndepends: [app-33]\n---\n",
+          world: { fs: { "work.yml": "fields:\n  status:\n    values: [{ name: Build }]\n", ".work/app-33/issue.md": "---\ntitle: [x\n---\n" } },
         },
         { path: ".work/app-42/issue.md", content: "---\nstatus: Anything\n---\n" },
         { path: ".work/app-42/artifacts/notes.md", content: "no front matter\n" },
@@ -321,17 +421,17 @@ export const driven = definePack("driven", {
   /**
    * Without it, a reviewer that reached a shell would have a builder's hands: it could fix the
    * defect it was sent to find, commit it, or write its own finding into the issue's log, and the
-   * leader would then act on a review the reviewer made true. The four tool lists withhold Edit and Write; this holds the
-   * shell to the same line.
+   * leader would then act on a review the reviewer made true. The reviewers' tool lists withhold
+   * Edit and Write; this holds the shell to the same line.
    */
   reviewersReadAndRun: guardrail()
     .at(command)
     .for(reviewer)
     .check(readAndRun)
     .message(
-      "You were spawned to review this work, as secops, codeops, docops or devops: you read the change, and you change nothing. No file, no commit, no push, no line in the issue's log. Read it with `git diff`, `git show` and `git log`, and filter their output through a pipe (`| grep`, `| head`) rather than a file. When a finding needs a change, say so in your report: the leader owns the code and decides what to change.",
+      "You were spawned to review this work, as " + REVIEWER_NAMES + ": you read the change, and you change nothing. No file, no commit, no push, no line in the issue's log. Read it with `git diff`, `git show` and `git log`, and filter their output through a pipe (`| grep`, `| head`) rather than a file. When a finding needs a change, say so in your report: the leader owns the code and decides what to change.",
     )
-    .description("The four reviewers, secops, codeops, docops and devops, read the change with git diff, show and log: a shell command that writes a file, changes git or writes the issue's log is refused.")
+    .description("The reviewers read the change with git diff, show and log: a shell command that writes a file, changes git or writes the issue's log is refused.")
     .test({
       pass: [
         "go test ./...",
