@@ -13,4 +13,7 @@ export default defineConfig([
   pack(house),
   // @refusal Property 'check' does not exist
   override(house.noTodo).check(somethingElse),
+  // Where a rule's protection reaches is part of what it asks, so `.everywhere()` is the pack's alone.
+  // @refusal Property 'everywhere' does not exist
+  override(house.noPushToMain).everywhere(),
 ]);

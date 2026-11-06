@@ -1218,6 +1218,7 @@ describe("the closed key sets", () => {
     expect(GUARDRAIL_KEYS).toEqual([
       "at",
       "for",
+      "everywhere",
       "on",
       "ignore",
       "check",
@@ -1232,7 +1233,7 @@ describe("the closed key sets", () => {
   it("differ only where the two entry types genuinely do", () => {
     const g = new Set<string>(GUARDRAIL_KEYS);
     const b = new Set<string>(BREADCRUMB_KEYS);
-    expect(GUARDRAIL_KEYS.filter((k) => !b.has(k))).toEqual(["check", "message", "test"]);
+    expect(GUARDRAIL_KEYS.filter((k) => !b.has(k))).toEqual(["everywhere", "check", "message", "test"]);
     expect(BREADCRUMB_KEYS.filter((k) => !g.has(k))).toEqual(["text", "file"]);
   });
 });

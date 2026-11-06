@@ -55,6 +55,7 @@ export const house = definePack("house", {
 
   noPushToMain: guardrail()
     .at(command)
+    .everywhere()
     .check(banCommands({ program: "git", args: ["push", "main"] }))
     .message("Pushing to main is Asim-controlled — push your branch instead.")
     .test({ pass: ["git push origin feature/x"], block: ["git push origin main"] }),

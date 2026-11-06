@@ -1600,7 +1600,7 @@ export function cannedWorld(
 
 // The grammar is closed and final:
 //
-//   at · for · on · ignore · check · message | text | file · disabled · test · description
+//   at · for · everywhere · on · ignore · check · message | text | file · disabled · test · description
 //
 // and it rests on the three rules the YAML format died holding, now enforced by the compiler
 // rather than by a validator nobody reached:
@@ -1641,6 +1641,11 @@ interface SpecCommon {
 export interface GuardrailSpec extends SpecCommon {
   readonly kind: "guardrail";
   readonly at?: readonly GuardrailMoment[];
+  /**
+   * `.everywhere()`: the rule also judges work outside the repository. A guardrail's alone — a
+   * breadcrumb is about this repository's files, and an override never says it.
+   */
+  readonly everywhere?: true;
   readonly check?: Check;
   readonly message?: string;
   readonly test?: Cases;
@@ -1691,6 +1696,7 @@ export function inScope(scope: Scope, path: string): boolean {
 export const GUARDRAIL_KEYS = [
   "at",
   "for",
+  "everywhere",
   "on",
   "ignore",
   "check",
@@ -1718,7 +1724,7 @@ export type BreadcrumbKey = (typeof BREADCRUMB_KEYS)[number];
 //
 // `Spoken` is the phantom: it grows by one word per chain call, and every verb already in it is
 // typed `never`, so saying it twice is not a call the compiler will make. It costs nothing at run
-// time — the object underneath carries all nine methods and always did.
+// time — the object underneath carries every verb of the grammar and always did.
 
 /**
  * A verb, until it is spoken.
@@ -1802,6 +1808,7 @@ export interface GuardrailSentence<Spoken extends GuardrailKey = never, At exten
     <M extends GuardrailMoment[]>(...moments: M) => GuardrailSentence<Spoken | "at", M[number]>
   >;
   readonly for: Once<Spoken, "for", (...categories: Category[]) => GuardrailSentence<Spoken | "for", At>>;
+  readonly everywhere: Once<Spoken, "everywhere", () => GuardrailSentence<Spoken | "everywhere", At>>;
   readonly on: Once<Spoken, "on", Scoping<At, Globs<GuardrailSentence<Spoken | "on", At>>>>;
   readonly ignore: Once<Spoken, "ignore", Scoping<At, Globs<GuardrailSentence<Spoken | "ignore", At>>>>;
   readonly check: Once<Spoken, "check", (check: Check) => GuardrailSentence<Spoken | "check", At>>;
@@ -1899,7 +1906,7 @@ export type CompleteEntry<B> =
  * interfaces above and in packs.ts — an override has no `.check` because its chain type does not
  * declare one, not because a different builder withheld it. That is the same reason this works
  * over an untyped record: the chain types are a PROJECTION of this one object, a shrinking subset
- * of eleven verbs, and no signature can describe that from the inside. The casts at each entry
+ * of twelve verbs, and no signature can describe that from the inside. The casts at each entry
  * point are the seam.
  */
 export function chain<Exposed extends object>(
@@ -1911,6 +1918,7 @@ export function chain<Exposed extends object>(
     ...expose(spoken),
     at: (...moments: string[]) => next({ at: moments }),
     for: (...categories: Category[]) => next({ for: categories }),
+    everywhere: () => next({ everywhere: true }),
     on: (...globs: string[]) => next({ on: globs }),
     ignore: (...globs: string[]) => next({ ignore: globs }),
     check: (check: Check) => next({ check }),
@@ -2229,14 +2237,15 @@ export function pack(definition: object, ...params: readonly unknown[]): PackBin
 // ── override() ───────────────────────────────────────────────────────────────
 
 /**
- * What an override may speak: BOTH entry grammars, minus the two verbs it must never reach.
+ * What an override may speak: BOTH entry grammars, minus the verbs it must never reach.
  *
  * Derived rather than listed, and the subtraction is the whole statement — "an override moves an
  * entry, rewords it or switches it off, and can never touch what the entry ASKS" is said once,
  * here, in a form that cannot drift from the key sets it is subtracting from. A third hand-typed
- * listing of the grammar would be a third place to forget a verb.
+ * listing of the grammar would be a third place to forget a verb. `everywhere` is the pack's to
+ * say: where a rule's protection reaches is part of what it asks.
  */
-type OverrideKey = Exclude<GuardrailKey | BreadcrumbKey, "check" | "test">;
+type OverrideKey = Exclude<GuardrailKey | BreadcrumbKey, "check" | "test" | "everywhere">;
 
 interface OverrideChain<Kind extends EntrySpec["kind"], Spoken extends OverrideKey> {
   readonly binding: OverrideBinding;
