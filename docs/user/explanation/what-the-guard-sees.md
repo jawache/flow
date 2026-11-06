@@ -160,21 +160,15 @@ The snapshot holds what git holds: every tracked file, and every untracked file 
 
 ## Work outside the repository
 
-A rule judges only work inside the repository, unless the rule is marked with `.everywhere()`. So an agent can make a throwaway repository in a scratch folder without this repository's rules judging it.
+A rule judges only work inside the repository, unless it is marked `.everywhere()`.
 
-A shell command runs in a folder. That folder is where the shell stood when the call started, moved by each `cd` or `pushd` earlier in the line, and by `git -C`. A variable the line sets itself, such as `R=/tmp/r; cd $R`, is followed.
+- **A command** is inside when the folder it runs in is. flow follows `cd`, `pushd`, `git -C` and the variables the line sets.
+- **A file** is inside when its path is.
+- **A folder** is inside when git names this repository for it, so every worktree of this repository is inside. A folder flow cannot work out, such as after `cd "$(mktemp -d)"`, counts as inside.
 
-A folder is inside the repository when git names this repository for it. Every worktree of this repository is inside. A folder git does not know, and a folder of another repository, are outside.
+So `cd /tmp/r && git init && git commit -m init` runs, because the commit-header rule is not passed the commit. A breadcrumb bound to paths is not shown for a file outside.
 
-- **A command outside the repository** is not passed to the rule. In `mkdir /tmp/r; cd /tmp/r && git init && git commit -m init`, the commit-header rule is passed no commit, so the line runs.
-- **A file outside the repository** is not passed to the rule. A breadcrumb bound to paths is not shown for it.
-- **A folder flow cannot work out**, such as the one `cd "$(mktemp -d)"` moves to, counts as inside.
-
-A rule marked `.everywhere()` judges work in every folder. These shipped rules are marked, because what they protect is not this repository's files:
-
-- `git.noGitDiscard`, `git.noForcePush` and `git.noDestructiveGh`
-- `flow.noUninstall`
-- `work.planIsTheParents`, `work.ticksAreTheChilds`, `work.noAgentInboxItems`, `work.noShellSubstitutionInProse` and `work.checkersDoNotWrite`
+The shipped rules marked `.everywhere()` are `git.noGitDiscard`, `git.noForcePush`, `git.noDestructiveGh`, `flow.noUninstall`, `work.planIsTheParents`, `work.ticksAreTheChilds`, `work.noAgentInboxItems`, `work.noShellSubstitutionInProse` and `work.checkersDoNotWrite`.
 
 ## Another worktree of the same repository
 
@@ -198,8 +192,6 @@ At the first such call, flow passes the agent a message beside the call's result
 - **The worktrees counted** are the ones `git worktree list` lists for the guarded folder.
 
 The commit gate still runs in the worktree, because git runs it from the worktree's own folder, with that worktree's config.
-
-The command rules still judge a command that runs in the worktree, because the worktree is inside the repository. See [Work outside the repository](#work-outside-the-repository).
 
 ### Why flow tells, rather than follows or refuses
 
