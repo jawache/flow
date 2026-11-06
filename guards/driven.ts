@@ -440,6 +440,7 @@ export const driven = definePack("driven", {
   reviewersReadAndRun: guardrail()
     .at(command)
     .for(reviewer)
+    .everywhere()
     .check(readAndRun)
     .message(
       "You were spawned to review this work, as " + REVIEWER_NAMES + ": you read the change, and you change nothing. No file, no commit, no push, no line in the issue's log. Read it with `git diff`, `git show` and `git log`, and filter their output through a pipe (`| grep`, `| head`) rather than a file. When a finding needs a change, say so in your report: the leader owns the code and decides what to change.",
