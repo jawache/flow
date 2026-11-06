@@ -89,8 +89,10 @@ Stop here, and write the commands for the human to type, in a terminal of their 
 ```sh
 git push --follow-tags origin HEAD
 npm whoami          # the account that owns @jawache/flow
-npm publish
+just build-release && npm publish
 ```
+
+- **The build comes first, on the same line.** `npm publish` packs `dist/` as it stands and runs no build of its own, because `package.json` has no scripts. Any test run after `just release` leaves a dev build there, which is larger and ends with a sourcemap comment for a file the package does not ship. `just build-release` is what `just release-check` packed.
 
 - **The publish is always the human's.** npm's two-factor prompt needs a terminal. A publish run through a subprocess, an agent's shell or anything that captures output fails at the one-time-password step with `EOTP` and never reaches the browser.
 - **The push is the human's unless they say otherwise.** The push shares the release commit and the tag. The tag on the remote is what the changelog links point at.

@@ -131,10 +131,16 @@ release:
     # Config in .versionrc.mjs. The version is computed from the commit headers, never chosen —
     # which is what `git/node/no-hand-edited-version` blocks a hand edit in favour of.
     npx commit-and-tag-version
+    # LAST, so dist/ holds the release build when `npm publish` follows. The gate the release commit
+    # fires rebuilds dist/ as a DEV build — the e2e suites build the binary they spawn — and
+    # `npm publish` packs dist/ as it stands, with no build of its own (`package.json` has no
+    # scripts, by this repo's own rule). 0.3.2 shipped the dev build, sourcemap comment and all,
+    # because nothing here rebuilt it after the gate.
+    just build-release
     @echo ''
-    @echo 'Local only — nothing was pushed and nothing was published.'
+    @echo 'Local only — nothing was pushed and nothing was published. dist/ is the release build.'
     @echo 'To share the release:  git push --follow-tags origin HEAD'
-    @echo 'To publish it:         just release-check   (then the npm line it prints)'
+    @echo 'To publish it:         just build-release && npm publish   (in a terminal; the build again, in case anything rebuilt dist/ since)'
 
 [doc("What `just release` WOULD do, and nothing else: the version it computes and the changelog entry it would write, printed. Touches no file, makes no commit, cuts no tag.")]
 release-dry:
