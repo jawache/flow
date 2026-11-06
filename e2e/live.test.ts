@@ -331,6 +331,57 @@ describe("a subagent's start", () => {
   });
 });
 
+describe("a subagent's note held for its brief", () => {
+  // Two runs of the binary with the hold saved on disk between them: the start, before the host has
+  // written the subagent's own transcript, and its first tool call, once the brief is there.
+  let held: string;
+  const session = "live-held";
+
+  beforeAll(() => {
+    held = newRepo("flow-held-");
+    mkdirSync(join(held, ".t"), { recursive: true });
+    writeFileSync(
+      join(held, "flow.config.ts"),
+      `import { breadcrumb, defineCategory, defineConfig, definePack, pack, session, spawnedAs } from ${JSON.stringify(join(PACKAGE, "index.ts"))};
+
+const briefed = defineCategory("briefed", spawnedAs({ generic: ["general-purpose"], brief: ["BUILD-MARKER"] }));
+
+const notes = definePack("notes", {
+  everyone: breadcrumb().at(session).text("For every agent."),
+  briefedOnly: breadcrumb().at(session).for(briefed).text("For the briefed agent."),
+});
+
+export default defineConfig([pack(notes)]);
+`,
+    );
+  });
+
+  afterAll(() => {
+    rmSync(held, { recursive: true, force: true });
+  });
+
+  it("is left out of the SubagentStart answer, and shown in the answer to the subagent's first tool call", () => {
+    const parent = join(held, ".t", `${session}.jsonl`);
+    const who = { session_id: session, transcript_path: parent, cwd: held, agent_id: "aheld", agent_type: "general-purpose" };
+
+    const start = hook("subagent-start", { ...who, hook_event_name: "SubagentStart" }, held);
+    expect(start.code, start.stderr).toBe(0);
+    const started = JSON.parse(start.stdout) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } };
+    expect(started.hookSpecificOutput.hookEventName).toBe("SubagentStart");
+    expect(started.hookSpecificOutput.additionalContext).toBe("# breadcrumb: notes.everyone (session)\nFor every agent.");
+
+    subagentTranscripts(join(held, ".t"), session, "aheld", { own: [JSON.stringify({ type: "user", message: { content: "Build the task. BUILD-MARKER" } })] });
+    const first = hook("pre-tool-use", { ...pre("Read", { file_path: join(held, "a.ts") }, session), ...who, tool_use_id: "toolu_held1" }, held);
+    expect(first.code, first.stderr).toBe(0);
+    const called = JSON.parse(first.stdout) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } };
+    expect(called.hookSpecificOutput.hookEventName).toBe("PreToolUse");
+    expect(called.hookSpecificOutput.additionalContext).toBe("# breadcrumb: notes.briefedOnly (session)\nFor the briefed agent.");
+
+    const second = hook("pre-tool-use", { ...pre("Read", { file_path: join(held, "a.ts") }, session), ...who, tool_use_id: "toolu_held2" }, held);
+    expect(second.stdout, "shown once").not.toContain("notes.briefedOnly");
+  });
+});
+
 describe("what a broken or empty call does", () => {
   it("passes an empty payload safely, on every rail", () => {
     for (const event of ["session-start", "subagent-start", "pre-tool-use", "post-tool-use", "post-tool-use-failure", "stop", "subagent-stop", "notification"]) {

@@ -697,6 +697,15 @@ export default defineConfig([pack(demo)]);
     expect(runs.stdout).toContain("demo.briefedOnly");
   });
 
+  it("shows a resumed subagent the note at its start, since its brief is already written, and not again at its first tool call", async () => {
+    briefOf("aresumed", "Build the task. BUILD-MARKER");
+    const started = await start("aresumed");
+    expect(started.stdout).toContain("demo.everyone");
+    expect(started.stdout).toContain("# breadcrumb: demo.briefedOnly (session)\\nFor the briefed agent.");
+    const first = await call("aresumed", "Read", { file_path: join(repo, "a.ts") }, "toolu_s1");
+    expect(first.stdout, "nothing was held").not.toContain("demo.briefedOnly");
+  });
+
   it("does not show the note to a subagent whose brief does not recognise the category", async () => {
     await start("aother");
     briefOf("aother", "Look something up.");
