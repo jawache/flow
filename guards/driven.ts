@@ -257,6 +257,8 @@ export const driven = definePack("driven", {
    */
   recordShape: guardrail()
     .at(write)
+    // The record is a link to a folder outside the repository, so its real path is outside too.
+    .everywhere()
     .check(recordShape)
     .message(
       "An issue's `issue.md` or task file whose front matter is not the record's shape (docs/user/reference/record.md § issue.md, § tasks/). Keep the front matter's keys to the ones the page lists, the issue's `status` to a value of `fields.status` in work.yml, its `depends` to a list of other issues' ids, and a task's to `id`, `title` and `done`; write anything else in the body.",
@@ -401,6 +403,8 @@ export const driven = definePack("driven", {
    */
   logByDaemon: guardrail()
     .at(write, deletion, command)
+    // The record is a link to a folder outside the repository, so its real path is outside too.
+    .everywhere()
     .check(logByDaemon)
     .message(
       "Only the daemon writes an issue's `log.jsonl` (docs/user/reference/record.md § log.jsonl). Ask with `work log question --ask \"…\"`, or tell with `work log fyi`, the body on stdin as a quoted heredoc, `<<'WORKLOG'`: the daemon appends the line. A line already in the log is never changed.",
@@ -422,6 +426,7 @@ export const driven = definePack("driven", {
         { path: ".work/app-42/log.jsonl", content: '{"kind":"answer"}\n' },
         { path: "/Users/me/src/app.record/app-42/log.jsonl", content: "" },
         "echo '{\"kind\":\"fyi\"}' >> .work/app-42/log.jsonl",
+        "echo '{\"kind\":\"fyi\"}' >> /Users/me/src/app.record/app-42/log.jsonl",
         "printf '%s\\n' x | tee -a .work/work-7/log.jsonl",
         "sed -i '' '$d' .work/app-42/log.jsonl",
         "rm .work/app-42/log.jsonl",
