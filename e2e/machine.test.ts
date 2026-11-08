@@ -28,8 +28,7 @@
 // product.test.ts, one scale up.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   buildBundles,
@@ -477,31 +476,12 @@ describe("the machine test", () => {
     refusal("command", hook("pre-tool-use", inThisSession("Bash", { command: "git push --force origin main" })), "git.noForcePush");
   });
 
-  it("shows a note bound to a path on a file reached through a link out of the repo", () => {
-    // A path-bound note is not shown for a file outside the repo, and the record is usually a link
-    // to one. The path is judged by its name, so `.work/…` stays inside wherever the link goes.
-    const target = mkdtempSync(join(tmpdir(), "flow-record-"));
-    symlinkSync(target, join(repo, ".work"));
-    try {
-      mkdirSync(join(target, "x"));
-      writeFileSync(join(target, "x", "y.md"), "a note\n");
-      const read = { ...inThisSession("Read", { file_path: join(repo, ".work/x/y.md") }), tool_use_id: "toolu_record" };
-      expect(hook("pre-tool-use", read).code).toBe(0);
-      const said = hook("post-tool-use", read);
-      expect(said.code, said.stderr).toBe(0);
-      expect(said.stdout).toContain("links out of the repo");
-    } finally {
-      rmSync(join(repo, ".work"));
-      rmSync(target, { recursive: true, force: true });
-    }
-  });
-
   // ── the two capabilities no shipped pack uses, driven live ─────────────────
   //
   // Both arrive through the SAME PreToolUse answer the command guardrails use, which is the whole
   // reason neither needed a new rail: a note rides the `additionalContext` channel, and a rule on a
   // declared grammar is an ordinary write refusal whose parser came from a file the config named.
-  it("shows a note attached to a COMMAND, on the same rail that refuses one", () => {
+  it("shows a note attached to a COMMAND, on the same rail that refuses one, and a path's note through a link out of the repo", () => {
     const said = hook("pre-tool-use", inThisSession("Bash", { command: "npm install left-pad" }));
     expect(said.code, `the note blocked the command:\n${said.stderr}`).toBe(0);
     const answer = JSON.parse(said.stdout) as { hookSpecificOutput?: { hookEventName?: string; additionalContext?: string } };
@@ -511,7 +491,28 @@ describe("the machine test", () => {
     // The scope is what makes it usable: an unscoped command note would ride every shell call.
     const quiet = hook("pre-tool-use", inThisSession("Bash", { command: "npm run build" }));
     expect(quiet.stdout).not.toContain("dependency cache");
-    step("note", "    note      🍞 stranger.installing — shown on `npm install …`, silent on `npm run build`");
+
+    // A path-bound note is not shown for a file outside the repo, and the record is usually a link
+    // to one. The path is judged by its name, so `.work/…` stays inside wherever the link goes.
+    // Unlike the command's note, a Read's arrives on the after-call answer.
+    const target = join(home, "record");
+    mkdirSync(join(target, "x"), { recursive: true });
+    writeFileSync(join(target, "x", "y.md"), "a note\n");
+    symlinkSync(target, join(repo, ".work"));
+    try {
+      const read = { ...inThisSession("Read", { file_path: join(repo, ".work/x/y.md") }), tool_use_id: "toolu_record" };
+      expect(hook("pre-tool-use", read).code).toBe(0);
+      const linked = hook("post-tool-use", read);
+      expect(linked.code, linked.stderr).toBe(0);
+      expect(linked.stdout).toContain("links out of the repo");
+    } finally {
+      rmSync(join(repo, ".work"));
+    }
+    step(
+      "note",
+      "    note      🍞 stranger.installing — shown on `npm install …`, silent on `npm run build`",
+      "              🍞 work.nodeInTheRecord — shown on `.work/x/y.md`, with `.work` a link out of the repo",
+    );
   });
 
   it("refuses a write judged by a grammar THIS REPO declared, which nothing publishes", () => {
