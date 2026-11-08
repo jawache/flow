@@ -267,7 +267,7 @@ export const work = definePack("work", (repo: Rungs = {}) => ({
     .on(".work/**")
     .description("Node code run from a linked record needs the Node settings that keep the link's path.")
     .text(
-      '`.work/` links out of the repo. Run Node code there with `NODE_OPTIONS="--preserve-symlinks --preserve-symlinks-main"`, or it cannot find the repo\'s packages.',
+      '`.work/` links out of the repo. Run Node code there with `NODE_OPTIONS="--preserve-symlinks --preserve-symlinks-main"`, or it cannot find the repo\'s packages. Call the tool by `node_modules/.bin/<tool>`: that setting breaks `npx`.',
     ),
 
   // ── ONE WRITER, when the repo names its writers ──

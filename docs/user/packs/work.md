@@ -316,7 +316,7 @@ works out why.
 ### What the agent reads
 
 ```
-`.work/` links out of the repo. Run Node code there with `NODE_OPTIONS="--preserve-symlinks --preserve-symlinks-main"`, or it cannot find the repo's packages.
+`.work/` links out of the repo. Run Node code there with `NODE_OPTIONS="--preserve-symlinks --preserve-symlinks-main"`, or it cannot find the repo's packages. Call the tool by `node_modules/.bin/<tool>`: that setting breaks `npx`.
 ```
 
 ## `work.builderWrites` — guardrail
