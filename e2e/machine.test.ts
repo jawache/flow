@@ -28,7 +28,8 @@
 // product.test.ts, one scale up.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildBundles,
@@ -279,6 +280,7 @@ const ENTRIES: readonly string[] = [
   "work.checkersDoNotWrite",
   "work.noAgentInboxItems",
   "work.noShellSubstitutionInProse",
+  "work.nodeInTheRecord",
   "work.planIsTheParents",
   "work.ticksAreTheChilds",
 ];
@@ -473,6 +475,25 @@ describe("the machine test", () => {
 
   it("refuses the command", () => {
     refusal("command", hook("pre-tool-use", inThisSession("Bash", { command: "git push --force origin main" })), "git.noForcePush");
+  });
+
+  it("shows a note bound to a path on a file reached through a link out of the repo", () => {
+    // A path-bound note is not shown for a file outside the repo, and the record is usually a link
+    // to one. The path is judged by its name, so `.work/…` stays inside wherever the link goes.
+    const target = mkdtempSync(join(tmpdir(), "flow-record-"));
+    symlinkSync(target, join(repo, ".work"));
+    try {
+      mkdirSync(join(target, "x"));
+      writeFileSync(join(target, "x", "y.md"), "a note\n");
+      const read = { ...inThisSession("Read", { file_path: join(repo, ".work/x/y.md") }), tool_use_id: "toolu_record" };
+      expect(hook("pre-tool-use", read).code).toBe(0);
+      const said = hook("post-tool-use", read);
+      expect(said.code, said.stderr).toBe(0);
+      expect(said.stdout).toContain("links out of the repo");
+    } finally {
+      rmSync(join(repo, ".work"));
+      rmSync(target, { recursive: true, force: true });
+    }
   });
 
   // ── the two capabilities no shipped pack uses, driven live ─────────────────
