@@ -14,6 +14,7 @@
 
 import {
   banCommands,
+  breadcrumb,
   command,
   defineCategory,
   definePack,
@@ -23,6 +24,7 @@ import {
   substitutionInProse,
   SUBSTITUTION_MESSAGE,
   deletion,
+  touch,
   write,
 } from "../index.ts";
 
@@ -94,7 +96,8 @@ export interface Rungs {
  * reflect · complete. It names the three rungs the lifecycle has (parent · builder · checker),
  * binds one rule per rung to keep them from doing each other's jobs, and adds the two rules about
  * the commands that write the journal: the inbox is the human's queue, and prose recorded through
- * a shell is prose the shell can rewrite first.
+ * a shell is prose the shell can rewrite first. One breadcrumb is about the record itself: Node
+ * code run from a `.work/` that is a link needs the settings that keep the link's path.
  *
  * IT IMPORTS NOTHING FROM WORK. It is a plain consumer of flow's public door, exactly like every
  * other pack here, and it knows the work CLI only as command strings on a rail. That is what lets
@@ -251,6 +254,22 @@ export const work = definePack("work", (repo: Rungs = {}) => ({
         '/usr/local/bin/work plan decision "chose the `chain` builder" --chose x --reverse y',
       ],
     }),
+
+  // ── the record ──
+
+  /**
+   * Without it, Node code run from a `.work/` that is a link resolves its imports from the link's
+   * real path, finds no `node_modules` and no `"type": "module"`, and fails with an import error
+   * that does not name the link.
+   */
+  nodeInTheRecord: breadcrumb()
+    .at(touch)
+    .on(".work/**")
+    .description("Node code run from a linked record needs the Node settings that keep the link's path.")
+    .text(
+      '`.work/` links out of the repo. Run Node code there with `NODE_OPTIONS="--preserve-symlinks --preserve-symlinks-main"`, or it cannot find the repo\'s packages. Call the tool by `node_modules/.bin/<tool>`: that setting breaks `npx`.',
+    ),
+
   // ── ONE WRITER, when the repo names its writers ──
   //
   // The rung rules above say what each rung may not do. This says who may write at all, and it

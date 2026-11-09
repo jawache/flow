@@ -1,5 +1,5 @@
 ---
-summary: "6 guardrails · 0 breadcrumbs · fires at: command · write · delete · takes 1 parameter"
+summary: "6 guardrails · 1 breadcrumb · fires at: command · write · touch · delete · takes 1 parameter"
 ---
 
 # The `work` pack
@@ -12,7 +12,8 @@ A pack for repos that run the `work` lifecycle skill — spec · plan · start �
 reflect · complete. It names the three rungs the lifecycle has (parent · builder · checker),
 binds one rule per rung to keep them from doing each other's jobs, and adds the two rules about
 the commands that write the journal: the inbox is the human's queue, and prose recorded through
-a shell is prose the shell can rewrite first.
+a shell is prose the shell can rewrite first. One breadcrumb is about the record itself: Node
+code run from a `.work/` that is a link needs the settings that keep the link's path.
 
 IT IMPORTS NOTHING FROM WORK. It is a plain consumer of flow's public door, exactly like every
 other pack here, and it knows the work CLI only as command strings on a rail. That is what lets
@@ -62,6 +63,7 @@ only those rungs change files in the worktree.
 - [`work.ticksAreTheChilds`](#workticksarethechilds--guardrail) · guardrail · The parent records verdicts; a box is ticked by the child that built it, with its evidence.
 - [`work.noAgentInboxItems`](#worknoagentinboxitems--guardrail) · guardrail · The inbox is the human's speccing queue — an agent raises a finding in chat, never files one.
 - [`work.noShellSubstitutionInProse`](#worknoshellsubstitutioninprose--guardrail) · guardrail · A backtick the shell would run in a work verb that records prose (double-quoted, bare, or in an unquoted heredoc) is live command substitution, not Markdown.
+- [`work.nodeInTheRecord`](#worknodeintherecord--breadcrumb) · breadcrumb · Node code run from a linked record needs the Node settings that keep the link's path.
 - [`work.builderWrites`](#workbuilderwrites--guardrail) · guardrail · Only the named rungs change files in this worktree — a checker or a stray helper hands its finding back.
 
 ## `work.planIsTheParents` — guardrail
@@ -296,6 +298,26 @@ chose the `chain` builder
 EOF
 )" --chose x --reverse y`
 - running `/usr/local/bin/work plan decision "chose the `chain` builder" --chose x --reverse y`
+
+## `work.nodeInTheRecord` — breadcrumb
+
+Node code run from a linked record needs the Node settings that keep the link's path.
+
+- **Shown when** the first time in a session a file it watches is touched
+- **Watches** `.work/**`
+- **Categories** every session
+
+### Why it exists
+
+Without it, Node code run from a `.work/` that is a link resolves its imports from the link's
+real path, finds no `node_modules` and no `"type": "module"`, and fails with an import error
+that does not name the link.
+
+### What the agent reads
+
+```
+`.work/` links out of the repo. Run Node code there with `NODE_OPTIONS="--preserve-symlinks --preserve-symlinks-main"`, or it cannot find the repo's packages. Call the tool by `node_modules/.bin/<tool>`: that setting breaks `npx`.
+```
 
 ## `work.builderWrites` — guardrail
 
