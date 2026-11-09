@@ -259,8 +259,8 @@ export const work = definePack("work", (repo: Rungs = {}) => ({
 
   /**
    * Without it, Node code run from a `.work/` that is a link resolves its imports from the link's
-   * real path, finds no `node_modules` and no `"type": "module"`, and fails twice before an agent
-   * works out why.
+   * real path, finds no `node_modules` and no `"type": "module"`, and fails with an import error
+   * that does not name the link.
    */
   nodeInTheRecord: breadcrumb()
     .at(touch)
