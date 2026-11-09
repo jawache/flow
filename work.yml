@@ -27,7 +27,7 @@ fields:                                              # every field is a key in e
     default: Backlog
     values:                                          # icon is shown in the TUI's rows; send is typed when an issue enters the value, a list as one message per item, a line starting with ! run as a shell command
       - { name: Backlog, icon: "📥" }
-      - { name: Triage, icon: "🔍", send: "[work] /work triage {issue}" }
+      - { name: Refine, icon: "🔍", send: "[work] /work refine {issue}" }
       - { name: Docs, icon: "📖", send: "[work] /work docs {issue}" }
       - { name: Plan, icon: "📝", send: "[work] /work plan {issue}" }
       - { name: Build, icon: "🔨", send: "[work] /work start {issue}: open every message that ends your turn with the recap" }
@@ -35,6 +35,8 @@ fields:                                              # every field is a key in e
       - { name: Review, icon: "👀", send: "[work] /work review {issue}" }
       - { name: Merge, icon: "🔀", send: "[work] /work merge {issue}" }
       - { name: Done, icon: "✅" }
+  type: [bug, feature, config, duplicate, wontfix]   # what kind of issue this is
+  risk: [low, medium, high]                          # the change's blast radius: its code, files and complexity
 
 events:                                              # each `send` is the text typed into the issue's session when the event happens
 
