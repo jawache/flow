@@ -481,6 +481,7 @@ describe("the machine test", () => {
   // Both arrive through the SAME PreToolUse answer the command guardrails use, which is the whole
   // reason neither needed a new rail: a note rides the `additionalContext` channel, and a rule on a
   // declared grammar is an ordinary write refusal whose parser came from a file the config named.
+  // The note test also reads a shipped path note through a link. That one arrives on the after-call answer.
   it("shows a note attached to a COMMAND, on the same rail that refuses one, and a path's note through a link out of the repo", () => {
     const said = hook("pre-tool-use", inThisSession("Bash", { command: "npm install left-pad" }));
     expect(said.code, `the note blocked the command:\n${said.stderr}`).toBe(0);
@@ -494,7 +495,6 @@ describe("the machine test", () => {
 
     // A path-bound note is not shown for a file outside the repo, and the record is usually a link
     // to one. The path is judged by its name, so `.work/…` stays inside wherever the link goes.
-    // Unlike the command's note, a Read's arrives on the after-call answer.
     const target = join(home, "record");
     mkdirSync(join(target, "x"), { recursive: true });
     writeFileSync(join(target, "x", "y.md"), "a note\n");
