@@ -7,20 +7,25 @@
 name: flow                                           # the project's name; its issues' ids are flow-1, flow-2 …
 base: main
 
-agents:                                              # the model each agent runs on; one left out, or with no model, runs on Claude Code's default
-  leader:   { model: opus }                          # this issue's session: passed to claude as --model
+agents:                                              # what claude is started as; a key left out runs on Claude Code's default
+  leader:   { model: opus, permissions: bypassPermissions }   # every issue's session: passed to claude as --model and --permission-mode
   builder:  { model: opus }                          # the others are read by the repo's skill, which passes each when it spawns that agent
   secops:   { model: opus }
   codeops:  { model: opus }
   docops:   { model: opus }
   devops:   { model: opus }
-permissions: bypassPermissions                       # passed to claude as --permission-mode
-teardown: archived                                   # archiving the card tears the session and its worktree down
 
-environment:                                         # flow guards itself through dist/, which git does not carry: install and build before the session starts, or every tool call is refused
-  create: "git -C {repo} worktree add {path} -b {branch} origin/{base} && cd {path} && just install && just build && echo {path}"
-  existing: "git -C {repo} worktree prune && git -C {repo} worktree add {path} {branch} && cd {path} && just install && just build && echo {path}"
-  remove: "git -C {repo} worktree remove {folder} && git -C {repo} branch -D {branch}"
+environments:                                        # flow guards itself through dist/, which git does not carry: install and build before the session starts, or every tool call is refused
+  worktree:
+    create: "git -C {repo} worktree add {path} -b {branch} origin/{base} && cd {path} && just install && just build && echo {path}"
+    existing: "git -C {repo} worktree prune && git -C {repo} worktree add {path} {branch} && cd {path} && just install && just build && echo {path}"
+    remove: "git -C {repo} worktree remove {folder} && git -C {repo} branch -D {branch}"
+
+sessions:                                            # default is every numbered issue's session
+  default:
+    environment: worktree
+    agent: leader
+    teardown: archived                               # archiving the card tears the session and its worktree down
 
 fields:                                              # every field is a key in each issue's front matter; status is the one the daemon acts on
   status:
@@ -37,8 +42,3 @@ fields:                                              # every field is a key in e
       - { name: Done, icon: "✅" }
   type: [bug, feature, config, duplicate, wontfix]   # what kind of issue this is
   risk: [low, medium, high]                          # the change's blast radius: its code, files and complexity
-
-events:                                              # each `send` is the text typed into the issue's session when the event happens
-
-  merged: |
-    [work] Merged into {base}
