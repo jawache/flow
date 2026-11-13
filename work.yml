@@ -42,15 +42,15 @@ sessions:                                            # default is every numbered
 fields:                                              # every field is a key in each issue's front matter; status is the one the daemon acts on
   status:
     default: Backlog
-    values:                                          # icon is shown in the session list's rows; send is typed when an issue enters the value, a list as one message per item, a line starting with ! run as a shell command
+    values:                                          # icon is shown in the session list's rows; action is typed when an issue enters the value, a list as one message per item, a line starting with ! run as a shell command
       - { name: Backlog, icon: "📥" }
-      - { name: Refine,  icon: "🔍", send: "[work] /work refine {issue}" }
-      - { name: Docs,    icon: "📖", send: "[work] /work docs {issue}" }
-      - { name: Plan,    icon: "📝", send: "[work] /work plan {issue}" }
-      - { name: Build,   icon: "🔨", send: "[work] /work start {issue}: open every message that ends your turn with the recap" }
-      - { name: Demo,    icon: "🎬", send: "[work] /work demo {issue}: write the recap of the build first" }
-      - { name: Review,  icon: "👀", send: "[work] /work review {issue}" }
-      - { name: Merge,   icon: "🔀", send: "[work] /work merge {issue}" }
+      - { name: Refine,  icon: "🔍", action: "[work] /work refine {issue}" }
+      - { name: Docs,    icon: "📖", action: "[work] /work docs {issue}" }
+      - { name: Plan,    icon: "📝", action: "[work] /work plan {issue}" }
+      - { name: Build,   icon: "🔨", action: "[work] /work start {issue}: open every message that ends your turn with the recap" }
+      - { name: Demo,    icon: "🎬", action: "[work] /work demo {issue}: write the recap of the build first" }
+      - { name: Review,  icon: "👀", action: "[work] /work review {issue}" }
+      - { name: Merge,   icon: "🔀", action: "[work] /work merge {issue}" }
       - { name: Done,    icon: "✅", done: true }
   story: { type: text, card: true }                  # a word on an issue, to group it with others; card shows it on the board
   priority:
@@ -66,11 +66,11 @@ fields:                                              # every field is a key in e
 on:                                                  # the rules: what else is typed into a session when an event happens (docs/user/reference/events.md)
   merged:
     event: issue.merged
-    send: "[work] Merged into {base}"
+    action: "[work] Merged into {base}"
   handled:
     event: question.answered
     where: { by: handled }
-    send: "[work] Handled elsewhere: {ask}"
+    action: "[work] Handled elsewhere: {ask}"
   unhandled:
     event: question.reopened
-    send: "[work] Open again, not handled: {ask}"
+    action: "[work] Open again, not handled: {ask}"
