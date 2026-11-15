@@ -41,6 +41,8 @@ flow parses each command line once, with [unbash](https://github.com/webpro-nl/u
 - **A here-string fed to a shell is commands.** The text of a here-string read by `bash`, `sh`, `zsh`, `dash` or `ksh`, such as `bash <<< 'rm -rf build'`, is read as nested commands.
 - **A heredoc belongs to its command.** Each heredoc is attached to the command it feeds, with whether its delimiter is quoted. In the body of a quoted heredoc, such as `<<'EOF'`, the shell runs nothing.
 - **The program is the one that runs.** A variable assignment such as `FOO=1`, and a wrapper such as `sudo`, `env` or `timeout 5`, is stepped past. `sudo rm -rf build` has the program `rm`.
+- **A variable the line sets is its value.** After `P=/tmp/s`, `sed -i s/a/b/ $P/x.ts` has the argument `/tmp/s/x.ts`.
+- **A command in a `for` loop is one command per value.** `for r in a b; do git -C $r status; done` is two commands, one in the folder `a` and one in `b`.
 
 Every rule that judges a shell command before it runs reads this one parse:
 
@@ -50,7 +52,7 @@ Every rule that judges a shell command before it runs reads this one parse:
 - **Reads.** The files that `cat`, `head`, `sed -n`, `grep` and the other readers name are read from their commands' arguments, to show their breadcrumbs.
 - **Recipes.** A command whose program the repo has a recipe for is counted as going round the recipe.
 
-The parse holds only what is written on the line. It does not include what `python3 script.py` or a `just` recipe writes, or the value a variable holds when the command runs. That is why the snapshot, not the parse, is the record of what a command changed. A line flow cannot parse, such as one with an unclosed quote, has no parse. `ctx.commands` is then `null`, and `banCommands` refuses the line when the program and every argument it names appear in it as whole words.
+The parse holds only what is written on the line. It does not include what `python3 script.py` or a `just` recipe writes, or the value of a variable set anywhere but on the line. That is why the snapshot, not the parse, is the record of what a command changed. A line flow cannot parse, such as one with an unclosed quote, has no parse. `ctx.commands` is then `null`, and `banCommands` refuses the line when the program and every argument it names appear in it as whole words.
 
 ## The order within a shell command
 
@@ -162,7 +164,7 @@ The snapshot holds what git holds: every tracked file, and every untracked file 
 
 A rule judges only work inside the repository, unless it is marked `.everywhere()`.
 
-- **A command** is inside when the folder it runs in is. flow follows `cd`, `pushd`, `git -C` and the variables the line sets.
+- **A command** is inside when the folder it runs in is. flow follows `cd`, `pushd`, `git -C`, the variables the line sets and each value of a `for` loop.
 - **A file** is inside when its path is.
 - **A folder** is inside when git names this repository for it, so every worktree of this repository is inside. A folder flow cannot work out, such as after `cd "$(mktemp -d)"`, counts as inside.
 
