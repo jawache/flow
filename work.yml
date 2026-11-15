@@ -40,9 +40,9 @@ sessions:                                            # default is every numbered
     resumed: |
       [work] This session was resumed. Re-read .work/{issue}/, its issue.md, its tasks and its log, and continue from where it stands.
 
-types:                                               # each type of issue, and the statuses it moves through; the first type is the default, and a new issue starts in its type's status with default: true
+types:                                               # each type of issue, and the statuses it moves through; the first type is the default
   feature:                                           # icon is shown in the session list's rows; action is typed when an issue enters the status, a list as one message per item, a line starting with ! run as a shell command
-    - { name: Backlog, icon: "📥", default: true }  # where a new issue starts
+    - { name: Backlog, icon: "📥", default: true }
     - { name: Up next, icon: "⏭" }
     - { name: Refine,  icon: "🔍", action: "[work] /work refine {issue}" }
     - { name: Docs,    icon: "📖", action: "[work] /work docs {issue}" }
@@ -53,7 +53,7 @@ types:                                               # each type of issue, and t
     - { name: Review,  icon: "👀", action: "[work] /work review {issue}" }
     - { name: Merge,   icon: "🔀", action: "[work] /work merge {issue}" }
     - { name: Done,    icon: "✅", done: true }
-  bug:                                               # a status written as <type>.<status> is that type's line, whole, default: true with it
+  bug:                                               # a status written as <type>.<status> is that type's line, whole
     - feature.Backlog
     - feature.Up next
     - feature.Refine
