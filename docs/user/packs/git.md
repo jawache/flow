@@ -50,7 +50,7 @@ refuse the first few commits while everyone re-learns the format — that is the
 
 - [`git.orientation`](#gitorientation--breadcrumb) · breadcrumb · The whole commit contract — how commits are written, how versions are computed, what is blocked.
 - [`git.noAiAttributionInCommits`](#gitnoaiattributionincommits--guardrail) · guardrail · Blocks Claude/Anthropic attribution in commits, PRs and issues.
-- [`git.noGitDiscard`](#gitnogitdiscard--guardrail) · guardrail · Blocks a git command that would wipe uncommitted work — checkout/restore/reset --hard/clean -f. No bypass; use git stash.
+- [`git.noGitDiscard`](#gitnogitdiscard--guardrail) · guardrail · Blocks a git command that would wipe uncommitted work — checkout/restore/reset --hard/clean -f. No bypass; set the edits aside with a labelled stash or a work-in-progress commit.
 - [`git.noForcePush`](#gitnoforcepush--guardrail) · guardrail · Blocks a force-push — rewriting pushed history is the one loss a stash cannot undo.
 - [`git.noDestructiveGh`](#gitnodestructivegh--guardrail) · guardrail · Blocks `gh repo delete`, `archive` and `rename`, `gh release delete`, and `gh api` with the DELETE method.
 - [`git.noGateSkip`](#gitnogateskip--guardrail) · guardrail · Blocks a commit the commit gate never runs on — --no-verify, -c core.hooksPath=…, commit-tree, update-ref, hash-object -w.
@@ -79,7 +79,7 @@ that has no undo.
 Commits, PRs and issues carry NO Claude/Anthropic attribution — no Co-Authored-By line, no "Generated with Claude", no mention. Author them as your own. This overrides Claude Code's own attribution reminder.
 Commit headers speak Conventional Commits — `type(scope)!: description`. The TYPE is your judgement: `fix` patches behaviour, `feat` adds it, `refactor` changes neither (and must not change test expectations); a `!` or a `BREAKING CHANGE:` footer drives the SemVer major. The grammar is enforced; the choice is yours.
 The version number is computed from this history at release (`./ci.sh release`) — never hand-edit a version field or a changelog.
-A `git checkout` / `git restore` / `reset --hard` / `clean -f` that would silently wipe uncommitted work is blocked outright — there is no bypass token. Use `git stash` instead; it is recoverable.
+A `git checkout` / `git restore` / `reset --hard` / `clean -f` that would silently wipe uncommitted work is blocked outright — there is no bypass token. Set the edits aside first, with `git stash push -m <your label> -- <path>` or a work-in-progress commit, and never with a plain `git stash`, which every worktree shares.
 `gh repo delete` / `archive` / `rename`, `gh release delete` and `gh api` with the DELETE method are refused. So is a call that only names those words, such as `gh repo view delete`. Every other `gh` call runs, under the person's own login.
 ```
 
@@ -186,7 +186,7 @@ Generated with Claude Code"`
 
 ## `git.noGitDiscard` — guardrail
 
-Blocks a git command that would wipe uncommitted work — checkout/restore/reset --hard/clean -f. No bypass; use git stash.
+Blocks a git command that would wipe uncommitted work — checkout/restore/reset --hard/clean -f. No bypass; set the edits aside with a labelled stash or a work-in-progress commit.
 
 - **Refuses at** a shell command is about to run
 - **Watches** not scoped by path
@@ -197,7 +197,7 @@ Blocks a git command that would wipe uncommitted work — checkout/restore/reset
 ### What the agent reads when refused
 
 ```
-This git command would discard uncommitted edits with no undo. Use `git stash` instead — it's recoverable. There is no opt-out token; disabling this entry in flow.config.ts is the visible route.
+This git command would discard uncommitted edits, and they cannot be got back. Set them aside first: `git stash push -m <your label> -- <path>`, then `git stash apply <id>` to bring them back, with the id from `git stash list --format='%H %gs'`. Or commit them as work in progress. Never run a plain `git stash` or `git stash pop`: every worktree of a repository shares one stash, so another session can take yours. There is no opt-out token; disabling this entry in flow.config.ts is the visible route.
 ```
 
 ### Proved by
