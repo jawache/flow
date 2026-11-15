@@ -117,7 +117,7 @@ The release is done when the registry prints the new version and the tag is on t
 | --- | --- | --- |
 | `release-guide: <version> has no migration guide` | Step 2 is not done | Write the guide, and its index row |
 | The gate refuses with `releaseHasMigrationGuide` | `package.json` names a version with no guide | Write the guide for that version |
-| The gate refuses inside `just release`, after `package.json` and `CHANGELOG.md` are stamped | commit-and-tag-version has no rollback | `git stash` the stamped files, fix the cause, `git stash drop`, run `just release` again |
+| The gate refuses inside `just release`, after `package.json` and `CHANGELOG.md` are stamped | commit-and-tag-version has no rollback | `git stash push -m release-stamp` the stamped files, fix the cause, drop that entry by its label, run `just release` again |
 | `just docs-packs-check` names a stale page | A pack changed and its page did not | `just docs-packs`, stage the pages, commit |
 | `npm publish` fails with `E401` or `EOTP` | The terminal is not logged in, or is not a terminal | The human runs `npm login`, then publishes from a real terminal |
 | `npm view` prints the old version after five minutes | The publish did not land | The human reads the publish's output; `npm publish` again is safe, the registry refuses a duplicate version |
