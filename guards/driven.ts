@@ -273,9 +273,9 @@ const ISSUE = new RegExp(ID_DIR + String.raw`issue\.md$`);
 const TASK = new RegExp(ID_DIR + String.raw`tasks/[0-9]+\.md$`);
 /**
  * The keys of issue.md's front matter besides the fields work.yml names (docs/user/reference/record.md § issue.md):
- * an issue's `from`, `rank`, `agent` and `depends`, a chat's `kind`, `summary` and `folder` (§ A chat), and a standing issue's `paused` (§ A standing issue).
+ * an issue's `from`, `rank`, `agent`, `depends`, `problem` and `solution`, a chat's `kind`, `summary` and `folder` (§ A chat), and a standing issue's `paused` (§ A standing issue).
  */
-const ISSUE_KEYS = ["id", "title", "status", "archived", "paused", "refs", "from", "rank", "agent", "depends", "kind", "summary", "folder"];
+const ISSUE_KEYS = ["id", "title", "status", "archived", "paused", "refs", "from", "rank", "agent", "depends", "problem", "solution", "kind", "summary", "folder"];
 /** The keys of a task file's front matter, all three and no other (§ tasks/). */
 const TASK_KEYS = ["id", "title", "done"];
 
@@ -724,6 +724,12 @@ export const driven = definePack("driven", {
         {
           path: ".work/app-15/issue.md",
           content: "---\nid: app-15\ntitle: Daily\nstatus: Build\nagent: triage\n---\n",
+          world: { fs: { "work.yml": "fields:\n  status:\n    values: [{ name: Build }]\n" } },
+        },
+        {
+          // problem and solution are keys of an issue, one sentence each
+          path: ".work/app-16/issue.md",
+          content: "---\nid: app-16\ntitle: x\nstatus: Build\nproblem: \"A board shows a title: nothing else\"\nsolution: It shows both\n---\n",
           world: { fs: { "work.yml": "fields:\n  status:\n    values: [{ name: Build }]\n" } },
         },
         {
