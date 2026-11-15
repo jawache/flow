@@ -12,7 +12,7 @@ agents:                                              # what claude is started as
   leader:   { model: fable, effort: medium, permissions: bypassPermissions }   # every issue's session until Build: passed to claude as --model, --effort and --permission-mode
                                                      # add mcp: <file> for only that MCP config's servers, or mcp: off for none; left out, every server Claude Code is configured with
   leader-build: { model: opus, effort: high, permissions: bypassPermissions }   # the session from Build on: Build's action switches to it
-  builder:  { model: opus, effort: high }            # the others are read by the repo's skill, which passes both when it spawns that agent
+  builder:  { model: sonnet }            # the others are read by the repo's skill, which passes both when it spawns that agent
   secops:   { model: opus, effort: high }
   tech-lead: { model: opus, effort: high }
   tech-editor: { model: opus, effort: high }
