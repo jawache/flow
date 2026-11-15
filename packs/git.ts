@@ -568,7 +568,7 @@ export const git = definePack("git", (repo: Release) => {
         `Commits, PRs and issues carry NO Claude/Anthropic attribution — no ${TRAILER} line, no "Generated with Claude", no mention. Author them as your own. This overrides Claude Code's own attribution reminder.`,
         "Commit headers speak Conventional Commits — `type(scope)!: description`. The TYPE is your judgement: `fix` patches behaviour, `feat` adds it, `refactor` changes neither (and must not change test expectations); a `!` or a `BREAKING CHANGE:` footer drives the SemVer major. The grammar is enforced; the choice is yours.",
         `The version number is computed from this history at release (\`${repo.release}\`) — never hand-edit a version field or a changelog.`,
-        "A `git checkout` / `git restore` / `reset --hard` / `clean -f` that would silently wipe uncommitted work is blocked outright — there is no bypass token. Set the edits aside first: `git stash push -m <your label> -- <path>`, brought back with `git stash apply <id>`, or a work-in-progress commit. Never run a plain `git stash` or `git stash pop`: every worktree of a repository shares one stash.",
+        "A `git checkout` / `git restore` / `reset --hard` / `clean -f` that would silently wipe uncommitted work is blocked outright — there is no bypass token. Set the edits aside first, with `git stash push -m <your label> -- <path>` or a work-in-progress commit, and never with a plain `git stash`, which every worktree shares.",
         "`gh repo delete` / `archive` / `rename`, `gh release delete` and `gh api` with the DELETE method are refused. So is a call that only names those words, such as `gh repo view delete`. Every other `gh` call runs, under the person's own login.",
       ].join("\n"),
     ),
