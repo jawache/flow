@@ -519,6 +519,7 @@ export const driven = definePack("driven", {
    */
   recordShape: guardrail()
     .at(write)
+    // The record links outside the repository, so its real path is outside too: keep this line when copying work's file in, until work-129 lands.
     .everywhere()
     .check(recordShape)
     .message(
@@ -770,6 +771,7 @@ export const driven = definePack("driven", {
    */
   logByDaemon: guardrail()
     .at(write, deletion, command)
+    // The record links outside the repository, so its real path is outside too: keep this line when copying work's file in, until work-129 lands.
     .everywhere()
     .check(logByDaemon)
     .message(
