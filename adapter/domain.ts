@@ -2041,7 +2041,7 @@ export function isInjected(prose: string): boolean {
  * A user line's prose, when it is one that starts a turn: what the human typed, or a background
  * task's notice (`isTaskNotice`). Null for tool results and injections.
  */
-function typedPrompt(line: TranscriptLine): string | null {
+function turnStart(line: TranscriptLine): string | null {
   if (line.kind !== "user" || line.record["isMeta"] === true) return null;
   const content = (line.record["message"] as { content?: unknown } | undefined)?.content;
   if (typeof content !== "string") return null;
@@ -2082,7 +2082,7 @@ export function turnActions(jsonl: string, root = ""): TurnAction[] {
   const lines = transcriptLines(jsonl);
   let from = 0;
   for (let i = lines.length - 1; i >= 0; i--) {
-    if (typedPrompt(lines[i] as TranscriptLine) !== null) {
+    if (turnStart(lines[i] as TranscriptLine) !== null) {
       from = i;
       break;
     }
@@ -2118,7 +2118,7 @@ export function turnActions(jsonl: string, root = ""): TurnAction[] {
 export function briefHead(jsonl: string, cap = 8000): string {
   for (const raw of jsonl.split("\n")) {
     const line = parseLine(raw);
-    const prose = line === null ? null : typedPrompt(line);
+    const prose = line === null ? null : turnStart(line);
     if (prose !== null) return prose.slice(0, cap);
   }
   return "";
@@ -2607,10 +2607,10 @@ export function parseEvents(jsonl: string, root = "", home?: string): Transcript
     const content = (line.record["message"] as { content?: unknown } | undefined)?.content;
 
     if (line.kind === "user") {
-      const typed = typedPrompt(line);
-      if (typed !== null) {
+      const start = turnStart(line);
+      if (start !== null) {
         // A background task's notice starts a turn, but nobody typed it.
-        if (!isTaskNotice(line, typed)) out.push({ line: line.line, kind: "prompt", text: typed });
+        if (!isTaskNotice(line, start)) out.push({ line: line.line, kind: "prompt", text: start });
         continue;
       }
       if (!Array.isArray(content)) continue;

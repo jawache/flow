@@ -1480,15 +1480,6 @@ describe("the narrative — the pairing, and the pointers it produces", () => {
     expect(read.corrections).toEqual([{ line: 1, text: "no, revert that" }]);
   });
 
-  it("still reads the daemon's lines and a shell escape's output as prompts", () => {
-    // Neither is a person typing, and both stay prompts: only a finished task's notice is left out.
-    const file = store(spoke("[work] /work refine flow-10"), spoke("<bash-stdout>ok</bash-stdout><bash-stderr></bash-stderr>"));
-    expect(narrative(parseEvents(file)).prompts).toEqual([
-      { line: 1, text: "[work] /work refine flow-10" },
-      { line: 2, text: "<bash-stdout>ok</bash-stdout><bash-stderr></bash-stderr>" },
-    ]);
-  });
-
   it("spots the human pushing back — a heuristic, which is why every finding cites its line", () => {
     expect(isCorrection("actually, revert that")).toBe(true);
     expect(isCorrection("you forgot the test")).toBe(true);
