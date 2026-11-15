@@ -55,7 +55,7 @@ Read `existed` when it is set.
 
 `ctx.commands` lists every simple command in the line, in the order they appear, including commands nested inside another. A rule without `.everywhere()` is passed only those [inside the repository](../explanation/what-the-guard-sees.md#work-outside-the-repository). [The parse](../explanation/what-the-guard-sees.md#the-parse-what-a-command-is) explains how the line is read.
 
-- **A variable the line sets** is replaced by its value in `program`, `args`, `text` and each redirect's `target`. After `P=/tmp/s`, the argument `$P/x.ts` is `/tmp/s/x.ts`. A variable set elsewhere stays as written, such as `$TMPDIR/x.ts`.
+- **A variable the line sets** is replaced by its value in `program`, `args`, `text` and each redirect's `target`. A variable set elsewhere stays as written, such as `$TMPDIR/x.ts`.
 - **A command in a `for` loop** is listed once per value of the loop, each time with that value filled in and its own `folder`.
 
 Each entry has these fields:
