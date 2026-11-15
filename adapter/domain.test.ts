@@ -935,6 +935,25 @@ describe("the transcript's dialect", () => {
     expect(isInjected("write the code")).toBe(false);
   });
 
+  it("starts a turn at a background task's notice, though nobody typed it", () => {
+    // The notice wakes the agent. Read as an injection, the turn would reach back to the human's
+    // last message, and a turn-end rule would be handed the edit from the turn before.
+    const jsonl = [
+      human("do the thing"),
+      assistant([use("Edit", { file_path: "a.ts" })]),
+      line({
+        type: "user",
+        origin: { kind: "task-notification" },
+        message: { role: "user", content: "<task-notification>\n<status>completed</status>\n</task-notification>" },
+      }),
+      assistant([use("Bash", { command: "ls" }), use("Write", { file_path: "b.ts" })]),
+    ].join("\n");
+    expect(turnActions(jsonl)).toStrictEqual([
+      { did: "run", command: "ls" },
+      { did: "edit", path: "b.ts" },
+    ]);
+  });
+
   it("knows which tool names change a file, in one place", () => {
     expect([...EDIT_TOOLS].sort()).toStrictEqual(["Edit", "MultiEdit", "NotebookEdit", "Write"]);
     const jsonl = [human("go"), assistant([use("NotebookEdit", { notebook_path: "n.ipynb" })])].join("\n");
@@ -1446,6 +1465,28 @@ describe("the narrative — the pairing, and the pointers it produces", () => {
   it("a result carrying an object rather than text is still readable", () => {
     const file = store({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t", content: { n: 1 } }] } });
     expect(parseEvents(file)[0]).toMatchObject({ kind: "result", content: '{"n":1}', failed: false });
+  });
+
+  it("leaves a background task's notice out of the prompts, so its result is never read as the human's correction", () => {
+    // The host writes the notice as a user line. The agent's own result is inside it, and reads as
+    // pushback as often as not: "instead", "rather than", "undo". Either mark is a notice.
+    const file = store(
+      spoke("no, revert that"),
+      spoke("<task-notification>\n<result>Used a map instead of a list.</result>\n</task-notification>"),
+      { ...spoke("Agent finished: it chose a set instead."), origin: { kind: "task-notification" } },
+    );
+    const read = narrative(parseEvents(file));
+    expect(read.prompts).toEqual([{ line: 1, text: "no, revert that" }]);
+    expect(read.corrections).toEqual([{ line: 1, text: "no, revert that" }]);
+  });
+
+  it("still reads the daemon's lines and a shell escape's output as prompts", () => {
+    // Neither is a person typing, and both stay prompts: only a finished task's notice is left out.
+    const file = store(spoke("[work] /work refine flow-10"), spoke("<bash-stdout>ok</bash-stdout><bash-stderr></bash-stderr>"));
+    expect(narrative(parseEvents(file)).prompts).toEqual([
+      { line: 1, text: "[work] /work refine flow-10" },
+      { line: 2, text: "<bash-stdout>ok</bash-stdout><bash-stderr></bash-stderr>" },
+    ]);
   });
 
   it("spots the human pushing back — a heuristic, which is why every finding cites its line", () => {
