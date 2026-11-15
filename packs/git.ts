@@ -175,7 +175,7 @@ const noGitDiscard = defineCheck(
       const dirty = dirtyIn(status.stdout, cleaning);
       if (dirty.length === 0) return ctx.ok();
       return ctx.fail(
-        dirty.map((f) => `would discard uncommitted edits to ${f} — use \`git stash\` instead (recoverable)`).join("\n"),
+        dirty.map((f) => `would discard uncommitted edits to ${f}`).join("\n"),
       );
     },
 );
@@ -568,7 +568,7 @@ export const git = definePack("git", (repo: Release) => {
         `Commits, PRs and issues carry NO Claude/Anthropic attribution — no ${TRAILER} line, no "Generated with Claude", no mention. Author them as your own. This overrides Claude Code's own attribution reminder.`,
         "Commit headers speak Conventional Commits — `type(scope)!: description`. The TYPE is your judgement: `fix` patches behaviour, `feat` adds it, `refactor` changes neither (and must not change test expectations); a `!` or a `BREAKING CHANGE:` footer drives the SemVer major. The grammar is enforced; the choice is yours.",
         `The version number is computed from this history at release (\`${repo.release}\`) — never hand-edit a version field or a changelog.`,
-        "A `git checkout` / `git restore` / `reset --hard` / `clean -f` that would silently wipe uncommitted work is blocked outright — there is no bypass token. Use `git stash` instead; it is recoverable.",
+        "A `git checkout` / `git restore` / `reset --hard` / `clean -f` that would silently wipe uncommitted work is blocked outright — there is no bypass token. Set the edits aside first: `git stash push -m <your label> -- <path>`, brought back with `git stash apply <id>`, or a work-in-progress commit. Never run a plain `git stash` or `git stash pop`: every worktree of a repository shares one stash.",
         "`gh repo delete` / `archive` / `rename`, `gh release delete` and `gh api` with the DELETE method are refused. So is a call that only names those words, such as `gh repo view delete`. Every other `gh` call runs, under the person's own login.",
       ].join("\n"),
     ),
@@ -649,10 +649,10 @@ export const git = definePack("git", (repo: Release) => {
   noGitDiscard: guardrail()
     .at(command)
     .everywhere()
-    .description("Blocks a git command that would wipe uncommitted work — checkout/restore/reset --hard/clean -f. No bypass; use git stash.")
+    .description("Blocks a git command that would wipe uncommitted work — checkout/restore/reset --hard/clean -f. No bypass; set the edits aside with a labelled stash or a work-in-progress commit.")
     .check(noGitDiscard({}))
     .message(
-      "This git command would discard uncommitted edits with no undo. Use `git stash` instead — it's recoverable. There is no opt-out token; disabling this entry in flow.config.ts is the visible route.",
+      "This git command would discard uncommitted edits, and they cannot be got back. Set them aside first: `git stash push -m <your label> -- <path>`, then `git stash apply <id>` to bring them back, with the id from `git stash list --format='%H %gs'`. Or commit them as work in progress. Never run a plain `git stash` or `git stash pop`: every worktree of a repository shares one stash, so another session can take yours. There is no opt-out token; disabling this entry in flow.config.ts is the visible route.",
     )
     .test({
       pass: [
