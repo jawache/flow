@@ -519,6 +519,7 @@ export const driven = definePack("driven", {
    */
   recordShape: guardrail()
     .at(write)
+    .everywhere()
     .check(recordShape)
     .message(
       "An issue's `issue.md` or task file not in the record's shape (docs/user/reference/record.md § issue.md, § tasks/). Keep the front matter's keys to the ones the page lists, the issue's `type` to one of `types` in work.yml and its `status` to a status of its type, or to a value of `fields.status` in a repo with no types, its `depends` to a list of other issues' ids, and a task's to `id`, `title` and `done`; write anything else in the body. In a review task, follow each row's lean, `FIX`, `SKIP` or `UPSTREAM → <repo>`, at once with a badge for what the fix changes, such as <kbd>CHANGES CODE</kbd> (the work skill's templates/review-rows.md).",
@@ -769,6 +770,7 @@ export const driven = definePack("driven", {
    */
   logByDaemon: guardrail()
     .at(write, deletion, command)
+    .everywhere()
     .check(logByDaemon)
     .message(
       "Only the daemon writes a record's `log.jsonl`, an issue's, a chat's or a standing issue's (docs/user/reference/record.md § log.jsonl). Ask with `work log question --ask \"…\"`, or tell with `work log fyi`, the body on stdin as a quoted heredoc, `<<'WORKLOG'`: the daemon appends the line. A line already in the log is never changed.",
