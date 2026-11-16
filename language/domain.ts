@@ -520,8 +520,12 @@ export type ShellStep =
   | { readonly kind: "assign"; readonly name: string; readonly value: ShellWord }
   /** A subshell, a substitution, or a script handed to another shell: a `cd` or a variable set inside stays inside. */
   | { readonly kind: "scope"; readonly body: readonly ShellStep[] }
-  /** `for name in values; do body; done`: the body runs once per value. `values` is empty when the line lists none. */
-  | { readonly kind: "for"; readonly name: string; readonly values: readonly ShellWord[]; readonly body: readonly ShellStep[] };
+  /**
+   * `for name in values; do body; done`: the body runs once per value, so it is read once per value,
+   * each turn its own copy: turn `i` runs with `values[i]`. `values` is empty when the line lists
+   * none, and the body is then read once.
+   */
+  | { readonly kind: "for"; readonly name: string; readonly values: readonly ShellWord[]; readonly turns: readonly (readonly ShellStep[])[] };
 
 /**
  * Every command in the steps, nested ones included, in the order they appear in the line: a
@@ -529,7 +533,13 @@ export type ShellStep =
  */
 export function stepCommands(steps: readonly ShellStep[]): ShellCommand[] {
   return steps.flatMap((step) =>
-    step.kind === "command" ? [step.command, ...stepCommands(step.before)] : step.kind === "assign" ? [] : stepCommands(step.body),
+    step.kind === "command"
+      ? [step.command, ...stepCommands(step.before)]
+      : step.kind === "assign"
+        ? []
+        : step.kind === "scope"
+          ? stepCommands(step.body)
+          : step.turns.flatMap(stepCommands),
   );
 }
 
@@ -568,7 +578,8 @@ function withRedirects(steps: readonly ShellStep[], nested: boolean, gathered: r
         redirects: [...step.redirects, ...gathered.map(stepRedirect)],
       };
     }
-    return { ...step, body: withRedirects(step.body, nested, gathered) };
+    if (step.kind === "scope") return { ...step, body: withRedirects(step.body, nested, gathered) };
+    return { ...step, turns: step.turns.map((turn) => withRedirects(turn, nested, gathered)) };
   });
 }
 
@@ -850,8 +861,9 @@ type CommandStep = Extract<ShellStep, { kind: "command" }>;
  * Follow the steps as the shell runs them. `visit` is called on every command, after the
  * substitutions that build it and before its own move, with the folder the shell stands in then,
  * that scope's expansion of a word, whether the command moves the shell itself (`cd`, `pushd`,
- * `popd`), and that scope's expansion of a word into the arguments the shell passes for it. A `for`
- * body is followed once per value, so its commands can be visited more than once.
+ * `popd`), and that scope's expansion of a word into the arguments the shell passes for it. Each
+ * turn of a `for` loop is followed with its own value, and is its own copy of the body, so every
+ * command is visited once.
  */
 export function followSteps(
   steps: readonly ShellStep[],
@@ -907,11 +919,12 @@ export function followSteps(
         else scope.vars.set(step.name, value);
       } else if (step.kind === "scope") walk(step.body, { cwd: scope.cwd, old: scope.old, stack: [...scope.stack], vars: new Map(scope.vars) });
       else {
-        const values = step.values.map((value) => expandWord(value, scope.vars, start.home));
-        for (const value of values.length > 0 ? values : [null]) {
+        for (const [i, turn] of step.turns.entries()) {
+          const written = step.values[i];
+          const value = written === undefined ? null : expandWord(written, scope.vars, start.home);
           if (value === null) scope.vars.delete(step.name);
           else scope.vars.set(step.name, value);
-          walk(step.body, scope);
+          walk(turn, scope);
         }
       }
     }
@@ -946,6 +959,7 @@ function namesItsRepository(step: CommandStep, git: GitCommand, assigned: Readon
 function assignedNames(steps: readonly ShellStep[], into = new Set<string>()): Set<string> {
   for (const step of steps) {
     if (step.kind === "assign") into.add(step.name);
+    else if (step.kind === "for") for (const turn of step.turns) assignedNames(turn, into);
     else assignedNames(step.kind === "command" ? step.before : step.body, into);
   }
   return into;
@@ -1002,11 +1016,9 @@ function fillCommand(step: CommandStep, expand: (word: ShellWord) => string | nu
   return { argv, targets, moved: starts.slice(1).map((at) => at - 1) };
 }
 
-const sameFill = (a: Filled, b: Filled): boolean => JSON.stringify(a) === JSON.stringify(b);
-
 /** The command, its fields from the fill, and each substitution's `argument` where its argument now is. */
-function filled(c: ShellCommand, fill: Filled | null): ShellCommand {
-  if (fill === null) return c;
+function filled(c: ShellCommand, fill: Filled | undefined): ShellCommand {
+  if (fill === undefined) return c;
   const [program = c.program, ...args] = fill.argv;
   const substitutions = c.substitutions.map((s) => {
     const argument = s.argument === null ? null : (fill.moved[s.argument] ?? -1);
@@ -1024,25 +1036,22 @@ function filled(c: ShellCommand, fill: Filled | null): ShellCommand {
 
 /**
  * The steps with every command settled by the walk — the commands a substitution runs included:
- * its `folder`, and the line's own variables filled in (`fillCommand`). A command a `for` body runs
- * in two different folders has no folder, and one it runs with two different values stays as written.
+ * its `folder`, and the line's own variables filled in (`fillCommand`). Each turn of a `for` loop is
+ * its own copy of the body, so a command the loop runs is placed once per value, with that value.
  */
 function placeSteps(steps: readonly ShellStep[], start: ShellStart): ShellStep[] {
   const folders = new Map<ShellCommand, string | null>();
-  const fills = new Map<ShellCommand, Filled | null>();
+  const fills = new Map<ShellCommand, Filled>();
   const assigned = assignedNames(steps);
   followSteps(steps, start, (step, cwd, expand, _moves, fields) => {
-    const folder = commandFolder(step, cwd, expand, assigned);
-    folders.set(step.command, !folders.has(step.command) || folders.get(step.command) === folder ? folder : null);
-    const fill = fillCommand(step, expand, fields);
-    const seen = fills.get(step.command);
-    fills.set(step.command, seen === undefined || (seen !== null && sameFill(seen, fill)) ? fill : null);
+    folders.set(step.command, commandFolder(step, cwd, expand, assigned));
+    fills.set(step.command, fillCommand(step, expand, fields));
   });
   const placed = new Map<ShellCommand, ShellCommand>();
   const place = (c: ShellCommand): ShellCommand => {
     const known = placed.get(c);
     if (known !== undefined) return known;
-    const own = filled(c, fills.get(c) ?? null);
+    const own = filled(c, fills.get(c));
     const substitutions = own.substitutions.map((s) => ({ ...s, commands: s.commands.map(place) }));
     const out = { ...own, substitutions, folder: folders.get(c) ?? null };
     placed.set(c, out);
@@ -1054,7 +1063,9 @@ function placeSteps(steps: readonly ShellStep[], start: ShellStart): ShellStep[]
         ? { ...step, command: place(step.command), before: rebuild(step.before) }
         : step.kind === "assign"
           ? step
-          : { ...step, body: rebuild(step.body) },
+          : step.kind === "scope"
+            ? { ...step, body: rebuild(step.body) }
+            : { ...step, turns: step.turns.map(rebuild) },
     );
   return rebuild(steps);
 }
@@ -1367,9 +1378,15 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
         return;
       case "For": {
         for (const w of n.wordlist ?? []) word(w, null, out);
-        const body: ShellStep[] = [];
-        node(n.body, nested, body);
-        out.push({ kind: "for", name: n.name.value, values: (n.wordlist ?? []).map(shellWord), body });
+        const values = (n.wordlist ?? []).map(shellWord);
+        // The body read once for each value, or once when the line lists none: each turn is its
+        // own copy, so the walk places each with its own value and folder.
+        const turns = Array.from({ length: Math.max(values.length, 1) }, () => {
+          const body: ShellStep[] = [];
+          node(n.body, nested, body);
+          return body;
+        });
+        out.push({ kind: "for", name: n.name.value, values, turns });
         return;
       }
       case "Select":

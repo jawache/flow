@@ -755,7 +755,7 @@ describe("parseShellSteps — the same parse, in the order the shell runs it", (
           ? [`${step.name}=${written(step.value)}`]
           : step.kind === "scope"
             ? [{ scope: shape(step.body) }]
-            : [{ for: step.name, in: step.values.map(written), do: shape(step.body) }],
+            : [{ for: step.name, in: step.values.map(written), do: step.turns.map(shape) }],
     );
   const steps = (line: string): unknown[] | null => {
     const parsed = parseShellSteps(line);
@@ -798,10 +798,10 @@ describe("parseShellSteps — the same parse, in the order the shell runs it", (
     expect(steps("{ cd src; cat a.ts; }")).toEqual(["cd src", "cat a.ts"]);
   });
 
-  it("gives a for loop its name, its values and its body", () => {
-    expect(steps("for f in a.ts b.ts; do cat $f; done")).toEqual([{ for: "f", in: ["a.ts", "b.ts"], do: ["cat $f"] }]);
-    expect(steps("for f in $D/a '$D/b'; do cat $f; done")).toEqual([{ for: "f", in: ["{D}/a", "$D/b"], do: ["cat $f"] }]);
-    expect(steps("for f; do cat $f; done")).toEqual([{ for: "f", in: [], do: ["cat $f"] }]);
+  it("gives a for loop its name, its values and its body once per value, each turn with its own value", () => {
+    expect(steps("for f in a.ts b.ts; do cat $f; done")).toEqual([{ for: "f", in: ["a.ts", "b.ts"], do: [["cat a.ts"], ["cat b.ts"]] }]);
+    expect(steps("for f in $D/a '$D/b'; do cat $f; done")).toEqual([{ for: "f", in: ["{D}/a", "$D/b"], do: [["cat $f"], ["cat $D/b"]] }]);
+    expect(steps("for f; do cat $f; done")).toEqual([{ for: "f", in: [], do: [["cat $f"]] }]);
   });
 
   it("keeps each word as written, a here-string out of them, and the wrappers stepped past before the program", () => {
@@ -827,6 +827,10 @@ describe("parseShellSteps — the same parse, in the order the shell runs it", (
       stepCommands(parseShellSteps(line) ?? []).map((c) => [c.text, c.redirects.map((r) => `${r.operator} ${r.target}`), c.nested]);
     expect(listed("(cd a; cat b) | sh")).toEqual([["cd a", [], false], ["cat b", [], false], ["sh", [], false]]);
     expect(listed("for f in a; do echo $(cat $f); done > out")).toEqual([["echo $(cat $f)", ["> out"], false], ["cat a", [], true]]);
+    // Each turn's substitution runs that turn's commands, on the command it builds too.
+    const echoes = parseCommandLine("for f in a b; do echo $(cat $f); done")?.filter((c) => c.program === "echo") ?? [];
+    expect(echoes.map((c) => c.substitutions[0]?.commands[0]?.text)).toEqual(["cat a", "cat b"]);
+    expect(parseCommandLine("for a in 1 2; do for b in x y; do echo $a$b; done; done")?.map((c) => c.text)).toEqual(["echo 1x", "echo 1y", "echo 2x", "echo 2y"]);
     expect(listed("F=1; echo `ls` <(sort a)")).toEqual([["echo `ls` <(sort a)", [], false], ["ls", [], true], ["sort a", [], true]]);
     expect(listed("cat <<'EOF' | bash\nls\nEOF")).toEqual([["cat", [], false], ["bash", [], false], ["ls", [], true]]);
     expect(listed("coproc cat a < in")).toEqual([["cat a", ["< in"], false]]);
@@ -964,12 +968,37 @@ describe("parseCommandLine — the folder each command runs in", () => {
     expect(echo?.substitutions[0]?.commands[0]?.folder).toBe("/a");
   });
 
-  it("has no folder for a command a for loop runs in two folders", () => {
-    expect(placed("for d in /a /b; do cd $d; git status; done")).toEqual([
-      ["cd", null],
-      ["git", null],
+  it("lists a command a for loop runs once per value, each in its own folder", () => {
+    expect(placed("for r in a b; do git -C $r status; done", { cwd: "." })).toEqual([
+      ["git", "a"],
+      ["git", "b"],
     ]);
-    expect(placed("for d in x y; do git status; done")).toEqual([["git", "/work/repo"]]);
+    // Each turn's cd moves the shell the next turn starts from.
+    expect(placed("for d in /a /b; do cd $d; git status; done")).toEqual([
+      ["cd", "/work/repo"],
+      ["git", "/a"],
+      ["cd", "/a"],
+      ["git", "/b"],
+    ]);
+    expect(placed("for d in /tmp/r .; do git -C $d commit -m init; done")).toEqual([
+      ["git", "/tmp/r"],
+      ["git", "/work/repo"],
+    ]);
+    // The line refused in work-107: each turn's commands run in that turn's repository in the scratchpad.
+    const line = "S=/tmp/s; D=$S/demo; for r in my-app other-app; do git -C $D/$r init -q -b main && git -C $D/$r commit -q --allow-empty -m init; done";
+    expect(placed(line)).toEqual([
+      ["git", "/tmp/s/demo/my-app"],
+      ["git", "/tmp/s/demo/my-app"],
+      ["git", "/tmp/s/demo/other-app"],
+      ["git", "/tmp/s/demo/other-app"],
+    ]);
+  });
+
+  it("lists a loop whose values the line does not hold once, with the variable as written", () => {
+    expect(parseCommandLine("for f in $(ls); do git -C $f status; done", { cwd: "/work/repo" })?.map((c) => [c.text, c.folder])).toEqual([
+      ["ls", "/work/repo"],
+      ["git -C $f status", null],
+    ]);
   });
 
   it("keeps each folder relative to where the line started, when that is not known, as in a case", () => {
@@ -1038,10 +1067,16 @@ describe("parseCommandLine — a variable the line sets, as its value", () => {
     expect(lone?.substitutions.map((s) => [s.argument, s.prefix]), "its argument became the program").toEqual([[null, null]]);
   });
 
-  it("fills in a loop's value in a command the loop runs once, and leaves one it runs with two values as written", () => {
+  it("fills in each value of a loop in the command it runs, and leaves a value the line does not hold as written", () => {
     expect(argv("for f in a.ts; do cat $f; done")).toEqual([["cat", ["a.ts"]]]);
-    expect(argv("for f in a.ts b.ts; do cat $f; done")).toEqual([["cat", ["$f"]]]);
-    expect(argv("for f in $(ls); do cat $f; done")?.[1]).toEqual(["cat", ["$f"]]);
+    expect(argv("for f in a.ts b.ts; do cat $f; done")).toEqual([
+      ["cat", ["a.ts"]],
+      ["cat", ["b.ts"]],
+    ]);
+    expect(argv("for f in $(ls); do cat $f; done")).toEqual([
+      ["ls", []],
+      ["cat", ["$f"]],
+    ]);
   });
 });
 

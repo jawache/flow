@@ -759,6 +759,16 @@ describe("work outside the repository", () => {
     expect(seen["here"]).toEqual([["git commit -m bad"]]);
   });
 
+  it("passes an unmarked rule only the turns of a for loop that run inside", async () => {
+    // The line refused in work-107: both turns work in the scratchpad, so the rule is not called.
+    const scratch = "S=/tmp/s; D=$S/demo; for r in my-app other-app; do git -C $D/$r init -q -b main && git -C $D/$r commit -q --allow-empty -m init; done";
+    const none = await ran(scratch, ["/tmp/s/demo/my-app", "/tmp/s/demo/other-app"]);
+    expect(seen["here"]).toEqual([]);
+    expect(tallyFor(none, "spy.here")?.evaluated).toBe(0);
+    await ran("for d in /tmp/r .; do git -C $d commit -m init; done", ["/tmp/r"]);
+    expect(seen["here"]).toEqual([["git -C . commit -m init"]]);
+  });
+
   it("counts a command with no folder as inside", async () => {
     await ran('cd "$(mktemp -d)" && git commit -m init', ["/tmp/r"]);
     expect(seen["here"]).toEqual([["cd $(mktemp -d)", "mktemp -d", "git commit -m init"]]);
