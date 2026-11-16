@@ -1084,7 +1084,7 @@ describe("parseCommandLine — a variable the line sets, as its value", () => {
     expect(lone?.substitutions.map((s) => [s.argument, s.prefix]), "its argument became the program").toEqual([[null, null]]);
   });
 
-  it("fills in each value of a loop in the command it runs, and leaves a value the line does not hold as written", () => {
+  it("fills in a loop's value in the command it runs", () => {
     expect(argv("for f in a.ts; do cat $f; done")).toEqual([["cat", ["a.ts"]]]);
   });
 });
