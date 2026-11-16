@@ -931,6 +931,11 @@ export const driven = definePack("driven", {
           command: "S=/private/tmp/claude-501/-Users-me-src-app/abc/scratchpad\nmkdir -p $S/probe\ncat > $S/probe/main.go <<'EOF'\npackage main\nEOF\ngo run $S/probe/main.go > \"$S/out.txt\"",
           world: { exec: { "worktree list": { stdout: WORKTREES }, "check-ignore": { code: 1 } } },
         },
+        // a variable assigned twice holds its second value where it is used: here, the scratchpad
+        {
+          command: "S=internal\nS=/private/tmp/claude-501/s\necho x > $S/x.go",
+          world: { exec: { "worktree list": { stdout: WORKTREES }, "check-ignore": { code: 1 } } },
+        },
         // a copy reads its sources, and an in-place edit's script is no file: only the scratchpad's file is judged
         ...[
           "cp internal/a.go /private/tmp/claude-501/-Users-me-src-app/abc/scratchpad/a.go",
@@ -953,9 +958,8 @@ export const driven = definePack("driven", {
           world: { exec: { "worktree list": { stdout: WORKTREES }, "check-ignore": { code: 1 } } },
         },
         { command: "echo x > $S/x.go", world: TRACKED },
-        // a variable assigned again after its use, or twice, is not followed
+        // a variable assigned again after its use is not followed
         { command: "S=internal; echo x > $S/x.go; S=/private/tmp/claude-501/s", world: TRACKED },
-        { command: "S=internal\nS=/private/tmp/claude-501/s\necho x > $S/x.go", world: TRACKED },
         { command: "cat <<'EOF'\nS=/private/tmp/claude-501/abc/scratchpad\nEOF\necho x > $S/x.go", world: TRACKED },
         { command: "go test ./... &> out.log", world: TRACKED },
         { command: "cat <<'EOF' >> README.md\nmore\nEOF", world: TRACKED },
