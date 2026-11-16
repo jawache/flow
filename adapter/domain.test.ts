@@ -517,6 +517,10 @@ describe("bashReads — the files a Bash command reads, before it runs", () => {
     expect(reads('F=a.ts; cat "$F" < "$F"')).toStrictEqual(["a.ts"]);
   });
 
+  it("reads an unquoted value the line sets as the words the shell splits it into", () => {
+    expect(reads('F="a.ts b.ts"; cat $F')).toStrictEqual(["a.ts", "b.ts"]);
+  });
+
   it("runs a for loop's body once per value", () => {
     expect(reads("for f in a.ts b.ts; do head -c 3 $f; done")).toStrictEqual(["a.ts", "b.ts"]);
     expect(reads("for f in a.ts $(ls); do\n  cat $f\ndone")).toStrictEqual(["a.ts"]);

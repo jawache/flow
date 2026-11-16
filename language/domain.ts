@@ -999,8 +999,6 @@ function fillCommand(step: CommandStep, expand: (word: ShellWord) => string | nu
     const word = step.redirects[i]?.target;
     return (word === undefined ? null : expand(word)) ?? r.target;
   });
-  // A program whose value is empty, and nothing after it, runs nothing the parse can name.
-  if (argv.length === 0) return { argv: written, targets, moved: written.slice(1).map((_, k) => k) };
   return { argv, targets, moved: starts.slice(1).map((at) => at - 1) };
 }
 

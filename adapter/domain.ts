@@ -693,7 +693,7 @@ export function bashReads(steps: readonly ShellStep[] | null, where: BashWhere):
     if (rel !== null && !list.includes(rel)) list.push(rel);
   };
   // The parse's own walk keeps the shell's folder and variables; this reads each command's files from it.
-  followSteps(steps ?? [], { cwd: where.cwd, home: where.home }, (step, cwd, expand, moves) => {
+  followSteps(steps ?? [], { cwd: where.cwd, home: where.home }, (step, cwd, expand, moves, fields) => {
     for (const { operator, target } of step.redirects) {
       if (operator !== "<" && operator !== "<>") continue;
       const path = expand(target);
@@ -702,7 +702,8 @@ export function bashReads(steps: readonly ShellStep[] | null, where: BashWhere):
     const list = xargsList(step.words.slice(0, step.at).map(expand));
     if (list !== null) add(reads, resolveFrom(list, cwd));
     if (moves) return;
-    const argv = step.words.slice(step.at).map(expand);
+    // Each word as the arguments the shell passes for it, as `ctx.commands` holds them: `F="a b"; cat $F` reads two files.
+    const argv = step.words.slice(step.at).flatMap((word) => fields(word) ?? [null]);
     const found = argvReads(argv);
     // A git command's own `-C` moves it, and the parse has already followed it into its `folder`.
     const from = gitCommand(step.command) === null ? cwd : step.command.folder;

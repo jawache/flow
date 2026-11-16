@@ -1013,6 +1013,7 @@ describe("parseCommandLine — a variable the line sets, as its value", () => {
   it("fills in the program", () => {
     expect(argv("G=git; $G push --force")).toEqual([["git", ["push", "--force"]]]);
     expect(argv("E=; $E rm x"), "an empty program is no word, so the next one runs").toEqual([["rm", ["x"]]]);
+    expect(argv("E=; $E"), "and with nothing after it, the program stays as written").toEqual([["$E", []]]);
   });
 
   it("leaves a variable set elsewhere, and one in single quotes, as written", () => {
