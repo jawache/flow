@@ -440,7 +440,7 @@ export interface ShellSubstitution {
   readonly prefix: string | null;
 }
 
-/** One redirect on a command: its operator (`>`, `>>`, `<`, `2>&1`'s `>&` …) and its target word. */
+/** One redirect on a command: its operator (`>`, `>>`, `<`, `2>&1`'s `>&` …) and its target word, a variable the line sets filled in. */
 export interface ShellRedirect {
   readonly operator: string;
   readonly target: string;
@@ -448,9 +448,12 @@ export interface ShellRedirect {
 
 /** One simple command in a parsed line — the fields docs/user/reference/ctx.md promises. */
 export interface ShellCommand {
-  /** The program that runs, after any `FOO=1` assignment and any wrapper. */
+  /** The program that runs, after any `FOO=1` assignment and any wrapper, a variable the line sets filled in. */
   readonly program: string;
-  /** Its arguments as the program receives them, quotes removed. */
+  /**
+   * Its arguments as the program receives them, quotes removed: a variable the line sets is its
+   * value, an unquoted one split at its spaces, and one set elsewhere stays as written (`$TMPDIR/x`).
+   */
   readonly args: readonly string[];
   /** `program` and `args` joined by single spaces. */
   readonly text: string;
@@ -478,7 +481,8 @@ export interface ShellCommand {
  */
 export type ShellWordPiece =
   | { readonly kind: "text"; readonly text: string }
-  | { readonly kind: "variable"; readonly name: string }
+  /** `quoted` inside double quotes, where the shell does not split its value into words. */
+  | { readonly kind: "variable"; readonly name: string; readonly quoted: boolean }
   | { readonly kind: "tilde" }
   | { readonly kind: "unknown" };
 
@@ -516,8 +520,13 @@ export type ShellStep =
   | { readonly kind: "assign"; readonly name: string; readonly value: ShellWord }
   /** A subshell, a substitution, or a script handed to another shell: a `cd` or a variable set inside stays inside. */
   | { readonly kind: "scope"; readonly body: readonly ShellStep[] }
-  /** `for name in values; do body; done`: the body runs once per value. `values` is empty when the line lists none. */
-  | { readonly kind: "for"; readonly name: string; readonly values: readonly ShellWord[]; readonly body: readonly ShellStep[] };
+  /**
+   * `for name in values; do body; done`: the body runs once per value, so it is read once per value,
+   * each turn its own copy: turn `i` runs with `values[i]`. `values` is empty when the line lists
+   * none, and the body is then read once. Fewer turns than values is a loop past `LOOP_COPIES`: its
+   * body is read once, and walked once with its variable as written.
+   */
+  | { readonly kind: "for"; readonly name: string; readonly values: readonly ShellWord[]; readonly turns: readonly (readonly ShellStep[])[] };
 
 /**
  * Every command in the steps, nested ones included, in the order they appear in the line: a
@@ -525,7 +534,13 @@ export type ShellStep =
  */
 export function stepCommands(steps: readonly ShellStep[]): ShellCommand[] {
   return steps.flatMap((step) =>
-    step.kind === "command" ? [step.command, ...stepCommands(step.before)] : step.kind === "assign" ? [] : stepCommands(step.body),
+    step.kind === "command"
+      ? [step.command, ...stepCommands(step.before)]
+      : step.kind === "assign"
+        ? []
+        : step.kind === "scope"
+          ? stepCommands(step.body)
+          : step.turns.flatMap(stepCommands),
   );
 }
 
@@ -564,7 +579,8 @@ function withRedirects(steps: readonly ShellStep[], nested: boolean, gathered: r
         redirects: [...step.redirects, ...gathered.map(stepRedirect)],
       };
     }
-    return { ...step, body: withRedirects(step.body, nested, gathered) };
+    if (step.kind === "scope") return { ...step, body: withRedirects(step.body, nested, gathered) };
+    return { ...step, turns: step.turns.map((turn) => withRedirects(turn, nested, gathered)) };
   });
 }
 
@@ -668,18 +684,18 @@ const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
  * `${…}` is read from unbash's own fields — no `!` or `#` prefix, no index, no operation — and a
  * bare `$NAME`, which unbash gives as text alone, from its text.
  */
-function expansionPiece(part: SimpleExpansionPart | ParameterExpansionPart): ShellWordPiece {
+function expansionPiece(part: SimpleExpansionPart | ParameterExpansionPart, quoted: boolean): ShellWordPiece {
   const name =
     part.type === "ParameterExpansion"
       ? part.prefix === undefined && part.index === undefined && part.operation === undefined
         ? part.parameter
         : ""
       : part.text.slice(1);
-  return VARIABLE_NAME.test(name) ? { kind: "variable", name } : { kind: "unknown" };
+  return VARIABLE_NAME.test(name) ? { kind: "variable", name, quoted } : { kind: "unknown" };
 }
 
-/** A part of a word, or of a double-quoted run, as pieces. */
-function wordPieces(part: WordPart): ShellWordPiece[] {
+/** A part of a word, or of a double-quoted run (`quoted`), as pieces. */
+function wordPieces(part: WordPart, quoted = false): ShellWordPiece[] {
   switch (part.type) {
     case "Literal":
     case "SingleQuoted":
@@ -687,10 +703,10 @@ function wordPieces(part: WordPart): ShellWordPiece[] {
       return [{ kind: "text", text: part.value }];
     case "DoubleQuoted":
     case "LocaleString":
-      return part.parts.flatMap(wordPieces);
+      return part.parts.flatMap((child) => wordPieces(child, true));
     case "SimpleExpansion":
     case "ParameterExpansion":
-      return [expansionPiece(part)];
+      return [expansionPiece(part, quoted)];
     case "ExtendedGlob":
     case "BraceExpansion":
       return [{ kind: "text", text: part.text }];
@@ -701,7 +717,7 @@ function wordPieces(part: WordPart): ShellWordPiece[] {
 
 /** A word as pieces. A leading `~` is the home directory only when it is unquoted, and only as `~` or `~/…`. */
 function shellWord(w: Word): ShellWord {
-  const pieces: ShellWordPiece[] = w.parts === undefined ? [{ kind: "text", text: w.value }] : w.parts.flatMap(wordPieces);
+  const pieces: ShellWordPiece[] = w.parts === undefined ? [{ kind: "text", text: w.value }] : w.parts.flatMap((part) => wordPieces(part));
   const [first] = pieces;
   const unquoted = w.parts === undefined || w.parts[0]?.type === "Literal";
   if (unquoted && first?.kind === "text" && (first.text === "~" || first.text.startsWith("~/")) && w.text.startsWith("~")) {
@@ -741,8 +757,9 @@ function textBefore(w: Word): string | null {
 //
 // One walk over the steps, in the order the shell runs them, keeping what the shell keeps: the
 // folder it stands in, the one `cd -` returns to, the `pushd` stack, and the variables the line
-// sets. `placeSteps` reads it to give every command its `folder`; the adapter's read detection
-// reads the same walk for the files a command names. Best-effort and failing open: a move only
+// sets. `placeSteps` reads it to give every command its `folder` and the values of the line's own
+// variables; the adapter's read detection reads the same walk for the files a command names.
+// Best-effort and failing open: a move only
 // running the line could resolve, such as `cd "$DIR"` with `DIR` set elsewhere, leaves the folder
 // unknown (null) rather than guessed. A line whose start is not known starts at `.`, and every
 // folder after is relative to it.
@@ -773,6 +790,18 @@ export const isOption = (arg: string | null): boolean => arg !== null && arg.sta
 const MOVERS: ReadonlySet<string> = new Set(["cd", "pushd", "popd"]);
 
 /**
+ * The most copies of a loop's body one line is read into, in all. Nested loops multiply: eight
+ * loops of six values each would be 1,679,616 copies. The loop whose turns would cross it is read
+ * once, as written.
+ */
+const LOOP_COPIES = 1000;
+
+/** Does a command in the steps move the line's own shell, a loop's included? One in a scope moves only the scope. */
+function movesShell(steps: readonly ShellStep[]): boolean {
+  return steps.some((step) => (step.kind === "command" ? MOVERS.has(step.command.program) : step.kind === "for" ? step.turns.some(movesShell) : false));
+}
+
+/**
  * One word of the parse as the shell would expand it, from what the line itself holds: an unquoted
  * leading `~`, `$HOME`, and a variable the line assigned. Quoted or escaped text is passed as is,
  * so `'$F'` stays `$F`. Null when only running the line could tell — an unknown or special
@@ -782,12 +811,50 @@ const MOVERS: ReadonlySet<string> = new Set(["cd", "pushd", "popd"]);
 function expandWord(word: ShellWord, vars: ReadonlyMap<string, string>, home: string | undefined): string | null {
   let out = "";
   for (const piece of word) {
-    const value =
-      piece.kind === "text" ? piece.text : piece.kind === "tilde" ? home : piece.kind === "variable" ? (piece.name === "HOME" ? home : vars.get(piece.name)) : undefined;
+    const value = pieceValue(piece, vars, home);
     if (value === undefined) return null;
     out += value;
   }
   return out;
+}
+
+/** One piece's value, from what the line holds, or undefined when only running the line could tell. */
+function pieceValue(piece: ShellWordPiece, vars: ReadonlyMap<string, string>, home: string | undefined): string | undefined {
+  if (piece.kind === "text") return piece.text;
+  if (piece.kind === "tilde") return home;
+  if (piece.kind === "variable") return piece.name === "HOME" ? home : vars.get(piece.name);
+  return undefined;
+}
+
+/** The characters the shell splits an unquoted variable's value at: the default `IFS`. */
+const FIELD_BREAK = /[ \t\n]+/;
+
+/**
+ * One word as the arguments the shell passes for it, from what the line holds: `expandWord`, then
+ * an unquoted variable's value split into words, as the shell splits it. `F="a b"; rm $F` passes
+ * `a` and `b`, `rm "$F"` passes `a b`, and an unquoted empty value passes nothing. Null with `expandWord`.
+ */
+function expandFields(word: ShellWord, vars: ReadonlyMap<string, string>, home: string | undefined): string[] | null {
+  const fields: string[] = [];
+  // The word being built, or null between words: a quoted `''` is a word, an unquoted empty value is none.
+  let field: string | null = null;
+  for (const piece of word) {
+    const value = pieceValue(piece, vars, home);
+    if (value === undefined) return null;
+    if (piece.kind !== "variable" || piece.quoted) {
+      field = (field ?? "") + value;
+      continue;
+    }
+    for (const [i, part] of value.split(FIELD_BREAK).entries()) {
+      if (i > 0 && field !== null) {
+        fields.push(field);
+        field = null;
+      }
+      if (part !== "") field = (field ?? "") + part;
+    }
+  }
+  if (field !== null) fields.push(field);
+  return fields;
 }
 
 /**
@@ -806,13 +873,21 @@ type CommandStep = Extract<ShellStep, { kind: "command" }>;
 /**
  * Follow the steps as the shell runs them. `visit` is called on every command, after the
  * substitutions that build it and before its own move, with the folder the shell stands in then,
- * that scope's expansion of a word, and whether the command moves the shell itself (`cd`, `pushd`,
- * `popd`). A `for` body is followed once per value, so its commands can be visited more than once.
+ * that scope's expansion of a word, whether the command moves the shell itself (`cd`, `pushd`,
+ * `popd`), and that scope's expansion of a word into the arguments the shell passes for it. Each
+ * turn of a `for` loop is followed with its own value, and is its own copy of the body, so every
+ * command is visited once.
  */
 export function followSteps(
   steps: readonly ShellStep[],
   start: ShellStart,
-  visit: (step: CommandStep, cwd: string | null, expand: (word: ShellWord) => string | null, moves: boolean) => void,
+  visit: (
+    step: CommandStep,
+    cwd: string | null,
+    expand: (word: ShellWord) => string | null,
+    moves: boolean,
+    fields: (word: ShellWord) => string[] | null,
+  ) => void,
 ): void {
   const move = (scope: ShellScope, next: string | null): void => {
     scope.old = scope.cwd;
@@ -821,7 +896,7 @@ export function followSteps(
   const run = (step: CommandStep, scope: ShellScope): void => {
     const expand = (word: ShellWord): string | null => expandWord(word, scope.vars, start.home);
     const moves = MOVERS.has(step.command.program);
-    visit(step, scope.cwd, expand, moves);
+    visit(step, scope.cwd, expand, moves, (word) => expandFields(word, scope.vars, start.home));
     if (!moves) return;
     const name = step.command.program;
     const operands = step.words.slice(step.at + 1).map(expand);
@@ -856,12 +931,25 @@ export function followSteps(
         if (value === null) scope.vars.delete(step.name);
         else scope.vars.set(step.name, value);
       } else if (step.kind === "scope") walk(step.body, { cwd: scope.cwd, old: scope.old, stack: [...scope.stack], vars: new Map(scope.vars) });
-      else {
-        const values = step.values.map((value) => expandWord(value, scope.vars, start.home));
-        for (const value of values.length > 0 ? values : [null]) {
+      else if (step.turns.length < step.values.length) {
+        // A loop past the cap, walked once for all its turns. What a turn sets or moves is not
+        // known in the turns after it, so its variable, and every variable it assigns, is as
+        // written, and a body that moves the shell runs in no known folder: it counts as inside.
+        const [turn = []] = step.turns;
+        for (const name of [step.name, ...assignedNames(turn)]) scope.vars.delete(name);
+        if (movesShell(turn)) {
+          scope.cwd = null;
+          scope.old = null;
+          scope.stack.fill(null);
+        }
+        walk(turn, scope);
+      } else {
+        for (const [i, turn] of step.turns.entries()) {
+          const written = step.values[i];
+          const value = written === undefined ? null : expandWord(written, scope.vars, start.home);
           if (value === null) scope.vars.delete(step.name);
           else scope.vars.set(step.name, value);
-          walk(step.body, scope);
+          walk(turn, scope);
         }
       }
     }
@@ -896,6 +984,7 @@ function namesItsRepository(step: CommandStep, git: GitCommand, assigned: Readon
 function assignedNames(steps: readonly ShellStep[], into = new Set<string>()): Set<string> {
   for (const step of steps) {
     if (step.kind === "assign") into.add(step.name);
+    else if (step.kind === "for") for (const turn of step.turns) assignedNames(turn, into);
     else assignedNames(step.kind === "command" ? step.before : step.body, into);
   }
   return into;
@@ -923,22 +1012,73 @@ function commandFolder(step: CommandStep, cwd: string | null, expand: (word: She
 }
 
 /**
- * The steps with every command's `folder` settled by the walk — the commands a substitution runs
- * included. A command a `for` body runs in two different folders has none.
+ * A command with the line's own variables as their values, as one visit of the walk has them:
+ * its program and arguments as the words the shell passes, each redirect's target, and where each
+ * argument as written now starts among the arguments (`moved`), for a substitution's `argument`.
+ * A word with anything the line does not hold — a variable set elsewhere, a substitution — stays as
+ * written, and so does a here-string, which is not a word.
+ */
+interface Filled {
+  readonly argv: readonly string[];
+  readonly targets: readonly string[];
+  readonly moved: readonly number[];
+}
+
+function fillCommand(step: CommandStep, expand: (word: ShellWord) => string | null, fields: (word: ShellWord) => string[] | null): Filled {
+  const c = step.command;
+  const written = [c.program, ...c.args];
+  const argv: string[] = [];
+  const starts: number[] = [];
+  for (const [i, as] of written.entries()) {
+    starts.push(argv.length);
+    const word = step.words[step.at + i];
+    argv.push(...((word === undefined ? null : fields(word)) ?? [as]));
+  }
+  const targets = c.redirects.map((r, i) => {
+    const word = step.redirects[i]?.target;
+    return (word === undefined ? null : expand(word)) ?? r.target;
+  });
+  return { argv, targets, moved: starts.slice(1).map((at) => at - 1) };
+}
+
+/** The command, its fields from the fill, and each substitution's `argument` where its argument now is. */
+function filled(c: ShellCommand, fill: Filled | undefined): ShellCommand {
+  if (fill === undefined) return c;
+  const [program = c.program, ...args] = fill.argv;
+  const substitutions = c.substitutions.map((s) => {
+    const argument = s.argument === null ? null : (fill.moved[s.argument] ?? -1);
+    return argument === null || argument >= 0 ? { ...s, argument } : { ...s, argument: null, prefix: null };
+  });
+  return {
+    ...c,
+    program,
+    args,
+    text: [program, ...args].join(" "),
+    redirects: c.redirects.map((r, i) => ({ ...r, target: fill.targets[i] ?? r.target })),
+    substitutions,
+  };
+}
+
+/**
+ * The steps with every command settled by the walk — the commands a substitution runs included:
+ * its `folder`, and the line's own variables filled in (`fillCommand`). Each turn of a `for` loop is
+ * its own copy of the body, so a command the loop runs is placed once per value, with that value.
  */
 function placeSteps(steps: readonly ShellStep[], start: ShellStart): ShellStep[] {
   const folders = new Map<ShellCommand, string | null>();
+  const fills = new Map<ShellCommand, Filled>();
   const assigned = assignedNames(steps);
-  followSteps(steps, start, (step, cwd, expand) => {
-    const folder = commandFolder(step, cwd, expand, assigned);
-    folders.set(step.command, !folders.has(step.command) || folders.get(step.command) === folder ? folder : null);
+  followSteps(steps, start, (step, cwd, expand, _moves, fields) => {
+    folders.set(step.command, commandFolder(step, cwd, expand, assigned));
+    fills.set(step.command, fillCommand(step, expand, fields));
   });
   const placed = new Map<ShellCommand, ShellCommand>();
   const place = (c: ShellCommand): ShellCommand => {
     const known = placed.get(c);
     if (known !== undefined) return known;
-    const substitutions = c.substitutions.map((s) => ({ ...s, commands: s.commands.map(place) }));
-    const out = { ...c, substitutions, folder: folders.get(c) ?? null };
+    const own = filled(c, fills.get(c));
+    const substitutions = own.substitutions.map((s) => ({ ...s, commands: s.commands.map(place) }));
+    const out = { ...own, substitutions, folder: folders.get(c) ?? null };
     placed.set(c, out);
     return out;
   };
@@ -948,7 +1088,9 @@ function placeSteps(steps: readonly ShellStep[], start: ShellStart): ShellStep[]
         ? { ...step, command: place(step.command), before: rebuild(step.before) }
         : step.kind === "assign"
           ? step
-          : { ...step, body: rebuild(step.body) },
+          : step.kind === "scope"
+            ? { ...step, body: rebuild(step.body) }
+            : { ...step, turns: step.turns.map(rebuild) },
     );
   return rebuild(steps);
 }
@@ -1047,6 +1189,8 @@ export function elideHeredocBodies(line: string): string | null {
 function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies: readonly (readonly [number, number])[] } | null {
   // Objects, not `let`s: the walk below sets them from inside closures, which narrowing cannot see.
   const fault = { found: false };
+  // How many copies of loop bodies the line has been read into, against `LOOP_COPIES`.
+  const copies = { made: 0 };
   // How deep the walk is in text the parse read on its own — a `bash -c` string, an `eval`, a
   // heredoc fed to a shell, an escaped-backtick script — whose positions are not the line's.
   const foreign = { depth: 0 };
@@ -1261,9 +1405,21 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
         return;
       case "For": {
         for (const w of n.wordlist ?? []) word(w, null, out);
-        const body: ShellStep[] = [];
-        node(n.body, nested, body);
-        out.push({ kind: "for", name: n.name.value, values: (n.wordlist ?? []).map(shellWord), body });
+        const values = (n.wordlist ?? []).map(shellWord);
+        // The body read once for each value, or once when the line lists none: each turn is its
+        // own copy, so the walk places each with its own value and folder. The first turn says
+        // how many copies one costs, loops inside it included; a loop whose turns would take the
+        // line past `LOOP_COPIES` keeps that one.
+        const turn = (): ShellStep[] => {
+          copies.made += 1;
+          const body: ShellStep[] = [];
+          node(n.body, nested, body);
+          return body;
+        };
+        const before = copies.made;
+        const turns = [turn()];
+        if (before + (copies.made - before) * values.length <= LOOP_COPIES) while (turns.length < values.length) turns.push(turn());
+        out.push({ kind: "for", name: n.name.value, values, turns });
         return;
       }
       case "Select":

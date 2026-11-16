@@ -512,10 +512,12 @@ EOF
 fix: a thing
 EOF
 )"`
+- running `M="fix: a thing"; git commit -m "$M"`
 
 **blocks**
 
 - running `git commit -m "fixed the auth thing"`
+- running `M="tidied things up"; git commit -m "$M"`
 - running `git commit -m "feat a thing"`
 - running `git commit -m 'tidied things up
 

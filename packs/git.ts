@@ -979,9 +979,13 @@ export const git = definePack("git", (repo: Release) => {
         // …and so it is with the value attached to its option, in either spelling.
         "git commit -m\"$(cat <<'EOF'\nfix: a thing\nEOF\n)\"",
         "git commit --message=\"$(cat <<'EOF'\nfix: a thing\nEOF\n)\"",
+        // A message the line sets in a variable is that variable's value, which is what git is given.
+        'M="fix: a thing"; git commit -m "$M"',
       ],
       block: [
         'git commit -m "fixed the auth thing"',
+        // A message the line sets in a variable is judged by its value, never passed for its `$M`.
+        'M="tidied things up"; git commit -m "$M"',
         // A known type word with no colon after it. `feat a thing` reads as a sentence that happens
         // to start with a type, and a header regex that only looked for the word would take it.
         'git commit -m "feat a thing"',
