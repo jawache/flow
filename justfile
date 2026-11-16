@@ -52,9 +52,10 @@ typecheck:
 lint:
     npx eslint adapter checks e2e engine language packs guards tools *.ts
 
+[positional-arguments]
 [doc("The whole unit suite: the grammar's pure model, the compiler-refusal matrix, the engine, the adapter driven through the built binary, and the machine test over every shipped pack.")]
 test *args:
-    npx vitest run {{args}}
+    npx vitest run "$@"
 
 [doc("Run every bound rule's own cases — the .test({pass, block}) block on each entry this repo's flow.config.ts binds, driven through the same ctx the live rails build.")]
 test-rules:
