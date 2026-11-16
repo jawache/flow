@@ -6,11 +6,14 @@
 # commit, a merge, CI — which is the half of the promise the PreToolUse rail cannot make. flow asks
 # git itself what the commit adds, changes and deletes, so this file passes nothing.
 #
-# It calls the `flow` binary on PATH, which in THIS repo is the one built from this checkout
-# (`just link`). flow guarding flow is the whole dogfood: a rule that stopped loading, a door that
+# It runs this checkout's own build, node_modules/@jawache/flow/dist/flow.mjs (a link back to the
+# checkout itself here, as `flow init` writes for a repo with flow as a dev dependency), and the
+# `flow` on PATH only when that is absent. flow guarding flow is the whole dogfood: a rule that stopped loading, a door that
 # stopped exporting, or a bundle that stopped building refuses this repo's own next commit first.
 #
 # Wired by `git config core.hooksPath .githooks`, which is per-CLONE and not committed — every
 # fresh clone and every worktree needs it again, and `flow status` says so when it is missing.
 
+f="$PWD/node_modules/@jawache/flow/dist/flow.mjs"
+[ -f "$f" ] && exec node "$f" hook commit
 exec flow hook commit
