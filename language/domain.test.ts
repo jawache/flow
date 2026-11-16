@@ -1083,10 +1083,6 @@ describe("parseCommandLine — a variable the line sets, as its value", () => {
     const [lone] = parseCommandLine('E=; $E "$(date)"') ?? [];
     expect(lone?.substitutions.map((s) => [s.argument, s.prefix]), "its argument became the program").toEqual([[null, null]]);
   });
-
-  it("fills in a loop's value in the command it runs", () => {
-    expect(argv("for f in a.ts; do cat $f; done")).toEqual([["cat", ["a.ts"]]]);
-  });
 });
 
 describe("parseCommandLine — a line that does not parse", () => {

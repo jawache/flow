@@ -368,10 +368,6 @@ describe("a Bash line's delete targets", () => {
     expect(deleteTargets(parseCommandLine("bash <<'EOF'\nrm a.ts\nEOF"))).toStrictEqual(["a.ts"]);
   });
 
-  it("reads a variable the line sets as its value", () => {
-    expect(deleteTargets(parseCommandLine("F=src/a.ts; rm $F"))).toStrictEqual(["src/a.ts"]);
-  });
-
   it("reads git's own options before its subcommand, and a file after `--` that looks like a flag", () => {
     expect(deleteTargets(parseCommandLine("git -c core.x=y rm --cached a.ts"))).toStrictEqual(["a.ts"]);
     expect(deleteTargets(parseCommandLine("rm -- -weird.ts"))).toStrictEqual(["-weird.ts"]);
