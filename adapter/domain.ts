@@ -2037,8 +2037,11 @@ export function isInjected(prose: string): boolean {
   return INJECTED.some((mark) => start.startsWith(mark)) || start.slice(0, 40).includes("<system-reminder>");
 }
 
-/** A user line's prose, when it is one the human typed. Null for tool results and injections. */
-function typedPrompt(line: TranscriptLine): string | null {
+/**
+ * A user line's prose, when it is one that starts a turn: what the human typed, or a background
+ * task's notice (`isTaskNotice`). Null for tool results and injections.
+ */
+function turnStart(line: TranscriptLine): string | null {
   if (line.kind !== "user" || line.record["isMeta"] === true) return null;
   const content = (line.record["message"] as { content?: unknown } | undefined)?.content;
   if (typeof content !== "string") return null;
@@ -2046,9 +2049,25 @@ function typedPrompt(line: TranscriptLine): string | null {
 }
 
 /**
+ * Is this user line the notice the host writes when a background task finishes?
+ *
+ * It is NOT in `INJECTED`, on purpose. A notice wakes the agent, so it starts a turn, and a turn
+ * woken by one holds only what the agent did after it; read as an injection, that turn would reach
+ * back to the human's last message, and a turn-end rule would be handed an edit from a turn
+ * earlier. It is not the human talking either, so the report's prompts, and the corrections read
+ * from them, leave it out. Either mark is enough: the text's opening tag, and the record's own
+ * `origin.kind`, which every notice measured on Claude Code 2.1.322 to 2.1.325 carried.
+ */
+function isTaskNotice(line: TranscriptLine, prose: string): boolean {
+  const origin = line.record["origin"] as { kind?: unknown } | undefined;
+  return origin?.kind === "task-notification" || prose.trimStart().startsWith("<task-notification>");
+}
+
+/**
  * What the actor did THIS TURN, in order — the fact a turn-end check is handed.
  *
- * The turn starts at the last thing the human typed. That is a real narrowing of the rule this
+ * The turn starts at the last thing the human typed, or at the last background task's notice
+ * when one woke the agent after it (`isTaskNotice`). That is a real narrowing of the rule this
  * replaces, which walked the whole file: over one turn the two agree (the check compares the last
  * edit against the last run), but over a resumed session of forty turns the old one was answering
  * about work from hours ago while its message said "this turn".
@@ -2063,7 +2082,7 @@ export function turnActions(jsonl: string, root = ""): TurnAction[] {
   const lines = transcriptLines(jsonl);
   let from = 0;
   for (let i = lines.length - 1; i >= 0; i--) {
-    if (typedPrompt(lines[i] as TranscriptLine) !== null) {
+    if (turnStart(lines[i] as TranscriptLine) !== null) {
       from = i;
       break;
     }
@@ -2099,7 +2118,7 @@ export function turnActions(jsonl: string, root = ""): TurnAction[] {
 export function briefHead(jsonl: string, cap = 8000): string {
   for (const raw of jsonl.split("\n")) {
     const line = parseLine(raw);
-    const prose = line === null ? null : typedPrompt(line);
+    const prose = line === null ? null : turnStart(line);
     if (prose !== null) return prose.slice(0, cap);
   }
   return "";
@@ -2588,9 +2607,10 @@ export function parseEvents(jsonl: string, root = "", home?: string): Transcript
     const content = (line.record["message"] as { content?: unknown } | undefined)?.content;
 
     if (line.kind === "user") {
-      const typed = typedPrompt(line);
-      if (typed !== null) {
-        out.push({ line: line.line, kind: "prompt", text: typed });
+      const start = turnStart(line);
+      if (start !== null) {
+        // A background task's notice starts a turn, but nobody typed it.
+        if (!isTaskNotice(line, start)) out.push({ line: line.line, kind: "prompt", text: start });
         continue;
       }
       if (!Array.isArray(content)) continue;
