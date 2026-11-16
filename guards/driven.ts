@@ -958,7 +958,7 @@ export const driven = definePack("driven", {
           world: { exec: { "worktree list": { stdout: WORKTREES }, "check-ignore": { code: 1 } } },
         },
         { command: "echo x > $S/x.go", world: TRACKED },
-        // a variable assigned again after its use is not followed
+        // a variable assigned again after its use holds its first value there: internal, which git checks in
         { command: "S=internal; echo x > $S/x.go; S=/private/tmp/claude-501/s", world: TRACKED },
         { command: "cat <<'EOF'\nS=/private/tmp/claude-501/abc/scratchpad\nEOF\necho x > $S/x.go", world: TRACKED },
         { command: "go test ./... &> out.log", world: TRACKED },
