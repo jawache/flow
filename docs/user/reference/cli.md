@@ -35,6 +35,8 @@ summary: "every `flow` command, what `flow init` writes and `flow uninstall` rem
 | `--since <date>` | Reads only conversations from this date on |
 | `--mark` | Marks what was read, so the next run starts after it |
 
+The report's corrections are prompts a person typed that read as pushback, such as "no, revert that". A notice that Claude Code writes when a background task finishes is not a prompt.
+
 ## What `flow init` writes
 
 | Path | What it is |
