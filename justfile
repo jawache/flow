@@ -60,7 +60,8 @@ test:
 test-rules:
     # There is no separate place a rule is proved: the cases travel ON the entry, and a
     # guardrail carrying none does not load at all. `flow test` walks every one of them.
-    flow test
+    just build
+    node dist/flow.mjs test
 
 [doc("THE MACHINE TEST — the sibling of test-rules, asked about the PACKS instead of this repo. In a throwaway repo that has never heard of flow: `flow init`, every pack the package ships bound at once with a stranger's parameters, `flow status` green, each pack's own cases run pack by pack, and one live refusal driven at write · delete · command · commit · turn-end. Exit 0 answers 'did anything in the packs break'; a red line names the pack.")]
 test-packs:
@@ -101,11 +102,11 @@ test-tutorial:
 
 [doc("Run the full commit gate over every file git can see, tracked or not, as if all of it were staged — the same guardrails .githooks/pre-commit runs on the staged changes, plus every file the last commit has that is now gone.")]
 gate:
-    flow hook commit --all
+    node dist/flow.mjs hook commit --all
 
 [doc("IS THE GUARD WORKING HERE — every rule loadable and able to fire, by MOMENT, plus every fitting (the config, the commit gate, core.hooksPath, the host's hook registrations). Green means guarded; every red line carries its fix, and the exit code is non-zero until they are all gone.")]
 guard-status:
-    flow status
+    node dist/flow.mjs status
 
 [doc("Build the binary, then put `flow` on PATH from this checkout (npm link) — the dogfood loop, and how you run flow while you are changing it. A guarded repo installs `@jawache/flow` from npm instead.")]
 link:
