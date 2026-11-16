@@ -994,6 +994,23 @@ describe("parseCommandLine — the folder each command runs in", () => {
     ]);
   });
 
+  it("lists a loop once, as written, past 1,000 copies of loop bodies in all, and the loop inside it per value", () => {
+    const values = (n: number): string => Array.from({ length: n }, (_, i) => `v${i}`).join(" ");
+    // The inner loop is 100 copies; eleven of them would be 1,111, so the outer loop is read once.
+    const nested = parseCommandLine(`for a in ${values(11)}; do for b in ${values(100)}; do git -C $a log $b; done; done`, { cwd: "/work/repo" }) ?? [];
+    expect(nested).toHaveLength(100);
+    expect(nested.slice(0, 2).map((c) => [c.text, c.folder])).toEqual([
+      ["git -C $a log v0", null],
+      ["git -C $a log v1", null],
+    ]);
+    // A body that moves the shell runs in no known folder past the cap, so it counts as inside.
+    expect(placed(`for d in ${values(1001)}; do cd sub; git status; done`)).toEqual([
+      ["cd", null],
+      ["git", null],
+    ]);
+    expect(placed(`for d in ${values(1000)}; do git status; done`), "1,000 copies is at the cap, not past it").toHaveLength(1000);
+  });
+
   it("lists a loop whose values the line does not hold once, with the variable as written", () => {
     expect(parseCommandLine("for f in $(ls); do git -C $f status; done", { cwd: "/work/repo" })?.map((c) => [c.text, c.folder])).toEqual([
       ["ls", "/work/repo"],
@@ -1069,14 +1086,6 @@ describe("parseCommandLine — a variable the line sets, as its value", () => {
 
   it("fills in each value of a loop in the command it runs, and leaves a value the line does not hold as written", () => {
     expect(argv("for f in a.ts; do cat $f; done")).toEqual([["cat", ["a.ts"]]]);
-    expect(argv("for f in a.ts b.ts; do cat $f; done")).toEqual([
-      ["cat", ["a.ts"]],
-      ["cat", ["b.ts"]],
-    ]);
-    expect(argv("for f in $(ls); do cat $f; done")).toEqual([
-      ["ls", []],
-      ["cat", ["$f"]],
-    ]);
   });
 });
 

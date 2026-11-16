@@ -523,7 +523,8 @@ export type ShellStep =
   /**
    * `for name in values; do body; done`: the body runs once per value, so it is read once per value,
    * each turn its own copy: turn `i` runs with `values[i]`. `values` is empty when the line lists
-   * none, and the body is then read once.
+   * none, and the body is then read once. Fewer turns than values is a loop past `LOOP_COPIES`: its
+   * body is read once, and walked once with its variable as written.
    */
   | { readonly kind: "for"; readonly name: string; readonly values: readonly ShellWord[]; readonly turns: readonly (readonly ShellStep[])[] };
 
@@ -789,6 +790,18 @@ export const isOption = (arg: string | null): boolean => arg !== null && arg.sta
 const MOVERS: ReadonlySet<string> = new Set(["cd", "pushd", "popd"]);
 
 /**
+ * The most copies of a loop's body one line is read into, in all. Nested loops multiply: eight
+ * loops of six values each would be 1,679,616 copies. The loop whose turns would cross it is read
+ * once, as written.
+ */
+const LOOP_COPIES = 1000;
+
+/** Does a command in the steps move the line's own shell, a loop's included? One in a scope moves only the scope. */
+function movesShell(steps: readonly ShellStep[]): boolean {
+  return steps.some((step) => (step.kind === "command" ? MOVERS.has(step.command.program) : step.kind === "for" ? step.turns.some(movesShell) : false));
+}
+
+/**
  * One word of the parse as the shell would expand it, from what the line itself holds: an unquoted
  * leading `~`, `$HOME`, and a variable the line assigned. Quoted or escaped text is passed as is,
  * so `'$F'` stays `$F`. Null when only running the line could tell — an unknown or special
@@ -918,7 +931,19 @@ export function followSteps(
         if (value === null) scope.vars.delete(step.name);
         else scope.vars.set(step.name, value);
       } else if (step.kind === "scope") walk(step.body, { cwd: scope.cwd, old: scope.old, stack: [...scope.stack], vars: new Map(scope.vars) });
-      else {
+      else if (step.turns.length < step.values.length) {
+        // A loop past the cap, walked once for all its turns. What a turn sets or moves is not
+        // known in the turns after it, so its variable, and every variable it assigns, is as
+        // written, and a body that moves the shell runs in no known folder: it counts as inside.
+        const [turn = []] = step.turns;
+        for (const name of [step.name, ...assignedNames(turn)]) scope.vars.delete(name);
+        if (movesShell(turn)) {
+          scope.cwd = null;
+          scope.old = null;
+          scope.stack.fill(null);
+        }
+        walk(turn, scope);
+      } else {
         for (const [i, turn] of step.turns.entries()) {
           const written = step.values[i];
           const value = written === undefined ? null : expandWord(written, scope.vars, start.home);
@@ -1164,6 +1189,8 @@ export function elideHeredocBodies(line: string): string | null {
 function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies: readonly (readonly [number, number])[] } | null {
   // Objects, not `let`s: the walk below sets them from inside closures, which narrowing cannot see.
   const fault = { found: false };
+  // How many copies of loop bodies the line has been read into, against `LOOP_COPIES`.
+  const copies = { made: 0 };
   // How deep the walk is in text the parse read on its own — a `bash -c` string, an `eval`, a
   // heredoc fed to a shell, an escaped-backtick script — whose positions are not the line's.
   const foreign = { depth: 0 };
@@ -1380,12 +1407,18 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
         for (const w of n.wordlist ?? []) word(w, null, out);
         const values = (n.wordlist ?? []).map(shellWord);
         // The body read once for each value, or once when the line lists none: each turn is its
-        // own copy, so the walk places each with its own value and folder.
-        const turns = Array.from({ length: Math.max(values.length, 1) }, () => {
+        // own copy, so the walk places each with its own value and folder. The first turn says
+        // how many copies one costs, loops inside it included; a loop whose turns would take the
+        // line past `LOOP_COPIES` keeps that one.
+        const turn = (): ShellStep[] => {
+          copies.made += 1;
           const body: ShellStep[] = [];
           node(n.body, nested, body);
           return body;
-        });
+        };
+        const before = copies.made;
+        const turns = [turn()];
+        if (before + (copies.made - before) * values.length <= LOOP_COPIES) while (turns.length < values.length) turns.push(turn());
         out.push({ kind: "for", name: n.name.value, values, turns });
         return;
       }
