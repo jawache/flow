@@ -763,7 +763,7 @@ describe("parseShellSteps — the same parse, in the order the shell runs it", (
   };
 
   it("lists a bare assignment as a step, and an assignment in front of a command as nothing", () => {
-    expect(steps("F=src/a.ts; cat $F")).toEqual(["F=src/a.ts", "cat $F"]);
+    expect(steps("F=src/a.ts; cat $F")).toEqual(["F=src/a.ts", "cat src/a.ts"]);
     expect(steps("F=$HOME/'$x'")).toEqual(["F={HOME}/$x"]);
     expect(steps("X=1 cat a.ts")).toEqual(["cat a.ts"]);
     expect(steps("F=$(pick)")).toEqual([{ scope: ["pick"] }, "F={?}"]);
@@ -782,7 +782,7 @@ describe("parseShellSteps — the same parse, in the order the shell runs it", (
   });
 
   it("lists each assignment a declaration makes as a step after it, and nothing for one that appends or sets an element", () => {
-    expect(steps("export F=src/a.ts G; cat $F")).toEqual(["export F=src/a.ts G", "F=src/a.ts", "cat $F"]);
+    expect(steps("export F=src/a.ts G; cat $F")).toEqual(["export F=src/a.ts G", "F=src/a.ts", "cat src/a.ts"]);
     expect(steps("declare -x F=$HOME/a")).toEqual(["declare -x F=$HOME/a", "F={HOME}/a"]);
     expect(steps("local F=$(pick)")).toEqual([{ scope: ["pick"] }, "local F=$(pick)", "F={?}"]);
     expect(steps("export F+=x A[1]=y")).toEqual(["export F+=x A[1]=y"]);
@@ -826,7 +826,7 @@ describe("parseShellSteps — the same parse, in the order the shell runs it", (
     const listed = (line: string): unknown =>
       stepCommands(parseShellSteps(line) ?? []).map((c) => [c.text, c.redirects.map((r) => `${r.operator} ${r.target}`), c.nested]);
     expect(listed("(cd a; cat b) | sh")).toEqual([["cd a", [], false], ["cat b", [], false], ["sh", [], false]]);
-    expect(listed("for f in a; do echo $(cat $f); done > out")).toEqual([["echo $(cat $f)", ["> out"], false], ["cat $f", [], true]]);
+    expect(listed("for f in a; do echo $(cat $f); done > out")).toEqual([["echo $(cat $f)", ["> out"], false], ["cat a", [], true]]);
     expect(listed("F=1; echo `ls` <(sort a)")).toEqual([["echo `ls` <(sort a)", [], false], ["ls", [], true], ["sort a", [], true]]);
     expect(listed("cat <<'EOF' | bash\nls\nEOF")).toEqual([["cat", [], false], ["bash", [], false], ["ls", [], true]]);
     expect(listed("coproc cat a < in")).toEqual([["cat a", ["< in"], false]]);
@@ -991,6 +991,56 @@ describe("parseCommandLine — the folder each command runs in", () => {
     expect(isOption("-")).toBe(false);
     expect(isOption("dir")).toBe(false);
     expect(isOption(null)).toBe(false);
+  });
+});
+
+describe("parseCommandLine — a variable the line sets, as its value", () => {
+  /** Each command's program and arguments. */
+  const argv = (line: string): (readonly [string, readonly string[]])[] | undefined =>
+    parseCommandLine(line)?.map((c) => [c.program, c.args] as const);
+
+  it("fills in an argument, and the text with it", () => {
+    expect(argv("P=/tmp/s; sed -i s/a/b/ $P/x.ts")?.[0]).toEqual(["sed", ["-i", "s/a/b/", "/tmp/s/x.ts"]]);
+    expect(parseCommandLine("P=/tmp/s; sed -i s/a/b/ $P/x.ts")?.[0]?.text).toBe("sed -i s/a/b/ /tmp/s/x.ts");
+    // The reviewer's line refused in work-107, its probe in its own scratchpad.
+    expect(argv("P=/tmp/s/coach; sed -i '' 's/a/b/' $P/p.test.ts")?.[0]).toEqual(["sed", ["-i", "", "s/a/b/", "/tmp/s/coach/p.test.ts"]]);
+  });
+
+  it("follows a value made from another variable, into a redirect's target", () => {
+    expect(parseCommandLine("S=/tmp/s; D=$S/demo; echo hi > $D/x.txt")?.[0]?.redirects).toEqual([{ operator: ">", target: "/tmp/s/demo/x.txt" }]);
+  });
+
+  it("fills in the program", () => {
+    expect(argv("G=git; $G push --force")).toEqual([["git", ["push", "--force"]]]);
+    expect(argv("E=; $E rm x"), "an empty program is no word, so the next one runs").toEqual([["rm", ["x"]]]);
+  });
+
+  it("leaves a variable set elsewhere, and one in single quotes, as written", () => {
+    expect(argv("P=/x; cat $TMPDIR/x.ts '$P/x.ts'")).toEqual([["cat", ["$TMPDIR/x.ts", "$P/x.ts"]]]);
+    expect(argv("FOO=1 cat $FOO"), "an assignment in front of a command is its env, not the line's").toEqual([["cat", ["$FOO"]]]);
+  });
+
+  it("splits an unquoted value at its spaces, as the shell passes it, and keeps a quoted one whole", () => {
+    expect(argv('F="push --force"; git $F; git "$F"')).toEqual([
+      ["git", ["push", "--force"]],
+      ["git", ["push --force"]],
+    ]);
+    expect(argv('F=" a  b "; echo x${F}y'), "the text either side starts and ends a word").toEqual([["echo", ["x", "a", "b", "y"]]]);
+    expect(argv("E=; echo $E ''"), "an unquoted empty value passes nothing, a quoted empty word one").toEqual([["echo", [""]]]);
+  });
+
+  it("keeps a substitution's argument on the argument it ends, past the words a value split into", () => {
+    const [commit] = parseCommandLine('M="a b"; git commit $M -m "$(cat x)"') ?? [];
+    expect(commit?.args).toEqual(["commit", "a", "b", "-m", "$(cat x)"]);
+    expect(commit?.substitutions.map((s) => [s.argument, s.prefix])).toEqual([[4, ""]]);
+    const [lone] = parseCommandLine('E=; $E "$(date)"') ?? [];
+    expect(lone?.substitutions.map((s) => [s.argument, s.prefix]), "its argument became the program").toEqual([[null, null]]);
+  });
+
+  it("fills in a loop's value in a command the loop runs once, and leaves one it runs with two values as written", () => {
+    expect(argv("for f in a.ts; do cat $f; done")).toEqual([["cat", ["a.ts"]]]);
+    expect(argv("for f in a.ts b.ts; do cat $f; done")).toEqual([["cat", ["$f"]]]);
+    expect(argv("for f in $(ls); do cat $f; done")?.[1]).toEqual(["cat", ["$f"]]);
   });
 });
 

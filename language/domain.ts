@@ -440,7 +440,7 @@ export interface ShellSubstitution {
   readonly prefix: string | null;
 }
 
-/** One redirect on a command: its operator (`>`, `>>`, `<`, `2>&1`'s `>&` …) and its target word. */
+/** One redirect on a command: its operator (`>`, `>>`, `<`, `2>&1`'s `>&` …) and its target word, a variable the line sets filled in. */
 export interface ShellRedirect {
   readonly operator: string;
   readonly target: string;
@@ -448,9 +448,12 @@ export interface ShellRedirect {
 
 /** One simple command in a parsed line — the fields docs/user/reference/ctx.md promises. */
 export interface ShellCommand {
-  /** The program that runs, after any `FOO=1` assignment and any wrapper. */
+  /** The program that runs, after any `FOO=1` assignment and any wrapper, a variable the line sets filled in. */
   readonly program: string;
-  /** Its arguments as the program receives them, quotes removed. */
+  /**
+   * Its arguments as the program receives them, quotes removed: a variable the line sets is its
+   * value, an unquoted one split at its spaces, and one set elsewhere stays as written (`$TMPDIR/x`).
+   */
   readonly args: readonly string[];
   /** `program` and `args` joined by single spaces. */
   readonly text: string;
@@ -478,7 +481,8 @@ export interface ShellCommand {
  */
 export type ShellWordPiece =
   | { readonly kind: "text"; readonly text: string }
-  | { readonly kind: "variable"; readonly name: string }
+  /** `quoted` inside double quotes, where the shell does not split its value into words. */
+  | { readonly kind: "variable"; readonly name: string; readonly quoted: boolean }
   | { readonly kind: "tilde" }
   | { readonly kind: "unknown" };
 
@@ -668,18 +672,18 @@ const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
  * `${…}` is read from unbash's own fields — no `!` or `#` prefix, no index, no operation — and a
  * bare `$NAME`, which unbash gives as text alone, from its text.
  */
-function expansionPiece(part: SimpleExpansionPart | ParameterExpansionPart): ShellWordPiece {
+function expansionPiece(part: SimpleExpansionPart | ParameterExpansionPart, quoted: boolean): ShellWordPiece {
   const name =
     part.type === "ParameterExpansion"
       ? part.prefix === undefined && part.index === undefined && part.operation === undefined
         ? part.parameter
         : ""
       : part.text.slice(1);
-  return VARIABLE_NAME.test(name) ? { kind: "variable", name } : { kind: "unknown" };
+  return VARIABLE_NAME.test(name) ? { kind: "variable", name, quoted } : { kind: "unknown" };
 }
 
-/** A part of a word, or of a double-quoted run, as pieces. */
-function wordPieces(part: WordPart): ShellWordPiece[] {
+/** A part of a word, or of a double-quoted run (`quoted`), as pieces. */
+function wordPieces(part: WordPart, quoted = false): ShellWordPiece[] {
   switch (part.type) {
     case "Literal":
     case "SingleQuoted":
@@ -687,10 +691,10 @@ function wordPieces(part: WordPart): ShellWordPiece[] {
       return [{ kind: "text", text: part.value }];
     case "DoubleQuoted":
     case "LocaleString":
-      return part.parts.flatMap(wordPieces);
+      return part.parts.flatMap((child) => wordPieces(child, true));
     case "SimpleExpansion":
     case "ParameterExpansion":
-      return [expansionPiece(part)];
+      return [expansionPiece(part, quoted)];
     case "ExtendedGlob":
     case "BraceExpansion":
       return [{ kind: "text", text: part.text }];
@@ -701,7 +705,7 @@ function wordPieces(part: WordPart): ShellWordPiece[] {
 
 /** A word as pieces. A leading `~` is the home directory only when it is unquoted, and only as `~` or `~/…`. */
 function shellWord(w: Word): ShellWord {
-  const pieces: ShellWordPiece[] = w.parts === undefined ? [{ kind: "text", text: w.value }] : w.parts.flatMap(wordPieces);
+  const pieces: ShellWordPiece[] = w.parts === undefined ? [{ kind: "text", text: w.value }] : w.parts.flatMap((part) => wordPieces(part));
   const [first] = pieces;
   const unquoted = w.parts === undefined || w.parts[0]?.type === "Literal";
   if (unquoted && first?.kind === "text" && (first.text === "~" || first.text.startsWith("~/")) && w.text.startsWith("~")) {
@@ -741,8 +745,9 @@ function textBefore(w: Word): string | null {
 //
 // One walk over the steps, in the order the shell runs them, keeping what the shell keeps: the
 // folder it stands in, the one `cd -` returns to, the `pushd` stack, and the variables the line
-// sets. `placeSteps` reads it to give every command its `folder`; the adapter's read detection
-// reads the same walk for the files a command names. Best-effort and failing open: a move only
+// sets. `placeSteps` reads it to give every command its `folder` and the values of the line's own
+// variables; the adapter's read detection reads the same walk for the files a command names.
+// Best-effort and failing open: a move only
 // running the line could resolve, such as `cd "$DIR"` with `DIR` set elsewhere, leaves the folder
 // unknown (null) rather than guessed. A line whose start is not known starts at `.`, and every
 // folder after is relative to it.
@@ -782,12 +787,50 @@ const MOVERS: ReadonlySet<string> = new Set(["cd", "pushd", "popd"]);
 function expandWord(word: ShellWord, vars: ReadonlyMap<string, string>, home: string | undefined): string | null {
   let out = "";
   for (const piece of word) {
-    const value =
-      piece.kind === "text" ? piece.text : piece.kind === "tilde" ? home : piece.kind === "variable" ? (piece.name === "HOME" ? home : vars.get(piece.name)) : undefined;
+    const value = pieceValue(piece, vars, home);
     if (value === undefined) return null;
     out += value;
   }
   return out;
+}
+
+/** One piece's value, from what the line holds, or undefined when only running the line could tell. */
+function pieceValue(piece: ShellWordPiece, vars: ReadonlyMap<string, string>, home: string | undefined): string | undefined {
+  if (piece.kind === "text") return piece.text;
+  if (piece.kind === "tilde") return home;
+  if (piece.kind === "variable") return piece.name === "HOME" ? home : vars.get(piece.name);
+  return undefined;
+}
+
+/** The characters the shell splits an unquoted variable's value at: the default `IFS`. */
+const FIELD_BREAK = /[ \t\n]+/;
+
+/**
+ * One word as the arguments the shell passes for it, from what the line holds: `expandWord`, then
+ * an unquoted variable's value split into words, as the shell splits it. `F="a b"; rm $F` passes
+ * `a` and `b`, `rm "$F"` passes `a b`, and an unquoted empty value passes nothing. Null with `expandWord`.
+ */
+function expandFields(word: ShellWord, vars: ReadonlyMap<string, string>, home: string | undefined): string[] | null {
+  const fields: string[] = [];
+  // The word being built, or null between words: a quoted `''` is a word, an unquoted empty value is none.
+  let field: string | null = null;
+  for (const piece of word) {
+    const value = pieceValue(piece, vars, home);
+    if (value === undefined) return null;
+    if (piece.kind !== "variable" || piece.quoted) {
+      field = (field ?? "") + value;
+      continue;
+    }
+    for (const [i, part] of value.split(FIELD_BREAK).entries()) {
+      if (i > 0 && field !== null) {
+        fields.push(field);
+        field = null;
+      }
+      if (part !== "") field = (field ?? "") + part;
+    }
+  }
+  if (field !== null) fields.push(field);
+  return fields;
 }
 
 /**
@@ -806,13 +849,20 @@ type CommandStep = Extract<ShellStep, { kind: "command" }>;
 /**
  * Follow the steps as the shell runs them. `visit` is called on every command, after the
  * substitutions that build it and before its own move, with the folder the shell stands in then,
- * that scope's expansion of a word, and whether the command moves the shell itself (`cd`, `pushd`,
- * `popd`). A `for` body is followed once per value, so its commands can be visited more than once.
+ * that scope's expansion of a word, whether the command moves the shell itself (`cd`, `pushd`,
+ * `popd`), and that scope's expansion of a word into the arguments the shell passes for it. A `for`
+ * body is followed once per value, so its commands can be visited more than once.
  */
 export function followSteps(
   steps: readonly ShellStep[],
   start: ShellStart,
-  visit: (step: CommandStep, cwd: string | null, expand: (word: ShellWord) => string | null, moves: boolean) => void,
+  visit: (
+    step: CommandStep,
+    cwd: string | null,
+    expand: (word: ShellWord) => string | null,
+    moves: boolean,
+    fields: (word: ShellWord) => string[] | null,
+  ) => void,
 ): void {
   const move = (scope: ShellScope, next: string | null): void => {
     scope.old = scope.cwd;
@@ -821,7 +871,7 @@ export function followSteps(
   const run = (step: CommandStep, scope: ShellScope): void => {
     const expand = (word: ShellWord): string | null => expandWord(word, scope.vars, start.home);
     const moves = MOVERS.has(step.command.program);
-    visit(step, scope.cwd, expand, moves);
+    visit(step, scope.cwd, expand, moves, (word) => expandFields(word, scope.vars, start.home));
     if (!moves) return;
     const name = step.command.program;
     const operands = step.words.slice(step.at + 1).map(expand);
@@ -923,22 +973,80 @@ function commandFolder(step: CommandStep, cwd: string | null, expand: (word: She
 }
 
 /**
- * The steps with every command's `folder` settled by the walk — the commands a substitution runs
- * included. A command a `for` body runs in two different folders has none.
+ * A command with the line's own variables as their values, as one visit of the walk has them:
+ * its program and arguments as the words the shell passes, each redirect's target, and where each
+ * argument as written now starts among the arguments (`moved`), for a substitution's `argument`.
+ * A word with anything the line does not hold — a variable set elsewhere, a substitution — stays as
+ * written, and so does a here-string, which is not a word.
+ */
+interface Filled {
+  readonly argv: readonly string[];
+  readonly targets: readonly string[];
+  readonly moved: readonly number[];
+}
+
+function fillCommand(step: CommandStep, expand: (word: ShellWord) => string | null, fields: (word: ShellWord) => string[] | null): Filled {
+  const c = step.command;
+  const written = [c.program, ...c.args];
+  const argv: string[] = [];
+  const starts: number[] = [];
+  for (const [i, as] of written.entries()) {
+    starts.push(argv.length);
+    const word = step.words[step.at + i];
+    argv.push(...((word === undefined ? null : fields(word)) ?? [as]));
+  }
+  const targets = c.redirects.map((r, i) => {
+    const word = step.redirects[i]?.target;
+    return (word === undefined ? null : expand(word)) ?? r.target;
+  });
+  // A program whose value is empty, and nothing after it, runs nothing the parse can name.
+  if (argv.length === 0) return { argv: written, targets, moved: written.slice(1).map((_, k) => k) };
+  return { argv, targets, moved: starts.slice(1).map((at) => at - 1) };
+}
+
+const sameFill = (a: Filled, b: Filled): boolean => JSON.stringify(a) === JSON.stringify(b);
+
+/** The command, its fields from the fill, and each substitution's `argument` where its argument now is. */
+function filled(c: ShellCommand, fill: Filled | null): ShellCommand {
+  if (fill === null) return c;
+  const [program = c.program, ...args] = fill.argv;
+  const substitutions = c.substitutions.map((s) => {
+    const argument = s.argument === null ? null : (fill.moved[s.argument] ?? -1);
+    return argument === null || argument >= 0 ? { ...s, argument } : { ...s, argument: null, prefix: null };
+  });
+  return {
+    ...c,
+    program,
+    args,
+    text: [program, ...args].join(" "),
+    redirects: c.redirects.map((r, i) => ({ ...r, target: fill.targets[i] ?? r.target })),
+    substitutions,
+  };
+}
+
+/**
+ * The steps with every command settled by the walk — the commands a substitution runs included:
+ * its `folder`, and the line's own variables filled in (`fillCommand`). A command a `for` body runs
+ * in two different folders has no folder, and one it runs with two different values stays as written.
  */
 function placeSteps(steps: readonly ShellStep[], start: ShellStart): ShellStep[] {
   const folders = new Map<ShellCommand, string | null>();
+  const fills = new Map<ShellCommand, Filled | null>();
   const assigned = assignedNames(steps);
-  followSteps(steps, start, (step, cwd, expand) => {
+  followSteps(steps, start, (step, cwd, expand, _moves, fields) => {
     const folder = commandFolder(step, cwd, expand, assigned);
     folders.set(step.command, !folders.has(step.command) || folders.get(step.command) === folder ? folder : null);
+    const fill = fillCommand(step, expand, fields);
+    const seen = fills.get(step.command);
+    fills.set(step.command, seen === undefined || (seen !== null && sameFill(seen, fill)) ? fill : null);
   });
   const placed = new Map<ShellCommand, ShellCommand>();
   const place = (c: ShellCommand): ShellCommand => {
     const known = placed.get(c);
     if (known !== undefined) return known;
-    const substitutions = c.substitutions.map((s) => ({ ...s, commands: s.commands.map(place) }));
-    const out = { ...c, substitutions, folder: folders.get(c) ?? null };
+    const own = filled(c, fills.get(c) ?? null);
+    const substitutions = own.substitutions.map((s) => ({ ...s, commands: s.commands.map(place) }));
+    const out = { ...own, substitutions, folder: folders.get(c) ?? null };
     placed.set(c, out);
     return out;
   };
