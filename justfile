@@ -53,8 +53,8 @@ lint:
     npx eslint adapter checks e2e engine language packs guards tools *.ts
 
 [doc("The whole unit suite: the grammar's pure model, the compiler-refusal matrix, the engine, the adapter driven through the built binary, and the machine test over every shipped pack.")]
-test:
-    npx vitest run
+test *args:
+    npx vitest run {{args}}
 
 [doc("Run every bound rule's own cases — the .test({pass, block}) block on each entry this repo's flow.config.ts binds, driven through the same ctx the live rails build.")]
 test-rules:
@@ -101,11 +101,11 @@ test-tutorial:
     FLOW_TUTORIAL=1 npx vitest run e2e/product.test.ts -t "the Getting started tutorial's transcripts"
 
 [doc("Run the full commit gate over every file git can see, tracked or not, as if all of it were staged — the same guardrails .githooks/pre-commit runs on the staged changes, plus every file the last commit has that is now gone.")]
-gate:
+gate: build
     node dist/flow.mjs hook commit --all
 
 [doc("IS THE GUARD WORKING HERE — every rule loadable and able to fire, by MOMENT, plus every fitting (the config, the commit gate, core.hooksPath, the host's hook registrations). Green means guarded; every red line carries its fix, and the exit code is non-zero until they are all gone.")]
-guard-status:
+guard-status: build
     node dist/flow.mjs status
 
 [doc("Build the binary, then put `flow` on PATH from this checkout (npm link) — the dogfood loop, and how you run flow while you are changing it. A guarded repo installs `@jawache/flow` from npm instead.")]
