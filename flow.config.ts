@@ -145,6 +145,8 @@ export default defineConfig([
 
   // ── this repo's own terrain ──
   pack(house, { pure: PURE }),
+  // The generated pack pages left the docs with flow-19, before the packs themselves move.
+  override(house.packPagesCurrent).disabled("0.4 removes the generated pack pages: flow-19"),
 ], {
   driftTokens: 400_000,
 });

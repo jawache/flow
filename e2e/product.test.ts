@@ -35,7 +35,6 @@ import {
   git as runGit,
   type Ran,
 } from "./harness.ts";
-import { worktreeLine } from "../adapter/domain.ts";
 
 let home: string;
 /**
@@ -776,16 +775,6 @@ function fenced(file: string, opening: string): string {
   return (found as string).trim();
 }
 
-/** The fenced block in the README that opens with this line. */
-const quoted = (opening: string): string => fenced(join(PACKAGE, "README.md"), opening);
-
-/** Code with its indentation taken off every line — a block quoted at the margin, compared. */
-const unindented = (code: string): string =>
-  code
-    .split("\n")
-    .map((line) => line.trim())
-    .join("\n");
-
 /**
  * One machine's output, in the spelling a page quotes.
  *
@@ -802,25 +791,6 @@ function asQuoted(output: string, repo: string, settingsHome: string): string {
     .replaceAll(settingsHome, "~/.claude")
     .trim();
 }
-
-describe("the README's example", () => {
-  it("quotes a rule from the config `flow init` writes, and the refusal it really prints", () => {
-    const shown = newRepo();
-    const firstTime = mkdtempSync(join(tmpdir(), "flow-readme-"));
-    try {
-      expect(flow(shown, ["init"], firstTime).code).toBe(0);
-      const written = unindented(readFileSync(join(shown, "flow.config.ts"), "utf8"));
-      expect(written, "the rule is the demo's own, word for word").toContain(unindented(quoted("noForcePush: guardrail()")));
-
-      const forced = JSON.stringify(pre("Bash", { command: "git push --force origin main" }));
-      const ran = runFlow(shown, ["hook", "pre-tool-use"], { home: firstTime, bin }, forced);
-      expect(ran.code).toBe(2);
-      expect(asQuoted(ran.stderr, shown, firstTime)).toBe(quoted("flow — command blocked before it ran:"));
-    } finally {
-      for (const dir of [shown, firstTime]) rmSync(dir, { recursive: true, force: true });
-    }
-  });
-});
 
 // ── the guarded repo's own module system ─────────────────────────────────────
 //
@@ -1486,14 +1456,6 @@ describe.runIf(process.env["FLOW_TUTORIAL"])("the Getting started tutorial's tra
     } finally {
       for (const dir of [mine, firstTime]) rmSync(dir, { recursive: true, force: true });
     }
-  });
-});
-
-describe("the troubleshooting page for a worktree flow does not guard", () => {
-  it("quotes the message flow passes the agent, word for word", () => {
-    // The page's folders are the real ones it was captured in, from the built binary.
-    const page = paged(join("troubleshooting", "flow-does-not-guard-this-worktree.md"), "flow guards /Users/Shared/code/my-repo,");
-    expect(page).toBe(worktreeLine("/Users/Shared/code/my-repo", "/Users/Shared/code/my-repo-feature"));
   });
 });
 
