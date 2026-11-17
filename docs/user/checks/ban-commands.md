@@ -34,18 +34,6 @@ An entry with no arguments, such as `"curl"`, matches every command that runs th
 
 A flag that takes a value attached to it, such as `-mfix`, counts letter by letter like any bundle: `-m`, `-f`, `-i`, `-x`. A rule that must tell a flag from its value is a check of its own that reads [`ctx.commands`](../reference/ctx.md#ctxcommands). [How to write your own check](../how-to/write-your-own-check.md) gives the steps.
 
-## A redirect
-
-A redirect is a ban whose message names the command to run instead. The agent reads the message and runs that command.
-
-```
-useTheRecipe: guardrail()
-  .at(command)
-  .check(banCommands({ ban: ["gofumpt"] }))
-  .message("Run `just fmt`: it runs gofumpt with this repo's settings.")
-  .test({ pass: ["just fmt"], block: ["gofumpt -w ."] }),
-```
-
 ## Options
 
 | Key | Type | Required | Meaning |

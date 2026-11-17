@@ -99,7 +99,7 @@ The first line of the file. It has no `ts`, `seq`, `agent` or `agentType`.
 | Field | What it holds |
 | --- | --- |
 | `moment` | The moment the guardrail ran at |
-| `id` | The entry's id, such as `git.noForcePush` |
+| `id` | The entry's id, such as `house.noForcePush` |
 | `subject` | The file, the commit message or the command line it refused |
 | `out` | `deny` |
 | `message` | The guardrail's message |

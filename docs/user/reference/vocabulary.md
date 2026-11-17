@@ -16,6 +16,8 @@ Each term below is used with this meaning on every page of these docs.
 | **guardrail** | A rule that refuses a commit or a command, or holds a turn open |
 | **breadcrumb** | A note shown to the agent, at a session's start, when a file changes, before a command or at turn-end |
 | **harness** | The program that runs the agent and calls flow's hooks: Claude Code or Codex |
+| **trust gate** | One of the two conditions Codex sets before it runs a project's hooks: the folder is trusted, and each hook is approved. See [the two trust gates](./codex.md#the-two-trust-gates) |
+| **redirect** | A command guardrail whose message names the command to run instead. See [how to block or redirect a command](../how-to/block-a-command.md#redirect-a-command) |
 | **actor** | The categories recorded for an agent, read from evidence the harness wrote. `.for(…)` binds a rule to one or more of them. A check reads them from `ctx.actor` |
 | **check** | A function of `ctx` that returns `ctx.ok()` or `ctx.fail(detail)`: a stock one, or your own via `defineCheck`. See [the check contract](./ctx.md#the-check-contract) |
 | **ctx** | The one argument a check is called with, and its only access to the world: the event facts (`file · staged · deleted · message · command · turn · actor · moment`) and the effects (`fs · exec · git`). See [what a check is given](./ctx.md) |

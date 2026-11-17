@@ -27,7 +27,7 @@ You see the fault in three places. Delete a `.message(…)` from an entry and sa
 ```
 flow 0.4.0 — the config will not load, so every guardrail and breadcrumb here is OFF.
   …
-  ✗ missing-mandatory: `house.noMarkedFiles` never said .message(…). Nothing in this grammar defaults — an absent key is absent, not a fallback.
+  ✗ missing-mandatory: `house.noTodo` never said .message(…). Nothing in this grammar defaults — an absent key is absent, not a fallback.
 1 red line — flow is NOT fully in force here.
 ```
 

@@ -74,7 +74,7 @@ A guardrail is a rule that refuses a commit or a command, or holds a turn open. 
 | `.at(…moments)` | moments | **Mandatory.** When it runs. See [moments](./moments.md) |
 | `.on(…globs)` | globs | The files it judges at `commit`. With no `.on(…)`, a commit rule is called once, with the whole staged set. `.on()` with no globs is refused. A command rule takes none |
 | `.ignore(…globs)` | globs | Carve-outs from `.on(…)`. `.ignore()` with no globs is refused |
-| `.for(…categories)` | categories | Binds the rule to actors. It runs only for a session that has at least one of the categories. With no `.for(…)`, it runs for every session |
+| `.for(…categories)` | categories | Binds the rule to actors. It runs only for an agent that has at least one of the categories. With no `.for(…)`, it runs for every agent |
 | `.everywhere()` | none | At `command`, also judges a command that runs outside the repository. See [a command outside the repository](./parse.md#a-command-outside-the-repository) |
 | `.check(fn)` | a check | **Mandatory.** A function of `ctx`, or a stock check such as `textBan({…})` |
 | `.message(str)` | string | **Mandatory.** What the blocked person reads |
@@ -104,7 +104,7 @@ A case is a canned `ctx`. Its shape picks which moment's dialect it speaks, and 
 | --- | --- |
 | `"a string"` or `{ command }` | command |
 | `{ path, content }` | commit, with that one file staged. Add `existed: true` or `existed: false` to say whether the last commit has the file: it sets `ctx.file.existed` |
-| `{ staged }` | commit. Add `added: [...]` to list the staged paths the last commit does not have: it sets each file's `ctx.file.existed`. Add `unchanged: [...]` to list the staged paths identical to the last commit, as `flow hook commit --all` passes them: it sets each one's `ctx.file.unchanged`. Add `deleted: { path: content }` to list the files the commit deletes, each with its content as the last commit has it: it sets `ctx.deleted` |
+| `{ staged }` | commit. Add `added: [...]` to list the staged paths the last commit does not have: it sets each file's `ctx.file.existed`. Add `unchanged: [...]` to list the staged paths identical to the last commit, as `flow hook commit --all` passes them: it sets each one's `ctx.file.unchanged`. Add `deleted: { path: content }` to list the files the commit deletes, each with its content as the last commit has it: it sets `ctx.deleted` to their paths, and a `protectedPath` rule is called with each one |
 | `{ message }` | commit, in the commit-message hook: it sets `ctx.message`. Add `staged`, as above. A rule with a `{ message }` case runs in that hook |
 | `{ actions }` | turn-end |
 
@@ -143,7 +143,7 @@ Any case may include a `world`, for a rule that reaches past its facts. A reach 
 
 ## Categories
 
-`defineCategory(name, classify)` is a name with its recognizer, bound to a rule with `.for(…)`. The classifier reads host-written evidence, never a claim the session made about itself.
+`defineCategory(name, classify)` is a name with its recognizer, bound to a rule with `.for(…)`. The classifier reads evidence the harness wrote, never a claim the agent made about itself.
 
 `spawnedAs(recipe)` builds a classifier from the agent type a spawn was registered as. The recipe is an object:
 
@@ -160,7 +160,7 @@ const builder = defineCategory("builder", spawnedAs({ types: ["builder"] }));
 // …then, on an entry:  .for(subagent)
 ```
 
-Why a category reads evidence the host wrote is on [rules bound to who](../explanation/rules-bound-to-who.md).
+Why a category reads evidence the harness wrote is on [rules bound to who](../explanation/rules-bound-to-who.md).
 
 ## What the loader refuses
 

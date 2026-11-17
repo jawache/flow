@@ -16,12 +16,7 @@ Git holds everything a commit is before it records it, and flow reads it from gi
 
 Nothing here depends on how the files were written. An edit tool, `sed -i`, a script and a recipe all end as the same staged content. That is why content rules judge at the commit.
 
-**What flow does not see at a commit:**
-
-- **A commit git runs no refusing hook for.** A cherry-pick, a revert and a rebase's picks are recorded without flow being called.
-- **A merge commit.** Git calls its hooks, and flow passes it: the staged files are other people's merged work, and the message is git's own.
-- **A commit with `--no-verify`.** Git skips both hooks. A command guardrail can refuse the flag.
-- **Work that is never committed.** A file written, used and deleted in the working tree is not judged.
+flow does not judge every commit: a merge, a cherry-pick, a revert, a rebase and a commit with `--no-verify` pass. [The commit moment](../reference/moments.md#the-commit-moment) has the table. Work that is never committed is not judged.
 
 ## At a command: the parse
 

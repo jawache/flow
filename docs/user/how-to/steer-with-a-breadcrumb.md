@@ -61,11 +61,11 @@ The breadcrumb is shown after the first tool call that changes a matching file, 
 
 ## Variants
 
-- **If the note is about a command**, use `.at(command)` with the command lines in `.on(…)`, such as `.on("npm install*")`. It is shown before the command runs.
-- **If you want a broad note and finer ones**, write both. Notes stack, so a file can match a general note and a specific one.
-- **If the note is long**, put it in a file and use `.file(path)` in place of `.text(…)`.
+- **If the breadcrumb is about a command**, use `.at(command)` with the command lines in `.on(…)`, such as `.on("npm install*")`. It is shown before the command runs.
+- **If you want a broad breadcrumb and finer ones**, write both. Breadcrumbs stack, so a file can match a general one and a specific one.
+- **If the text is long**, put it in a file and use `.file(path)` in place of `.text(…)`.
 
-[When a breadcrumb is shown again](../reference/moments.md#when-a-breadcrumb-is-shown-again) says when an agent is shown the same note twice.
+[When a breadcrumb is shown again](../reference/moments.md#when-a-breadcrumb-is-shown-again) says when an agent is shown the same breadcrumb twice.
 
 ---
 

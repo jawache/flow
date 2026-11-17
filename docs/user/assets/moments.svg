@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 366" role="img" aria-labelledby="t">
+<title id="t">The harness's hooks and git's hooks, each delivering one of flow's five moments</title>
+<style>text{font:14px system-ui,sans-serif;fill:#1f2328}.h{font-weight:600}.b{fill:#f6f8fa;stroke:#8c959f}.m{fill:#ddf4ff;stroke:#0969da}.l{stroke:#57606a;stroke-width:1.5;fill:none}.s{font-size:12px;fill:#57606a}@media(prefers-color-scheme:dark){text{fill:#e6edf3}.b{fill:#161b22;stroke:#6e7681}.m{fill:#0c2d6b;stroke:#58a6ff}.l{stroke:#8b949e}.s{fill:#8b949e}}</style>
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#57606a"/></marker></defs>
+<text class="h" x="20" y="36">Who calls flow</text><text class="h" x="130" y="36">When</text><text class="h" x="430" y="36">Moment</text><text class="h" x="560" y="36">What flow does</text>
+<text x="20" y="90">harness</text>
+<rect class="b" x="125" y="70" width="230" height="32" rx="6"/><text x="137" y="91">session or subagent starts</text>
+<path class="l" d="M355 86H420" marker-end="url(#a)"/><text class="s" x="364" y="80">calls</text>
+<rect class="m" x="424" y="70" width="110" height="32" rx="6"/><text x="436" y="91">session</text>
+<text class="s" x="560" y="91">breadcrumb shown</text>
+<text x="20" y="136">harness</text>
+<rect class="b" x="125" y="116" width="230" height="32" rx="6"/><text x="137" y="137">before a shell command</text>
+<path class="l" d="M355 132H420" marker-end="url(#a)"/><text class="s" x="364" y="126">calls</text>
+<rect class="m" x="424" y="116" width="110" height="32" rx="6"/><text x="436" y="137">command</text>
+<text class="s" x="560" y="137">guardrail refuses · breadcrumb shown</text>
+<text x="20" y="182">harness</text>
+<rect class="b" x="125" y="162" width="230" height="32" rx="6"/><text x="137" y="183">after a tool call</text>
+<path class="l" d="M355 178H420" marker-end="url(#a)"/><text class="s" x="364" y="172">calls</text>
+<rect class="m" x="424" y="162" width="110" height="32" rx="6"/><text x="436" y="183">change</text>
+<text class="s" x="560" y="183">breadcrumb shown</text>
+<text x="20" y="228">harness</text>
+<rect class="b" x="125" y="208" width="230" height="32" rx="6"/><text x="137" y="229">an agent hands back</text>
+<path class="l" d="M355 224H420" marker-end="url(#a)"/><text class="s" x="364" y="218">calls</text>
+<rect class="m" x="424" y="208" width="110" height="32" rx="6"/><text x="436" y="229">turn-end</text>
+<text class="s" x="560" y="229">guardrail holds the turn · breadcrumb shown</text>
+<text x="20" y="274">git</text>
+<rect class="b" x="125" y="254" width="230" height="32" rx="6"/><text x="137" y="275">before a commit</text>
+<path class="l" d="M355 270H420" marker-end="url(#a)"/><text class="s" x="364" y="264">calls</text>
+<rect class="m" x="424" y="254" width="110" height="32" rx="6"/><text x="436" y="275">commit</text>
+<text class="s" x="560" y="275">guardrail refuses: staged and deleted files</text>
+<text x="20" y="320">git</text>
+<rect class="b" x="125" y="300" width="230" height="32" rx="6"/><text x="137" y="321">the commit message</text>
+<path class="l" d="M355 316H420" marker-end="url(#a)"/><text class="s" x="364" y="310">calls</text>
+<rect class="m" x="424" y="300" width="110" height="32" rx="6"/><text x="436" y="321">commit</text>
+<text class="s" x="560" y="321">guardrail refuses: the message</text>
+</svg>

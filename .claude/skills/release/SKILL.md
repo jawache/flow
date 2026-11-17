@@ -121,4 +121,4 @@ The release is done when the tag is on the remote and the installed flow prints 
 | The gate refuses inside `just release`, after `package.json` and `CHANGELOG.md` are stamped | commit-and-tag-version has no rollback | `git stash push -m release-stamp` the stamped files, fix the cause, drop that entry by its label, run `just release` again |
 | The installed flow prints nothing, or `dist/flow.mjs` is missing | The tag points at the release commit, not the commit that holds `dist/` | Tell the human. The fix is the next version, cut with `just release` |
 
-You must not pass `--no-verify` to any commit, and you must not run `npm publish`: flow is not on npm.
+You must not pass `--no-verify` to any commit, and you must not publish flow to npm.

@@ -126,7 +126,7 @@ Once both hooks git runs call flow, and are executable when git runs them itself
 For Codex with no hook run, the line names the two trust gates as the likely reason:
 
 ```
-codex   registered · no hook has run here
+  ✓ codex: registered · no hook has run here
         Codex runs a project's hooks only in a trusted folder, and each hook only once approved in /hooks
 ```
 
@@ -150,7 +150,7 @@ codex   registered · no hook has run here
 A hook has two codes: 0 lets the action go ahead, and 2 refuses it and shows standard error to the agent.
 
 - **A blocked action** exits 2, from every hook of a harness and from both git hooks, with the message on standard error.
-- **A config that does not load** exits 2 from the git hooks only. Every hook of a harness exits 0: `pre-tool-use`, `session-start` and `subagent-start` pass the load error to the agent as a note, and `stop` and `subagent-stop` write it to standard error and let the turn end.
+- **A config that does not load** exits 2 from the git hooks only. Every hook of a harness exits 0: `pre-tool-use`, `post-tool-use`, `session-start` and `subagent-start` pass the load error to the agent as a note, and `stop` and `subagent-stop` write it to standard error and let the turn end.
 
 These commands exit 1:
 

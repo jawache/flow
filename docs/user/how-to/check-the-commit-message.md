@@ -61,8 +61,6 @@ newDependency: guardrail()
   }),
 ```
 
-A merge commit's message is not judged. Git writes it.
-
 ---
 
 [Index](../index.md) · every option: [`commitMessage`](../checks/commit-message.md) · [`commitReason`](../checks/commit-reason.md) · which commits are judged: [the commit moment](../reference/moments.md#the-commit-moment)

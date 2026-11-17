@@ -19,7 +19,11 @@ Codex is a harness: it runs the agent and calls flow's hooks. The same `flow.con
 | `Stop` | none | `flow hook stop` | the `turn-end` moment, for the main session |
 | `SubagentStop` | none | `flow hook subagent-stop` | the `turn-end` moment, for a subagent |
 
-Each registration runs the repository's own `node_modules/@jawache/flow/dist/flow.mjs` with `node` when that file is there, and otherwise the `flow` on the `PATH`.
+Each registration runs this command, with its own event. It finds the repository with git, from the folder Codex runs the hook in:
+
+```
+f="$(git rev-parse --show-toplevel)/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook <event>; exec flow hook <event>
+```
 
 ## The two trust gates
 
