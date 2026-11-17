@@ -1,16 +1,16 @@
 ---
-summary: "refuse a commit when your test suite, typecheck or any tool exits non-zero, with `execPasses`"
+summary: "refuse a commit when your typecheck, lint, tests or coverage bar fails, with `execPasses`"
 ---
 
 # How to gate a commit on a tool
 
-This guide shows you how to run your test suite, a typecheck or any other tool before each commit, and refuse the commit when it fails.
+This guide shows you how to run the typecheck, the lint, the tests or the coverage bar before each commit, and refuse the commit when one fails.
 
 1. Open the pack that holds your repo's rules. If you have none, create `guards/house.ts` and bind it with `pack(house)` in `flow.config.ts`:
 
    ```
    // guards/house.ts — the rules of this house
-   import { banCommands, commit, command, definePack, guardrail, textBan, write } from "@jawache/flow";
+   import { banCommands, command, commit, definePack, guardrail, textBan } from "@jawache/flow";
 
    export const house = definePack("house", {
      // …entries…
@@ -40,6 +40,8 @@ An exit code of 0 passes. Any other exit code refuses the commit, and the refusa
 
 - **If you want the tool to run only when one area changed**, list that area's globs in `changed`. Leave `changed` out to run the tool on every commit.
 - **If the tool takes a list of files**, put `{files}` in `run`. flow replaces it with the changed files.
+- **If you want one entry per tool**, add an entry for each: the typecheck, the lint, the tests. Each refusal then names the tool that failed.
+- **If you want a coverage bar**, run the tool that enforces it, such as `execPasses({ run: "npx vitest run --coverage", changed: ["src/**"] })`, with the threshold set in that tool's own config. Code written before its test passes, as long as the commit meets the bar.
 
 ---
 

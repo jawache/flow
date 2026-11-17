@@ -1,52 +1,83 @@
 ---
-summary: "the seven moments a rule runs at, and how each is delivered"
+summary: "the five moments a rule runs at, and exactly when each happens"
 ---
 
 # Moments
 
-A moment is when a rule runs. A guardrail runs at one or more moments, set with `.at(…)`. A breadcrumb may be set at four: `session`, `touch`, `command` and `turn-end`. The Claude Code adapter shows a breadcrumb at all four.
+A moment is when a rule runs. A guardrail runs at one or more moments, set with `.at(…)`. A breadcrumb does too.
 
 ## The moments
 
-Moments are imported symbols: `session · touch · write · command · deletion · commit · turnEnd`.
+Moments are imported symbols: `commit · command · session · change · turnEnd`.
 
-| Symbol | Moment | For | Runs |
-| --- | --- | --- | --- |
-| `session` | session | breadcrumb | Claude Code's `SessionStart` hook: a chat starts, resumes, is cleared or is compacted. Its `SubagentStart` hook: a subagent starts or is resumed. A breadcrumb bound with `.for(…)` to a category recognised by the subagent's brief is shown at the subagent's first tool call instead, once its brief can be read. A `session` breadcrumb is shown once per session and agent. A compaction, or a resume that keeps the session, does not show it again |
-| `touch` | touch | breadcrumb | After a tool call whose input names a matching file in `file_path`, `notebook_path`, `path` or `glob` (Read, Edit, Write, Grep, Glob and others), and after a call that changed a matching file. Before a shell command that reads a matching file, such as `cat`, `head`, `sed -n` or `grep`. The note is shown the first time, and again once the context size has grown by `driftTokens` since the last showing, 200,000 by default. A compaction clears the marks of every breadcrumb except `session` ones, so each note is shown again at its next touch |
-| `write` | write | guardrail | A file is created or changed. When the Edit or Write tool makes the change, the rule runs before the change reaches the disk, on the would-be content of the file held in memory. When anything else makes the change, such as a heredoc, `sed -i`, a script, a recipe or an MCP tool, the rule runs the moment the change has reached the disk, and a refusal writes the previous content back. A refused write never stays on disk. A file that matches HEAD after the call, when HEAD is a commit the repo already has, is not judged here, because git put it there: see [Files git puts in place](../explanation/what-the-guard-sees.md#files-git-puts-in-place) |
-| `command` | command | either | Before a shell command runs. A guardrail refuses it. A breadcrumb is shown as a note before it runs, scoped by `.on(…)` to the commands it is about, and again after drift, as at `touch` |
-| `deletion` | delete | guardrail | A file is removed. When an `rm` command would remove it, the rule runs before that command runs. When anything else removes it, the rule runs the moment the file is gone, and a refusal writes the file back. A file the call removed that HEAD held before the call and does not hold after it is not judged here, when HEAD after the call is a commit the repo already has: see [Files git puts in place](../explanation/what-the-guard-sees.md#files-git-puts-in-place) |
-| `commit` | commit | guardrail | The git pre-commit gate, over the staged changes. It runs for commits people make too. A rule bound at both `deletion` and `commit`, with paths in `.on(…)`, also runs on each file the commit deletes, as a delete |
-| `turnEnd` | turn-end | either | Claude Code's `Stop` hook, when the main chat hands back, and its `SubagentStop` hook, when a subagent hands back. A guardrail holds the turn open. A breadcrumb is shown as a note. See [the turn-end moment](#the-turn-end-moment) |
+| Symbol | Moment | Guardrail | Breadcrumb | Runs |
+| --- | --- | --- | --- | --- |
+| `commit` | commit | yes | no | Git is about to record a commit. A guardrail judges the staged files, the files the commit deletes, and the commit message. See [the commit moment](#the-commit-moment) |
+| `command` | command | yes | yes | Before a shell command runs. A guardrail refuses it. A breadcrumb is shown before it runs, scoped by `.on(…)` to the commands it is about |
+| `session` | session | no | yes | A session starts, resumes or is cleared, and a subagent starts or is resumed. A breadcrumb bound with `.for(…)` is shown only to an agent of that category |
+| `change` | change | no | yes | After a tool call that changed a file matching the breadcrumb's `.on(…)`. A created file and a deleted file are changes. See [the change moment](#the-change-moment) |
+| `turnEnd` | turn-end | yes | yes | An agent hands back: the main session or a subagent. A guardrail holds the turn open. A breadcrumb is shown. See [the turn-end moment](#the-turn-end-moment) |
 
-`deletion` and `turnEnd` are spelled that way because `delete` is a reserved word. The moment is still called "delete".
+`turnEnd` is spelled that way because a symbol has no hyphen. The moment is called "turn-end".
 
-How flow detects a change made outside the Edit tool is on [what the guard sees](../explanation/what-the-guard-sees.md).
+Which hook of each harness delivers each moment is on [flow under Claude Code](./claude-code.md) and [flow under Codex](./codex.md).
 
 ## The commit moment
 
-Git's own pre-commit hook delivers the commit moment, not the harness. The hook is `.githooks/pre-commit`, and it runs `flow hook commit`.
+Git delivers the commit moment, not the harness, so it runs for a commit a person makes too. Two git hooks deliver it:
+
+| Hook | File | Runs | Judges |
+| --- | --- | --- | --- |
+| before the commit | `.githooks/pre-commit` | `flow hook commit` | the staged files, and the files the commit deletes |
+| the commit message | `.githooks/commit-msg` | `flow hook commit-msg` | the message |
 
 - **The staged changes** are read from git: the files the commit adds, changes and deletes.
 - **A rename** is, to git, a deletion of the old path plus an add of the new one.
-- **A rule with no `.on(…)`** is called once, with the whole staged set in `ctx.staged`.
-- **A rule with `.on(…)`** is called once per staged file in scope, with that file in `ctx.file`.
-- **A file the commit deletes** goes only to a rule bound at both `deletion` and `commit`, with paths in `.on(…)`.
+- **A rule with no `.on(…)`** is called once, with the whole staged set in `ctx.staged` and the deleted paths in `ctx.deleted`.
+- **A rule with `.on(…)`** is called once per added or changed file in scope, with that file in `ctx.file`.
+- **A file the commit deletes** is judged by [`protectedPath`](../checks/protected-path.md), which is called once per deleted file in scope. Your own check reads `ctx.deleted`.
+- **A rule that reads the message** runs in the commit-message hook, with the message in `ctx.message`. Those are the stock checks [`commitMessage`](../checks/commit-message.md) and [`commitReason`](../checks/commit-reason.md), and any rule of your own with a `{ message }` case. Every other commit rule runs in the hook before the commit.
+- **The message** is as git records it: comment lines, and the diff that `git commit -v` adds, are removed.
+
+Which commits git runs the hooks for:
+
+| Command | Judged |
+| --- | --- |
+| `git commit`, and `git commit --amend` | the staged files and the message |
+| `git merge`, with or without a conflict | nothing. A merge commit passes |
+| `git cherry-pick`, `git revert`, `git rebase` | nothing. Git runs no hook that can refuse them |
+| `git commit --no-verify` | nothing. Git skips both hooks |
+
+## The change moment
+
+A `change` breadcrumb is shown after a tool call that changed a file under its `.on(…)` globs.
+
+- **What changed** is found by comparing git's list of changed paths before and after the call. Any tool counts: Edit, Write, a shell command, a script the command ran.
+- **A file git ignores** is not in git's list, so its change shows no breadcrumb.
+- **A call that edits and commits in one line** leaves git's list clean. flow reads the files of the commit as the changed paths.
+- **Another worktree of the same repository** is read too, when the call worked in it. The rules are those of the config in the folder the session started in.
+- **The breadcrumb is shown after the first change,** with the tool's result. The agent reads it before its next call.
 
 ## The turn-end moment
 
-A turn-end rule runs each time an agent hands back: the main chat or a subagent. The same rules run at both.
+A turn-end rule runs each time an agent hands back: the main session or a subagent. The same rules run at both.
 
-- **The main chat** hands back through Claude Code's `Stop` hook.
-- **A subagent** hands back through Claude Code's `SubagentStop` hook. A rule with no `.for(…)` runs for it, as at every other moment. A rule with `.for(…)` runs only for an agent that has one of the categories it names, as [rules bound to who](../explanation/rules-bound-to-who.md) shows.
-- **Claude Code's internal agents** also send `SubagentStop`. They make prompt suggestions and answer `/btw` side questions. flow runs no guardrail and shows no note for them.
+- **A rule with no `.for(…)`** runs for both. A rule with `.for(…)` runs only for an agent that has one of the categories it names, as [rules bound to who](../explanation/rules-bound-to-who.md) shows.
+- **A harness's internal agents,** such as the one that makes prompt suggestions, are not judged and are shown nothing.
 - **A guardrail** holds the turn open, and its message is the agent's next instruction. The agent acts on it, then hands back again.
-- **A breadcrumb** is shown as a note. The agent takes one more turn to read it, then hands back again.
-- **When a note shows:** the first time, and again once the context size has grown by `driftTokens` since the last showing, as at `touch`.
-- **A guardrail and a note at the same hand-back** are passed to the agent together.
-- **A hand-back that a stop hook already held open** is marked by Claude Code with `stop_hook_active`. flow lets it through: it runs no guardrail and shows no note. So flow never holds an agent open twice in a row.
-- **`ctx.turn`** holds the actions of the agent that hands back, read from that agent's own transcript.
+- **A breadcrumb** is shown. The agent takes one more turn to read it, then hands back again.
+- **A guardrail and a breadcrumb at the same hand-back** are passed to the agent together.
+- **A hand-back that a hook already held open** is let through: flow runs no guardrail and shows no breadcrumb. So flow never holds an agent open twice in a row.
+- **`ctx.turn`** holds the actions of the agent that hands back.
+
+## When a breadcrumb is shown again
+
+A breadcrumb is shown to an agent once. It is shown to the same agent again in two cases:
+
+- **After a compaction.** A compaction removes the breadcrumb's text from the agent's context. Every breadcrumb except a `session` one is shown again the next time its moment happens.
+- **After the context grows by `driftTokens`** since the breadcrumb was last shown, 200,000 tokens by default. This applies to every breadcrumb except a `session` one. `driftTokens` is a [setting](./config.md#settings).
+
+A `session` breadcrumb is shown once per session and agent. A compaction, or a resume that keeps the session, does not show it again.
 
 ## Scope at the command moment
 
@@ -57,4 +88,4 @@ A turn-end rule runs each time an agent hands back: the main chat or a subagent.
 
 ---
 
-[Index](../index.md) · the verbs that set a moment: [the config](./config.md) · what a check is called with at each moment: [the ctx a check reads](./ctx.md) · the commands: [the flow command](./cli.md)
+[Index](../index.md) · the verbs that set a moment: [the config](./config.md) · what a check is called with at each moment: [what a check is given](./ctx.md) · the commands: [the flow command](./cli.md)

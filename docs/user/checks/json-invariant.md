@@ -1,5 +1,5 @@
 ---
-summary: "reads: file body · fires at: write · commit"
+summary: "reads: file body · fires at: commit"
 ---
 
 # `jsonInvariant`
@@ -14,13 +14,13 @@ Holds one or more assertions over the values in a JSON file. Each assertion digs
 
 Set `required: true` on any path that must exist. Without it, an assertion on a missing path passes.
 
-A file that does not parse as JSON passes every assertion, `required` included. The check runs on the file as it would be after each edit, and a half-typed file is often not valid JSON yet.
+A file that does not parse as JSON passes every assertion, `required` included.
 
 ## Example
 
 ```
 strictStaysOn: guardrail()
-  .at(write, commit)
+  .at(commit)
   .on("tsconfig.json")
   .check(jsonInvariant({ assert: [{ path: "compilerOptions.strict", equals: true, required: true }] }))
   .message("Strictness is load-bearing — a red squiggle is a defect found, not a setting to relax.")

@@ -1,5 +1,5 @@
 ---
-summary: "reads: file body · fires at: write · commit"
+summary: "reads: file body · fires at: commit"
 ---
 
 # `astGrep`
@@ -17,7 +17,7 @@ Bans or requires a structural code pattern, parsed rather than text-matched — 
 
 ```
 noRawEslint: guardrail()
-  .at(write, commit)
+  .at(commit)
   .on("eslint.config.js")
   .check(astGrep({
     language: "javascript",

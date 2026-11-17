@@ -8,7 +8,7 @@ Bans a shell command before it runs. You name each banned command in plain words
 
 ## How a command is matched
 
-flow parses the command line with [unbash](https://github.com/webpro-nl/unbash), a bash parser, into a list of commands, each one program and its arguments. [The parse](../explanation/what-the-guard-sees.md#the-parse-what-a-command-is) explains how. Each entry in `ban` goes through the same parser: the first word is the program, and the words after it are its arguments. A command matches the entry when both of these hold:
+flow parses the command line with [unbash](https://github.com/webpro-nl/unbash), a bash parser, into a list of commands, each one program and its arguments. [The command parse](../reference/parse.md) states everything it follows. Each entry in `ban` goes through the same parser: the first word is the program, and the words after it are its arguments. A command matches the entry when both of these hold:
 
 - **The program is the same.** The program's path is ignored on both sides, so `/usr/local/bin/work plan tick` has the program `work`.
 - **Every argument of the entry is among the command's arguments.** Order and position do not matter, and other arguments may come before, between and after them. So `"work plan tick"` matches `work plan tick F7.B1` and `work --verbose plan A B tick`.
@@ -32,7 +32,19 @@ An entry with no arguments, such as `"curl"`, matches every command that runs th
 - **A here-string fed to a shell.** The text of a `<<<` here-string read by `bash`, `sh`, `zsh`, `dash` or `ksh`, such as `bash <<< 'rm -rf build'`, is commands. Each one is matched.
 - **A line that does not parse.** A line flow cannot parse, such as one with an unclosed quote, is refused when the entry's program and every one of its arguments appear in the line as whole words.
 
-A flag that takes a value attached to it, such as `-mfix`, counts letter by letter like any bundle: `-m`, `-f`, `-i`, `-x`. A rule that must tell a flag from its value, as the `git` pack's rules do, is a check of its own that reads [`ctx.commands`](../reference/ctx.md#ctxcommands). [How to write your own check](../how-to/write-your-own-check.md) gives the steps.
+A flag that takes a value attached to it, such as `-mfix`, counts letter by letter like any bundle: `-m`, `-f`, `-i`, `-x`. A rule that must tell a flag from its value is a check of its own that reads [`ctx.commands`](../reference/ctx.md#ctxcommands). [How to write your own check](../how-to/write-your-own-check.md) gives the steps.
+
+## A redirect
+
+A redirect is a ban whose message names the command to run instead. The agent reads the message and runs that command.
+
+```
+useTheRecipe: guardrail()
+  .at(command)
+  .check(banCommands({ ban: ["gofumpt"] }))
+  .message("Run `just fmt`: it runs gofumpt with this repo's settings.")
+  .test({ pass: ["just fmt"], block: ["gofumpt -w ."] }),
+```
 
 ## Options
 

@@ -21,7 +21,7 @@ Every guardrail has its own cases, written on the entry with `.test({ pass, bloc
    })
    ```
 
-4. **If the rule is about a file, a commit or the turn**, write each case as an object. Add a `world` when the check reads more than its input:
+4. **If the rule is about a commit or the turn**, write each case as an object. Add a `world` when the check reads more than its input:
 
    ```
    .test({
@@ -32,9 +32,10 @@ Every guardrail has its own cases, written on the entry with `.test({ pass, bloc
 
    Use the shape for the rule's moment:
 
-   - **`path` and `content`** for a write rule.
+   - **`path` and `content`** for a commit rule about one file.
+   - **`staged`** for a commit rule about the whole commit, with `deleted` for the files it deletes.
+   - **`message`** for a commit rule that reads the message.
    - **`command`** for a command rule, when the case also needs a `world` or an `actor`.
-   - **`staged`** for a commit rule.
    - **`actions`** for a turn-end rule.
    - **`world`**, with `fs`, `exec`, `gitDiff` or `staged` answers, for a check that reads further.
 

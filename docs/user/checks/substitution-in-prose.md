@@ -4,11 +4,11 @@ summary: "reads: command line · fires at: command"
 
 # `substitutionInProse`
 
-Refuses a command that records prose, such as a commit message or a pull request body, when the shell would run a backtick in it. Inside double quotes or an unquoted heredoc, `` `just test` `` is not Markdown: the shell runs `just test` and puts its output into the text before the command starts. The `git` and `work` packs bind this check for the commands they own.
+Refuses a command that records prose, such as a commit message or a pull request body, when the shell would run a backtick in it. Inside double quotes or an unquoted heredoc, `` `just test` `` is not Markdown: the shell runs `just test` and puts its output into the text before the command starts.
 
 ## What is refused
 
-The check reads [the parse](../explanation/what-the-guard-sees.md#the-parse-what-a-command-is) of the command line, one command at a time.
+The check reads [the parse](../reference/parse.md) of the command line, one command at a time.
 
 - **A command named by a head.** Each head is a command in words, such as `"gh pr"`, matched the way [`banCommands`](./ban-commands.md#how-a-command-is-matched) matches an entry: the same program, and every argument of the head among the command's arguments.
 - **A git command named by its subcommand.** A git command is matched by the subcommand the parse finds after git's own options, so `git -C '/a b' commit` and `git --git-dir /x commit` are both `commit`.
@@ -41,7 +41,7 @@ noBacktickInNotes: guardrail()
   .test({ pass: ["notes add 'run `just test`'"], block: ['notes add "run `just test`"'] }),
 ```
 
-`SUBSTITUTION_MESSAGE` is the message the `git` and `work` packs give with this check. It is exported from `@jawache/flow` beside it.
+`SUBSTITUTION_MESSAGE` is a ready message for this check. It is exported from `@jawache/flow` beside it.
 
 ---
 

@@ -1,41 +1,33 @@
 ---
-summary: "reads: command line · fires at: command"
+summary: "reads: commit message · staged set · fires at: commit"
 ---
 
 # `commitReason`
 
-Makes an act legal when the commit message explains it — the classic being “adding a dependency is fine, adding it silently is not”. The reason lands in git history, where the next reviewer reads it. It fires at `command`, not `commit`: git runs the pre-commit gate before the message exists, so the only place a message can be read is the typed command — which also means it polices agent-typed commits only.
+Makes an act legal when the commit message explains it — the classic being “adding a dependency is fine, adding it silently is not”. The reason lands in git history, where the next reviewer reads it. It reads the message, so it runs in git's commit-message hook, for a commit a person makes as well as an agent's.
 
 ## Options
 
 | Key | Type | Required | Meaning |
 | --- | --- | --- | --- |
 | `token` | string | yes | the word that must start a line of the message, followed by a colon, when the reason is due: `new-dep: zod`. Spaces or tabs may come before the token and before the colon. The match ignores case, so `NEW-DEP: zod` also counts |
-| `whenChanged` | list of globs | no | changed files matching these make the token due. The changed files are what `git diff HEAD --name-only` lists plus every untracked file, so an unstaged edit counts as well as a staged one |
-| `whenAdded` | list of globs | no | ADDED files (not edits) matching these make it due |
+| `whenChanged` | list of globs | no | staged files matching these make the token due |
+| `whenAdded` | list of globs | no | staged files the last commit does not have, matching these, make it due |
 | `except` | list of globs | no | files matching these never make the token due through `whenChanged` or `whenAdded`. A name `diffAdds` finds is still due, even in a file `except` matches |
 | `diffAdds` | list of `{ file, patterns, known? }` | no | the third condition, and the only one not about paths: names this commit ADDED *inside* one named file. `patterns` are regexes with one capture group each — the name; `known` lists the names already there, which are matched and ignored. |
 
-All three conditions report in ONE sentence, each hit marked with why it asked — `(changed)`, `(new)`, `(added in <file>)`. A binding that names only `diffAdds` reads one diff and asks git nothing else, which is why the second example below records one command where the first records three.
+All three conditions report in ONE sentence, each hit marked with why it asked — `(changed)`, `(new)`, `(added in <file>)`. A binding that names `diffAdds` reads the staged diff of each named file, which is why the second example below answers one command in its `world`.
 
 ## Example — a path condition
 
 ```
 newDependency: guardrail()
-  .at(command)
+  .at(commit)
   .check(commitReason({ whenChanged: ["package.json"], token: "new-dep" }))
   .message("Adding a dependency is fine; adding it silently is not — put `new-dep: <name> — <why>` in the message.")
   .test({
-    pass: [{ command: "git commit -m 'feat: x\n\nnew-dep: zod — checked ajv'", world: { exec: {
-      "git diff HEAD --name-only": { stdout: "package.json" },
-      "git diff HEAD --name-only --diff-filter=A": { stdout: "" },
-      "git ls-files --others --exclude-standard": { stdout: "" },
-    } } }],
-    block: [{ command: 'git commit -m "feat: x"', world: { exec: {
-      "git diff HEAD --name-only": { stdout: "package.json" },
-      "git diff HEAD --name-only --diff-filter=A": { stdout: "" },
-      "git ls-files --others --exclude-standard": { stdout: "" },
-    } } }],
+    pass:  [{ message: "feat: x\n\nnew-dep: zod — checked ajv", staged: ["package.json"] }],
+    block: [{ message: "feat: x", staged: ["package.json"] }],
   }),
 ```
 
@@ -45,7 +37,7 @@ A RATCHET on a dispatch surface. “Did this file change” is the wrong questio
 
 ```
 newVerbNeedsCaller: guardrail()
-  .at(command)
+  .at(commit)
   .check(commitReason({
     diffAdds: [{
       file: "flow.ts",
@@ -56,11 +48,11 @@ newVerbNeedsCaller: guardrail()
   }))
   .message("Adding a verb must name its caller — put `caller: <who> — <why>` on a line of its own.")
   .test({
-    pass: [{ command: "git commit -m 'feat: explain\n\ncaller: human — no verb answers it'", world: { exec: {
-      "diff HEAD -- 'flow.ts'": { stdout: '+    case "explain":' },
+    pass: [{ message: "feat: explain\n\ncaller: human — no verb answers it", staged: ["flow.ts"], world: { exec: {
+      "diff --cached -- 'flow.ts'": { stdout: '+    case "explain":' },
     } } }],
-    block: [{ command: 'git commit -m "feat: explain"', world: { exec: {
-      "diff HEAD -- 'flow.ts'": { stdout: '+    case "explain":' },
+    block: [{ message: "feat: explain", staged: ["flow.ts"], world: { exec: {
+      "diff --cached -- 'flow.ts'": { stdout: '+    case "explain":' },
     } } }],
   }),
 ```

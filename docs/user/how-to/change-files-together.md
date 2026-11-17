@@ -10,7 +10,7 @@ This guide shows you how to refuse a commit that changes one file without the fi
 
    ```
    // guards/house.ts — the rules of this house
-   import { banCommands, commit, command, definePack, guardrail, textBan, write } from "@jawache/flow";
+   import { banCommands, command, commit, definePack, guardrail, textBan } from "@jawache/flow";
 
    export const house = definePack("house", {
      // …entries…

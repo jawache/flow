@@ -1,5 +1,5 @@
 ---
-summary: "reads: file path · fires at: write · commit"
+summary: "reads: file path · fires at: commit"
 ---
 
 # `siblingExists`
@@ -16,7 +16,7 @@ A file must have its required companion on disk — every `src/domain/**` needs 
 
 ```
 pureHasTest: guardrail()
-  .at(write, commit)
+  .at(commit)
   .on("src/domain/**/*.ts")
   .ignore("**/*.test.ts")
   .check(siblingExists({ sibling: "{dir}/{name}.test.ts" }))

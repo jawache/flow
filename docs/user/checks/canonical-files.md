@@ -1,5 +1,5 @@
 ---
-summary: "reads: file path · fires at: write · commit"
+summary: "reads: file path · fires at: commit"
 ---
 
 # `canonicalFiles`
@@ -19,7 +19,7 @@ Judges a folder against a canon: which filenames a tier may hold, and/or which f
 
 ```
 docsTwoDoors: guardrail()
-  .at(write, commit)
+  .at(commit)
   .on("docs/**")
   .check(canonicalFiles({ root: "docs", allow: [], folders: ["user", "agent"] }))
   .message("docs/ holds exactly two doors: `user/` (for people) and `agent/` (archival context, for agents). A third folder or a loose file at the top is documentation with no declared audience, which is how a docs folder becomes a drawer.")

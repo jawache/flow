@@ -1,10 +1,10 @@
 ---
-summary: "reads: file path · fires at: write · delete · commit"
+summary: "reads: file path · fires at: commit"
 ---
 
 # `protectedPath`
 
-Refuses a hand-edit of a protected path. The `.on(…)` set *is* the protected set — any file that reaches the check is protected by definition, so matching it is the violation. When the rule is bound at `deletion`, a glob such as `src/generated/**` also covers an `rm -rf` of the folder: each file the command removed is judged after it runs, and written back when refused. Without `existingOnly`, every file in scope is refused, so the rule has only block cases. With `existingOnly: true`, a new file passes, so a pass case can name one.
+Refuses a commit that changes or deletes a protected path. The `.on(…)` set *is* the protected set — any file that reaches the check is protected by definition, so matching it is the violation. It is the one stock check called for a file the commit deletes. Without `existingOnly`, every file in scope is refused, so the rule has only block cases. With `existingOnly: true`, a new file passes, so a pass case can name one.
 
 A file identical to the one in the last commit passes, with or without `existingOnly`. Only `flow hook commit --all` passes such a file to the check, because it checks every file in the repo and most of them are as committed.
 
@@ -12,17 +12,17 @@ A file identical to the one in the last commit passes, with or without `existing
 
 | Key | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `existingOnly` | boolean | no | append-only: a NEW file here is fine, but an existing one may not be edited or deleted. At write, a new file is one that was not on disk before the change. At commit, a new file is one the last commit does not have, and a file the commit deletes is refused when the rule is bound at both `deletion` and `commit`. A rename is refused by its old path |
+| `existingOnly` | boolean | no | append-only: a NEW file here is fine, but an existing one may not be edited or deleted. A new file is one the last commit does not have. A file the commit deletes is refused. A rename is refused by its old path |
 
 ## Example
 
 ```
 keepGenerated: guardrail()
-  .at(write, deletion, commit)
+  .at(commit)
   .on("src/generated/**")
   .check(protectedPath({}))
   .message("Machine-written — edit the source the header names, then re-run the build.")
-  .test({ block: [{ path: "src/generated/api.ts", content: "" }] }),
+  .test({ block: [{ path: "src/generated/api.ts", content: "" }, { staged: [], deleted: { "src/generated/api.ts": "" } }] }),
 ```
 
 ---

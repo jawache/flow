@@ -2,7 +2,7 @@
 summary: "the check contract, every field of `ctx`, and what each moment fills in"
 ---
 
-# The ctx a check reads
+# What a check is given
 
 A check is a function of `ctx`, and `ctx` is its only access to the world. What is filled in depends on the moment.
 
@@ -29,47 +29,27 @@ A check declares no moments, no schema and no `kind`. The entry's `.at(…)` set
 
 | Field | Is |
 | --- | --- |
-| `ctx.file` | The file this moment is about, `{ path, content, existed, unchanged }`, at a file moment. See [ctx.file](#ctxfile) |
+| `ctx.file` | The staged file this call is about, `{ path, content, existed, unchanged }`, at the commit moment, in a rule with `.on(…)`. See [ctx.file](#ctxfile) |
+| `ctx.staged` | The paths the commit adds or changes, at the commit moment, in every call that moment makes. Under `flow hook commit --all`, every file git lists |
+| `ctx.deleted` | The paths the commit deletes, at the commit moment, in every call that moment makes |
+| `ctx.message` | The commit message as git records it, in the commit-message hook. `null` in the hook before the commit |
 | `ctx.command` | The shell command line, at the command moment |
-| `ctx.commands` | The command line parsed as bash, at the command moment: one entry per simple command, or `null` when the line does not parse. See [ctx.commands](#ctxcommands) |
-| `ctx.staged` | The staged paths, at the commit moment, in every call that moment makes. Under `flow hook commit --all`, every file git lists |
-| `ctx.turn` | The turn's actions (edits and runs), at turn-end. For a subagent, they are that subagent's own actions |
-| `ctx.actor` | The category names that match the session making this change. Each name comes from evidence the host wrote about that session, never from a claim the session made about itself. The stock `oneWriter` check reads this field |
+| `ctx.commands` | The command line parsed as bash, at the command moment: one entry per simple command, or `null` when the line does not parse. Every field of an entry is on [the command parse](./parse.md#what-a-command-holds) |
+| `ctx.turn` | The turn's actions, at turn-end: each file a call changed, and each shell command run. For a subagent, they are that subagent's own actions |
+| `ctx.actor` | The category names that match the agent making this change. Each name comes from evidence the harness wrote about that agent, never from a claim the agent made about itself |
 | `ctx.moment` | Which moment this is, to branch on |
 | `ctx.fs` · `ctx.exec` · `ctx.git` | The effects: read a file, run a command, query git. They are the only way a check reaches beyond its facts |
 | `ctx.ok()` · `ctx.fail(detail)` | The verdict: a pass, or a block that includes the detail line |
 
 ### ctx.file
 
-- **`content` at write** is the would-be bytes when the Edit tool made the change, and the bytes now on disk when a shell command made it. A check reads `content` the same way in both cases.
-- **`existed` after a shell command** is `true` if a file was at `path` before the command ran, and `false` if the command created it. The check runs after the command, so `ctx.fs.exists(path)` returns `true` for a file the command created.
-- **`existed` at commit** is `true` if the last commit has the file, and `false` if it does not.
-- **`unchanged`** is `true` on a file identical to the one in the last commit. Only `flow hook commit --all` passes such a file to a rule. On every other file, and at every other moment, `unchanged` is not set.
-- **When `existed` is not set**, use `ctx.fs.exists(path)`. At write, it returns whether the file was there before the change.
-- **A file the commit deletes** is passed to a rule bound at both `deletion` and `commit`, with paths in `.on(…)`. `ctx.moment` is `delete`, `content` is the file as the last commit has it, and `existed` is `true`.
-- **At an in-session delete**, `ctx.file` is `{ path, content }`, with no `existed`. `content` is the file before it was removed.
-
-Read `existed` when it is set.
+- **`content`** is the file as staged.
+- **`existed`** is `true` if the last commit has the file, and `false` if it does not.
+- **`unchanged`** is `true` on a file identical to the one in the last commit. Only `flow hook commit --all` passes such a file to a rule. On every other file, `unchanged` is not set.
 
 ### ctx.commands
 
-`ctx.commands` lists every simple command in the line, in the order they appear, including commands nested inside another. A rule without `.everywhere()` is passed only those [inside the repository](../explanation/what-the-guard-sees.md#work-outside-the-repository). [The parse](../explanation/what-the-guard-sees.md#the-parse-what-a-command-is) explains how the line is read.
-
-- **A variable the line sets** is replaced by its value in `program`, `args`, `text` and each redirect's `target`. A variable set elsewhere stays as written, such as `$TMPDIR/x.ts`.
-- **A command in a `for` loop** is listed once per value of the loop, each time with that value filled in and its own `folder`, until the line's loops reach 1,000 copies in all. Past that, as nested loops can reach, the loop is listed once, as written.
-
-Each entry has these fields:
-
-| Field | Is |
-| --- | --- |
-| `program` | The program that runs, after any `FOO=1` assignment and any wrapper: `sudo`, `env`, `nohup`, `nice`, `time`, `timeout`, `command`, `exec` or `xargs`. It keeps any path it is run by, such as `/usr/bin/gh`. `programName(program)`, from `@jawache/flow`, returns it without the path: `gh` |
-| `args` | Its arguments, in order, each as the program receives it, with quotes removed |
-| `text` | `program` and `args` joined by single spaces, for a message to show. A check compares `program` and `args`, never this |
-| `heredocs` | Each heredoc the command is fed, as `{ body, quoted }`. `quoted` is `true` for a delimiter in quotes or after a backslash, such as `<<'EOF'`, where the shell runs nothing in the body |
-| `substitutions` | Each `$( … )` or backtick substitution the shell runs while building this command's arguments and unquoted heredocs, as `{ text, backtick, commands, argument, prefix }`. `commands` lists the commands it runs, nested ones included, as `ctx.commands` lists them. `argument` is the index in `args` of the argument the substitution ends, when only plain text comes before it in that argument. `prefix` is that text: `""` for `-m "$(cat <<'EOF' … EOF)"`, and `--message=` for `--message="$( … )"`. Both are `null` otherwise |
-| `redirects` | Each redirect on the command, as `{ operator, target }`, such as `{ operator: ">", target: "notes.md" }`. A redirect on a group or a loop, such as `{ …; } > out.log`, is listed on each command inside it |
-| `folder` | The absolute folder the command runs in, or `null` when the line does not settle it. In a case, it is relative to where the line starts |
-| `nested` | `true` for a command inside a substitution, a `<( … )`, or a string given to `bash -c`, `sh -c` or `eval`. Also `true` for each line of a heredoc a shell reads, such as `bash <<'EOF'` or `cat <<'EOF' \| sh`, and of a here-string a shell reads, such as `bash <<< 'ls'` |
+`ctx.commands` lists every simple command in the line, in the order they appear, including commands nested inside another. A rule without `.everywhere()` is passed only those [inside the repository](./parse.md#a-command-outside-the-repository).
 
 `ctx.commands` is `null` when the line does not parse, for example when a quote never closes. A check reads `null` as "cannot tell", and the stock checks then pass, except `banCommands`, which refuses the line when the program and every argument it names appear in it as whole words.
 
@@ -78,7 +58,7 @@ This check compares each program without its path, with `programName`, so `/usr/
 ```
 const noBareGh = defineCheck((_opts: Record<string, never>) => (ctx) => {
   const bare = (ctx.commands ?? []).find((c) => programName(c.program) === "gh");
-  return bare === undefined ? ctx.ok() : ctx.fail(`\`${bare.text}\` runs gh directly — run it as \`work gh …\``);
+  return bare === undefined ? ctx.ok() : ctx.fail(`\`${bare.text}\` runs gh directly — run it as \`just gh …\``);
 });
 ```
 
@@ -86,14 +66,14 @@ const noBareGh = defineCheck((_opts: Record<string, never>) => (ctx) => {
 
 | At | The check reads |
 | --- | --- |
-| `write` | `ctx.file` = `{ path, content }`, plus `existed` when a shell command made the change |
-| `delete` | `ctx.file` = `{ path, content }`, where `content` is the file before it was removed |
-| `commit` (a file rule) | When the rule lists globs with `.on(…)`, the check is called once per staged file in scope that is on disk. `ctx.file` = `{ path, content, existed }`, and `ctx.staged` is the whole staged set. Under `flow hook commit --all`, `ctx.file` also has `unchanged: true` when the file is identical to the one in the last commit |
+| `commit` (with `.on`) | The check is called once per staged file in scope that the commit adds or changes. `ctx.file` = `{ path, content, existed }`, with `ctx.staged` and `ctx.deleted` for the whole commit. Under `flow hook commit --all`, `ctx.file` also has `unchanged: true` when the file is identical to the one in the last commit |
+| `commit` (no `.on`) | `ctx.staged` and `ctx.deleted`: the whole commit, in one call |
+| `commit`, in the commit-message hook | `ctx.message`, with `ctx.staged` and `ctx.deleted` |
 | `command` | `ctx.command`: the line about to run, and `ctx.commands`: that line parsed |
-| `commit` (no `.on`) | `ctx.staged`: the whole staged set, in one call |
-| `commit`, for a deleted file | Only when the rule is bound at both `deletion` and `commit`, and lists globs with `.on(…)`. `ctx.moment` is `delete`, and `ctx.file` = `{ path, content, existed: true }`, where `content` is the file as the last commit has it. `ctx.staged` is the whole staged set |
-| `turn-end` | `ctx.turn`: the edits and runs of the turn |
+| `turn-end` | `ctx.turn`: the changed files and the commands of the turn |
 | any | `ctx.actor`, `ctx.fs`, `ctx.exec`, `ctx.git` and `ctx.moment` |
+
+Which commit rules run in which hook is on [the commit moment](./moments.md#the-commit-moment).
 
 ---
 

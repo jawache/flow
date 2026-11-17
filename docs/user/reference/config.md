@@ -4,9 +4,9 @@ summary: "`flow.config.ts`, its settings, a pack, every verb of a guardrail and 
 
 # The config
 
-`flow.config.ts` is the whole guard: a TypeScript file at the repo root that binds packs and overrides their entries. Because the config is TypeScript, most of what this page calls a refusal is a compile error in your editor. The loader checks the same things again at run time, for a config edited outside an editor.
+`flow.config.ts` is the whole guard: a TypeScript file at the repo root that binds packs and overrides their entries. A config stays short because its rules are in packs: the one flow ships, a package you install, and files of your own in `guards/`. Because the config is TypeScript, most of what this page calls a refusal is a compile error in your editor. The loader checks the same things again at run time, for a config edited outside an editor.
 
-The moments a rule runs at are on [moments](./moments.md). What a check is called with is on [the ctx a check reads](./ctx.md).
+The moments a rule runs at are on [moments](./moments.md). What a check is called with is on [what a check is given](./ctx.md).
 
 ## The file
 
@@ -14,13 +14,13 @@ The moments a rule runs at are on [moments](./moments.md). What a check is calle
 
 ```
 import { defineConfig, override, pack } from "@jawache/flow";
-import { git } from "@jawache/flow/packs";
+import { flow } from "@jawache/flow/packs";
 import { house } from "./guards/house.ts";
 
 export default defineConfig([
-  pack(git, { release: "just release" }),           // bind a pack and all its entries
+  pack(flow),                                         // bind a pack and all its entries
   pack(house),
-  override(git.noForcePush).disabled("scratch repo"),   // bend one entry of a bound pack
+  override(house.noForcePush).disabled("scratch repo"),   // bend one entry of a bound pack
 ]);
 ```
 
@@ -40,9 +40,7 @@ The settings apply to the whole run rather than to one entry, so they are `defin
 
 | Key | Type | Meaning |
 | --- | --- | --- |
-| `revert` | `"refused"` or `"all"` | What is put back when a rule refuses a write that has already landed on disk. To revert a file is to write its previous content back over it. `"refused"` is the default: only the files the rule refused are put back, and every other file the same tool call changed stays as that call left it. `"all"` puts back every file that call changed. When two or more agents are running tool calls that overlap in time, `"all"` is ignored, only the refused files are put back, and the refusal message says that happened |
-| `snapshotInclude` | array of globs | Ignored paths to record in the snapshot as well. The snapshot is the record of every file's content that flow takes before a tool call and compares against the tree after the call. It holds what git holds: every tracked file, and every untracked file git does not ignore. A file git ignores is left out unless a glob here matches it. Each entry is a glob: a pattern that matches file paths. A rule that guards `.env` works only while `.env` is in the snapshot. `flow status` shows a red line for a rule that names an ignored path exactly, such as `.on(".env.keys")`, when no glob here includes it. You can add a glob at any time: the call that adds it records the files it brings into the snapshot and does not judge them |
-| `driftTokens` | number | How far the session's context size must grow, in tokens, before a breadcrumb that has already been shown is shown again. It applies to every breadcrumb except a `session` one. The context size is read from the last message's input and cache tokens. The default is 200,000. It is one value for the whole repo, which is why it is not set on entries |
+| `driftTokens` | number | How far the agent's context size must grow, in tokens, before a breadcrumb that has already been shown is shown again. It applies to every breadcrumb except a `session` one. See [when a breadcrumb is shown again](./moments.md#when-a-breadcrumb-is-shown-again). The context size is read from the last message's input and cache tokens. The default is 200,000. It is one value for the whole repo, which is why it is not set on entries |
 | `grammars` | array | Grammars this repo built itself, for `astGrep` rules whose language nobody publishes. Each is `{ name, libraryPath, extensions, languageSymbol? }`. The path is relative to the repo root or absolute, and it is a build artefact. Until the file is built, `flow status` shows a red line naming it, and the rules on that language refuse rather than pass |
 
 ```
@@ -51,7 +49,7 @@ export default defineConfig([pack(house)], { driftTokens: 120_000 });
 
 ## Defining a pack
 
-A pack is a module: `definePack("name", { … })`, whose values are sentences. It lives in `guards/` or in an npm package, in the same shape.
+A pack is a module: `definePack("name", { … })`, whose values are sentences. It lives in `guards/` or in a package of its own, in the same shape.
 
 ```
 import { command, definePack, guardrail } from "@jawache/flow";
@@ -65,19 +63,19 @@ export const house = definePack("house", {
 });
 ```
 
-A pack that needs a repo fact passes a function of its parameters to `definePack` instead of an object. [How to share a pack](../how-to/share-a-pack.md) shows one.
+A pack that needs a repo fact passes a function of its parameters to `definePack` instead of an object. [How to write your own check, and share rules as a pack](../how-to/write-your-own-check.md#share-rules-as-a-pack) shows one.
 
 ## A guardrail
 
-A guardrail is a rule that refuses a write, a command or a commit. Every verb is a method, and saying one twice is a compile error. `.at(…)`, `.check(…)`, `.message(…)` and `.test(…)` are mandatory: a guardrail missing one is a compile error. A guardrail with `.disabled(…)` is exempt from all four.
+A guardrail is a rule that refuses a commit or a command, or holds a turn open. Every verb is a method, and saying one twice is a compile error. `.at(…)`, `.check(…)`, `.message(…)` and `.test(…)` are mandatory: a guardrail missing one is a compile error. A guardrail with `.disabled(…)` is exempt from all four.
 
 | Verb | Value | Meaning |
 | --- | --- | --- |
 | `.at(…moments)` | moments | **Mandatory.** When it runs. See [moments](./moments.md) |
-| `.on(…globs)` | globs | The files it watches. With no `.on(…)`, a file rule watches every path in the repository. `.on()` with no globs is refused. A command rule takes none |
+| `.on(…globs)` | globs | The files it judges at `commit`. With no `.on(…)`, a commit rule is called once, with the whole staged set. `.on()` with no globs is refused. A command rule takes none |
 | `.ignore(…globs)` | globs | Carve-outs from `.on(…)`. `.ignore()` with no globs is refused |
 | `.for(…categories)` | categories | Binds the rule to actors. It runs only for a session that has at least one of the categories. With no `.for(…)`, it runs for every session |
-| `.everywhere()` | none | Also judges work outside the repository. See [work outside the repository](../explanation/what-the-guard-sees.md#work-outside-the-repository) |
+| `.everywhere()` | none | At `command`, also judges a command that runs outside the repository. See [a command outside the repository](./parse.md#a-command-outside-the-repository) |
 | `.check(fn)` | a check | **Mandatory.** A function of `ctx`, or a stock check such as `textBan({…})` |
 | `.message(str)` | string | **Mandatory.** What the blocked person reads |
 | `.description(str)` | string | What the entry is for, for the reader |
@@ -90,10 +88,10 @@ A breadcrumb is a note shown to the agent. It has no rail to block with, so it h
 
 | Verb | Value | Meaning |
 | --- | --- | --- |
-| `.at(…moments)` | `session · touch · command · turn-end` | **Mandatory.** When the note shows. Each time a `turn-end` note shows, the agent takes one more turn to read it. See [the turn-end moment](./moments.md#the-turn-end-moment) |
-| `.on(…globs)` | globs | What the note is about: the files whose touch shows it, or, at `command`, the command lines it is about (`"npm install*"`). `.on()` with no globs is refused |
+| `.at(…moments)` | `session · change · command · turn-end` | **Mandatory.** When the note shows. Each time a `turn-end` note shows, the agent takes one more turn to read it. See [the turn-end moment](./moments.md#the-turn-end-moment) |
+| `.on(…globs)` | globs | What the note is about: the files whose change shows it, or, at `command`, the command lines it is about (`"npm install*"`). `.on()` with no globs is refused |
 | `.ignore(…globs)` | globs | Carve-outs from `.on(…)`. `.ignore()` with no globs is refused |
-| `.for(…categories)` | categories | Binds the note to actors. Only a session that has at least one of the categories is shown it |
+| `.for(…categories)` | categories | Binds the note to actors. Only an agent that has at least one of the categories is shown it. At `session`, this is how a breadcrumb is chosen by the type of agent |
 | `.text(str)` / `.file(path)` | prose | The note itself. Exactly one of the two is mandatory. A breadcrumb with both is refused. On an override, either one replaces the pack's prose, whichever of the two the pack used |
 | `.description(str)` | string | What the entry is for, for the reader |
 | `.disabled(why)` | string | Turns the entry off, on the record. The reason prints in `flow status` |
@@ -105,8 +103,9 @@ A case is a canned `ctx`. Its shape picks which moment's dialect it speaks, and 
 | Case shape | Dialect |
 | --- | --- |
 | `"a string"` or `{ command }` | command |
-| `{ path, content }` | write (a file rule). Add `existed: true` or `existed: false` to test a change a shell command made: it sets `ctx.file.existed` |
-| `{ staged }` | commit. Add `added: [...]` to list the staged paths the last commit does not have: it sets each file's `ctx.file.existed`. Add `unchanged: [...]` to list the staged paths identical to the last commit, as `flow hook commit --all` passes them: it sets each one's `ctx.file.unchanged`. Add `deleted: { path: content }` to list the files the commit deletes, each with its content as the last commit has it: a rule bound at both `deletion` and `commit`, with paths in `.on(…)`, is called with each one, as a delete |
+| `{ path, content }` | commit, with that one file staged. Add `existed: true` or `existed: false` to say whether the last commit has the file: it sets `ctx.file.existed` |
+| `{ staged }` | commit. Add `added: [...]` to list the staged paths the last commit does not have: it sets each file's `ctx.file.existed`. Add `unchanged: [...]` to list the staged paths identical to the last commit, as `flow hook commit --all` passes them: it sets each one's `ctx.file.unchanged`. Add `deleted: { path: content }` to list the files the commit deletes, each with its content as the last commit has it: it sets `ctx.deleted` |
+| `{ message }` | commit, in the commit-message hook: it sets `ctx.message`. Add `staged`, as above. A rule with a `{ message }` case runs in that hook |
 | `{ actions }` | turn-end |
 
 Any case may add `actor: [...]`, the category names of the canned session.
@@ -132,6 +131,11 @@ Any case may include a `world`, for a rule that reaches past its facts. A reach 
 .test({
   pass:  [{ staged: ["a.txt"], world: { fs: { "a.txt": "fine" } } }],
   block: [{ staged: ["a.txt"], world: { fs: { "a.txt": "SECRET" } } }],
+})
+
+.test({
+  pass:  [{ message: "fix(parse): read a quoted heredoc" }],
+  block: [{ message: "wip" }],
 })
 ```
 
@@ -167,6 +171,7 @@ Each refusal is a closed code that includes the entry it names. The loader check
 - **`dead-scope`**, when `.on(…)` comes before `.at(…)`.
 - **`empty-scope`**, when `.on(…)` or `.ignore(…)` spreads a list that turns out empty, such as `.on(...files)`.
 - **`unknown-entry`**, when the override names an entry of a pack the config does not bind.
+- **`unknown-setting`**, always.
 
 | Code | Cause |
 | --- | --- |
@@ -174,7 +179,8 @@ Each refusal is a closed code that includes the entry it names. The loader check
 | `missing-parameter` | A pack with a mandatory typed parameter was bound without it |
 | `unknown-entry` | An override names an entry the pack does not have |
 | `unknown-key` | A verb outside the closed set |
-| `unknown-moment` | A moment the entry's kind has no rail for: a breadcrumb at `write`, `delete` or `commit`, or a guardrail at `session` or `touch` |
+| `unknown-moment` | A moment the entry's kind has no rail for: a breadcrumb at `commit`, or a guardrail at `session` or `change` |
+| `unknown-setting` | A key in the settings that flow does not have. `revert` and `snapshotInclude` are refused this way, and the refusal names [the 0.4 migration guide](../migrations/0.4.0.md) |
 | `missing-mandatory` | A guardrail without `.at`, `.check` or `.message`, or a breadcrumb without `.at` or without `.text`/`.file`. A disabled entry is exempt |
 | `undeclared-category` | `.for(…)` a category nothing declared |
 | `no-block-cases` | A guardrail with no block case. Pass cases alone do not count |
@@ -185,8 +191,8 @@ Each refusal is a closed code that includes the entry it names. The loader check
 | `dead-scope` | An `.on(…)` or `.ignore(…)` on an entry whose moments carry no path or command to narrow, such as a guardrail only at `command` or `turn-end`, or a breadcrumb only at `session` or `turn-end` |
 
 > [!IMPORTANT]
-> If the file does not load at all, every guardrail and breadcrumb is off until it is fixed. Every write, delete and command goes through, and the agent is given the load error with each one. Every commit is refused. See [fail loud](../explanation/fail-loud.md).
+> If the file does not load at all, every guardrail and breadcrumb is off until it is fixed. Every command goes through, and the agent is given the load error with each one. Every commit is refused. See [fail loud](../explanation/fail-loud.md).
 
 ---
 
-[Index](../index.md) · when each rule runs: [moments](./moments.md) · what a check is called with: [the ctx a check reads](./ctx.md) · each stock check's options: [the stock checks](../index.md#the-stock-checks--one-page-each) · the terms: [vocabulary](./vocabulary.md)
+[Index](../index.md) · when each rule runs: [moments](./moments.md) · what a check is called with: [what a check is given](./ctx.md) · each stock check's options: [the stock checks](../index.md#the-stock-checks--one-page-each) · the terms: [vocabulary](./vocabulary.md)

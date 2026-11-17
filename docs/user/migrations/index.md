@@ -4,7 +4,7 @@ summary: "one page per release"
 
 # Upgrading flow — migration guides
 
-Each page lists what a repo that uses flow must change to upgrade to one version from the version before it. A repo that uses flow has a `flow.config.ts`, a `.githooks/pre-commit` written by `flow init`, and flow's hook registrations in the Claude Code settings file.
+Each page lists what a repo that uses flow must change to upgrade to one version from the version before it. A repo that uses flow has a `flow.config.ts`, the git hooks written by `flow init`, and flow's hook registrations for its harness.
 
 ## Upgrade across several versions
 
@@ -15,9 +15,9 @@ Apply the pages one at a time, oldest first. For each page:
 3. Read **What now blocks or passes differently**.
 4. Run the page's **Verify** steps, and fix what they report before you open the next page.
 
-Find the version a repo has now with `npm ls @jawache/flow`, or `flow --version` for a global install.
+Find the version a repo has now with `npx flow --version`, or `flow --version` for a global install of 0.3 or earlier.
 
-From 0.2.2, these pages are in the npm package. After `npm i -D @jawache/flow@<target>`, they are at `node_modules/@jawache/flow/docs/user/migrations/`, and that folder has every guide up to `<target>`. They are also on GitHub, at <https://github.com/jawache/flow/tree/main/docs/user/migrations>.
+These pages are in the package. After the install, they are at `node_modules/@jawache/flow/docs/user/migrations/`, and that folder has every guide up to the installed version. They are also on GitHub, at <https://github.com/jawache/flow/tree/main/docs/user/migrations>.
 
 To give the upgrade to an agent working in that repo, use this instruction, with the two versions filled in:
 
@@ -33,6 +33,7 @@ steps that index lists. Stop and report if a Verify step fails.
 
 | Version | Released | Upgrades from | Changes needed |
 | --- | --- | --- | --- |
+| [0.4.0](./0.4.0.md) | not yet released | 0.3.2 | Install from GitHub as a dev dependency. Re-run `flow init`. Replace the nine packs flow no longer ships. Move rules off `write`, `deletion` and `touch`. Move commit-message rules to `commit`. Remove `oneWriter`, `revert` and `snapshotInclude`. Remove the machine-wide install |
 | [0.3.2](./0.3.2.md) | 2026-11-06 | 0.3.1 | Only for a repo with its own command rule that must judge a command run outside the repository: mark it `.everywhere()` |
 | [0.3.1](./0.3.1.md) | tagged, not published | 0.3.0 | Re-run `flow init` to register `SubagentStart` |
 | [0.3.0](./0.3.0.md) | 2026-10-17 | 0.2.3 | Re-run `flow init`. Add the repo-first line to `.githooks/pre-commit`. Give every guardrail a block case. Rewrite each `banCommands` entry, `substitutionInProse` head and `justfile` `recipes` key in words. Replace `tokenizeCommand` and `gitInvocations` |
@@ -43,5 +44,7 @@ steps that index lists. Stop and report if a Verify step fails.
 | [0.1.2](./0.1.2.md) | 2026-09-16 | 0.1.1 | Only for a repo with its own `depcruise` rule whose layers are written as regexes |
 | [0.1.1](./0.1.1.md) | 2026-09-16 | 0.1.0 | None |
 | [0.1.0](./0.1.0.md) | 2026-09-15 | a checkout linked with `npm link` | Install from npm. Rename the `guard` pack to `flow`. Replace removed checks and entries |
+
+Releases up to 0.3.2 were published to npm, and their guides install from there.
 
 The full list of changes in each release is in [CHANGELOG.md](../../../CHANGELOG.md).
