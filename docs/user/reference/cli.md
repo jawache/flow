@@ -10,7 +10,7 @@ summary: "every `flow` command, what `flow init` writes and `flow uninstall` rem
 
 | Command | What it does |
 | --- | --- |
-| `flow init [--empty]` | Writes `flow.config.ts`, the two git hooks and `.flow/`, sets `core.hooksPath`, and registers flow's hooks for Claude Code and for Codex, inside the repository. `--empty` writes a config that binds no pack. Run it again at any time: it writes only what is missing, and never writes over `flow.config.ts` or a git hook once it exists. It does change one thing you may have set yourself, the hook registrations, listed under [what `flow init` writes](#what-flow-init-writes). When git already runs other hooks, it leaves them alone and prints that flow is not installed, as described under [when git already runs other hooks](#when-git-already-runs-other-hooks) |
+| `flow init [--empty] [--harness <names>]` | Asks which harnesses to register, then writes `flow.config.ts`, the two git hooks and `.flow/`, sets `core.hooksPath`, and registers flow's hooks for each harness you chose, inside the repository. See [what `flow init` asks](#what-flow-init-asks). `--empty` writes a config that binds no pack. Run it again at any time: it writes only what is missing, and never writes over `flow.config.ts` or a git hook once it exists. It does change one thing you may have set yourself, the hook registrations, listed under [what `flow init` writes](#what-flow-init-writes). When git already runs other hooks, it leaves them alone and prints that flow is not installed, as described under [when git already runs other hooks](#when-git-already-runs-other-hooks) |
 | `flow uninstall [--machine]` | Removes what `flow init` wrote in this repo, except `flow.config.ts`. `--machine` also removes the hooks that flow 0.3 wrote to the machine-wide Claude Code settings file. Prints each thing it removed, then the `npm uninstall` command to run next. Each removal is listed under [what `flow uninstall` removes](#what-flow-uninstall-removes). The `flow` pack refuses it when an agent runs it |
 | `flow status [--json]` | Lists every bound rule by moment, and checks each fitting. A fitting that is not in place is a red line with its fix. See [what `flow status` reports](#what-flow-status-reports) |
 | `flow test [config]` | Runs every bound rule's `.test()` cases. The default config is `flow.config.ts` |
@@ -40,6 +40,34 @@ The report's corrections are prompts a person typed that read as pushback, such 
 
 The report counts a file as changed from the log's [`change` rows](./log.md#change), whichever tool changed it.
 
+## What `flow init` asks
+
+In a terminal, `flow init` is interactive.
+
+1. **It detects the harnesses.** A harness is detected when its folder is in the repository, `.claude/` or `.codex/`, or its program is on the `PATH`, `claude` or `codex`.
+2. **It asks which to register,** with each detected harness already selected:
+
+   ```
+   Which harnesses run agents in this repo?
+     [x] Claude Code   detected: .claude/
+     [ ] Codex         not found
+   ```
+
+3. **It prints each warning that applies,** before it writes anything:
+
+   | Warning | When |
+   | --- | --- |
+   | git already runs other hooks | as described under [when git already runs other hooks](#when-git-already-runs-other-hooks) |
+   | flow is not a dev dependency of this repo | `package.json` is missing, or does not list `@jawache/flow`. The hooks then run whatever `flow` is on the `PATH` |
+   | flow's hooks are also in the machine-wide settings file | flow 0.3 wrote them. Each hook would run twice. The warning gives the command that removes them |
+   | Codex runs no hook until you trust the folder and approve the hooks | Codex is chosen. See [the two trust gates](./codex.md#the-two-trust-gates) |
+
+4. **It lists the files it is about to write, and asks to go ahead.**
+
+When `flow init` is not run in a terminal, as when an agent or a script runs it, it asks nothing. It registers the detected harnesses, or both when it detects none, prints the warnings, and writes.
+
+`--harness` names the harnesses and skips the question: `--harness claude-code`, `--harness codex` or `--harness claude-code,codex`.
+
 ## What `flow init` writes
 
 | Path | What it is |
@@ -49,15 +77,14 @@ The report counts a file as changed from the log's [`change` rows](./log.md#chan
 | `.githooks/commit-msg` | The commit-message hook: the same script, ending with `exec flow hook commit-msg "$1"`. Not written when a file is already at that path |
 | `.flow/` | flow's state and logs. It holds its own `.gitignore`, so it is never committed and your `.gitignore` is not changed. Each session's log is `.flow/log/<session id>.jsonl`, described in [the session log](./log.md) |
 | `node_modules/@jawache/flow` | A link to the `flow` that is running. Written only when the repo does not install `@jawache/flow` itself |
-| `.claude/settings.json` | Claude Code's hook registrations, listed on [flow under Claude Code](./claude-code.md#the-hooks) |
-| `.codex/hooks.json` | Codex's hook registrations, listed on [flow under Codex](./codex.md#the-hooks) |
+| `.claude/settings.json` | Claude Code's hook registrations, listed on [flow under Claude Code](./claude-code.md#the-hooks). Written when Claude Code is chosen |
+| `.codex/hooks.json` | Codex's hook registrations, listed on [flow under Codex](./codex.md#the-hooks). Written when Codex is chosen |
 | `core.hooksPath` | Set to `.githooks`, so git runs the two hooks. `flow init` sets it only when it is unset and `.git/hooks` holds no hooks. It is a setting of one clone, so run `flow init` in every new clone |
 
 `flow init` writes every registration inside the repository, whatever the repository is. It writes nothing to a machine-wide file.
 
 - **A registration an older `flow init` wrote in the repo's file** is rewritten in place to the 0.4 command and matcher, and one for an event flow no longer uses is removed.
 - **When `flow init` adds or rewrites a registration,** it writes the whole file back as JSON indented by two spaces. Every key already in the file is kept.
-- **`flow init` ends by printing the two steps you do in Codex,** as [the two trust gates](./codex.md#the-two-trust-gates) describes.
 
 Every hook runs the repo's own `@jawache/flow` package first, then the `flow` on the `PATH` that git and the harness use. They never run a `flow` in the repo's `node_modules/.bin`, because any package can install one there. If neither has it, each hook fails with `flow: not found`, every commit is refused, and `flow status` prints a red `binary` line. [How to install and pin flow](../how-to/install-flow.md) puts `flow` there.
 
@@ -121,7 +148,7 @@ Once both hooks git runs call flow, and are executable when git runs them itself
 | `config` | `flow.config.ts` loads |
 | `git hooks` | git runs both hooks, and both call flow |
 | `binary` | the `flow` the hooks run is found |
-| one line per harness | the harness's hooks are registered in the repository. The line also says when one of its hooks last ran here, from the session log |
+| one line per registered harness | the harness's hooks are registered in the repository. The line also says when one of its hooks last ran here, from the session log |
 
 For Codex with no hook run, the line names the two trust gates as the likely reason:
 

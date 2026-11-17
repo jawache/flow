@@ -8,7 +8,7 @@ Claude Code is a harness: it runs the agent and calls flow's hooks. This page li
 
 ## The hooks
 
-`flow init` registers six hooks in the repository's `.claude/settings.json`.
+When Claude Code is chosen, `flow init` registers six hooks in the repository's `.claude/settings.json`.
 
 | Hook | Matcher | Runs | Delivers |
 | --- | --- | --- | --- |

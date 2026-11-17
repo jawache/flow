@@ -4,7 +4,7 @@ summary: "refuse a commit whose code cites a docs page or section that does not 
 
 # How to check that doc links in code still resolve
 
-This guide shows you how to keep the docs pages your code cites from going stale. A comment that says where a behaviour is documented, such as `docs/user/reference/record.md § Ids`, is refused at commit when the page or the heading is gone.
+This guide shows you how to keep the docs pages your code cites from going stale. A comment that says where a behaviour is documented, such as `docs/user/reference/record.md#ids`, is refused at commit when the page or the heading is gone.
 
 1. Open the pack that holds your repo's rules. If you have none, create `guards/house.ts` and bind it with `pack(house)` in `flow.config.ts`:
 
@@ -28,8 +28,8 @@ This guide shows you how to keep the docs pages your code cites from going stale
      .check(docLinks({ pages: ["docs/user/**/*.md"] }))
      .message("This file cites a docs page or section that does not exist. Fix the citation, or restore the heading.")
      .test({
-       pass: [{ path: "src/id.ts", content: "// docs/user/reference/record.md § Ids", world: { fs: { "docs/user/reference/record.md": "# The record\n\n## Ids\n" } } }],
-       block: [{ path: "src/id.ts", content: "// docs/user/reference/record.md § Idz", world: { fs: { "docs/user/reference/record.md": "# The record\n\n## Ids\n" } } }],
+       pass: [{ path: "src/id.ts", content: "// docs/user/reference/record.md#ids", world: { fs: { "docs/user/reference/record.md": "# The record\n\n## Ids\n" } } }],
+       block: [{ path: "src/id.ts", content: "// docs/user/reference/record.md#idz", world: { fs: { "docs/user/reference/record.md": "# The record\n\n## Ids\n" } } }],
      }),
    ```
 

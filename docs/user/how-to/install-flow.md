@@ -44,9 +44,9 @@ Add `node_modules/` to `.gitignore`.
    npx flow init
    ```
 
-   It writes `flow.config.ts`, the two git hooks in `.githooks/`, and `.flow/`, and registers flow's hooks for Claude Code in `.claude/settings.json` and for Codex in `.codex/hooks.json`. Each file is listed in [the command reference](../reference/cli.md#what-flow-init-writes).
+   It asks which harnesses run agents in the repo, with the ones it detects already selected, and warns you about anything it finds, such as hooks git already runs. Then it writes `flow.config.ts`, the two git hooks in `.githooks/`, and `.flow/`, and registers flow's hooks for each harness you chose: Claude Code in `.claude/settings.json`, Codex in `.codex/hooks.json`. Each question is listed in [the command reference](../reference/cli.md#what-flow-init-asks).
 
-2. If you use Codex, do the two steps `flow init` prints: trust the folder in Codex, and approve the hooks with `/hooks`. Until both are done, Codex runs no hook. See [the two trust gates](../reference/codex.md#the-two-trust-gates).
+2. If you chose Codex, do the two steps `flow init` warns of: trust the folder in Codex, and approve the hooks with `/hooks`. Until both are done, Codex runs no hook. See [the two trust gates](../reference/codex.md#the-two-trust-gates).
 
 3. Check the guard:
 
@@ -57,10 +57,11 @@ Add `node_modules/` to `.gitignore`.
 
    A red line in `flow status` names its own fix, and the command exits non-zero, so a setup script can call it and read the exit code.
 
-4. Commit `package.json`, the lockfile, `flow.config.ts`, the packs it imports, `.githooks/`, `.claude/settings.json` and `.codex/hooks.json`.
+4. Commit `package.json`, the lockfile, `flow.config.ts`, the packs it imports, `.githooks/`, and the registration file of each harness you chose: `.claude/settings.json`, `.codex/hooks.json`.
 
 ## Variants
 
+- **If a script or an agent runs `flow init`**, it asks nothing and registers the harnesses it detects. Name them with `--harness claude-code,codex` to be exact.
 - **If you want an empty config**, run `npx flow init --empty`. It writes the same wiring with a config that binds no pack.
 - **If you already have a config or a git hook**, run `flow init` anyway. It never writes over `flow.config.ts` or a hook in `.githooks/`, and adds only what is missing.
 - **If git already runs other hooks**, such as husky's, `flow init` leaves them alone and prints `FLOW IS NOT INSTALLED`, with the lines to add to your own hooks. [When git already runs other hooks](../reference/cli.md#when-git-already-runs-other-hooks) has the steps.

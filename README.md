@@ -52,7 +52,7 @@ npx flow status
 
 The tag holds flow's built files, and the lockfile pins the commit. flow is not on npm, and nothing is installed for the whole machine. [How to install and pin flow](./docs/user/how-to/install-flow.md) has the details, including a project that is not a Node project.
 
-`flow init` writes `flow.config.ts`, two git hooks, and flow's hook registrations for Claude Code and Codex, all inside the repo. `flow status` lists every rule and checks the wiring: green means every rule loads and is in place. Then follow [Getting started](./docs/user/tutorials/getting-started.md), which takes you from an unguarded repo to a refused commit, a refused command and a breadcrumb shown.
+`flow init` asks which harnesses you use, then writes `flow.config.ts`, two git hooks, and flow's hook registrations for each one, all inside the repo. `flow status` lists every rule and checks the wiring: green means every rule loads and is in place. Then follow [Getting started](./docs/user/tutorials/getting-started.md), which takes you from an unguarded repo to a refused commit, a refused command and a breadcrumb shown.
 
 ## Documentation
 

@@ -8,7 +8,7 @@ Codex is a harness: it runs the agent and calls flow's hooks. The same `flow.con
 
 ## The hooks
 
-`flow init` registers six hooks in the repository's `.codex/hooks.json`.
+When Codex is chosen, `flow init` registers six hooks in the repository's `.codex/hooks.json`.
 
 | Hook | Matcher | Runs | Delivers |
 | --- | --- | --- | --- |
@@ -32,7 +32,7 @@ Codex runs a project's hooks only when both of these are true. When either is no
 1. **The folder is trusted.** In a folder Codex does not trust, `.codex/hooks.json` is not read.
 2. **Each hook is approved.** You approve a project's hooks in Codex with `/hooks`. Codex ties the approval to the hook's definition, so a hook that `flow init` rewrites must be approved again.
 
-`flow init` ends by printing these two steps. `flow status` says when a Codex hook last ran in the repository, and names the two gates when none has: see [what `flow status` reports](./cli.md#what-flow-status-reports).
+`flow init` warns of these two steps when Codex is chosen. `flow status` says when a Codex hook last ran in the repository, and names the two gates when none has: see [what `flow status` reports](./cli.md#what-flow-status-reports).
 
 ## What flow reads from a payload
 

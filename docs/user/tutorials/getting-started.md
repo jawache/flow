@@ -28,7 +28,15 @@ Now run `flow init`:
 npx flow init
 ```
 
-The output should look like this:
+It asks which harnesses run agents in this repo. Select both, so the rest of this tutorial works under either:
+
+```
+Which harnesses run agents in this repo?
+  [x] Claude Code   detected: claude on the PATH
+  [x] Codex         detected: codex on the PATH
+```
+
+Then it lists what it is about to write. Go ahead. The output should look like this:
 
 ```
 flow init — created:
