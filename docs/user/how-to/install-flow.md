@@ -44,7 +44,7 @@ Add `node_modules/` to `.gitignore`.
    npx flow init
    ```
 
-   It asks which harnesses run agents in the repo, with the ones it detects already selected, and warns you about anything it finds, such as hooks git already runs. Then it writes `flow.config.ts`, the two git hooks in `.githooks/`, and `.flow/`, and registers flow's hooks for each harness you chose: Claude Code in `.claude/settings.json`, Codex in `.codex/hooks.json`. Each question is listed in [the command reference](../reference/cli.md#what-flow-init-asks).
+   It asks which harnesses run agents in the repo, with the ones it detects already selected, and warns you about anything it finds, such as hooks git already runs. Then it writes `flow.config.ts`, the git hook, `.githooks/commit-msg`, and `.flow/`, and registers flow's hooks for each harness you chose: Claude Code in `.claude/settings.json`, Codex in `.codex/hooks.json`. Each question is listed in [the command reference](../reference/cli.md#what-flow-init-asks).
 
 2. If you chose Codex, do the two steps `flow init` warns of: trust the folder in Codex, and approve the hooks with `/hooks`. Until both are done, Codex runs no hook. See [the two trust gates](../reference/codex.md#the-two-trust-gates).
 
@@ -83,7 +83,7 @@ Run `flow uninstall` before you remove the package. Removing the package alone l
    npx flow uninstall
    ```
 
-   It removes the two git hooks, `core.hooksPath`, `.flow/` and flow's hooks in `.claude/settings.json` and `.codex/hooks.json`. It leaves `flow.config.ts` and the packs it imports. Each removal is listed in [the command reference](../reference/cli.md#what-flow-uninstall-removes).
+   It removes the git hook, `core.hooksPath`, `.flow/` and flow's hooks in `.claude/settings.json` and `.codex/hooks.json`. It leaves `flow.config.ts` and the packs it imports. Each removal is listed in [the command reference](../reference/cli.md#what-flow-uninstall-removes).
 
 2. Remove the package, with the command `flow uninstall` prints as its last line:
 

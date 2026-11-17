@@ -8,7 +8,7 @@ Not to be confused with Flow, Meta's JavaScript type checker. No relation.
 
 ## Why use flow
 
-- **The commit is judged on real content.** Two git hooks run your rules over the staged files, the files the commit deletes, and the message, whichever tool wrote them and whoever commits: the lint, the tests, a coverage bar, a banned pattern, a protected file, the format of the message.
+- **The commit is judged on real content.** A git hook runs your rules over the staged files, the files the commit deletes, and the message, whichever tool wrote them and whoever commits: the lint, the tests, a coverage bar, a banned pattern, a protected file, the format of the message.
 - **A named command is stopped before it runs.** A force-push, a `gh repo delete`, a raw command your repo has a recipe for: the rule refuses the command, and the agent gets the rule's message instead of the command's output.
 - **Recoverable mistakes are not blocked.** flow does not stop a write. An agent finds out at the commit, while the mistake is still in the working tree.
 - **Notes arrive when they matter.** A breadcrumb is a note shown to the agent at the start of a session, chosen by the type of agent, or the first time it changes a file in a given area, instead of one long instruction file read once at the start.
@@ -52,7 +52,7 @@ npx flow status
 
 The tag holds flow's built files, and the lockfile pins the commit. flow is not on npm, and nothing is installed for the whole machine. [How to install and pin flow](./docs/user/how-to/install-flow.md) has the details, including a project that is not a Node project.
 
-`flow init` asks which harnesses you use, then writes `flow.config.ts`, two git hooks, and flow's hook registrations for each one, all inside the repo. `flow status` lists every rule and checks the wiring: green means every rule loads and is in place. Then follow [Getting started](./docs/user/tutorials/getting-started.md), which takes you from an unguarded repo to a refused commit, a refused command and a breadcrumb shown.
+`flow init` asks which harnesses you use, then writes `flow.config.ts`, a git hook, and flow's hook registrations for each one, all inside the repo. `flow status` lists every rule and checks the wiring: green means every rule loads and is in place. Then follow [Getting started](./docs/user/tutorials/getting-started.md), which takes you from an unguarded repo to a refused commit, a refused command and a breadcrumb shown.
 
 ## Documentation
 
@@ -72,7 +72,7 @@ The tag holds flow's built files, and the lockfile pins the commit. flow is not 
 
 ## How it works
 
-`flow init` registers flow with Claude Code and Codex, and adds two git hooks. The harness then runs `flow` when a session or a subagent starts, before a shell command, after a tool call, and when an agent hands back. Git runs flow before every commit, and again once it has the message. Each time, flow loads `flow.config.ts` and runs the rules bound to that moment: `commit`, `command`, `session`, `change` or `turn-end`. A guardrail refuses by exiting with code 2, which the harness and git both treat as "do not go ahead", and its message is shown to the agent. A breadcrumb never refuses: its text is added to the agent's context. [Moments](./docs/user/reference/moments.md) describes each one.
+`flow init` registers flow with Claude Code and Codex, and adds a git hook. The harness then runs `flow` when a session or a subagent starts, before a shell command, after a tool call, and when an agent hands back. Git runs flow at every commit, once it has the message. Each time, flow loads `flow.config.ts` and runs the rules bound to that moment: `commit`, `command`, `session`, `change` or `turn-end`. A guardrail refuses by exiting with code 2, which the harness and git both treat as "do not go ahead", and its message is shown to the agent. A breadcrumb never refuses: its text is added to the agent's context. [Moments](./docs/user/reference/moments.md) describes each one.
 
 ## Working on flow
 

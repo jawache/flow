@@ -50,7 +50,7 @@ The window lasts until the config loads again. The agent has the load error on e
 
 ## Every commit is refused
 
-A commit turns work in the tree into history. Both git hooks refuse while the config will not load, so nothing reaches a commit until every commit rule has judged it.
+A commit turns work in the tree into history. The git hook refuses while the config will not load, so nothing reaches a commit until every commit rule has judged it.
 
 ## When flow cannot report
 

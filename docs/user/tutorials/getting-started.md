@@ -41,7 +41,6 @@ Then it lists what it is about to write. Go ahead. The output should look like t
 ```
 flow init — created:
   + flow.config.ts
-  + .githooks/pre-commit
   + .githooks/commit-msg
   + .flow/ — flow's own state, self-ignoring, never committed
   + .claude/settings.json — SessionStart · SubagentStart · PreToolUse · PostToolUse · Stop · SubagentStop
@@ -112,7 +111,7 @@ flow is ON — 5 guardrails · 2 breadcrumbs, every one resolved and able to fir
   config     …/my-repo/flow.config.ts
   state      …/my-repo/.flow
   commit
-    ✗ flow.noDeleteGuardrails  —  on flow.config.ts .githooks/pre-commit .githooks/commit-msg .claude/settings.json .codex/hooks.json
+    ✗ flow.noDeleteGuardrails  —  on flow.config.ts .githooks/commit-msg .claude/settings.json .codex/hooks.json
         This commit deletes part of this repo's guard. Turn a rule off in flow.config.ts instead.
     ✗ house.noTodo  —  on src/**
         No TODOs — do it now, or track it properly.
@@ -130,7 +129,7 @@ flow is ON — 5 guardrails · 2 breadcrumbs, every one resolved and able to fir
     🍞 house.sourceLayout  —  on src/**
         Code under src/ is pure: no file or network access. Put those in shell/.
   ✓ config: …/my-repo/flow.config.ts
-  ✓ git hooks: .githooks/pre-commit and .githooks/commit-msg run flow, and core.hooksPath = .githooks
+  ✓ git hook: .githooks/commit-msg runs flow, and core.hooksPath = .githooks
   ✓ binary: the hooks run this repo's own flow
   ✓ claude-code: registered · no hook has run here
   ✓ codex: registered · no hook has run here
@@ -138,7 +137,7 @@ flow is ON — 5 guardrails · 2 breadcrumbs, every one resolved and able to fir
 green — every rule loads, every fitting is in place.
 ```
 
-Notice the last line: green. Every rule loads, and every fitting it needs is in place. A fitting is a piece of wiring flow depends on, such as the git hooks or a harness's hook registrations. If something were not in place, `flow status` would print a red line with its fix, and exit with a non-zero code.
+Notice the last line: green. Every rule loads, and every fitting it needs is in place. A fitting is a piece of wiring flow depends on, such as the git hook or a harness's hook registrations. If something were not in place, `flow status` would print a red line with its fix, and exit with a non-zero code.
 
 ## 5 · See a commit refused
 

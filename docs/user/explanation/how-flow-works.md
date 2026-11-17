@@ -93,9 +93,9 @@ noForcePush: guardrail()
 
 ## Two harnesses, one config
 
-![The harness's hooks and git's hooks, each delivering one of flow's five moments](../assets/moments.svg)
+![The harness's hooks and git's hook, each delivering one of flow's five moments](../assets/moments.svg)
 
-flow plugs into a harness, the program that runs the agent, and into git. The harness calls flow at a session's start, before a shell command, after a tool call and at turn-end. Git calls flow at the commit. flow runs under Claude Code and Codex, and the same `flow.config.ts` guards a repository under both.
+flow plugs into a harness, the program that runs the agent, and into git. The harness calls flow at a session's start, before a shell command, after a tool call and at turn-end. Git calls flow at the commit, once it has the message. flow runs under Claude Code and Codex, and the same `flow.config.ts` guards a repository under both.
 
 ---
 

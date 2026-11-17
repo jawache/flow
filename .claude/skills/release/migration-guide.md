@@ -14,9 +14,9 @@ Write the page with `/work docs`: its layout and sentence rules apply here as on
 1. Read `git log --format='%h %s%n%b' v<previous>..HEAD`.
 2. Read the `BREAKING CHANGE` footers in that log.
 3. Read `git diff v<previous> HEAD -- index.ts packs/index.ts flow.ts`.
-4. Read each harness's hook registrations, and the two git hooks, in the same diff.
+4. Read each harness's hook registrations, and the git hook, in the same diff.
 
-Together these cover the grammar and pack exports, the CLI, the hook registrations of each harness and the git hooks.
+Together these cover the grammar and pack exports, the CLI, the hook registrations of each harness and the git hook.
 
 A change belongs on the page when it changes something in the other repo:
 
@@ -25,7 +25,7 @@ A change belongs on the page when it changes something in the other repo:
 - an entry id an `override` lists
 - a pack parameter
 - `.claude/settings.json` or `.codex/hooks.json`
-- `.githooks/pre-commit` or `.githooks/commit-msg`
+- `.githooks/commit-msg`
 - a rule that now blocks or passes differently
 
 ## The page, in this order

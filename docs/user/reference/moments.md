@@ -24,29 +24,26 @@ Which hook of each harness delivers each moment is on [flow under Claude Code](.
 
 ## The commit moment
 
-Git delivers the commit moment, not the harness, so it runs for a commit a person makes too. Two git hooks deliver it:
+Git delivers the commit moment, not the harness, so it runs for a commit a person makes too. One git hook delivers it: `.githooks/commit-msg`, git's commit-message hook, which runs `flow hook commit` once git has the message. Every commit rule runs there, once, with the staged files and the message.
 
-| Hook | File | Runs | Judges |
-| --- | --- | --- | --- |
-| before the commit | `.githooks/pre-commit` | `flow hook commit` | the staged files, and the files the commit deletes |
-| the commit message | `.githooks/commit-msg` | `flow hook commit-msg` | the message |
+Someone who commits in an editor writes the message first. The commit is refused when they save it.
 
 - **The staged changes** are read from git: the files the commit adds, changes and deletes.
 - **A rename** is, to git, a deletion of the old path plus an add of the new one.
 - **A rule with no `.on(…)`** is called once, with the whole staged set in `ctx.staged` and the deleted paths in `ctx.deleted`.
 - **A rule with `.on(…)`** is called once per added or changed file in scope, with that file in `ctx.file`.
 - **A file the commit deletes** is passed only to a rule whose check is [`protectedPath`](../checks/protected-path.md): the rule is also called once per deleted file in scope, with `ctx.file.deleted` set to `true`. Your own check reads the deleted paths from `ctx.deleted`.
-- **A rule that reads the message** runs in the commit-message hook, with the message in `ctx.message`. Those are the stock checks [`commitMessage`](../checks/commit-message.md) and [`commitReason`](../checks/commit-reason.md), and any rule of your own with a `{ message }` case. Every other commit rule runs in the hook before the commit.
+- **Every call has the message,** in `ctx.message`.
 - **The message** is as git records it: comment lines, and the diff that `git commit -v` adds, are removed.
 
-Which commits git runs the hooks for:
+Which commits are judged:
 
 | Command | Judged |
 | --- | --- |
 | `git commit`, and `git commit --amend` | the staged files and the message |
 | `git merge`, with or without a conflict | nothing. A merge commit passes |
 | `git cherry-pick`, `git revert`, `git rebase` | nothing. Git runs no hook that can refuse them |
-| `git commit --no-verify` | nothing. Git skips both hooks |
+| `git commit --no-verify` | nothing. Git skips the hook |
 
 ## The change moment
 

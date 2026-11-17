@@ -32,7 +32,7 @@ A check declares no moments, no schema and no `kind`. The entry's `.at(…)` set
 | `ctx.file` | The staged file this call is about, `{ path, content, existed, unchanged, deleted }`, at the commit moment, in a rule with `.on(…)`. See [ctx.file](#ctxfile) |
 | `ctx.staged` | The paths the commit adds or changes, at the commit moment, in every call that moment makes. Under `flow hook commit --all`, every file git lists |
 | `ctx.deleted` | The paths the commit deletes, as a list of strings, at the commit moment, in every call that moment makes |
-| `ctx.message` | The commit message as git records it, in the commit-message hook. `null` in the hook before the commit |
+| `ctx.message` | The commit message as git records it, at the commit moment, in every call that moment makes. `null` under `flow hook commit --all`, which has no commit |
 | `ctx.command` | The shell command line, at the command moment |
 | `ctx.commands` | The command line parsed as bash, at the command moment: one entry per simple command, or `null` when the line does not parse. Every field of an entry is on [the command parse](./parse.md#what-a-command-holds) |
 | `ctx.turn` | The turn's actions, at turn-end: each file a call changed, and each shell command run. For a subagent, they are that subagent's own actions |
@@ -67,14 +67,13 @@ const noBareGh = defineCheck((_opts: Record<string, never>) => (ctx) => {
 
 | At | The check reads |
 | --- | --- |
-| `commit` (with `.on`) | The check is called once per staged file in scope that the commit adds or changes. `ctx.file` = `{ path, content, existed }`, with `ctx.staged` and `ctx.deleted` for the whole commit. Under `flow hook commit --all`, `ctx.file` also has `unchanged: true` when the file is identical to the one in the last commit. A `protectedPath` rule is also called once per deleted file in scope, with `ctx.file` = `{ path, content, existed: true, deleted: true }` |
-| `commit` (no `.on`) | `ctx.staged` and `ctx.deleted`: the whole commit, in one call |
-| `commit`, in the commit-message hook | `ctx.message`, with `ctx.staged` and `ctx.deleted` |
+| `commit` (with `.on`) | The check is called once per staged file in scope that the commit adds or changes. `ctx.file` = `{ path, content, existed }`, with `ctx.staged`, `ctx.deleted` and `ctx.message` for the whole commit. Under `flow hook commit --all`, `ctx.file` also has `unchanged: true` when the file is identical to the one in the last commit. A `protectedPath` rule is also called once per deleted file in scope, with `ctx.file` = `{ path, content, existed: true, deleted: true }` |
+| `commit` (no `.on`) | `ctx.staged`, `ctx.deleted` and `ctx.message`: the whole commit, in one call |
 | `command` | `ctx.command`: the line about to run, and `ctx.commands`: that line parsed |
 | `turn-end` | `ctx.turn`: the changed files and the commands of the turn |
 | any | `ctx.actor`, `ctx.fs`, `ctx.exec`, `ctx.git` and `ctx.moment` |
 
-Which commit rules run in which hook is on [the commit moment](./moments.md#the-commit-moment).
+Which commits are judged is on [the commit moment](./moments.md#the-commit-moment).
 
 ---
 
