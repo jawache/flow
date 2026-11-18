@@ -1147,7 +1147,7 @@ describe("the store — where the harness keeps its transcripts", () => {
     expect(projectFolderName("/Users/x/dev/repo")).toBe("-Users-x-dev-repo");
     // A dot is not special, so a hidden folder yields a DOUBLED dash — the check that this is the
     // real rule rather than the hand-written `[/.]` approximation the old tools carried.
-    expect(projectFolderName("/Users/x/.work/y")).toBe("-Users-x--work-y");
+    expect(projectFolderName("/Users/x/.hidden/y")).toBe("-Users-x--hidden-y");
     expect(projectFolderName("/Users/x/a_b c")).toBe("-Users-x-a-b-c");
   });
 
@@ -3698,9 +3698,9 @@ describe("outsideOf — where a call works outside the repository", () => {
   const under = (folder: string, top: string): boolean => folder === top || folder.startsWith(`${top}/`);
   const same = (folder: string): boolean => {
     asked.push(folder);
-    return !under(folder, "/code/app/.work/tmp/r") && repository.some((top) => under(folder, top));
+    return !under(folder, "/code/app/.scratch/tmp/r") && repository.some((top) => under(folder, top));
   };
-  const nestedRepo = (dir: string): boolean => dir === "/code/app/.work/tmp/r";
+  const nestedRepo = (dir: string): boolean => dir === "/code/app/.scratch/tmp/r";
   const none = (): boolean => false;
   const ran = (line: string) => ({ rail: "guard" as const, moment: "command" as const, command: line, commands: parseCommandLine(line, { cwd: root }) });
 
@@ -3722,7 +3722,7 @@ describe("outsideOf — where a call works outside the repository", () => {
   });
 
   it("counts a repository made under the guarded folder as outside", () => {
-    expect(outsideOf(ran("cd .work/tmp/r && git commit -m init"), root, nestedRepo, same)).toEqual(["/code/app/.work/tmp/r"]);
+    expect(outsideOf(ran("cd .scratch/tmp/r && git commit -m init"), root, nestedRepo, same)).toEqual(["/code/app/.scratch/tmp/r"]);
   });
 
   it("names nothing for a command with no folder", () => {
@@ -3734,7 +3734,7 @@ describe("outsideOf — where a call works outside the repository", () => {
     expect(outsideOf(wrote, root, none, same)).toEqual(["/tmp/r/a.ts"]);
     expect(outsideOf({ rail: "brief", moment: "touch", path: "/tmp/r/a.ts" }, root, none, same)).toEqual(["/tmp/r/a.ts"]);
     expect(outsideOf({ rail: "brief", moment: "touch", path: "src/a.ts" }, root, none, same)).toEqual([]);
-    expect(outsideOf({ rail: "brief", moment: "touch", path: ".work/tmp/r/a.ts" }, root, nestedRepo, same)).toEqual([".work/tmp/r/a.ts"]);
+    expect(outsideOf({ rail: "brief", moment: "touch", path: ".scratch/tmp/r/a.ts" }, root, nestedRepo, same)).toEqual([".scratch/tmp/r/a.ts"]);
     expect(outsideOf({ rail: "brief", moment: "session" }, root, none, same)).toEqual([]);
   });
 });

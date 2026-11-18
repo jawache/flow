@@ -723,11 +723,11 @@ export function formatBlocks(effects: readonly Effect[]): string {
 // THE STATE HOME — `.flow/`, spelled once
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-// A REAL DIRECTORY at the repo root, and it is flow's own. The old engine kept its state in
-// `.work/guard/`, inside a journal symlink, which bought one thing (every worktree of a repo shared
-// one ledger) at the price of standing alone: flow must work in a repo that has never heard of the
-// work platform. So `.flow/` is honest and local, self-ignoring so it never shows up in `git
-// status`, and sharing returns as configuration for the repos that want it.
+// A REAL DIRECTORY at the repo root, and it is flow's own. The old engine kept its state
+// inside a journal symlink, which bought one thing (every worktree of a repo shared one ledger) at
+// the price of standing alone: flow must work in a repo that has never heard of any other tool. So
+// `.flow/` is honest and local, self-ignoring so it never shows up in `git status`, and sharing
+// returns as configuration for the repos that want it.
 //
 // SPELLED ONCE. In the old engine the same path was written two ways, and the disagreement was
 // invisible in exactly the direction that hurts: a reader looking in the wrong place reports "no

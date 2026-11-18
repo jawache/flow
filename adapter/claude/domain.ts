@@ -1759,7 +1759,7 @@ const SUBAGENTS = "subagents";
  *
  * Every character that is not a letter or a digit becomes a dash — verified against all 63 folders
  * on this machine carrying a readable cwd, with zero mismatches, rather than taken from a summary.
- * A dot is not special: `/Users/x/.work/y` yields a doubled dash, and that doubling is the check
+ * A dot is not special: `/Users/x/.hidden/y` yields a doubled dash, and that doubling is the check
  * that this is the real rule rather than a hand-written approximation (the old signposts spelling
  * was `[/.]` and was wrong for an underscore or a space).
  *

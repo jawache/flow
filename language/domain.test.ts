@@ -334,7 +334,7 @@ describe("programName — a program without its path", () => {
 });
 
 describe("parseCommandLine — the 45 hand-labelled commands from triage's bake-off", () => {
-  // Lifted from LABELLED in the bake-off that chose unbash (.work/tmp/bakeoff/bakeoff.mjs, #17).
+  // Lifted from LABELLED in the bake-off that chose unbash (its script, #17).
   // Each label is what a shell does with the line: the programs that run, in the order they appear,
   // nested ones included; each heredoc's owner and whether its delimiter is quoted; and the
   // programs a substitution runs. One label differs from the bake-off's on purpose: `bash -c`
