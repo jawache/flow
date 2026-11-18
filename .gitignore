@@ -22,7 +22,7 @@ dist/
 # this file never has to know it exists.
 #
 # What a guarded repo DOES commit is `flow.config.ts`, any pack it writes itself under `guards/`,
-# and `.githooks/pre-commit`. That is the whole guard: the packs this package ships arrive with
+# and `.githooks/commit-msg`. That is the whole guard: the packs this package ships arrive with
 # the install, there is no rule library anywhere on the machine, and nothing resolves at run time.
 
 # Provisioned by the secrets pack — the three files that must never be committed.

@@ -91,7 +91,7 @@ test-commit:
 test-tutorial:
     FLOW_TUTORIAL=1 npx vitest run e2e/product.test.ts -t "the Getting started tutorial's transcripts"
 
-[doc("Run the full commit gate over every file git can see, tracked or not, as if all of it were staged — the same guardrails .githooks/pre-commit runs on the staged changes, plus every file the last commit has that is now gone.")]
+[doc("Run the full commit gate over every file git can see, tracked or not, as if all of it were staged — the same guardrails .githooks/commit-msg runs on the staged changes, plus every file the last commit has that is now gone.")]
 gate: build
     node dist/flow.mjs hook commit --all
 
@@ -114,7 +114,7 @@ release:
     # upgrade. Asked first, for the same no-rollback reason as the gate below.
     node tools/release-guide.ts
     # The gate runs FIRST, before a byte is written. commit-and-tag-version has no rollback: its
-    # own `git commit` fires .githooks/pre-commit, and a gate failure there aborts the release with
+    # own `git commit` fires .githooks/commit-msg, and a gate failure there aborts the release with
     # the version already stamped and CHANGELOG.md already written, but nothing committed and no
     # tag — a half-release you then have to unpick by hand. Running the same gate up front turns
     # that into a clean refusal. The hook still runs on the release commit: this ADDS a check, it
