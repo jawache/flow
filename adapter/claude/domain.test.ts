@@ -20,7 +20,7 @@ import { metrics, momentsView, type Block, type Bound, type Row } from "../../en
 import { parseCommandLine, parseShellSteps } from "../../language/domain.ts";
 import { claudeCode } from "./claude.ts";
 import { ALLOW, type AdapterEvent, CONFIG_FILE, type Facts, GATE_PATH, HOOKS_DIR, type InitFacts, LOCAL_BIN, MACHINE_FLAG, PACKAGE_BIN, COMMIT_MSG, type SpawnRecord, type Status, type StatusFacts, type UninstallFacts, branchFromHead, delivers, formatFacts, guardPaths, initLines, isGuardPath, lastMode, mergeNarratives, modesOf, planInit, planUninstall, relativise, status, statusCode, statusLines, uninstallCode, uninstallLines, weakenedAfterBlock } from "../domain.ts";
-import { DELIVERS, EDIT_TOOLS, type EventWorld, FLOW_OFF, HOOK_COSTS, HOOK_EVENTS, HOOK_REGISTRATIONS, HOST_SURFACE, type HookPayload, REPO_SETTINGS, type Shown, agentOf, agentSettingOf, awaitsBrief, bareHook, bareRegistrations, bashReads, briefBlock, briefHead, classifyStore, commandFolders, contextTokens, decision, foldersBetween, holdsForBrief, hookCommand, isHookEvent, isInjected, listsFlow, nothingBound, ourHookCommand, outsideOf, ownTranscriptPath, parseEvents, projectFolderName, reachesAnotherWorktree, readFault, registeredEvents, ridesRefusal, sessionFactsFrom, settingsFileFor, shellReadRows, spawnMeta, spawnsIn, staleRegistrations, steerOf, toEvent, toResult, tokensFromTranscript, toolRow, touchedPath, transcriptHead, transcriptLines, turnActions, untoldWorktrees, whileBroken, withMachineCommandsUpToDate, withRegistrations, withoutRegistrations, workedPaths, worktreeFolders, worktreeLine } from "./domain.ts";
+import { DELIVERS, EDIT_TOOLS, type EventWorld, FLOW_OFF, HOOK_COSTS, HOOK_EVENTS, HOOK_REGISTRATIONS, HOST_SURFACE, type HookPayload, REPO_SETTINGS, type Shown, agentOf, agentSettingOf, opensCall, awaitsBrief, bareHook, bareRegistrations, bashReads, briefBlock, briefHead, classifyStore, commandFolders, contextTokens, decision, foldersBetween, holdsForBrief, hookCommand, isHookEvent, isInjected, listsFlow, nothingBound, ourHookCommand, outsideOf, ownTranscriptPath, parseEvents, projectFolderName, reachesAnotherWorktree, readFault, registeredEvents, ridesRefusal, sessionFactsFrom, settingsFileFor, shellReadRows, spawnMeta, spawnsIn, staleRegistrations, steerOf, toEvent, toResult, tokensFromTranscript, toolRow, touchedPath, transcriptHead, transcriptLines, turnActions, untoldWorktrees, whileBroken, withMachineCommandsUpToDate, withRegistrations, withoutRegistrations, workedPaths, worktreeFolders, worktreeLine } from "./domain.ts";
 import { type Steer, type TranscriptEvent } from "../harness.ts";
 
 
@@ -339,10 +339,16 @@ describe("toEvent — one payload, every moment it carries", () => {
 
   it("adds the session notes held for the brief to a subagent's call, after its guard events and before its notes", () => {
     const held = { ...world(), heldForBrief: true };
-    expect(toEvent("pre-tool-use", pre("Read", { file_path: "/repo/src/a.ts" }), held)).toStrictEqual([{ rail: "brief", moment: "session" }]);
+    const read = toEvent("post-tool-use", pre("Read", { file_path: "/repo/src/a.ts" }), held);
+    expect(read, "the first call that names a file, held notes first").toStrictEqual([
+      { rail: "brief", moment: "session" },
+      { rail: "brief", moment: "touch", path: "src/a.ts" },
+    ]);
+    expect(toEvent("post-tool-use", pre("Read", { file_path: "/repo/src/a.ts" }), world()), "nothing held: only the touch").toStrictEqual([
+      { rail: "brief", moment: "touch", path: "src/a.ts" },
+    ]);
     const bash = toEvent("pre-tool-use", pre("Bash", { command: "git status" }), held).map((event) => `${event.rail}:${event.moment}`);
     expect(bash).toStrictEqual(["guard:command", "brief:session", "brief:command"]);
-    expect(toEvent("pre-tool-use", pre("Read", { file_path: "/repo/src/a.ts" }), world()), "nothing held").toStrictEqual([]);
   });
 
   it("holds a subagent's session notes for its brief only when a session note is bound to a category, and only before the brief is written", () => {
@@ -1300,8 +1306,8 @@ describe("the hook registrations flow writes", () => {
 
   it("adds every event to a settings file that has none, leaving the rest of it alone", () => {
     const before = { permissions: { allow: ["Bash(git:*)"] } };
-    const { settings, added } = withRegistrations(before);
-    expect(added).toEqual(REGISTERED_EVENTS);
+    const { settings, changed } = withRegistrations(before);
+    expect(changed).toEqual(REGISTERED_EVENTS);
     const after = settings as { permissions: unknown; hooks: Record<string, unknown[]> };
     expect(after.permissions, "untouched, byte for byte").toEqual(before.permissions);
     expect(registeredEvents(settings)).toEqual(REGISTERED_EVENTS);
@@ -1312,14 +1318,14 @@ describe("the hook registrations flow writes", () => {
   it("adds nothing on a second run — the whole of what makes init idempotent", () => {
     const once = withRegistrations({});
     const twice = withRegistrations(once.settings);
-    expect(twice.added).toEqual([]);
+    expect(twice.changed).toEqual([]);
     expect(twice.settings).toEqual(once.settings);
   });
 
   it("keeps a stranger's registration on the same event and stands beside it", () => {
     const theirs = { hooks: { Stop: [{ hooks: [{ type: "command", command: "their-tool --report" }] }] } };
-    const { settings, added } = withRegistrations(theirs);
-    expect(added).toContain("Stop");
+    const { settings, changed } = withRegistrations(theirs);
+    expect(changed).toContain("Stop");
     const stop = (settings as { hooks: Record<string, unknown[]> }).hooks["Stop"];
     expect(JSON.stringify(stop), "theirs survives — we add, we never rewrite").toContain("their-tool --report");
     expect(JSON.stringify(stop)).toContain(JSON.stringify(hookCommand("stop")));
@@ -1343,15 +1349,15 @@ describe("the hook registrations flow writes", () => {
       },
     };
     expect(staleRegistrations(older)).toEqual(["PostToolUse"]);
-    const { settings, added } = withRegistrations(older);
-    expect(added).toEqual(["PostToolUse (matcher brought up to date)"]);
+    const { settings, changed } = withRegistrations(older);
+    expect(changed).toEqual(["PostToolUse (matcher brought up to date)"]);
     const post = (settings as { hooks: Record<string, unknown[]> }).hooks["PostToolUse"];
     expect(post).toEqual([
       { matcher: "*", hooks: [{ type: "command", command: hookCommand("post-tool-use") }] },
       { matcher: "Bash", hooks: [{ type: "command", command: "their-tool --after" }] },
     ]);
     expect(staleRegistrations(settings), "and a second run finds nothing to change").toEqual([]);
-    expect(withRegistrations(settings).added).toEqual([]);
+    expect(withRegistrations(settings).changed).toEqual([]);
   });
 
   it("narrows an older PreToolUse registered for every tool to Bash, and removes the hook after a failed call", () => {
@@ -1367,12 +1373,12 @@ describe("the hook registrations flow writes", () => {
     };
     expect(staleRegistrations(older)).toEqual(["PreToolUse", "PostToolUseFailure"]);
     expect(registeredEvents(older), "a hook flow no longer registers is not a registration").toEqual(REGISTERED_EVENTS);
-    const { settings, added } = withRegistrations(older);
-    expect(added).toEqual(["PreToolUse (matcher brought up to date)", "PostToolUseFailure (removed: flow no longer registers it)"]);
+    const { settings, changed } = withRegistrations(older);
+    expect(changed).toEqual(["PreToolUse (matcher brought up to date)", "PostToolUseFailure (removed: flow no longer registers it)"]);
     const hooks = (settings as { hooks: Record<string, unknown[]> }).hooks;
     expect(hooks["PreToolUse"]).toEqual([{ matcher: "Bash", hooks: [{ type: "command", command: hookCommand("pre-tool-use") }] }]);
     expect(hooks["PostToolUseFailure"], "theirs stays, flow's goes").toEqual([{ matcher: "Bash", hooks: [{ type: "command", command: "their-tool --failed" }] }]);
-    expect(withRegistrations(settings).added, "and a second run finds nothing to do").toEqual([]);
+    expect(withRegistrations(settings).changed, "and a second run finds nothing to do").toEqual([]);
     const alone = { hooks: { ...without("PostToolUse").hooks, PostToolUseFailure: [{ matcher: "*", hooks: [{ type: "command", command: "flow hook post-tool-use-failure" }] }] } };
     expect(Object.keys((withRegistrations(alone).settings as { hooks: Record<string, unknown> }).hooks), "an event left with nothing of anyone's goes").not.toContain("PostToolUseFailure");
   });
@@ -1404,15 +1410,15 @@ describe("the hook registrations flow writes", () => {
     expect(bareRegistrations(older)).toEqual(REGISTERED_EVENTS);
     expect(status(statusFacts({ settings: older })).fittings.find((f) => f.id === "hooks")?.ok).toBe(true);
 
-    const { settings, added } = withRegistrations(older);
-    expect(added).toEqual(REGISTERED_EVENTS.map((event) => `${event} (now runs the flow in node_modules/@jawache/flow first)`));
+    const { settings, changed } = withRegistrations(older);
+    expect(changed).toEqual(REGISTERED_EVENTS.map((event) => `${event} (now runs the flow in node_modules/@jawache/flow first)`));
     const hooks = (settings as { model: string; hooks: Record<string, { matcher?: string; hooks: { command: string }[] }[]> }).hooks;
     const flows = Object.values(hooks).flatMap((entries) => entries.flatMap((entry) => entry.hooks.map((h) => h.command)).filter(ourHookCommand));
     expect(flows, "exactly flow's, each the new command").toEqual(HOOK_REGISTRATIONS.map((r) => r.command));
     expect(hooks["PreToolUse"]?.[0]?.matcher, "the matcher stays").toBe("Bash");
     expect(JSON.stringify(hooks["Stop"]), "theirs is untouched").toContain("their-tool --report");
     expect((settings as { model: string }).model).toBe("opus");
-    expect(withRegistrations(settings).added, "and a second run finds nothing to do").toEqual([]);
+    expect(withRegistrations(settings).changed, "and a second run finds nothing to do").toEqual([]);
   });
 
   it("rewrites only flow's command inside an entry it shares, and brings an old matcher up to date in the same pass", () => {
@@ -1430,8 +1436,8 @@ describe("the hook registrations flow writes", () => {
         ],
       },
     };
-    const { settings, added } = withRegistrations(older);
-    expect(added).toEqual(["PostToolUse (matcher brought up to date, now runs the flow in node_modules/@jawache/flow first)"]);
+    const { settings, changed } = withRegistrations(older);
+    expect(changed).toEqual(["PostToolUse (matcher brought up to date, now runs the flow in node_modules/@jawache/flow first)"]);
     expect((settings as { hooks: Record<string, unknown[]> }).hooks["PostToolUse"]).toEqual([
       {
         matcher: "*",
@@ -1445,14 +1451,14 @@ describe("the hook registrations flow writes", () => {
 
   it("leaves a registration with a path to the binary as it is — it names the copy it runs", () => {
     const pinned = registrationsAs((command) => command.replace(/^.* flow /, "node /x/dist/flow.mjs "));
-    expect(withRegistrations(pinned).added).toEqual([]);
+    expect(withRegistrations(pinned).changed).toEqual([]);
   });
 
   it("leaves a by-name command with anything else in it as it is — it is somebody's own", () => {
     for (const prefix of ["FLOW_DEBUG=1 flow ", "cd /x && flow "]) {
       const theirs = registrationsAs((command) => command.replace(/^.* flow /, prefix));
       expect(bareRegistrations(theirs), prefix).toEqual([]);
-      expect(withRegistrations(theirs).added, prefix).toEqual([]);
+      expect(withRegistrations(theirs).changed, prefix).toEqual([]);
     }
   });
 
@@ -1465,8 +1471,8 @@ describe("the hook registrations flow writes", () => {
         Notification: [{ hooks: [{ type: "command", command: "flow hook notification" }] }],
       },
     };
-    const { settings, added } = withRegistrations(older);
-    expect(added).toEqual(["Notification (now runs the flow in node_modules/@jawache/flow first)"]);
+    const { settings, changed } = withRegistrations(older);
+    expect(changed).toEqual(["Notification (now runs the flow in node_modules/@jawache/flow first)"]);
     expect((settings as { hooks: Record<string, unknown[]> }).hooks["Notification"]).toEqual([
       { hooks: [{ type: "command", command: hookCommand("notification") }] },
     ]);
@@ -1477,8 +1483,8 @@ describe("the hook registrations flow writes", () => {
   // already in the file, and rewrites nothing.
   it.each(["SubagentStart", "SubagentStop"])("adds %s to a file holding every other registration, and keeps every other key", (event) => {
     const older = { model: "opus", permissions: { allow: ["Bash(git:*)"] }, hooks: { ...without(event).hooks, Notification: [{ hooks: [{ type: "command", command: "say done" }] }] } };
-    const { settings, added } = withRegistrations(older);
-    expect(added).toEqual([event]);
+    const { settings, changed } = withRegistrations(older);
+    expect(changed).toEqual([event]);
     const after = settings as typeof older & { hooks: Record<string, unknown> };
     const command = HOOK_REGISTRATIONS.find((r) => r.event === event)?.command;
     expect(after.hooks[event], "no matcher: every agent type").toEqual([{ hooks: [{ type: "command", command }] }]);
@@ -1491,7 +1497,7 @@ describe("the hook registrations flow writes", () => {
       "Notification",
       event,
     ]);
-    expect(withRegistrations(settings).added, "and a second run finds nothing to do").toEqual([]);
+    expect(withRegistrations(settings).changed, "and a second run finds nothing to do").toEqual([]);
   });
 
   it("reads nothing out of a settings file that is not an object", () => {
@@ -1556,10 +1562,19 @@ describe("what every rail answers while the config will not load", () => {
       expect(whileBroken([{ rail: "brief", moment: "session" }], FAULT).shown.map((note) => note.body)).toStrictEqual([TOLD]);
     });
 
-    it("says nothing after the call, because the agent was told when it asked", () => {
-      const events = toEvent("post-tool-use", pre("Read", { file_path: "/repo/src/a.ts" }), world());
+    it("tells the agent at the first hook of a call: after a Read, which no hook came before, and not after a Bash call, which was told when it asked", () => {
+      const read = pre("Read", { file_path: "/repo/src/a.ts" });
+      const events = toEvent("post-tool-use", read, world());
       expect(events, "the file the call named was touched").toStrictEqual([{ rail: "brief", moment: "touch", path: "src/a.ts" }]);
-      expect(whileBroken(events, FAULT)).toStrictEqual({ refused: [], shown: [], told: null });
+      expect(opensCall("post-tool-use", "Read")).toBe(true);
+      expect(whileBroken(events, FAULT, opensCall("post-tool-use", "Read")).shown.map((note) => note.body)).toStrictEqual([TOLD]);
+      expect(opensCall("post-tool-use", "Bash")).toBe(false);
+      expect(whileBroken(events, FAULT, opensCall("post-tool-use", "Bash"))).toStrictEqual({ refused: [], shown: [], told: null });
+    });
+
+    it("asks which hook opens a call: before a shell command, after any other tool, and never for a call with no tool", () => {
+      expect([opensCall("pre-tool-use", "Bash"), opensCall("post-tool-use", "Edit"), opensCall("post-tool-use", "Bash"), opensCall("pre-tool-use", "Edit")]).toStrictEqual([true, true, false, false]);
+      expect([opensCall("post-tool-use", ""), opensCall("stop", "Bash")]).toStrictEqual([false, false]);
     });
 
     it("tells turn-end rather than holding it", () => {
@@ -2380,7 +2395,7 @@ describe("outsideOf — where a call works outside the repository", () => {
   });
 
   it("names a touched file outside by its own path, and no moment but a command's a guard's", () => {
-    expect(outsideOf({ rail: "guard", moment: "commit", staged: ["/tmp/r/a.ts"] }, root, none, same)).toEqual([]);
+    expect(outsideOf({ rail: "guard", moment: "commit" }, root, none, same)).toEqual([]);
     expect(outsideOf({ rail: "brief", moment: "touch", path: "/tmp/r/a.ts" }, root, none, same)).toEqual(["/tmp/r/a.ts"]);
     expect(outsideOf({ rail: "brief", moment: "touch", path: "src/a.ts" }, root, none, same)).toEqual([]);
     expect(outsideOf({ rail: "brief", moment: "touch", path: ".scratch/tmp/r/a.ts" }, root, nestedRepo, same)).toEqual([".scratch/tmp/r/a.ts"]);

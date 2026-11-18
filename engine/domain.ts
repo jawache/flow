@@ -56,7 +56,7 @@ import {
   type Verdict,
   type World,
 } from "../language/domain.ts";
-import { commitFacts, stagedFiles } from "../checks/domain.ts";
+import { commitSubjects } from "../checks/domain.ts";
 import type { CommitFileFacts } from "../checks/domain.ts";
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -342,15 +342,10 @@ interface Subject {
  * as inside. `commands` is the line's one parse.
  */
 async function subjectsOf(entry: LoadedEntry, event: GuardEvent, world: World, commands: readonly ShellCommand[] | null): Promise<Subject[]> {
-  const { spec } = entry;
   const outside = everywhere(entry) ? [] : (event.outside ?? []);
   if (event.moment === "commit") {
-    const staged = event.staged ?? [];
-    if (event.whole === true && !spec.on) return [];
-    const every = event.whole === true ? { staged: [], added: [], deleted: [], message: null } : commitFacts(staged, event);
-    if (!spec.on) return [{ name: null, facts: every }];
-    const files = await stagedFiles(spec, staged, world, event);
-    return files.map((file) => ({ name: file.path, facts: { ...every, file } }));
+    const facts = await commitSubjects(entry, { staged: event.staged ?? [] }, world, event, event.whole === true);
+    return facts.map((one) => ({ name: one.file?.path ?? null, facts: one }));
   }
   if (event.moment === "command") {
     const command = event.command ?? "";

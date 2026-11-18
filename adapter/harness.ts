@@ -191,7 +191,7 @@ export interface Registering {
   /** The machine-wide file against the repo's own: the events the two call flow for, differently. */
   readonly machineDiffers: (repo: unknown, machine: unknown) => { bare: string[]; theirs: string[] };
   /** A settings file with flow's registrations added. A new object, never a mutation. */
-  readonly withRegistrations: (settings: unknown) => { settings: unknown; added: string[] };
+  readonly withRegistrations: (settings: unknown) => { settings: unknown; changed: string[] };
   /** A settings file with flow's registrations taken out. */
   readonly withoutRegistrations: (settings: unknown) => { settings: unknown; removed: string[] };
   /** The machine-wide file with flow's old commands brought up to date, and nothing else touched. */

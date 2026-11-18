@@ -3,7 +3,7 @@
 // The behaviour assertions came across from the fourteen per-check tests the old engine carried
 // and are the same claims, re-homed: what each check says yes to, what it says no to, and the
 // specific bug each odd-looking line exists to prevent. What is NEW is that every check is driven
-// through `cannedCtx` — the same door `flow test` drives them through and the same door the live
+// through `caseCtxs` — the same door `flow test` drives them through and the same door the live
 // hooks will — so the harness is proved by every test in the file rather than by one test of its
 // own. A check that could only be tested by reaching around ctx would fail here first.
 
@@ -13,6 +13,7 @@ import {
   verdict,
   type Case,
   type CaseWorld,
+  type Ctx,
   type Check,
   type LoadedEntry,
   type Unanswered,
@@ -25,7 +26,6 @@ import {
   astGrep,
   astGrepHits,
   banCommands,
-  cannedCtx,
   caseCtxs,
   canonicalFault,
   canonicalFiles,
@@ -90,20 +90,27 @@ import {
   type CaseResult,
 } from "./domain.ts";
 
+/** The one ctx a case becomes: a `{ path, content }` case is the commit of that file, asked of a rule with `.on("**")`. */
+const ctxOf = async (moment: Parameters<typeof caseCtxs>[1], c: Case, unanswered: Unanswered[]): Promise<Ctx> => {
+  const named = typeof c !== "string" && "path" in c;
+  const [ctx] = await caseCtxs(entry({ at: [moment], ...(named ? { on: ["**"] } : {}) }), moment, c, unanswered);
+  return ctx as Ctx;
+};
+
 /** Drive a check exactly as `flow test` does: one canned ctx, one verdict. */
-const run = async (check: Check, moment: Parameters<typeof cannedCtx>[0], c: Case): Promise<string | null> => {
-  const v = await check(cannedCtx(moment, c, []));
+const run = async (check: Check, moment: Parameters<typeof caseCtxs>[1], c: Case): Promise<string | null> => {
+  const v = await check(await ctxOf(moment, c, []));
   return v.ok ? null : (v.detail ?? "");
 };
 
 /** …and the same, keeping whatever the check reached for and the case never answered. */
 const runWithReaches = async (
   check: Check,
-  moment: Parameters<typeof cannedCtx>[0],
+  moment: Parameters<typeof caseCtxs>[1],
   c: Case,
 ): Promise<{ detail: string | null; missing: Unanswered[] }> => {
   const missing: Unanswered[] = [];
-  const v = await check(cannedCtx(moment, c, missing));
+  const v = await check(await ctxOf(moment, c, missing));
   return { detail: v.ok ? null : (v.detail ?? ""), missing };
 };
 
@@ -427,7 +434,7 @@ describe("commitMessage", () => {
   });
 
   it("judges nothing when there is no message, as under --all", async () => {
-    const ctx = cannedCtx("commit", { staged: ["a.ts"], message: "x" }, []);
+    const ctx = await ctxOf("commit", { staged: ["a.ts"], message: "x" }, []);
     expect((await header({ ...ctx, message: null })).ok).toBe(true);
   });
 
@@ -753,12 +760,12 @@ describe("symbolsInSibling", () => {
 
 describe("changedSet", () => {
   it("prefers the event's own fact over asking git", async () => {
-    const ctx = cannedCtx("commit", { staged: ["a.ts"] }, []);
+    const ctx = await ctxOf("commit", { staged: ["a.ts"] }, []);
     expect(await changedSet(ctx)).toEqual(["a.ts"]);
   });
 
   it("falls back to the capability when the moment carried no staged set", async () => {
-    const ctx = cannedCtx("command", { command: "x", world: { staged: ["b.ts"] } }, []);
+    const ctx = await ctxOf("command", { command: "x", world: { staged: ["b.ts"] } }, []);
     expect(await changedSet(ctx)).toEqual(["b.ts"]);
   });
 });
@@ -989,7 +996,7 @@ describe("commitReason", () => {
 
   it("passes a commit that moves no watched file, and a commit with no message at all", async () => {
     expect(await run(commitReason(opts), "commit", { message: "feat: x", staged: ["src/a.ts"] })).toBeNull();
-    const none = cannedCtx("commit", { staged: ["package.json"] }, []);
+    const none = await ctxOf("commit", { staged: ["package.json"] }, []);
     expect(await commitReason(opts)({ ...none, message: null }), "`flow hook commit --all` has no commit, so no message").toEqual({ ok: true });
   });
 
@@ -1182,7 +1189,7 @@ describe("execPasses", () => {
 
   it("{files} hands the tool the changed set — the old empty-argv blindness", async () => {
     const missing: Unanswered[] = [];
-    const ctx = cannedCtx("commit", { staged: ["a b.ts", "c.ts"] }, missing);
+    const ctx = await ctxOf("commit", { staged: ["a b.ts", "c.ts"] }, missing);
     await execPasses({ run: "npx eslint {files}" })(ctx);
     expect(missing[0]?.asked).toBe("npx eslint 'a b.ts' 'c.ts'");
   });
@@ -1634,16 +1641,16 @@ describe("readCase — the one ladder over the case union", () => {
   });
 });
 
-describe("cannedCtx", () => {
+describe("a case as a ctx", () => {
   it("matches a recorded exec answer exactly, and by containment for a command nobody would retype", async () => {
-    const ctx = cannedCtx("command", { command: "x", world: { exec: { "just test": { stdout: "exact", code: 0 } } } }, []);
+    const ctx = await ctxOf("command", { command: "x", world: { exec: { "just test": { stdout: "exact", code: 0 } } } }, []);
     expect((await ctx.exec("just test")).stdout).toBe("exact");
     expect((await ctx.exec("bash -lc 'just test --watch=false'")).stdout).toBe("exact");
   });
 
   it("records a reach the case never answered, rather than guessing or throwing", async () => {
     const missing: Unanswered[] = [];
-    const ctx = cannedCtx("command", "x", missing);
+    const ctx = await ctxOf("command", "x", missing);
     await ctx.exec("just nope");
     await ctx.fs.read("nope.ts");
     expect(missing).toEqual([
@@ -1656,16 +1663,16 @@ describe("cannedCtx", () => {
 
   it("a path the case never mentions simply is not there — absence is an ordinary answer", async () => {
     const missing: Unanswered[] = [];
-    const ctx = cannedCtx("commit", file("a.ts", ""), missing);
+    const ctx = await ctxOf("commit", file("a.ts", ""), missing);
     expect(await ctx.fs.exists("b.ts")).toBe(false);
     expect(missing).toEqual([]);
   });
 
   it("answers git from the case, and defaults its diff to empty", async () => {
-    const ctx = cannedCtx("commit", { staged: ["a.ts"], world: { gitDiff: "diff --git" } }, []);
+    const ctx = await ctxOf("commit", { staged: ["a.ts"], world: { gitDiff: "diff --git" } }, []);
     expect(await ctx.git.stagedFiles()).toEqual(["a.ts"]);
     expect(await ctx.git.diff()).toBe("diff --git");
-    expect(await cannedCtx("command", "x", []).git.diff()).toBe("");
+    expect(await (await ctxOf("command", "x", [])).git.diff()).toBe("");
   });
 });
 

@@ -214,7 +214,7 @@ function parsedFile(root: string, path: string): { readonly value: unknown; read
 
 /**
  * Who last worked in this worktree, what they wear, and the permission mode they run under — the
- * marker the write rail leaves, and the mode its last call recorded.
+ * marker a tool call leaves, and the mode its last call recorded.
  */
 function liveSession(root: string, harness: Harness): StatusFacts["session"] {
   const { session, who, wearing } = wearer(root);

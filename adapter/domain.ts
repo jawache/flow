@@ -113,7 +113,6 @@ export type AdapterEvent =
       readonly commands?: Ctx["commands"];
       /** command: where the line started, which the parse followed each command's folder from. */
       readonly start?: ShellStart | undefined;
-      readonly staged?: readonly string[] | undefined;
       readonly turn?: readonly TurnAction[] | undefined;
     }
   | {
@@ -160,7 +159,7 @@ export interface StagedChanges {
 }
 
 /** NUL-separated paths, as git prints them under `-z` — no quoting, so a path is a path. */
-export function nulPaths(stdout: string): string[] {
+function nulPaths(stdout: string): string[] {
   return stdout.split("\0").filter((path) => path !== "");
 }
 
@@ -1754,7 +1753,7 @@ export function planInit(facts: InitFacts): InitPlan {
   // settings file holding flow's registrations and NOTHING ELSE — permissions, model, theme,
   // every other tool's hooks, gone. There is no safe merge into bytes nobody parsed, so init
   // registers nothing and says which file to fix.
-  const registration = facts.settingsUnreadable ? { settings: facts.settings, added: [] } : facts.harness.registering.withRegistrations(facts.settings);
+  const registration = facts.settingsUnreadable ? { settings: facts.settings, changed: [] } : facts.harness.registering.withRegistrations(facts.settings);
   // Outside git there are no hooks to keep. A folder git could not name has none to read, and may
   // still hold some, so it is left alone as other hooks are.
   const other = facts.isGit && facts.hooksFolder !== null ? otherHooks(facts.hooksPath, facts.hooksFolder) : null;
@@ -1776,8 +1775,8 @@ export function planInit(facts: InitFacts): InitPlan {
     hooksPath: facts.isGit && facts.hooksPath !== HOOKS_DIR && other === null && !hooksUnknown,
     otherHooks: other,
     hooksUnknown,
-    settings: registration.added.length === 0 ? null : { path: facts.settingsPath, value: registration.settings },
-    registered: registration.added,
+    settings: registration.changed.length === 0 ? null : { path: facts.settingsPath, value: registration.settings },
+    registered: registration.changed,
     machine: machineRewrite(facts.machine, facts.harness.registering),
     settingsUnreadable: facts.settingsUnreadable ? facts.settingsPath : null,
   };

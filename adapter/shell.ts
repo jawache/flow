@@ -63,7 +63,7 @@ export function runCommand(command: string, root: string, env = hermeticEnv(proc
 }
 
 /** A repo-relative path, made absolute. Every path a check sees is relative; disk is not. */
-export function inRepo(root: string, path: string): string {
+function inRepo(root: string, path: string): string {
   return isAbsolute(path) ? path : join(root, path);
 }
 
@@ -234,7 +234,7 @@ function askGit(command: string, root: string): ExecResult {
 
 /**
  * What the commit changes, asked of git ONCE, whoever called the gate — the files it will hold,
- * which of them are new, which are as the last commit has them (`--all` only), and which it removes.
+ * which of them are new, and which it removes.
  *
  * A git that cannot answer is a refusal, never an empty commit: a gate that read "nothing staged"
  * off a failed command would pass everything.

@@ -216,14 +216,6 @@ describe("the command rail", () => {
     expect(hook("pre-tool-use", inThisSession("Bash", { command: "git status" })).code).toBe(0);
   });
 
-  it("carries no moment for an Edit or a Write: flow stops no write, so its file is judged only at the commit", () => {
-    const write = inThisSession("Write", { file_path: join(repo, "src/b.ts"), content: "// TODO: later\n" });
-    const answer = hook("pre-tool-use", write);
-    expect(answer.code).toBe(0);
-    expect(answer.stdout + answer.stderr).toBe("");
-    expect(existsSync(join(repo, "src/b.ts")), "flow did not write it either").toBe(false);
-  });
-
   it("leaves the session marker the commit gate reads, and records the call", () => {
     // The handshake: the PreToolUse rail writes which session is live, and the gate — spawned by
     // git, outside any session — reads it back. Both ends are flow's or commits misattribute.
@@ -563,7 +555,6 @@ describe("the commit gate", () => {
         ...pre("Edit", { file_path: join(other, "src", "edited.ts"), old_string: "x", new_string: "y" }, "journey-1"),
         cwd: other,
       };
-      expect(runFlow(other, ["hook", "pre-tool-use"], {}, JSON.stringify(edit)).code, "no hook is asked before an Edit").toBe(0);
       writeFileSync(join(other, "src", "edited.ts"), marked);
       const after = runFlow(other, ["hook", "post-tool-use"], {}, JSON.stringify(edit));
       expect(after.code, after.stderr).toBe(0);

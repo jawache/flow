@@ -1731,7 +1731,7 @@ describe("the binary fitting — can the hooks and the gate find flow", () => {
   // ONE RULE FOR STATUS AND INIT: a red line whose fix is `flow init` must be one init can carry out.
   it("judges registrations by the rule init rewrites by — a prefixed by-name command is somebody's own", () => {
     const theirs = registrationsAs((command) => command.replace(/^.* flow /, "FLOW_DEBUG=1 flow "));
-    expect(host.registering.withRegistrations(theirs).added, "init has nothing to rewrite").toEqual([]);
+    expect(host.registering.withRegistrations(theirs).changed, "init has nothing to rewrite").toEqual([]);
     expect(binary(true, false, { settings: theirs }).fitting?.ok, "so status names no fix init would not make").toBe(true);
   });
 

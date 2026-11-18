@@ -26,7 +26,7 @@ import { type Category, refusalText, type LoadResult, type Settings, type TurnAc
 import { afterCompaction, brief, categoriesIn, guard, recorder, runRows, type AgentOf, type Identity, type Marks, type Notice, type Outcome, type RecordedStep, type Row, type SessionState } from "../../engine/domain.ts";
 import { appendRows, appendSteps, isOff, isRecording, loadState, saveState, stickyIdentity, writeMarker } from "../../engine/state.ts";
 import { ALLOW, hermeticEnv, type AdapterEvent, type Refused } from "../domain.ts";
-import { agentOf, agentSettingOf, awaitsBrief, holdsForBrief, isHookEvent, nothingBound, outsideOf, ownTranscriptPath, reachesAnotherWorktree, readFault, ridesRefusal, sessionFactsFrom, shellReadRows, toEvent, toResult, tokensFromTranscript, toolRow, turnActions, type Answer, type EventWorld, type HookEvent, type HookPayload, type Shown, untoldWorktrees, whileBroken, workedPaths, worktreeFolders } from "./domain.ts";
+import { agentOf, agentSettingOf, awaitsBrief, holdsForBrief, isHookEvent, nothingBound, outsideOf, opensCall, ownTranscriptPath, reachesAnotherWorktree, readFault, ridesRefusal, sessionFactsFrom, shellReadRows, toEvent, toResult, tokensFromTranscript, toolRow, turnActions, type Answer, type EventWorld, type HookEvent, type HookPayload, type Shown, untoldWorktrees, whileBroken, workedPaths, worktreeFolders } from "./domain.ts";
 import type { Harness, HookResult } from "../harness.ts";
 import { DELIVERS, HOOK_COSTS, HOOK_EVENTS, HOOK_REGISTRATIONS, HOST_SURFACE, REPO_SETTINGS, bareRegistrations, listsFlow, machineDiffers, parseEvents, registeredEvents, settingsFileFor, spawnMeta, spawnsIn, staleRegistrations, steerOf, transcriptHead, withMachineCommandsUpToDate, withRegistrations, withoutRegistrations } from "./domain.ts";
 import { configRoot, readStore, readTranscript } from "./store.ts";
@@ -37,14 +37,10 @@ import { currentBranch, loadRegime, readText, realWorld } from "../shell.ts";
 // GIT — one command, run directly
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-/** How much output one git command may carry. */
-const MAX_OUTPUT = 256 * 1024 * 1024;
-
 /** One git command, run DIRECTLY — no shell, so no login profile on a path that runs every call. */
 function runGit(root: string, args: readonly string[]): { readonly ok: boolean; readonly stdout: Buffer; readonly stderr: string } {
   const result = spawnSync("git", args, {
     cwd: root,
-    maxBuffer: MAX_OUTPUT,
     // Git's hook variables are stripped (see GIT_HOOK_ENV), so a call made inside a commit hook
     // never aims at the commit's own index.
     env: hermeticEnv(process.env),
@@ -262,11 +258,6 @@ function prose(root: string, notice: Notice): string {
   return notice.file === undefined ? "" : (readText(root, notice.file) ?? "");
 }
 
-/** How many things one event was about — what the log row means by `subjects`. */
-function subjectCount(event: AdapterEvent): number {
-  return event.rail === "guard" && event.moment === "commit" ? (event.staged?.length ?? 0) : 1;
-}
-
 /**
  * ONE payload, judged. The live half of the pipeline, in the order the pieces become knowable.
  *
@@ -299,9 +290,7 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
   const outage = (sentence: string): HookResult => {
     if (off) return ALLOW;
     // A tool other than Bash is first seen after it ran, so that is where the agent is told.
-    const events = toEvent(hook, payload, eventWorld(root, session));
-    const seen: AdapterEvent[] = afterCall && tool !== "Bash" ? [{ rail: "brief", moment: "session" }, ...events] : events;
-    const answer = whileBroken(seen, sentence);
+    const answer = whileBroken(toEvent(hook, payload, eventWorld(root, session)), sentence, opensCall(hook, tool));
     const result = toResult(hook, answer);
     // TURN-END IS TOLD RATHER THAN HELD. `whileBroken` says why; this is the only place that can
     // write it, because a note on the hand-back rails would keep the agent working, and `toResult`
@@ -340,7 +329,7 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
   // The flight recorder goes FIRST, so the tool row precedes the guardrail rows about the same call
   // and the stream reads in the order things happened. A shell command is recorded before it runs,
   // because one the guard refuses never reaches PostToolUse; every other call is recorded after.
-  if (isCall(hook) && !off && (hook === "pre-tool-use") === (tool === "Bash")) {
+  if (isCall(hook) && !off && opensCall(hook, tool)) {
     const row = toolRow(payload, root);
     if (row) rows.push(row);
     if (hook === "pre-tool-use") rows.push(...shellReadRows(payload, root, homedir()));
@@ -404,7 +393,6 @@ async function judge(args: {
           moment: event.moment,
           command: event.command,
           commands: event.commands,
-          staged: event.staged,
           turn: event.turn,
           wearing: identity.wearing,
           outside,
@@ -417,7 +405,6 @@ async function judge(args: {
         rail: "guard",
         moment: event.moment,
         ...(event.command === undefined ? {} : { command: event.command }),
-        ...(event.staged === undefined ? {} : { staged: event.staged }),
         ...(event.turn === undefined ? {} : { turn: event.turn }),
         // Where the line started rides with the answer, so a replay parses it to the same folders.
         ...(outside.length === 0 ? {} : { outside, ...(event.start === undefined ? {} : { start: event.start }) }),
@@ -427,7 +414,7 @@ async function judge(args: {
       for (const effect of outcome.effects)
         if (effect.do === "block")
           blocked.push({ moment: event.moment, block: effect });
-      if (!off) rows.push(...runRows(event.moment, outcome, subjectCount(event)));
+      if (!off) rows.push(...runRows(event.moment, outcome, 1));
       continue;
     }
 

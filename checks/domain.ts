@@ -1791,7 +1791,7 @@ export interface CommitFileFacts {
  * The facts a commit puts on EVERY ctx it makes, whichever file the call is about: the staged
  * paths, the paths added and deleted, and the message. The live gate and a case build them here.
  */
-export function commitFacts(staged: readonly string[], commit: CommitFileFacts): Partial<Ctx> {
+function commitFacts(staged: readonly string[], commit: CommitFileFacts): Partial<Ctx> {
   return { staged, added: commit.added ?? [], deleted: commit.deleted ?? [], message: commit.message === undefined ? "" : commit.message };
 }
 
@@ -1847,35 +1847,6 @@ export function caseMoment(c: Case): Moment {
 }
 
 /**
- * Build the ctx one case becomes, at one moment.
- *
- * BOTH halves are the language layer's, and deliberately the same two calls the live engine makes:
- * `cannedWorld` turns what the case wrote down into the three capabilities, and `makeCtx` assembles
- * the ctx from those and the event's facts. A case is a recorded WORLD handed to one assembler, not
- * a second kind of ctx — the moment either of those is written twice, a green case stops being
- * evidence about the live rail, which is the whole value of cases existing.
- */
-export function cannedCtx(moment: Moment, c: Case, unanswered: Unanswered[]): Ctx {
-  const { world, facts, ...commit } = cannedParts(c, unanswered);
-  // A `{ path, content }` case is a commit of one file, and this ctx is that file's call: the file
-  // a rule with `.on(…)` is handed. `caseCtxs` is the door that fans a case out as the gate does.
-  const file = typeof c === "string" || !("path" in c) ? {} : { file: { path: c.path, content: c.content, ...(c.existed === undefined ? {} : { existed: c.existed }) } };
-  return makeCtx(moment, moment === "commit" ? { ...facts, ...file, ...commitFacts(facts.staged ?? [], commit) } : facts, world);
-}
-
-/**
- * A case read once: the world it recorded, assembled, and the event facts it carries. At the commit
- * moment a `{ path, content }` case is a commit of that one file.
- */
-function cannedParts(
-  c: Case,
-  unanswered: Unanswered[],
-): { readonly facts: Partial<Ctx>; readonly world: World } & CommitFileFacts {
-  const { world, facts, added, deleted, message } = readCase(c);
-  return { world: cannedWorld(world, facts.staged, unanswered), facts, added, deleted, message };
-}
-
-/**
  * Every ctx one case becomes for one entry — one, or one per staged file it is scoped to.
  *
  * The plural is the whole of the fan-out fix, and the world is built ONCE and shared across the
@@ -1883,9 +1854,11 @@ function cannedParts(
  * four answers the live gate would.
  */
 export async function caseCtxs(entry: LoadedEntry, moment: Moment, c: Case, unanswered: Unanswered[]): Promise<Ctx[]> {
-  const { world, facts, ...commit } = cannedParts(c, unanswered);
-  const subjects = moment === "commit" ? await commitSubjects(entry, facts, world, commit) : [facts];
-  return subjects.map((subject) => makeCtx(subject.moment ?? moment, subject, world));
+  const { world, facts, added, deleted, message } = readCase(c);
+  const canned = cannedWorld(world, facts.staged, unanswered);
+  const commit = { added, deleted, message };
+  const subjects = moment === "commit" ? await commitSubjects(entry, facts, canned, commit) : [facts];
+  return subjects.map((subject) => makeCtx(subject.moment ?? moment, subject, canned));
 }
 
 /**
@@ -1895,7 +1868,7 @@ export async function caseCtxs(entry: LoadedEntry, moment: Moment, c: Case, unan
  * A file out of the entry's scope, or not on disk, yields none. `existed` is set when `added` is
  * given.
  */
-export async function stagedFiles(
+async function stagedFiles(
   scope: Scope,
   staged: readonly string[],
   world: World,
@@ -1933,15 +1906,19 @@ export async function stagedFiles(
  * A case's `deleted` paths are no subject: a rule with `.on(…)` is asked about files the commit
  * holds, and one without reads them from `ctx.deleted`.
  */
-async function commitSubjects(
+export async function commitSubjects(
   entry: LoadedEntry,
   facts: Partial<Ctx>,
   world: World,
   commit: CommitFileFacts,
+  whole = false,
 ): Promise<Partial<Ctx>[]> {
   const staged = facts.staged ?? [];
   const { spec } = entry;
-  const every = { ...facts, ...commitFacts(staged, commit) };
+  // The whole repo, with no commit (`--all`): only a rule with `.on(…)` is asked, once per file, and no
+  // file counts as staged, added or deleted, with no message.
+  if (whole && !spec.on) return [];
+  const every = whole ? { ...facts, staged: [], added: [], deleted: [], message: null } : { ...facts, ...commitFacts(staged, commit) };
   if (!spec.on) return [every];
   return (await stagedFiles(spec, staged, world, commit)).map((file) => ({ ...every, file }));
 }

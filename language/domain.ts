@@ -2289,7 +2289,7 @@ export interface Settings {
 }
 
 /** The keys `Settings` has: what the load accepts in the second argument of `defineConfig`. */
-export const SETTING_KEYS: readonly string[] = ["driftTokens", "grammars"];
+const SETTING_KEYS = ["driftTokens", "grammars"] as const satisfies readonly (keyof Settings)[];
 
 /**
  * The settings 0.3 had and 0.4 refuses by name: both configured the snapshot, which is removed, so
@@ -2652,7 +2652,7 @@ export function loadConfig(config: FlowConfig): LoadResult {
   // A key the load does not know is refused, never ignored: a setting that reads as a decision and
   // decides nothing is how a config goes on looking guarded after the thing it configured is gone.
   for (const key of Object.keys(config.settings)) {
-    if (SETTING_KEYS.includes(key)) continue;
+    if ((SETTING_KEYS as readonly string[]).includes(key)) continue;
     refusals.push({
       code: "unknown-setting",
       entry: "",

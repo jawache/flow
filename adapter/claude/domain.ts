@@ -496,8 +496,8 @@ function callEvents(payload: HookPayload, world: EventWorld): AdapterEvent[] {
     //
     // Every guard event comes before every brief event: a refusal carries no notes, and the
     // shell stops judging notes once something has refused, so they are not marked shown.
-    // The line is parsed once here: the command rules read it, and so do the files it reads. The host's `cwd` is where the shell stands, which is where each
-    // command's folder is followed from.
+    // The line is parsed once here: the command rules read it, and so do the files it reads. The
+    // host's `cwd` is where the shell stands, which is where each command's folder is followed from.
     const cwd = shellCwd(payload, world.root);
     const steps = parseShellSteps(command, { cwd, home: world.home });
     const commands = steps === null ? null : stepCommands(steps);
@@ -807,6 +807,17 @@ export interface Outage extends Answer {
 }
 
 /**
+ * Is this the first hook flow is asked about a tool's call? A shell command is asked before it runs
+ * (`pre-tool-use`), because one the guard refuses never reaches the hook after; every other tool is
+ * asked after it ran (`post-tool-use`), since flow registers nothing before it. The flight
+ * recorder writes the call's row at this hook, and a broken config tells the agent at it.
+ */
+export function opensCall(hook: HookEvent, tool: string): boolean {
+  if (tool === "") return false;
+  return hook === "pre-tool-use" ? tool === "Bash" : hook === "post-tool-use" && tool !== "Bash";
+}
+
+/**
  * Does this event's answer carry the load error? A session start, and a command not yet run. Not a
  * touch, and not turn-end, on either rail, which is told on stderr instead.
  */
@@ -814,11 +825,16 @@ function carriesTheNotice(event: AdapterEvent): boolean {
   return event.moment !== "touch" && event.moment !== "turn-end";
 }
 
-export function whileBroken(events: readonly AdapterEvent[], message: string): Outage {
+/**
+ * What a broken config answers with. `opens` is `opensCall` for this hook: the first hook of a
+ * call carries the notice whatever events it made, so a Read's touch is not the only thing the
+ * agent hears.
+ */
+export function whileBroken(events: readonly AdapterEvent[], message: string, opens = false): Outage {
   const body = `${message}\n\n${FLOW_OFF}`;
   return {
     refused: [],
-    shown: events.some(carriesTheNotice) ? [{ entry: null, cause: "fault", body }] : [],
+    shown: opens || events.some(carriesTheNotice) ? [{ entry: null, cause: "fault", body }] : [],
     told: events.some((event) => event.rail === "guard" && event.moment === "turn-end") ? body : null,
   };
 }
@@ -1849,13 +1865,13 @@ export function machineDiffers(repo: unknown, machine: unknown): { bare: string[
  * flow stands beside it. Adding what is already there is skipped, which is the whole of what makes
  * `flow init` idempotent — a second run has nothing to say.
  */
-export function withRegistrations(settings: unknown): { settings: unknown; added: string[] } {
+export function withRegistrations(settings: unknown): { settings: unknown; changed: string[] } {
   const base = (settings && typeof settings === "object" ? settings : {}) as Record<string, unknown>;
   const already = new Set(registeredEvents(settings));
   const wanted = HOOK_REGISTRATIONS.filter((r) => !already.has(r.event));
   const stale = new Set(staleRegistrations(settings));
   const bare = new Set(bareRegistrations(settings));
-  if (wanted.length === 0 && stale.size === 0 && bare.size === 0) return { settings: base, added: [] };
+  if (wanted.length === 0 && stale.size === 0 && bare.size === 0) return { settings: base, changed: [] };
 
   const arrays = hookArrays(settings);
   const hooks = rewrittenOurs(settings, stale, bare);
@@ -1869,17 +1885,17 @@ export function withRegistrations(settings: unknown): { settings: unknown; added
     ];
   }
   // THE REPORT, in registration order: each event added, rewritten or removed, once, with why.
-  const added: string[] = [];
+  const changed: string[] = [];
   for (const event of new Set([...HOOK_REGISTRATIONS.map((r) => r.event), ...bare, ...RETIRED.keys()])) {
     const why = [
       ...(stale.has(event) && RETIRED.has(event) ? ["removed: flow no longer registers it"] : []),
       ...(stale.has(event) && !RETIRED.has(event) ? ["matcher brought up to date"] : []),
       ...(bare.has(event) ? [`now runs the flow in ${PACKAGE_DIR} first`] : []),
     ];
-    if (why.length > 0) added.push(`${event} (${why.join(", ")})`);
-    else if (!already.has(event) && !RETIRED.has(event)) added.push(event);
+    if (why.length > 0) changed.push(`${event} (${why.join(", ")})`);
+    else if (!already.has(event) && !RETIRED.has(event)) changed.push(event);
   }
-  return { settings: { ...base, hooks }, added };
+  return { settings: { ...base, hooks }, changed };
 }
 
 /**
