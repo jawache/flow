@@ -718,7 +718,9 @@ function wordPieces(part: WordPart, quoted = false): ShellWordPiece[] {
     case "ParameterExpansion":
       return [expansionPiece(part, quoted)];
     case "Glob":
-      return [{ kind: "text", text: part.value }];
+      return part.kind === "bracket"
+        ? [{ kind: "text", text: "[" }, ...part.parts.flatMap((child) => wordPieces(child, quoted)), { kind: "text", text: "]" }]
+        : [{ kind: "text", text: part.value }];
     case "ExtendedGlob":
     case "BraceExpansion":
       return [{ kind: "text", text: part.text }];
@@ -748,6 +750,9 @@ function substitution(text: string, body: readonly ShellStep[]): ShellSubstituti
   return { text: (backtick ? text.slice(1, -1) : text.slice(2, -1)).trim(), backtick, commands: stepCommands(body), argument: null, prefix: null };
 }
 
+const isPlain = (part: WordPart): part is WordPart & { readonly value: string } =>
+  part.type === "Literal" || part.type === "SingleQuoted" || part.type === "AnsiCQuoted";
+
 /**
  * The plain text in front of the substitution a word ends with — `""` when the word is the
  * substitution alone, bare or in double quotes — or null when the word ends with something else, or
@@ -759,7 +764,8 @@ function textBefore(w: Word): string | null {
   if (last?.type !== "CommandExpansion") return null;
   let text = "";
   for (const piece of pieces) {
-    if (piece.type !== "Literal" && piece.type !== "SingleQuoted" && piece.type !== "AnsiCQuoted") return null;
+    if (piece.type === "Glob" && piece.kind === "bracket" && !piece.parts.every(isPlain)) return null;
+    if (piece.type !== "Glob" && !isPlain(piece)) return null;
     text += piece.value;
   }
   return text;

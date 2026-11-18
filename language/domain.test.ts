@@ -576,6 +576,10 @@ describe("parseCommandLine — the six fields", () => {
     expect(placed('echo "$(date) today"')).toEqual([[null, null]]);
     expect(placed('echo "$HOME $(date)"')).toEqual([[null, null]]);
     expect(placed('echo "$(date)$(whoami)"')).toEqual([[null, null], [null, null]]);
+    // A glob is plain text before it, a bracket with a variable inside is not.
+    expect(placed("cat a*$(echo x)")).toEqual([[0, "a*"]]);
+    expect(placed("cat --f=[x]$(echo x)")).toEqual([[0, "--f=[x]"]]);
+    expect(placed("cat [$R]$(echo x)")).toEqual([[null, null]]);
     expect(placed("$(which ls) -la")).toEqual([[null, null]]);
     expect(placed("cat <<EOF\n$(date)\nEOF")).toEqual([[null, null]]);
   });
@@ -1091,6 +1095,11 @@ describe("parseCommandLine — a variable the line sets, as its value", () => {
   /** Each command's program and arguments. */
   const argv = (line: string): (readonly [string, readonly string[]])[] | undefined =>
     parseCommandLine(line)?.map((c) => [c.program, c.args] as const);
+
+  it("fills in a variable inside a bracket glob", () => {
+    expect(argv("R=x; cat [$R]")?.[0]).toEqual(["cat", ["[x]"]]);
+    expect(argv("R=/tmp; rm [$R]/x")?.[0]).toEqual(["rm", ["[/tmp]/x"]]);
+  });
 
   it("fills in an argument, and the text with it", () => {
     expect(argv("P=/tmp/s; sed -i s/a/b/ $P/x.ts")?.[0]).toEqual(["sed", ["-i", "s/a/b/", "/tmp/s/x.ts"]]);
