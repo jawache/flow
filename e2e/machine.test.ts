@@ -1,34 +1,28 @@
-// flow/packs/machine.test.ts — THE MACHINE TEST. Every pack the package ships, bound at once in a
-// repo that has never heard of flow, and driven until each rail actually refuses.
+// flow/e2e/machine.test.ts — THE MACHINE TEST. The one pack the package ships, bound in a repo that
+// has never heard of flow, and driven until its rails actually refuse.
 //
 // It answers ONE question — "did we break anything?" — and it answers it with an exit code, which
 // is why it is one command (`just test-packs`) and not a reading exercise. `flow test` proves the
-// rules in YOUR config; this proves the ten the package ships, in a repo that is not this one.
+// rules in YOUR config; this proves the pack the package ships, in a repo that is not this one.
 //
-// THE STRANGER'S REPO IS THE POINT. Every parameter below is somebody else's: the tooling is one
-// shell script rather than a justfile, the pure home is `core/`, the repo's own pack lives in
-// `rules/`. A copy of this repo's flow.config.ts would prove only that our own spelling still
-// works, and the defect these packs were extracted out of (F2) was exactly one repo's spelling
-// baked into a pack — so the fixture is written by someone flow has never met.
+// THE STRANGER'S REPO IS THE POINT. Every parameter below is somebody else's: the pure home is
+// `core/`, the repo's own packs live in `rules/`. A copy of this repo's flow.config.ts would prove
+// only that our own spelling still works, so the fixture is written by someone flow has never met.
 //
-// FIVE MOMENTS, DRIVEN LIVE, one refusal each: write · delete · command · commit · turn-end. Four
-// come from a shipped pack; turn-end comes from the stranger's own, because NO pack in the package
-// carries a turn-end rule and inventing one to make a table symmetrical would be a rule nobody
-// asked for. The rail is real either way, and this is what proves it. Turn-end is driven twice,
-// because two host events reach it: the main chat's hand-back and a subagent's.
+// The stranger's own packs ride along because they are what exercises the rest of the road: a
+// turn-end rule, a note attached to a command, a grammar the repo declared, and a fence that must
+// not load. No shipped pack carries any of those.
 //
 // THE CENSUS is what makes a deleted case visible. `flow status --json` gives the exact entry list
 // and one `flow test` per pack gives its case count, both pinned below: remove a block case from
-// any pack and this exits non-zero naming that pack. It is the same discipline index.test.ts
-// applies to the export list — a change here is deliberate or it is a bug.
+// the pack and this exits non-zero naming it.
 //
 // NOTHING OUTSIDE THE TEMP DIRECTORIES IS TOUCHED, and none of that plumbing is here: the
 // throwaway repo, the built binary and the host's own `CLAUDE_CONFIG_DIR` and PATH seams are
-// flow/harness.ts, which product.test.ts and live.test.ts drive too. Literally the same road as
-// product.test.ts, one scale up.
+// harness.ts, which product.test.ts and live.test.ts drive too.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   buildBundles,
@@ -41,93 +35,48 @@ import {
   subagentStopPayload,
   subagentTranscripts,
   flow as runFlow,
-  git as runGit,
   hook as sendHook,
   type Ran,
 } from "./harness.ts";
-import { bindLine, EXAMPLE } from "../tools/domain.ts";
 
 // ── the stranger, and what it calls things ───────────────────────────────────
 //
-// One shell script for the whole toolchain, `core/` for the pure home, `rules/` for the pack it
-// writes itself. Not one of those names is this repo's, and that is the fixture's whole job.
-//
-// THE SPELLINGS ARE THE SHARED ONES — `EXAMPLE` in tools/domain.ts, the same values every pack page
-// is rendered with. One list, because the alternative is a page documenting a binding nothing has
-// ever run and a test driving a binding nobody has read. Two packs are bound differently here on
-// purpose, and each says so at its own line.
+// `core/` for the pure home, `rules/` for the packs it writes itself. Not one of those names is
+// this repo's, and that is the fixture's whole job.
 
-/** Every pack the package ships, as a stranger's config binds it — with its census pinned. */
+/** One pack bound in the stranger's config, with its census pinned. */
 interface Shipped {
   /** The pack's exported name, which is also the prefix of every entry id it contributes. */
   readonly pack: string;
-  /**
-   * Where this pack is imported FROM when it is the repo's own — the file, relative to `probe/`.
-   *
-   * Absent means the package, which is the ordinary case. It is a field rather than a branch per
-   * pack in the generator below: the two the stranger writes differ from the ten only in this one
-   * fact, and a second template is a second place for "how a config imports a pack" to be spelled.
-   */
+  /** Where this pack is imported FROM when it is the repo's own — the file, relative to `probe/`. Absent means the package. */
   readonly from?: string;
   /** Whether this binding declares the repo's own grammar — the settings block rides with it. */
   readonly declaresGrammar?: boolean;
-  /** What this repo binds it with. `undefined` binds it bare. */
-  readonly params: Readonly<Record<string, unknown>> | undefined;
+  /** The parameters, as the config line writes them. Empty binds the pack bare. */
+  readonly params: string;
   /** What `flow test` runs over this pack alone. Pinned: a deleted case shows up here, by name. */
   readonly cases: number;
   /** The guardrails those cases cover — the disabled ones are loaded but not run. */
   readonly guardrails: number;
 }
 
-/** The config line one binding is written as — the generator's, so the page prints what runs here. */
-const bind = (entry: Shipped): string => bindLine(entry.pack, entry.params);
+/** The config line one binding is written as. */
+const bind = (entry: Shipped): string => `pack(${entry.pack}${entry.params === "" ? "" : `, ${entry.params}`})`;
 
-const SHIPPED: readonly Shipped[] = [
-  // BARE, where the page binds `root` and `allow`. Every parameter the docs pack takes is optional,
-  // and a pack in that state must stay bindable with no object at all — a config that had already
-  // bound it refuses to load, fail-closed, the day the pack gains its first parameter otherwise.
-  // Nothing else in this file drives that path: `node` and `work` take no parameters to begin with.
-  { pack: "docs", params: undefined, cases: 2, guardrails: 1 },
-  // `example` is the field this command's first run earned. Two of the pack's entries narrow
-  // inside their own check (`changed`, `whenAdded`) rather than through `.on(…)`, and both used
-  // to prove themselves with `cli/pure/a.ts` written out — one repo's spelling, inside the pack.
-  // Bound here, against `core/`, their block cases fell outside the check's narrowing, were
-  // correctly passed, and FAILED: `flow test` red on day one in every repo that spells its pure
-  // home differently. Nothing else in the suite could see it, because nothing else binds a pack
-  // as a stranger.
-  { pack: "fcis", params: EXAMPLE.fcis, cases: 15, guardrails: 7 },
-  { pack: "flow", params: EXAMPLE.flow, cases: 34, guardrails: 2 },
-  { pack: "git", params: EXAMPLE.git, cases: 197, guardrails: 9 },
-  // `recipes` bound, so the entry that only exists when a repo has one is driven here too.
-  { pack: "justfile", params: EXAMPLE.justfile, cases: 20, guardrails: 3 },
-  { pack: "node", params: undefined, cases: 14, guardrails: 2 },
-  // BARE, where the page binds both command names. They are optional now and default to dotenvx's
-  // own spelling, which is the path a repo that has wrapped nothing takes — so it is what runs
-  // here, while the page names a wrapper because a wrapper is what the parameters are for. The
-  // same split as `typescript` below, made for the same reason.
-  { pack: "secrets", params: undefined, cases: 6, guardrails: 3 },
-  { pack: "tdd", params: EXAMPLE.tdd, cases: 12, guardrails: 6 },
-  // NO SHARED BASE, where the page names both — `eslintFromBase` exists only when a repo names an
-  // eslint base, so the page has to name one or that rule is invisible to a reader, and this has to
-  // name none or the no-base path the F2 ruling created is driven nowhere. The two gate recipes are
-  // the shared ones.
-  { pack: "typescript", params: { typecheck: EXAMPLE.typescript.typecheck, lint: EXAMPLE.typescript.lint }, cases: 7, guardrails: 3 },
-  // `writers` named, so the one-writer entry — which exists only when a repo names its writers —
-  // is bound and driven here too.
-  { pack: "work", params: EXAMPLE.work, cases: 37, guardrails: 6 },
-];
-/** The stranger's own pack — the eleventh binding, and the only turn-end rule in the config. */
-const HOUSE: Shipped = { pack: "house", params: undefined, cases: 2, guardrails: 1, from: "../rules/house.ts" };
+/** The one shipped pack, `rules/**` handed over as the folder this repo keeps its own packs in. */
+const SHIPPED: readonly Shipped[] = [{ pack: "flow", params: '{ packs: ["rules/**"] }', cases: 34, guardrails: 2 }];
+/** The stranger's own pack — the second binding, and the only turn-end rule in the config. */
+const HOUSE: Shipped = { pack: "house", params: "", cases: 2, guardrails: 1, from: "../rules/house.ts" };
 
 /**
- * The stranger's SECOND pack — the twelfth binding, and the only user of the two capabilities no
+ * The stranger's SECOND pack — the third binding, and the only user of the two capabilities no
  * shipped pack touches: a note attached to a command, and a rule on a grammar the repo declared.
  *
  * Its guardrail carries two cases; its note carries none, because a note has no rail to block with.
  */
 const STRANGER: Shipped = {
   pack: "stranger",
-  params: undefined,
+  params: "",
   cases: 2,
   guardrails: 1,
   from: "../rules/stranger.ts",
@@ -150,7 +99,7 @@ const MISSING_LIBRARY = "grammars/nowhere.so";
 /**
  * The stranger's own pack, in the folder the stranger chose.
  *
- * ONE RULE, and it is at turn-end deliberately: not one of the ten shipped packs carries a
+ * ONE RULE, and it is at turn-end deliberately: the shipped pack carries a
  * turn-end guardrail, so the rail would otherwise go undriven here — and "no pack ships one" is a
  * fact about the packs, not about the moment. This is also what `flow`'s `packs: ["rules/**"]`
  * parameter is pointed at, so the delete refusal below is protecting a file that really exists.
@@ -171,7 +120,7 @@ const STRANGER_PACK = fixturePack("repo-grammar-pack", "@jawache/flow");
  * that uses it reads it through a probe config of its own. A pack that cannot load has no business
  * in a list of what is bound.
  */
-const BAD_FENCE: Shipped = { pack: "fence", params: undefined, cases: 2, guardrails: 1, from: "../rules/fence.ts" };
+const BAD_FENCE: Shipped = { pack: "fence", params: "", cases: 2, guardrails: 1, from: "../rules/fence.ts" };
 const BAD_FENCE_PACK = fixturePack("bad-fence-pack", "@jawache/flow");
 
 /**
@@ -187,7 +136,7 @@ const settingsBlock = (libraryPath: string): string =>
 /** The whole guard of a repo that binds everything flow ships, plus the two packs it writes itself. */
 const config = (libraryPath: string): string => `// flow.config.ts — this repo's whole guard.
 import { defineConfig, pack } from "@jawache/flow";
-import { docs, fcis, flow, git, justfile, node, secrets, tdd, typescript, work } from "@jawache/flow/packs";
+import { flow } from "@jawache/flow/packs";
 import { house } from "./rules/house.ts";
 import { stranger } from "./rules/stranger.ts";
 
@@ -207,15 +156,6 @@ const only = (entry: Shipped, libraryPath: string): string =>
     "",
   ].join("\n");
 
-/** The stranger's entire toolchain: one script, one job per argument. */
-const CI_SH = `#!/bin/sh
-# Every gate this repo runs, behind one verb. The config hands the spelling to the packs.
-case "$1" in
-  test|types|lint|coverage) exit 0 ;;
-  *) echo "no such job: $1" >&2; exit 1 ;;
-esac
-`;
-
 /**
  * EVERY ENTRY THE CONFIG BINDS, exactly — the other half of the census.
  *
@@ -224,64 +164,13 @@ esac
  * re-export — is caught here by name.
  */
 const ENTRIES: readonly string[] = [
-  "docs.docs",
-  "docs.docsShape",
-  "docs.userDocsStyle",
-  "fcis.fcis",
-  "fcis.newPureFileNeedsReason",
-  "fcis.noShellInPure",
-  "fcis.noSideEffectsInPure",
-  "fcis.noThrowInPure",
-  "fcis.pureCovered",
-  "fcis.pureExportsTested",
-  "fcis.pureHasTest",
   "flow.editingTheGuardrails",
   "flow.noDeleteGuardrails",
   "flow.noUninstall",
   "flow.orientation",
-  "git.conventionalCommitFormat",
-  "git.noAiAttributionInCommits",
-  "git.noDestructiveGh",
-  "git.noForcePush",
-  "git.noGateSkip",
-  "git.noGitDiscard",
-  "git.noShellSubstitutionInProse",
-  "git.node.noHandEditedVersion",
-  "git.node.versionIsSemver",
-  "git.orientation",
   "house.ranSomething",
-  "justfile.justfileDocs",
-  "justfile.node.noPackageScripts",
-  "justfile.orientation",
-  "justfile.toolsHome",
-  "justfile.useTheRecipe",
-  "node.dependencies",
-  "node.lockfileInStep",
-  "node.newDependencyNeedsReason",
-  "secrets.envEncrypted",
-  "secrets.noKeysFileInCommits",
-  "secrets.noSecretsInCommits",
-  "secrets.orientation",
   "stranger.installing",
   "stranger.noEvalInScripts",
-  "tdd.commitRunsTests",
-  "tdd.testingStrategy",
-  "tdd.vitest",
-  "tdd.vitestIdioms.noEmptyTest",
-  "tdd.vitestIdioms.noMockInternal",
-  "tdd.vitestIdioms.noNetworkStubs",
-  "tdd.vitestIdioms.noOnlyInTests",
-  "typescript.commitRunsEslint",
-  "typescript.commitRunsTsc",
-  "typescript.strictTypesNoInvalidStates",
-  "typescript.tsconfigStrict",
-  "work.builderWrites",
-  "work.checkersDoNotWrite",
-  "work.noAgentInboxItems",
-  "work.noShellSubstitutionInProse",
-  "work.nodeInTheRecord",
-  "work.planIsTheParents",
-  "work.ticksAreTheChilds",
 ];
 
 // ── the road ─────────────────────────────────────────────────────────────────
@@ -306,7 +195,7 @@ const report: string[] = [];
  * complete report with a hole in it — the worst of the three possible outputs. So each step signs
  * its own name, and `afterAll` says which never did.
  */
-const STEPS = ["scaffold", "bind", "cases", "write", "delete", "command", "note", "grammar", "fence", "commit", "turn-end"] as const;
+const STEPS = ["scaffold", "bind", "cases", "delete", "note", "grammar", "fence", "turn-end"] as const;
 const finished = new Set<string>();
 const step = (name: (typeof STEPS)[number], ...lines: string[]): void => {
   finished.add(name);
@@ -315,7 +204,6 @@ const step = (name: (typeof STEPS)[number], ...lines: string[]): void => {
 
 /** The built binary, in the stranger's repo, with the throwaway host settings and the shim on PATH. */
 const flow = (args: readonly string[], stdin = ""): Ran => runFlow(repo, args, { home, bin }, stdin);
-const git = (args: readonly string[]): Ran => runGit(repo, args, { home, bin });
 const hook = (event: string, payload: Record<string, unknown>): Ran => sendHook(repo, event, payload, { home, bin });
 const inThisSession = (tool: string, input: Record<string, unknown>): Record<string, unknown> =>
   pre(tool, input, "machine-1");
@@ -367,7 +255,6 @@ beforeAll(async () => {
   // 1 — the scaffold. Everything after this point is the stranger writing their own guard over it.
   scaffolded = flow(["init"]);
 
-  writeFileSync(join(repo, "ci.sh"), CI_SH, { mode: 0o755 });
   mkdirSync(join(repo, "rules"), { recursive: true });
   writeFileSync(join(repo, "rules", "house.ts"), HOUSE_PACK);
   writeFileSync(join(repo, "rules", "stranger.ts"), STRANGER_PACK);
@@ -400,10 +287,10 @@ describe("the machine test", () => {
     expect(scaffolded.code, scaffolded.stdout + scaffolded.stderr).toBe(0);
     for (const created of ["flow.config.ts", ".githooks/pre-commit", "node_modules/@jawache/flow", "core.hooksPath"])
       expect(scaffolded.stdout).toContain(created);
-    step("scaffold", "flow packs — the machine test, in a repo that has never heard of flow", "", "  scaffold   flow init armed the gate, the link and the hook registrations");
+    step("scaffold", "flow pack — the machine test, in a repo that has never heard of flow", "", "  scaffold   flow init armed the gate, the link and the hook registrations");
   });
 
-  it("binds every pack the package ships, and exactly these entries", () => {
+  it("binds the pack the package ships, and exactly these entries", () => {
     const said = flow(["status", "--json"]);
     const read = JSON.parse(said.stdout) as {
       green: boolean;
@@ -424,7 +311,7 @@ describe("the machine test", () => {
     const totals = read.moments.totals;
     step(
       "bind",
-      `  bind       ${SHIPPED.length} shipped packs + the two the repo writes · ${ids.length} entries ` +
+      `  bind       ${SHIPPED.length} shipped pack + the two the repo writes · ${ids.length} entries ` +
         `(${totals["guardrails"]} guardrails · ${totals["breadcrumbs"]} breadcrumbs · ${totals["disabled"]} disabled)`,
       `             ${[...SHIPPED.map((s) => s.pack), `${HOUSE.pack} · ${STRANGER.pack} (this repo's own)`].join(" · ")}`,
       "  status     green — every rule resolves and can fire, every fitting is in place",
@@ -456,24 +343,10 @@ describe("the machine test", () => {
     step("cases", `  cases      ${total} green over ${measured.reduce((sum, m) => sum + m.guardrails, 0)} guardrails, pack by pack`, "  live");
   });
 
-  it("refuses the write — the stranger's own pure home, from a parameter", () => {
-    // `core/**` is nothing this pack ever heard of: it is the `files` parameter reaching the scope,
-    // live, on the rail rather than in a case.
-    refusal(
-      "write",
-      hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "core/clock.ts"), content: "export const now = () => new Date();\n" })),
-      "fcis.noSideEffectsInPure",
-    );
-  });
-
   it("refuses the delete — the guard surface named by a parameter", () => {
     // One Bash call, two moments: the command itself, and the file the `rm` would take. `rules/`
     // is the stranger's pack folder, handed to the flow pack as `packs`.
     refusal("delete", hook("pre-tool-use", inThisSession("Bash", { command: "rm rules/house.ts" })), "flow.noDeleteGuardrails");
-  });
-
-  it("refuses the command", () => {
-    refusal("command", hook("pre-tool-use", inThisSession("Bash", { command: "git push --force origin main" })), "git.noForcePush");
   });
 
   // ── the two capabilities no shipped pack uses, driven live ─────────────────
@@ -481,8 +354,7 @@ describe("the machine test", () => {
   // Both arrive through the SAME PreToolUse answer the command guardrails use, which is the whole
   // reason neither needed a new rail: a note rides the `additionalContext` channel, and a rule on a
   // declared grammar is an ordinary write refusal whose parser came from a file the config named.
-  // The note test also reads a shipped path note through a link. That one arrives on the after-call answer.
-  it("shows a note attached to a COMMAND, on the same rail that refuses one, and a path's note through a link out of the repo", () => {
+  it("shows a note attached to a COMMAND, on the same rail that refuses one", () => {
     const said = hook("pre-tool-use", inThisSession("Bash", { command: "npm install left-pad" }));
     expect(said.code, `the note blocked the command:\n${said.stderr}`).toBe(0);
     const answer = JSON.parse(said.stdout) as { hookSpecificOutput?: { hookEventName?: string; additionalContext?: string } };
@@ -493,25 +365,9 @@ describe("the machine test", () => {
     const quiet = hook("pre-tool-use", inThisSession("Bash", { command: "npm run build" }));
     expect(quiet.stdout).not.toContain("dependency cache");
 
-    // A path-bound note is not shown for a file outside the repo, and the record is usually a link
-    // to one. The path is judged by its name, so `.work/…` stays inside wherever the link goes.
-    const target = join(home, "record");
-    mkdirSync(join(target, "x"), { recursive: true });
-    writeFileSync(join(target, "x", "y.md"), "a note\n");
-    symlinkSync(target, join(repo, ".work"));
-    try {
-      const read = { ...inThisSession("Read", { file_path: join(repo, ".work/x/y.md") }), tool_use_id: "toolu_record" };
-      expect(hook("pre-tool-use", read).code).toBe(0);
-      const linked = hook("post-tool-use", read);
-      expect(linked.code, linked.stderr).toBe(0);
-      expect(linked.stdout).toContain("links out of the repo");
-    } finally {
-      rmSync(join(repo, ".work"));
-    }
     step(
       "note",
       "    note      🍞 stranger.installing — shown on `npm install …`, silent on `npm run build`",
-      "              🍞 work.nodeInTheRecord — shown on `.work/x/y.md`, with `.work` a link out of the repo",
     );
   });
 
@@ -573,31 +429,7 @@ describe("the machine test", () => {
     expect(flow(["status"]).code, "and it is green again once the library is back").toBe(0);
   });
 
-  it("refuses the commit, at git's own hook, and passes the same commit once it is clean", () => {
-    // ASSEMBLED, never written whole: spelled out, this file would carry a live-key shape and the
-    // rule it is testing would refuse the commit that adds it. The pack's own block case is built
-    // the same way, for the same reason.
-    const KEY = ["AKIA", "IOSFODNN7EXAMPLE"].join("");
-    const notes = join(repo, "deploy-notes.txt");
-    writeFileSync(notes, `the old prod key was ${KEY}\n`);
-    git(["add", "deploy-notes.txt"]);
-
-    const refused = git(["commit", "-m", "chore: deploy notes"]);
-    expect(refused.code, "git refuses when the gate exits non-zero").not.toBe(0);
-    expect(refused.stderr).toContain("secrets.noSecretsInCommits");
-    step("commit", "    commit    ✗ secrets.noSecretsInCommits (at git's own pre-commit hook)");
-
-    // …and the gate is not simply refusing everything: the same commit lands once the shape is
-    // gone, with every exec-shaped rule in the config (the suite, the typecheck, the lint) really
-    // running the stranger's own script.
-    writeFileSync(notes, "the old prod key was rotated on Tuesday\n");
-    git(["add", "deploy-notes.txt"]);
-    const passed = git(["commit", "-m", "chore: deploy notes"]);
-    expect(passed.code, passed.stdout + passed.stderr).toBe(0);
-    report.push("               …and the clean commit lands, gates run");
-  });
-
-  it("refuses the turn-end — the one moment no shipped pack carries", () => {
+  it("refuses the turn-end — a moment the shipped pack carries no rule for", () => {
     // The turn is read off the transcript the host writes, so the transcript is what has to exist:
     // a typed prompt, then four edits and nothing run.
     mkdirSync(join(repo, ".t"), { recursive: true });
@@ -634,9 +466,9 @@ describe("the machine test", () => {
     expect(sub.stderr).toContain("house.ranSomething");
     report.push("               …and a subagent's hand-back, at SubagentStop: ✗ house.ranSomething");
     report.push(
-      "               (no shipped pack carries a turn-end rule — this repo's own proves the rail)",
+      "               (the shipped pack carries no turn-end rule — this repo's own proves the rail)",
       "",
-      "  ✔ every pack binds, loads and fires.",
+      "  ✔ the pack binds, loads and fires.",
     );
   });
 });

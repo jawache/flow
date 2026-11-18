@@ -11,21 +11,31 @@
 // REPLACES the key it names — a narrowed `.on(…)` is the whole list, never a merge — because two
 // merge semantics is two bugs, and the one that bites is the silent one.
 //
-// FLOW GUARDING FLOW, and the import lines are the whole of what that means. The ten packs come
-// from `@jawache/flow/packs` and the grammar from `@jawache/flow` — bare specifiers, resolved
-// through `node_modules/@jawache/flow`, which `flow init` linked back to this very checkout. This
-// repo is therefore a CONSUMER of its own package, on exactly the path a stranger takes: nothing
-// below reaches a source folder, and a door that stopped exporting a symbol breaks this file
-// before it breaks anybody else's. One pack is written here, `guards/house.ts` — the project map,
-// the internal layout, the one-way import fences, and the ratchet on this binary's verb surface.
+// FLOW GUARDING FLOW, and the import lines are the whole of what that means. The one pack flow
+// ships, `flow`, comes from `@jawache/flow/packs` and the grammar from `@jawache/flow` — bare
+// specifiers, resolved through `node_modules/@jawache/flow`, which `flow init` linked back to this
+// very checkout. This repo is therefore a CONSUMER of its own package, on exactly the path a
+// stranger takes: a door that stopped exporting a symbol breaks this file before it breaks anybody
+// else's. Every other pack is this repo's own, in `guards/` and shipped to nobody: nine that
+// started as fleet discipline, `driven`, and `house` — the project map, the internal layout, the
+// one-way import fences, and the ratchet on this binary's verb surface.
 //
-// An unbound pack costs nothing, so binding is opt-in per pack and every one of the ten is named
-// below on purpose.
+// An unbound pack costs nothing, so binding is opt-in per pack and every one is named below on
+// purpose.
 
 import { defineConfig, override, pack } from "@jawache/flow";
-import { docs, fcis, flow, git, justfile, node, secrets, tdd, typescript, work } from "@jawache/flow/packs";
+import { flow } from "@jawache/flow/packs";
+import { docs } from "./guards/docs.ts";
 import { driven } from "./guards/driven.ts";
+import { fcis } from "./guards/fcis.ts";
+import { git } from "./guards/git.ts";
 import { house } from "./guards/house.ts";
+import { justfile } from "./guards/justfile.ts";
+import { node } from "./guards/node.ts";
+import { secrets } from "./guards/secrets.ts";
+import { tdd } from "./guards/tdd.ts";
+import { typescript } from "./guards/typescript.ts";
+import { work } from "./guards/work.ts";
 
 // THIS REPO'S PURE HOME, stated once and used by every fcis rail and by the import fence.
 //
@@ -145,8 +155,6 @@ export default defineConfig([
 
   // ── this repo's own terrain ──
   pack(house, { pure: PURE }),
-  // The generated pack pages left the docs with flow-19, before the packs themselves move.
-  override(house.packPagesCurrent).disabled("0.4 removes the generated pack pages: flow-19"),
 ], {
   driftTokens: 400_000,
 });

@@ -1,6 +1,6 @@
 // flow/packs/node.ts — package.json discipline.
 
-import { breadcrumb, command, commit, commitReason, defineCheck, definePack, guardrail, touch, type Check } from "../index.ts";
+import { breadcrumb, command, commit, commitReason, defineCheck, definePack, guardrail, touch, type Check } from "@jawache/flow";
 
 // ── node: the lockfile moves with the dependency, not with the file ──────────
 

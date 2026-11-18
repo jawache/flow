@@ -46,7 +46,7 @@ let repo: string;
 /**
  * The one pack this repo writes itself, in the folder it chose to write it in.
  *
- * A category and one turn-end rule, shared with `packs/machine.test.ts` as a fixture file rather
+ * A category and one turn-end rule, shared with `e2e/machine.test.ts` as a fixture file rather
  * than kept twice as a string — see flow/__fixtures__/repo-pack.ts. It matters here beyond the
  * rule: a `.for(…)` entry needs a rung to bind to at the commit gate, and a real config binds the
  * repo's own pack beside the package's. The folder name is this fixture's choice and nothing
@@ -849,7 +849,7 @@ describe("several agents in one worktree — overlap, background commands, and o
   let ids = 0;
   const OVERLAP_CONFIG = (packageRoot: string): string => `
 import { defineConfig, definePack, guardrail, pack, write } from ${JSON.stringify(join(packageRoot, "index.ts"))};
-import { work } from ${JSON.stringify(join(packageRoot, "packs", "index.ts"))};
+import { work } from ${JSON.stringify(join(packageRoot, "guards", "work.ts"))};
 
 const demo = definePack("demo", {
   noTodo: guardrail()
@@ -1420,7 +1420,7 @@ describe("work outside the repository — judged only by a rule marked .everywhe
     try {
       writeFileSync(join(where, "flow.config.ts"), `
 import { defineConfig, pack } from ${JSON.stringify(join(PACKAGE, "index.ts"))};
-import { git } from ${JSON.stringify(join(PACKAGE, "packs", "index.ts"))};
+import { git } from ${JSON.stringify(join(PACKAGE, "guards", "git.ts"))};
 
 export default defineConfig([pack(git, {})]);
 `);

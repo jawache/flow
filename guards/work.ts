@@ -26,7 +26,7 @@ import {
   deletion,
   touch,
   write,
-} from "../index.ts";
+} from "@jawache/flow";
 
 /**
  * The harness's typeless spawn buckets — the ONLY ones whose brief may be read.

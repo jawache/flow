@@ -1,6 +1,6 @@
 // flow/packs/docs.ts — two documentation audiences, one folder, nothing replicated.
 
-import { breadcrumb, canonicalFiles, commit, definePack, guardrail, touch, write } from "../index.ts";
+import { breadcrumb, canonicalFiles, commit, definePack, guardrail, touch, write } from "@jawache/flow";
 
 /** The two facts about a repo's docs folder the pack cannot know: where it is, and what may sit loose in it. */
 export interface Doors {

@@ -5,7 +5,7 @@
 // the trio, scoped to the pure homes it is handed as a parameter. The ruling and its reasons are
 // written at the trio's old spot below, where whoever comes looking for it will land.
 
-import { astGrep, breadcrumb, commit, definePack, execPasses, guardrail, touch, write } from "../index.ts";
+import { astGrep, breadcrumb, commit, definePack, execPasses, guardrail, touch, write } from "@jawache/flow";
 
 /** The test-file spellings the idiom rules watch when a repo names none of its own. */
 const TESTS = ["**/*.test.ts", "**/*.test.tsx", "**/*.test.js", "**/*.test.mjs", "**/*.spec.ts", "**/*.spec.tsx", "**/*.spec.js"];

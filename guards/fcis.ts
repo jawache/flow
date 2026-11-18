@@ -29,7 +29,7 @@ import {
   symbolsInSibling,
   touch,
   write,
-} from "../index.ts";
+} from "@jawache/flow";
 
 /** Where a repo's pure code lives, and what proves it. Stated by the repo; nothing is defaulted. */
 export interface Convention {

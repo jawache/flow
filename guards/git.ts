@@ -33,7 +33,7 @@ import {
   type Ctx,
   type GitCommand,
   type ShellCommand,
-} from "../index.ts";
+} from "@jawache/flow";
 
 // ── git: the commands that destroy work, and the commits that owe a sentence ──
 

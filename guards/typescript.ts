@@ -5,7 +5,7 @@
 // nothing in a repo whose gate is `npm run typecheck`, and would say so in the refusal too.
 
 
-import { astGrep, commit, breadcrumb, definePack, escapeRe, execPasses, guardrail, jsonInvariant, touch, write } from "../index.ts";
+import { astGrep, commit, breadcrumb, definePack, escapeRe, execPasses, guardrail, jsonInvariant, touch, write } from "@jawache/flow";
 
 /** What this pack cannot know: the two gate recipes, and whether the repo has shared config files. */
 export interface Gates {

@@ -19,7 +19,7 @@ install:
     mkdir -p node_modules/@jawache
     ln -sfn ../.. node_modules/@jawache/flow
 
-[doc("Build the package — the `flow` binary (dist/flow.mjs), the library a flow.config.ts imports (dist/index.mjs), the packs behind their own subpath export (dist/packs.mjs), and the types for all of it (dist/types/). All four are what `exports` and `files` promise; a bundle without the types would ship a config grammar the editor cannot check.")]
+[doc("Build the package — the `flow` binary (dist/flow.mjs), the library a flow.config.ts imports (dist/index.mjs), the one pack behind its own subpath export (dist/packs.mjs), and the types for all of it (dist/types/). All four are what `exports` and `files` promise; a bundle without the types would ship a config grammar the editor cannot check.")]
 build:
     node esbuild.mjs
     just emit-types
@@ -64,7 +64,7 @@ test-rules:
     just build
     node dist/flow.mjs test
 
-[doc("THE MACHINE TEST — the sibling of test-rules, asked about the PACKS instead of this repo. In a throwaway repo that has never heard of flow: `flow init`, every pack the package ships bound at once with a stranger's parameters, `flow status` green, each pack's own cases run pack by pack, and one live refusal driven at write · delete · command · commit · turn-end. Exit 0 answers 'did anything in the packs break'; a red line names the pack.")]
+[doc("THE MACHINE TEST — the sibling of test-rules, asked about the PACK the package ships instead of this repo. In a throwaway repo that has never heard of flow: `flow init`, the `flow` pack bound with a stranger's parameters beside two packs the repo writes, `flow status` green, each pack's own cases run, and a live refusal driven at delete · turn-end. Exit 0 answers 'did the shipped pack break'; a red line names it.")]
 test-packs:
     # No build step: the test builds the bundles itself, because the thing under test is the
     # INSTALLED package — `@jawache/flow` and `@jawache/flow/packs` resolved through the link
@@ -72,16 +72,6 @@ test-packs:
     # FLOW_MACHINE_REPORT is what makes it PRINT its report: the file is in the suite, so
     # `just test` and the commit gate run it too, and they want the exit code rather than the page.
     FLOW_MACHINE_REPORT=1 npx vitest run e2e/machine.test.ts
-
-[doc("Render one page per shipped pack into docs/user/packs/ — the surface a pack is READ on. Each page is the LOADED pack (ids, moments, globs, the message or text verbatim, the check's settings as written, both sides of every case) plus the doc comments the source carries (the pack's lead, its parameters, why each entry exists). Run it after any edit under packs/ and stage what it rewrites.")]
-docs-packs:
-    # No build step and no binary: the generator imports the packs as SOURCE and loads them through
-    # the same `loadConfig` the engine calls, so a page is never one rebuild behind the pack it prints.
-    node tools/pack-pages.ts
-
-[doc("THE DRIFT GATE — regenerate every pack page into memory and compare it with the one on disk. Green when they match; names the stale page and exits non-zero when they do not. This is what the commit gate runs, and it writes no file.")]
-docs-packs-check:
-    node tools/pack-pages.ts --check
 
 [doc("Score a Bash path extractor against the hand-labelled corpus in __fixtures__/bash-corpus/ — recall and precision for reads and writes, per mechanism and per parsing trap. `just score-bash` scores the naive baseline; name another extractor from tools/score-bash.ts to score that one, and add --misses to list every path it missed or invented.")]
 score-bash *args:

@@ -14,7 +14,7 @@ import {
   touch,
   write,
   type Check,
-} from "../index.ts";
+} from "@jawache/flow";
 
 /** The one fact this pack cannot know: which recipes are genuinely undocumentable in a repo. */
 // ── the justfile: every recipe is discoverable ───────────────────────────────

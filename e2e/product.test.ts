@@ -1413,8 +1413,7 @@ describe("flow init --empty", () => {
 
 // ── the hand-written pages, pinned to the binary ─────────────────────────────
 //
-// THE PRINCIPLE, ruled with the human on 2026-09-09: a GENERATED page is captured from the code
-// (that is `just docs-packs` and its drift gate); a HAND-WRITTEN page is pinned by a test that
+// THE PRINCIPLE, ruled with the human on 2026-09-09: a HAND-WRITTEN page is pinned by a test that
 // fails when it and the binary disagree. The README's transcripts had that already, and were the
 // only pages that had not drifted — the Getting started tutorial claimed a scaffold that stopped
 // existing at the split, and the exit-code table published a 1/2 split the binary never made.
