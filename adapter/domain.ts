@@ -447,7 +447,7 @@ export function branchFromHead(head: string): string | null {
  * The variables git exports into a hook's environment, which REDIRECT any nested `git` command back
  * at the parent repo — a `git init` in a temp directory would suddenly write the real index.
  *
- * The commit gate runs inside git's pre-commit hook and inherits every one of them, so a check that
+ * The commit gate runs inside git's commit-msg hook and inherits every one of them, so a check that
  * shells out (a test suite, a type-checker, dependency-cruiser writing a temp config) would run
  * inside the in-progress commit unless they are stripped. It was one rule script's own business in
  * the old engine; it is the adapter's now, because `ctx.exec` is the one door and this is a fact
@@ -1312,7 +1312,7 @@ export function formatFacts(facts: Facts): string[] {
 //
 // The two verbs a PERSON types at a repo, as against the two the harness invokes. They live in the
 // adapter because both are about the host: init writes the harness's own hook registrations and
-// git's own pre-commit hook, and status reports whether those wirings are there. Neither could sit
+// git's own commit-msg hook, and status reports whether those wirings are there. Neither could sit
 // upstream — the engine is not allowed to know that a settings file exists.
 //
 // The split with the shell next door (product.ts) is the one this package keeps everywhere: what to
@@ -1410,7 +1410,10 @@ export function repoFirst(root: string, verb: string): string {
  */
 export const HOOKS_DIR = ".githooks";
 
-export const GATE_PATH = `${HOOKS_DIR}/pre-commit`;
+export const GATE_PATH = `${HOOKS_DIR}/commit-msg`;
+
+/** Where releases before 0.4 wrote the gate: git's pre-commit hook, which runs before git has the message. */
+export const OLD_GATE_PATH = `${HOOKS_DIR}/pre-commit`;
 
 /** What arms git, said the way a person types it — the report's line and the fitting's fix. */
 export const SET_HOOKS_PATH = `git config core.hooksPath ${HOOKS_DIR}`;
@@ -1419,10 +1422,10 @@ export const SET_HOOKS_PATH = `git config core.hooksPath ${HOOKS_DIR}`;
  * The gate's line that runs the repo's own `@jawache/flow` first: git runs the hook from the repo's
  * root, so `$PWD` is the repo. Written by `init`, looked for by `status`, and named in its fixes.
  */
-export const GATE_LOCAL_LINE = repoFirst("$PWD", "hook commit");
+export const GATE_LOCAL_LINE = repoFirst("$PWD", 'hook commit "$1"');
 
-/** The gate's line that runs flow, last, so its exit code is the hook's. */
-export const GATE_RUN_LINE = "exec flow hook commit";
+/** The gate's line that runs flow, last, so its exit code is the hook's. `$1` is the file git holds the message in. */
+export const GATE_RUN_LINE = 'exec flow hook commit "$1"';
 
 /**
  * How to arm a gate flow will not write over, in the ONE wording both readers use. Both of the
@@ -1445,19 +1448,20 @@ export const ADD_THE_GATE_LINE = `add \`${GATE_LOCAL_LINE}\` and then \`${GATE_R
 export const UPDATE_THE_GATE_LINE = `replace its \`flow commit …\` line with \`${GATE_LOCAL_LINE}\` and then \`${GATE_RUN_LINE}\``;
 
 /**
- * The pre-commit hook, verbatim.
+ * The commit-message hook, verbatim.
  *
- * `flow hook commit` — git's hook under the same verb as the harness's hooks. It passes nothing:
- * flow asks git what the commit adds, changes and deletes, so there is one source of the staged set
- * whoever calls the gate, and nothing in this file to filter it or to skip flow when it is empty.
+ * `flow hook commit "$1"` — git's hook under the same verb as the harness's hooks, handed the file
+ * git holds the message in. It passes no list of files: flow asks git what the commit adds, changes
+ * and deletes, so there is one source of the staged set whoever calls the gate, and nothing in this
+ * file to filter it or to skip flow when it is empty.
  */
-export const PRE_COMMIT = `#!/bin/sh
+export const COMMIT_MSG = `#!/bin/sh
 # The flow commit gate. Written by \`flow init\`; \`${SET_HOOKS_PATH}\` arms it.
 #
-# Every at(commit) guardrail runs over the staged changes and a block exits non-zero, which is how
-# git refuses the commit. This is the half of the promise the PreToolUse rail cannot make: it fires
-# for a human's commit, a merge and CI, with no session in the room. flow asks git itself what the
-# commit adds, changes and deletes.
+# Every commit guardrail runs here, once, over the staged changes and the message, and a block exits
+# non-zero, which is how git refuses the commit. It fires for a human's commit as well as an
+# agent's, with no session in the room. flow asks git itself what the commit adds, changes and
+# deletes.
 #
 # git runs this from the repo's root, so the repo's own @jawache/flow, a dev dependency's, runs
 # before any flow on the PATH.
@@ -1473,7 +1477,7 @@ function hookCommands(text: string): string {
     .join("\n");
 }
 
-/** Does this pre-commit hook call flow's gate? Asked by `init` before writing, and by `status` after. */
+/** Does this commit-msg hook call flow's gate? Asked by `init` before writing, and by `status` after. */
 export function armsFlow(text: string | null): boolean {
   return text !== null && /(^|[\s"'/\\])flow\s+hook\s+commit\b/m.test(hookCommands(text));
 }
@@ -1491,7 +1495,14 @@ export function armsOldFlow(text: string | null): boolean {
  */
 const OLD_GATE_SETUP = ["staged=$(git diff --cached --name-only --diff-filter=ACMR)", '[ -z "$staged" ] && exit 0'];
 
-const OLD_GATE_RUNS = ["exec flow commit $staged", "flow commit $(git diff --cached --name-only)", "flow hook commit"];
+const OLD_GATE_RUNS = [
+  "exec flow commit $staged",
+  "flow commit $(git diff --cached --name-only)",
+  "flow hook commit",
+  // 0.3's pre-commit hook, which passed no message file.
+  repoFirst("$PWD", "hook commit"),
+  "exec flow hook commit",
+];
 
 /** The lines of a gate that run flow, today's and every older release's: what uninstall takes out of a hook it keeps. */
 const GATE_RUNS: ReadonlySet<string> = new Set([GATE_LOCAL_LINE, GATE_RUN_LINE, ...OLD_GATE_RUNS]);
@@ -1500,7 +1511,7 @@ const GATE_RUNS: ReadonlySet<string> = new Set([GATE_LOCAL_LINE, GATE_RUN_LINE, 
 const GATE_WRITTEN: ReadonlySet<string> = new Set([...GATE_RUNS, ...OLD_GATE_SETUP]);
 
 /**
- * The pre-commit hook with flow taken out: `delete` when every command in it is one a `flow init`
+ * A hook with flow taken out: `delete` when every command in it is one a `flow init`
  * wrote, the hook less the lines that run flow when it holds commands of its own, and null when no
  * line of it is flow's. A line is flow's only when it is, trimmed, exactly one flow wrote: a line
  * somebody spelled themselves is theirs to remove.
@@ -1533,14 +1544,55 @@ export function flowLinesOf(text: string | null): string[] {
 /** What the gate judges: the staged changes, or the whole tree as if all of it were staged. */
 export type CommitScope = "staged" | "all";
 
+/** `flow hook commit [<file>] [--all]`, read: what to judge, and the file git holds the message in. */
+export interface CommitArgs {
+  readonly scope: CommitScope;
+  /** The message file git passed to its commit-message hook. Null under `--all`, and for an older pre-commit hook, which runs before git has a message. */
+  readonly messageFile: string | null;
+}
+
 /**
- * `flow hook commit [--all]`, read. Null is a refusal: a file list here would be a second source of
- * the staged set. `legacy` is the old `flow commit <files…>`, whose list an older hook still passes,
- * and it is dropped rather than refused so that hook keeps running the gate.
+ * `flow hook commit [<file>] [--all]`, read. Null is a refusal: a second file here would be a
+ * second source of the message, and any other flag is one flow does not have. `legacy` is the old
+ * `flow commit <files…>`, whose list an older hook still passes: it is dropped rather than refused
+ * so that hook keeps running the gate, and it has no message.
  */
-export function commitScope(args: readonly string[], legacy: boolean): CommitScope | null {
-  if (legacy || args.length === 0) return "staged";
-  return args.length === 1 && args[0] === "--all" ? "all" : null;
+export function commitArgs(args: readonly string[], legacy: boolean): CommitArgs | null {
+  if (legacy) return { scope: "staged", messageFile: null };
+  const files = args.filter((arg) => arg !== "--all");
+  if (files.length > 1 || files.some((file) => file.startsWith("--"))) return null;
+  // Under `--all` there is no commit, so there is no message to read, whatever file came with it.
+  return args.includes("--all") ? { scope: "all", messageFile: null } : { scope: "staged", messageFile: files[0] ?? null };
+}
+
+/**
+ * The comment leader git strips from a message: `core.commentString`, else `core.commentChar`, as
+ * `git config` printed it. `#` when it printed nothing. `auto` is `#` too: git chooses its own
+ * character while it edits the message, and the file the hook is handed does not say which.
+ */
+export function commentLeader(configured: string): string {
+  const leader = configured.replace(/\r?\n$/, "");
+  return leader === "" || leader === "auto" ? "#" : leader;
+}
+
+/**
+ * A commit message as git records it: from the scissors line on, gone, then every comment line,
+ * trailing whitespace, runs of blank lines and the blank lines at either end, as git's own `strip`
+ * clean-up does. Comment lines are what git's editor template adds, and the section after the
+ * scissors line is the diff `git commit -v` appends.
+ */
+export function cleanMessage(raw: string, leader: string): string {
+  const scissors = `${leader} ------------------------ >8 ------------------------`;
+  const kept: string[] = [];
+  for (const line of raw.split(/\r?\n/)) {
+    if (line === scissors) break;
+    if (line.startsWith(leader)) continue;
+    const text = line.trimEnd();
+    if (text === "" && (kept.length === 0 || kept.at(-1) === "")) continue;
+    kept.push(text);
+  }
+  while (kept.at(-1) === "") kept.pop();
+  return kept.join("\n");
 }
 
 // ── other hooks ──────────────────────────────────────────────────────────────
@@ -1549,7 +1601,7 @@ export function commitScope(args: readonly string[], legacy: boolean): CommitSco
 // repo whose git already runs hooks from somewhere else (husky's `.husky/_`, or Git LFS and
 // lefthook in `.git/hooks`) would lose every one of them the moment init pointed git at
 // `.githooks`, with nothing said. So init never does: it detects the other setup, leaves it alone,
-// and says that flow is not installed until the pre-commit hook git runs calls flow.
+// and says that flow is not installed until the commit-msg hook git runs calls flow.
 
 /** The folder git runs hooks from, as the shell found it. One reading, for init and status alike. */
 export interface HooksFolder {
@@ -1557,25 +1609,25 @@ export interface HooksFolder {
   readonly dir: string;
   /** The name of every file in it, `.sample` files included: which of them count is decided here. */
   readonly files: readonly string[];
-  /** The text of the pre-commit hook a person edits for that folder (`preCommitOf(dir)`), or null. */
-  readonly preCommitText: string | null;
+  /** The text of the commit-msg hook a person edits for that folder (`commitMsgOf(dir)`), or null. */
+  readonly commitMsgText: string | null;
   /** That file has the execute bit this user needs to run it. False when there is no file. */
-  readonly preCommitExecutable: boolean;
+  readonly commitMsgExecutable: boolean;
 }
 
 /**
- * What the pre-commit hook git runs lacks before it runs flow's gate: `add` flow's two lines;
+ * What the commit-msg hook git runs lacks before it runs flow's gate: `add` flow's two lines;
  * `create` the hook, which is not there; `chmod` a hook that calls flow but that git ignores,
  * because it lacks the execute bit; or `add-and-chmod`, both.
  */
 export type HookFix = "add" | "create" | "chmod" | "add-and-chmod";
 
-/** Git runs other hooks, and whether the pre-commit hook it runs calls flow. */
+/** Git runs other hooks, and whether the commit-msg hook it runs calls flow. */
 export interface OtherHooks {
   /** The folder git runs hooks from. */
   readonly dir: string;
-  /** The pre-commit hook a person edits to call flow. */
-  readonly preCommit: string;
+  /** The commit-msg hook a person edits to call flow. */
+  readonly commitMsg: string;
   /** The first fix, or null when that hook calls flow's gate and git runs it: flow is installed. */
   readonly fix: HookFix | null;
 }
@@ -1589,15 +1641,15 @@ export function unwired(other: OtherHooks | null): other is UnwiredHooks {
 }
 
 /**
- * The pre-commit hook a person edits for this hooks folder.
+ * The commit-msg hook a person edits for this hooks folder.
  *
- * Usually the folder's own `pre-commit`. Husky is the exception: it points git at `.husky/_`, a
+ * Usually the folder's own `commit-msg`. Husky is the exception: it points git at `.husky/_`, a
  * folder of stubs it rewrites on every install, and each stub runs the hook of the same name one
- * folder up, so the file a person edits is `.husky/pre-commit`. Any folder named `_` is read that way.
+ * folder up, so the file a person edits is `.husky/commit-msg`. Any folder named `_` is read that way.
  */
-export function preCommitOf(dir: string): string {
+export function commitMsgOf(dir: string): string {
   const folder = dir.replace(/\/+$/, "");
-  return posix.basename(folder) === "_" ? posix.join(posix.dirname(folder), "pre-commit") : posix.join(folder, "pre-commit");
+  return posix.basename(folder) === "_" ? posix.join(posix.dirname(folder), "commit-msg") : posix.join(folder, "commit-msg");
 }
 
 /**
@@ -1613,24 +1665,24 @@ export function hooksDirOf(root: string, said: string): string {
  * Does git run hooks other than flow's here? Null when it does not: `core.hooksPath` is flow's own
  * folder, or it is unset and `.git/hooks` holds nothing but git's own `.sample` files. A
  * `core.hooksPath` anywhere else counts whatever is in it, and any other file in `.git/hooks` counts,
- * not only a `pre-commit`: Git LFS installs `pre-push` and `post-checkout` there.
+ * not only a `commit-msg`: Git LFS installs `pre-push` and `post-checkout` there.
  */
 export function otherHooks(hooksPath: string | null, folder: HooksFolder): OtherHooks | null {
   // The folder git resolved, not the setting as typed: `.githooks/`, `./.githooks` and an absolute
   // path to it are all flow's own.
   if (folder.dir === HOOKS_DIR) return null;
   if (hooksPath === null && folder.files.every((name) => name.endsWith(".sample"))) return null;
-  const preCommit = preCommitOf(folder.dir);
-  const calls = armsFlow(folder.preCommitText);
+  const commitMsg = commitMsgOf(folder.dir);
+  const calls = armsFlow(folder.commitMsgText);
   // Git runs a hook only when it has the execute bit, and ignores it otherwise with a warning a
   // commit scrolls past. That bites only when git runs the file itself. Husky's stub in `.husky/_`
-  // runs `.husky/pre-commit` with `sh`, so that file needs no execute bit, and is never created
+  // runs `.husky/commit-msg` with `sh`, so that file needs no execute bit, and is never created
   // for husky either: its stub skips a hook that is not there.
-  const viaStub = preCommit !== posix.join(folder.dir, "pre-commit");
-  if (viaStub) return { dir: folder.dir, preCommit, fix: calls ? null : "add" };
+  const viaStub = commitMsg !== posix.join(folder.dir, "commit-msg");
+  if (viaStub) return { dir: folder.dir, commitMsg, fix: calls ? null : "add" };
   const fix =
-    folder.preCommitText === null ? "create" : folder.preCommitExecutable ? (calls ? null : "add") : calls ? "chmod" : "add-and-chmod";
-  return { dir: folder.dir, preCommit, fix };
+    folder.commitMsgText === null ? "create" : folder.commitMsgExecutable ? (calls ? null : "add") : calls ? "chmod" : "add-and-chmod";
+  return { dir: folder.dir, commitMsg, fix };
 }
 
 /** The words the block opens with, fixed by the docs, for every reader that looks for them. */
@@ -1643,17 +1695,17 @@ export const NOT_INSTALLED = "FLOW IS NOT INSTALLED";
 export const HOOKS_UNKNOWN =
   "git could not name the folder it runs hooks from, so flow cannot tell whether a commit runs its gate. Run `git rev-parse --git-path hooks` here to see why.";
 
-/** Other hooks whose pre-commit calls flow, in the ONE wording init's note and status's line share. */
+/** Other hooks whose commit-msg calls flow, in the ONE wording init's note and status's line share. */
 export function wiredLine(other: OtherHooks): string {
-  return `git runs hooks from ${other.dir}, and ${other.preCommit} calls flow`;
+  return `git runs hooks from ${other.dir}, and ${other.commitMsg} calls flow`;
 }
 
-/** Flow's two lines, as the block prints them for a person to copy into a pre-commit hook. */
+/** Flow's two lines, as the block prints them for a person to copy into a commit-msg hook. */
 const GATE_LINES = [`      ${GATE_LOCAL_LINE}`, `      ${GATE_RUN_LINE}`];
 
 /**
  * The message for other hooks that do not run flow, in the ONE wording init's block and status's
- * line share: the folder git runs hooks from, why its pre-commit hook does not run flow's gate, and
+ * line share: the folder git runs hooks from, why its commit-msg hook does not run flow's gate, and
  * the two ways to finish. The first fix is whatever that hook lacks: flow's two lines, the hook
  * itself, or the execute bit. Init never takes either fix itself: editing or creating another
  * tool's hook, or moving its hooks, is the person's call.
@@ -1676,9 +1728,9 @@ function asTyped(path: string): string {
   return /^[\w@%+=:,./-]+$/.test(path) ? path : quoteArg(path);
 }
 
-/** Why the pre-commit hook does not run flow's gate, as the block's first line ends, and the fix. */
+/** Why the commit-msg hook does not run flow's gate, as the block's first line ends, and the fix. */
 function firstFix(other: UnwiredHooks): [string, string[]] {
-  const hook = other.preCommit;
+  const hook = other.commitMsg;
   const chmod = `\`chmod +x ${asTyped(hook)}\``;
   switch (other.fix) {
     case "create":
@@ -1813,6 +1865,8 @@ export interface InitFacts {
   readonly hasConfig: boolean;
   /** The gate as it stands, or null when there is none. */
   readonly gateText: string | null;
+  /** The pre-0.4 gate, `.githooks/pre-commit`, as it stands, or null when there is none. */
+  readonly oldGateText: string | null;
   readonly hasFlowDir: boolean;
   /** `git config core.hooksPath` as it stands. */
   readonly hooksPath: string | null;
@@ -1860,7 +1914,13 @@ export interface Write {
 export interface InitPlan {
   readonly config: Write | null;
   readonly gate: Write | null;
-  /** A pre-commit hook that is somebody else's. Never overwritten — reported, with the line to add. */
+  /**
+   * The hook an older flow wrote before git has the message, `.githooks/pre-commit`, which would run
+   * the gate a second time with no message: deleted when it holds only flow's lines, else rewritten
+   * without them. Null when no line of it is flow's.
+   */
+  readonly oldGate: { readonly path: string; readonly body: string | null } | null;
+  /** A commit-msg hook that is somebody else's. Never overwritten — reported, with the line to add. */
   readonly gateKept: boolean;
   /** …and it is flow's own, from before `flow hook commit` — reported with the line to replace. */
   readonly gateOld: boolean;
@@ -1900,6 +1960,12 @@ function machineRewrite(file: InitFacts["machine"], registering: Registering): I
   return rewritten.length === 0 ? null : { path: file.path, value: settings, rewritten, repoFile: registering.repoFile };
 }
 
+/** The pre-0.4 gate with flow's lines taken out, as a write: null when the repo has none or none of it is flow's. */
+function oldGateOf(facts: InitFacts): InitPlan["oldGate"] {
+  const old = facts.isGit ? gateWithoutFlow(facts.oldGateText) : null;
+  return old === null ? null : { path: OLD_GATE_PATH, body: old.delete ? null : old.body };
+}
+
 /** What init will do to this repo. Pure: every branch reads a fact the shell already gathered. */
 export function planInit(facts: InitFacts): InitPlan {
   // A file we could not read is a file we may not write. `withRegistrations` builds a NEW object
@@ -1916,7 +1982,8 @@ export function planInit(facts: InitFacts): InitPlan {
     config: facts.hasConfig ? null : { path: CONFIG_FILE, body: scaffold(facts.empty) },
     // NEVER over a hook that is already there. This is a scaffold, and a repo whose gate runs its
     // own suite must not lose it to a re-run — which is also what makes init safe to run again.
-    gate: !facts.isGit || facts.gateText !== null ? null : { path: GATE_PATH, body: PRE_COMMIT, mode: 0o755 },
+    gate: !facts.isGit || facts.gateText !== null ? null : { path: GATE_PATH, body: COMMIT_MSG, mode: 0o755 },
+    oldGate: oldGateOf(facts),
     gateKept: facts.isGit && facts.gateText !== null && !armsFlow(facts.gateText),
     gateOld: facts.isGit && !armsFlow(facts.gateText) && armsOldFlow(facts.gateText),
     notGit: !facts.isGit,
@@ -1947,6 +2014,12 @@ export function initLines(plan: InitPlan, failures: readonly string[], colour = 
   const wrote: string[] = [];
   if (plan.config) wrote.push(plan.config.path);
   if (plan.gate) wrote.push(plan.gate.path);
+  if (plan.oldGate)
+    wrote.push(
+      plan.oldGate.body === null
+        ? `${plan.oldGate.path} deleted — an older flow wrote it, and ${GATE_PATH} runs the gate now`
+        : `flow's lines taken out of ${plan.oldGate.path} — an older flow wrote them, and ${GATE_PATH} runs the gate now`,
+    );
   if (plan.flowDir) wrote.push(`${FLOW_DIR}/ — flow's own state, self-ignoring, never committed`);
   // WHY it linked, not what linking is for. The parenthetical used to read "npm link is flow's
   // distribution until it is published", which stopped being true at 0.1.0 and left the reader
@@ -2069,10 +2142,10 @@ export interface UninstallPlan {
   /** The gate: deleted, rewritten without flow's lines, or null when nothing in it is flow's. */
   readonly gate: { readonly path: string; readonly body: string | null } | null;
   /**
-   * A pre-commit hook that still calls flow after the run, in lines flow did not write there: that
+   * A commit-msg hook that still calls flow after the run, in lines flow did not write there: that
    * hook, as the report names it, and those lines, for a person to delete before `npm uninstall`.
-   * The hook git runs from another folder, such as husky's `.husky/pre-commit`, which uninstall
-   * never edits, as `flow init` never does; else what is left of `.githooks/pre-commit`. Null when
+   * The hook git runs from another folder, such as husky's `.husky/commit-msg`, which uninstall
+   * never edits, as `flow init` never does; else what is left of `.githooks/commit-msg`. Null when
    * neither calls flow.
    */
   readonly hookCallsFlow: { readonly path: string; readonly lines: readonly string[] } | null;
@@ -2115,7 +2188,7 @@ export function planUninstall(facts: UninstallFacts): UninstallPlan {
   const gateGone = gate?.delete === true;
   const leftText = gate === null ? facts.gateText : gate.delete ? null : gate.body;
   // A hook left in the folder is a hook git should still run, so `core.hooksPath` stays pointed at it.
-  const hooksLeft = (facts.hooksDir ?? []).filter((name) => !(gateGone && name === "pre-commit"));
+  const hooksLeft = (facts.hooksDir ?? []).filter((name) => !(gateGone && name === "commit-msg"));
   // `core.hooksPath` is the whole repo's, and `.githooks/` is in the repo's top folder, so only a run
   // there unsets it. From a subfolder the run finds no gate, and unsetting the setting would leave
   // the gate in place with nothing pointing git at it.
@@ -2139,9 +2212,9 @@ export function planUninstall(facts: UninstallFacts): UninstallPlan {
   let hookCallsFlow: UninstallPlan["hookCallsFlow"] = null;
   if (hooksFolder !== null) {
     const other = otherHooks(facts.hooksPath, hooksFolder);
-    const lines = flowLinesOf(hooksFolder.preCommitText);
+    const lines = flowLinesOf(hooksFolder.commitMsgText);
     if (other !== null && lines.length > 0)
-      hookCallsFlow = { path: subfolderOf === null ? other.preCommit : posix.resolve(subfolderOf, other.preCommit), lines };
+      hookCallsFlow = { path: subfolderOf === null ? other.commitMsg : posix.resolve(subfolderOf, other.commitMsg), lines };
   }
   const gateLines = flowLinesOf(leftText);
   if (hookCallsFlow === null && gateLines.length > 0) hookCallsFlow = { path: GATE_PATH, lines: gateLines };
@@ -2540,7 +2613,7 @@ export function hostPath(dirs: readonly string[], root: string): string[] {
  * `.githooks/`, `./.githooks` and an absolute path to it are all flow's own.
  *
  * Git runs ONE folder. Flow's own is green. Another tool's (husky's `.husky/_`, or a hook in
- * `.git/hooks`) is green once the pre-commit hook git runs calls flow, and otherwise red in the
+ * `.git/hooks`) is green once the commit-msg hook git runs calls flow, and otherwise red in the
  * words of init's block, because it is the same fact: flow is not installed. With no other hooks,
  * the setting is simply missing, which every fresh clone is.
  */

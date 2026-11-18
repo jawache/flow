@@ -1,6 +1,6 @@
 // flow/packs/node.ts — package.json discipline.
 
-import { breadcrumb, command, commit, commitReason, defineCheck, definePack, guardrail, touch, type Check } from "@jawache/flow";
+import { breadcrumb, commit, commitReason, defineCheck, definePack, guardrail, touch, type Check } from "@jawache/flow";
 
 // ── node: the lockfile moves with the dependency, not with the file ──────────
 
@@ -94,37 +94,18 @@ export const node = definePack("node", {
    * person to ask "why do we depend on this" has only the package name to go on.
    */
   newDependencyNeedsReason: guardrail()
-    .at(command)
-    .description("A commit made while package.json has uncommitted changes must record why, and what else was checked.")
+    .at(commit)
+    .description("A commit that changes package.json must record why, and what else was checked.")
     .check(commitReason({ whenChanged: ["package.json"], token: "new-dep" }))
     .message(
-      "package.json has changes since the last commit, staged or not, and this commit's message records no reason. If this commit adds or moves a dependency, put `new-dep: <name> — <why, and what else was checked>` on a line of its own in the message. If the package.json changes belong to another commit, commit them first with their own `new-dep:` line, or stash them, then commit again.",
+      "This commit changes package.json and its message records no reason. If it adds or moves a dependency, put `new-dep: <name> — <why, and what else was checked>` on a line of its own in the message. If the package.json change belongs to another commit, take it out of this one.",
     )
     .test({
       pass: [
-        {
-          command: "git commit -m 'feat: x\n\nnew-dep: zod — checked ajv'",
-          world: {
-            exec: {
-              "git diff HEAD --name-only": { stdout: "package.json" },
-              "git diff HEAD --name-only --diff-filter=A": { stdout: "" },
-              "git ls-files --others --exclude-standard": { stdout: "" },
-            },
-          },
-        },
+        { message: "feat: x\n\nnew-dep: zod — checked ajv", staged: ["package.json"] },
+        { message: "feat: x", staged: ["src/a.ts"] },
       ],
-      block: [
-        {
-          command: 'git commit -m "feat: x"',
-          world: {
-            exec: {
-              "git diff HEAD --name-only": { stdout: "package.json" },
-              "git diff HEAD --name-only --diff-filter=A": { stdout: "" },
-              "git ls-files --others --exclude-standard": { stdout: "" },
-            },
-          },
-        },
-      ],
+      block: [{ message: "feat: x", staged: ["package.json"] }],
     }),
 
   // Keyed on the dependency BLOCKS, not on the file: a repository.url fix moves no lockfile, and

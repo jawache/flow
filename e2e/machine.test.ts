@@ -285,7 +285,7 @@ afterAll(() => {
 describe("the machine test", () => {
   it("scaffolds and arms a repo that has never heard of flow", () => {
     expect(scaffolded.code, scaffolded.stdout + scaffolded.stderr).toBe(0);
-    for (const created of ["flow.config.ts", ".githooks/pre-commit", "node_modules/@jawache/flow", "core.hooksPath"])
+    for (const created of ["flow.config.ts", ".githooks/commit-msg", "node_modules/@jawache/flow", "core.hooksPath"])
       expect(scaffolded.stdout).toContain(created);
     step("scaffold", "flow pack — the machine test, in a repo that has never heard of flow", "", "  scaffold   flow init armed the gate, the link and the hook registrations");
   });

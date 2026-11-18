@@ -9,14 +9,14 @@ import { type Bound, type Row } from "../engine/domain.ts";
 import { missingGrammarText } from "../checks/domain.ts";
 import { matchAny } from "../glob.ts";
 import { host } from "../__fixtures__/host.ts";
-import { ADD_THE_GATE_LINE, CONFIG_FILE, type Candidate, GATE_LOCAL_LINE, GATE_PATH, GATE_RUN_LINE, GIT_HOOK_ENV, HOOKS_DIR, HOOKS_UNKNOWN, type HooksFolder, type InitFacts, LOCAL_BIN, MACHINE_FLAG, NODE_FLOOR, NOT_INSTALLED, type OtherHooks, PACKAGE_BIN, PACKAGE_DIR, PRE_COMMIT, SET_HOOKS_PATH, type StatusFacts, UPDATE_THE_GATE_LINE, type UninstallFacts, armsFlow, armsOldFlow, classifyBash, commitScope, configImports, configLoadFault, flowLinesOf, gateWithoutFlow, guardPaths, health, hermeticEnv, hooksDirOf, hostPath, initCode, initLines, isCorrection, joinSpawn, listed, loadsAsStrippedModule, mergeNarratives, narrative, notInstalledLines, otherHooks, pathLines, planInit, planUninstall, preCommitOf, recipeTools, repoFirst, scaffold, selectSessions, snip, stagedChanges, status, statusCode, statusLines, strip, text, treeChanges, uncoveredAreas, uninstallCode, uninstallLines, uninstallRefusal, wantsColour, weakenedAfterBlock } from "./domain.ts";
+import { ADD_THE_GATE_LINE, CONFIG_FILE, type Candidate, GATE_LOCAL_LINE, GATE_PATH, GATE_RUN_LINE, GIT_HOOK_ENV, HOOKS_DIR, HOOKS_UNKNOWN, type HooksFolder, type InitFacts, LOCAL_BIN, MACHINE_FLAG, NODE_FLOOR, NOT_INSTALLED, OLD_GATE_PATH, type OtherHooks, PACKAGE_BIN, PACKAGE_DIR, COMMIT_MSG, SET_HOOKS_PATH, type StatusFacts, UPDATE_THE_GATE_LINE, type UninstallFacts, armsFlow, armsOldFlow, classifyBash, cleanMessage, commentLeader, commitArgs, configImports, configLoadFault, flowLinesOf, gateWithoutFlow, guardPaths, health, hermeticEnv, hooksDirOf, hostPath, initCode, initLines, isCorrection, joinSpawn, listed, loadsAsStrippedModule, mergeNarratives, narrative, notInstalledLines, otherHooks, pathLines, planInit, planUninstall, commitMsgOf, recipeTools, repoFirst, scaffold, selectSessions, snip, stagedChanges, status, statusCode, statusLines, strip, text, treeChanges, uncoveredAreas, uninstallCode, uninstallLines, uninstallRefusal, wantsColour, weakenedAfterBlock } from "./domain.ts";
 import { type ToolAction, type TranscriptEvent } from "./harness.ts";
 
 
 
 describe("the environment a check's command sees", () => {
   it("strips git's hook plumbing, and keeps everything else", () => {
-    // The gate runs inside the pre-commit hook and inherits these; a nested `git` would then aim at
+    // The gate runs inside the commit-msg hook and inherits these; a nested `git` would then aim at
     // the in-progress commit. It was the tool-gate rule's own business until ctx.exec became the
     // one door.
     const env = hermeticEnv({ PATH: "/usr/bin", GIT_INDEX_FILE: "/repo/.git/index", HOME: "/home/me" });
@@ -311,32 +311,32 @@ const BARE_SETTINGS = registrationsAs((command) => command.replace(/^.* flow /, 
 const OLD_GATE = '#!/bin/sh\nstaged=$(git diff --cached --name-only --diff-filter=ACMR)\n[ -z "$staged" ] && exit 0\nexec flow commit $staged\n';
 
 describe("the git gate flow arms", () => {
-  it("calls `flow hook commit` and passes nothing — no list, no filter, no early exit", () => {
-    expect(PRE_COMMIT.startsWith("#!")).toBe(true);
-    expect(PRE_COMMIT, "flow asks git; the hook does not").not.toContain("git diff");
-    expect(PRE_COMMIT).not.toContain("exit 0");
+  it("calls `flow hook commit` with the message file and nothing else — no list, no filter, no early exit", () => {
+    expect(COMMIT_MSG.startsWith("#!")).toBe(true);
+    expect(COMMIT_MSG, "flow asks git; the hook does not").not.toContain("git diff");
+    expect(COMMIT_MSG).not.toContain("exit 0");
   });
 
   // A DEV DEPENDENCY GUARDS THE REPO: git hands its hooks the PATH it was given, and a repo with
   // flow only as a dev dependency has none there, so the gate runs the repo's own package first.
   it("runs the repo's own @jawache/flow first, then the flow on the PATH", () => {
-    const lines = PRE_COMMIT.split("\n").filter((line) => line !== "" && !line.startsWith("#"));
+    const lines = COMMIT_MSG.split("\n").filter((line) => line !== "" && !line.startsWith("#"));
     expect(lines).toEqual([GATE_LOCAL_LINE, GATE_RUN_LINE]);
-    expect(GATE_LOCAL_LINE).toBe('f="$PWD/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook commit');
-    expect(GATE_RUN_LINE).toBe("exec flow hook commit");
+    expect(GATE_LOCAL_LINE).toBe('f="$PWD/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook commit "$1"');
+    expect(GATE_RUN_LINE).toBe('exec flow hook commit "$1"');
   });
 
   it("names one hooks directory, and one gate inside it", () => {
-    expect(GATE_PATH).toBe(`${HOOKS_DIR}/pre-commit`);
+    expect(GATE_PATH).toBe(`${HOOKS_DIR}/commit-msg`);
     expect(SET_HOOKS_PATH, "the report's line and the fitting's fix are one sentence").toContain(HOOKS_DIR);
-    expect(PRE_COMMIT, "the hook's own comment tells you what arms it").toContain(SET_HOOKS_PATH);
+    expect(COMMIT_MSG, "the hook's own comment tells you what arms it").toContain(SET_HOOKS_PATH);
   });
 
   it("recognises a gate that runs flow, one that runs the OLD verb, and one that runs something else", () => {
-    expect(armsFlow(PRE_COMMIT)).toBe(true);
+    expect(armsFlow(COMMIT_MSG)).toBe(true);
     expect(armsFlow(OLD_GATE), "flow's own gate from before `flow hook commit`").toBe(false);
     expect(armsOldFlow(OLD_GATE)).toBe(true);
-    expect(armsOldFlow(PRE_COMMIT), "the current gate is not the old one, whatever its comment says").toBe(false);
+    expect(armsOldFlow(COMMIT_MSG), "the current gate is not the old one, whatever its comment says").toBe(false);
     expect(armsFlow("#!/bin/sh\n# flow hook commit runs here one day\nnpm test\n"), "a comment runs nothing").toBe(false);
     expect(armsFlow('#!/bin/sh\nwork guard commit "$@"\n'), "the old engine's gate").toBe(false);
     expect(armsOldFlow('#!/bin/sh\nwork guard commit "$@"\n')).toBe(false);
@@ -344,12 +344,44 @@ describe("the git gate flow arms", () => {
     expect(armsOldFlow(null)).toBe(false);
   });
 
-  it("reads `flow hook commit [--all]`, refuses a file list, and drops the old verb's list", () => {
-    expect(commitScope([], false)).toBe("staged");
-    expect(commitScope(["--all"], false)).toBe("all");
-    expect(commitScope(["src/a.ts"], false), "a second source of the staged set").toBeNull();
-    expect(commitScope(["--all", "src/a.ts"], false)).toBeNull();
-    expect(commitScope(["src/a.ts", "src/b.ts"], true), "an older hook's `flow commit $staged`").toBe("staged");
+  it("reads `flow hook commit [<file>] [--all]`, refuses a second file, and drops the old verb's list", () => {
+    expect(commitArgs([], false), "an older pre-commit hook passes no message file").toEqual({ scope: "staged", messageFile: null });
+    expect(commitArgs([".git/COMMIT_EDITMSG"], false)).toEqual({ scope: "staged", messageFile: ".git/COMMIT_EDITMSG" });
+    expect(commitArgs(["--all"], false)).toEqual({ scope: "all", messageFile: null });
+    expect(commitArgs(["msg", "--all"], false), "--all has no commit, so no message, whatever file came with it").toEqual({ scope: "all", messageFile: null });
+    expect(commitArgs(["a.ts", "b.ts"], false), "a second source of the message").toBeNull();
+    expect(commitArgs(["--cached"], false), "a flag flow does not have").toBeNull();
+    expect(commitArgs(["src/a.ts", "src/b.ts"], true), "an older hook's `flow commit $staged`").toEqual({ scope: "staged", messageFile: null });
+  });
+
+  it("names the pre-0.4 gate, which ran before git had a message", () => {
+    expect(OLD_GATE_PATH).toBe(".githooks/pre-commit");
+  });
+});
+
+describe("the message as git records it", () => {
+  it("removes comment lines by git's comment leader, and the blank lines they leave", () => {
+    const raw = "fix(parse): read a heredoc\n\nBody line.\n# Please enter the commit message\n# Changes to be committed:\n#\tmodified: a.ts\n";
+    expect(cleanMessage(raw, "#")).toBe("fix(parse): read a heredoc\n\nBody line.");
+    expect(cleanMessage("; a note\nfix: x\n# kept\n", ";"), "a leader of the repo's choosing").toBe("fix: x\n# kept");
+  });
+
+  it("removes everything from the scissors line, which is the diff `git commit -v` adds", () => {
+    const raw = "fix: x\n\n# ------------------------ >8 ------------------------\n# Do not modify or remove the line above.\ndiff --git a/a b/a\n+# not a comment\n";
+    expect(cleanMessage(raw, "#")).toBe("fix: x");
+  });
+
+  it("strips trailing whitespace, collapses runs of blank lines and trims both ends, as git's own clean-up does", () => {
+    expect(cleanMessage("\n\nfix: x   \n\n\n\nbody\t\n\n", "#")).toBe("fix: x\n\nbody");
+    expect(cleanMessage("# only a comment\n", "#"), "nothing left is an empty message").toBe("");
+    expect(cleanMessage("fix: x\r\n\r\nbody\r\n", "#"), "a message saved with Windows line ends").toBe("fix: x\n\nbody");
+  });
+
+  it("reads the leader from `git config`: `#` when unset or `auto`", () => {
+    expect(commentLeader("")).toBe("#");
+    expect(commentLeader("auto\n")).toBe("#");
+    expect(commentLeader(";\n")).toBe(";");
+    expect(commentLeader("//\n"), "core.commentString may be longer than one character").toBe("//");
   });
 });
 
@@ -387,9 +419,10 @@ const bare: InitFacts = {
   isGit: true,
   hasConfig: false,
   gateText: null,
+  oldGateText: null,
   hasFlowDir: false,
   hooksPath: null,
-  hooksFolder: { dir: ".git/hooks", files: ["pre-commit.sample", "pre-push.sample"], preCommitText: null, preCommitExecutable: false },
+  hooksFolder: { dir: ".git/hooks", files: ["pre-commit.sample", "pre-push.sample"], commitMsgText: null, commitMsgExecutable: false },
   settingsPath: "/home/host/settings.json",
   settings: {},
   settingsUnreadable: false,
@@ -398,29 +431,29 @@ const bare: InitFacts = {
   packageRoot: "/checkout/flow",
 };
 
-/** Flow's two lines at the end of somebody's pre-commit hook: what the block asks a person to add. */
+/** Flow's two lines at the end of somebody's commit-msg hook: what the block asks a person to add. */
 const WIRED = `#!/bin/sh\nnpm test\n${GATE_LOCAL_LINE}\n${GATE_RUN_LINE}\n`;
 
 /**
- * A repo husky set up: git runs `.husky/_`, and a person edits `.husky/pre-commit`, which husky's
+ * A repo husky set up: git runs `.husky/_`, and a person edits `.husky/commit-msg`, which husky's
  * stub runs with `sh`, so it carries no execute bit here.
  */
-const husky = (preCommitText: string | null): Partial<InitFacts> => ({
+const husky = (commitMsgText: string | null): Partial<InitFacts> => ({
   hooksPath: ".husky/_",
-  hooksFolder: { dir: ".husky/_", files: ["h", "husky.sh", "pre-commit", "pre-push"], preCommitText, preCommitExecutable: false },
+  hooksFolder: { dir: ".husky/_", files: ["h", "husky.sh", "commit-msg", "pre-push"], commitMsgText, commitMsgExecutable: false },
 });
 
 /** A repo with a hook of its own in `.git/hooks`, which git runs while `core.hooksPath` is unset. */
-const gitHooks = (files: readonly string[], preCommitText: string | null = null, preCommitExecutable = preCommitText !== null): Partial<InitFacts> => ({
-  hooksFolder: { dir: ".git/hooks", files: ["pre-commit.sample", ...files], preCommitText, preCommitExecutable },
+const gitHooks = (files: readonly string[], commitMsgText: string | null = null, commitMsgExecutable = commitMsgText !== null): Partial<InitFacts> => ({
+  hooksFolder: { dir: ".git/hooks", files: ["pre-commit.sample", ...files], commitMsgText, commitMsgExecutable },
 });
 
-describe("other hooks — what counts, and the pre-commit hook a person edits", () => {
-  const folder = (files: readonly string[], dir = ".git/hooks", preCommitText: string | null = null, preCommitExecutable = preCommitText !== null): HooksFolder => ({
+describe("other hooks — what counts, and the commit-msg hook a person edits", () => {
+  const folder = (files: readonly string[], dir = ".git/hooks", commitMsgText: string | null = null, commitMsgExecutable = commitMsgText !== null): HooksFolder => ({
     dir,
     files,
-    preCommitText,
-    preCommitExecutable,
+    commitMsgText,
+    commitMsgExecutable,
   });
 
   it("a fresh `git init` has only sample hooks, and they do not count", () => {
@@ -428,26 +461,26 @@ describe("other hooks — what counts, and the pre-commit hook a person edits", 
     expect(otherHooks(null, folder([])), "nor does an empty or missing folder").toBeNull();
   });
 
-  it("any other file in .git/hooks counts, not only a pre-commit: Git LFS installs pre-push", () => {
+  it("any other file in .git/hooks counts, not only a commit-msg: Git LFS installs pre-push", () => {
     expect(otherHooks(null, folder(["pre-push.sample", "pre-push"]))).toStrictEqual({
       dir: ".git/hooks",
-      preCommit: ".git/hooks/pre-commit",
+      commitMsg: ".git/hooks/commit-msg",
       fix: "create",
     });
   });
 
   it("a core.hooksPath anywhere but .githooks counts, whatever is in it", () => {
     expect(otherHooks(".husky/_", folder([], ".husky/_"))?.dir).toBe(".husky/_");
-    expect(otherHooks("hooks", folder([], "hooks"))?.preCommit).toBe("hooks/pre-commit");
+    expect(otherHooks("hooks", folder([], "hooks"))?.commitMsg).toBe("hooks/commit-msg");
   });
 
   it("flow's own .githooks is not other hooks, whatever .git/hooks holds", () => {
-    expect(otherHooks(HOOKS_DIR, folder(["pre-commit"], HOOKS_DIR))).toBeNull();
+    expect(otherHooks(HOOKS_DIR, folder(["commit-msg"], HOOKS_DIR))).toBeNull();
   });
 
   it("compares the folder git resolved, so any spelling of .githooks is flow's own", () => {
     for (const set of [".githooks/", "./.githooks", "/repo/.githooks"])
-      expect(otherHooks(set, folder(["pre-commit"], hooksDirOf("/repo", set))), set).toBeNull();
+      expect(otherHooks(set, folder(["commit-msg"], hooksDirOf("/repo", set))), set).toBeNull();
   });
 
   it("names the folder repo-relative when it is inside the repo, and absolute when it is not", () => {
@@ -459,22 +492,22 @@ describe("other hooks — what counts, and the pre-commit hook a person edits", 
     expect(hooksDirOf("/repo", "."), "the repo root itself is not a folder inside it").toBe("/repo");
   });
 
-  it("is wired once the pre-commit hook a person edits calls flow, and a comment naming it does not", () => {
+  it("is wired once the commit-msg hook a person edits calls flow, and a comment naming it does not", () => {
     expect(otherHooks(".husky/_", folder([], ".husky/_", WIRED))?.fix).toBeNull();
     expect(otherHooks(".husky/_", folder([], ".husky/_", "#!/bin/sh\n# flow hook commit\nnpm test\n"))?.fix).not.toBeNull();
   });
 
-  describe("a pre-commit hook git runs itself counts only with the execute bit, as git runs it", () => {
-    const lfs = (preCommit: string | null, executable: boolean): OtherHooks | null =>
-      otherHooks(null, folder(["pre-push", ...(preCommit === null ? [] : ["pre-commit"])], ".git/hooks", preCommit, executable));
+  describe("a commit-msg hook git runs itself counts only with the execute bit, as git runs it", () => {
+    const lfs = (commitMsg: string | null, executable: boolean): OtherHooks | null =>
+      otherHooks(null, folder(["pre-push", ...(commitMsg === null ? [] : ["commit-msg"])], ".git/hooks", commitMsg, executable));
 
     it("calls flow but is not executable: git ignores it, so not wired, and the fix is the execute bit", () => {
-      expect(lfs(WIRED, false)).toStrictEqual({ dir: ".git/hooks", preCommit: ".git/hooks/pre-commit", fix: "chmod" });
-      expect(otherHooks("hooks", folder([], "hooks", WIRED, false))?.fix, "a core.hooksPath folder's own pre-commit too").toBe("chmod");
+      expect(lfs(WIRED, false)).toStrictEqual({ dir: ".git/hooks", commitMsg: ".git/hooks/commit-msg", fix: "chmod" });
+      expect(otherHooks("hooks", folder([], "hooks", WIRED, false))?.fix, "a core.hooksPath folder's own commit-msg too").toBe("chmod");
     });
 
     it("calls flow and is executable: wired", () => {
-      expect(lfs(WIRED, true)).toStrictEqual({ dir: ".git/hooks", preCommit: ".git/hooks/pre-commit", fix: null });
+      expect(lfs(WIRED, true)).toStrictEqual({ dir: ".git/hooks", commitMsg: ".git/hooks/commit-msg", fix: null });
     });
 
     it("not there yet: the fix is to create it", () => {
@@ -486,27 +519,27 @@ describe("other hooks — what counts, and the pre-commit hook a person edits", 
       expect(lfs("#!/bin/sh\nnpm test\n", false)?.fix).toBe("add-and-chmod");
     });
 
-    it("husky's .husky/pre-commit needs no execute bit: its stub runs it with sh", () => {
+    it("husky's .husky/commit-msg needs no execute bit: its stub runs it with sh", () => {
       expect(otherHooks(".husky/_", folder([], ".husky/_", WIRED, false))).toStrictEqual({
         dir: ".husky/_",
-        preCommit: ".husky/pre-commit",
+        commitMsg: ".husky/commit-msg",
         fix: null,
       });
       expect(otherHooks(".husky/_", folder([], ".husky/_", null, false))?.fix, "and is never created: the stub skips a missing hook").toBe("add");
     });
   });
 
-  it("husky's stub folder `.husky/_` maps to `.husky/pre-commit`; any other folder to its own", () => {
-    expect(preCommitOf(".husky/_")).toBe(".husky/pre-commit");
-    expect(preCommitOf(".husky/_/")).toBe(".husky/pre-commit");
-    expect(preCommitOf(".husky"), "husky 5 to 8 pointed git at .husky itself").toBe(".husky/pre-commit");
-    expect(preCommitOf(".git/hooks")).toBe(".git/hooks/pre-commit");
-    expect(preCommitOf("/main/.git/hooks"), "a worktree's shared folder is absolute").toBe("/main/.git/hooks/pre-commit");
+  it("husky's stub folder `.husky/_` maps to `.husky/commit-msg`; any other folder to its own", () => {
+    expect(commitMsgOf(".husky/_")).toBe(".husky/commit-msg");
+    expect(commitMsgOf(".husky/_/")).toBe(".husky/commit-msg");
+    expect(commitMsgOf(".husky"), "husky 5 to 8 pointed git at .husky itself").toBe(".husky/commit-msg");
+    expect(commitMsgOf(".git/hooks")).toBe(".git/hooks/commit-msg");
+    expect(commitMsgOf("/main/.git/hooks"), "a worktree's shared folder is absolute").toBe("/main/.git/hooks/commit-msg");
   });
 
   it("init's plan carries it, and a repo with no other hooks plans none", () => {
     expect(planInit(bare).otherHooks).toBeNull();
-    expect(planInit({ ...bare, ...husky(null) }).otherHooks).toStrictEqual({ dir: ".husky/_", preCommit: ".husky/pre-commit", fix: "add" });
+    expect(planInit({ ...bare, ...husky(null) }).otherHooks).toStrictEqual({ dir: ".husky/_", commitMsg: ".husky/commit-msg", fix: "add" });
     expect(planInit({ ...bare, ...gitHooks(["pre-push"]) }).otherHooks?.dir).toBe(".git/hooks");
     expect(planInit({ ...bare, ...husky(null), isGit: false }).otherHooks, "outside git there are no hooks to keep").toBeNull();
     expect(planInit({ ...bare, hooksPath: ".husky/_", hooksFolder: null }).otherHooks, "nor when git could not say").toBeNull();
@@ -535,7 +568,31 @@ describe("planInit — a repo that has never heard of flow", () => {
   });
 });
 
-describe("planInit — a repo that already has a pre-commit hook", () => {
+describe("planInit — the pre-commit hook an older flow wrote", () => {
+  // What 0.3's `flow init` wrote: the gate, in git's pre-commit hook, which runs before there is a message.
+  const wrote03 = `#!/bin/sh\n# The flow commit gate.\n${repoFirst("$PWD", "hook commit")}\nexec flow hook commit\n`;
+
+  it("deletes it when it holds only flow's lines, and says why", () => {
+    const plan = planInit({ ...bare, oldGateText: wrote03 });
+    expect(plan.oldGate).toEqual({ path: OLD_GATE_PATH, body: null });
+    expect(plan.gate?.path, "the new hook is written beside it").toBe(GATE_PATH);
+    expect(initLines(plan, []).join("\n")).toContain(`${OLD_GATE_PATH} deleted`);
+  });
+
+  it("removes flow's lines and keeps the rest when the hook runs other things", () => {
+    const plan = planInit({ ...bare, oldGateText: `#!/bin/sh\nnpm test\n${repoFirst("$PWD", "hook commit")}\nexec flow hook commit\n` });
+    expect(plan.oldGate).toEqual({ path: OLD_GATE_PATH, body: "#!/bin/sh\nnpm test\n" });
+    expect(initLines(plan, []).join("\n")).toContain(`flow's lines taken out of ${OLD_GATE_PATH}`);
+  });
+
+  it("leaves a pre-commit hook none of whose lines are flow's, and a repo with none", () => {
+    expect(planInit({ ...bare, oldGateText: "#!/bin/sh\nnpm test\n" }).oldGate).toBeNull();
+    expect(planInit({ ...bare, oldGateText: null }).oldGate).toBeNull();
+    expect(planInit({ ...bare, isGit: false, oldGateText: wrote03 }).oldGate, "outside git there are no hooks").toBeNull();
+  });
+});
+
+describe("planInit — a repo that already has a commit-msg hook", () => {
   const theirs = planInit({ ...bare, gateText: "#!/bin/sh\nnpm test\n" });
 
   it("NEVER overwrites it, and says what to add by hand", () => {
@@ -563,7 +620,7 @@ describe("planInit — a repo that already has a pre-commit hook", () => {
     const said = initLines(old, []).join("\n");
     expect(said, "the same instruction status gives, in the same words").toContain(UPDATE_THE_GATE_LINE);
     expect(said).not.toContain(ADD_THE_GATE_LINE);
-    expect(planInit({ ...bare, gateText: PRE_COMMIT }).gateKept, "today's gate is simply kept").toBe(false);
+    expect(planInit({ ...bare, gateText: COMMIT_MSG }).gateKept, "today's gate is simply kept").toBe(false);
   });
 
   // THE SAME GAP AS A HOOK THAT NEVER RAN FLOW: the old verb's line, replaced by the run line alone,
@@ -591,9 +648,9 @@ const statusFacts = (over: Partial<StatusFacts> = {}): StatusFacts => ({
   configPath: "/repo/flow.config.ts",
   hasConfig: true,
   load: { ok: true, entries: [] },
-  gateText: PRE_COMMIT,
+  gateText: COMMIT_MSG,
   hooksPath: HOOKS_DIR,
-  hooksFolder: { dir: HOOKS_DIR, files: ["pre-commit"], preCommitText: PRE_COMMIT, preCommitExecutable: true },
+  hooksFolder: { dir: HOOKS_DIR, files: ["commit-msg"], commitMsgText: COMMIT_MSG, commitMsgExecutable: true },
   settingsPath: "/home/host/settings.json",
   settings: host.registering.withRegistrations({}).settings,
   machine: null,
@@ -606,14 +663,14 @@ const statusFacts = (over: Partial<StatusFacts> = {}): StatusFacts => ({
 });
 
 /** A fresh clone's hooks folder: `core.hooksPath` unset, and `.git/hooks` holding only git's samples. */
-const FRESH_CLONE: HooksFolder = { dir: ".git/hooks", files: ["pre-commit.sample", "pre-push.sample"], preCommitText: null, preCommitExecutable: false };
+const FRESH_CLONE: HooksFolder = { dir: ".git/hooks", files: ["pre-commit.sample", "pre-push.sample"], commitMsgText: null, commitMsgExecutable: false };
 
 /** The gate an older `flow init` wrote: today's, without the line that runs the repo's own package first. */
-const PATH_ONLY_GATE = PRE_COMMIT.replace(`${GATE_LOCAL_LINE}\n`, "");
+const PATH_ONLY_GATE = COMMIT_MSG.replace(`${GATE_LOCAL_LINE}\n`, "");
 
 describe("gateWithoutFlow — the commit gate with flow's lines taken out", () => {
   it("deletes the gate today's flow writes, and the gates earlier releases wrote", () => {
-    expect(gateWithoutFlow(PRE_COMMIT)).toEqual({ delete: true });
+    expect(gateWithoutFlow(COMMIT_MSG)).toEqual({ delete: true });
     expect(gateWithoutFlow(PATH_ONLY_GATE), "0.2.2's gate").toEqual({ delete: true });
     expect(gateWithoutFlow(OLD_GATE), "the gate before `flow hook commit`").toEqual({ delete: true });
   });
@@ -646,11 +703,11 @@ const MACHINE_SETTINGS = "/home/me/host/settings.json";
 const wired: UninstallFacts = {
   harness: host,
   hasConfig: true,
-  gateText: PRE_COMMIT,
+  gateText: COMMIT_MSG,
   hooksPath: HOOKS_DIR,
   subfolderOf: null,
-  hooksDir: ["pre-commit"],
-  hooksFolder: { dir: HOOKS_DIR, files: ["pre-commit"], preCommitText: PRE_COMMIT, preCommitExecutable: true },
+  hooksDir: ["commit-msg"],
+  hooksFolder: { dir: HOOKS_DIR, files: ["commit-msg"], commitMsgText: COMMIT_MSG, commitMsgExecutable: true },
   hasFlowDir: true,
   linked: true,
   listed: false,
@@ -725,7 +782,7 @@ describe("planUninstall — hooks of somebody's own", () => {
     expect(plan.gate?.body).toBeNull();
     expect(plan.hooksPath).toBe(false);
     expect(plan.hooksDir).toBe(false);
-    expect(uninstallLines(plan, []).join("\n")).toContain("kept core.hooksPath at .githooks — git still runs the hooks there: commit-msg.");
+    expect(uninstallLines(plan, []).join("\n")).toContain("kept core.hooksPath at .githooks — git still runs the hooks there: pre-commit.");
   });
 
   it("keeps a gate with lines of its own, rewritten, and the hooks path that runs it", () => {
@@ -735,7 +792,7 @@ describe("planUninstall — hooks of somebody's own", () => {
     expect(plan.hookCallsFlow, "nothing left calls flow").toBeNull();
     const said = uninstallLines(plan, []).join("\n");
     expect(said).toContain(`  - flow's lines from ${GATE_PATH} — the rest of the hook is kept`);
-    expect(said).toContain("git still runs the hooks there: pre-commit.");
+    expect(said).toContain("git still runs the hooks there: commit-msg.");
   });
 
   it("names a gate line flow did not write that still calls flow, and puts deleting it first in the next line", () => {
@@ -782,19 +839,19 @@ describe("planUninstall — hooks of somebody's own", () => {
   });
 });
 
-// ── another folder's pre-commit hook ──
+// ── another folder's commit-msg hook ──
 //
-// Git runs husky's hooks, or a hook in `.git/hooks`, and the pre-commit hook a person edits for it
+// Git runs husky's hooks, or a hook in `.git/hooks`, and the commit-msg hook a person edits for it
 // was told by `flow init` to call flow. Uninstall never edits that hook: it names it and its lines.
 
 /** The two lines `flow init` tells a person to add to a hook it does not write. */
 const FLOWS_TWO = `${GATE_LOCAL_LINE}\n${GATE_RUN_LINE}\n`;
 
-/** A husky repo after `flow init`: git runs `.husky/_`, whose stub runs `.husky/pre-commit`. */
-const huskyRepo = (preCommitText: string): UninstallFacts => ({
+/** A husky repo after `flow init`: git runs `.husky/_`, whose stub runs `.husky/commit-msg`. */
+const huskyRepo = (commitMsgText: string): UninstallFacts => ({
   ...wired,
   hooksPath: ".husky/_",
-  hooksFolder: { dir: ".husky/_", files: ["pre-commit"], preCommitText, preCommitExecutable: false },
+  hooksFolder: { dir: ".husky/_", files: ["commit-msg"], commitMsgText, commitMsgExecutable: false },
 });
 
 describe("flowLinesOf — a hook's lines that call flow", () => {
@@ -811,48 +868,48 @@ describe("flowLinesOf — a hook's lines that call flow", () => {
   });
 });
 
-describe("planUninstall — another folder's pre-commit hook that calls flow", () => {
+describe("planUninstall — another folder's commit-msg hook that calls flow", () => {
   it("leaves the hook as it is, names it and flow's two lines, and says to delete them before npm uninstall", () => {
     const plan = planUninstall({ ...huskyRepo(`npm test\n${FLOWS_TWO}`), machineFile: { ...wired.machineFile, settings: null } });
-    expect(plan.hookCallsFlow).toEqual({ path: ".husky/pre-commit", lines: [GATE_LOCAL_LINE, GATE_RUN_LINE] });
+    expect(plan.hookCallsFlow).toEqual({ path: ".husky/commit-msg", lines: [GATE_LOCAL_LINE, GATE_RUN_LINE] });
     expect(plan.gate, "the .githooks gate init wrote beside it still goes").toEqual({ path: GATE_PATH, body: null });
     const said = uninstallLines(plan, []);
-    const at = said.findIndex((line) => line.startsWith("  · .husky/pre-commit still calls flow"));
+    const at = said.findIndex((line) => line.startsWith("  · .husky/commit-msg still calls flow"));
     expect(said.slice(at, at + 3)).toEqual([
-      "  · .husky/pre-commit still calls flow, and flow takes out only the lines it wrote there itself. " +
+      "  · .husky/commit-msg still calls flow, and flow takes out only the lines it wrote there itself. " +
         "Delete these lines from it yourself, or every commit fails with `flow: not found` once flow is gone:",
       `      ${GATE_LOCAL_LINE}`,
       `      ${GATE_RUN_LINE}`,
     ]);
-    expect(said.at(-1)).toBe("  next: delete flow's lines from .husky/pre-commit, then `npm uninstall -g @jawache/flow` — removes the package.");
+    expect(said.at(-1)).toBe("  next: delete flow's lines from .husky/commit-msg, then `npm uninstall -g @jawache/flow` — removes the package.");
     expect(uninstallCode(plan, []), "a step for the person, not a failure").toBe(0);
   });
 
   it("puts the hook's lines first in a next line that also names --machine", () => {
     expect(uninstallLines(planUninstall(huskyRepo(FLOWS_TWO)), []).at(-1)).toBe(
-      "  next: delete flow's lines from .husky/pre-commit, then `flow uninstall --machine` once no repo on this machine needs flow, then `npm uninstall -g @jawache/flow` — removes the hooks, then the package.",
+      "  next: delete flow's lines from .husky/commit-msg, then `flow uninstall --machine` once no repo on this machine needs flow, then `npm uninstall -g @jawache/flow` — removes the hooks, then the package.",
     );
   });
 
-  it("names a .git/hooks/pre-commit that calls flow, with the one line it holds", () => {
+  it("names a .git/hooks/commit-msg that calls flow, with the one line it holds", () => {
     const plan = planUninstall({
       ...wired,
       hooksPath: null,
-      hooksFolder: { dir: ".git/hooks", files: ["pre-commit", "pre-push"], preCommitText: `#!/bin/sh\n${GATE_RUN_LINE}\n`, preCommitExecutable: true },
+      hooksFolder: { dir: ".git/hooks", files: ["commit-msg", "pre-push"], commitMsgText: `#!/bin/sh\n${GATE_RUN_LINE}\n`, commitMsgExecutable: true },
     });
-    expect(plan.hookCallsFlow).toEqual({ path: ".git/hooks/pre-commit", lines: [GATE_RUN_LINE] });
+    expect(plan.hookCallsFlow).toEqual({ path: ".git/hooks/commit-msg", lines: [GATE_RUN_LINE] });
     expect(uninstallLines(plan, []).join("\n")).toContain("Delete this line from it yourself");
   });
 
   it("names the hook by its full path when the run is in a subfolder", () => {
-    expect(planUninstall({ ...huskyRepo(FLOWS_TWO), subfolderOf: "/home/me/repo" }).hookCallsFlow?.path).toBe("/home/me/repo/.husky/pre-commit");
+    expect(planUninstall({ ...huskyRepo(FLOWS_TWO), subfolderOf: "/home/me/repo" }).hookCallsFlow?.path).toBe("/home/me/repo/.husky/commit-msg");
   });
 
   it("says nothing of a hook that does not call flow, and the next line is the npm uninstall alone", () => {
     const plan = planUninstall({ ...huskyRepo("npm test\n"), machineFile: { ...wired.machineFile, settings: null } });
     expect(plan.hookCallsFlow).toBeNull();
     const said = uninstallLines(plan, []);
-    expect(said.join("\n")).not.toContain(".husky/pre-commit");
+    expect(said.join("\n")).not.toContain(".husky/commit-msg");
     expect(said.at(-1)).toBe("  next: `npm uninstall -g @jawache/flow` — removes the package.");
   });
 
@@ -863,7 +920,7 @@ describe("planUninstall — another folder's pre-commit hook that calls flow", (
 
   it("names the hook git runs over a .githooks gate that also still calls flow", () => {
     const both = planUninstall({ ...huskyRepo(FLOWS_TWO), gateText: "#!/bin/sh\nnpx flow hook commit\n" });
-    expect(both.hookCallsFlow?.path).toBe(".husky/pre-commit");
+    expect(both.hookCallsFlow?.path).toBe(".husky/commit-msg");
   });
 });
 
@@ -1269,7 +1326,7 @@ describe("planInit — when git already runs other hooks", () => {
     return at === -1 ? [] : said.slice(at);
   };
 
-  describe("a husky repo whose .husky/pre-commit does not call flow", () => {
+  describe("a husky repo whose .husky/commit-msg does not call flow", () => {
     const plan = planInit({ ...bare, ...husky("#!/bin/sh\nnpm test\n") });
 
     it("leaves core.hooksPath alone, and still writes every other file", () => {
@@ -1284,11 +1341,11 @@ describe("planInit — when git already runs other hooks", () => {
     it("ends with the block: the folder git runs hooks from, and both fixes", () => {
       const said = initLines(plan, []);
       const lines = block(plan);
-      expect(lines, "the block is the end of the output").toStrictEqual(notInstalledLines({ dir: ".husky/_", preCommit: ".husky/pre-commit", fix: "add" }));
+      expect(lines, "the block is the end of the output").toStrictEqual(notInstalledLines({ dir: ".husky/_", commitMsg: ".husky/commit-msg", fix: "add" }));
       expect(said[said.length - lines.length - 1], "set apart from the report by a blank line").toBe("");
       const text = lines.join("\n");
       expect(text).toContain("Git runs hooks from .husky/_");
-      expect(text).toContain("Add these two lines to the end of .husky/pre-commit:");
+      expect(text).toContain("Add these two lines to the end of .husky/commit-msg:");
       expect(text).toContain(GATE_LOCAL_LINE);
       expect(text).toContain(GATE_RUN_LINE);
       expect(text).toContain(`move those hooks into ${HOOKS_DIR}/`);
@@ -1301,7 +1358,7 @@ describe("planInit — when git already runs other hooks", () => {
 
     it("followed to the letter, the first fix wires it", () => {
       const lines = block(plan);
-      const at = lines.findIndex((line) => line.includes("Add these two lines to the end of .husky/pre-commit:"));
+      const at = lines.findIndex((line) => line.includes("Add these two lines to the end of .husky/commit-msg:"));
       const added = lines.slice(at + 1, at + 3).map((line) => line.trim());
       const followed = `#!/bin/sh\nnpm test\n${added.join("\n")}\n`;
       expect(planInit({ ...bare, ...husky(followed) }).otherHooks?.fix).toBeNull();
@@ -1339,7 +1396,7 @@ describe("planInit — when git already runs other hooks", () => {
       ...bare,
       ...husky("#!/bin/sh\nnpm test\n"),
       hasConfig: true,
-      gateText: PRE_COMMIT,
+      gateText: COMMIT_MSG,
       hasFlowDir: true,
       resolves: true,
       settings: host.registering.withRegistrations({}).settings,
@@ -1356,7 +1413,7 @@ describe("planInit — when git already runs other hooks", () => {
       ...bare,
       hooksFolder: null,
       hasConfig: true,
-      gateText: PRE_COMMIT,
+      gateText: COMMIT_MSG,
       hasFlowDir: true,
       resolves: true,
       settings: host.registering.withRegistrations({}).settings,
@@ -1367,28 +1424,28 @@ describe("planInit — when git already runs other hooks", () => {
     expect(initCode(again, [])).toBe(1);
   });
 
-  it("a repo with a hook in .git/hooks names that folder and its pre-commit", () => {
+  it("a repo with a hook in .git/hooks names that folder and its commit-msg", () => {
     const plan = planInit({ ...bare, ...gitHooks(["pre-push", "post-checkout"], "#!/bin/sh\nnpm test\n") });
     expect(plan.hooksPath).toBe(false);
     expect(block(plan)[0]).toContain("Git runs hooks from .git/hooks");
-    expect(block(plan).join("\n")).toContain("Add these two lines to the end of .git/hooks/pre-commit:");
+    expect(block(plan).join("\n")).toContain("Add these two lines to the end of .git/hooks/commit-msg:");
     expect(initCode(plan, [])).toBe(1);
   });
 
-  describe("a pre-commit hook git runs itself, and the execute bit git needs to run it", () => {
+  describe("a commit-msg hook git runs itself, and the execute bit git needs to run it", () => {
     /** The first fix: the lines from the block's third up to the second fix. */
     const firstFix = (plan: ReturnType<typeof planInit>): string[] => {
       const lines = block(plan);
       return lines.slice(2, lines.findIndex((line) => line.startsWith("  - Or move")));
     };
 
-    it("Git LFS's hooks and no pre-commit yet: create it as an executable shell script", () => {
+    it("Git LFS's hooks and no commit-msg yet: create it as an executable shell script", () => {
       const plan = planInit({ ...bare, ...gitHooks(["pre-push", "post-checkout"]) });
       expect(block(plan)[0]).toBe(
-        `${NOT_INSTALLED}. Git runs hooks from .git/hooks, and there is no .git/hooks/pre-commit, so no commit runs flow's gate.`,
+        `${NOT_INSTALLED}. Git runs hooks from .git/hooks, and there is no .git/hooks/commit-msg, so no commit runs flow's gate.`,
       );
       expect(firstFix(plan)).toStrictEqual([
-        "  - Create .git/hooks/pre-commit with these three lines, then run `chmod +x .git/hooks/pre-commit` so git runs it:",
+        "  - Create .git/hooks/commit-msg with these three lines, then run `chmod +x .git/hooks/commit-msg` so git runs it:",
         "      #!/bin/sh",
         `      ${GATE_LOCAL_LINE}`,
         `      ${GATE_RUN_LINE}`,
@@ -1402,45 +1459,45 @@ describe("planInit — when git already runs other hooks", () => {
         .slice(1)
         .map((line) => line.trim())
         .join("\n")}\n`;
-      const plan = planInit({ ...bare, ...gitHooks(["pre-push", "pre-commit"], created, true) });
+      const plan = planInit({ ...bare, ...gitHooks(["pre-push", "commit-msg"], created, true) });
       expect(plan.otherHooks?.fix).toBeNull();
       expect(block(plan)).toStrictEqual([]);
       expect(initCode(plan, [])).toBe(0);
     });
 
     it("a hook that calls flow without the execute bit: not installed, and it says the file must be executable", () => {
-      const plan = planInit({ ...bare, ...gitHooks(["pre-push", "pre-commit"], WIRED, false) });
+      const plan = planInit({ ...bare, ...gitHooks(["pre-push", "commit-msg"], WIRED, false) });
       expect(block(plan)[0]).toBe(
-        `${NOT_INSTALLED}. Git runs hooks from .git/hooks, and .git/hooks/pre-commit calls flow but is not executable, so git ignores it and no commit runs flow's gate.`,
+        `${NOT_INSTALLED}. Git runs hooks from .git/hooks, and .git/hooks/commit-msg calls flow but is not executable, so git ignores it and no commit runs flow's gate.`,
       );
-      expect(firstFix(plan)).toStrictEqual(["  - Make .git/hooks/pre-commit executable, so git runs it: `chmod +x .git/hooks/pre-commit`"]);
+      expect(firstFix(plan)).toStrictEqual(["  - Make .git/hooks/commit-msg executable, so git runs it: `chmod +x .git/hooks/commit-msg`"]);
       expect(initLines(plan, []).join("\n"), "never the quiet note that it calls flow").not.toContain("· git runs hooks from");
       expect(initCode(plan, [])).toBe(1);
     });
 
     it("a hook that neither calls flow nor has the execute bit: both, in the one fix", () => {
-      const plan = planInit({ ...bare, ...gitHooks(["pre-commit"], "#!/bin/sh\nnpm test\n", false) });
-      expect(block(plan)[0]).toContain(".git/hooks/pre-commit does not call flow and is not executable, so git ignores it");
+      const plan = planInit({ ...bare, ...gitHooks(["commit-msg"], "#!/bin/sh\nnpm test\n", false) });
+      expect(block(plan)[0]).toContain(".git/hooks/commit-msg does not call flow and is not executable, so git ignores it");
       expect(firstFix(plan)[0]).toBe(
-        "  - Add these two lines to the end of .git/hooks/pre-commit, then run `chmod +x .git/hooks/pre-commit` so git runs it:",
+        "  - Add these two lines to the end of .git/hooks/commit-msg, then run `chmod +x .git/hooks/commit-msg` so git runs it:",
       );
     });
 
     it("the chmod to paste leaves a plain path as it is, and single-quotes one the shell would split or expand", () => {
       const chmodOf = (dir: string): string[] =>
-        firstFix(planInit({ ...bare, hooksFolder: { dir, files: ["pre-commit"], preCommitText: WIRED, preCommitExecutable: false } }));
-      const said = (dir: string, typed: string): string[] => [`  - Make ${dir}/pre-commit executable, so git runs it: \`chmod +x ${typed}\``];
-      expect(chmodOf("/main/.git/hooks"), "a worktree's shared folder").toStrictEqual(said("/main/.git/hooks", "/main/.git/hooks/pre-commit"));
+        firstFix(planInit({ ...bare, hooksFolder: { dir, files: ["commit-msg"], commitMsgText: WIRED, commitMsgExecutable: false } }));
+      const said = (dir: string, typed: string): string[] => [`  - Make ${dir}/commit-msg executable, so git runs it: \`chmod +x ${typed}\``];
+      expect(chmodOf("/main/.git/hooks"), "a worktree's shared folder").toStrictEqual(said("/main/.git/hooks", "/main/.git/hooks/commit-msg"));
       const spaced = "/Users/me/My Projects/app/.git/hooks";
-      expect(chmodOf(spaced), "a space, as under ~/My Projects/").toStrictEqual(said(spaced, `'${spaced}/pre-commit'`));
-      expect(chmodOf("/it's/$HOME/hooks"), "a quote and a $").toStrictEqual(said("/it's/$HOME/hooks", `'/it'\\''s/$HOME/hooks/pre-commit'`));
+      expect(chmodOf(spaced), "a space, as under ~/My Projects/").toStrictEqual(said(spaced, `'${spaced}/commit-msg'`));
+      expect(chmodOf("/it's/$HOME/hooks"), "a quote and a $").toStrictEqual(said("/it's/$HOME/hooks", `'/it'\\''s/$HOME/hooks/commit-msg'`));
     });
 
-    it("husky's .husky/pre-commit, with no execute bit, still counts once it calls flow, and its fix is unchanged", () => {
+    it("husky's .husky/commit-msg, with no execute bit, still counts once it calls flow, and its fix is unchanged", () => {
       expect(initCode(planInit({ ...bare, ...husky(WIRED) }), [])).toBe(0);
-      for (const preCommit of [null, "npm test\n"])
-        expect(firstFix(planInit({ ...bare, ...husky(preCommit) })), String(preCommit)).toStrictEqual([
-          "  - Add these two lines to the end of .husky/pre-commit:",
+      for (const commitMsg of [null, "npm test\n"])
+        expect(firstFix(planInit({ ...bare, ...husky(commitMsg) })), String(commitMsg)).toStrictEqual([
+          "  - Add these two lines to the end of .husky/commit-msg:",
           `      ${GATE_LOCAL_LINE}`,
           `      ${GATE_RUN_LINE}`,
         ]);
@@ -1451,7 +1508,7 @@ describe("planInit — when git already runs other hooks", () => {
     const plan = planInit({ ...bare, ...husky(WIRED) });
     expect(plan.hooksPath, "still never set over husky's").toBe(false);
     expect(block(plan)).toStrictEqual([]);
-    expect(initLines(plan, []).join("\n")).toContain("· git runs hooks from .husky/_, and .husky/pre-commit calls flow");
+    expect(initLines(plan, []).join("\n")).toContain("· git runs hooks from .husky/_, and .husky/commit-msg calls flow");
     expect(initCode(plan, [])).toBe(0);
   });
 
@@ -1464,7 +1521,7 @@ describe("planInit — when git already runs other hooks", () => {
       const said = initLines(plan, [], true);
       const at = said.findIndex((line) => line.includes(NOT_INSTALLED));
       expect(said.slice(at)).toStrictEqual(
-        notInstalledLines({ dir: ".husky/_", preCommit: ".husky/pre-commit", fix: "add" }).map((line) => `${BOLD_RED}${line}${RESET}`),
+        notInstalledLines({ dir: ".husky/_", commitMsg: ".husky/commit-msg", fix: "add" }).map((line) => `${BOLD_RED}${line}${RESET}`),
       );
       expect(said.slice(0, at).join("\n"), "the report above it stays plain").not.toContain("\u001b[");
     });
@@ -1489,7 +1546,7 @@ describe("planInit — when git already runs other hooks", () => {
     expect(block(plan)).toStrictEqual([]);
     expect(initLines(plan, []).join("\n")).not.toContain("git runs hooks from");
     expect(initCode(plan, [])).toBe(0);
-    expect(initCode(plan, ["could not write .githooks/pre-commit: EACCES"]), "a failure is still a 1").toBe(1);
+    expect(initCode(plan, ["could not write .githooks/commit-msg: EACCES"]), "a failure is still a 1").toBe(1);
   });
 });
 
@@ -1497,10 +1554,10 @@ describe("planInit — the second run", () => {
   const already = planInit({
     ...bare,
     hasConfig: true,
-    gateText: PRE_COMMIT,
+    gateText: COMMIT_MSG,
     hasFlowDir: true,
     hooksPath: HOOKS_DIR,
-    hooksFolder: { dir: HOOKS_DIR, files: ["pre-commit"], preCommitText: PRE_COMMIT, preCommitExecutable: true },
+    hooksFolder: { dir: HOOKS_DIR, files: ["commit-msg"], commitMsgText: COMMIT_MSG, commitMsgExecutable: true },
     resolves: true,
     settings: host.registering.withRegistrations({}).settings,
   });
@@ -1612,7 +1669,7 @@ describe("the binary fitting — can the hooks and the gate find flow", () => {
     expect(fitting?.ok).toBe(false);
     expect(fitting?.detail).toBe(
       "the flow in node_modules/@jawache/flow is not on the PATH, and the gate looks for flow on the PATH alone, so git refuses every commit — " +
-        'add `f="$PWD/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook commit` to .githooks/pre-commit above the line that runs flow; ' +
+        'add `f="$PWD/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook commit "$1"` to .githooks/commit-msg above the line that runs flow; ' +
         "or install it for every repo with `npm i -g @jawache/flow`.",
     );
     expect(green).toBe(false);
@@ -1627,7 +1684,7 @@ describe("the binary fitting — can the hooks and the gate find flow", () => {
     const { fitting, green } = binary(true, false, { gateText: lintFirst });
     expect(fitting?.ok).toBe(false);
     expect(fitting?.detail).toContain("the gate looks for flow on the PATH alone");
-    expect(fitting?.detail).toContain(`add \`${GATE_LOCAL_LINE}\` to .githooks/pre-commit`);
+    expect(fitting?.detail).toContain(`add \`${GATE_LOCAL_LINE}\` to .githooks/commit-msg`);
     expect(green).toBe(false);
     expect(binary(true, false, { gateText: `#!/bin/sh\n  ${GATE_LOCAL_LINE}\nnode_modules/.bin/lint-staged && flow hook commit\n` }).fitting?.ok,
       "the line itself, indented, puts the repo's copy first").toBe(true);
@@ -1722,10 +1779,10 @@ describe("status — does git run the commit gate", () => {
     const line = statusLines(s).join("\n").split("\n").find((said) => said.includes(" hooks-path: "));
     return { s, fitting: s.fittings.find((f) => f.id === "hooks-path"), line, code: statusCode(s) };
   };
-  /** Husky's setup: git runs `.husky/_`, and a person edits `.husky/pre-commit`. */
-  const husky = (preCommitText: string | null): Partial<StatusFacts> => ({
+  /** Husky's setup: git runs `.husky/_`, and a person edits `.husky/commit-msg`. */
+  const husky = (commitMsgText: string | null): Partial<StatusFacts> => ({
     hooksPath: ".husky/_",
-    hooksFolder: { dir: ".husky/_", files: ["h", "husky.sh", "pre-commit"], preCommitText, preCommitExecutable: false },
+    hooksFolder: { dir: ".husky/_", files: ["h", "husky.sh", "commit-msg"], commitMsgText, commitMsgExecutable: false },
   });
 
   it("flow's own .githooks is green, as it always read", () => {
@@ -1736,7 +1793,7 @@ describe("status — does git run the commit gate", () => {
 
   it("counts `.githooks/`, `./.githooks` and an absolute path to it as flow's own, as init does", () => {
     for (const set of [".githooks/", "./.githooks", "/repo/.githooks"]) {
-      const { s, line } = judged({ hooksPath: set, hooksFolder: { dir: hooksDirOf("/repo", set), files: ["pre-commit"], preCommitText: PRE_COMMIT, preCommitExecutable: true } });
+      const { s, line } = judged({ hooksPath: set, hooksFolder: { dir: hooksDirOf("/repo", set), files: ["commit-msg"], commitMsgText: COMMIT_MSG, commitMsgExecutable: true } });
       expect(line, set).toBe(`  ✓ hooks-path: core.hooksPath = ${HOOKS_DIR}`);
       expect(s.green, set).toBe(true);
     }
@@ -1745,15 +1802,15 @@ describe("status — does git run the commit gate", () => {
   describe("other hooks that do not call flow", () => {
     it("husky's: red, in the words of init's block — the folder and both fixes — and exits 1", () => {
       const { s, fitting, line, code } = judged(husky("npm test\n"));
-      const other = { dir: ".husky/_", preCommit: ".husky/pre-commit", fix: "add" } as const;
+      const other = { dir: ".husky/_", commitMsg: ".husky/commit-msg", fix: "add" } as const;
       expect(fitting).toStrictEqual({ id: "hooks-path", ok: false, detail: notInstalledLines(other).join("\n") });
-      expect(line).toBe(`  ✗ hooks-path: ${NOT_INSTALLED}. Git runs hooks from .husky/_, and .husky/pre-commit does not call flow, so no commit runs flow's gate.`);
+      expect(line).toBe(`  ✗ hooks-path: ${NOT_INSTALLED}. Git runs hooks from .husky/_, and .husky/commit-msg does not call flow, so no commit runs flow's gate.`);
       const said = statusLines(s).join("\n");
       // Every later line of the block sits under the row, four in, its own indent kept after that.
       const page = said.split("\n");
       const at = page.findIndex((l) => l.includes(" hooks-path: "));
       expect(page.slice(at + 1, at + 6)).toStrictEqual(notInstalledLines(other).slice(1).map((l) => `    ${l}`));
-      expect(said).toContain("Add these two lines to the end of .husky/pre-commit:");
+      expect(said).toContain("Add these two lines to the end of .husky/commit-msg:");
       expect(said).toContain(GATE_RUN_LINE);
       expect(said).toContain(`move those hooks into ${HOOKS_DIR}/`);
       expect(said).toContain(SET_HOOKS_PATH);
@@ -1761,31 +1818,31 @@ describe("status — does git run the commit gate", () => {
       expect(code).toBe(1);
     });
 
-    it("a hook in .git/hooks, with core.hooksPath unset: red, naming that folder and its pre-commit", () => {
+    it("a hook in .git/hooks, with core.hooksPath unset: red, naming that folder and its commit-msg", () => {
       const { fitting, code } = judged({ hooksPath: null, hooksFolder: { ...FRESH_CLONE, files: [...FRESH_CLONE.files, "pre-push"] } });
       expect(fitting?.ok).toBe(false);
-      expect(fitting?.detail).toContain("Git runs hooks from .git/hooks, and there is no .git/hooks/pre-commit");
-      expect(fitting?.detail).toContain("Create .git/hooks/pre-commit with these three lines, then run `chmod +x .git/hooks/pre-commit`");
+      expect(fitting?.detail).toContain("Git runs hooks from .git/hooks, and there is no .git/hooks/commit-msg");
+      expect(fitting?.detail).toContain("Create .git/hooks/commit-msg with these three lines, then run `chmod +x .git/hooks/commit-msg`");
       expect(code).toBe(1);
     });
 
-    it("a pre-commit in .git/hooks that calls flow without the execute bit: red, saying it must be executable", () => {
-      const lfs: HooksFolder = { dir: ".git/hooks", files: ["pre-push", "pre-commit"], preCommitText: PRE_COMMIT, preCommitExecutable: false };
+    it("a commit-msg in .git/hooks that calls flow without the execute bit: red, saying it must be executable", () => {
+      const lfs: HooksFolder = { dir: ".git/hooks", files: ["pre-push", "commit-msg"], commitMsgText: COMMIT_MSG, commitMsgExecutable: false };
       const { fitting, code } = judged({ hooksPath: null, hooksFolder: lfs });
       expect(fitting).toStrictEqual({
         id: "hooks-path",
         ok: false,
-        detail: notInstalledLines({ dir: ".git/hooks", preCommit: ".git/hooks/pre-commit", fix: "chmod" }).join("\n"),
+        detail: notInstalledLines({ dir: ".git/hooks", commitMsg: ".git/hooks/commit-msg", fix: "chmod" }).join("\n"),
       });
       expect(fitting?.detail).toContain("calls flow but is not executable, so git ignores it");
       expect(code).toBe(1);
-      expect(judged({ hooksPath: null, hooksFolder: { ...lfs, preCommitExecutable: true } }).fitting?.ok, "and green once it is").toBe(true);
+      expect(judged({ hooksPath: null, hooksFolder: { ...lfs, commitMsgExecutable: true } }).fitting?.ok, "and green once it is").toBe(true);
     });
   });
 
-  it("other hooks whose pre-commit calls flow: green, naming the folder and the hook", () => {
+  it("other hooks whose commit-msg calls flow: green, naming the folder and the hook", () => {
     const { s, line, code } = judged(husky(`#!/bin/sh\nnpm test\n${GATE_LOCAL_LINE}\n${GATE_RUN_LINE}\n`));
-    expect(line).toBe("  ✓ hooks-path: git runs hooks from .husky/_, and .husky/pre-commit calls flow");
+    expect(line).toBe("  ✓ hooks-path: git runs hooks from .husky/_, and .husky/commit-msg calls flow");
     expect(s.green).toBe(true);
     expect(code).toBe(0);
   });

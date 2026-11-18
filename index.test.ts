@@ -22,7 +22,6 @@ describe("the public surface", () => {
       "changeTogether",
       "command",
       "commit",
-      "commitMessage",
       "commitReason",
       "defineCategory",
       "defineCheck",

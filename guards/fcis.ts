@@ -19,7 +19,6 @@
 import {
   astGrep,
   breadcrumb,
-  command,
   commit,
   commitReason,
   definePack,
@@ -260,7 +259,7 @@ export const fcis = definePack("fcis", (repo: Convention) => {
     // A new test sibling is expected, never sprawl, so it is exempt — the one thing the old script
     // hard-coded that is visible here.
     newPureFileNeedsReason: guardrail()
-      .at(command)
+      .at(commit)
       .description("A commit adding a non-test file to the pure core must say why the pure file it belongs in isn't the place.")
       .check(
         commitReason({
@@ -278,41 +277,14 @@ export const fcis = definePack("fcis", (repo: Convention) => {
       // The exempt one is that same path under `TESTS`, the exemption's own glob.
       .test({
         pass: [
-          {
-            command: "git commit -m 'feat: x\n\nnew-pure-file: a whole new tier'",
-            world: {
-              exec: {
-                "git diff HEAD --name-only": { stdout: repo.example },
-                "git diff HEAD --name-only --diff-filter=A": { stdout: repo.example },
-                "git ls-files --others --exclude-standard": { stdout: "" },
-              },
-            },
-          },
-          {
-            // A new TEST is expected, never sprawl — and the exemption is what this proves, so the
-            // path has to be BOTH a pure file and a test.
-            command: 'git commit -m "test: cover it"',
-            world: {
-              exec: {
-                "git diff HEAD --name-only": { stdout: asTest(repo.example) },
-                "git diff HEAD --name-only --diff-filter=A": { stdout: asTest(repo.example) },
-                "git ls-files --others --exclude-standard": { stdout: "" },
-              },
-            },
-          },
+          { message: "feat: x\n\nnew-pure-file: a whole new tier", staged: [repo.example], added: [repo.example] },
+          // A new TEST is expected, never sprawl — and the exemption is what this proves, so the
+          // path has to be BOTH a pure file and a test.
+          { message: "test: cover it", staged: [asTest(repo.example)], added: [asTest(repo.example)] },
+          // An EDIT of a pure file is not growth: only a file the last commit does not have owes it.
+          { message: "feat: x", staged: [repo.example], added: [] },
         ],
-        block: [
-          {
-            command: 'git commit -m "feat: x"',
-            world: {
-              exec: {
-                "git diff HEAD --name-only": { stdout: repo.example },
-                "git diff HEAD --name-only --diff-filter=A": { stdout: repo.example },
-                "git ls-files --others --exclude-standard": { stdout: "" },
-              },
-            },
-          },
-        ],
+        block: [{ message: "feat: x", staged: [repo.example], added: [repo.example] }],
       }),
   };
 });

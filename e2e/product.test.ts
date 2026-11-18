@@ -84,7 +84,7 @@ describe("flow init — a repo that has never heard of flow", () => {
   it("reports exactly what it created, and answers 0", () => {
     expect(first.code, first.stdout + first.stderr).toBe(0);
     expect(first.stdout).toContain("flow.config.ts");
-    expect(first.stdout).toContain(".githooks/pre-commit");
+    expect(first.stdout).toContain(".githooks/commit-msg");
     expect(first.stdout).toContain("core.hooksPath");
     expect(first.stdout).toContain("SessionStart");
   });
@@ -92,9 +92,40 @@ describe("flow init — a repo that has never heard of flow", () => {
   it("leaves a config, a gate, a state directory and a resolvable @jawache/flow", () => {
     expect(existsSync(join(repo, "flow.config.ts"))).toBe(true);
     expect(existsSync(join(repo, ".flow"))).toBe(true);
-    expect(readFileSync(join(repo, ".githooks", "pre-commit"), "utf8")).toContain("flow hook commit");
+    expect(readFileSync(join(repo, ".githooks", "commit-msg"), "utf8")).toContain("flow hook commit");
     expect(lstatSync(join(repo, "node_modules", "@jawache", "flow")).isSymbolicLink()).toBe(true);
     expect(git(repo, ["config", "--get", "core.hooksPath"]).stdout.trim()).toBe(".githooks");
+  });
+
+  // What 0.3 wrote: the gate in git's pre-commit hook, which runs before git has the message.
+  const GATE_03 = (extra: string): string =>
+    `#!/bin/sh\n# The flow commit gate.\n${extra}f="$PWD/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook commit\nexec flow hook commit\n`;
+
+  it("takes flow's lines out of the pre-commit hook an older flow wrote, and deletes it when they were all of it", () => {
+    const older = newRepo();
+    try {
+      mkdirSync(join(older, ".githooks"), { recursive: true });
+      writeFileSync(join(older, ".githooks", "pre-commit"), GATE_03(""), { mode: 0o755 });
+      const said = flow(older, ["init"]);
+      expect(said.code, said.stdout + said.stderr).toBe(0);
+      expect(said.stdout).toContain(".githooks/pre-commit deleted");
+      expect(existsSync(join(older, ".githooks", "pre-commit"))).toBe(false);
+      expect(readFileSync(join(older, ".githooks", "commit-msg"), "utf8")).toContain('flow hook commit "$1"');
+      expect(flow(older, ["init"]).stdout, "a second run has nothing left to take out").toContain("already set up");
+    } finally {
+      rmSync(older, { recursive: true, force: true });
+    }
+
+    const mixed = newRepo();
+    try {
+      mkdirSync(join(mixed, ".githooks"), { recursive: true });
+      writeFileSync(join(mixed, ".githooks", "pre-commit"), GATE_03("npm test\n"), { mode: 0o755 });
+      const said = flow(mixed, ["init"]);
+      expect(said.stdout).toContain("flow's lines taken out of .githooks/pre-commit");
+      expect(readFileSync(join(mixed, ".githooks", "pre-commit"), "utf8"), "their own line stays").toBe("#!/bin/sh\n# The flow commit gate.\nnpm test\n");
+    } finally {
+      rmSync(mixed, { recursive: true, force: true });
+    }
   });
 
   it("registers the events flow answers, and not Notification", () => {
@@ -429,13 +460,13 @@ describe("flow init, run again", () => {
     }
   });
 
-  it("never overwrites a pre-commit hook somebody else put there", () => {
+  it("never overwrites a commit-msg hook somebody else put there", () => {
     const theirs = newRepo();
     try {
       mkdirSync(join(theirs, ".githooks"), { recursive: true });
-      writeFileSync(join(theirs, ".githooks", "pre-commit"), "#!/bin/sh\nnpm test\n", { mode: 0o755 });
+      writeFileSync(join(theirs, ".githooks", "commit-msg"), "#!/bin/sh\nnpm test\n", { mode: 0o755 });
       const said = flow(theirs, ["init"]);
-      expect(readFileSync(join(theirs, ".githooks", "pre-commit"), "utf8")).toBe("#!/bin/sh\nnpm test\n");
+      expect(readFileSync(join(theirs, ".githooks", "commit-msg"), "utf8")).toBe("#!/bin/sh\nnpm test\n");
       expect(said.stdout).toContain("kept");
       expect(said.stdout).toContain("flow hook commit");
     } finally {
@@ -448,41 +479,41 @@ describe("flow init, run again", () => {
 //
 // Git runs hooks from one folder. Pointing it at `.githooks` over husky's, or over a hook in
 // `.git/hooks`, turns those off without a word, so init leaves them alone and says loudly that flow
-// is not installed until the pre-commit hook git runs calls it.
+// is not installed until the commit-msg hook git runs calls it.
 
 /** The words the block opens with, as the docs fix them. */
 const NOT_INSTALLED = "FLOW IS NOT INSTALLED";
 
-/** The two lines the block tells a person to add to that pre-commit hook, as it printed them. */
-const linesToAdd = (stdout: string, preCommit: string): string[] => {
+/** The two lines the block tells a person to add to that commit-msg hook, as it printed them. */
+const linesToAdd = (stdout: string, commitMsg: string): string[] => {
   const lines = stdout.split("\n");
-  const at = lines.findIndex((line) => line.includes(`Add these two lines to the end of ${preCommit}:`));
+  const at = lines.findIndex((line) => line.includes(`Add these two lines to the end of ${commitMsg}:`));
   expect(at, "the block names the hook to add them to").not.toBe(-1);
   return lines.slice(at + 1, at + 3).map((line) => line.trim());
 };
 
 /**
- * A repo set up the way husky 9 sets one up: `core.hooksPath` is `.husky/_`, whose `pre-commit` is
- * a stub that runs `.husky/pre-commit`, the file a person edits.
+ * A repo set up the way husky 9 sets one up: `core.hooksPath` is `.husky/_`, whose `commit-msg` is
+ * a stub that runs `.husky/commit-msg`, the file a person edits.
  */
-function huskyRepo(preCommit: string): string {
+function huskyRepo(commitMsg: string): string {
   const repo = newRepo();
   mkdirSync(join(repo, ".husky", "_"), { recursive: true });
-  writeFileSync(join(repo, ".husky", "_", "pre-commit"), '#!/bin/sh\nexec sh -e "$(dirname "$0")/../pre-commit" "$@"\n', { mode: 0o755 });
-  writeFileSync(join(repo, ".husky", "pre-commit"), preCommit);
+  writeFileSync(join(repo, ".husky", "_", "commit-msg"), '#!/bin/sh\nexec sh -e "$(dirname "$0")/../commit-msg" "$@"\n', { mode: 0o755 });
+  writeFileSync(join(repo, ".husky", "commit-msg"), commitMsg);
   git(repo, ["config", "core.hooksPath", ".husky/_"]);
   return repo;
 }
 
-/** The three lines the block tells a person to create a missing pre-commit hook with, as it printed them. */
-const linesToCreate = (stdout: string, preCommit: string): string[] => {
+/** The three lines the block tells a person to create a missing commit-msg hook with, as it printed them. */
+const linesToCreate = (stdout: string, commitMsg: string): string[] => {
   const lines = stdout.split("\n");
-  const at = lines.findIndex((line) => line.includes(`Create ${preCommit} with these three lines`));
+  const at = lines.findIndex((line) => line.includes(`Create ${commitMsg} with these three lines`));
   expect(at, "the block says to create the hook").not.toBe(-1);
   return lines.slice(at + 1, at + 4).map((line) => line.trim());
 };
 
-/** A repo whose only hook is the `pre-push` Git LFS installs in `.git/hooks`: no pre-commit there. */
+/** A repo whose only hook is the `pre-push` Git LFS installs in `.git/hooks`: no commit-msg there. */
 function lfsRepo(): string {
   const repo = newRepo();
   writeFileSync(join(repo, ".git", "hooks", "pre-push"), '#!/bin/sh\ngit lfs pre-push "$@"\n', { mode: 0o755 });
@@ -503,15 +534,15 @@ describe("flow init, when git already runs other hooks", () => {
       expect(said.code, said.stdout + said.stderr).toBe(1);
       expect(git(husky, ["config", "--get", "core.hooksPath"]).stdout.trim(), "husky's setting, as it was").toBe(".husky/_");
       expect(said.stdout).not.toContain("+ git config core.hooksPath");
-      expect(readFileSync(join(husky, ".husky", "pre-commit"), "utf8"), "husky's hook, untouched").toBe("npm test\n");
-      expect(readFileSync(join(husky, ".githooks", "pre-commit"), "utf8")).toContain("flow hook commit");
+      expect(readFileSync(join(husky, ".husky", "commit-msg"), "utf8"), "husky's hook, untouched").toBe("npm test\n");
+      expect(readFileSync(join(husky, ".githooks", "commit-msg"), "utf8")).toContain("flow hook commit");
       expect(existsSync(join(husky, "flow.config.ts"))).toBe(true);
       expect(existsSync(join(husky, ".flow"))).toBe(true);
 
       const block = blockOf(said.stdout);
       expect(block, "the block is the end of the output").not.toBe("");
       expect(block).toContain("Git runs hooks from .husky/_");
-      expect(block).toContain("Add these two lines to the end of .husky/pre-commit:");
+      expect(block).toContain("Add these two lines to the end of .husky/commit-msg:");
       expect(block).toContain("exec flow hook commit");
       expect(block).toContain("move those hooks into .githooks/");
       expect(block).toContain("git config core.hooksPath .githooks");
@@ -521,19 +552,19 @@ describe("flow init, when git already runs other hooks", () => {
     }
   });
 
-  it("counts flow installed once .husky/pre-commit calls it: no block, 0, and husky's hook runs the gate", () => {
+  it("counts flow installed once .husky/commit-msg calls it: no block, 0, and husky's hook runs the gate", () => {
     const husky = huskyRepo("npm test\n");
     try {
       const first = flow(husky, ["init"]);
       expect(first.code).toBe(1);
       // Followed to the letter: the two lines the block printed, appended to husky's hook.
-      writeFileSync(join(husky, ".husky", "pre-commit"), `echo husky ran\n${linesToAdd(first.stdout, ".husky/pre-commit").join("\n")}\n`);
-      expect(statSync(join(husky, ".husky", "pre-commit")).mode & 0o111, "husky's stub runs it with sh, so it needs no execute bit").toBe(0);
+      writeFileSync(join(husky, ".husky", "commit-msg"), `echo husky ran\n${linesToAdd(first.stdout, ".husky/commit-msg").join("\n")}\n`);
+      expect(statSync(join(husky, ".husky", "commit-msg")).mode & 0o111, "husky's stub runs it with sh, so it needs no execute bit").toBe(0);
 
       const again = flow(husky, ["init"]);
       expect(again.code, again.stdout + again.stderr).toBe(0);
       expect(again.stdout).not.toContain(NOT_INSTALLED);
-      expect(again.stdout).toContain("git runs hooks from .husky/_, and .husky/pre-commit calls flow");
+      expect(again.stdout).toContain("git runs hooks from .husky/_, and .husky/commit-msg calls flow");
       expect(git(husky, ["config", "--get", "core.hooksPath"]).stdout.trim()).toBe(".husky/_");
 
       // Wired, the gate really runs through husky's stub: the scaffold's marker rule refuses.
@@ -554,58 +585,58 @@ describe("flow init, when git already runs other hooks", () => {
       expect(said.code, said.stdout + said.stderr).toBe(1);
       expect(git(lfs, ["config", "--get", "core.hooksPath"]).code, "still unset").toBe(1);
       const block = blockOf(said.stdout);
-      expect(block).toContain("Git runs hooks from .git/hooks, and there is no .git/hooks/pre-commit");
-      expect(block).toContain("Create .git/hooks/pre-commit with these three lines, then run `chmod +x .git/hooks/pre-commit` so git runs it:");
-      expect(existsSync(join(lfs, ".git", "hooks", "pre-commit")), "init creates nothing in another tool's folder").toBe(false);
+      expect(block).toContain("Git runs hooks from .git/hooks, and there is no .git/hooks/commit-msg");
+      expect(block).toContain("Create .git/hooks/commit-msg with these three lines, then run `chmod +x .git/hooks/commit-msg` so git runs it:");
+      expect(existsSync(join(lfs, ".git", "hooks", "commit-msg")), "init creates nothing in another tool's folder").toBe(false);
     } finally {
       rmSync(lfs, { recursive: true, force: true });
     }
   });
 
-  it("with no pre-commit in .git/hooks, the first fix followed to the letter installs flow, and the gate refuses", () => {
+  it("with no commit-msg in .git/hooks, the first fix followed to the letter installs flow, and the gate refuses", () => {
     const lfs = lfsRepo();
     try {
       const first = flow(lfs, ["init"]);
       expect(first.code).toBe(1);
       // As printed: the three lines into the file, then the chmod the block names.
-      const hook = join(lfs, ".git", "hooks", "pre-commit");
-      writeFileSync(hook, `${linesToCreate(first.stdout, ".git/hooks/pre-commit").join("\n")}\n`);
+      const hook = join(lfs, ".git", "hooks", "commit-msg");
+      writeFileSync(hook, `${linesToCreate(first.stdout, ".git/hooks/commit-msg").join("\n")}\n`);
       chmodSync(hook, 0o755);
 
       const again = flow(lfs, ["init"]);
       expect(again.code, again.stdout + again.stderr).toBe(0);
       expect(again.stdout).not.toContain(NOT_INSTALLED);
-      expect(again.stdout).toContain("git runs hooks from .git/hooks, and .git/hooks/pre-commit calls flow");
+      expect(again.stdout).toContain("git runs hooks from .git/hooks, and .git/hooks/commit-msg calls flow");
       expect(flow(lfs, ["status"]).code).toBe(0);
 
       writeFileSync(join(lfs, "secret.txt"), `${["DO", "NOT", "COMMIT"].join("-")}\n`);
       git(lfs, ["add", "secret.txt"]);
       const refused = git(lfs, ["commit", "-m", "test: a marked file"]);
-      expect(refused.code, "git refuses when its own pre-commit runs the gate").not.toBe(0);
+      expect(refused.code, "git refuses when its own commit-msg runs the gate").not.toBe(0);
       expect(refused.stderr).toContain("demo.noMarkedFiles");
     } finally {
       rmSync(lfs, { recursive: true, force: true });
     }
   });
 
-  it("a .git/hooks/pre-commit that calls flow without the execute bit is not installed: git ignores it", () => {
+  it("a .git/hooks/commit-msg that calls flow without the execute bit is not installed: git ignores it", () => {
     const lfs = lfsRepo();
     try {
       const first = flow(lfs, ["init"]);
       // The rehearsal's slip: flow's lines in the file, and no chmod.
-      const hook = join(lfs, ".git", "hooks", "pre-commit");
-      writeFileSync(hook, `${linesToCreate(first.stdout, ".git/hooks/pre-commit").join("\n")}\n`, { mode: 0o644 });
+      const hook = join(lfs, ".git", "hooks", "commit-msg");
+      writeFileSync(hook, `${linesToCreate(first.stdout, ".git/hooks/commit-msg").join("\n")}\n`, { mode: 0o644 });
 
       const said = flow(lfs, ["init"]);
       expect(said.code, said.stdout + said.stderr).toBe(1);
       const block = blockOf(said.stdout);
-      expect(block).toContain(".git/hooks/pre-commit calls flow but is not executable, so git ignores it");
-      expect(block).toContain("Make .git/hooks/pre-commit executable, so git runs it: `chmod +x .git/hooks/pre-commit`");
+      expect(block).toContain(".git/hooks/commit-msg calls flow but is not executable, so git ignores it");
+      expect(block).toContain("Make .git/hooks/commit-msg executable, so git runs it: `chmod +x .git/hooks/commit-msg`");
       expect(said.stdout).not.toContain("· git runs hooks from");
 
       const status = flow(lfs, ["status"]);
       expect(status.code).toBe(1);
-      expect(hooksPathOf(status.stdout)).toContain(`✗ hooks-path: ${NOT_INSTALLED}. Git runs hooks from .git/hooks, and .git/hooks/pre-commit calls flow but is not executable`);
+      expect(hooksPathOf(status.stdout)).toContain(`✗ hooks-path: ${NOT_INSTALLED}. Git runs hooks from .git/hooks, and .git/hooks/commit-msg calls flow but is not executable`);
 
       // What the red line is about: git really does commit past it.
       writeFileSync(join(lfs, "secret.txt"), `${["DO", "NOT", "COMMIT"].join("-")}\n`);
@@ -633,9 +664,9 @@ describe("flow init, when git already runs other hooks", () => {
       expect(git(tree, ["config", "--get", "core.hooksPath"]).code, "still unset").toBe(1);
       const hooks = join(realpathSync(main), ".git", "hooks");
       const block = blockOf(said.stdout);
-      expect(block).toContain(`Git runs hooks from ${hooks}, and there is no ${hooks}/pre-commit`);
-      expect(block).toContain(`Create ${hooks}/pre-commit with these three lines, then run \`chmod +x ${hooks}/pre-commit\` so git runs it:`);
-      expect(existsSync(join(hooks, "pre-commit")), "init creates nothing in another tool's folder").toBe(false);
+      expect(block).toContain(`Git runs hooks from ${hooks}, and there is no ${hooks}/commit-msg`);
+      expect(block).toContain(`Create ${hooks}/commit-msg with these three lines, then run \`chmod +x ${hooks}/commit-msg\` so git runs it:`);
+      expect(existsSync(join(hooks, "commit-msg")), "init creates nothing in another tool's folder").toBe(false);
     } finally {
       rmSync(main, { recursive: true, force: true });
       rmSync(dirname(tree), { recursive: true, force: true });
@@ -663,7 +694,7 @@ const hooksPathOf = (stdout: string): string => {
 describe("flow status, when git already runs other hooks", () => {
   type Read = { green: boolean; fittings: { id: string; ok: boolean; detail: string }[] };
 
-  it("a husky repo whose .husky/pre-commit does not call flow: red, init's words, exit 1, and the same as data", () => {
+  it("a husky repo whose .husky/commit-msg does not call flow: red, init's words, exit 1, and the same as data", () => {
     const husky = huskyRepo("npm test\n");
     try {
       expect(flow(husky, ["init"]).code).toBe(1);
@@ -671,7 +702,7 @@ describe("flow status, when git already runs other hooks", () => {
       expect(said.code, said.stdout + said.stderr).toBe(1);
       const line = hooksPathOf(said.stdout);
       expect(line).toMatch(/^✗ hooks-path: FLOW IS NOT INSTALLED\. Git runs hooks from \.husky\/_/);
-      expect(line).toContain("Add these two lines to the end of .husky/pre-commit:");
+      expect(line).toContain("Add these two lines to the end of .husky/commit-msg:");
       expect(line).toContain("exec flow hook commit");
       expect(line).toContain("git config core.hooksPath .githooks");
 
@@ -688,14 +719,14 @@ describe("flow status, when git already runs other hooks", () => {
     }
   });
 
-  it("a husky repo whose .husky/pre-commit calls flow: green, and exit 0", () => {
+  it("a husky repo whose .husky/commit-msg calls flow: green, and exit 0", () => {
     const husky = huskyRepo("npm test\n");
     try {
       const first = flow(husky, ["init"]);
-      writeFileSync(join(husky, ".husky", "pre-commit"), `npm test\n${linesToAdd(first.stdout, ".husky/pre-commit").join("\n")}\n`);
+      writeFileSync(join(husky, ".husky", "commit-msg"), `npm test\n${linesToAdd(first.stdout, ".husky/commit-msg").join("\n")}\n`);
       const said = flow(husky, ["status"]);
       expect(said.code, said.stdout + said.stderr).toBe(0);
-      expect(hooksPathOf(said.stdout)).toBe("✓ hooks-path: git runs hooks from .husky/_, and .husky/pre-commit calls flow");
+      expect(hooksPathOf(said.stdout)).toBe("✓ hooks-path: git runs hooks from .husky/_, and .husky/commit-msg calls flow");
       expect(said.stdout).not.toContain(NOT_INSTALLED);
     } finally {
       rmSync(husky, { recursive: true, force: true });
@@ -710,7 +741,7 @@ describe("flow status, when git already runs other hooks", () => {
       expect(said.code, said.stdout + said.stderr).toBe(1);
       const line = hooksPathOf(said.stdout);
       expect(line).toContain(`✗ hooks-path: ${NOT_INSTALLED}. Git runs hooks from .git/hooks`);
-      expect(line).toContain("Create .git/hooks/pre-commit with these three lines");
+      expect(line).toContain("Create .git/hooks/commit-msg with these three lines");
     } finally {
       rmSync(lfs, { recursive: true, force: true });
     }
@@ -955,7 +986,7 @@ describe("flow uninstall", () => {
       expect(said.code, said.stdout + said.stderr).toBe(0);
       expect(said.stdout.trim().split("\n")).toEqual([
         "flow uninstall — removed:",
-        "  - .githooks/pre-commit",
+        "  - .githooks/commit-msg",
         "  - core.hooksPath (it was .githooks)",
         "  - .githooks/",
         "  - .flow/ — flow's state and logs",
@@ -1012,19 +1043,19 @@ describe("flow uninstall", () => {
     try {
       const own = "#!/bin/sh\n# my own checks\necho mine-ran\n";
       mkdirSync(join(theirs, ".githooks"), { recursive: true });
-      writeFileSync(join(theirs, ".githooks", "pre-commit"), own, { mode: 0o755 });
+      writeFileSync(join(theirs, ".githooks", "commit-msg"), own, { mode: 0o755 });
       expect(flow(theirs, ["init"]).code).toBe(0);
       // What init's report tells them to do: add the two lines to the end of it.
       writeFileSync(
-        join(theirs, ".githooks", "pre-commit"),
+        join(theirs, ".githooks", "commit-msg"),
         `${own}f="$PWD/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook commit\nexec flow hook commit\n`,
       );
 
       const said = flow(theirs, ["uninstall"]);
       expect(said.code, said.stdout + said.stderr).toBe(0);
-      expect(said.stdout).toContain("  - flow's lines from .githooks/pre-commit — the rest of the hook is kept");
-      expect(said.stdout).toContain("  · kept core.hooksPath at .githooks — git still runs the hooks there: pre-commit.");
-      expect(readFileSync(join(theirs, ".githooks", "pre-commit"), "utf8"), "their hook, as they wrote it").toBe(own);
+      expect(said.stdout).toContain("  - flow's lines from .githooks/commit-msg — the rest of the hook is kept");
+      expect(said.stdout).toContain("  · kept core.hooksPath at .githooks — git still runs the hooks there: commit-msg.");
+      expect(readFileSync(join(theirs, ".githooks", "commit-msg"), "utf8"), "their hook, as they wrote it").toBe(own);
       expect(git(theirs, ["config", "--get", "core.hooksPath"]).stdout.trim()).toBe(".githooks");
 
       const committed = noFlow(theirs);
@@ -1039,15 +1070,15 @@ describe("flow uninstall", () => {
     const shared = newRepo();
     try {
       mkdirSync(join(shared, ".githooks"), { recursive: true });
-      writeFileSync(join(shared, ".githooks", "commit-msg"), "#!/bin/sh\necho msg-hook-ran\n", { mode: 0o755 });
+      writeFileSync(join(shared, ".githooks", "pre-commit"), "#!/bin/sh\necho msg-hook-ran\n", { mode: 0o755 });
       expect(flow(shared, ["init"]).code).toBe(0);
 
       const said = flow(shared, ["uninstall"]);
       expect(said.code, said.stdout + said.stderr).toBe(0);
-      expect(said.stdout).toContain("  - .githooks/pre-commit");
-      expect(said.stdout).toContain("  · kept core.hooksPath at .githooks — git still runs the hooks there: commit-msg.");
-      expect(existsSync(join(shared, ".githooks", "pre-commit"))).toBe(false);
-      expect(existsSync(join(shared, ".githooks", "commit-msg"))).toBe(true);
+      expect(said.stdout).toContain("  - .githooks/commit-msg");
+      expect(said.stdout).toContain("  · kept core.hooksPath at .githooks — git still runs the hooks there: pre-commit.");
+      expect(existsSync(join(shared, ".githooks", "commit-msg"))).toBe(false);
+      expect(existsSync(join(shared, ".githooks", "pre-commit"))).toBe(true);
       expect(git(shared, ["config", "--get", "core.hooksPath"]).stdout.trim()).toBe(".githooks");
 
       const committed = noFlow(shared);
@@ -1079,7 +1110,7 @@ describe("flow uninstall", () => {
         "still calls flow",
       );
       expect(git(nested, ["config", "--get", "core.hooksPath"]).stdout.trim(), "the repo's hooks path stays").toBe(".githooks");
-      expect(existsSync(join(nested, ".githooks", "pre-commit")), "the gate stays").toBe(true);
+      expect(existsSync(join(nested, ".githooks", "commit-msg")), "the gate stays").toBe(true);
 
       const removed = flow(nested, ["uninstall"]);
       expect(removed.stdout, "from the top folder, it all goes").toContain("  - core.hooksPath (it was .githooks)");
@@ -1093,9 +1124,9 @@ describe("flow uninstall", () => {
   // a person who follows the report commits with flow gone.
 
   /** The lines the report names under the hook it kept, as it printed them. */
-  const linesToDelete = (stdout: string, preCommit: string): string[] => {
+  const linesToDelete = (stdout: string, commitMsg: string): string[] => {
     const lines = stdout.split("\n");
-    const at = lines.findIndex((line) => line.startsWith(`  · ${preCommit} still calls flow`));
+    const at = lines.findIndex((line) => line.startsWith(`  · ${commitMsg} still calls flow`));
     expect(at, "the report names the hook").not.toBe(-1);
     const named: string[] = [];
     for (const line of lines.slice(at + 1)) {
@@ -1105,22 +1136,22 @@ describe("flow uninstall", () => {
     return named;
   };
 
-  it("leaves a husky .husky/pre-commit that calls flow byte for byte, names it and flow's two lines, and following the report commits with flow gone", () => {
+  it("leaves a husky .husky/commit-msg that calls flow byte for byte, names it and flow's two lines, and following the report commits with flow gone", () => {
     const husky = huskyRepo("echo husky ran\n");
     try {
       const first = flow(husky, ["init"]);
-      const wiredHook = `echo husky ran\n${linesToAdd(first.stdout, ".husky/pre-commit").join("\n")}\n`;
-      writeFileSync(join(husky, ".husky", "pre-commit"), wiredHook);
+      const wiredHook = `echo husky ran\n${linesToAdd(first.stdout, ".husky/commit-msg").join("\n")}\n`;
+      writeFileSync(join(husky, ".husky", "commit-msg"), wiredHook);
       expect(flow(husky, ["init"]).code, "installed through husky").toBe(0);
 
       const said = flow(husky, ["uninstall"]);
       expect(said.code, said.stdout + said.stderr).toBe(0);
-      expect(readFileSync(join(husky, ".husky", "pre-commit"), "utf8"), "husky's hook, byte for byte").toBe(wiredHook);
+      expect(readFileSync(join(husky, ".husky", "commit-msg"), "utf8"), "husky's hook, byte for byte").toBe(wiredHook);
       expect(git(husky, ["config", "--get", "core.hooksPath"]).stdout.trim(), "husky's setting, as it was").toBe(".husky/_");
-      const named = linesToDelete(said.stdout, ".husky/pre-commit");
-      expect(named, "the two lines init told them to add").toEqual(linesToAdd(first.stdout, ".husky/pre-commit"));
+      const named = linesToDelete(said.stdout, ".husky/commit-msg");
+      expect(named, "the two lines init told them to add").toEqual(linesToAdd(first.stdout, ".husky/commit-msg"));
       expect(said.stdout.trim().split("\n").at(-1)).toBe(
-        "  next: delete flow's lines from .husky/pre-commit, then `flow uninstall --machine` once no repo on this machine needs flow, then `npm uninstall -g @jawache/flow` — removes the hooks, then the package.",
+        "  next: delete flow's lines from .husky/commit-msg, then `flow uninstall --machine` once no repo on this machine needs flow, then `npm uninstall -g @jawache/flow` — removes the hooks, then the package.",
       );
 
       // Skipped, the report is right: husky's hook still calls the flow that is gone.
@@ -1130,7 +1161,7 @@ describe("flow uninstall", () => {
 
       // Followed: the named lines out of the hook, and nothing else.
       const theirs = wiredHook.split("\n").filter((line) => !named.includes(line.trim())).join("\n");
-      writeFileSync(join(husky, ".husky", "pre-commit"), theirs);
+      writeFileSync(join(husky, ".husky", "commit-msg"), theirs);
       const committed = noFlow(husky);
       expect(committed.code, committed.stdout + committed.stderr).toBe(0);
       expect(committed.stdout + committed.stderr, "husky's own hook still runs").toContain("husky ran");
@@ -1139,39 +1170,39 @@ describe("flow uninstall", () => {
     }
   });
 
-  it("says nothing of a husky .husky/pre-commit that does not call flow, and leaves it byte for byte", () => {
+  it("says nothing of a husky .husky/commit-msg that does not call flow, and leaves it byte for byte", () => {
     const husky = huskyRepo("echo husky ran\n");
     try {
       expect(flow(husky, ["init"]).code, "not installed: the hook does not call flow").toBe(1);
       const said = flow(husky, ["uninstall"]);
       expect(said.code, said.stdout + said.stderr).toBe(0);
-      expect(said.stdout).not.toContain(".husky/pre-commit");
+      expect(said.stdout).not.toContain(".husky/commit-msg");
       expect(said.stdout.trim().split("\n").at(-1)).toBe(
         "  next: `flow uninstall --machine` once no repo on this machine needs flow, then `npm uninstall -g @jawache/flow` — removes the hooks, then the package.",
       );
-      expect(readFileSync(join(husky, ".husky", "pre-commit"), "utf8")).toBe("echo husky ran\n");
+      expect(readFileSync(join(husky, ".husky", "commit-msg"), "utf8")).toBe("echo husky ran\n");
       expect(noFlow(husky).code, "a commit then needs no flow").toBe(0);
     } finally {
       rmSync(husky, { recursive: true, force: true });
     }
   });
 
-  it("leaves a .git/hooks/pre-commit that calls flow byte for byte, and names it and its lines", () => {
+  it("leaves a .git/hooks/commit-msg that calls flow byte for byte, and names it and its lines", () => {
     const lfs = lfsRepo();
     try {
       const first = flow(lfs, ["init"]);
-      const hook = join(lfs, ".git", "hooks", "pre-commit");
-      const wiredHook = `${linesToCreate(first.stdout, ".git/hooks/pre-commit").join("\n")}\n`;
+      const hook = join(lfs, ".git", "hooks", "commit-msg");
+      const wiredHook = `${linesToCreate(first.stdout, ".git/hooks/commit-msg").join("\n")}\n`;
       writeFileSync(hook, wiredHook, { mode: 0o755 });
       expect(flow(lfs, ["init"]).code, "installed through .git/hooks").toBe(0);
 
       const said = flow(lfs, ["uninstall"]);
       expect(said.code, said.stdout + said.stderr).toBe(0);
       expect(readFileSync(hook, "utf8"), "git's own hook, byte for byte").toBe(wiredHook);
-      expect(linesToDelete(said.stdout, ".git/hooks/pre-commit"), "flow's two lines, not the shebang").toEqual(
-        linesToCreate(first.stdout, ".git/hooks/pre-commit").slice(1),
+      expect(linesToDelete(said.stdout, ".git/hooks/commit-msg"), "flow's two lines, not the shebang").toEqual(
+        linesToCreate(first.stdout, ".git/hooks/commit-msg").slice(1),
       );
-      expect(said.stdout.trim().split("\n").at(-1)).toMatch(/^ {2}next: delete flow's lines from \.git\/hooks\/pre-commit, then /);
+      expect(said.stdout.trim().split("\n").at(-1)).toMatch(/^ {2}next: delete flow's lines from \.git\/hooks\/commit-msg, then /);
     } finally {
       rmSync(lfs, { recursive: true, force: true });
     }
@@ -1188,8 +1219,8 @@ describe("flow uninstall", () => {
 
       const said = flow(locked, ["uninstall"]);
       expect(said.code, said.stdout + said.stderr).toBe(1);
-      expect(said.stdout).toMatch(/^ {2}✗ could not delete \.githooks\/pre-commit: /m);
-      expect(existsSync(join(hooksDir, "pre-commit")), "the gate the disk would not let go").toBe(true);
+      expect(said.stdout).toMatch(/^ {2}✗ could not delete \.githooks\/commit-msg: /m);
+      expect(existsSync(join(hooksDir, "commit-msg")), "the gate the disk would not let go").toBe(true);
       expect(existsSync(join(locked, ".flow")), "the other steps still ran").toBe(false);
     } finally {
       chmodSync(hooksDir, 0o755);
@@ -1205,7 +1236,7 @@ describe("flow uninstall", () => {
       expect(said.code).toBe(2);
       expect(said.stderr).toBe("flow uninstall — unknown argument `--dry-run`; nothing was removed.\nusage: flow uninstall [--machine]\n");
       expect(said.stdout).toBe("");
-      for (const kept of [".githooks/pre-commit", ".flow"]) expect(existsSync(join(wired, kept)), `${kept} is still there`).toBe(true);
+      for (const kept of [".githooks/commit-msg", ".flow"]) expect(existsSync(join(wired, kept)), `${kept} is still there`).toBe(true);
     } finally {
       rmSync(wired, { recursive: true, force: true });
     }
@@ -1296,7 +1327,7 @@ describe("flow uninstall", () => {
         expect(said.code).toBe(1);
         expect(said.stdout).toContain(`  ✗ ${file} is not valid JSON`);
         expect(said.stdout).toContain("run `flow uninstall --machine` again.");
-        expect(said.stdout, "the repo's own steps still ran").toContain("  - .githooks/pre-commit");
+        expect(said.stdout, "the repo's own steps still ran").toContain("  - .githooks/commit-msg");
         expect(readFileSync(file, "utf8"), "the file nobody could parse is not written").toBe(unparseable);
       } finally {
         for (const dir of [global, machine]) rmSync(dir, { recursive: true, force: true });
@@ -1317,7 +1348,7 @@ describe("flow uninstall", () => {
       const said = flow(broken, ["uninstall"], machine);
       expect(said.code).toBe(1);
       expect(said.stdout).toContain("✗ .claude/settings.json is not valid JSON");
-      expect(said.stdout, "the other steps still ran").toContain("  - .githooks/pre-commit");
+      expect(said.stdout, "the other steps still ran").toContain("  - .githooks/commit-msg");
       expect(existsSync(join(broken, ".flow"))).toBe(false);
       expect(readFileSync(join(broken, ".claude", "settings.json"), "utf8"), "the file nobody could parse is not written").toBe(unparseable);
     } finally {
@@ -1400,7 +1431,7 @@ describe("flow init --empty", () => {
       const config = readFileSync(join(bare, "flow.config.ts"), "utf8");
       expect(config).toContain("defineConfig([])");
       expect(config).not.toContain("definePack");
-      expect(existsSync(join(bare, ".githooks", "pre-commit")), "the wiring is the same").toBe(true);
+      expect(existsSync(join(bare, ".githooks", "commit-msg")), "the wiring is the same").toBe(true);
       // It loads and binds nothing, which is a different fact from not loading.
       const said = flow(bare, ["status"]);
       expect(said.stdout).toContain("0 guardrails");

@@ -354,6 +354,16 @@ export interface Ctx {
   readonly commands?: readonly ShellCommand[] | null | undefined;
   /** commit: the staged paths. Under `flow hook commit --all`, every file in the tree. */
   readonly staged?: readonly string[] | undefined;
+  /** commit: the staged paths the last commit does not have. Empty when git could not say, as under `--all` with no answer. */
+  readonly added?: readonly string[] | undefined;
+  /** commit: the paths the commit deletes. A rename is a deletion of the old path plus an add of the new one. */
+  readonly deleted?: readonly string[] | undefined;
+  /**
+   * commit: the message as git records it, comment lines and the scissors section removed. `null`
+   * under `flow hook commit --all`, which has no commit, and for a hook an older flow wrote, which
+   * runs before git has the message.
+   */
+  readonly message?: string | null | undefined;
   /** turn-end: what the actor did this turn, in order. */
   readonly turn?: readonly TurnAction[] | undefined;
   /**
@@ -1687,6 +1697,23 @@ export interface CaseWorld {
   readonly staged?: readonly string[];
 }
 
+/** What a commit case may say beside the files it stages and the message it carries. */
+interface CommitCase {
+  /** The staged paths the last commit does not have: it sets `ctx.added` and each file's `ctx.file.existed`. */
+  readonly added?: readonly string[];
+  /** The staged paths identical to the last commit, as under `--all`. Each sets `ctx.file.unchanged`. */
+  readonly unchanged?: readonly string[];
+  /**
+   * The paths the commit deletes: it sets `ctx.deleted`. As a record, each path with its content as
+   * the last commit has it: an entry that fires at `delete` as well as `commit` is asked about each one, as a delete.
+   */
+  readonly deleted?: readonly string[] | Readonly<Record<string, string>>;
+  /** The commit message, as git records it. A case with none has an empty one. */
+  readonly message?: string;
+  readonly world?: CaseWorld;
+  readonly actor?: readonly string[];
+}
+
 /** One canned event, in the dialect its moment speaks. */
 export type Case =
   /** A command rail, shorthand — by far the commonest case, and it should read as one line. */
@@ -1700,20 +1727,8 @@ export type Case =
       readonly world?: CaseWorld;
       readonly actor?: readonly string[];
     }
-  | {
-      readonly staged: readonly string[];
-      /** The staged paths the last commit does not have. Each file's `ctx.file.existed` says so. */
-      readonly added?: readonly string[];
-      /** The staged paths identical to the last commit, as under `--all`. Each sets `ctx.file.unchanged`. */
-      readonly unchanged?: readonly string[];
-      /**
-       * Staged deletions, by path, each with its content as the last commit has it. An entry that
-       * fires at `delete` as well as `commit` is asked about each one, as a delete.
-       */
-      readonly deleted?: Readonly<Record<string, string>>;
-      readonly world?: CaseWorld;
-      readonly actor?: readonly string[];
-    }
+  | ({ readonly staged: readonly string[] } & CommitCase)
+  | ({ readonly staged?: readonly string[] | undefined; readonly message: string } & CommitCase)
   | { readonly actions: readonly TurnAction[]; readonly world?: CaseWorld; readonly actor?: readonly string[] };
 
 /** The cases an entry carries: what must pass it, and what must be blocked by it. */

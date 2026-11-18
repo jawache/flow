@@ -86,7 +86,7 @@ const HOST_EVENT: Record<HookEvent, string> = {
  *
  * Two facts are stated here rather than discovered by somebody whose rule never fires:
  *
- *   · `commit` is delivered, but not by the harness — git's pre-commit hook calls `flow hook
+ *   · `commit` is delivered, but not by the harness — git's commit-msg hook calls `flow hook
  *     commit`, which is why every harness gets the gates for free and why it is in this list at all.
  *   · turn-end BRIEFING is delivered, on the `Stop` and `SubagentStop` answers'
  *     `additionalContext`: the host labels it hook feedback rather than an error, and the agent

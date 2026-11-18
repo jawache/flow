@@ -56,7 +56,7 @@ import {
   type Verdict,
   type World,
 } from "../language/domain.ts";
-import { stagedFiles } from "../checks/domain.ts";
+import { commitFacts, stagedFiles } from "../checks/domain.ts";
 import type { CommitFileFacts } from "../checks/domain.ts";
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -216,10 +216,10 @@ export function identify(
 /**
  * One event the guardrail rails carry. Facts only — who it happened to is `wearing`.
  *
- * commit: `added` and `unchanged` are the commit's file facts (`CommitFileFacts`), the same two a
- * case lists.
+ * commit: `added`, `unchanged`, `deleted`, `gone` and `message` are the commit's facts
+ * (`CommitFileFacts`), the same a case lists.
  */
-export interface GuardEvent extends Pick<CommitFileFacts, "added" | "unchanged"> {
+export interface GuardEvent extends CommitFileFacts {
   readonly moment: GuardrailMoment;
   /** write/delete: the would-be file, in memory, before disk. */
   readonly file?: Ctx["file"];
@@ -229,11 +229,6 @@ export interface GuardEvent extends Pick<CommitFileFacts, "added" | "unchanged">
   readonly commands?: Ctx["commands"];
   /** commit: the staged paths. */
   readonly staged?: readonly string[] | undefined;
-  /**
-   * commit: the staged deletions an entry will judge (`judgedDeletions`), each with its content as
-   * the last commit has it. A rename is a deletion of its old path plus an add of its new one.
-   */
-  readonly deleted?: readonly { readonly path: string; readonly content: string }[] | undefined;
   /** turn-end: what the actor did this turn, in order. */
   readonly turn?: readonly TurnAction[] | undefined;
   /** Every category this session × agent wears. Empty means it wears none, not "all of them". */
@@ -369,12 +364,13 @@ async function subjectsOf(entry: LoadedEntry, event: GuardEvent, world: World, c
   const outside = everywhere(entry) ? [] : (event.outside ?? []);
   if (event.moment === "commit") {
     const staged = event.staged ?? [];
-    if (!spec.on) return [{ name: null, facts: { staged } }];
+    const every = commitFacts(staged, event);
+    if (!spec.on) return [{ name: null, facts: every }];
     const files = await stagedFiles(spec, staged, world, event);
-    const out: Subject[] = files.map((file) => ({ name: file.path, facts: { file, staged } }));
-    for (const gone of event.deleted ?? []) {
+    const out: Subject[] = files.map((file) => ({ name: file.path, facts: { ...every, file } }));
+    for (const gone of event.gone ?? []) {
       if (!judgesDeletion(entry, gone.path)) continue;
-      out.push({ name: gone.path, facts: { file: { ...gone, existed: true }, staged }, moment: "delete" });
+      out.push({ name: gone.path, facts: { ...every, file: { ...gone, existed: true } }, moment: "delete" });
     }
     return out;
   }
@@ -833,7 +829,7 @@ export function readState(text: string | null | undefined): SessionState {
 /**
  * The marker that tells the commit gate which live session this worktree's commit belongs to.
  *
- * The BRANCH is in the name, and it has to be: the gate runs inside git's pre-commit hook, outside
+ * The BRANCH is in the name, and it has to be: the gate runs inside git's commit-msg hook, outside
  * any session, and two worktrees committing at once must not clobber each other's answer and
  * mis-attribute a commit. A worktree IS a branch — git refuses to check one out twice — so the
  * branch is a safe key. It also keeps the scheme working the day a repo points several checkouts at
@@ -1784,6 +1780,8 @@ export type RecordedStep =
       readonly added?: GuardEvent["added"];
       readonly unchanged?: GuardEvent["unchanged"];
       readonly deleted?: GuardEvent["deleted"];
+      readonly gone?: GuardEvent["gone"];
+      readonly message?: GuardEvent["message"];
       readonly turn?: readonly TurnAction[] | undefined;
       readonly wearing: readonly string[];
       readonly world?: CaseWorld | undefined;
@@ -1909,6 +1907,8 @@ export async function replay({ load, recording, settings, marks = {} }: ReplayAr
           added: step.added,
           unchanged: step.unchanged,
           deleted: step.deleted,
+          gone: step.gone,
+          message: step.message,
           turn: step.turn,
           wearing: step.wearing,
           outside: step.outside,

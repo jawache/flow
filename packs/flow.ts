@@ -182,13 +182,13 @@ export const flow = definePack("flow", (repo: Home) => {
 
     noDeleteGuardrails: guardrail()
       .at(deletion)
-      .on("flow.config.ts", ...repo.packs, ".githooks/pre-commit")
+      .on("flow.config.ts", ...repo.packs, ".githooks/commit-msg")
       .description("Stops a command from deleting the committed guard surface. No bypass — disable entries in the file instead.")
       .check(protectedPath({}))
       .message(
-        "That command would delete this repo's guard surface (flow.config.ts binds every rule; the packs it imports are where this repo writes its own; .githooks/pre-commit is what runs them at the gate). Deleting any of them is the same attack. There is no bypass — `override(pack.entry).disabled(\"why\")` inside flow.config.ts is the visible, committed route.",
+        "That command would delete this repo's guard surface (flow.config.ts binds every rule; the packs it imports are where this repo writes its own; .githooks/commit-msg is what runs them at the gate). Deleting any of them is the same attack. There is no bypass — `override(pack.entry).disabled(\"why\")` inside flow.config.ts is the visible, committed route.",
       )
-      .test({ block: [{ path: "flow.config.ts", content: "" }, { path: ".githooks/pre-commit", content: "" }] }),
+      .test({ block: [{ path: "flow.config.ts", content: "" }, { path: ".githooks/commit-msg", content: "" }] }),
 
     /**
      * Without it, an agent that hit a guardrail could take the whole guard off with one command.

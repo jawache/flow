@@ -20,7 +20,7 @@ import { breadcrumb, defineCategory, defineConfig, definePack, guardrail, loadCo
 import { metrics, momentsView, type Block, type Bound, type Row } from "../../engine/domain.ts";
 import { parseCommandLine, parseShellSteps } from "../../language/domain.ts";
 import { claudeCode } from "./claude.ts";
-import { ALLOW, type AdapterEvent, CONFIG_FILE, type CallRecord, type Change, type Facts, GATE_PATH, HOOKS_DIR, type InitFacts, LOCAL_BIN, MACHINE_FLAG, PACKAGE_BIN, PRE_COMMIT, REFUSED_ONLY, type SpawnRecord, type Status, type StatusFacts, type UninstallFacts, branchFromHead, callName, delivers, formatFacts, guardPaths, initLines, isGuardPath, lastMode, literalScopes, mergeNarratives, mismatchesIn, modesOf, nulPaths, planInit, planUninstall, relativise, staticPrefix, status, statusCode, statusLines, uninstallCode, uninstallLines, weakenedAfterBlock } from "../domain.ts";
+import { ALLOW, type AdapterEvent, CONFIG_FILE, type CallRecord, type Change, type Facts, GATE_PATH, HOOKS_DIR, type InitFacts, LOCAL_BIN, MACHINE_FLAG, PACKAGE_BIN, COMMIT_MSG, REFUSED_ONLY, type SpawnRecord, type Status, type StatusFacts, type UninstallFacts, branchFromHead, callName, delivers, formatFacts, guardPaths, initLines, isGuardPath, lastMode, literalScopes, mergeNarratives, mismatchesIn, modesOf, nulPaths, planInit, planUninstall, relativise, staticPrefix, status, statusCode, statusLines, uninstallCode, uninstallLines, weakenedAfterBlock } from "../domain.ts";
 import { CALL_LIFETIME_MS, DELIVERS, EDIT_TOOLS, type EventWorld, FLOW_OFF, HOOK_COSTS, HOOK_EVENTS, HOOK_REGISTRATIONS, HOST_SURFACE, type HookPayload, REPO_SETTINGS, type Shown, agentOf, agentSettingOf, applyEdit, authored, awaitsBrief, bareHook, bareRegistrations, bashReads, briefBlock, briefHead, callKey, callRecord, classifyStore, commandFolders, contextTokens, decision, deleteTargets, deltaFault, foldersBetween, forgettable, holdsForBrief, hookCommand, included, isHookEvent, isInjected, listsFlow, mismatchRow, nothingBound, ourHookCommand, outsideOf, overlapping, ownTranscriptPath, parseEvents, preJudged, projectFolderName, reachesAnotherWorktree, readFault, registeredEvents, reversal, ridesRefusal, sessionFactsFrom, settingsFileFor, shellReadRows, snapshotPathspecs, spawnMeta, spawnsIn, staleRegistrations, steerOf, toEvent, toResult, tokensFromTranscript, toolRow, touchedPath, transcriptHead, transcriptLines, turnActions, untoldWorktrees, visibility, whileBroken, withMachineCommandsUpToDate, withRegistrations, withoutRegistrations, workedPaths, worktreeFolders, worktreeLine, wouldBeFile, writeRows } from "./domain.ts";
 import { type Steer, type TranscriptEvent } from "../harness.ts";
 
@@ -1481,7 +1481,7 @@ describe("the hook registrations flow writes", () => {
   // A `flow` in node_modules/.bin can be anyone's: Facebook's `flow-bin` installs one, and nothing
   // guards the folder. Every caller flow writes runs its own package's file, by path, or the PATH's.
   it("writes no command that finds flow through node_modules/.bin — only its own package's file, then the PATH", () => {
-    for (const command of [...HOOK_REGISTRATIONS.map((r) => r.command), PRE_COMMIT]) {
+    for (const command of [...HOOK_REGISTRATIONS.map((r) => r.command), COMMIT_MSG]) {
       expect(command, command).not.toContain(LOCAL_BIN);
       expect(command, command).not.toMatch(/\bPATH=/);
       expect(command, command).toContain(PACKAGE_BIN);
@@ -1686,9 +1686,10 @@ const bare: InitFacts = {
   isGit: true,
   hasConfig: false,
   gateText: null,
+  oldGateText: null,
   hasFlowDir: false,
   hooksPath: null,
-  hooksFolder: { dir: ".git/hooks", files: ["pre-commit.sample", "pre-push.sample"], preCommitText: null, preCommitExecutable: false },
+  hooksFolder: { dir: ".git/hooks", files: ["pre-commit.sample", "pre-push.sample"], commitMsgText: null, commitMsgExecutable: false },
   settingsPath: "/home/.claude/settings.json",
   settings: {},
   settingsUnreadable: false,
@@ -2002,9 +2003,9 @@ const statusFacts = (over: Partial<StatusFacts> = {}): StatusFacts => ({
   configPath: "/repo/flow.config.ts",
   hasConfig: true,
   load: { ok: true, entries: [] },
-  gateText: PRE_COMMIT,
+  gateText: COMMIT_MSG,
   hooksPath: HOOKS_DIR,
-  hooksFolder: { dir: HOOKS_DIR, files: ["pre-commit"], preCommitText: PRE_COMMIT, preCommitExecutable: true },
+  hooksFolder: { dir: HOOKS_DIR, files: ["pre-commit"], commitMsgText: COMMIT_MSG, commitMsgExecutable: true },
   settingsPath: "/home/.claude/settings.json",
   settings: withRegistrations({}).settings,
   machine: null,
@@ -2065,11 +2066,11 @@ const MACHINE_SETTINGS = "/home/me/.claude/settings.json";
 const wired: UninstallFacts = {
   harness: claudeCode,
   hasConfig: true,
-  gateText: PRE_COMMIT,
+  gateText: COMMIT_MSG,
   hooksPath: HOOKS_DIR,
   subfolderOf: null,
   hooksDir: ["pre-commit"],
-  hooksFolder: { dir: HOOKS_DIR, files: ["pre-commit"], preCommitText: PRE_COMMIT, preCommitExecutable: true },
+  hooksFolder: { dir: HOOKS_DIR, files: ["pre-commit"], commitMsgText: COMMIT_MSG, commitMsgExecutable: true },
   hasFlowDir: true,
   linked: true,
   listed: false,

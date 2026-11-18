@@ -14,7 +14,6 @@ import {
   breadcrumb,
   command,
   commit,
-  commitMessage,
   defineCheck,
   definePack,
   escapeRe,
@@ -152,7 +151,7 @@ const noGitDiscard = defineCheck(
       // or written into a heredoc is not one, and a line that does not parse has none.
       const gits = gitCommands(ctx);
       const cleaning = gits.some((g) => g.subcommand === "clean");
-      // THE COMMAND'S OWN FOLDER, put on every read as `-C`, exactly as `commitReason` puts it: a
+      // THE COMMAND'S OWN FOLDER, put on every read as `-C`: a
       // `git -C ~/other-repo checkout -- x` is about THAT repo's tree, and a status read here would
       // answer about files the command was never aimed at — clean ones, so the loss goes through.
       const git = `git ${gitDirPrefix(ctx)}`.trimEnd();
@@ -239,7 +238,7 @@ export function gateSkips(facts: Pick<Ctx, "command" | "commands">): string[] {
       const setting = global === "-c" ? (globals[++i] ?? "") : global.startsWith("-c") ? global.slice(2) : global.startsWith("--config-env=") ? global.slice(13) : "";
       if (/^core\.hookspath=/i.test(setting)) out.push("`-c core.hooksPath=…` runs git with another hooks folder");
     }
-    if (subcommand === "commit" && skipsVerify(args)) out.push("`git commit --no-verify` (or `-n`) skips the pre-commit hook");
+    if (subcommand === "commit" && skipsVerify(args)) out.push("`git commit --no-verify` (or `-n`) skips the commit-msg hook");
     if (subcommand === "commit-tree") out.push("`git commit-tree` writes a commit with no hook");
     if (subcommand === "update-ref") out.push("`git update-ref` moves a ref with no hook");
     if (subcommand === "hash-object" && args.includes("-w")) out.push("`git hash-object -w` writes an object with no hook");
@@ -352,7 +351,7 @@ export function isConventional(header: string, types: readonly string[]): boolea
 }
 
 /**
- * The commit header must speak Conventional Commits v1.0.0, checked before `git commit` runs.
+ * The commit header must speak Conventional Commits v1.0.0, checked in git's commit-message hook.
  *
  * `types` is stated, never defaulted: the accepted words are the whole content of the rule, and a
  * private list inside a script is a rule a reader of the entry cannot check.
@@ -360,8 +359,8 @@ export function isConventional(header: string, types: readonly string[]): boolea
 const conventionalCommit = defineCheck(
   (opts: { types: readonly string[] }): Check =>
     (ctx) => {
-      const message = commitMessage(ctx);
-      if (message === null) return ctx.ok(); // nothing judgeable — an editor commit passes
+      const message = ctx.message;
+      if (message == null) return ctx.ok(); // no message: `flow hook commit --all` judges no commit
       return isConventional(message, opts.types)
         ? ctx.ok()
         : ctx.fail(`commit header "${message.split("\n")[0] ?? ""}" is not Conventional Commits (type(scope)!: description)`);
@@ -411,15 +410,10 @@ export function changesVersion(diff: string): boolean {
 const noHandEditedVersion = defineCheck(
   (opts: { versionFile: string; recipe: string }): Check =>
     async (ctx) => {
-      const message = commitMessage(ctx);
-      if (message === null) return ctx.ok();
+      const message = ctx.message;
+      if (message == null) return ctx.ok();
       if (isReleaseCommit(message)) return ctx.ok(); // the one shape that may write it
-      // `git diff HEAD` — staged AND unstaged, because `git commit -a` sweeps the second lot in.
-      // Prefixed with the command's own folder, the way `commitReason` is: a commit aimed at another
-      // repo has to be judged against that repo's diff, or this vetoes it over a version field it
-      // cannot see.
-      const git = `git ${gitDirPrefix(ctx)}`.trimEnd();
-      const diff = await ctx.exec(`${git} diff HEAD -- ${quoteArg(opts.versionFile)}`);
+      const diff = await ctx.exec(`git diff --cached -- ${quoteArg(opts.versionFile)}`);
       if (diff.code !== 0) return ctx.ok();
       if (!changesVersion(diff.stdout)) return ctx.ok();
       return ctx.fail(
@@ -953,9 +947,9 @@ export const git = definePack("git", (repo: Release) => {
       ],
     }),
 
-  conventionalCommitFormat: guardrail()
-    .at(command)
-    .description("The commit header must speak Conventional Commits v1.0.0 (checked before git commit runs).")
+    conventionalCommitFormat: guardrail()
+    .at(commit)
+    .description("The commit header must speak Conventional Commits v1.0.0 (checked in git's commit-message hook).")
     .check(conventionalCommit({ types }))
     .message(
       [
@@ -965,38 +959,21 @@ export const git = definePack("git", (repo: Release) => {
     )
     .test({
       pass: [
-        'git commit -m "fix(auth): renew session on token refresh"',
-        "git status",
+        { message: "fix(auth): renew session on token refresh" },
         // The BANG, which is what drives the SemVer major — a scope and a `!` together, since that
         // is the shape a breaking change is actually typed in.
-        'git commit -m "feat(cli)!: the config grammar is closed"',
-        // THE COMMIT'S OWN HEREDOC is its message, not the first heredoc on the line, which here is
-        // a python script (#9).
-        "python3 - <<'EOF'\nprint(1)\nEOF\ngit commit -F - <<'EOF'\nfix: a thing\nEOF",
-        // A message given as `-m "$(cat <<'EOF' … EOF)"` is the heredoc's body, which is what the
-        // shell passes to git, and the form an agent is taught.
-        "git commit -m \"$(cat <<'EOF'\nfix: a thing\n\nwhy it was needed\nEOF\n)\"",
-        // …and so it is with the value attached to its option, in either spelling.
-        "git commit -m\"$(cat <<'EOF'\nfix: a thing\nEOF\n)\"",
-        "git commit --message=\"$(cat <<'EOF'\nfix: a thing\nEOF\n)\"",
-        // A message the line sets in a variable is that variable's value, which is what git is given.
-        'M="fix: a thing"; git commit -m "$M"',
+        { message: "feat(cli)!: the config grammar is closed" },
+        { message: "fix: a thing\n\nwhy it was needed" },
       ],
       block: [
-        'git commit -m "fixed the auth thing"',
-        // A message the line sets in a variable is judged by its value, never passed for its `$M`.
-        'M="tidied things up"; git commit -m "$M"',
+        { message: "fixed the auth thing" },
         // A known type word with no colon after it. `feat a thing` reads as a sentence that happens
         // to start with a type, and a header regex that only looked for the word would take it.
-        'git commit -m "feat a thing"',
+        { message: "feat a thing" },
         // THE FIRST LINE IS THE HEADER, and the body may say anything at all — including something
         // that looks exactly like a header. A check that searched the whole message would pass this
         // and every other well-meaning commit whose subject was never written.
-        "git commit -m 'tidied things up\n\nfeat: the thing I actually did'",
-        // …and the other way round: a header-shaped script ahead of the commit lends it nothing.
-        "cat > a.md <<'EOF'\nfix: a thing\nEOF\ngit commit -F - <<'EOF'\ntidied things up\nEOF",
-        // …and the heredoc in a `$( … )` is judged by its body, not passed for its `$(cat` text.
-        "git commit -m \"$(cat <<'EOF'\ntidied things up\nEOF\n)\"",
+        { message: "tidied things up\n\nfeat: the thing I actually did" },
       ],
     }),
 
@@ -1068,7 +1045,7 @@ export const git = definePack("git", (repo: Release) => {
       }),
 
     noHandEditedVersion: guardrail()
-      .at(command)
+      .at(commit)
       .description("The version field is written by the release commit, never by hand.")
       .check(noHandEditedVersion({ versionFile, recipe: repo.release }))
       .message(
@@ -1077,91 +1054,39 @@ export const git = definePack("git", (repo: Release) => {
       .test({
         pass: [
           // A release commit may write it — the one shape that passes with the diff right there.
-          {
-            command: 'git commit -m "chore(release): 1.2.3"',
-            world: { exec: { [`git diff HEAD -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
-          },
+          { message: "chore(release): 1.2.3", world: { exec: { [`git diff --cached -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } } },
           // The other two release spellings the header rule accepts, so all three arms are proved
           // rather than the one this repo happens to type.
-          {
-            command: 'git commit -m "release: 1.2.3"',
-            world: { exec: { [`git diff HEAD -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
-          },
-          {
-            command: 'git commit -m "release(flow)!: 2.0.0"',
-            world: { exec: { [`git diff HEAD -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "2.0.0"' } } },
-          },
-          // A release commit whose message is a heredoc in a `$( … )`: its body is the header.
-          {
-            command: "git commit -m \"$(cat <<'EOF'\nchore(release): 1.2.3\nEOF\n)\"",
-            world: { exec: { [`git diff HEAD -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
-          },
+          { message: "release: 1.2.3", world: { exec: { [`git diff --cached -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } } },
+          { message: "release(flow)!: 2.0.0", world: { exec: { [`git diff --cached -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "2.0.0"' } } } },
           // A metadata edit that rewrites the version LINE without moving its value — adding a key
           // after it puts a comma on the end. Values are compared, never lines, or this would fire
           // on every reformat.
-          {
-            command: 'git commit -m "chore: add a field"',
-            world: { exec: { [`git diff HEAD -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.2",' } } },
-          },
-          {
-            command: 'git commit -m "fix: a thing"',
-            world: { exec: { [`git diff HEAD -- '${versionFile}'`]: { stdout: '-  "name": "a"\n+  "name": "b"' } } },
-          },
+          { message: "chore: add a field", world: { exec: { [`git diff --cached -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.2",' } } } },
+          { message: "fix: a thing", world: { exec: { [`git diff --cached -- '${versionFile}'`]: { stdout: '-  "name": "a"\n+  "name": "b"' } } } },
           // The type word is read case-insensitively: a person typing `Release:` has written a
           // release commit, and refusing it would teach them the rule is about capitalisation.
-          {
-            command: 'git commit -m "Release: 1.2.3"',
-            world: { exec: { [`git diff HEAD -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
-          },
+          { message: "Release: 1.2.3", world: { exec: { [`git diff --cached -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } } },
           // A `+++` line is the diff's own header naming the file, not a line OF the file — so a
           // path that happens to contain a version-shaped string changes nothing.
-          {
-            command: 'git commit -m "fix: a thing"',
-            world: { exec: { [`git diff HEAD -- '${versionFile}'`]: { stdout: '+++ b/version = "9.9.9"\n--- a/x' } } },
-          },
+          { message: "fix: a thing", world: { exec: { [`git diff --cached -- '${versionFile}'`]: { stdout: '+++ b/version = "9.9.9"\n--- a/x' } } } },
         ],
         block: [
-          {
-            command: 'git commit -m "fix: a thing"',
-            world: { exec: { [`git diff HEAD -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
-          },
+          { message: "fix: a thing", world: { exec: { [`git diff --cached -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } } },
           // THE HOLE THIS CASE CLOSED: a bare `chore:` used to read as a release, so every
           // housekeeping commit in the repo was licensed to hand-edit the version. `chore` needs
           // its release scope now, and this case is what keeps it needing one.
-          {
-            command: 'git commit -m "chore: tidy the readme"',
-            world: { exec: { [`git diff HEAD -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
-          },
+          { message: "chore: tidy the readme", world: { exec: { [`git diff --cached -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } } },
           // A release header in the BODY is not a release commit. The header is line one, the same
           // reading the format rule takes — and a message parser that searched the whole text would
           // hand every commit a free pass by way of a footer.
-          {
-            command: "git commit -m 'feat: a thing\n\nrelease: 1.2.3'",
-            world: { exec: { [`git diff HEAD -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } },
-          },
+          { message: "feat: a thing\n\nrelease: 1.2.3", world: { exec: { [`git diff --cached -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' } } } },
           // A version ADDED where the file had none: there is no removed value to compare against,
           // and writing the first one by hand is the same act as changing it.
-          {
-            command: 'git commit -m "chore: add the field"',
-            world: { exec: { [`git diff HEAD -- '${versionFile}'`]: { stdout: '+  "version": "0.1.0"' } } },
-          },
+          { message: "chore: add the field", world: { exec: { [`git diff --cached -- '${versionFile}'`]: { stdout: '+  "version": "0.1.0"' } } } },
           // A prerelease suffix is part of the value, so `1.0.0` → `1.0.0-rc.1` is a change. A
           // comparison that read only the numeric core would wave through every rc a hand cut.
-          {
-            command: 'git commit -m "fix: a thing"',
-            world: { exec: { [`git diff HEAD -- '${versionFile}'`]: { stdout: '-  "version": "1.0.0"\n+  "version": "1.0.0-rc.1"' } } },
-          },
-          // A COMMIT AIMED ELSEWHERE, read where it lands. The world answers only the `-C` form,
-          // so a check that diffed this repo would ask a question the case never answered and fail
-          // naming it — the case is about which repo is read, not about the version.
-          {
-            command: 'git -C ../other commit -m "fix: a thing"',
-            world: {
-              exec: {
-                [`git -C '../other' diff HEAD -- '${versionFile}'`]: { stdout: '-  "version": "1.2.2"\n+  "version": "1.2.3"' },
-              },
-            },
-          },
+          { message: "fix: a thing", world: { exec: { [`git diff --cached -- '${versionFile}'`]: { stdout: '-  "version": "1.0.0"\n+  "version": "1.0.0-rc.1"' } } } },
         ],
       }),
     },

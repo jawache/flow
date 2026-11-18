@@ -17,7 +17,6 @@
 // the house pack binds a stock check like every other entry here does.
 import {
   breadcrumb,
-  command,
   commit,
   commitReason,
   definePack,
@@ -430,7 +429,7 @@ export const house = definePack("house", (repo: Terrain) => ({
     }),
 
   newFlowCommandNeedsCaller: guardrail()
-    .at(command)
+    .at(commit)
     .description("A commit adding a verb to flow's dispatch surface must name its caller and why nothing existing serves.")
     // THE KNOWN SET IS ON THE BINDING, never inside the check: which verbs already exist is a
     // project's own fact, and a ratchet keyed off a stale list is the same silent failure it exists
@@ -462,29 +461,33 @@ export const house = definePack("house", (repo: Terrain) => ({
     // exactly as that file spells it, including the one line that registers two verbs at once.
     .test({
       pass: [
-        { command: 'git commit -m "feat: a thing"', world: { exec: { "diff HEAD -- 'flow.ts'": { stdout: "" } } } },
+        { message: "feat: a thing", staged: ["flow.ts"], world: { exec: { "diff --cached -- 'flow.ts'": { stdout: "" } } } },
         // Verbs already ON the surface, moved in a refactor: known, so neither is new and neither
         // owes anything. The ratchet is about GROWTH, and a rule that fired on every dispatch tidy
         // would be turned off. Two on one line, because that is how this pair is really written.
         {
-          command: 'git commit -m "refactor: move the dispatch"',
-          world: { exec: { "diff HEAD -- 'flow.ts'": { stdout: '+} else if (verb === "init" || verb === "status") {' } } },
+          message: "refactor: move the dispatch",
+          staged: ["flow.ts"],
+          world: { exec: { "diff --cached -- 'flow.ts'": { stdout: '+} else if (verb === "init" || verb === "status") {' } } },
         },
         {
-          command: "git commit -m 'feat: explain\n\ncaller: human — no verb says why one entry did not fire'",
-          world: { exec: { "diff HEAD -- 'flow.ts'": { stdout: '+} else if (verb === "explain") {' } } },
+          message: "feat: explain\n\ncaller: human — no verb says why one entry did not fire",
+          staged: ["flow.ts"],
+          world: { exec: { "diff --cached -- 'flow.ts'": { stdout: '+} else if (verb === "explain") {' } } },
         },
       ],
       block: [
         {
-          command: 'git commit -m "feat: explain"',
-          world: { exec: { "diff HEAD -- 'flow.ts'": { stdout: '+} else if (verb === "explain") {' } } },
+          message: "feat: explain",
+          staged: ["flow.ts"],
+          world: { exec: { "diff --cached -- 'flow.ts'": { stdout: '+} else if (verb === "explain") {' } } },
         },
         // A new verb smuggled in beside a known one on the same line — the surface's own shape for
         // init/status, and what a reader that stopped at the first match on a line would miss.
         {
-          command: 'git commit -m "feat: two at once"',
-          world: { exec: { "diff HEAD -- 'flow.ts'": { stdout: '+} else if (verb === "status" || verb === "why") {' } } },
+          message: "feat: two at once",
+          staged: ["flow.ts"],
+          world: { exec: { "diff --cached -- 'flow.ts'": { stdout: '+} else if (verb === "status" || verb === "why") {' } } },
         },
       ],
     }),

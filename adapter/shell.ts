@@ -10,7 +10,7 @@
 //
 //   realWorld(root)        the `World` a check reaches through: exec · fs · git
 //   loadRegime(root)       what this repo's config amounts to: none, loaded or broken
-//   runCommit(root, scope) the git gate, handed what the commit changes
+//   runCommit(root, args) the git gate, handed what the commit changes and its message
 //
 // THE GUARD fails LOUD. A check that crashes or a bound command that is missing BLOCKS, carrying the
 // reason; a config that will not load makes the gate refuse every commit until it loads. THE
@@ -24,7 +24,7 @@ import { loadConfig, type ExecResult, type FlowConfig, type LoadResult, type Gra
 import { fault, judgedDeletions, guard, recorder, runRows, UNNAMED_COMMIT, type AgentOf, type Block } from "../engine/domain.ts";
 import { quoteArg, useGrammars } from "../checks/domain.ts";
 import { appendRows, appendSteps, commitAttribution, isOff, isRecording, loadState } from "../engine/state.ts";
-import { ALLOW, CONFIG_FILE, branchFromHead, commitScope, configLoadFault, hermeticEnv, pathLines, refused, stagedChanges, treeChanges, type CommitScope, type Refused, type StagedChanges } from "./domain.ts";
+import { ALLOW, CONFIG_FILE, branchFromHead, cleanMessage, commentLeader, commitArgs, configLoadFault, hermeticEnv, pathLines, refused, stagedChanges, treeChanges, type CommitArgs, type CommitScope, type Refused, type StagedChanges } from "./domain.ts";
 import type { HookResult } from "./harness.ts";
 
 
@@ -218,7 +218,7 @@ export async function loadRegime(root: string): Promise<Regime> {
 
 /**
  * A git question about the commit in progress, asked WITH git's hook variables — the one place flow
- * keeps them. Inside a pre-commit hook `GIT_INDEX_FILE` names the index being committed, and
+ * keeps them. Inside a commit-msg hook `GIT_INDEX_FILE` names the index being committed, and
  * `git commit -a` or `git commit <path>` stage into a temporary one, so without it git describes the
  * wrong index: an empty one, for both. A check's own commands stay hermetic (`runCommand`).
  */
@@ -250,6 +250,20 @@ function readChanges(
 }
 
 /**
+ * The message git is recording, as git records it: read from the file git handed its commit-message
+ * hook, with the comment lines and the scissors section removed. Null with no file, which is the
+ * message of `--all` and of a hook an older flow wrote. A file that cannot be read is a refusal,
+ * never an empty message: a gate that judged "no message" off a failed read would pass everything.
+ */
+function readMessage(root: string, file: string | null): { readonly ok: true; readonly message: string | null } | { readonly ok: false; readonly why: string } {
+  if (file === null) return { ok: true, message: null };
+  const raw = readText(root, file);
+  if (raw === null) return { ok: false, why: `flow could not read the commit message git passed it, ${file}` };
+  const leader = commentLeader(askGit("git config --get core.commentString || git config --get core.commentChar", root).stdout);
+  return { ok: true, message: cleanMessage(raw, leader) };
+}
+
+/**
  * Every `at(commit)` guardrail over the staged set — the half of the promise the PreToolUse rail
  * cannot make.
  *
@@ -263,7 +277,7 @@ function readChanges(
  * hook message outside a session, so the STORED verdict is the only truthful answer, and a fresh commit
  * on a stale or absent marker wears nothing rather than wearing a guess.
  */
-export async function runCommit(root: string, scope: CommitScope): Promise<HookResult> {
+export async function runCommit(root: string, { scope, messageFile }: CommitArgs): Promise<HookResult> {
   const regime = await loadRegime(root);
   if (regime.kind === "none") return ALLOW;
   if (isOff(root)) return ALLOW;
@@ -273,13 +287,20 @@ export async function runCommit(root: string, scope: CommitScope): Promise<HookR
   // the config loads and every guardrail has checked it — so this rail refuses however the config
   // broke: the import fault here, and a load refusal through `guard()`'s own `!load.ok` branch below.
   if (regime.kind === "broken") return refused([{ moment: "commit", block: fault(regime.message) }]) ?? ALLOW;
+  // A MERGE COMMIT passes: git has written MERGE_HEAD by the time it asks the hook. What a merge
+  // brought in was judged, or not, on the branch it came from.
+  if (messageFile !== null && askGit("git rev-parse -q --verify MERGE_HEAD", root).code === 0) return ALLOW;
   const changes = readChanges(root, scope);
   if (!changes.ok) return refused([{ moment: "commit", block: fault(changes.why) }]) ?? ALLOW;
   const { files, added, unchanged, deleted } = changes.staged;
+  const read = readMessage(root, messageFile);
+  if (!read.ok) return refused([{ moment: "commit", block: fault(read.why) }]) ?? ALLOW;
+  const { message } = read;
   const { load } = regime;
   // Nothing to judge is a pass only for a config that loaded: one that did not refuses every commit,
-  // empty or not, through `guard()`'s own `!load.ok` branch.
-  if (load.ok && files.length === 0 && deleted.length === 0) return ALLOW;
+  // empty or not, through `guard()`'s own `!load.ok` branch. A message is something to judge: an
+  // amend that only rewrites it, or `git commit --allow-empty`, stages nothing.
+  if (load.ok && files.length === 0 && deleted.length === 0 && message === null) return ALLOW;
 
   const { branch, session, who, wearing } = wearer(root);
   // The gate is where the expensive checks live — a suite, a type-check, a whole dependency
@@ -294,7 +315,7 @@ export async function runCommit(root: string, scope: CommitScope): Promise<HookR
   }));
   const outcome = await guard({
     load,
-    event: { moment: "commit", staged: files, added, unchanged, deleted: gone, wearing },
+    event: { moment: "commit", staged: files, added, unchanged, deleted, gone, message, wearing },
     world: tape?.world ?? realWorld(root),
     off: false,
   });
@@ -306,7 +327,9 @@ export async function runCommit(root: string, scope: CommitScope): Promise<HookR
         staged: files,
         ...(added === undefined ? {} : { added }),
         ...(unchanged.length === 0 ? {} : { unchanged }),
-        ...(gone.length === 0 ? {} : { deleted: gone }),
+        ...(deleted.length === 0 ? {} : { deleted }),
+        ...(gone.length === 0 ? {} : { gone }),
+        message,
         wearing,
         world: tape.taken(),
       },
@@ -320,19 +343,20 @@ export async function runCommit(root: string, scope: CommitScope): Promise<HookR
 }
 
 /**
- * The git gate, end to end — `flow hook commit`, or `flow hook commit --all` for the whole tree.
+ * The git gate, end to end — `flow hook commit <message file>`, which git's commit-message hook
+ * runs, or `flow hook commit --all` for the whole tree, which has no commit and so no message.
  *
- * It takes no file list: git is asked. `flow commit <files…>`, the name an older hook still calls,
+ * It takes no list of changed files: git is asked. `flow commit <files…>`, the name an older hook still calls,
  * arrives here with `legacy` set and its list is dropped, because git's answer is the only list — a
  * second source of the staged set is two answers that can disagree.
  */
 export async function commitEntry(args: readonly string[], cwd: string, legacy = false): Promise<HookResult> {
-  const scope = commitScope(args, legacy);
-  if (scope === null)
+  const read = commitArgs(args, legacy);
+  if (read === null)
     return {
       stdout: "",
-      stderr: `flow hook commit takes no files — it asks git what the commit changes. Pass --all to judge the whole tree instead. Got: ${args.join(" ")}\n`,
+      stderr: `flow hook commit takes the file git holds the message in, and --all. It asks git what the commit changes, so it takes no list of files. Got: ${args.join(" ")}\n`,
       exitCode: 2,
     };
-  return runCommit(resolve(cwd), scope);
+  return runCommit(resolve(cwd), read);
 }

@@ -41,6 +41,7 @@ import { FLOW_DIR } from "../engine/domain.ts";
 import {
   CONFIG_FILE,
   GATE_PATH,
+  OLD_GATE_PATH,
   HOOKS_DIR,
   hooksDirOf,
   initCode,
@@ -57,7 +58,7 @@ import {
   hostPath,
   pathLines,
   planInit,
-  preCommitOf,
+  commitMsgOf,
   status,
   statusCode,
   statusLines,
@@ -163,7 +164,7 @@ function hooksPath(root: string): string | null {
 }
 
 /**
- * The folder git runs hooks from, what is in it, and the pre-commit hook a person edits for it.
+ * The folder git runs hooks from, what is in it, and the commit-msg hook a person edits for it.
  *
  * `git rev-parse --git-path hooks` is git's own answer: `core.hooksPath` when it is set, with `~`
  * expanded, and `.git/hooks` when it is not. That is the shared git directory in a worktree, whose
@@ -187,8 +188,8 @@ function hooksFolder(root: string): HooksFolder | null {
   } catch {
     /* no folder there yet: git runs nothing from it */
   }
-  const preCommit = preCommitOf(dir);
-  return { dir, files, preCommitText: readText(root, preCommit), preCommitExecutable: executable(resolve(root, preCommit)) };
+  const commitMsg = commitMsgOf(dir);
+  return { dir, files, commitMsgText: readText(root, commitMsg), commitMsgExecutable: executable(resolve(root, commitMsg)) };
 }
 
 /**
@@ -261,6 +262,7 @@ function initFacts(root: string, empty: boolean, harness: Harness): InitFacts {
     isGit: existsSync(join(root, ".git")),
     hasConfig: existsSync(join(root, CONFIG_FILE)),
     gateText: readText(root, GATE_PATH),
+    oldGateText: readText(root, OLD_GATE_PATH),
     hasFlowDir: existsSync(join(root, FLOW_DIR)),
     hooksPath: hooksPath(root),
     hooksFolder: hooksFolder(root),
@@ -306,6 +308,15 @@ function perform(root: string, plan: InitPlan): string[] {
       if (write.mode !== undefined) chmodSync(file, write.mode);
     });
   }
+
+  // The pre-0.4 gate goes after the new one is in place, so a commit never runs with neither.
+  const { oldGate } = plan;
+  if (oldGate !== null)
+    attempt(`could not ${oldGate.body === null ? "delete" : "rewrite"} ${oldGate.path}`, () => {
+      const file = join(root, oldGate.path);
+      if (oldGate.body === null) unlinkSync(file);
+      else writeFileSync(file, oldGate.body);
+    });
 
   // `.flow/` self-ignores, so it never appears in `git status` and the repo needs no .gitignore edit
   // at all — which is why init writes no line into a file it does not own.

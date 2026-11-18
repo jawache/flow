@@ -10,7 +10,7 @@
 //                       The engine's whole fail-loud proof for a bound command that does not exist
 //                       is a test against a RECORDED 127; if the live exec threw instead, that
 //                       proof would be about a world flow does not have.
-//   THE HERMETIC ENV    the gate runs inside git's pre-commit hook, so a check that shells out
+//   THE HERMETIC ENV    the gate runs inside git's commit-msg hook, so a check that shells out
 //                       inherits GIT_INDEX_FILE and friends — and any nested `git` then aims at the
 //                       in-progress commit.
 //   THE BRANCH READ     a linked worktree's `.git` is a FILE naming the real gitdir. Miss the

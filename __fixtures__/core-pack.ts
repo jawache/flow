@@ -29,15 +29,6 @@ import {
   textBan,
 } from "../checks/domain.ts";
 
-/** The three git reads `commitReason` makes, answered as a real repo would answer them. */
-const gitSaysPackageChanged = {
-  exec: {
-    "git diff HEAD --name-only --diff-filter=A": { stdout: "" },
-    "git diff HEAD --name-only": { stdout: "package.json" },
-    "git ls-files --others --exclude-standard": { stdout: "" },
-  },
-};
-
 export const core = definePack("core", {
   orientation: breadcrumb().at(session).text("Every stock check is bound in this repo."),
 
@@ -159,15 +150,15 @@ export const core = definePack("core", {
     }),
 
   newDepNeedsReason: guardrail()
-    .at(command)
+    .at(commit)
     .check(commitReason({ whenChanged: ["package.json"], token: "new-dep" }))
     .message("A dependency arrived with no reason recorded.")
     .test({
       pass: [
-        { command: "git commit -m 'feat: x\n\nnew-dep: zod — checked ajv'", world: gitSaysPackageChanged },
-        { command: "git status", world: gitSaysPackageChanged },
+        { message: "feat: x\n\nnew-dep: zod — checked ajv", staged: ["package.json"] },
+        { message: "feat: x", staged: ["src/a.ts"] },
       ],
-      block: [{ command: 'git commit -m "feat: x"', world: gitSaysPackageChanged }],
+      block: [{ message: "feat: x", staged: ["package.json"] }],
     }),
 
   importFences: guardrail()

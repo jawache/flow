@@ -38,7 +38,7 @@ import {
   git as runGit,
   type Ran,
 } from "./harness.ts";
-import { PRE_COMMIT, SET_HOOKS_PATH } from "../adapter/domain.ts";
+import { COMMIT_MSG, SET_HOOKS_PATH } from "../adapter/domain.ts";
 import { FLOW_OFF } from "../adapter/claude/domain.ts";
 
 let repo: string;
@@ -144,6 +144,23 @@ const demo = definePack("demo", {
 // The repo's own pack is bound beside the demo one, which is how a real config reads: the package's
 // rules and the repo's, in one list.
 export default defineConfig([pack(demo), pack(house)]);
+`;
+
+/**
+ * A header rule, in a pack of its own that only the repo of the commit journey binds: the repo of
+ * every other test here has no rule reading a message. The rule is a check written in the config,
+ * as a repo's own would be, and reads `ctx.message` as git records it.
+ */
+const HEADER_PACK = (packageRoot: string): string => `
+import { commit, definePack, guardrail } from ${JSON.stringify(join(packageRoot, "index.ts"))};
+
+export const header = definePack("header", {
+  header: guardrail()
+    .at(commit)
+    .check((ctx) => (ctx.message == null || /^(fix|feat|chore): \\S/.test(ctx.message) ? ctx.ok() : ctx.fail(\`header is "\${ctx.message.split("\\n")[0] ?? ""}"\`)))
+    .message("The header is \`type: description\`.")
+    .test({ pass: [{ message: "fix: a thing" }], block: [{ message: "wip" }] }),
+});
 `;
 
 /** Run the built binary in the temp repo, with a payload on stdin exactly as the host sends it. */
@@ -509,6 +526,12 @@ describe("the commit gate", () => {
     beforeAll(() => {
       other = newRepo("flow-append-");
       copyGuard(other);
+      writeFileSync(join(other, "header.ts"), HEADER_PACK(PACKAGE));
+      const config = readFileSync(join(other, "flow.config.ts"), "utf8");
+      writeFileSync(
+        join(other, "flow.config.ts"),
+        `import { header } from "./header.ts";\n${config.replace("defineConfig([pack(demo), pack(house)])", "defineConfig([pack(demo), pack(house), pack(header)])")}`,
+      );
       mkdirSync(join(other, "migrations"));
       writeFileSync(migration("001.sql"), "create table a ();\n");
       writeFileSync(migration("002.sql"), "create table b ();\n");
@@ -589,38 +612,93 @@ describe("the commit gate", () => {
       }
     });
 
-    it("refuses a file list, which would be a second source of the staged set", () => {
-      const answer = gateHere(["hook", "commit", "migrations/001.sql"]);
+    it("refuses a list of files, which would be a second source of the staged set", () => {
+      const answer = gateHere(["hook", "commit", "migrations/001.sql", "migrations/002.sql"]);
       expect(answer.code).toBe(2);
-      expect(answer.stderr).toContain("takes no files");
+      expect(answer.stderr).toContain("takes no list of files");
     });
 
-    it("judges the commit git is making through the REAL hook — a delete-only commit, and `git commit -a`", () => {
+    it("judges the commit git is making through the REAL hook — a bad header, a delete-only commit, `git commit -a`, an amend, and passes a merge", () => {
       // `git commit -a` stages into a temporary index that only the hook's own GIT_INDEX_FILE names.
       // A gate that asked git without it would see nothing staged, and pass everything.
       const bin = shimBin();
       try {
         mkdirSync(join(other, ".githooks"), { recursive: true });
-        writeFileSync(join(other, ".githooks", "pre-commit"), PRE_COMMIT, { mode: 0o755 });
+        writeFileSync(join(other, ".githooks", "commit-msg"), COMMIT_MSG, { mode: 0o755 });
         runGit(other, SET_HOOKS_PATH.split(" ").slice(1));
         const viaGit = (args: readonly string[]): Ran => runGit(other, args, { bin });
+        const head = (): string => runGit(other, ["rev-parse", "HEAD"]).stdout.trim();
 
         runGit(other, ["rm", "-q", "migrations/002.sql"]);
-        const deleted = viaGit(["commit", "-m", "drop 002"]);
+        const deleted = viaGit(["commit", "-m", "fix: drop 002"]);
         expect(deleted.code, "git refuses when the gate exits non-zero").not.toBe(0);
         expect(deleted.stderr).toContain("demo.appendOnly · migrations/002.sql");
         reset();
 
         writeFileSync(migration("001.sql"), "drop table a;\n");
-        const all = viaGit(["commit", "-a", "-m", "edit 001"]);
+        const all = viaGit(["commit", "-a", "-m", "fix: edit 001"]);
         expect(all.code).not.toBe(0);
         expect(all.stderr).toContain("demo.appendOnly · migrations/001.sql");
         reset();
 
+        // THE HEADER RULE reads the message as git records it, and judges a clean set all the same.
         writeFileSync(migration("004.sql"), "create table d ();\n");
         runGit(other, ["add", "migrations/004.sql"]);
-        const added = viaGit(["commit", "-m", "add 004"]);
+        const before = head();
+        const wip = viaGit(["commit", "-m", "wip"]);
+        expect(wip.code, "`git commit -m wip` is refused").not.toBe(0);
+        expect(wip.stderr).toContain("header.header");
+        expect(wip.stderr).toContain('header is "wip"');
+        expect(head(), "nothing was committed").toBe(before);
+        // …and the same refusal, exit code 2, when flow is handed a message file as git hands it,
+        // comment lines and all: a comment line is not the header.
+        const messageFile = join(other, "msg.txt");
+        writeFileSync(messageFile, "wip\n# Please enter the commit message\n");
+        expect(gateHere(["hook", "commit", messageFile]).code).toBe(2);
+        writeFileSync(messageFile, "# a comment first\nfix: add 004\n# Changes to be committed:\n");
+        expect(gateHere(["hook", "commit", messageFile]).code, "the header is the first line git records").toBe(0);
+
+        const added = viaGit(["commit", "-m", "fix: add 004"]);
         expect(added.code, added.stderr).toBe(0);
+
+        // AN AMEND is judged with its message: the commit it replaces is not the one asked about.
+        const amended = viaGit(["commit", "--amend", "-m", "wip"]);
+        expect(amended.code).not.toBe(0);
+        expect(amended.stderr).toContain("header.header");
+        const kept = viaGit(["commit", "--amend", "-m", "fix: add 004, amended"]);
+        expect(kept.code, kept.stderr).toBe(0);
+
+        // A MERGE passes, whatever the branch it brings in broke: its header and its content were
+        // judged, or not, where they were made. With a conflict, the commit that finishes it passes too.
+        const trunk = runGit(other, ["rev-parse", "--abbrev-ref", "HEAD"]).stdout.trim();
+        writeFileSync(join(other, "notes.txt"), "base\n");
+        runGit(other, ["add", "notes.txt"]);
+        expect(viaGit(["commit", "-m", "fix: notes"]).code).toBe(0);
+        runGit(other, ["checkout", "-q", "-b", "topic"]);
+        writeFileSync(join(other, "src", "bad.ts"), "// DO-NOT-COMMIT\n");
+        writeFileSync(join(other, "notes.txt"), "topic\n");
+        runGit(other, ["add", "src/bad.ts", "notes.txt"]);
+        expect(viaGit(["commit", "-m", "wip", "--no-verify"]).code, "the branch broke the header and a content rule").toBe(0);
+        runGit(other, ["checkout", "-q", trunk]);
+        writeFileSync(join(other, "migrations", "005.sql"), "create table e ();\n");
+        runGit(other, ["add", "migrations/005.sql"]);
+        expect(viaGit(["commit", "-m", "fix: add 005"]).code).toBe(0);
+        const clean = viaGit(["merge", "--no-ff", "-m", "Merge topic", "topic"]);
+        expect(clean.code, clean.stderr).toBe(0);
+        expect(runGit(other, ["rev-parse", "HEAD^2"]).code, "a merge commit, with two parents").toBe(0);
+        expect(runGit(other, ["log", "-1", "--format=%s"]).stdout.trim()).toBe("Merge topic");
+
+        runGit(other, ["checkout", "-q", "-b", "clash", "HEAD~1"]);
+        writeFileSync(join(other, "notes.txt"), "clash\n");
+        runGit(other, ["add", "notes.txt"]);
+        expect(viaGit(["commit", "-m", "fix: clash"]).code).toBe(0);
+        const conflicted = viaGit(["merge", "--no-ff", "topic"]);
+        expect(conflicted.code, "the merge stops on a conflict").not.toBe(0);
+        writeFileSync(join(other, "notes.txt"), "resolved\n");
+        runGit(other, ["add", "notes.txt"]);
+        const finished = viaGit(["commit", "--no-edit"]);
+        expect(finished.code, finished.stderr).toBe(0);
+        expect(runGit(other, ["rev-parse", "HEAD^2"]).code).toBe(0);
       } finally {
         rmSync(bin, { recursive: true, force: true });
       }
@@ -1415,7 +1493,7 @@ describe("a command run in another worktree of the repository — told once to s
 });
 
 describe("work outside the repository — judged only by a rule marked .everywhere()", () => {
-  it("refuses a bad commit header from a linked worktree, passes it in a scratch repo outside, and still refuses a force-push there", () => {
+  it("refuses a hard reset from a linked worktree, passes it in a scratch repo outside, and still refuses a force-push there", () => {
     const { parent, where, worktree, outside } = repoWithWorktree();
     try {
       writeFileSync(join(where, "everywhere.ts"), fixturePack("everywhere-pack", join(PACKAGE, "index.ts")));
@@ -1428,11 +1506,11 @@ export default defineConfig([pack(git)]);
       let ids = 0;
       const command = (line: string): Ran => hook("pre-tool-use", { ...pre("Bash", { command: line }, "outside"), cwd: where, tool_use_id: `toolu_out_${++ids}` }, where);
 
-      const fromWorktree = command(`cd ${worktree} && git commit --allow-empty -m bad`);
+      const fromWorktree = command(`cd ${worktree} && git reset --hard HEAD~1`);
       expect(fromWorktree.code, `a worktree of this repository is inside; flow said:\n${fromWorktree.stderr}`).toBe(2);
-      expect(fromWorktree.stderr).toContain("git.conventionalCommitFormat");
+      expect(fromWorktree.stderr).toContain("git.noHardReset");
 
-      const scratch = command(`cd ${outside} && git init -q && git commit -q --allow-empty -m bad`);
+      const scratch = command(`cd ${outside} && git init -q && git reset --hard HEAD~1`);
       expect(scratch.code, `a scratch repo outside is not this repository's; flow said:\n${scratch.stderr}`).toBe(0);
 
       const forced = command(`cd ${outside} && git push --force origin main`);

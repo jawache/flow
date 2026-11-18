@@ -43,12 +43,12 @@ describe("the packs surface", () => {
     const theirs = bound(["rules/**", "policy/*.ts"]);
     expect(theirs["flow.editingTheGuardrails"]).toContain("rules/**");
     expect(theirs["flow.editingTheGuardrails"]).toContain("policy/*.ts");
-    expect(theirs["flow.noDeleteGuardrails"]).toStrictEqual(["flow.config.ts", "rules/**", "policy/*.ts", ".githooks/pre-commit"]);
+    expect(theirs["flow.noDeleteGuardrails"]).toStrictEqual(["flow.config.ts", "rules/**", "policy/*.ts", ".githooks/commit-msg"]);
 
     // Empty is a real answer — the config IS the whole guard — and the two entries still cover it
     // and the host's registrations, and nothing invented.
     const inline = bound([]);
-    expect(inline["flow.noDeleteGuardrails"]).toStrictEqual(["flow.config.ts", ".githooks/pre-commit"]);
+    expect(inline["flow.noDeleteGuardrails"]).toStrictEqual(["flow.config.ts", ".githooks/commit-msg"]);
     expect(inline["flow.editingTheGuardrails"]).toStrictEqual([
       "flow.config.ts",
       ".claude/settings.json",

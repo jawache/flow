@@ -573,7 +573,7 @@ describe("what an entry is run against", () => {
     );
     const outcome = await guard({
       load: both,
-      event: { moment: "commit", staged: [], deleted: [{ path: "m/1.sql", content: "-- TODO: old" }], wearing: [] },
+      event: { moment: "commit", staged: [], deleted: ["m/1.sql"], gone: [{ path: "m/1.sql", content: "-- TODO: old" }], wearing: [] },
       world: world(),
     });
     expect(blocks(outcome).map((b) => [b.entry, b.subject, b.detail])).toEqual([
@@ -581,6 +581,45 @@ describe("what an entry is run against", () => {
     ]);
     // Only what such an entry covers is worth reading out of the last commit.
     expect(judgedDeletions(both.ok ? both.entries : [], ["m/1.sql", "src/a.ts"])).toEqual(["m/1.sql"]);
+  });
+
+  it("hands every call of a commit the message, the added paths and every deleted path, a judged one or not", async () => {
+    const seen: unknown[] = [];
+    const spy = loadConfig(
+      defineConfig([
+        pack(
+          definePack("log", {
+            once: guardrail()
+              .at(commit)
+              .check((ctx) => {
+                seen.push(["once", ctx.message, ctx.added, ctx.deleted, ctx.file?.path]);
+                return ctx.ok();
+              })
+              .message("m")
+              .test({ block: [{ staged: [] }] }),
+            perFile: guardrail()
+              .at(commit)
+              .on("**")
+              .check((ctx) => {
+                seen.push(["perFile", ctx.message, ctx.added, ctx.deleted, ctx.file?.path]);
+                return ctx.ok();
+              })
+              .message("m")
+              .test({ block: [{ staged: [] }] }),
+          }),
+        ),
+      ]),
+    );
+    const event = { moment: "commit" as const, staged: ["a.ts"], added: ["a.ts"], deleted: ["old.ts"], message: "fix: x", wearing: [] };
+    await guard({ load: spy, event, world: world({ fs: { "a.ts": "x" } }) });
+    expect(seen).toEqual([
+      ["once", "fix: x", ["a.ts"], ["old.ts"], undefined],
+      ["perFile", "fix: x", ["a.ts"], ["old.ts"], "a.ts"],
+    ]);
+    // `flow hook commit --all` has no commit: the message is null, never an empty one.
+    seen.length = 0;
+    await guard({ load: spy, event: { ...event, message: null }, world: world({ fs: { "a.ts": "x" } }) });
+    expect(seen.map((call) => (call as unknown[])[1])).toEqual([null, null]);
   });
 
   it("skips a staged path that is not there — a deletion has no would-be file to judge", async () => {

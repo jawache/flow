@@ -809,92 +809,6 @@ export function gitCommands(facts: CommandFacts): GitCommand[] {
   return (shellCommands(facts) ?? []).flatMap((c) => gitCommand(c) ?? []);
 }
 
-/**
- * The message in the commit's argument at `i`, after its `option` (`""` for a value given apart,
- * `-m` or `--message=` for one attached), as git receives it. A message that is one substitution
- * running only `cat` on a heredoc — `"$(cat <<'EOF' … EOF)"`, the form an agent is taught — is
- * that heredoc's body, less the trailing newlines a substitution drops. Any other is passed as written.
- */
-function passedAs(commit: GitCommand, i: number, option: string): string {
-  const value = (commit.args[i] as string).slice(option.length);
-  const at = commit.argsAt + i;
-  const commands = commit.command.substitutions.find((s) => s.argument === at && s.prefix === option)?.commands;
-  const [cat] = commands ?? [];
-  if (commands?.length !== 1 || cat?.program !== "cat" || cat.args.length > 0) return value;
-  const body = cat.heredocs[cat.heredocs.length - 1]?.body;
-  return body === undefined ? value : body.replace(/\n+$/, "");
-}
-
-/**
- * The message a `git commit` in this command line carries, or null when there is no judgeable
- * commit in it at all. Null is the "not our business" answer and every caller passes on it.
- *
- * EVERY `-m` IS READ, AND THEY JOIN AS PARAGRAPHS. This returned the FIRST one and stopped, which
- * made `git commit -m "<subject>" -m "<body>"` — git's own two-paragraph form, and the one an agent
- * reaches for when the reason will not fit in a subject — a commit whose body was never read. The
- * consequence was not a missed block but the worse direction: a commit that HAD recorded its reason
- * in the second `-m` was refused, on the one rail whose whole job is to be obeyed.
- *
- * The separator is a BLANK line because that is what git writes. Verified rather than assumed:
- * `git commit -m a -m b -m c` then `git log --format=%B | od -c` shows `a\n\nb\n\nc\n\n`.
- *
- * The forms it sees, settled from the two scripts this absorbed rather than invented:
- *
- *   git commit -m MSG · -mMSG · --message MSG · --message=MSG      judged
- *   git commit -m SUBJECT -m BODY   (repeated, any mix of forms)   judged, joined as git joins them
- *   git commit -m "$(cat <<'EOF' … EOF)"                            judged, via that heredoc's body,
- *                                                                  which is what the shell passes
- *   git commit -F - <<'EOF' … EOF   (the commit reads stdin)        judged, via ITS heredoc's body
- *   python3 - <<'PY' … PY; git commit -F - <<'EOF' … EOF            judged, via the commit's own
- *                                                                  heredoc — the first one is the
- *                                                                  python's script
- *   python3 - <<'PY' … PY; git commit -F msg.txt                    NOT judged — the heredoc is
- *                                                                  another command's script, and
- *                                                                  the message is on disk
- *   git commit -F path/to/file                                     NOT judged — the message is on
- *                                                                  disk, and reading it is a read
- *                                                                  of the world this layer does not
- *                                                                  do
- *   git commit            (an editor commit, no message anywhere)  NOT judged — there is nothing to
- *                                                                  read before the editor opens
- *
- * The boundary is on the record: this rail polices AGENT-typed commits, which are its audience. A
- * human committing from an editor is not its subject and never was.
- */
-export function commitMessage(facts: CommandFacts): string | null {
-  // A line that does not parse has no git commands, so it is not judged: cannot tell.
-  const commit = gitCommands(facts).find((g) => g.subcommand === "commit");
-  if (!commit) return null;
-  const parts: string[] = [];
-  for (let i = 0; i < commit.args.length; i++) {
-    const a = commit.args[i] as string;
-    if (a === "-m" || a === "--message") {
-      if (i + 1 >= commit.args.length) break; // a trailing `-m` with nothing after it — git would refuse too
-      parts.push(passedAs(commit, i + 1, ""));
-      i++; // STEP OVER the value: without this a message that looks like a flag is read twice
-      continue;
-    }
-    if (a.startsWith("-m") && a !== "-m") parts.push(passedAs(commit, i, "-m")); // -mMESSAGE
-    else if (a.startsWith("--message=")) parts.push(passedAs(commit, i, "--message="));
-  }
-  if (parts.length) return parts.join("\n\n");
-  // No inline message: it may still be on stdin, and ONLY when the commit itself says so. `-F -`
-  // (or `--file=-`) is the one form that reads stdin. A heredoc that belongs to ANOTHER command on
-  // the line — a python edit ahead of the commit — is a script, not a message, and reading it as
-  // one refused nine legitimate commits in one run: no conventional header in a script, no
-  // `new-dep:` line, and once the attribution rule's own fixture text. An EDITOR commit (neither
-  // `-m` nor `-F -`) returns null and passes, which is the narrow scope this rail has always kept.
-  const readsStdin = commit.args.some(
-    (a, i) => ((a === "-F" || a === "--file") && commit.args[i + 1] === "-") || a === "-F-" || a === "--file=-",
-  );
-  if (!readsStdin) return null;
-  // The message is then the body of the heredoc the commit ITSELF is fed — a QUOTED heredoc is the
-  // safe way to write one containing backticks. Fed several, its stdin is the last: each `<<`
-  // replaces the one before. Trimmed; empty is no message.
-  const { heredocs } = commit.command;
-  return heredocs[heredocs.length - 1]?.body.trim() || null;
-}
-
 /** One shell argument, single-quoted so nothing in it can be expanded or re-parsed. */
 export function quoteArg(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
@@ -942,11 +856,11 @@ export function givesReason(message: string, token: string): boolean {
   return new RegExp(`^[ \\t]*${escapeRe(token)}[ \\t]*:`, "im").test(message);
 }
 
-/** What the working tree is about to carry, split by whether each path is new to the repo. */
+/** What the commit carries, split by whether each path is new to the repo. */
 export interface WorkingState {
-  /** Everything that moved — tracked edits, staged adds, and untracked files. */
+  /** Everything the commit adds or changes: `ctx.staged`. */
   readonly changed: readonly string[];
-  /** The subset that is NEW here: a staged add, or untracked. */
+  /** The subset that is NEW here, which the last commit does not have: `ctx.added`. */
   readonly added: readonly string[];
 }
 
@@ -1022,16 +936,9 @@ export function addedNames(diff: string, patterns: readonly string[], known: rea
 }
 
 export interface ReasonInput {
-  /** The commit message, as the command line carries it. */
+  /** The commit message, as git records it. */
   readonly message: string;
-  /**
-   * What the working tree has to say — index and worktree, tracked and untracked.
-   *
-   * Deliberately the generous reading: a commit is usually typed straight after the staging,
-   * `git commit -a` sweeps tracked worktree edits in, and the cost of asking for a sentence that
-   * was not strictly owed is a sentence, while the cost of missing one is the record this rule
-   * exists to keep.
-   */
+  /** What the commit carries, as git answered for the whole commit. */
   readonly state: WorkingState;
   /** Paths that owe a reason when they change at all. */
   readonly whenChanged?: readonly string[] | undefined;
@@ -1080,14 +987,6 @@ export function reasonHits(o: ReasonInput): string[] {
   ];
 }
 
-/** Lines of output as a path list — the shape all three commands below answer in. */
-function pathLines(out: string): string[] {
-  return out
-    .split("\n")
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
 /**
  * This commit needs a reason recorded, and here is whether it gave one.
  *
@@ -1102,25 +1001,16 @@ function pathLines(out: string): string[] {
  * repos did — which on inspection was this check with one condition missing and everything else
  * written a second time.
  *
- * AT WHICH RAIL, and the boundary that comes with it: the COMMAND moment — the Bash rail, before
- * the command runs, which is where an agent's commit can still be stopped and rewritten. git's own
- * commit-msg hook (which would also catch a human committing from an editor) was considered and
- * shelved on the record: the agent is the audience.
+ * AT `commit`, in git's commit-message hook, where the message exists as git records it. The
+ * message is `ctx.message`, so a commit a person types in an editor owes its reason as an agent's
+ * does, and the files it changes are the staged ones: `ctx.staged` and `ctx.added`, which git
+ * answered once for the whole commit. Under `flow hook commit --all` there is no commit, so no
+ * message, and no reason is owed.
  *
- * THREE COMMANDS, AND NOT `git status`. The old script read `git status --porcelain=v1` and carried
- * a fixed-width parser for the answer. That parser reads the world's own format and went with the
- * adapter; what is left here asks three questions whose answers need no format knowledge at all —
- * each one is a list of paths, one per line. It is also strictly better: the porcelain parser had a
- * war story about eating the first character of a path, and there is now no column to slice.
- *
- * …AND IT ASKS THEM ONLY WHEN A PATH CONDITION IS BOUND. A binding that names `diffAdds` alone —
- * the verb ratchets in both house packs do — reads one diff and nothing else. This is not a
- * micro-optimisation: every one of these commands is a question a `.test()` case has to answer, so
- * asking three that cannot change the verdict makes every case for a diff-adds entry carry three
- * lines of git output that mean nothing, and a case full of noise is a case nobody re-reads.
- *
- * Fails safe on every read: not a git repo, or git unavailable, and the check stands aside rather
- * than trapping a commit it cannot judge.
+ * `diffAdds` is the one condition that asks git again: one `git diff --cached` of the named file,
+ * and only when a binding names it, because every question a check asks is one a `.test()` case
+ * has to answer. A diff git cannot give leaves the check standing aside rather than trapping a
+ * commit it cannot judge.
  */
 export const commitReason = defineCheck(
   (opts: {
@@ -1131,33 +1021,14 @@ export const commitReason = defineCheck(
     token: string;
   }): Check =>
     async (ctx) => {
-      // The message first, and no git call unless there is one: a command that is not a judgeable
-      // commit is the overwhelming majority of everything typed at this rail.
-      const message = commitMessage(ctx);
+      const message = ctx.message;
       if (message == null) return ctx.ok();
 
-      const git = `git ${gitDirPrefix(ctx)}`.trimEnd();
-
-      let state: WorkingState = { changed: [], added: [] };
-      if (opts.whenChanged || opts.whenAdded) {
-        const [tracked, adds, untracked] = await Promise.all([
-          ctx.exec(`${git} diff HEAD --name-only`),
-          ctx.exec(`${git} diff HEAD --name-only --diff-filter=A`),
-          ctx.exec(`${git} ls-files --others --exclude-standard`),
-        ]);
-        if (tracked.code !== 0 || adds.code !== 0 || untracked.code !== 0) return ctx.ok();
-        const untrackedPaths = pathLines(untracked.stdout);
-        state = {
-          changed: [...new Set([...pathLines(tracked.stdout), ...untrackedPaths])],
-          added: [...pathLines(adds.stdout), ...untrackedPaths],
-        };
-      }
+      const state: WorkingState = { changed: [...(ctx.staged ?? [])], added: [...(ctx.added ?? [])] };
 
       const namesAdded: { name: string; file: string }[] = [];
       for (const surface of opts.diffAdds ?? []) {
-        // `git diff HEAD`, so a staged add and an unstaged edit both count — `git commit -a`
-        // sweeps the second in, and the generous reading is the same one the path conditions take.
-        const diff = await ctx.exec(`${git} diff HEAD -- ${quoteArg(surface.file)}`);
+        const diff = await ctx.exec(`git diff --cached -- ${quoteArg(surface.file)}`);
         if (diff.code !== 0) return ctx.ok();
         for (const name of addedNames(diff.stdout, surface.patterns, surface.known ?? []))
           namesAdded.push({ name, file: surface.file });
@@ -1876,20 +1747,20 @@ export type CaseDialect = "command" | "write" | "commit" | "turn-end";
  * WHICH GUARDRAIL MOMENTS SPEAK EACH DIALECT — the one table, and everything else reads it.
  *
  * `write` covers `delete` too, because both carry a path and the delete rail hands over the file
- * that is going away. Nothing else overlaps: a command case can only ever reach a command rail.
+ * that is going away, and `commit`, where a `{ path, content }` case is a commit of that one file
+ * (`asCommit`). Nothing else overlaps: a command case can only ever reach a command rail.
  */
 const SPEAKS: Readonly<Record<CaseDialect, readonly GuardrailMoment[]>> = {
   command: ["command"],
-  write: ["write", "delete"],
+  write: ["write", "delete", "commit"],
   commit: ["commit"],
   "turn-end": ["turn-end"],
 };
 
 /**
- * What a commit says about its staged files beyond their paths — what a case lists, and what the
- * live gate's event carries (`GuardEvent` takes `added` and `unchanged` from here; its `deleted`
- * holds the same facts as a list). Written out rather than derived from `readCase`, so a field
- * added to a case's reading does not silently become an option of the fan-out.
+ * What a commit says beyond the paths it stages — what a case lists, and what the live gate's event
+ * carries (`GuardEvent` takes every field from here). Written out rather than derived from
+ * `readCase`, so a field added to a case's reading does not silently become an option of the fan-out.
  */
 export interface CommitFileFacts {
   /**
@@ -1902,8 +1773,42 @@ export interface CommitFileFacts {
    * `ctx.file.unchanged` is `true`.
    */
   readonly unchanged?: readonly string[] | undefined;
-  /** The staged deletions, by path, with their content as the last commit has it. */
-  readonly deleted?: Readonly<Record<string, string>> | undefined;
+  /** Every path the commit deletes: `ctx.deleted`. */
+  readonly deleted?: readonly string[] | undefined;
+  /** The deletions an entry that fires at `delete` will judge, each with its content as the last commit has it. */
+  readonly gone?: readonly { readonly path: string; readonly content: string }[] | undefined;
+  /** The message as git records it. `null` under `--all`; absent, an empty one, as in a case with none. */
+  readonly message?: string | null | undefined;
+}
+
+/**
+ * The facts a commit puts on EVERY ctx it makes, whichever file the call is about: the staged
+ * paths, the paths added and deleted, and the message. The live gate and a case build them here.
+ */
+export function commitFacts(staged: readonly string[], commit: CommitFileFacts): Partial<Ctx> {
+  return { staged, added: commit.added ?? [], deleted: commit.deleted ?? [], message: commit.message === undefined ? "" : commit.message };
+}
+
+/** The shape a case's `deleted` is written in: a list of paths, or each path with the content it had. */
+function deletedOf(deleted: Extract<Case, { staged: readonly string[] }>["deleted"]): Pick<CommitFileFacts, "deleted" | "gone"> {
+  if (deleted === undefined) return {};
+  if (Array.isArray(deleted)) return { deleted: deleted as readonly string[] };
+  const record = deleted as Readonly<Record<string, string>>;
+  return { deleted: Object.keys(record), gone: Object.entries(record).map(([path, content]) => ({ path, content })) };
+}
+
+/**
+ * A `{ path, content }` case read as a commit of that one file: the file staged, on disk with that
+ * content, and — when the case says whether the last commit had it — added or not.
+ */
+function asCommit(c: Extract<Case, { path: string }>): Extract<Case, { staged: readonly string[] }> {
+  const world = c.world ?? {};
+  return {
+    staged: [c.path],
+    ...(c.existed === false ? { added: [c.path] } : c.existed === true ? { added: [] } : {}),
+    world: { ...world, fs: { ...world.fs, [c.path]: c.content } },
+    ...(c.actor === undefined ? {} : { actor: c.actor }),
+  };
 }
 
 /**
@@ -1929,8 +1834,16 @@ export function readCase(c: Case): {
     const existed = c.existed === undefined ? {} : { existed: c.existed };
     return { dialect: "write", facts: { file: { path: c.path, content: c.content, ...existed }, ...actor }, world };
   }
-  if ("staged" in c)
-    return { dialect: "commit", facts: { staged: c.staged, ...actor }, world, added: c.added, unchanged: c.unchanged, deleted: c.deleted };
+  if ("staged" in c || "message" in c)
+    return {
+      dialect: "commit",
+      facts: { staged: c.staged ?? [], ...actor },
+      world,
+      added: c.added,
+      unchanged: c.unchanged,
+      message: c.message,
+      ...deletedOf(c.deleted),
+    };
   return { dialect: "turn-end", facts: { turn: c.actions, ...actor }, world };
 }
 
@@ -1949,17 +1862,21 @@ export function caseMoment(c: Case): Moment {
  * evidence about the live rail, which is the whole value of cases existing.
  */
 export function cannedCtx(moment: Moment, c: Case, unanswered: Unanswered[]): Ctx {
-  const { world, facts } = cannedParts(c, unanswered);
-  return makeCtx(moment, facts, world);
+  const { world, facts, ...commit } = cannedParts(moment, c, unanswered);
+  return makeCtx(moment, moment === "commit" ? { ...facts, ...commitFacts(facts.staged ?? [], commit) } : facts, world);
 }
 
-/** A case read once: the world it recorded, assembled, and the event facts it carries. */
+/**
+ * A case read once: the world it recorded, assembled, and the event facts it carries. At the commit
+ * moment a `{ path, content }` case is a commit of that one file.
+ */
 function cannedParts(
+  moment: Moment,
   c: Case,
   unanswered: Unanswered[],
 ): { readonly facts: Partial<Ctx>; readonly world: World } & CommitFileFacts {
-  const { world, facts, added, unchanged, deleted } = readCase(c);
-  return { world: cannedWorld(world, facts.staged, unanswered), facts, added, unchanged, deleted };
+  const { world, facts, added, unchanged, deleted, gone, message } = readCase(moment === "commit" && typeof c !== "string" && "path" in c ? asCommit(c) : c);
+  return { world: cannedWorld(world, facts.staged, unanswered), facts, added, unchanged, deleted, gone, message };
 }
 
 /**
@@ -1970,7 +1887,7 @@ function cannedParts(
  * four answers the live gate would.
  */
 export async function caseCtxs(entry: LoadedEntry, moment: Moment, c: Case, unanswered: Unanswered[]): Promise<Ctx[]> {
-  const { world, facts, ...commit } = cannedParts(c, unanswered);
+  const { world, facts, ...commit } = cannedParts(moment, c, unanswered);
   const subjects = moment === "commit" ? await commitSubjects(entry, facts, world, commit) : [facts];
   return subjects.map((subject) => makeCtx(subject.moment ?? moment, subject, world));
 }
@@ -2032,12 +1949,13 @@ async function commitSubjects(
 ): Promise<Partial<Ctx>[]> {
   const staged = facts.staged ?? [];
   const { spec } = entry;
-  if (!spec.on) return [facts];
-  const out: Partial<Ctx>[] = (await stagedFiles(spec, staged, world, commit)).map((file) => ({ file, staged }));
+  const every = { ...facts, ...commitFacts(staged, commit) };
+  if (!spec.on) return [every];
+  const out: Partial<Ctx>[] = (await stagedFiles(spec, staged, world, commit)).map((file) => ({ ...every, file }));
   const atDelete = ((spec.at ?? []) as readonly string[]).includes("delete");
-  for (const [path, content] of Object.entries(commit.deleted ?? {})) {
+  for (const { path, content } of commit.gone ?? []) {
     if (!atDelete || !inScope(spec, path)) continue;
-    out.push({ moment: "delete", file: { path, content, existed: true }, staged });
+    out.push({ ...every, moment: "delete", file: { path, content, existed: true } });
   }
   return out;
 }

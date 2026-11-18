@@ -9,7 +9,7 @@
 //
 //   THE LIVE HALF, invoked by something else rather than by a person:
 //     flow hook <event>    what the harness's registrations call, payload on stdin
-//     flow hook commit     what git's pre-commit hook calls; it asks git what the commit changes
+//     flow hook commit     what git's commit-msg hook calls; it asks git what the commit changes
 //
 //   THE ASKING HALF, which a person types:
 //     flow test [config]   every bound entry's cases, driven
@@ -340,7 +340,7 @@ if (argv.includes("--version") || argv.includes("-v")) {
       "  flow status [--json]   what is bound here, at which moments — and what is not wired yet",
       "  flow test [config]     run every bound entry's cases (default: flow.config.ts)",
       `  flow hook <event>      a harness hook, payload on stdin — ${harness.events.join(" · ")}`,
-      "  flow hook commit       the git pre-commit gate, over the staged changes — --all for the whole tree",
+      "  flow hook commit [<file>]  git's commit-msg gate, over the staged changes and the message in <file> — --all for the whole tree",
       "  flow replay <file>     a recorded session, back through the engine — --against <log> diffs it",
       "  flow facts             what the record and the conversations say about this repo — --json for all of it",
       "",
