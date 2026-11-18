@@ -634,6 +634,13 @@ describe("parseCommandLine — nested commands", () => {
     ]);
   });
 
+  it("reads a command inside square brackets as a nested command", () => {
+    expect(nested("pnpm test --filter=[$(git rev-parse HEAD~1)]")).toEqual([
+      ["pnpm", false],
+      ["git", true],
+    ]);
+  });
+
   it("reads the string given to bash -c, sh -c and eval", () => {
     expect(nested("bash -c 'npx vitest run; ls'")).toEqual([
       ["bash", false],
@@ -1037,6 +1044,46 @@ describe("parseCommandLine — the folder each command runs in", () => {
     expect(isOption("-")).toBe(false);
     expect(isOption("dir")).toBe(false);
     expect(isOption(null)).toBe(false);
+  });
+});
+
+describe("parseCommandLine — the worked examples of the command parse page", () => {
+  const start = { cwd: "/work/repo" };
+  const read = (line: string): [string, string[], string | null, boolean][] =>
+    (parseCommandLine(line, start) ?? []).map((c) => [c.program, [...c.args], c.folder, c.nested]);
+
+  it("git push --force origin main is one command", () => {
+    expect(read("git push --force origin main")).toEqual([["git", ["push", "--force", "origin", "main"], "/work/repo", false]]);
+  });
+
+  it("the words of a quoted argument are text passed to echo", () => {
+    expect(read('echo "never git push --force"')).toEqual([["echo", ["never git push --force"], "/work/repo", false]]);
+  });
+
+  it("bash -c reads its string, a cd moving the folder of what follows", () => {
+    expect(read('bash -c "cd api && git push --force"')).toEqual([
+      ["bash", ["-c", "cd api && git push --force"], "/work/repo", false],
+      ["cd", ["api"], "/work/repo", true],
+      ["git", ["push", "--force"], "/work/repo/api", true],
+    ]);
+  });
+
+  it("a variable the line sets is filled in, and git -C moves the folder", () => {
+    expect(read("R=/tmp/scratch; git -C $R push --force")).toEqual([["git", ["-C", "/tmp/scratch", "push", "--force"], "/tmp/scratch", false]]);
+  });
+
+  it("a loop with a substitution is one set of commands per value", () => {
+    const line = 'for d in api web; do (cd $d && npm test > "$(git rev-parse --short HEAD).log"); done';
+    const rows = (parseCommandLine(line, start) ?? []).map((c) => [c.program, c.folder, c.nested, c.redirects.map((r) => [r.operator, r.target])]);
+    const log = [[">", "$(git rev-parse --short HEAD).log"]];
+    expect(rows).toEqual([
+      ["cd", "/work/repo", false, []],
+      ["npm", "/work/repo/api", false, log],
+      ["git", "/work/repo/api", true, []],
+      ["cd", "/work/repo", false, []],
+      ["npm", "/work/repo/web", false, log],
+      ["git", "/work/repo/web", true, []],
+    ]);
   });
 });
 

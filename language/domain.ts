@@ -717,6 +717,8 @@ function wordPieces(part: WordPart, quoted = false): ShellWordPiece[] {
     case "SimpleExpansion":
     case "ParameterExpansion":
       return [expansionPiece(part, quoted)];
+    case "Glob":
+      return [{ kind: "text", text: part.value }];
     case "ExtendedGlob":
     case "BraceExpansion":
       return [{ kind: "text", text: part.text }];
@@ -1260,6 +1262,7 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
         return;
       case "ExtendedGlob":
       case "BraceExpansion":
+      case "Glob":
         for (const child of part.parts ?? []) wordPart(child, subs, out);
         return;
       case "ParameterExpansion":
@@ -1331,8 +1334,7 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
         word(e.right, null, out);
         return;
       case "TestLogical":
-        test(e.left, out);
-        test(e.right, out);
+        for (const operand of e.operands) test(operand, out);
         return;
       case "TestNot":
         test(e.operand, out);
@@ -1375,10 +1377,6 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
       case "Pipeline":
         pipeline(n.commands, nested, out);
         return;
-      case "Time":
-      case "Negation":
-        if (n.command !== undefined) node(n.command, nested, out);
-        return;
       case "Command":
         simple(n, nested, out);
         return;
@@ -1411,6 +1409,10 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
       case "If":
         node(n.clause, nested, out);
         node(n.then, nested, out);
+        for (const elif of n.elif) {
+          node(elif.clause, nested, out);
+          node(elif.then, nested, out);
+        }
         if (n.else !== undefined) node(n.else, nested, out);
         return;
       case "For": {
