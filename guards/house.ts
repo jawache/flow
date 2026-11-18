@@ -195,13 +195,13 @@ export const house = definePack("house", (repo: Terrain) => ({
         "· language/  the config grammar — sentences, packs, moments, categories, the Ctx contract, the load. What a config file and a pack import.",
         "· checks/    the stock checks, as typed functions over ctx.",
         "· engine/    matching, categories, effects, the state home.",
-        "· adapter/   everything that knows Claude Code — payloads, transcripts, hooks.",
+        "· adapter/   the seam between flow and the harness that runs the agent. `harness.ts` is the interface and every file beside it is flow's own product, which takes a `Harness` and names none: `shell.ts` (the world a check reaches through, the config load, the git gate), `product.ts` (init, status, uninstall), `archive.ts` (facts) and `domain.ts`. `adapter/claude/` is everything that knows Claude Code — payloads, transcripts, hooks, its settings file — and nothing outside it may import it but flow.ts, which chooses the harness.",
         "· packs/     the ten packs the package SHIPS, behind their own subpath export (`@jawache/flow/packs`). Not a pipeline stage: they are content written IN the grammar, which is why they sit beside the layers rather than in them. Each imports `../index.ts` — the public door — and nothing else in the package; nothing in the package imports them back.",
         "· tools/     the code behind a justfile recipe, and nothing that ships. `pack-pages.ts` renders one page per shipped pack into `docs/user/packs/`, and `--check` refuses a page that has drifted from its pack; `parse.ts` reads what a pack's source says that loading it cannot; `score-bash.ts` scores a Bash path extractor against the hand-labelled corpus in `__fixtures__/bash-corpus/`; `domain.ts` is the pure half all three decide through. tsconfig.build.json excludes the folder, and nothing in the package may import it — `e2e/` may, and does, for the example bindings every page and the machine test share.",
-        "Each layer folder holds ONE `domain.ts` plus its `domain.test.ts`, and that file is the layer's whole pure home — there is no `pure/` folder anywhere here, and no `core/` folder either. Both were considered and ruled out: a folder of one-file-per-topic modules is what the old engine had, and it hid which checks were really the same check.",
+        "Each layer folder holds ONE `domain.ts` plus its `domain.test.ts` (a harness's folder, `adapter/claude/`, holds its own), and that file is the layer's whole pure home — there is no `pure/` folder anywhere here, and no `core/` folder either. Both were considered and ruled out: a folder of one-file-per-topic modules is what the old engine had, and it hid which checks were really the same check.",
         "`glob.ts` is the ONE shared file of the PRODUCT, at the package root, because exactly one thing is genuinely shared and one shared thing earns a name rather than a folder.",
         "`e2e/` is the END-TO-END suites and nothing else, and it is not a pipeline stage either: the three tests that spawn the built binary over a throwaway git repo (product · live · machine) plus `harness.ts`, the one road all three drive — the repo, the binary, the host's CLAUDE_CONFIG_DIR and PATH seams. It ships with nothing (tsconfig.build.json excludes the folder) and nothing in the package may import it. The fixture packs those suites write into a temp repo live in `__fixtures__/`. One fast test lives here too, `bash-corpus.test.ts`, because it scores the adapter's read detection with tools/'s scorer and e2e/ is the one place the fence lets reach both. Every OTHER test file sits beside the code it is about and runs in milliseconds; the three suites take tens of seconds because they build and spawn.",
-        "The pipeline runs ONE WAY — language → checks → engine → adapter. A layer may import backwards and never forwards; the fences are in the import-boundaries entry in guards/house.ts, and they are why a recorded session can replay with no harness at all.",
+        "The pipeline runs ONE WAY — language → checks → engine → adapter, and inside the adapter flow's own product never imports a harness's folder. A layer may import backwards and never forwards; the fences are in the import-boundaries entry in guards/house.ts, and they are why a recorded session can replay with no harness at all.",
         "A domain file reaches the world ONLY through ctx: no node:fs, no child_process, no process.env. eslint says so on the line, import-boundaries says so at the commit.",
       ].join("\n"),
     ),
@@ -297,6 +297,14 @@ export const house = definePack("house", (repo: Terrain) => ({
           checks: ["checks/**"],
           engine: ["engine/**"],
           adapter: ["adapter/**"],
+          // THE ADAPTER, TWO WAYS. A harness is one folder, `adapter/claude/` for Claude Code, and
+          // flow's own product is everything else in `adapter/`: `harness.ts` (the interface), the
+          // shell every harness shares, `init`, `status`, `uninstall` and `facts`. The product is
+          // handed a `Harness` and names none, so a second harness is a second folder and no change to
+          // the product. Both are layers inside `adapter` above, which still carries every fence the
+          // pipeline has.
+          "claude-code": ["adapter/claude/**"],
+          product: { path: ["adapter/**"], not: ["adapter/claude/**"] },
           // THE PACKS THE PACKAGE SHIPS, and they are NOT a pipeline stage — they are content
           // written in the grammar, so they sit outside the one-way run rather than at the end of
           // it. Their fence is the strictest here and it is two rules: a pack may reach the public
@@ -335,6 +343,10 @@ export const house = definePack("house", (repo: Terrain) => ({
           { from: "checks", to: "engine", why: "a check answers about one event and knows nothing of matching, scoping or effects — that coupling is what made the old engine's registry unreplayable" },
           { from: "checks", to: "adapter", why: "a check reads the world only through ctx; importing the adapter is how it would reach past ctx to the harness, and determinism-given-ctx is what replay stands on" },
           { from: "engine", to: "adapter", why: "the engine must not be able to tell which harness recorded an event — that is the seam a second harness fills and the reason a recorded session replays without one" },
+          // INSIDE THE ADAPTER, the seam itself. A harness is chosen once, in flow.ts, and handed to the
+          // product as a `Harness`; a product file that imported the harness would name it, and the
+          // second harness would then be a change to the product, which is what the seam is for.
+          { from: "product", to: "claude-code", why: "flow's own product — init, status, uninstall, facts, the git gate — is handed a Harness by flow.ts and names none; importing the adapter's folder is how it would stop being harness-blind, and a second harness would then be an edit to the product instead of a second folder" },
           // THE PACKS, both ways. Outward first: a pack reaches `index.ts` and stops, which is the
           // same rule a guarded repo's own pack obeys from outside and the reason the door can be
           // trusted — a door only one kind of consumer has to use is not a door.
@@ -423,6 +435,19 @@ export const house = definePack("house", (repo: Terrain) => ({
                 code: 1,
                 stdout:
                   '{"summary":{"violations":[{"rule":{"name":"no-engine-to-adapter"},"from":"engine/domain.ts","to":"adapter/domain.ts"}]}}',
+              },
+            },
+          },
+        },
+        // …and the seam inside the adapter: flow's own product reaching the harness's folder.
+        {
+          staged: ["adapter/product.ts"],
+          world: {
+            exec: {
+              depcruise: {
+                code: 1,
+                stdout:
+                  '{"summary":{"violations":[{"rule":{"name":"no-product-to-claude-code"},"from":"adapter/product.ts","to":"adapter/claude/claude.ts"}]}}',
               },
             },
           },
