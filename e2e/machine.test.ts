@@ -64,7 +64,7 @@ interface Shipped {
 const bind = (entry: Shipped): string => `pack(${entry.pack}${entry.params === "" ? "" : `, ${entry.params}`})`;
 
 /** The one shipped pack, `rules/**` handed over as the folder this repo keeps its own packs in. */
-const SHIPPED: readonly Shipped[] = [{ pack: "flow", params: '{ packs: ["rules/**"] }', cases: 34, guardrails: 2 }];
+const FLOW: Shipped = { pack: "flow", params: '{ packs: ["rules/**"] }', cases: 34, guardrails: 2 };
 /** The stranger's own pack — the second binding, and the only turn-end rule in the config. */
 const HOUSE: Shipped = { pack: "house", params: "", cases: 2, guardrails: 1, from: "../rules/house.ts" };
 
@@ -99,9 +99,9 @@ const MISSING_LIBRARY = "grammars/nowhere.so";
 /**
  * The stranger's own pack, in the folder the stranger chose.
  *
- * ONE RULE, and it is at turn-end deliberately: the shipped pack carries a
- * turn-end guardrail, so the rail would otherwise go undriven here — and "no pack ships one" is a
- * fact about the packs, not about the moment. This is also what `flow`'s `packs: ["rules/**"]`
+ * ONE RULE, and it is at turn-end deliberately: the shipped pack carries no turn-end
+ * guardrail, so the rail would otherwise go undriven here — and "no pack ships one" is a fact about
+ * the pack, not about the moment. This is also what `flow`'s `packs: ["rules/**"]`
  * parameter is pointed at, so the delete refusal below is protecting a file that really exists.
  *
  * It is the fixture `live.test.ts` drives too (flow/__fixtures__/repo-pack.ts), with its import
@@ -141,7 +141,7 @@ import { house } from "./rules/house.ts";
 import { stranger } from "./rules/stranger.ts";
 
 export default defineConfig([
-${SHIPPED.map((s) => `  ${bind(s)},`).join("\n")}
+  ${bind(FLOW)},
   ${bind(HOUSE)},
   ${bind(STRANGER)},
 ]${settingsBlock(libraryPath)});
@@ -260,7 +260,7 @@ beforeAll(async () => {
   writeFileSync(join(repo, "rules", "stranger.ts"), STRANGER_PACK);
   writeFileSync(join(repo, "flow.config.ts"), config(grammarLibrary));
   mkdirSync(join(repo, "probe"), { recursive: true });
-  for (const entry of [...SHIPPED, HOUSE, STRANGER])
+  for (const entry of [FLOW, HOUSE, STRANGER])
     writeFileSync(join(repo, "probe", `${entry.pack}.config.ts`), only(entry, grammarLibrary));
 });
 
@@ -303,7 +303,7 @@ describe("the machine test", () => {
     // an answer.
     expect(ids).toEqual([...ENTRIES]);
     expect([...new Set(entries.map((e) => e.pack))].sort()).toEqual(
-      [...SHIPPED.map((s) => s.pack), HOUSE.pack, STRANGER.pack].sort(),
+      [FLOW.pack, HOUSE.pack, STRANGER.pack].sort(),
     );
     expect(read.green, `flow status is not green:\n${flow(["status"]).stdout}`).toBe(true);
     expect(said.code).toBe(0);
@@ -311,9 +311,9 @@ describe("the machine test", () => {
     const totals = read.moments.totals;
     step(
       "bind",
-      `  bind       ${SHIPPED.length} shipped pack + the two the repo writes · ${ids.length} entries ` +
+      `  bind       1 shipped pack + the two the repo writes · ${ids.length} entries ` +
         `(${totals["guardrails"]} guardrails · ${totals["breadcrumbs"]} breadcrumbs · ${totals["disabled"]} disabled)`,
-      `             ${[...SHIPPED.map((s) => s.pack), `${HOUSE.pack} · ${STRANGER.pack} (this repo's own)`].join(" · ")}`,
+      `             ${[FLOW.pack, `${HOUSE.pack} · ${STRANGER.pack} (this repo's own)`].join(" · ")}`,
       "  status     green — every rule resolves and can fire, every fitting is in place",
     );
   });
@@ -321,7 +321,7 @@ describe("the machine test", () => {
   it("runs every pack's own cases, and each pack's count is exactly what it was", () => {
     // PER PACK, so a deleted case NAMES the pack it was deleted from. One config each, so the
     // number that moves is attributable — the whole-config run below can only say "one fewer".
-    const measured = [...SHIPPED, HOUSE, STRANGER].map((entry) => {
+    const measured = [FLOW, HOUSE, STRANGER].map((entry) => {
       const said = flow(["test", join("probe", `${entry.pack}.config.ts`)]);
       const { cases, guardrails, red } = ran(said);
       // Every case of every pack, green under somebody else's parameters. A pack whose own case
@@ -330,14 +330,14 @@ describe("the machine test", () => {
       expect(red, `${entry.pack} failed its own cases:\n${said.stdout}`).toEqual([]);
       return { pack: entry.pack, cases, guardrails };
     });
-    expect(measured).toEqual([...SHIPPED, HOUSE, STRANGER].map(({ pack, cases, guardrails }) => ({ pack, cases, guardrails })));
+    expect(measured).toEqual([FLOW, HOUSE, STRANGER].map(({ pack, cases, guardrails }) => ({ pack, cases, guardrails })));
 
     // …and the same run over the whole config: green, and the cases add up — which is the
     // arithmetic that catches a case moving between packs rather than disappearing.
     const said = flow(["test"]);
     expect(said.code, said.stdout + said.stderr).toBe(0);
     expect(said.stdout).toContain("all green");
-    const total = [...SHIPPED, HOUSE, STRANGER].reduce((sum, entry) => sum + entry.cases, 0);
+    const total = [FLOW, HOUSE, STRANGER].reduce((sum, entry) => sum + entry.cases, 0);
     expect(ran(said).cases).toBe(total);
 
     step("cases", `  cases      ${total} green over ${measured.reduce((sum, m) => sum + m.guardrails, 0)} guardrails, pack by pack`, "  live");

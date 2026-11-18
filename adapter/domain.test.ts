@@ -1525,10 +1525,10 @@ describe("the guard's own files — the repo's half read out of the config's tex
   // whatever went wrong two hundred lines below them.
   const CONFIG = [
     `import { defineConfig, pack } from "@jawache/flow";`,
-    `import { git, work } from "@jawache/flow/packs";`,
+    `import { flow } from "@jawache/flow/packs";`,
     `import { house } from "./guards/house.ts";`,
     ``,
-    `export default defineConfig([pack(git), pack(house)]);`,
+    `export default defineConfig([pack(flow), pack(house)]);`,
   ].join("\n");
 
   it("is the config, the packs it imports and the host's half, and nothing else", () => {

@@ -1,14 +1,14 @@
 // guards/house.ts — THIS REPO'S TERRAIN, and the only pack it writes itself.
 //
-// Everything else this repo's guard binds is a pack from `@jawache/flow/packs` — fleet discipline
-// any repo would recognise, and here they are the very packs this package ships, bound the way a
-// stranger binds them. What is left in this file is the half that could never travel: the project
-// map, this package's internal layout, the one-way import fences that ARE its architecture, and
-// one ratchet about its own verb surface. "House" is what a repo's own pack is called; the line
-// between it and a shipped pack is a module boundary and nothing more.
+// Everything else this repo's guard binds is the one pack flow ships, `flow`, from
+// `@jawache/flow/packs`, and the packs kept beside this file in `guards/`: fleet discipline any
+// repo would recognise, shipped to nobody. What is in this file is the half that could never
+// travel: the project map, this package's internal layout, the one-way import fences that ARE its
+// architecture, and one ratchet about its own verb surface. "House" is what a repo's own pack is
+// called; the line between it and a shipped pack is a module boundary and nothing more.
 //
-// It imports `@jawache/flow` and `@jawache/flow/packs` — the two public doors — exactly as any
-// other repo's guard does, never a layer path. That is deliberate: the doors are proved by a real
+// It imports `@jawache/flow` — the public door — exactly as any other repo's guard does, never a
+// layer path. That is deliberate: the doors are proved by a real
 // consumer, and this one is the first to notice when either stops exporting something.
 
 // EVERYTHING from the grammar door, and nothing from the packs door any more. Until F5 this file
@@ -57,9 +57,8 @@ const ELEMENT = /^\s*"((?:[^"\\]|\\.)*)",?$/;
  *
  * The rule it enforces is one sentence — a string in `.text(…)` or `.message(…)` is never broken
  * across lines to fit an editor — and the reason is that nothing human reads it: the model gets one
- * string, and the wrap is invisible there and load-bearing nowhere. What it costs is real, and the
- * generated pack pages are where it shows: a paragraph arrives with newlines through the middle of
- * it, and a reader comparing two entries cannot tell a deliberate line break from a wrap.
+ * string, and the wrap is invisible there and load-bearing nowhere. What it costs is real: a reader
+ * comparing two entries cannot tell a deliberate line break from a wrap.
  *
  * A CONTINUATION, precisely: the previous element did not finish (no closing punctuation) and this
  * one opens with a space or a lower-case letter. That pair is what separates a wrap from the two
@@ -106,14 +105,13 @@ const BREADCRUMB_KEY = /^\s*([A-Za-z_][A-Za-z0-9_]*):\s*breadcrumb\(\)/;
  * Every breadcrumb whose key carries no doc comment, as `{ name, line }` (1-based).
  *
  * A breadcrumb's text is INSTRUCTIONS — it tells an agent what to do and never explains itself —
- * so the only place its reason can live is a doc comment on its key, and that comment is what the
- * generated pack page prints under "Why it exists". Left empty, the page says "Not stated" and the
- * entry is one nobody can judge: the delete-it test — what goes wrong in a repo without this —
- * has no answer on the page or in the file.
+ * so the only place its reason can live is a doc comment on its key, and that comment is where
+ * it is said, for whoever edits the entry next. Left empty, the entry is one nobody can judge: the
+ * delete-it test — what goes wrong in a repo without this — has no answer in the file.
  *
- * IMMEDIATELY ABOVE, and that strictness is the parser's rather than a preference: the page reads
- * these with the TypeScript compiler API, and a note wedged between the comment and the key is a
- * comment it may no longer attach to anything. Placement notes go above the doc comment.
+ * IMMEDIATELY ABOVE, so the comment is unmistakably the key's: a note wedged between the comment
+ * and the key is a comment a tool may no longer attach to anything. Placement notes go above the
+ * doc comment.
  */
 export function breadcrumbsWithoutWhy(text: string): { name: string; line: number }[] {
   const lines = text.split("\n");
@@ -282,14 +280,13 @@ export const house = definePack("house", (repo: Terrain) => ({
           // pipeline has.
           "claude-code": ["adapter/claude/**"],
           product: { path: ["adapter/**"], not: ["adapter/claude/**"] },
-          // THE PACKS THE PACKAGE SHIPS, and they are NOT a pipeline stage — they are content
-          // written in the grammar, so they sit outside the one-way run rather than at the end of
-          // it. Their fence is the strictest here and it is two rules: a pack may reach the public
-          // door and nothing else, and nothing may reach a pack.
+          // THE PACK THE PACKAGE SHIPS, and it is NOT a pipeline stage — it is content written in
+          // the grammar, so it sits outside the one-way run rather than at the end of it. Its fence
+          // is the strictest here and it is two rules: a pack may reach the public door and nothing
+          // else, and nothing may reach a pack.
           packs: ["packs/**"],
           // THE CODE BEHIND THE RECIPES, and a layer for the same reason `guards` is one: it is a
-          // CONSUMER of the two public doors,
-          // and nothing in the package may reach back into it. Without the layer these files belong
+          // CONSUMER of the public doors, and nothing in the package may reach back into it. Without the layer these files belong
           // to no layer at all, which is the hole the `root` entry above was added to close.
           tools: ["tools/**"],
           // THIS REPO'S GUARD, as code. It is a CONSUMER of the public door and of nothing else —
@@ -351,24 +348,24 @@ export const house = definePack("house", (repo: Terrain) => ({
           { from: "adapter", to: "guards", why: "the adapter loads a config by path at run time — importing one would bake this repo's guard into the shipped bundle" },
           { from: "packs", to: "guards", why: "a shipped pack that imported this repo's own pack would ship it to everybody who installs flow" },
           // THE TOOLS, both ways, and the outward half is the same claim the guard makes: the code
-          // behind a recipe reads this package through the doors a stranger reads it through, so a
-          // page it renders is a page rendered off the shipped surface rather than off our layers.
-          { from: "tools", to: "language", why: "a tool that reached the grammar's own file would be rendering a pack from a layer path, and the page would stop being what a consumer sees" },
+          // behind a recipe reads this package through the doors a stranger reads it through, so what
+          // it prints is read off the shipped surface rather than off our layers.
+          { from: "tools", to: "language", why: "a tool that reached the grammar's own file would be reading the package from a layer path, and stop seeing what a consumer sees" },
           { from: "tools", to: "checks", why: "the stock checks come through the public door here too — a second route to them is a second surface to keep working" },
-          { from: "tools", to: "engine", why: "a tool asks what a config SAYS; matching, effects and the state home are what happens next, and none of it belongs in a page" },
-          { from: "tools", to: "adapter", why: "nothing a recipe renders may depend on which harness is installed — the pages are the same in every repo that installs this package" },
-          { from: "tools", to: "guards", why: "the pages document what the package SHIPS; this repo's own bindings are not part of that, and importing them would put our spelling on a fleet page" },
+          { from: "tools", to: "engine", why: "a tool asks what a config SAYS; matching, effects and the state home are what happens next, and none of it belongs in a script" },
+          { from: "tools", to: "adapter", why: "nothing a recipe prints may depend on which harness is installed — it is the same in every repo that installs this package" },
+          { from: "tools", to: "guards", why: "a tool reads what the package SHIPS; this repo's own bindings are not part of that" },
           // …and inward: nothing in the package imports a tool. It ships with nothing
           // (tsconfig.build.json excludes the folder), so an import would be a bundle reaching for
           // a file that is not in the tarball.
           { from: "language", to: "tools", why: "the grammar cannot depend on a script that reads it" },
           { from: "checks", to: "tools", why: "a check reads the world through ctx; a tool reads the disk directly, which is the opposite promise" },
-          { from: "engine", to: "tools", why: "the engine runs a config; rendering documentation about one is nothing it does" },
+          { from: "engine", to: "tools", why: "the engine runs a config; scoring or documenting one is nothing it does" },
           { from: "adapter", to: "tools", why: "the adapter is the shipped harness column, and tools/ is not in the package's files list at all" },
           { from: "packs", to: "tools", why: "a shipped pack that imported a local script would ship a file the tarball does not carry" },
-          { from: "root", to: "tools", why: "index.ts IS the shipped surface — an import here would put a documentation generator into `@jawache/flow`" },
-          { from: "guards", to: "tools", why: "a rule fires at a gated moment and must load in milliseconds; the page generator parses every pack with the TypeScript compiler, and the guard reaches it through a recipe instead" },
-          { from: "tools", to: "e2e", why: "the end-to-end road builds temp repos and spawns binaries; a page generator needs none of it" },
+          { from: "root", to: "tools", why: "index.ts IS the shipped surface — an import here would put a script into `@jawache/flow`" },
+          { from: "guards", to: "tools", why: "a rule fires at a gated moment and must load in milliseconds; a tool reads the disk and parses, and the guard reaches it through a recipe instead" },
+          { from: "tools", to: "e2e", why: "the end-to-end road builds temp repos and spawns binaries; a tool needs none of it" },
           // NOTHING IMPORTS e2e/. It is test-only, it ships with nothing, and a product file that
           // reached into it would put a temp-repo builder and a binary spawner into the bundle.
           { from: "language", to: "e2e", why: "the grammar cannot depend on the suites that drive it" },
@@ -518,13 +515,13 @@ export const house = definePack("house", (repo: Terrain) => ({
   breadcrumbSaysWhy: guardrail()
     .at(commit)
     .on("packs/**", "guards/**")
-    .description("Every breadcrumb's key carries a doc comment saying why the entry exists — the page prints it, and nothing else can.")
+    .description("Every breadcrumb's key carries a doc comment saying why the entry exists, for whoever edits it next.")
     .check((ctx) => {
       const bare = breadcrumbsWithoutWhy(ctx.file?.content ?? "");
       return bare.length === 0 ? ctx.ok() : ctx.fail(bare.map((one) => `\`${one.name}\` (line ${one.line}) has no doc comment`).join("\n"));
     })
     .message(
-      "A breadcrumb with no `why`. Its text is instructions and never explains itself, so a doc comment on the key — immediately above it — is the only place the reason can live, and it is what the pack page prints under \"Why it exists\". Write the delete-it test: what goes wrong in a repo without this entry. (A guardrail owes one only when its refusal message cannot carry the reason.)",
+      "A breadcrumb with no `why`. Its text is instructions and never explains itself, so a doc comment on the key — immediately above it — is the only place the reason can live, for whoever edits the entry next. Write the delete-it test: what goes wrong in a repo without this entry. (A guardrail owes one only when its refusal message cannot carry the reason.)",
     )
     // THE COMMIT DIALECT, because the entry fires at the gate: a staged path, and the file's body
     // in the world beside it. The rule reads a whole file, and a commit is the moment a whole file
@@ -540,8 +537,8 @@ export const house = definePack("house", (repo: Terrain) => ({
       ],
       block: [
         { staged: ["packs/x.ts"], world: { fs: { "packs/x.ts": "  docs: breadcrumb()\n    .at(touch)\n" } } },
-        // A `//` note is not a doc comment: the compiler API does not read it, so the page cannot
-        // print it, and this is exactly the shape every pack carried before the convention.
+        // A `//` note is not a doc comment: a tool reading doc comments does not see it, and this is
+        // exactly the shape every pack carried before the convention.
         {
           staged: ["packs/x.ts"],
           world: { fs: { "packs/x.ts": "  // the two audiences, in one place\n  docs: breadcrumb()\n    .at(touch)\n" } },
@@ -552,7 +549,7 @@ export const house = definePack("house", (repo: Terrain) => ({
   proseNeverHandWrapped: guardrail()
     .at(write, commit)
     .on("packs/**", "guards/**")
-    .description("A string in .text() or .message() is one line, however long — the wrap is invisible to the model and a break on the page.")
+    .description("A string in .text() or .message() is one line, however long — the wrap is invisible to the model.")
     // INLINE, because the rule is one function and the function is above. A configured check would
     // be a factory with no options, and a stock one cannot see the shape at all: the tell is not a
     // pattern on a line, it is a line's relationship to the line before it.
@@ -563,7 +560,7 @@ export const house = definePack("house", (repo: Terrain) => ({
         : ctx.fail(`line${wrapped.length === 1 ? "" : "s"} ${wrapped.join(", ")} continue${wrapped.length === 1 ? "s" : ""} the prose string above`);
     })
     .message(
-      "Hand-wrapped prose. A string in `.text(…)` or `.message(…)` stays on ONE line however long it gets: only a model reads it, so the wrap buys no reader anything, and on the generated pack page it arrives as a line break through the middle of a sentence. Join the fragments into one string. (An aligned table or a bulleted list is fine — there every line is a complete unit and the line above it finishes.)",
+      "Hand-wrapped prose. A string in `.text(…)` or `.message(…)` stays on ONE line however long it gets: only a model reads it, so the wrap buys no reader anything, and a reader cannot tell it from a deliberate break. Join the fragments into one string. (An aligned table or a bulleted list is fine — there every line is a complete unit and the line above it finishes.)",
     )
     .test({
       pass: [

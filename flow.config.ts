@@ -79,8 +79,8 @@ export default defineConfig([
   //
   // `toolsHome` is LIVE again, and the override that used to sit here is gone with the fact that
   // earned it. There genuinely was no tools/ folder — the package was the product and esbuild.mjs
-  // was its one operational script — until the pack pages needed a generator: real code, typed and
-  // tested, behind two thin recipes. That is the shape this pack's orientation asks for, so the
+  // was its one operational script — until the score of a Bash path extractor needed one: real code, typed and
+  // tested, behind a thin recipe. That is the shape this pack's orientation asks for, so the
   // folder exists and the breadcrumb that fires on touching it is worth having.
   pack(justfile, { exempt: [] }),
 

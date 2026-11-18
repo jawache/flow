@@ -1,7 +1,7 @@
 node_modules
 
 # Build output. `just build` makes it; `npm pack` publishes dist/flow.mjs (the binary),
-# dist/index.mjs (the grammar), dist/packs.mjs (the ten packs) and dist/types/ from the
+# dist/index.mjs (the grammar), dist/packs.mjs (the one pack) and dist/types/ from the
 # working tree. Committing bundles plus their sourcemaps would put generated artefacts in
 # every diff for no reader's benefit.
 dist/

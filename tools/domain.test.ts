@@ -15,6 +15,7 @@ import {
   frontMatterFields,
   headingSlug,
   headingSlugs,
+  kebab,
   localLinks,
   packedFiles,
   unshippedLinks,
@@ -360,5 +361,13 @@ describe("the package's own links — every page npm uploads, followed from insi
 
   it("refuses a link that climbs out of the package altogether", () => {
     expect(unshippedLinks(shipped, reading("[up](../elsewhere.md)", "README.md"))).toStrictEqual(["README.md → ../elsewhere.md (outside the package)"]);
+  });
+});
+
+describe("a check's page name", () => {
+  it("spells a check's page name the way the file is spelled", () => {
+    expect(kebab("canonicalFiles")).toBe("canonical-files");
+    expect(kebab("astGrep")).toBe("ast-grep");
+    expect(kebab("depcruise")).toBe("depcruise");
   });
 });

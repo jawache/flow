@@ -531,6 +531,11 @@ export function packedFiles(report: string): string[] {
   return files.flatMap((file: unknown) => (typeof file === "object" && file !== null && "path" in file && typeof file.path === "string" ? [file.path] : []));
 }
 
+/** `canonicalFiles` → `canonical-files`, which is what the stock check's page is called. */
+export function kebab(name: string): string {
+  return name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+}
+
 /**
  * EVERY LINK A SHIPPED PAGE MAKES TO A FILE THE PACKAGE LEAVES OUT, one line each naming the page,
  * the link as written and where it lands. The pages are the shipped markdown files, each read

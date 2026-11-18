@@ -1418,11 +1418,12 @@ describe("work outside the repository — judged only by a rule marked .everywhe
   it("refuses a bad commit header from a linked worktree, passes it in a scratch repo outside, and still refuses a force-push there", () => {
     const { parent, where, worktree, outside } = repoWithWorktree();
     try {
+      writeFileSync(join(where, "everywhere.ts"), fixturePack("everywhere-pack", join(PACKAGE, "index.ts")));
       writeFileSync(join(where, "flow.config.ts"), `
 import { defineConfig, pack } from ${JSON.stringify(join(PACKAGE, "index.ts"))};
-import { git } from ${JSON.stringify(join(PACKAGE, "guards", "git.ts"))};
+import { git } from "./everywhere.ts";
 
-export default defineConfig([pack(git, {})]);
+export default defineConfig([pack(git)]);
 `);
       let ids = 0;
       const command = (line: string): Ran => hook("pre-tool-use", { ...pre("Bash", { command: line }, "outside"), cwd: where, tool_use_id: `toolu_out_${++ids}` }, where);
