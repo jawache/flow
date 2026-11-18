@@ -214,7 +214,7 @@ Every [guardrail](../reference/glossary.md#guardrail) carries the inputs it must
 
 ```
 npx flow test
-# flow test — 12 cases over 5 guardrails, all green
+# flow test — 46 cases over 5 guardrails, all green
 ```
 
 ## 9 · Commit the guard
