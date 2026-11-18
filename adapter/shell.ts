@@ -24,7 +24,7 @@ import { loadConfig, type ExecResult, type FlowConfig, type LoadResult, type Gra
 import { fault, judgedDeletions, guard, recorder, runRows, UNNAMED_COMMIT, type AgentOf, type Block } from "../engine/domain.ts";
 import { quoteArg, useGrammars } from "../checks/domain.ts";
 import { appendRows, appendSteps, commitAttribution, isOff, isRecording, loadState } from "../engine/state.ts";
-import { ALLOW, CONFIG_FILE, branchFromHead, cleanMessage, commentLeader, commitArgs, configLoadFault, hermeticEnv, pathLines, refused, stagedChanges, treeChanges, type CommitArgs, type CommitScope, type Refused, type StagedChanges } from "./domain.ts";
+import { ALLOW, CONFIG_FILE, branchFromHead, cleanMessage, commentLeader, commitArgs, configLoadFault, hermeticEnv, pathLines, readsCommitIndex, refused, stagedChanges, treeChanges, type CommitArgs, type CommitScope, type Refused, type StagedChanges } from "./domain.ts";
 import type { HookResult } from "./harness.ts";
 
 
@@ -88,9 +88,15 @@ export function readText(root: string, path: string): string | null {
  * character of a path; the checks now ask questions whose answers are one path per line, so there
  * is no column to slice and no porcelain parser anywhere in flow.
  */
-export function realWorld(root: string): World {
+export function realWorld(root: string, commitIndex?: string): World {
   return {
-    exec: (command: string): Promise<ExecResult> => Promise.resolve(runCommand(command, root)),
+    // Hermetic, but for a read of what the commit holds, which is given the commit's own index.
+    exec: (command: string): Promise<ExecResult> => {
+      const hermetic = hermeticEnv(process.env);
+      return Promise.resolve(
+        runCommand(command, root, commitIndex !== undefined && readsCommitIndex(command) ? { ...hermetic, GIT_INDEX_FILE: commitIndex } : hermetic),
+      );
+    },
     fs: {
       read: (path: string): Promise<string> => Promise.resolve(readText(root, path) ?? ""),
       exists: (path: string): Promise<boolean> => Promise.resolve(existsSync(inRepo(root, path))),
@@ -260,7 +266,8 @@ function readMessage(root: string, file: string | null): { readonly ok: true; re
   const raw = readText(root, file);
   if (raw === null) return { ok: false, why: `flow could not read the commit message git passed it, ${file}` };
   const leader = commentLeader(askGit("git config --get core.commentString || git config --get core.commentChar", root).stdout);
-  return { ok: true, message: cleanMessage(raw, leader) };
+  // git sets GIT_EDITOR=: for the hook when no editor ran, and then the comments are the author's.
+  return { ok: true, message: cleanMessage(raw, leader, process.env["GIT_EDITOR"] !== ":") };
 }
 
 /**
@@ -306,7 +313,7 @@ export async function runCommit(root: string, { scope, messageFile }: CommitArgs
   // The gate is where the expensive checks live — a suite, a type-check, a whole dependency
   // cruise — so it is also where a recording is worth the most: replaying a refused commit is the
   // one thing you cannot do by re-running it, because the working tree has moved on since.
-  const tape = isRecording(root) ? recorder(realWorld(root)) : null;
+  const tape = isRecording(root) ? recorder(realWorld(root, process.env["GIT_INDEX_FILE"])) : null;
   // A deleted file is no longer on disk, so what it held is read from the last commit — and only
   // for a deletion some rule will judge.
   const gone = judgedDeletions(load.ok ? load.entries : [], deleted).map((path) => ({
@@ -316,7 +323,7 @@ export async function runCommit(root: string, { scope, messageFile }: CommitArgs
   const outcome = await guard({
     load,
     event: { moment: "commit", staged: files, added, unchanged, deleted, gone, message, wearing },
-    world: tape?.world ?? realWorld(root),
+    world: tape?.world ?? realWorld(root, process.env["GIT_INDEX_FILE"]),
     off: false,
   });
   if (tape !== null)

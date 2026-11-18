@@ -9,7 +9,7 @@ import { type Bound, type Row } from "../engine/domain.ts";
 import { missingGrammarText } from "../checks/domain.ts";
 import { matchAny } from "../glob.ts";
 import { host } from "../__fixtures__/host.ts";
-import { ADD_THE_GATE_LINE, CONFIG_FILE, type Candidate, GATE_LOCAL_LINE, GATE_PATH, GATE_RUN_LINE, GIT_HOOK_ENV, HOOKS_DIR, HOOKS_UNKNOWN, type HooksFolder, type InitFacts, LOCAL_BIN, MACHINE_FLAG, NODE_FLOOR, NOT_INSTALLED, OLD_GATE_PATH, type OtherHooks, PACKAGE_BIN, PACKAGE_DIR, COMMIT_MSG, SET_HOOKS_PATH, type StatusFacts, UPDATE_THE_GATE_LINE, type UninstallFacts, armsFlow, armsOldFlow, classifyBash, cleanMessage, commentLeader, commitArgs, configImports, configLoadFault, flowLinesOf, gateWithoutFlow, guardPaths, health, hermeticEnv, hooksDirOf, hostPath, initCode, initLines, isCorrection, joinSpawn, listed, loadsAsStrippedModule, mergeNarratives, narrative, notInstalledLines, otherHooks, pathLines, planInit, planUninstall, commitMsgOf, recipeTools, repoFirst, scaffold, selectSessions, snip, stagedChanges, status, statusCode, statusLines, strip, text, treeChanges, uncoveredAreas, uninstallCode, uninstallLines, uninstallRefusal, wantsColour, weakenedAfterBlock } from "./domain.ts";
+import { ADD_THE_GATE_LINE, CONFIG_FILE, type Candidate, GATE_LOCAL_LINE, GATE_PATH, GATE_RUN_LINE, GIT_HOOK_ENV, HOOKS_DIR, HOOKS_UNKNOWN, type HooksFolder, type InitFacts, LOCAL_BIN, MACHINE_FLAG, NODE_FLOOR, NOT_INSTALLED, OLD_GATE_PATH, type OtherHooks, PACKAGE_BIN, PACKAGE_DIR, COMMIT_MSG, SET_HOOKS_PATH, type StatusFacts, UPDATE_THE_GATE_LINE, type UninstallFacts, armsFlow, armsOldFlow, classifyBash, cleanMessage, commentLeader, commitArgs, configImports, configLoadFault, flowLinesOf, gateWithoutFlow, guardPaths, health, hermeticEnv, readsCommitIndex, hooksDirOf, hostPath, initCode, initLines, isCorrection, joinSpawn, listed, loadsAsStrippedModule, mergeNarratives, narrative, notInstalledLines, otherHooks, pathLines, planInit, planUninstall, commitMsgOf, recipeTools, repoFirst, scaffold, selectSessions, snip, stagedChanges, status, statusCode, statusLines, strip, text, treeChanges, uncoveredAreas, uninstallCode, uninstallLines, uninstallRefusal, wantsColour, weakenedAfterBlock } from "./domain.ts";
 import { type ToolAction, type TranscriptEvent } from "./harness.ts";
 
 
@@ -359,22 +359,36 @@ describe("the git gate flow arms", () => {
   });
 });
 
+describe("which read gets the commit's index", () => {
+  it("is `git diff --cached` alone", () => {
+    expect(readsCommitIndex("git diff --cached -- 'package.json'")).toBe(true);
+    expect(readsCommitIndex("git diff --cached")).toBe(true);
+    for (const other of ["git diff HEAD -- 'a'", "just test", "git diff --cachedx", "echo git diff --cached"]) expect(readsCommitIndex(other), other).toBe(false);
+  });
+});
+
 describe("the message as git records it", () => {
   it("removes comment lines by git's comment leader, and the blank lines they leave", () => {
     const raw = "fix(parse): read a heredoc\n\nBody line.\n# Please enter the commit message\n# Changes to be committed:\n#\tmodified: a.ts\n";
-    expect(cleanMessage(raw, "#")).toBe("fix(parse): read a heredoc\n\nBody line.");
-    expect(cleanMessage("; a note\nfix: x\n# kept\n", ";"), "a leader of the repo's choosing").toBe("fix: x\n# kept");
+    expect(cleanMessage(raw, "#", true)).toBe("fix(parse): read a heredoc\n\nBody line.");
+    expect(cleanMessage("; a note\nfix: x\n# kept\n", ";", true), "a leader of the repo's choosing").toBe("fix: x\n# kept");
   });
 
   it("removes everything from the scissors line, which is the diff `git commit -v` adds", () => {
     const raw = "fix: x\n\n# ------------------------ >8 ------------------------\n# Do not modify or remove the line above.\ndiff --git a/a b/a\n+# not a comment\n";
-    expect(cleanMessage(raw, "#")).toBe("fix: x");
+    expect(cleanMessage(raw, "#", true)).toBe("fix: x");
   });
 
   it("strips trailing whitespace, collapses runs of blank lines and trims both ends, as git's own clean-up does", () => {
-    expect(cleanMessage("\n\nfix: x   \n\n\n\nbody\t\n\n", "#")).toBe("fix: x\n\nbody");
-    expect(cleanMessage("# only a comment\n", "#"), "nothing left is an empty message").toBe("");
-    expect(cleanMessage("fix: x\r\n\r\nbody\r\n", "#"), "a message saved with Windows line ends").toBe("fix: x\n\nbody");
+    expect(cleanMessage("\n\nfix: x   \n\n\n\nbody\t\n\n", "#", true)).toBe("fix: x\n\nbody");
+    expect(cleanMessage("# only a comment\n", "#", true), "nothing left is an empty message").toBe("");
+    expect(cleanMessage("fix: x\r\n\r\nbody\r\n", "#", true), "a message saved with Windows line ends").toBe("fix: x\n\nbody");
+  });
+
+  it("removes no comment line when git opened no editor: `-m \"fix: x\" -m \"#123 notes\"` keeps the #123 line", () => {
+    expect(cleanMessage("fix: x\n\n#123 notes\n", "#", false)).toBe("fix: x\n\n#123 notes");
+    expect(cleanMessage("fix: x\n\n# ------------------------ >8 ------------------------\nbody\n", "#", false), "no -v diff without an editor").toContain(">8");
+    expect(cleanMessage("fix: x  \n\n\n#123\n\n", "#", false), "whitespace is still cleaned").toBe("fix: x\n\n#123");
   });
 
   it("reads the leader from `git config`: `#` when unset or `auto`", () => {
@@ -649,6 +663,7 @@ const statusFacts = (over: Partial<StatusFacts> = {}): StatusFacts => ({
   hasConfig: true,
   load: { ok: true, entries: [] },
   gateText: COMMIT_MSG,
+  oldGateText: null,
   hooksPath: HOOKS_DIR,
   hooksFolder: { dir: HOOKS_DIR, files: ["commit-msg"], commitMsgText: COMMIT_MSG, commitMsgExecutable: true },
   settingsPath: "/home/host/settings.json",
@@ -704,6 +719,7 @@ const wired: UninstallFacts = {
   harness: host,
   hasConfig: true,
   gateText: COMMIT_MSG,
+  oldGateText: null,
   hooksPath: HOOKS_DIR,
   subfolderOf: null,
   hooksDir: ["commit-msg"],
@@ -773,6 +789,23 @@ describe("planUninstall — a repo flow init set up", () => {
     expect(said.at(-2)).toBe(`  ✗ could not delete ${GATE_PATH}: EACCES`);
     expect(said.at(-1)).toContain("next:");
     expect(uninstallCode(plan, ["x"])).toBe(1);
+  });
+});
+
+describe("planUninstall — the pre-commit hook an older flow wrote", () => {
+  const wrote03 = `#!/bin/sh\n${repoFirst("$PWD", "hook commit")}\nexec flow hook commit\n`;
+
+  it("is deleted when flow's lines are all of it, so no commit runs flow once it is gone", () => {
+    const plan = planUninstall({ ...wired, gateText: null, hooksDir: ["pre-commit"], oldGateText: wrote03 });
+    expect(plan.oldGate).toEqual({ path: OLD_GATE_PATH, body: null });
+    expect(plan.hooksPath, "nothing is left in the folder").toBe(true);
+    expect(uninstallLines(plan, []).join("\n")).toContain(`  - ${OLD_GATE_PATH}`);
+  });
+
+  it("loses only flow's lines when the hook runs other things", () => {
+    const plan = planUninstall({ ...wired, oldGateText: `#!/bin/sh\nnpm test\n${wrote03.split("\n").slice(1).join("\n")}`, hooksDir: ["commit-msg", "pre-commit"] });
+    expect(plan.oldGate).toEqual({ path: OLD_GATE_PATH, body: "#!/bin/sh\nnpm test\n" });
+    expect(plan.hooksPath, "their hook is still in the folder").toBe(false);
   });
 });
 
@@ -1044,6 +1077,12 @@ describe("status — the red lines, each carrying its fix", () => {
     const old = red({ gateText: OLD_GATE });
     expect(old, "an old gate still runs, and misses every deletion").toContain("calls the old `flow commit`");
     expect(old, "the same instruction init gives, in the same words").toContain(UPDATE_THE_GATE_LINE);
+  });
+
+  it("a pre-0.4 pre-commit gate that still runs flow, which gets no message", () => {
+    const said = red({ gateText: null, oldGateText: `#!/bin/sh\n${repoFirst("$PWD", "hook commit")}\nexec flow hook commit\n` });
+    expect(said).toContain(`${OLD_GATE_PATH} still runs flow, without the commit message`);
+    expect(said).toContain("`flow init` replaces it");
   });
 
   it("a hooksPath git was never told about — the one a fresh clone always needs", () => {

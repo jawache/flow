@@ -94,6 +94,23 @@ describe("ctx.fs and ctx.git, live", () => {
   });
 });
 
+describe("a check's read of what the commit holds", () => {
+  it("is given the commit's own index, and every other command stays hermetic", async () => {
+    writeFileSync(join(repo, "a.ts"), "one\n");
+    git("add", "a.ts");
+    git("commit", "-qm", "first");
+    // The index `git commit -a` makes: a copy of the real one, with a change staged that the real one lacks.
+    const temp = join(repo, ".git", "next-index.lock");
+    writeFileSync(join(repo, "a.ts"), "two\n");
+    spawnSync("git", ["add", "a.ts"], { cwd: repo, env: { ...process.env, GIT_INDEX_FILE: temp } });
+    const real = realWorld(repo);
+    const commits = realWorld(repo, temp);
+    expect((await real.exec("git diff --cached -- 'a.ts'")).stdout, "the real index holds nothing staged").toBe("");
+    expect((await commits.exec("git diff --cached -- 'a.ts'")).stdout, "the commit's own index holds the change").toContain("+two");
+    expect((await commits.exec('echo "${GIT_INDEX_FILE:-stripped}"')).stdout.trim(), "any other command is hermetic").toBe("stripped");
+  });
+});
+
 describe("which branch this checkout has out", () => {
   it("reads it from HEAD, before there is any commit to rev-parse", () => {
     // An unborn branch is every repo's own first commit, and `git rev-parse HEAD` fails outright

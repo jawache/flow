@@ -465,6 +465,16 @@ export const GIT_HOOK_ENV: readonly string[] = [
   "GIT_QUARANTINE_ID",
 ];
 
+/**
+ * Does this command read the index the commit is being made from? Only `git diff --cached` does: it
+ * is the one read a check makes of what the commit holds, and under `git commit -a` or `git commit
+ * <path>` that index is a temporary one that only `GIT_INDEX_FILE` names. Any other command stays
+ * hermetic.
+ */
+export function readsCommitIndex(command: string): boolean {
+  return /^git diff --cached(\s|$)/.test(command);
+}
+
 /** The environment a check's command should see: this one, minus git's hook plumbing. */
 export function hermeticEnv(
   env: Readonly<Record<string, string | undefined>>,
@@ -1576,17 +1586,19 @@ export function commentLeader(configured: string): string {
 }
 
 /**
- * A commit message as git records it: from the scissors line on, gone, then every comment line,
- * trailing whitespace, runs of blank lines and the blank lines at either end, as git's own `strip`
- * clean-up does. Comment lines are what git's editor template adds, and the section after the
- * scissors line is the diff `git commit -v` appends.
+ * A commit message as git records it. When git opened an editor, from the scissors line on is gone,
+ * then every comment line: comment lines are what git's editor template adds, and the section after
+ * the scissors line is the diff `git commit -v` appends. When it did not (`-m`, `-F`), they are the
+ * author's own text and stay. Either way trailing whitespace, runs of blank lines and the blank
+ * lines at either end go, as git's own clean-up does. `edited` is false when git set
+ * `GIT_EDITOR=:` for the hook, which is how it says no editor ran.
  */
-export function cleanMessage(raw: string, leader: string): string {
+export function cleanMessage(raw: string, leader: string, edited: boolean): string {
   const scissors = `${leader} ------------------------ >8 ------------------------`;
   const kept: string[] = [];
   for (const line of raw.split(/\r?\n/)) {
-    if (line === scissors) break;
-    if (line.startsWith(leader)) continue;
+    if (edited && line === scissors) break;
+    if (edited && line.startsWith(leader)) continue;
     const text = line.trimEnd();
     if (text === "" && (kept.length === 0 || kept.at(-1) === "")) continue;
     kept.push(text);
@@ -1961,8 +1973,8 @@ function machineRewrite(file: InitFacts["machine"], registering: Registering): I
 }
 
 /** The pre-0.4 gate with flow's lines taken out, as a write: null when the repo has none or none of it is flow's. */
-function oldGateOf(facts: InitFacts): InitPlan["oldGate"] {
-  const old = facts.isGit ? gateWithoutFlow(facts.oldGateText) : null;
+function oldGateOf(text: string | null): InitPlan["oldGate"] {
+  const old = gateWithoutFlow(text);
   return old === null ? null : { path: OLD_GATE_PATH, body: old.delete ? null : old.body };
 }
 
@@ -1983,7 +1995,7 @@ export function planInit(facts: InitFacts): InitPlan {
     // NEVER over a hook that is already there. This is a scaffold, and a repo whose gate runs its
     // own suite must not lose it to a re-run — which is also what makes init safe to run again.
     gate: !facts.isGit || facts.gateText !== null ? null : { path: GATE_PATH, body: COMMIT_MSG, mode: 0o755 },
-    oldGate: oldGateOf(facts),
+    oldGate: facts.isGit ? oldGateOf(facts.oldGateText) : null,
     gateKept: facts.isGit && facts.gateText !== null && !armsFlow(facts.gateText),
     gateOld: facts.isGit && !armsFlow(facts.gateText) && armsOldFlow(facts.gateText),
     notGit: !facts.isGit,
@@ -2104,6 +2116,8 @@ export interface UninstallFacts {
   readonly hasConfig: boolean;
   /** The gate as it stands, or null when there is none. */
   readonly gateText: string | null;
+  /** The pre-0.4 gate, `.githooks/pre-commit`, as it stands, or null when there is none. */
+  readonly oldGateText: string | null;
   /** `git config core.hooksPath` as it stands. */
   readonly hooksPath: string | null;
   /** The repo's top folder when the run is in a folder below it, else null. */
@@ -2141,6 +2155,8 @@ export interface SettingsWithout {
 export interface UninstallPlan {
   /** The gate: deleted, rewritten without flow's lines, or null when nothing in it is flow's. */
   readonly gate: { readonly path: string; readonly body: string | null } | null;
+  /** The pre-0.4 gate, taken out the same way: it would run `flow hook commit` with flow gone. */
+  readonly oldGate: { readonly path: string; readonly body: string | null } | null;
   /**
    * A commit-msg hook that still calls flow after the run, in lines flow did not write there: that
    * hook, as the report names it, and those lines, for a person to delete before `npm uninstall`.
@@ -2188,7 +2204,10 @@ export function planUninstall(facts: UninstallFacts): UninstallPlan {
   const gateGone = gate?.delete === true;
   const leftText = gate === null ? facts.gateText : gate.delete ? null : gate.body;
   // A hook left in the folder is a hook git should still run, so `core.hooksPath` stays pointed at it.
-  const hooksLeft = (facts.hooksDir ?? []).filter((name) => !(gateGone && name === "commit-msg"));
+  const oldGate = oldGateOf(facts.oldGateText);
+  const hooksLeft = (facts.hooksDir ?? []).filter(
+    (name) => !(gateGone && name === "commit-msg") && !(oldGate?.body === null && name === "pre-commit"),
+  );
   // `core.hooksPath` is the whole repo's, and `.githooks/` is in the repo's top folder, so only a run
   // there unsets it. From a subfolder the run finds no gate, and unsetting the setting would leave
   // the gate in place with nothing pointing git at it.
@@ -2220,6 +2239,7 @@ export function planUninstall(facts: UninstallFacts): UninstallPlan {
   if (hookCallsFlow === null && gateLines.length > 0) hookCallsFlow = { path: GATE_PATH, lines: gateLines };
   return {
     gate: gate === null ? null : { path: GATE_PATH, body: gate.delete ? null : gate.body },
+    oldGate,
     hookCallsFlow,
     hooksPath: ownsHooksPath && hooksLeft.length === 0,
     hooksPathFrom: flowsHooksPath ? facts.subfolderOf : null,
@@ -2264,7 +2284,8 @@ export function uninstallCode(plan: UninstallPlan, failures: readonly string[]):
 /** The report: every removal named, what was kept and why, each failure, and the command to run next. */
 export function uninstallLines(plan: UninstallPlan, failures: readonly string[]): string[] {
   const removed: string[] = [];
-  if (plan.gate) removed.push(plan.gate.body === null ? plan.gate.path : `flow's lines from ${plan.gate.path} — the rest of the hook is kept`);
+  for (const gate of [plan.gate, plan.oldGate])
+    if (gate) removed.push(gate.body === null ? gate.path : `flow's lines from ${gate.path} — the rest of the hook is kept`);
   if (plan.hooksPath) removed.push(`core.hooksPath (it was ${HOOKS_DIR})`);
   if (plan.hooksDir) removed.push(`${HOOKS_DIR}/`);
   if (plan.flowDir) removed.push(`${FLOW_DIR}/ — flow's state and logs`);
@@ -2343,6 +2364,8 @@ export interface StatusFacts {
   /** The load, or null when there is no config to load. */
   readonly load: LoadResult | null;
   readonly gateText: string | null;
+  /** The pre-0.4 gate, `.githooks/pre-commit`, as it stands, or null when there is none. */
+  readonly oldGateText: string | null;
   readonly hooksPath: string | null;
   /** The folder git runs hooks from, read as init reads it, or null outside git or when git could not say. */
   readonly hooksFolder: HooksFolder | null;
@@ -2497,6 +2520,7 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
   const once = twice.bare.length === 0 && twice.theirs.length === 0;
   const armed = armsFlow(facts.gateText);
   const old = !armed && armsOldFlow(facts.gateText);
+  const olderGate = armsFlow(facts.oldGateText) || armsOldFlow(facts.oldGateText);
   return [
     {
       id: "config",
@@ -2507,8 +2531,10 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
     },
     {
       id: "commit-gate",
-      ok: armed,
-      detail: armed
+      ok: armed && !olderGate,
+      detail: olderGate
+        ? `${OLD_GATE_PATH} still runs flow, without the commit message — \`flow init\` replaces it with ${GATE_PATH}.`
+        : armed
         ? `${GATE_PATH} runs \`flow hook commit\` over the staged changes`
         : old
           ? `${GATE_PATH} calls the old \`flow commit\`, which leaves every deleted file unchecked — ${UPDATE_THE_GATE_LINE}.`

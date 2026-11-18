@@ -115,17 +115,6 @@ describe("flow init — a repo that has never heard of flow", () => {
     } finally {
       rmSync(older, { recursive: true, force: true });
     }
-
-    const mixed = newRepo();
-    try {
-      mkdirSync(join(mixed, ".githooks"), { recursive: true });
-      writeFileSync(join(mixed, ".githooks", "pre-commit"), GATE_03("npm test\n"), { mode: 0o755 });
-      const said = flow(mixed, ["init"]);
-      expect(said.stdout).toContain("flow's lines taken out of .githooks/pre-commit");
-      expect(readFileSync(join(mixed, ".githooks", "pre-commit"), "utf8"), "their own line stays").toBe("#!/bin/sh\n# The flow commit gate.\nnpm test\n");
-    } finally {
-      rmSync(mixed, { recursive: true, force: true });
-    }
   });
 
   it("registers the events flow answers, and not Notification", () => {

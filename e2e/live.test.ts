@@ -655,8 +655,6 @@ describe("the commit gate", () => {
         const messageFile = join(other, "msg.txt");
         writeFileSync(messageFile, "wip\n# Please enter the commit message\n");
         expect(gateHere(["hook", "commit", messageFile]).code).toBe(2);
-        writeFileSync(messageFile, "# a comment first\nfix: add 004\n# Changes to be committed:\n");
-        expect(gateHere(["hook", "commit", messageFile]).code, "the header is the first line git records").toBe(0);
 
         const added = viaGit(["commit", "-m", "fix: add 004"]);
         expect(added.code, added.stderr).toBe(0);

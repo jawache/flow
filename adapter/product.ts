@@ -400,6 +400,7 @@ function uninstallFacts(root: string, machineFlag: boolean, harness: Harness): U
     harness,
     hasConfig: existsSync(join(root, CONFIG_FILE)),
     gateText: readText(root, GATE_PATH),
+    oldGateText: readText(root, OLD_GATE_PATH),
     hooksPath: hooksPath(root),
     subfolderOf: top,
     hooksDir,
@@ -432,13 +433,13 @@ function removeIfEmpty(dir: string): void {
 function performUninstall(root: string, plan: UninstallPlan): string[] {
   const { failures, attempt } = steps();
 
-  const { gate } = plan;
-  if (gate !== null)
-    attempt(`could not ${gate.body === null ? "delete" : "rewrite"} ${gate.path}`, () => {
-      const file = join(root, gate.path);
-      if (gate.body === null) unlinkSync(file);
-      else writeFileSync(file, gate.body);
-    });
+  for (const gate of [plan.gate, plan.oldGate])
+    if (gate !== null)
+      attempt(`could not ${gate.body === null ? "delete" : "rewrite"} ${gate.path}`, () => {
+        const file = join(root, gate.path);
+        if (gate.body === null) unlinkSync(file);
+        else writeFileSync(file, gate.body);
+      });
 
   if (plan.hooksPath)
     attempt("could not unset core.hooksPath", () =>
@@ -517,6 +518,7 @@ export async function runStatus(cwd: string, args: readonly string[], harness: H
     hasConfig: regime.kind === "loaded",
     load: regime.kind === "loaded" ? regime.load : null,
     gateText: readText(root, GATE_PATH),
+    oldGateText: readText(root, OLD_GATE_PATH),
     hooksPath: hooksPath(root),
     hooksFolder: hooksFolder(root),
     settingsPath,
