@@ -320,18 +320,12 @@ export interface Ctx {
    * `existed` says whether the last commit had a file at `path`: every staged file is on disk, so
    * `ctx.fs.exists(path)` answers yes to a file the commit adds, and "before" is the last commit.
    * Absent, git could not say.
-   *
-   * `unchanged` is `true` on a file identical to the last commit's copy, which only `flow hook
-   * commit --all` hands a check: it judges the whole tree, and most of it is as committed. A check
-   * about content reads it all the same; a check about edits has nothing to judge. Absent everywhere
-   * else, because every other event is a change.
    */
   readonly file?:
     | {
         readonly path: string;
         readonly content: string;
         readonly existed?: boolean | undefined;
-        readonly unchanged?: boolean | undefined;
       }
     | undefined;
   /** command: the line about to run. */
@@ -341,12 +335,10 @@ export interface Ctx {
    * the order they appear. `null` when the line does not parse: read it as "cannot tell".
    */
   readonly commands?: readonly ShellCommand[] | null | undefined;
-  /** commit: the staged paths. Under `flow hook commit --all`, every file in the tree. */
+  /** commit: the staged paths. Empty under `flow hook commit --all`, which makes no commit. */
   readonly staged?: readonly string[] | undefined;
-  /** commit: the staged paths the last commit does not have. Empty when git could not say, as under `--all` with no answer. */
+  /** commit: the staged paths the last commit does not have. Empty when git could not say, and under `--all`. */
   readonly added?: readonly string[] | undefined;
-  /** commit: the staged paths identical to the last commit's copy, which only `flow hook commit --all` lists. A check about changes skips them. */
-  readonly unchanged?: readonly string[] | undefined;
   /** commit: the paths the commit deletes. A rename is a deletion of the old path plus an add of the new one. */
   readonly deleted?: readonly string[] | undefined;
   /**
@@ -1700,8 +1692,6 @@ export interface CaseWorld {
 interface CommitCase {
   /** The staged paths the last commit does not have: it sets `ctx.added` and each file's `ctx.file.existed`. */
   readonly added?: readonly string[];
-  /** The staged paths identical to the last commit, as under `--all`. Each sets `ctx.file.unchanged`. */
-  readonly unchanged?: readonly string[];
   /** The paths the commit deletes: it sets `ctx.deleted`. */
   readonly deleted?: readonly string[];
   /** The commit message, as git records it. A case with none has an empty one. */

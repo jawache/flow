@@ -215,8 +215,8 @@ export function identify(
 /**
  * One event the guardrail rails carry. Facts only — who it happened to is `wearing`.
  *
- * commit: `added`, `unchanged`, `deleted` and `message` are the commit's facts
- * (`CommitFileFacts`), the same a case lists.
+ * commit: `added`, `deleted` and `message` are the commit's facts (`CommitFileFacts`), the same a
+ * case lists.
  */
 export interface GuardEvent extends CommitFileFacts {
   readonly moment: GuardrailMoment;
@@ -224,8 +224,15 @@ export interface GuardEvent extends CommitFileFacts {
   readonly command?: string | undefined;
   /** command: the line's parse, when the caller already made it. Absent, the engine parses the line. */
   readonly commands?: Ctx["commands"];
-  /** commit: the staged paths. */
+  /** commit: the staged paths. Under `whole`, every file git lists. */
   readonly staged?: readonly string[] | undefined;
+  /**
+   * commit: the whole repo, with no commit — `flow hook commit --all`. Only a rule with `.on(…)` is
+   * called, once for each file its globs match; `ctx.staged`, `ctx.added` and `ctx.deleted` are
+   * empty and `ctx.message` is null. `added` still says which files the last commit lacks, for
+   * each file's `existed`.
+   */
+  readonly whole?: boolean | undefined;
   /** turn-end: what the actor did this turn, in order. */
   readonly turn?: readonly TurnAction[] | undefined;
   /** Every category this session × agent wears. Empty means it wears none, not "all of them". */
@@ -339,7 +346,8 @@ async function subjectsOf(entry: LoadedEntry, event: GuardEvent, world: World, c
   const outside = everywhere(entry) ? [] : (event.outside ?? []);
   if (event.moment === "commit") {
     const staged = event.staged ?? [];
-    const every = commitFacts(staged, event);
+    if (event.whole === true && !spec.on) return [];
+    const every = event.whole === true ? { staged: [], added: [], deleted: [], message: null } : commitFacts(staged, event);
     if (!spec.on) return [{ name: null, facts: every }];
     const files = await stagedFiles(spec, staged, world, event);
     return files.map((file) => ({ name: file.path, facts: { ...every, file } }));
@@ -1738,8 +1746,8 @@ export type RecordedStep =
       readonly command?: string | undefined;
       readonly staged?: readonly string[] | undefined;
       readonly added?: GuardEvent["added"];
-      readonly unchanged?: GuardEvent["unchanged"];
       readonly deleted?: GuardEvent["deleted"];
+      readonly whole?: GuardEvent["whole"];
       readonly message?: GuardEvent["message"];
       readonly turn?: readonly TurnAction[] | undefined;
       readonly wearing: readonly string[];
@@ -1863,7 +1871,7 @@ export async function replay({ load, recording, settings, marks = {} }: ReplayAr
           command: step.command,
           staged: step.staged,
           added: step.added,
-          unchanged: step.unchanged,
+          whole: step.whole,
           deleted: step.deleted,
           message: step.message,
           turn: step.turn,

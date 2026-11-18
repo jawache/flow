@@ -36,9 +36,6 @@ let repo: string;
  * else's — `guards/` is where this repo happens to keep them, and the engine knows no such word.
  */
 
-// A rule written inline: `protectedPath` reads a commit.
-const ANY_CHANGE = `(ctx) => (ctx.file?.unchanged === true ? ctx.ok() : ctx.fail("protected"))`;
-
 const HOUSE = (packageRoot: string): string => fixturePack("repo-pack", join(packageRoot, "index.ts"));
 
 /** What the temp repo's own guard says. A few entries, at least one per rail this suite drives. */
@@ -67,10 +64,9 @@ const demo = definePack("demo", {
 
   keepGenerated: guardrail()
     .at(commit)
-    .on("gen/**")
-    .check(${ANY_CHANGE})
+    .check(protectedPath({ paths: ["gen/**"] }))
     .message("Machine-written: edit its source, then re-run the build.")
-    .test({ block: [{ path: "gen/a.ts", content: "" }] }),
+    .test({ block: [{ staged: ["gen/a.ts"] }] }),
 
   noForce: guardrail()
     .at(command)
@@ -541,23 +537,58 @@ describe("the commit gate", () => {
       }
     });
 
-    it("passes --all over a tree the last commit already holds, and blocks --all over an edit of one (#142)", () => {
+    it("runs only the rules with .on under --all, once for each file, and none of a commit's own (#142)", () => {
       // This repo's config is untracked and carries the marker noSecrets bans, so --all refuses it
-      // whatever happens here: only the append-only rule's lines are this test's business.
-      const clean = gateHere(["hook", "commit", "--all"]);
-      expect(clean.stderr, "every migration is as committed").not.toContain("demo.appendOnly");
-      expect(clean.stderr, "a plain protected-file rule passes a file as committed").not.toContain("demo.keepGenerated");
-      expect(clean.stderr, "a content rule still reads a file as committed").toContain("✗ demo.noSecrets · src/marked.ts");
+      // whatever happens here: only the lines about the rules without `.on` are this test's business.
       writeFileSync(migration("001.sql"), "drop table a;\n");
       writeFileSync(join(other, "gen", "a.ts"), "export const a = 2;\n");
       try {
-        const edited = gateHere(["hook", "commit", "--all"]);
-        expect(edited.code).toBe(2);
-        expect(edited.stderr).toContain("✗ demo.appendOnly");
-        expect(edited.stderr, "002.sql is as committed").not.toContain("migrations/002.sql");
-        expect(edited.stderr).toContain("✗ demo.keepGenerated · gen/a.ts");
+        const all = gateHere(["hook", "commit", "--all"]);
+        expect(all.code).toBe(2);
+        expect(all.stderr, "a content rule reads each file git lists").toContain("✗ demo.noSecrets · src/marked.ts");
+        expect(all.stderr, "an edit of a protected file is a commit's business, and --all has no commit").not.toContain("demo.appendOnly");
+        expect(all.stderr).not.toContain("demo.keepGenerated");
+        expect(all.stderr, "nor is a header, or a rule bound to who").not.toContain("header.header");
+        expect(all.stderr).not.toContain("demo.buildersOnly");
       } finally {
         reset();
+      }
+    });
+
+    it("lets an Edit and a shell write of a file under a content rule through, and refuses the commit that stages it", () => {
+      // flow stops no write: the file lands, whatever the rule says, and nothing is kept to put it
+      // back. The commit is where the file is judged.
+      const marked = "// DO-NOT-COMMIT\n";
+      const edit = {
+        ...pre("Edit", { file_path: join(other, "src", "edited.ts"), old_string: "x", new_string: "y" }, "journey-1"),
+        cwd: other,
+      };
+      expect(runFlow(other, ["hook", "pre-tool-use"], {}, JSON.stringify(edit)).code, "no hook is asked before an Edit").toBe(0);
+      writeFileSync(join(other, "src", "edited.ts"), marked);
+      const after = runFlow(other, ["hook", "post-tool-use"], {}, JSON.stringify(edit));
+      expect(after.code, after.stderr).toBe(0);
+      expect(after.stderr).toBe("");
+
+      const command = "printf '// DO-NOT-COMMIT\\n' > src/shell.ts";
+      const bash = { ...pre("Bash", { command }, "journey-1"), cwd: other };
+      expect(runFlow(other, ["hook", "pre-tool-use"], {}, JSON.stringify(bash)).code, "the command is judged by its words, not by what it writes").toBe(0);
+      spawnSync("bash", ["-c", command], { cwd: other });
+      expect(runFlow(other, ["hook", "post-tool-use"], {}, JSON.stringify(bash)).code).toBe(0);
+
+      try {
+        expect(readFileSync(join(other, "src", "edited.ts"), "utf8"), "the Edit's file is as written").toBe(marked);
+        expect(readFileSync(join(other, "src", "shell.ts"), "utf8"), "the shell's file is as written").toBe(marked);
+        expect(existsSync(join(other, ".flow", "snapshots")), "flow keeps no snapshot").toBe(false);
+
+        runGit(other, ["add", "src/edited.ts", "src/shell.ts"]);
+        const refused = gateHere();
+        expect(refused.code).toBe(2);
+        expect(refused.stderr).toContain("✗ demo.noSecrets · src/edited.ts");
+        expect(refused.stderr).toContain("✗ demo.noSecrets · src/shell.ts");
+      } finally {
+        reset();
+        rmSync(join(other, "src", "edited.ts"), { force: true });
+        rmSync(join(other, "src", "shell.ts"), { force: true });
       }
     });
 

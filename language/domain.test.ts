@@ -2124,6 +2124,31 @@ describe("the load refuses", () => {
   });
 });
 
+describe("the settings are a closed set", () => {
+  it("refuses `revert` and `snapshotInclude` as unknown-setting, naming the key and the 0.4 migration guide", () => {
+    for (const key of ["revert", "snapshotInclude"]) {
+      const result = loadConfig({ bindings: [], settings: { [key]: key === "revert" ? "all" : [".env"] } });
+      expect(result.ok).toBe(false);
+      const refusals = result.ok ? [] : result.refusals;
+      expect(shape(refusals)).toEqual([["unknown-setting", ""]]);
+      expect(refusals[0]?.detail).toContain(`\`${key}\``);
+      expect(refusals[0]?.detail).toContain("docs/user/migrations/0.4.0.md");
+    }
+  });
+
+  it("refuses any other key as well, and lists the two it has", () => {
+    const result = loadConfig({ bindings: [], settings: { driftTokens: 1, drift: 2 } as never });
+    const refusals = result.ok ? [] : result.refusals;
+    expect(shape(refusals)).toEqual([["unknown-setting", ""]]);
+    expect(refusals[0]?.detail).toContain("`drift`");
+    expect(refusals[0]?.detail).toContain("`driftTokens` and `grammars`");
+  });
+
+  it("accepts driftTokens and grammars", () => {
+    expect(loadConfig({ bindings: [], settings: { driftTokens: 1, grammars: [] } }).ok).toBe(true);
+  });
+});
+
 describe("REFUSAL_CODES", () => {
   it("is the closed vocabulary every refusal draws from", () => {
     expect(REFUSAL_CODES).toEqual([

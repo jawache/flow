@@ -251,8 +251,7 @@ function readChanges(
   // The whole tree: every file git can see that is on disk, measured against the last commit.
   const present = [...new Set(listed.stdout.split("\0"))].filter((path) => path !== "" && existsSync(inRepo(root, path)));
   const tree = askGit("git ls-tree -r --name-only -z HEAD", root);
-  const differs = askGit("git diff --name-only --no-renames -z HEAD", root);
-  return { ok: true, staged: treeChanges(present, tree, differs, () => askGit("git rev-parse -q --verify HEAD", root).code === 0) };
+  return { ok: true, staged: treeChanges(present, tree, () => askGit("git rev-parse -q --verify HEAD", root).code === 0) };
 }
 
 /**
@@ -299,7 +298,7 @@ export async function runCommit(root: string, { scope, messageFile }: CommitArgs
   if (messageFile !== null && askGit("git rev-parse -q --verify MERGE_HEAD", root).code === 0) return ALLOW;
   const changes = readChanges(root, scope);
   if (!changes.ok) return refused([{ moment: "commit", block: fault(changes.why) }]) ?? ALLOW;
-  const { files, added, unchanged, deleted } = changes.staged;
+  const { files, added, deleted } = changes.staged;
   const read = readMessage(root, messageFile);
   if (!read.ok) return refused([{ moment: "commit", block: fault(read.why) }]) ?? ALLOW;
   const { message } = read;
@@ -316,7 +315,7 @@ export async function runCommit(root: string, { scope, messageFile }: CommitArgs
   const tape = isRecording(root) ? recorder(realWorld(root, process.env["GIT_INDEX_FILE"])) : null;
   const outcome = await guard({
     load,
-    event: { moment: "commit", staged: files, added, unchanged, deleted, message, wearing },
+    event: { moment: "commit", staged: files, added, deleted, message, wearing, ...(scope === "all" ? { whole: true } : {}) },
     world: tape?.world ?? realWorld(root, process.env["GIT_INDEX_FILE"]),
     off: false,
   });
@@ -327,8 +326,8 @@ export async function runCommit(root: string, { scope, messageFile }: CommitArgs
         moment: "commit",
         staged: files,
         ...(added === undefined ? {} : { added }),
-        ...(unchanged.length === 0 ? {} : { unchanged }),
         ...(deleted.length === 0 ? {} : { deleted }),
+        ...(scope === "all" ? { whole: true } : {}),
         message,
         wearing,
         world: tape.taken(),

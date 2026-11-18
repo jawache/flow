@@ -383,15 +383,6 @@ describe("protectedPath", () => {
     expect(await run(migrations, "commit", { staged: [], deleted: ["migrations/001.sql"] })).toContain("append-only");
   });
 
-  it("passes a file identical to the last commit, as --all lists it, with and without existingOnly", async () => {
-    for (const check of [generated, migrations]) {
-      const path = check === generated ? "src/generated/api.ts" : "migrations/001.sql";
-      expect(await run(check, "commit", { staged: [path], added: [], unchanged: [path] }), path).toBeNull();
-      const other = check === generated ? "src/generated/other.ts" : "migrations/002.sql";
-      expect(await run(check, "commit", { staged: [path, other], added: [], unchanged: [path] }), "the changed one is still refused").toContain(other);
-    }
-  });
-
   it("refuses to load with no paths — it would protect nothing", () => {
     expect(faultsOf(protectedPath({ paths: [] }))).toStrictEqual([
       "lists no `paths`, so it protects nothing. Name the files a commit must not change or delete.",
@@ -1766,11 +1757,10 @@ describe("runCase", () => {
   describe("a commit entry that named paths", () => {
     const banned: Check = (ctx) => (ctx.file?.content.includes("SECRET") === true ? ctx.fail(ctx.file.path) : ctx.ok());
     const scoped = entry({ at: ["commit"], on: ["**"], ignore: ["**/*.test.ts"], check: banned });
-    // Per-file edit rules, as the fan-out hands a file: `existed` and `unchanged` ride on `ctx.file`.
-    const anyEdit: Check = (ctx) => (ctx.file === undefined || ctx.file.unchanged === true ? ctx.ok() : ctx.fail("changed"));
+    // A per-file edit rule, as the fan-out hands a file: `existed` rides on `ctx.file`.
     const existingEdit: Check = async (ctx) => {
       const f = ctx.file;
-      if (f === undefined || f.unchanged === true) return ctx.ok();
+      if (f === undefined) return ctx.ok();
       return (f.existed ?? (await ctx.fs.exists(f.path))) ? ctx.fail("existing") : ctx.ok();
     };
 
@@ -1786,23 +1776,6 @@ describe("runCase", () => {
       expect((await runCase(appendOnly, check, { staged: ["m/2.sql"], added: ["m/2.sql"], world }, "pass", 0)).ok).toBe(true);
       expect((await runCase(appendOnly, check, { staged: ["m/1.sql"], added: ["m/2.sql"], world }, "block", 0)).ok).toBe(true);
       expect((await runCase(appendOnly, check, { staged: ["m/2.sql"], world }, "block", 0)).ok, "the disk decides").toBe(true);
-    });
-
-    it("passes a protected file identical to the last commit, with and without existingOnly, and refuses an edited one", async () => {
-      const world = { fs: { "m/1.sql": "old", "m/2.sql": "edited" } };
-      for (const check of [anyEdit, existingEdit]) {
-        const guarded = entry({ at: ["commit"], on: ["m/**"], check });
-        const asCommitted = { staged: ["m/1.sql"], added: [], unchanged: ["m/1.sql"], world };
-        expect((await runCase(guarded, check, asCommitted, "pass", 0)).ok, "as committed is not an edit").toBe(true);
-        const edited = { staged: ["m/1.sql", "m/2.sql"], added: [], unchanged: ["m/1.sql"], world };
-        const outcome = await runCase(guarded, check, edited, "block", 0);
-        expect(outcome.ok, "the edited file is still refused").toBe(true);
-      }
-    });
-
-    it("still refuses an unchanged file for what it holds: only an edit rule passes one", async () => {
-      const asCommitted = { staged: ["a.ts"], added: [], unchanged: ["a.ts"], world: { fs: { "a.ts": "SECRET" } } };
-      expect((await runCase(scoped, banned, asCommitted, "block", 0)).ok).toBe(true);
     });
 
     it("honours the entry's own ignore list, so an out-of-scope file is never a subject", async () => {

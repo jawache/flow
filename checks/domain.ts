@@ -309,17 +309,14 @@ function wordsInLine(banned: CommandInWords, line: string): boolean {
  * the last commit does not have it (`ctx.added`). Absent means no narrowing, which is the empty
  * value rather than a default a reader has to know about.
  *
- * Either way, a file identical to the last commit's copy is not a change, and passes. Only `flow
- * hook commit --all` lists one (`ctx.unchanged`): it judges the whole tree, and a real commit
- * never stages a file it leaves as it was.
+ * It has no `.on(…)`, so `flow hook commit --all`, which makes no commit, does not call it.
  */
 export const protectedPath = defineCheck(
   (opts: { paths: readonly string[]; existingOnly?: boolean }): Check =>
     withFaults(
       (ctx) => {
-        const same = new Set(ctx.unchanged ?? []);
         const fresh = new Set(opts.existingOnly === true ? (ctx.added ?? []) : []);
-        const changed = (ctx.staged ?? []).filter((path) => !same.has(path) && !fresh.has(path) && matchAny(path, opts.paths));
+        const changed = (ctx.staged ?? []).filter((path) => !fresh.has(path) && matchAny(path, opts.paths));
         const deleted = (ctx.deleted ?? []).filter((path) => matchAny(path, opts.paths));
         const why =
           opts.existingOnly === true
@@ -1784,11 +1781,6 @@ export interface CommitFileFacts {
    * when the shell could not ask git, or the case does not say, and then `existed` is left unset.
    */
   readonly added?: readonly string[] | undefined;
-  /**
-   * The staged paths identical to the last commit, which only `--all` has. Each one's
-   * `ctx.file.unchanged` is `true`.
-   */
-  readonly unchanged?: readonly string[] | undefined;
   /** Every path the commit deletes: `ctx.deleted`. */
   readonly deleted?: readonly string[] | undefined;
   /** The message as git records it. `null` under `--all`; absent, an empty one, as in a case with none. */
@@ -1797,10 +1789,10 @@ export interface CommitFileFacts {
 
 /**
  * The facts a commit puts on EVERY ctx it makes, whichever file the call is about: the staged
- * paths, the paths added, unchanged and deleted, and the message. The live gate and a case build them here.
+ * paths, the paths added and deleted, and the message. The live gate and a case build them here.
  */
 export function commitFacts(staged: readonly string[], commit: CommitFileFacts): Partial<Ctx> {
-  return { staged, added: commit.added ?? [], unchanged: commit.unchanged ?? [], deleted: commit.deleted ?? [], message: commit.message === undefined ? "" : commit.message };
+  return { staged, added: commit.added ?? [], deleted: commit.deleted ?? [], message: commit.message === undefined ? "" : commit.message };
 }
 
 /**
@@ -1843,7 +1835,6 @@ export function readCase(c: Case): {
       facts: { staged: c.staged ?? [], ...actor },
       world,
       added: c.added,
-      unchanged: c.unchanged,
       deleted: c.deleted,
       message: c.message,
     };
@@ -1880,8 +1871,8 @@ function cannedParts(
   c: Case,
   unanswered: Unanswered[],
 ): { readonly facts: Partial<Ctx>; readonly world: World } & CommitFileFacts {
-  const { world, facts, added, unchanged, deleted, message } = readCase(c);
-  return { world: cannedWorld(world, facts.staged, unanswered), facts, added, unchanged, deleted, message };
+  const { world, facts, added, deleted, message } = readCase(c);
+  return { world: cannedWorld(world, facts.staged, unanswered), facts, added, deleted, message };
 }
 
 /**
@@ -1902,24 +1893,22 @@ export async function caseCtxs(entry: LoadedEntry, moment: Moment, c: Case, unan
  * for a commit's file subjects, which the live gate (`subjectsOf`) and a case both build through.
  *
  * A file out of the entry's scope, or not on disk, yields none. `existed` is set when `added` is
- * given, and `unchanged` on each file `unchanged` names — which only `--all` has.
+ * given.
  */
 export async function stagedFiles(
   scope: Scope,
   staged: readonly string[],
   world: World,
-  { added, unchanged }: Pick<CommitFileFacts, "added" | "unchanged">,
+  { added }: Pick<CommitFileFacts, "added">,
 ): Promise<NonNullable<Ctx["file"]>[]> {
-  // Sets, not lists: under `--all` nearly every file in the tree is unchanged, and before the
-  // first commit every one is added.
+  // A set, not a list: before the first commit every file in the tree is added.
   const fresh = added === undefined ? undefined : new Set(added);
-  const same = new Set(unchanged ?? []);
   const out: NonNullable<Ctx["file"]>[] = [];
   for (const path of staged) {
     if (!inScope(scope, path)) continue;
     if (!(await world.fs.exists(path))) continue;
     const existed = fresh === undefined ? {} : { existed: !fresh.has(path) };
-    out.push({ path, content: await world.fs.read(path), ...existed, ...(same.has(path) ? { unchanged: true } : {}) });
+    out.push({ path, content: await world.fs.read(path), ...existed });
   }
   return out;
 }
@@ -1939,9 +1928,7 @@ export async function stagedFiles(
  * content is a failure naming what to add rather than a silent pass.
  *
  * A case that lists `added` says which files the last commit does not have, as the live gate does,
- * and each file's `existed` follows from it. A case that lists none leaves `existed` unset. A case
- * that lists `unchanged` says which are identical to the last commit, as `--all` does, and each of
- * those has `unchanged` set.
+ * and each file's `existed` follows from it. A case that lists none leaves `existed` unset.
  *
  * A case's `deleted` paths are no subject: a rule with `.on(…)` is asked about files the commit
  * holds, and one without reads them from `ctx.deleted`.
