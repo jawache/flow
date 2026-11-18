@@ -34,7 +34,7 @@ emit-types:
     # MEASURED on the eve of 0.1.0, from this very tarball: dist/types/packs/guard.d.ts and
     # dist/types/packs/checks.d.ts — declarations for two packs deleted commits ago — plus
     # dist/types/e2e/harness.d.ts, emitted before tsconfig.build.json excluded that folder. Three
-    # files no clean clone could produce, one `npm publish` away from being part of the package.
+    # files no clean clone could produce, one release away from being part of the package.
     rm -rf dist/types
     npx tsc -p tsconfig.build.json
 
