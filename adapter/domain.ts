@@ -1529,6 +1529,23 @@ function firstFix(other: UnwiredHooks): [string, string[]] {
 
 // ── choosing the harnesses ───────────────────────────────────────────────────
 
+/** Does this `package.json` list `@jawache/flow` as a dependency or a dev dependency? */
+export function listsFlow(manifest: string | null): boolean {
+  if (manifest === null) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(manifest);
+  } catch {
+    return false;
+  }
+  if (typeof parsed !== "object" || parsed === null) return false;
+  const { dependencies, devDependencies } = parsed as Record<string, unknown>;
+  return [dependencies, devDependencies].some(
+    (listed) => typeof listed === "object" && listed !== null && Object.hasOwn(listed, "@jawache/flow"),
+  );
+}
+
+
 /** One harness, and what the shell found of it in this repo: its folder, and its program on the `PATH`. */
 export interface Found {
   readonly harness: HarnessFacts;
@@ -1558,11 +1575,18 @@ export function harnessArg(args: readonly string[]): string | null {
   return next === undefined || next.startsWith("--") ? "" : next;
 }
 
-/** Harness names typed by a person — `claude-code,codex` or `claude-code codex` — read: the ids, or the first name no harness has. */
-export function parseHarnesses(typed: string, found: readonly Found[]): { readonly ok: true; readonly ids: string[] } | { readonly ok: false; readonly unknown: string } {
+/**
+ * The harnesses to register: what `--harness` or the prompt was given, or null when nothing was, which
+ * is the default of detection. A name no harness has, and a choice of none, are refused with one message
+ * that names the valid harnesses: none would register nothing.
+ */
+export function chooseHarnesses(found: readonly Found[], typed: string | null): { readonly ok: true; readonly ids: string[] } | { readonly ok: false; readonly refusal: string } {
+  if (typed === null) return { ok: true, ids: defaultHarnesses(found) };
+  const valid = found.map(({ harness }) => harness.id);
   const ids = typed.split(/[\s,]+/).filter((name) => name !== "");
-  const unknown = ids.find((id) => !found.some(({ harness }) => harness.id === id));
-  return unknown === undefined ? { ok: true, ids: [...new Set(ids)] } : { ok: false, unknown };
+  const unknown = ids.find((id) => !valid.includes(id));
+  const bad = ids.length === 0 ? "no harness" : unknown === undefined ? null : `no harness called \`${unknown}\``;
+  return bad === null ? { ok: true, ids: [...new Set(ids)] } : { ok: false, refusal: `flow init — ${bad} was chosen, so nothing was written. The harnesses are ${valid.join(", ")}.` };
 }
 
 /** The prompt for the harnesses: each one, ticked when selected, with how it was detected. */
@@ -2521,7 +2545,7 @@ function hooksPathFitting(facts: Pick<StatusFacts, "hooksPath" | "hooksFolder">)
  * registration in the old shape, finds only the PATH — and the repo's own copy is one it never
  * runs, a red line naming which of them is stranded and how to bring it up to date.
  */
-function binaryFitting(facts: Pick<StatusFacts, "binary" | "gateText" | "harnesses">): Fitting {
+function binaryFitting(facts: Pick<StatusFacts, "binary" | "gateText" | "harnesses" | "version">): Fitting {
   const { listed, copy, path } = facts.binary;
   // THE REPO'S OWN COPY is one its package.json lists. In a repo that does not list flow, the copy
   // is the link `flow init` made to the flow that ran it — the PATH's, in the ordinary global
@@ -2540,7 +2564,7 @@ function binaryFitting(facts: Pick<StatusFacts, "binary" | "gateText" | "harness
           ? `the hooks and the gate run the flow ${byHooks}`
           : `the hooks run the flow ${byHooks}, and the gate the flow ${byGate}`,
     };
-  const install = `install it for this repo with \`npm i -D @jawache/flow\`, or for every repo with \`npm i -g @jawache/flow\`.`;
+  const install = `install it for this repo with \`npm i -D github:jawache/flow#v${facts.version}\`.`;
   // LINKED, NOT LISTED, AND NOTHING ON THE PATH: the hooks and the gate run the link while it
   // resolves, so this is red on the safe side, and it says so rather than "no flow".
   if (!modules && copy)
@@ -2576,7 +2600,7 @@ function binaryFitting(facts: Pick<StatusFacts, "binary" | "gateText" | "harness
     ok: false,
     detail:
       `the flow in ${PACKAGE_DIR} is not on the PATH, and ${stranded.map((s) => s.who).join(" and ")} ${looks} for flow on the PATH alone, ` +
-      `so ${stranded.map((s) => s.fails).join(" and ")} — ${stranded.map((s) => s.fix).join("; ")}; or install it for every repo with \`npm i -g @jawache/flow\`.`,
+      `so ${stranded.map((s) => s.fails).join(" and ")} — ${stranded.map((s) => s.fix).join("; ")}; or install it for this repo with \`npm i -D github:jawache/flow#v${facts.version}\`.`,
   };
 }
 

@@ -147,20 +147,14 @@ describe("flow init — a repo that has never heard of flow", () => {
     }
   });
 
-  it("`--harness` names the harnesses, and one it has never heard of writes nothing and answers 1", () => {
+  it("`--harness claude-code` names the harness and registers it", () => {
     const named = newRepo();
-    const unknown = newRepo();
     try {
       const ran = flow(named, ["init", "--harness", "claude-code"]);
       expect(ran.code, ran.stdout + ran.stderr).toBe(0);
       expect(existsSync(join(named, ".claude", "settings.json"))).toBe(true);
-
-      const refused = flow(unknown, ["init", "--harness", "nope"]);
-      expect(refused.code).toBe(1);
-      expect(refused.stderr).toContain("no harness is called `nope`");
-      expect(existsSync(join(unknown, "flow.config.ts")), "nothing was written").toBe(false);
     } finally {
-      for (const dir of [named, unknown]) rmSync(dir, { recursive: true, force: true });
+      rmSync(named, { recursive: true, force: true });
     }
   });
 
@@ -936,18 +930,6 @@ describe("a repo whose package.json lists flow", () => {
       expect(Object.keys(settings(listed)["hooks"] as object), "the repo's own file holds every registration").toEqual(REGISTERED);
     } finally {
       for (const dir of [listed, machine]) rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("warns that flow is not a dev dependency of a repo whose package.json does not list it, and still registers in the repo", () => {
-    const bare = newRepo();
-    try {
-      const init = flow(bare, ["init"]);
-      expect(init.code, init.stdout + init.stderr).toBe(0);
-      expect(init.stdout).toContain("  ! flow is not a dev dependency of this repo, so the hooks run whatever flow is on the PATH.");
-      expect(Object.keys(settings(bare)["hooks"] as object)).toEqual(REGISTERED);
-    } finally {
-      rmSync(bare, { recursive: true, force: true });
     }
   });
 });

@@ -58,13 +58,14 @@ import {
   planInit,
   commitMsgOf,
   aboutToWrite,
-  defaultHarnesses,
   harnessArg,
   harnessPrompt,
   harnessQuestion,
   isYes,
   lastHookRan,
-  parseHarnesses,
+  listsFlow,
+  chooseHarnesses,
+  defaultHarnesses,
   warningLines,
   status,
   statusCode,
@@ -257,18 +258,22 @@ function initFacts(root: string, empty: boolean, chosen: readonly Harness[]): In
     hooksPath: hooksPath(root),
     hooksFolder: hooksFolder(root),
     resolves: resolves(root),
-    listed: chosen.some((harness) => harness.registering.listsFlow(readText(root, "package.json"))),
+    listed: listsFlow(readText(root, "package.json")),
     packageRoot: packageRoot(),
   };
 }
 
+/** Is a program in a folder on the `PATH` this command was run with, less what npm added for this run? */
+function onPath(root: string, program: string): boolean {
+  return hostPath((process.env["PATH"] ?? "").split(delimiter), root).some((dir) => executable(join(dir, program)));
+}
+
 /** Each harness, with whether its folder is in the repo and its program is on the `PATH`. */
 function findHarnesses(root: string, harnesses: readonly Harness[]): Found[] {
-  const dirs = hostPath((process.env["PATH"] ?? "").split(delimiter), root);
   return harnesses.map((harness) => ({
     harness,
     folder: existsSync(join(root, harness.detect.folder)),
-    program: dirs.some((dir) => executable(join(dir, harness.detect.program))),
+    program: onPath(root, harness.detect.program),
   }));
 }
 
@@ -367,23 +372,15 @@ export interface Terminal {
 export async function runInit(cwd: string, args: readonly string[], harnesses: readonly Harness[], terminal: Terminal | null): Promise<VerbResult> {
   const root = resolve(cwd);
   const found = findHarnesses(root, harnesses);
-  const named = harnessArg(args);
-  let ids = defaultHarnesses(found);
-  if (named !== null) {
-    const parsed = parseHarnesses(named, found);
-    if (!parsed.ok)
-      return { stdout: "", stderr: `flow init — no harness is called \`${parsed.unknown}\`, so nothing was written. The harnesses are ${found.map((one) => one.harness.id).join(", ")}.\n`, exitCode: 1 };
-    ids = parsed.ids;
-  } else if (terminal !== null) {
-    terminal.say(`${harnessPrompt(found, ids).join("\n")}\n`);
+  let typed = harnessArg(args);
+  if (typed === null && terminal !== null) {
+    terminal.say(`${harnessPrompt(found, defaultHarnesses(found)).join("\n")}\n`);
     const answer = (await terminal.ask(harnessQuestion(found))).trim();
-    if (answer !== "") {
-      const parsed = parseHarnesses(answer, found);
-      if (!parsed.ok)
-        return { stdout: "", stderr: `flow init — no harness is called \`${parsed.unknown}\`, so nothing was written.\n`, exitCode: 1 };
-      ids = parsed.ids;
-    }
+    typed = answer === "" ? null : answer;
   }
+  const chosen = chooseHarnesses(found, typed);
+  if (!chosen.ok) return { stdout: "", stderr: `${chosen.refusal}\n`, exitCode: 1 };
+  const { ids } = chosen;
   const plan = planInit(initFacts(root, args.includes("--empty"), harnesses.filter((harness) => ids.includes(harness.id))));
   const warned = warningLines(plan);
   const colour = wantsColour(process.stdout.isTTY, process.env["NO_COLOR"]);
@@ -565,9 +562,9 @@ export async function runStatus(cwd: string, args: readonly string[], harnesses:
         : [],
     session: liveSession(root, harnesses[0] as Harness),
     binary: {
-      listed: harnesses.some((harness) => harness.registering.listsFlow(readText(root, "package.json"))),
+      listed: listsFlow(readText(root, "package.json")),
       copy: existsSync(join(root, PACKAGE_BIN)),
-      path: hostPath((process.env["PATH"] ?? "").split(delimiter), root).some((dir) => executable(join(dir, "flow"))),
+      path: onPath(root, "flow"),
     },
   };
 

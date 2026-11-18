@@ -20,7 +20,7 @@ import { metrics, momentsView, type Block, type Bound, type Row } from "../../en
 import { parseCommandLine, parseShellSteps } from "../../language/domain.ts";
 import { claudeCode } from "./claude.ts";
 import { ALLOW, type AdapterEvent, CONFIG_FILE, type Facts, GATE_PATH, HOOKS_DIR, type InitFacts, LOCAL_BIN, MACHINE_FLAG, PACKAGE_BIN, COMMIT_MSG, type SpawnRecord, type Status, type StatusFacts, type UninstallFacts, branchFromHead, delivers, formatFacts, guardPaths, initLines, isGuardPath, lastMode, mergeNarratives, modesOf, planInit, planUninstall, relativise, status, statusCode, statusLines, uninstallCode, uninstallLines, weakenedAfterBlock } from "../domain.ts";
-import { DELIVERS, EDIT_TOOLS, type EventWorld, FLOW_OFF, HOOK_COSTS, HOOK_EVENTS, HOOK_REGISTRATIONS, HOST_SURFACE, type HookPayload, REPO_SETTINGS, type Shown, agentOf, agentSettingOf, opensCall, awaitsBrief, bareHook, bareRegistrations, bashReads, briefBlock, briefHead, classifyStore, commandFolders, contextTokens, decision, foldersBetween, holdsForBrief, hookCommand, isHookEvent, isInjected, listsFlow, nothingBound, ourHookCommand, outsideOf, ownTranscriptPath, parseEvents, projectFolderName, reachesAnotherWorktree, readFault, registeredEvents, ridesRefusal, sessionFactsFrom, shellReadRows, spawnMeta, spawnsIn, staleRegistrations, steerOf, toEvent, toResult, tokensFromTranscript, toolRow, touchedPath, transcriptHead, transcriptLines, turnActions, untoldWorktrees, whileBroken, withRegistrations, withoutRegistrations, workedPaths, worktreeFolders, worktreeLine } from "./domain.ts";
+import { DELIVERS, EDIT_TOOLS, type EventWorld, FLOW_OFF, HOOK_COSTS, HOOK_EVENTS, HOOK_REGISTRATIONS, HOST_SURFACE, type HookPayload, REPO_SETTINGS, type Shown, agentOf, agentSettingOf, opensCall, awaitsBrief, bareHook, bareRegistrations, bashReads, briefBlock, briefHead, classifyStore, commandFolders, contextTokens, decision, foldersBetween, holdsForBrief, hookCommand, isHookEvent, isInjected, nothingBound, ourHookCommand, outsideOf, ownTranscriptPath, parseEvents, projectFolderName, reachesAnotherWorktree, readFault, registeredEvents, ridesRefusal, sessionFactsFrom, shellReadRows, spawnMeta, spawnsIn, staleRegistrations, steerOf, toEvent, toResult, tokensFromTranscript, toolRow, touchedPath, transcriptHead, transcriptLines, turnActions, untoldWorktrees, whileBroken, withRegistrations, withoutRegistrations, workedPaths, worktreeFolders, worktreeLine } from "./domain.ts";
 import { type Steer, type TranscriptEvent } from "../harness.ts";
 
 
@@ -1405,7 +1405,7 @@ describe("the hook registrations flow writes", () => {
     };
     expect(registeredEvents(older), "both shapes are flow's").toEqual(REGISTERED_EVENTS);
     expect(bareRegistrations(older)).toEqual(REGISTERED_EVENTS);
-    expect(status(statusFacts({ settings: older })).fittings.find((f) => f.id === "hooks" || f.id === "claude-code")?.ok).toBe(true);
+    expect(status(statusFacts({ settings: older })).fittings.find((f) => f.id === "claude-code")?.ok).toBe(true);
 
     const { settings, changed } = withRegistrations(older);
     expect(changed).toEqual(REGISTERED_EVENTS.map((event) => `${event} (now runs the flow in node_modules/@jawache/flow first)`));
@@ -1601,29 +1601,6 @@ describe("what every rail answers while the config will not load", () => {
       expect(statusCode(answer({ refusals: [], green: true }))).toBe(0);
       expect(statusCode(answer({ refusals: [], green: false }))).toBe(1);
     });
-  });
-});
-
-describe("listsFlow — does the repo's package.json list flow", () => {
-  const manifest = (body: unknown): string => JSON.stringify(body);
-
-  it("is true when flow is a dev dependency or a dependency", () => {
-    expect(listsFlow(manifest({ devDependencies: { "@jawache/flow": "^0.3.0" } }))).toBe(true);
-    expect(listsFlow(manifest({ dependencies: { "@jawache/flow": "0.3.0" } }))).toBe(true);
-  });
-
-  it("is false when package.json lists other packages only — this repo, which IS flow, among them", () => {
-    expect(listsFlow(manifest({ name: "@jawache/flow", devDependencies: { vitest: "^3.0.0" } }))).toBe(false);
-    expect(listsFlow(manifest({ peerDependencies: { "@jawache/flow": "*" } }))).toBe(false);
-  });
-
-  it("is false when there is no package.json, or it will not parse or is not an object", () => {
-    expect(listsFlow(null)).toBe(false);
-    expect(listsFlow('{ "devDependencies": { "@jawache/flow": "^0.3.0" }, }')).toBe(false);
-    expect(listsFlow("")).toBe(false);
-    expect(listsFlow("null")).toBe(false);
-    expect(listsFlow('["@jawache/flow"]')).toBe(false);
-    expect(listsFlow(manifest({ devDependencies: ["@jawache/flow"] }))).toBe(false);
   });
 });
 
@@ -2054,12 +2031,12 @@ describe("status — a registration an older flow wrote", () => {
     ["SubagentStop", "no turn-end rule runs when a subagent hands back"],
   ])("goes red on a file without %s, and names what goes unjudged", (event, unregistered) => {
     const s = status(statusFacts({ settings: without(event) }));
-    expect(s.fittings.find((f) => f.id === "hooks" || f.id === "claude-code")?.ok).toBe(false);
+    expect(s.fittings.find((f) => f.id === "claude-code")?.ok).toBe(false);
     expect(s.green).toBe(false);
-    expect(s.fittings.find((f) => f.id === "hooks" || f.id === "claude-code")?.detail).toBe(
+    expect(s.fittings.find((f) => f.id === "claude-code")?.detail).toBe(
       `.claude/settings.json does not call flow for ${event} — re-run \`flow init\`. Until it does, ${unregistered}.`,
     );
-    expect(status(statusFacts()).fittings.find((f) => f.id === "hooks" || f.id === "claude-code")?.detail, "every one, and it is green").toBe(
+    expect(status(statusFacts()).fittings.find((f) => f.id === "claude-code")?.detail, "every one, and it is green").toBe(
       "registered · no hook has run here",
     );
   });
@@ -2068,11 +2045,11 @@ describe("status — a registration an older flow wrote", () => {
   // PreToolUse and SubagentStop still shows the note for a file a tool call names and judges the main chat's hand-back.
   it("names only the rails of the missing events as not firing", () => {
     const hooks = { ...without("SubagentStop").hooks, PreToolUse: undefined };
-    expect(status(statusFacts({ settings: { hooks } })).fittings.find((f) => f.id === "hooks" || f.id === "claude-code")?.detail).toBe(
+    expect(status(statusFacts({ settings: { hooks } })).fittings.find((f) => f.id === "claude-code")?.detail).toBe(
       ".claude/settings.json does not call flow for PreToolUse · SubagentStop — re-run `flow init`. " +
         "Until it does, no rule judges a command before it runs; no turn-end rule runs when a subagent hands back.",
     );
-    const none = status(statusFacts({ settings: {} })).fittings.find((f) => f.id === "hooks" || f.id === "claude-code")?.detail ?? "";
+    const none = status(statusFacts({ settings: {} })).fittings.find((f) => f.id === "hooks")?.detail ?? "";
     for (const registration of HOOK_REGISTRATIONS) expect(none, "a file with none names every cost").toContain(registration.event);
     expect(none).toContain("no note is shown when a session starts; no note is shown when a subagent starts; no rule judges a command before it runs;");
   });

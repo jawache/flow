@@ -178,8 +178,6 @@ export interface Registering {
   readonly hooks: readonly HookCost[];
   /** What flow writes, one per event. */
   readonly registrations: readonly Registration[];
-  /** Does this `package.json` list flow as a dependency? */
-  readonly listsFlow: (manifest: string | null) => boolean;
   /** The events this settings file calls flow for. */
   readonly registeredEvents: (settings: unknown) => string[];
   /** The events it calls flow for with a command that is not today's. */

@@ -1652,22 +1652,6 @@ export const HOOK_REGISTRATIONS: readonly Registration[] = REGISTERED.map(({ hoo
  */
 export const HOOK_COSTS: readonly HookCost[] = REGISTERED.map(({ hook, unregistered }) => ({ event: HOST_EVENT[hook], unregistered }));
 
-/** Does this `package.json` list `@jawache/flow` as a dependency or a dev dependency? */
-export function listsFlow(manifest: string | null): boolean {
-  if (manifest === null) return false;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(manifest);
-  } catch {
-    return false;
-  }
-  if (typeof parsed !== "object" || parsed === null) return false;
-  const { dependencies, devDependencies } = parsed as Record<string, unknown>;
-  return [dependencies, devDependencies].some(
-    (listed) => typeof listed === "object" && listed !== null && Object.hasOwn(listed, "@jawache/flow"),
-  );
-}
-
 /**
  * Is this registration OURS?
  *

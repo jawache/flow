@@ -9,7 +9,7 @@ import { type Bound, type Row } from "../engine/domain.ts";
 import { missingGrammarText } from "../checks/domain.ts";
 import { matchAny } from "../glob.ts";
 import { host } from "../__fixtures__/host.ts";
-import { ADD_THE_GATE_LINE, type Found, aboutToWrite, ago, defaultHarnesses, detection, harnessArg, harnessPrompt, harnessQuestion, isYes, lastHookRan, parseHarnesses, warningLines, writtenLines, CONFIG_FILE, type Candidate, GATE_LOCAL_LINE, GATE_PATH, GATE_RUN_LINE, GIT_HOOK_ENV, HOOKS_DIR, HOOKS_UNKNOWN, type HooksFolder, type InitFacts, LOCAL_BIN, MACHINE_FLAG, NODE_FLOOR, NOT_INSTALLED, OLD_GATE_PATH, type OtherHooks, PACKAGE_BIN, PACKAGE_DIR, COMMIT_MSG, SET_HOOKS_PATH, type StatusFacts, UPDATE_THE_GATE_LINE, type UninstallFacts, armsFlow, armsOldFlow, classifyBash, cleanMessage, commentLeader, commitArgs, configImports, configLoadFault, flowLinesOf, gateWithoutFlow, guardPaths, health, hermeticEnv, readsCommitIndex, hooksDirOf, hostPath, initCode, initLines, isCorrection, joinSpawn, listed, loadsAsStrippedModule, mergeNarratives, narrative, notInstalledLines, otherHooks, pathLines, planInit, planUninstall, commitMsgOf, recipeTools, repoFirst, scaffold, selectSessions, snip, stagedChanges, status, statusCode, statusLines, strip, text, treeChanges, uncoveredAreas, uninstallCode, uninstallLines, uninstallRefusal, wantsColour, weakenedAfterBlock } from "./domain.ts";
+import { ADD_THE_GATE_LINE, type Found, aboutToWrite, ago, defaultHarnesses, detection, harnessArg, harnessPrompt, harnessQuestion, isYes, lastHookRan, chooseHarnesses, listsFlow, warningLines, writtenLines, CONFIG_FILE, type Candidate, GATE_LOCAL_LINE, GATE_PATH, GATE_RUN_LINE, GIT_HOOK_ENV, HOOKS_DIR, HOOKS_UNKNOWN, type HooksFolder, type InitFacts, LOCAL_BIN, MACHINE_FLAG, NODE_FLOOR, NOT_INSTALLED, OLD_GATE_PATH, type OtherHooks, PACKAGE_BIN, PACKAGE_DIR, COMMIT_MSG, SET_HOOKS_PATH, type StatusFacts, UPDATE_THE_GATE_LINE, type UninstallFacts, armsFlow, armsOldFlow, classifyBash, cleanMessage, commentLeader, commitArgs, configImports, configLoadFault, flowLinesOf, gateWithoutFlow, guardPaths, health, hermeticEnv, readsCommitIndex, hooksDirOf, hostPath, initCode, initLines, isCorrection, joinSpawn, listed, loadsAsStrippedModule, mergeNarratives, narrative, notInstalledLines, otherHooks, pathLines, planInit, planUninstall, commitMsgOf, recipeTools, repoFirst, scaffold, selectSessions, snip, stagedChanges, status, statusCode, statusLines, strip, text, treeChanges, uncoveredAreas, uninstallCode, uninstallLines, uninstallRefusal, wantsColour, weakenedAfterBlock } from "./domain.ts";
 import { type ToolAction, type TranscriptEvent } from "./harness.ts";
 
 describe("the environment a check's command sees", () => {
@@ -1694,7 +1694,7 @@ describe("the binary fitting — can the hooks and the gate find flow", () => {
     expect(fitting?.detail).toBe(
       "the flow in node_modules/@jawache/flow is not on the PATH, and the gate looks for flow on the PATH alone, so git refuses every commit — " +
         'add `f="$PWD/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook commit "$1"` to .githooks/commit-msg above the line that runs flow; ' +
-        "or install it for every repo with `npm i -g @jawache/flow`.",
+        "or install it for this repo with `npm i -D github:jawache/flow#v1.2.3`.",
     );
     expect(green).toBe(false);
     expect(binary(true, false, { gateText: OLD_GATE }).fitting?.detail, "the old verb's gate too").toContain("the gate looks for flow on the PATH alone");
@@ -1776,7 +1776,7 @@ describe("the binary fitting — can the hooks and the gate find flow", () => {
       detail:
         "this repo's package.json does not list @jawache/flow, so node_modules/@jawache/flow is the link `flow init` made to the flow that ran it, " +
         "and no flow is on the PATH. The hooks and the gate run that link only while it resolves, and once it breaks every hook fails " +
-        "with `flow: not found` and git refuses every commit — install it for this repo with `npm i -D @jawache/flow`, or for every repo with `npm i -g @jawache/flow`.",
+        "with `flow: not found` and git refuses every commit — install it for this repo with `npm i -D github:jawache/flow#v1.2.3`.",
     });
     expect(red.green).toBe(false);
     const listedNotInstalled = status(statusFacts({ binary: { listed: true, copy: false, path: false } })).fittings.find((f) => f.id === "binary");
@@ -1788,8 +1788,8 @@ describe("the binary fitting — can the hooks and the gate find flow", () => {
       const { fitting, green, lines } = binary(false, false, over);
       expect(fitting?.ok).toBe(false);
       expect(fitting?.detail).toContain(`no flow in ${PACKAGE_DIR} or on the PATH`);
-      expect(fitting?.detail).toContain("npm i -D @jawache/flow");
-      expect(fitting?.detail).toContain("npm i -g @jawache/flow");
+      expect(fitting?.detail).toContain("npm i -D github:jawache/flow#v1.2.3");
+      expect(fitting?.detail).not.toContain("npm i -g");
       expect(green).toBe(false);
       expect(lines.at(-1)).toContain("1 red line");
     }
@@ -1975,16 +1975,31 @@ describe("the prompt for the harnesses", () => {
     );
   });
 
-  it("reads `--harness` and a typed answer as one list of names, and names the first one no harness has", () => {
-    const both = [found(true, false), foundOther(false, false)];
+  it("reads `--harness`'s value, `harnessArg`, as typed", () => {
     expect(harnessArg(["--empty", "--harness", "claude-code,other"])).toBe("claude-code,other");
     expect(harnessArg(["--harness"]), "no value is the empty string").toBe("");
     expect(harnessArg(["--harness", "--empty"])).toBe("");
     expect(harnessArg(["--empty"])).toBeNull();
-    expect(parseHarnesses("claude-code,other", both)).toEqual({ ok: true, ids: ["claude-code", "other"] });
-    expect(parseHarnesses("other  claude-code other", both), "spaces too, and each once").toEqual({ ok: true, ids: ["other", "claude-code"] });
-    expect(parseHarnesses("claude-code,nope", both)).toEqual({ ok: false, unknown: "nope" });
-    expect(parseHarnesses("", both), "none at all is a choice").toEqual({ ok: true, ids: [] });
+  });
+
+  it("chooses the harnesses from what was typed, or by detection when nothing was", () => {
+    const both = [found(true, false), foundOther(false, false)];
+    expect(chooseHarnesses(both, null)).toEqual({ ok: true, ids: ["claude-code"] });
+    expect(chooseHarnesses(both, "claude-code,other")).toEqual({ ok: true, ids: ["claude-code", "other"] });
+    expect(chooseHarnesses(both, "other  claude-code other"), "spaces too, and each once").toEqual({ ok: true, ids: ["other", "claude-code"] });
+  });
+
+  it("refuses a name no harness has, and a choice of none, in one message that names the valid harnesses", () => {
+    const both = [found(true, false), foundOther(false, false)];
+    expect(chooseHarnesses(both, "claude-code,nope")).toEqual({
+      ok: false,
+      refusal: "flow init — no harness called `nope` was chosen, so nothing was written. The harnesses are claude-code, other.",
+    });
+    for (const none of ["", ",", " , "])
+      expect(chooseHarnesses(both, none), JSON.stringify(none)).toEqual({
+        ok: false,
+        refusal: "flow init — no harness was chosen, so nothing was written. The harnesses are claude-code, other.",
+      });
   });
 
   it("takes an empty answer, y or yes, in any case, as a yes", () => {
@@ -2102,3 +2117,27 @@ describe("lastHookRan — when a harness's hook last ran, from the session logs"
     expect(lastHookRan(history, "codex")).toBeNull();
   });
 });
+
+describe("listsFlow — does the repo's package.json list flow", () => {
+  const manifest = (body: unknown): string => JSON.stringify(body);
+
+  it("is true when flow is a dev dependency or a dependency", () => {
+    expect(listsFlow(manifest({ devDependencies: { "@jawache/flow": "^0.3.0" } }))).toBe(true);
+    expect(listsFlow(manifest({ dependencies: { "@jawache/flow": "0.3.0" } }))).toBe(true);
+  });
+
+  it("is false when package.json lists other packages only — this repo, which IS flow, among them", () => {
+    expect(listsFlow(manifest({ name: "@jawache/flow", devDependencies: { vitest: "^3.0.0" } }))).toBe(false);
+    expect(listsFlow(manifest({ peerDependencies: { "@jawache/flow": "*" } }))).toBe(false);
+  });
+
+  it("is false when there is no package.json, or it will not parse or is not an object", () => {
+    expect(listsFlow(null)).toBe(false);
+    expect(listsFlow('{ "devDependencies": { "@jawache/flow": "^0.3.0" }, }')).toBe(false);
+    expect(listsFlow("")).toBe(false);
+    expect(listsFlow("null")).toBe(false);
+    expect(listsFlow('["@jawache/flow"]')).toBe(false);
+    expect(listsFlow(manifest({ devDependencies: ["@jawache/flow"] }))).toBe(false);
+  });
+});
+
