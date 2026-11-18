@@ -154,11 +154,12 @@ describe("the event log", () => {
   const seqs = (): unknown[] => readRows(root, "sess-1").filter((r) => r.kind !== "meta").map((r) => r.seq);
 
   it("opens a stream with its meta row — an armed guard and an absent one are different facts", () => {
-    expect(appendRows(ctx(), rows)).toBe(true);
+    expect(appendRows({ ...ctx(), harness: "codex" }, rows)).toBe(true);
     const [meta] = readFileSync(logFile(root, "sess-1"), "utf8").split("\n");
     expect(JSON.parse(meta as string)).toEqual({
       kind: "meta",
-      v: 1,
+      v: 2,
+      harness: "codex",
       session: "sess-1",
       started: at.toISOString(),
       branch: "workflow/flow",

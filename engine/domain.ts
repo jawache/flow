@@ -704,7 +704,7 @@ export const FLOW_DIR = ".flow";
 export const FLOW_GITIGNORE = "# flow's own state — telemetry and session marks, never committed.\n*\n";
 
 /** The log schema this build writes, stamped into every session file's first row. */
-export const LOG_VERSION = 1;
+export const LOG_VERSION = 2;
 
 /**
  * Every kind a log row may be. Closed — a reader that meets another word has met corruption.
@@ -967,8 +967,8 @@ export interface Row {
 }
 
 /** The first row of every session file: who this stream is, and which build wrote it. */
-export function metaRow(session: string, branch: string | null, worktree: string, startedAt: string): Row {
-  return { kind: "meta", v: LOG_VERSION, session: sanitise(session), started: startedAt, branch, worktree };
+export function metaRow(session: string, branch: string | null, worktree: string, startedAt: string, harness?: string): Row {
+  return { kind: "meta", v: LOG_VERSION, ...(harness === undefined ? {} : { harness }), session: sanitise(session), started: startedAt, branch, worktree };
 }
 
 /**

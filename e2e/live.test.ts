@@ -21,8 +21,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { PACKAGE, buildBundles, cleanBundles, fixturePack, hookInPieces, newRepo, pre, shimBin, subagentStopPayload, subagentTranscripts, tapeRecords, tapeSteps, BREAKS, flow as runFlow, git as runGit, type Ran } from "./harness.ts";
-import { COMMIT_MSG, SET_HOOKS_PATH } from "../adapter/domain.ts";
-import { FLOW_OFF } from "../adapter/claude/domain.ts";
+import { COMMIT_MSG, FLOW_OFF, SET_HOOKS_PATH } from "../adapter/domain.ts";
 
 let repo: string;
 
@@ -1679,7 +1678,7 @@ export default defineConfig([pack(demo)]);
 
   it("leaves the meta row as it was: no agent, no agentType, and v 1", () => {
     const [meta] = rows(tree, "agents");
-    expect(Object.keys(meta ?? {}).sort()).toEqual(["branch", "kind", "session", "started", "v", "worktree"]);
-    expect(meta).toMatchObject({ kind: "meta", v: 1, session: "agents" });
+    expect(Object.keys(meta ?? {}).sort()).toEqual(["branch", "harness", "kind", "session", "started", "v", "worktree"]);
+    expect(meta).toMatchObject({ kind: "meta", v: 2, harness: "claude-code", session: "agents" });
   });
 });

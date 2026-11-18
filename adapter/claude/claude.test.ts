@@ -6,10 +6,11 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { projectRoot, realPath, runHook } from "./claude.ts";
+import { runHook } from "../hook.ts";
+import { claudeCode, projectRoot } from "./claude.ts";
 
 let repo: string;
 
@@ -27,25 +28,6 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(repo, { recursive: true, force: true });
 });
-
-describe("a path made real, as far as it exists", () => {
-  it("resolves the links in the part on disk and keeps the missing tail as named", () => {
-    // Made real first, so the one link on the way is the test's own, on any platform: macOS
-    // reaches its temp folder through a link of its own, and a test leaning on it proves nothing
-    // on Linux.
-    const dir = realpathSync(mkdtempSync(join(tmpdir(), "flow-real-")));
-    try {
-      mkdirSync(join(dir, "real"));
-      symlinkSync(join(dir, "real"), join(dir, "link"));
-      expect(realPath(join(dir, "link", "not", "yet.ts"))).toBe(join(dir, "real", "not", "yet.ts"));
-      expect(realPath(join(dir, "link"))).toBe(join(dir, "real"));
-      expect(realPath(join(dir, "not", "yet.ts")), "nothing to resolve: as named").toBe(join(dir, "not", "yet.ts"));
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-});
-
 
 describe("which repo", () => {
   it("prefers the host's own project directory over the hook's cwd", () => {
@@ -81,10 +63,10 @@ export default defineConfig([pack(demo)]);
     writeFileSync(join(repo, ".t", "s1", "subagents", `agent-${agent}.jsonl`), `${JSON.stringify({ type: "user", message: { content: brief } })}\n`);
   };
   const start = (agent: string): Promise<Awaited<ReturnType<typeof runHook>>> =>
-    runHook("subagent-start", { session_id: "s1", transcript_path: parent(), cwd: repo, agent_id: agent, agent_type: "general-purpose", hook_event_name: "SubagentStart" }, repo);
+    runHook(claudeCode, "subagent-start", { session_id: "s1", transcript_path: parent(), cwd: repo, agent_id: agent, agent_type: "general-purpose", hook_event_name: "SubagentStart" }, repo);
   // A shell command is judged before it runs, and any other tool's call is seen after it ran.
   const call = (agent: string, tool: string, input: Record<string, unknown>): Promise<Awaited<ReturnType<typeof runHook>>> =>
-    runHook(tool === "Bash" ? "pre-tool-use" : "post-tool-use", { session_id: "s1", transcript_path: parent(), cwd: repo, agent_id: agent, agent_type: "general-purpose", tool_name: tool, tool_input: input }, repo);
+    runHook(claudeCode, tool === "Bash" ? "pre-tool-use" : "post-tool-use", { session_id: "s1", transcript_path: parent(), cwd: repo, agent_id: agent, agent_type: "general-purpose", tool_name: tool, tool_input: input }, repo);
 
   beforeEach(() => {
     writeFileSync(join(repo, "flow.config.ts"), notesConfig);

@@ -19,9 +19,9 @@ import { breadcrumb, defineCategory, defineConfig, definePack, guardrail, loadCo
 import { metrics, momentsView, type Block, type Bound, type Row } from "../../engine/domain.ts";
 import { parseCommandLine, parseShellSteps } from "../../language/domain.ts";
 import { claudeCode } from "./claude.ts";
-import { ALLOW, type AdapterEvent, CONFIG_FILE, type Facts, GATE_PATH, HOOKS_DIR, type InitFacts, LOCAL_BIN, MACHINE_FLAG, PACKAGE_BIN, COMMIT_MSG, type SpawnRecord, type Status, type StatusFacts, type UninstallFacts, branchFromHead, delivers, formatFacts, guardPaths, initLines, isGuardPath, lastMode, mergeNarratives, modesOf, planInit, planUninstall, relativise, status, statusCode, statusLines, uninstallCode, uninstallLines, weakenedAfterBlock } from "../domain.ts";
-import { DELIVERS, EDIT_TOOLS, type EventWorld, FLOW_OFF, HOOK_COSTS, HOOK_EVENTS, HOOK_REGISTRATIONS, HOST_SURFACE, type HookPayload, REPO_SETTINGS, type Shown, agentOf, agentSettingOf, opensCall, awaitsBrief, bareHook, bareRegistrations, bashReads, briefBlock, briefHead, classifyStore, commandFolders, contextTokens, decision, foldersBetween, holdsForBrief, hookCommand, isHookEvent, isInjected, nothingBound, ourHookCommand, outsideOf, ownTranscriptPath, parseEvents, projectFolderName, reachesAnotherWorktree, readFault, registeredEvents, ridesRefusal, sessionFactsFrom, shellReadRows, spawnMeta, spawnsIn, staleRegistrations, steerOf, toEvent, toResult, tokensFromTranscript, toolRow, touchedPath, transcriptHead, transcriptLines, turnActions, untoldWorktrees, whileBroken, withRegistrations, withoutRegistrations, workedPaths, worktreeFolders, worktreeLine } from "./domain.ts";
-import { type Steer, type TranscriptEvent } from "../harness.ts";
+import { type AdapterEvent, agentOf, ALLOW, awaitsBrief, bashReads, branchFromHead, briefBlock, commandFolders, COMMIT_MSG, CONFIG_FILE, decision, EDIT_TOOLS, type EventWorld, type Facts, FLOW_OFF, foldersBetween, formatFacts, GATE_PATH, guardPaths, holdsForBrief, HOOKS_DIR, type InitFacts, initLines, isGuardPath, isHookEvent, lastMode, LOCAL_BIN, MACHINE_FLAG, mergeNarratives, modesOf, nothingBound, opensCall, outsideOf, PACKAGE_BIN, planInit, planUninstall, reachesAnotherWorktree, readFault, relativise, ridesRefusal, sessionFactsFrom, shellReadRows, type Shown, type SpawnRecord, type Status, status, statusCode, type StatusFacts, statusLines, toEvent, toolRow, toResult, touchedPath, uninstallCode, type UninstallFacts, uninstallLines, untoldWorktrees, weakenedAfterBlock, whileBroken, workedPaths, worktreeFolders, worktreeLine } from "../domain.ts";
+import { HOOK_COSTS, HOOK_REGISTRATIONS, HOST_SURFACE, REPO_SETTINGS, agentSettingOf, bareHook, bareRegistrations, briefHead, classifyStore, contextTokens, hookCommand, isInjected, ourHookCommand, ownTranscriptPath, parseEvents, projectFolderName, registeredEvents, spawnMeta, spawnsIn, staleRegistrations, steerOf, tokensFromTranscript, transcriptHead, transcriptLines, turnActions, withRegistrations, withoutRegistrations } from "./domain.ts";
+import { type HookPayload, type Steer, type TranscriptEvent } from "../harness.ts";
 
 
 // ── the world a payload is read against ──────────────────────────────────────
@@ -53,40 +53,6 @@ const pre = (tool: string, input: Record<string, unknown>): HookPayload => ({
   session_id: "s1",
   tool_name: tool,
   tool_input: input,
-});
-
-// ════════════════════════════════════════════════════════════════════════════════════════════════
-// WHAT THIS ADAPTER ANSWERS TO
-// ════════════════════════════════════════════════════════════════════════════════════════════════
-
-describe("the seven events, and the moments honestly delivered", () => {
-  it("answers to seven events, named by the event and never by the job", () => {
-    expect([...HOOK_EVENTS]).toStrictEqual([
-      "session-start",
-      "subagent-start",
-      "pre-tool-use",
-      "post-tool-use",
-      "stop",
-      "subagent-stop",
-      "notification",
-    ]);
-    expect(isHookEvent("pre-tool-use")).toBe(true);
-    expect(isHookEvent("SubagentStop"), "the host's name is not flow's verb").toBe(false);
-    expect(isHookEvent("PreToolUse"), "the host's name is not flow's verb").toBe(false);
-  });
-
-  it("states what it can supply, turn-end briefing among it", () => {
-    // The Stop and SubagentStop answers carry `additionalContext`, so a note bound at turn-end is
-    // shown there. Saying what is carried is the contract; faking it would be the failure.
-    expect(delivers("guardrail", "turn-end", DELIVERS), "the turn-end GUARDRAIL rail works").toBe(true);
-    expect(delivers("breadcrumb", "turn-end", DELIVERS), "a NOTE bound there is shown at the hand-back").toBe(true);
-    expect(DELIVERS.brief).toContain("turn-end");
-    expect(DELIVERS.guard, "commit is delivered — by the git gate, not by the harness").toContain("commit");
-    expect(delivers("breadcrumb", "session", DELIVERS)).toBe(true);
-    expect(delivers("breadcrumb", "touch", DELIVERS)).toBe(true);
-    expect(delivers("guardrail", "session", DELIVERS), "a guardrail has no session rail at all").toBe(false);
-    expect(DELIVERS.guard, "flow stops no write and no delete").toEqual(["command", "commit", "turn-end"]);
-  });
 });
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -836,7 +802,7 @@ describe("who the session is, from what the host wrote", () => {
   const subagent = { session_id: "s1", agent_id: "a6009b5", agent_type: "builder", transcript_path: parent };
 
   it("takes the agent type from the hook message and the brief from the subagent's own transcript", () => {
-    const facts = sessionFactsFrom({ payload: subagent, transcript: human("Follow `/work build`") });
+    const facts = sessionFactsFrom({ payload: subagent, head: briefHead(human("Follow `/work build`")) });
     expect(facts).toStrictEqual({ head: "Follow `/work build`", subagent: true, agentType: "builder" });
   });
 
@@ -852,16 +818,16 @@ describe("who the session is, from what the host wrote", () => {
   });
 
   it("keeps a subagent a subagent when its message carries no type — spawned, but as what we cannot say", () => {
-    const facts = sessionFactsFrom({ payload: { session_id: "s1", agent_id: "a1", transcript_path: parent }, transcript: null });
+    const facts = sessionFactsFrom({ payload: { session_id: "s1", agent_id: "a1", transcript_path: parent }, head: "" });
     expect(facts.subagent, "the agent id alone makes it a subagent, with no file read").toBe(true);
     expect(facts.agentType, "a category keyed on a type declines; the parent must not claim it").toBeUndefined();
     expect(facts.head).toBe("");
   });
 
   it("reads the parent by ABSENCE — no agent id, no type — even when a top-level --agent session sends a type", () => {
-    const plain = sessionFactsFrom({ payload: { session_id: "s" }, transcript: human("hello") });
+    const plain = sessionFactsFrom({ payload: { session_id: "s" }, head: briefHead(human("hello")) });
     expect(plain).toStrictEqual({ head: "hello", subagent: false });
-    const named = sessionFactsFrom({ payload: { session_id: "s", agent_type: "leader" }, transcript: human("hello") });
+    const named = sessionFactsFrom({ payload: { session_id: "s", agent_type: "leader" }, head: briefHead(human("hello")) });
     expect(named, "agent_type without agent_id is the top-level session's own").toStrictEqual(plain);
   });
 

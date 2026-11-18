@@ -14,7 +14,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { bashReads } from "../adapter/claude/domain.ts";
+import { bashReads } from "../adapter/domain.ts";
 import { parseShellSteps } from "../language/domain.ts";
 import { parseCorpus, scoreCorpus, type Row, type Targets } from "../tools/domain.ts";
 

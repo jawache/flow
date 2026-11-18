@@ -189,7 +189,7 @@ export const house = definePack("house", (repo: Terrain) => ({
         "· language/  the config grammar — sentences, packs, moments, categories, the Ctx contract, the load. What a config file and a pack import.",
         "· checks/    the stock checks, as typed functions over ctx.",
         "· engine/    matching, categories, effects, the state home.",
-        "· adapter/   the seam between flow and the harness that runs the agent. `harness.ts` is the interface and every file beside it is flow's own product, which takes a `Harness` and names none: `shell.ts` (the world a check reaches through, the config load, the git gate), `product.ts` (init, status, uninstall), `archive.ts` (facts) and `domain.ts`. `adapter/claude/` is everything that knows Claude Code — payloads, transcripts, hooks, its settings file — and nothing outside it may import it but flow.ts, which chooses the harness.",
+        "· adapter/   the seam between flow and the harness that runs the agent. `harness.ts` is the interface and every file beside it is flow's own product, which takes a `Harness` and names none: `shell.ts` (the world a check reaches through, the config load, the git gate), `hook.ts` (the hook run every harness shares), `product.ts` (init, status, uninstall), `archive.ts` (facts) and `domain.ts`, which holds the hook payload and the answers too. `adapter/claude/` and `adapter/codex/` are everything that knows one harness — its transcripts, its settings file, which payloads are its own — and nothing outside a folder may import it but flow.ts, which chooses the harnesses.",
         "· packs/     the one pack the package SHIPS, `flow`, behind its own subpath export (`@jawache/flow/packs`). Not a pipeline stage: it is content written IN the grammar, which is why it sits beside the layers rather than in them. It imports `../index.ts` — the public door — and nothing else in the package; nothing in the package imports it back.",
         "· guards/   this repo's own packs, shipped to nobody: nine that began as fleet discipline, `driven` and `house`. Each imports `@jawache/flow` and nothing else in the package, and `flow.config.ts` binds them.",
         "· tools/     the code behind a justfile recipe, and nothing that ships. `score-bash.ts` scores a Bash path extractor against the hand-labelled corpus in `__fixtures__/bash-corpus/`; `domain.ts` is the pure half it decides through. tsconfig.build.json excludes the folder, and nothing in the package may import it — `e2e/` may, and does, for the scorer.",
@@ -210,7 +210,7 @@ export const house = definePack("house", (repo: Terrain) => ({
    */
   shellParse: breadcrumb()
     .at(touch)
-    .on("language/domain.ts", "checks/domain.ts", "engine/domain.ts", "adapter/domain.ts", "adapter/claude/domain.ts", "packs/**", "guards/**")
+    .on("language/domain.ts", "checks/domain.ts", "engine/domain.ts", "adapter/domain.ts", "adapter/claude/domain.ts", "adapter/codex/domain.ts", "packs/**", "guards/**")
     .description("Every reading of a shell command goes through the one parse — never a regex or a splitter over the raw line.")
     .text(
       [
@@ -277,7 +277,8 @@ export const house = definePack("house", (repo: Terrain) => ({
           // the product. Both are layers inside `adapter` above, which still carries every fence the
           // pipeline has.
           "claude-code": ["adapter/claude/**"],
-          product: { path: ["adapter/**"], not: ["adapter/claude/**"] },
+          codex: ["adapter/codex/**"],
+          product: { path: ["adapter/**"], not: ["adapter/claude/**", "adapter/codex/**"] },
           // THE PACK THE PACKAGE SHIPS, and it is NOT a pipeline stage — it is content written in
           // the grammar, so it sits outside the one-way run rather than at the end of it. Its fence
           // is the strictest here and it is two rules: a pack may reach the public door and nothing
@@ -319,6 +320,9 @@ export const house = definePack("house", (repo: Terrain) => ({
           // product as a `Harness`; a product file that imported the harness would name it, and the
           // second harness would then be a change to the product, which is what the seam is for.
           { from: "product", to: "claude-code", why: "flow's own product — init, status, uninstall, facts, the git gate — is handed a Harness by flow.ts and names none; importing the adapter's folder is how it would stop being harness-blind, and a second harness would then be an edit to the product instead of a second folder" },
+          { from: "product", to: "codex", why: "flow's own product is handed a Harness by flow.ts and names none; importing Codex's folder is how it would stop being harness-blind" },
+          { from: "claude-code", to: "codex", why: "a harness is one folder and knows no other; the hook run they share is in the product, and a harness that read another's dialect would make the two one" },
+          { from: "codex", to: "claude-code", why: "a harness is one folder and knows no other; the hook run they share is in the product, and a harness that read another's dialect would make the two one" },
           // THE PACKS, both ways. Outward first: a pack reaches `index.ts` and stops, which is the
           // same rule a guarded repo's own pack obeys from outside and the reason the door can be
           // trusted — a door only one kind of consumer has to use is not a door.

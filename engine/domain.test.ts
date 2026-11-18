@@ -1198,10 +1198,11 @@ describe("the commit gate's session marker", () => {
 
 describe("the log's layout", () => {
   it("stamps the first row with who the stream is and which build wrote it", () => {
-    const row: Row = metaRow("a/b", "main", "/repo", "2026-09-04T12:00:00.000Z");
+    const row: Row = metaRow("a/b", "main", "/repo", "2026-09-04T12:00:00.000Z", "claude-code");
     expect(row).toEqual({
       kind: "meta",
       v: LOG_VERSION,
+      harness: "claude-code",
       session: "a-b",
       started: "2026-09-04T12:00:00.000Z",
       branch: "main",

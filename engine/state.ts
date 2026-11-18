@@ -178,6 +178,8 @@ function tailOf(file: string): string {
 export interface LogContext {
   readonly root: string;
   readonly session: string;
+  /** The harness the session runs under, for the stream's meta row. The shared `commit` stream is no harness's, and names none. */
+  readonly harness?: string;
   /** The branch this worktree has out, for the stream's meta row. The adapter knows it; this does not. */
   readonly branch: string | null;
   /** The agent every row came from, stamped beside the time. */
@@ -197,13 +199,13 @@ export interface LogContext {
 export function appendRows(ctx: LogContext, rows: readonly Row[]): boolean {
   try {
     if (rows.length === 0) return true;
-    const { root, session, branch, who } = ctx;
+    const { root, session, harness, branch, who } = ctx;
     const clock = ctx.now ?? ((): Date => new Date());
     const file = logFile(root, session);
     ensureFlowDir(root);
     mkdirSync(dirname(file), { recursive: true });
     if (!existsSync(file)) {
-      writeFileSync(file, `${JSON.stringify(metaRow(session, branch, root, clock().toISOString()))}\n`);
+      writeFileSync(file, `${JSON.stringify(metaRow(session, branch, root, clock().toISOString(), harness))}\n`);
       seqCache.set(file, 1);
     }
     let seq = seqCache.get(file) ?? nextSeq(tailOf(file));

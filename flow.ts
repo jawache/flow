@@ -39,6 +39,7 @@ import { runCases, type CaseResult } from "./checks/domain.ts";
 import { claudeCode } from "./adapter/claude/claude.ts";
 import { commitEntry, registerGrammars } from "./adapter/shell.ts";
 import { facts } from "./adapter/archive.ts";
+import { hookEntry } from "./adapter/hook.ts";
 import {
   CONFIG_FILE,
   configLoadFault,
@@ -326,7 +327,7 @@ if (argv.includes("--version") || argv.includes("-v")) {
   // Git's hook, not the harness's: it carries no payload on stdin, so it never reaches the reader.
   perform(await commitEntry(rest.slice(1), process.cwd()));
 } else if (verb === "hook") {
-  perform(await harness.run(rest[0] ?? "", process.cwd()));
+  perform(await hookEntry(harnesses, rest[0] ?? "", process.cwd()));
 } else if (verb === "commit") {
   // The name an older pre-commit hook calls. Kept so those commits still run the gate;
   // `flow status` tells the repo to update the hook, and the file list it passes is ignored.

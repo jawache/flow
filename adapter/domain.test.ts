@@ -9,7 +9,7 @@ import { type Bound, type Row } from "../engine/domain.ts";
 import { missingGrammarText } from "../checks/domain.ts";
 import { matchAny } from "../glob.ts";
 import { host } from "../__fixtures__/host.ts";
-import { ADD_THE_GATE_LINE, type Found, aboutToWrite, ago, defaultHarnesses, detection, harnessArg, harnessPrompt, harnessQuestion, isYes, lastHookRan, chooseHarnesses, listsFlow, warningLines, writtenLines, CONFIG_FILE, type Candidate, GATE_LOCAL_LINE, GATE_PATH, GATE_RUN_LINE, GIT_HOOK_ENV, HOOKS_DIR, HOOKS_UNKNOWN, type HooksFolder, type InitFacts, LOCAL_BIN, MACHINE_FLAG, NODE_FLOOR, NOT_INSTALLED, OLD_GATE_PATH, type OtherHooks, PACKAGE_BIN, PACKAGE_DIR, COMMIT_MSG, SET_HOOKS_PATH, type StatusFacts, UPDATE_THE_GATE_LINE, type UninstallFacts, armsFlow, armsOldFlow, classifyBash, cleanMessage, commentLeader, commitArgs, configImports, configLoadFault, flowLinesOf, gateWithoutFlow, guardPaths, health, hermeticEnv, readsCommitIndex, hooksDirOf, hostPath, initCode, initLines, isCorrection, joinSpawn, listed, loadsAsStrippedModule, mergeNarratives, narrative, notInstalledLines, otherHooks, pathLines, planInit, planUninstall, commitMsgOf, recipeTools, repoFirst, scaffold, selectSessions, snip, stagedChanges, status, statusCode, statusLines, strip, text, treeChanges, uncoveredAreas, uninstallCode, uninstallLines, uninstallRefusal, wantsColour, weakenedAfterBlock } from "./domain.ts";
+import { aboutToWrite, ADD_THE_GATE_LINE, ago, armsFlow, armsOldFlow, type Candidate, chooseHarnesses, classifyBash, cleanMessage, commentLeader, COMMIT_MSG, commitArgs, commitMsgOf, CONFIG_FILE, configImports, configLoadFault, defaultHarnesses, DELIVERS, delivers, detection, FLOW_OFF, flowLinesOf, type Found, GATE_LOCAL_LINE, GATE_PATH, GATE_RUN_LINE, gateWithoutFlow, GIT_HOOK_ENV, guardPaths, harnessArg, harnessPrompt, harnessQuestion, health, hermeticEnv, HOOK_EVENTS, HOOKS_DIR, HOOKS_UNKNOWN, hooksDirOf, type HooksFolder, hostPath, initCode, type InitFacts, initLines, isCorrection, isHookEvent, isYes, joinSpawn, lastHookRan, listed, listsFlow, loadsAsStrippedModule, LOCAL_BIN, MACHINE_FLAG, mergeNarratives, narrative, NODE_FLOOR, NOT_INSTALLED, notInstalledLines, OLD_GATE_PATH, type OtherHooks, otherHooks, PACKAGE_BIN, PACKAGE_DIR, pathLines, planInit, planUninstall, readsCommitIndex, recipeTools, repoFirst, scaffold, selectSessions, SET_HOOKS_PATH, snip, stagedChanges, status, statusCode, type StatusFacts, statusLines, strip, text, treeChanges, uncoveredAreas, uninstallCode, type UninstallFacts, uninstallLines, uninstallRefusal, UPDATE_THE_GATE_LINE, wantsColour, warningLines, weakenedAfterBlock, whileBroken, writtenLines } from "./domain.ts";
 import { type ToolAction, type TranscriptEvent } from "./harness.ts";
 
 describe("the environment a check's command sees", () => {
@@ -2141,3 +2141,41 @@ describe("listsFlow — does the repo's package.json list flow", () => {
   });
 });
 
+describe("the seven events, and the moments honestly delivered", () => {
+  it("answers to seven events, named by the event and never by the job", () => {
+    expect([...HOOK_EVENTS]).toStrictEqual([
+      "session-start",
+      "subagent-start",
+      "pre-tool-use",
+      "post-tool-use",
+      "stop",
+      "subagent-stop",
+      "notification",
+    ]);
+    expect(isHookEvent("pre-tool-use")).toBe(true);
+    expect(isHookEvent("SubagentStop"), "the host's name is not flow's verb").toBe(false);
+    expect(isHookEvent("PreToolUse"), "the host's name is not flow's verb").toBe(false);
+  });
+
+  it("states what it can supply, turn-end briefing among it", () => {
+    // The Stop and SubagentStop answers carry `additionalContext`, so a note bound at turn-end is
+    // shown there. Saying what is carried is the contract; faking it would be the failure.
+    expect(delivers("guardrail", "turn-end", DELIVERS), "the turn-end GUARDRAIL rail works").toBe(true);
+    expect(delivers("breadcrumb", "turn-end", DELIVERS), "a NOTE bound there is shown at the hand-back").toBe(true);
+    expect(DELIVERS.brief).toContain("turn-end");
+    expect(DELIVERS.guard, "commit is delivered — by the git gate, not by the harness").toContain("commit");
+    expect(delivers("breadcrumb", "session", DELIVERS)).toBe(true);
+    expect(delivers("breadcrumb", "touch", DELIVERS)).toBe(true);
+    expect(delivers("guardrail", "session", DELIVERS), "a guardrail has no session rail at all").toBe(false);
+    expect(DELIVERS.guard, "flow stops no write and no delete").toEqual(["command", "commit", "turn-end"]);
+  });
+});
+
+describe("what an agent is told while the config will not load", () => {
+  it("is the fault, then that flow is off, and nothing is refused", () => {
+    const answer = whileBroken([{ rail: "brief", moment: "session" }], "the config will not load");
+    expect(answer.refused).toStrictEqual([]);
+    expect(answer.shown.map((note) => note.body)).toStrictEqual([`the config will not load\n\n${FLOW_OFF}`]);
+    expect(FLOW_OFF).toContain("every commit is refused");
+  });
+});

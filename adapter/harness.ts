@@ -9,17 +9,18 @@
 //
 // FIVE THINGS FLOW ASKS OF A HARNESS, and the interface has one member for each:
 //
-//   the events it is called with   `events`, and `run` answers one                   → HookResult
+//   the events it is called with   `events`, and `claims` tells its payload from another's → HookPayload
 //   the replies flow gives         `HookResult`: stdout, stderr, an exit code
 //   registering                    `registering`: where the harness's settings live, what flow adds
 //   the type of the agent acting   carried in what `run` hands the engine (`AgentOf`, engine/domain.ts)
-//   the transcript reads           `transcripts`: the harness's store, read after the fact
+//   the transcript reads           `transcripts`: the harness's store, read after the fact, and the
+//                                  session's own transcript, read as a hook runs
 //
 // This file is types only, and is the leaf of the adapter: it imports from the two layers upstream
 // and from nothing in its own folder, so the product's pure home and the harness's can both import it
 // without a cycle.
 
-import type { BreadcrumbMoment, GuardrailMoment } from "../language/domain.ts";
+import type { BreadcrumbMoment, GuardrailMoment, TurnAction } from "../language/domain.ts";
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // RESULTS — effects become an exit code, a line on stderr, or a decision object
@@ -33,6 +34,41 @@ export interface HookResult {
   readonly stderr: string;
   /** 0 allows; 2 blocks. Never anything else — those are the host's two codes. */
   readonly exitCode: 0 | 2;
+}
+
+/**
+ * One hook payload, as a harness writes it on stdin.
+ *
+ * Deliberately loose, every field optional: it is JSON from another program, so a shape this file
+ * DEMANDS is a shape that breaks the day the host adds a field or omits one. The index signature is
+ * not laziness either — F5's archival side reads keys this phase has no use for, and a payload
+ * narrowed on the way in cannot grow them back. Claude Code and Codex send these fields under these
+ * names.
+ */
+export interface HookPayload {
+  readonly session_id?: string;
+  /** The folder the harness ran the hook in: where a shell command starts. */
+  readonly cwd?: string;
+  /** Present on every call a SUBAGENT makes, and only then: the host's id for that one spawn. */
+  readonly agent_id?: string;
+  /**
+   * The agent type the host started this subagent as, sent beside `agent_id` on its every call.
+   * Host-written: the session cannot change the message, which is why a category may key on it.
+   */
+  readonly agent_type?: string;
+  readonly hook_event_name?: string;
+  readonly transcript_path?: string | null;
+  readonly stop_hook_active?: boolean;
+  readonly tool_name?: string;
+  readonly tool_input?: Record<string, unknown>;
+  /** SessionStart's reason: `startup` · `resume` · `clear` · `compact` — the compaction announcement. */
+  readonly source?: string;
+  /**
+   * The permission mode the session runs under (`default` · `acceptEdits` · `plan` · `auto` · …),
+   * as the host states it on every call. Recorded and reported; never a category key.
+   */
+  readonly permission_mode?: string;
+  readonly [key: string]: unknown;
 }
 
 /** One transcript file worth reading, and the sidecar beside it. */
@@ -190,8 +226,18 @@ export interface Registering {
   readonly withoutRegistrations: (settings: unknown) => { settings: unknown; removed: string[] };
 }
 
-/** The harness's transcripts, read after the fact. Each takes text a shell already read. */
+/** The harness's transcripts. Each takes text a shell already read. */
 export interface Transcripts {
+  /** The session's own transcript as a hook payload names it: a subagent's own, never its parent's. Null when there is none. */
+  readonly own: (payload: HookPayload) => string | null;
+  /** How many tokens the conversation holds in its context now, for `driftTokens`. 0 when it cannot say. */
+  readonly tokens: (jsonl: string) => number;
+  /** What the agent did this turn, for the turn-end rules. */
+  readonly turn: (jsonl: string, root: string) => TurnAction[];
+  /** The brief a session was started with, whole: what a category recognises a generic spawn by. */
+  readonly brief: (jsonl: string) => string;
+  /** The agent the session itself runs as (`--agent`, or its setting), read from the parent's transcript; null when it runs as none. */
+  readonly sessionAgent: (jsonl: string) => string | null;
   /** The store as it stands for a working directory. A missing folder is a fact, not an error. */
   readonly readStore: (cwd: string, home?: string) => Store;
   /** One transcript's bytes, and the sidecar beside it if there is one. */
@@ -226,8 +272,10 @@ export interface Harness {
   readonly events: readonly string[];
   /** The moments it delivers. */
   readonly delivers: Delivered;
-  /** One hook, end to end: read what the harness sent, judge it, answer in its dialect. */
-  readonly run: (event: string, cwd: string) => Promise<HookResult>;
+  /** Is this payload this harness's? Two harnesses call the same `flow hook <event>`, so the payload says which one did. */
+  readonly claims: (payload: HookPayload) => boolean;
+  /** The repo a hook stands in, from the folder the harness ran it in. */
+  readonly projectRoot: (cwd: string) => string;
   /** How `flow init` finds the harness in a repo: its folder there, and its program on the `PATH`. */
   readonly detect: { readonly folder: string; readonly program: string };
   /** What a person must do in the harness before it runs flow's hooks, or null when nothing. `flow init` warns of it. */
