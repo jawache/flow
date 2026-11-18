@@ -2083,8 +2083,16 @@ describe("the line for a registered harness in flow status", () => {
     const facts = statusFacts({});
     const reported = (lastRan: string | null) =>
       status({ ...facts, harnesses: [{ harness: noted, settings: noted.registering.withRegistrations({}).settings, lastRan }] }).fittings.find((f) => f.id === "other");
-    expect(reported(null)).toEqual({ id: "other", ok: true, detail: "registered · no hook has run here\nOther runs a hook only once it is approved", lastRan: null });
+    expect(reported(null)).toEqual({ id: "other", ok: true, detail: "registered · no hook has run here\n    Other runs a hook only once it is approved", lastRan: null });
     expect(reported("2026-11-18T11:57:00.000Z")?.detail, "a hook has run: nothing to explain").toBe("registered · last hook ran 3 minutes ago");
+  });
+
+  it("prints the reason on its own line under the row, as an entry's message is", () => {
+    const noted = { ...other, noHookNote: "Other runs a hook only once it is approved" };
+    const facts = statusFacts({});
+    const lines = statusLines(status({ ...facts, harnesses: [{ harness: noted, settings: noted.registering.withRegistrations({}).settings, lastRan: null }] })).join("\n").split("\n");
+    const at = lines.findIndex((l) => l.startsWith("  ✓ other:"));
+    expect(lines.slice(at, at + 2)).toEqual(["  ✓ other: registered · no hook has run here", "        Other runs a hook only once it is approved"]);
   });
 
   it("says how long ago, in the unit that fits", () => {

@@ -2336,6 +2336,9 @@ function unregisteredText(path: string, unregistered: readonly HookCost[]): stri
   return `${path} does not call flow for ${names} — re-run \`flow init\`. Until it does, ${unregistered.map((r) => r.unregistered).join("; ")}.`;
 }
 
+/** The harness's note sits as far in as an entry's message does: four more than a fitting's later lines. */
+const NOTE_INDENT = "    ";
+
 /**
  * One harness's line: green when every hook flow registers is in the repo's file in today's shape,
  * and the time one of them last ran here. Its fix, in words, when not.
@@ -2349,7 +2352,7 @@ function harnessFitting({ harness, settings, lastRan }: StatusHarness, now: numb
   const ok = unregistered.length === 0 && stale.length === 0;
   const ran = lastRan === null ? "no hook has run here" : `last hook ran ${ago(lastRan, now)}`;
   const detail = ok
-    ? `registered · ${ran}${lastRan === null && harness.noHookNote !== null ? `\n${harness.noHookNote}` : ""}`
+    ? `registered · ${ran}${lastRan === null && harness.noHookNote !== null ? `\n${NOTE_INDENT}${harness.noHookNote}` : ""}`
     : [
         unregistered.length === 0 ? "" : unregisteredText(path, unregistered),
         stale.length === 0
