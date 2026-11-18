@@ -1636,13 +1636,16 @@ export function isYes(answer: string): boolean {
 
 // ── the scaffold ─────────────────────────────────────────────────────────────
 
-/** The config `flow init --empty` leaves: the wiring, with no opinions. */
-const EMPTY_CONFIG = String.raw`// flow.config.ts — this repo's whole guard.
+/** What every config `flow init` writes starts with: what the file is, and how a pack is bound to it. */
+const HEADER = `// flow.config.ts — this repo's whole guard, and the only file that turns anything on.
 //
-// A rule not reachable from this file does not run. Bind a pack with ` + "`pack(x)`" + String.raw`, refine one of
-// its entries with ` + "`override(x.entry)`" + String.raw`, and ask ` + "`flow status`" + String.raw` what is live.
+// A rule not reachable from here does not run. Bind a pack with \`pack(x)\`, refine one of
+// its entries with \`override(x.entry)\`, and ask \`flow status\` what is live.
 
-import { defineConfig } from "@jawache/flow";
+`;
+
+/** The config `flow init --empty` leaves: the wiring, with no opinions. */
+const EMPTY_CONFIG = `${HEADER}import { defineConfig } from "@jawache/flow";
 
 export default defineConfig([]);
 `;
@@ -1657,12 +1660,7 @@ export default defineConfig([]);
  * guard — and every repo running flow wants all three. It takes no parameter. `--empty` binds
  * nothing.
  */
-const DEFAULT_CONFIG = String.raw`// flow.config.ts — this repo's whole guard, and the only file that turns anything on.
-//
-// A rule not reachable from here does not run. Bind a pack with ` + "`pack(x)`" + String.raw`, refine one of
-// its entries with ` + "`override(x.entry)`" + String.raw`, and ask ` + "`flow status`" + String.raw` what is live.
-
-import { defineConfig, pack } from "@jawache/flow";
+const DEFAULT_CONFIG = `${HEADER}import { defineConfig, pack } from "@jawache/flow";
 import { flow } from "@jawache/flow/packs";
 
 export default defineConfig([

@@ -1629,9 +1629,7 @@ export function faultsOf(check: Check | undefined): readonly string[] {
  * IT DOES ONE THING BESIDES, and it was a plain identity function until it did: the options a
  * check was configured with are kept ON the returned check, under a symbol nothing enumerates. A
  * check is a closure, so once it is built the settings inside it are unreachable — and a reader
- * that cannot see them cannot say what a rule really watches. The generated pack pages printed the
- * `.check(…)` SOURCE instead, which is how `noGitDiscard({})`, a bare `TESTS` constant and a
- * helper call reached a page as the whole description of a rule. Read back through `settings` on
+ * that cannot see them cannot say what a rule really watches. Read back through `settings` on
  * the loaded entry they are RESOLVED values: the globs a parameter supplied, the recipe a repo
  * named. Nothing in the run reads them — the engine calls the check and asks it nothing else — so
  * this cannot change what any rule decides.

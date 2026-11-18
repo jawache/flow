@@ -64,7 +64,7 @@ test-rules:
     just build
     node dist/flow.mjs test
 
-[doc("THE MACHINE TEST — the sibling of test-rules, asked about the PACK the package ships instead of this repo. In a throwaway repo that has never heard of flow: `flow init`, the `flow` pack bound with a stranger's parameters beside two packs the repo writes, `flow status` green, each pack's own cases run, and a live refusal driven at delete · turn-end. Exit 0 answers 'did the shipped pack break'; a red line names it.")]
+[doc("THE MACHINE TEST — the sibling of test-rules, asked about the PACK the package ships instead of this repo. In a throwaway repo that has never heard of flow: `flow init`, the `flow` pack bound bare beside two packs the repo writes, `flow status` green, each pack's own cases run, and a live refusal driven at commit · turn-end. Exit 0 answers 'did the shipped pack break'; a red line names it.")]
 test-packs:
     # No build step: the test builds the bundles itself, because the thing under test is the
     # INSTALLED package — `@jawache/flow` and `@jawache/flow/packs` resolved through the link

@@ -399,7 +399,7 @@ describe("the scaffolded config", () => {
     expect(config).toContain('import { defineConfig, pack } from "@jawache/flow";');
     expect(config).toContain('import { flow } from "@jawache/flow/packs";');
     expect(config).toContain("  pack(flow),\n");
-    expect(config.match(/pack\(/g), "one pack, and no other").toHaveLength(2);
+    expect(config.match(/^\s*pack\(/gm), "one pack, and no other").toHaveLength(1);
     expect(config).not.toContain("definePack");
     expect(config.split("\n").length).toBeLessThan(25);
   });

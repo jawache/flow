@@ -54,8 +54,6 @@ interface Shipped {
   readonly from?: string;
   /** Whether this binding declares the repo's own grammar — the settings block rides with it. */
   readonly declaresGrammar?: boolean;
-  /** The parameters, as the config line writes them. Empty binds the pack bare. */
-  readonly params: string;
   /** What `flow test` runs over this pack alone. Pinned: a deleted case shows up here, by name. */
   readonly cases: number;
   /** The guardrails those cases cover — the disabled ones are loaded but not run. */
@@ -63,12 +61,12 @@ interface Shipped {
 }
 
 /** The config line one binding is written as. */
-const bind = (entry: Shipped): string => `pack(${entry.pack}${entry.params === "" ? "" : `, ${entry.params}`})`;
+const bind = (entry: Shipped): string => `pack(${entry.pack})`;
 
-/** The one shipped pack, `rules/**` handed over as the folder this repo keeps its own packs in. */
-const FLOW: Shipped = { pack: "flow", params: "", cases: 40, guardrails: 2 };
+/** The one shipped pack, bound bare. */
+const FLOW: Shipped = { pack: "flow", cases: 40, guardrails: 2 };
 /** The stranger's own pack — the second binding, and the only turn-end rule in the config. */
-const HOUSE: Shipped = { pack: "house", params: "", cases: 2, guardrails: 1, from: "../rules/house.ts" };
+const HOUSE: Shipped = { pack: "house", cases: 2, guardrails: 1, from: "../rules/house.ts" };
 
 /**
  * The stranger's SECOND pack — the third binding, and the only user of the two capabilities no
@@ -78,7 +76,6 @@ const HOUSE: Shipped = { pack: "house", params: "", cases: 2, guardrails: 1, fro
  */
 const STRANGER: Shipped = {
   pack: "stranger",
-  params: "",
   cases: 2,
   guardrails: 1,
   from: "../rules/stranger.ts",
@@ -121,7 +118,7 @@ const STRANGER_PACK = fixturePack("repo-grammar-pack", "@jawache/flow");
  * that uses it reads it through a probe config of its own. A pack that cannot load has no business
  * in a list of what is bound.
  */
-const BAD_FENCE: Shipped = { pack: "fence", params: "", cases: 2, guardrails: 1, from: "../rules/fence.ts" };
+const BAD_FENCE: Shipped = { pack: "fence", cases: 2, guardrails: 1, from: "../rules/fence.ts" };
 const BAD_FENCE_PACK = fixturePack("bad-fence-pack", "@jawache/flow");
 
 /**
