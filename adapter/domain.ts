@@ -2383,8 +2383,8 @@ function commitGate(facts: Pick<StatusFacts, "gateText" | "oldGateText">): Fitti
  * and git runs the folder it is in. Green joins them, as the tutorial prints it; red names each
  * half that is not, so the fix of each is on the line.
  */
-function gitHookFitting(gate: Fitting, path: Fitting): Fitting {
-  if (gate.ok && path.ok) return { id: "git hook", ok: true, detail: path.detail.startsWith("core.hooksPath") ? `${gate.detail}, and ${path.detail}` : path.detail };
+function gitHookFitting(gate: Fitting, path: Fitting, ownFolder: boolean): Fitting {
+  if (gate.ok && path.ok) return { id: "git hook", ok: true, detail: ownFolder ? `${gate.detail}, and ${path.detail}` : path.detail };
   return { id: "git hook", ok: false, detail: [gate, path].filter((f) => !f.ok).map((f) => f.detail).join("\n") };
 }
 
@@ -2397,7 +2397,7 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
         ? facts.configPath
         : `no ${CONFIG_FILE} in ${facts.root} — \`flow init\` writes one, that binds flow's own pack.`,
     },
-    gitHookFitting(commitGate(facts), hooksPathFitting(facts)),
+    gitHookFitting(commitGate(facts), hooksPathFitting(facts), facts.hooksFolder?.dir === HOOKS_DIR),
     binaryFitting(facts),
     // NO GRAMMARS, NO ROW. A repo that declares none has nothing to be told, and a fitting saying so
     // would be a green tick about a feature nobody used.
@@ -2542,7 +2542,7 @@ function binaryFitting(facts: Pick<StatusFacts, "binary" | "gateText" | "harness
       ok: true,
       detail:
         byHooks === byGate
-          ? byHooks === `in ${PACKAGE_DIR}`
+          ? hooks === "local" && gate === "local" && modules
             ? "the hooks run this repo's own flow"
             : `the hooks and the gate run the flow ${byHooks}`
           : `the hooks run the flow ${byHooks}, and the gate the flow ${byGate}`,

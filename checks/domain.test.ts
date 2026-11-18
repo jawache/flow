@@ -139,7 +139,7 @@ describe("textBan", () => {
   it("passes clean prose and blocks a banned word, naming the line", async () => {
     const check = textBan({ ban: ["\\bTODO\\b"] });
     expect(await run(check, "commit", file("a.md", "all good here"))).toBeNull();
-    expect(await run(check, "commit", file("a.md", "x\nleft a TODO here"))).toContain("line 2");
+    expect(await run(check, "commit", file("a.md", "x\nleft a TODO here"))).toBe("line 2 matches \\bTODO\\b");
   });
 });
 
@@ -430,7 +430,7 @@ describe("commitMessage", () => {
     const both = commitMessage({ header: "^fix: ", ban: ["wip"] });
     const detail = await run(both, "commit", { message: "wip" });
     expect(detail).toContain("does not match");
-    expect(detail).toContain("matches /wip/");
+    expect(detail).toContain("of the message matches wip");
   });
 
   it("judges nothing when there is no message, as under --all", async () => {

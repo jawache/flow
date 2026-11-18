@@ -995,7 +995,7 @@ export const commitMessage = defineCheck(
         if (!re.test(first)) hits.push(`the first line of the message, "${first}", does not match /${pattern}/`);
       for (const { pattern, re } of ban.patterns)
         lines.forEach((line, index) => {
-          if (re.test(line)) hits.push(`line ${index + 1} of the message matches /${pattern}/: "${line}"`);
+          if (re.test(line)) hits.push(`line ${index + 1} of the message matches ${pattern}: "${line}"`);
         });
       return answer(ctx, hits);
     }, faults);

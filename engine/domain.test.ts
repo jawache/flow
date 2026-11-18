@@ -62,7 +62,6 @@ import {
   LEAD_BUCKETS,
   LOG_VERSION,
   MARKER_MAX_AGE_MS,
-  MOMENT_ORDER,
   RECORDING_VERSION,
   ROW_KINDS,
   readDir,
@@ -1669,7 +1668,7 @@ describe("the terrain — the real tree, with coverage laid over it", () => {
 describe("the moments lens", () => {
   it("arranges the universe by moment, in the order a session meets them", () => {
     const view = momentsView(bound, null);
-    expect(view.moments.map((m) => m.moment)).toEqual(MOMENT_ORDER);
+    expect(view.moments.map((m) => m.moment)).toEqual(["commit", "command", "session", "file-change", "turn-end"]);
     expect(view.totals).toEqual({ breadcrumbs: 4, guardrails: 10, disabled: 1 });
   });
 
