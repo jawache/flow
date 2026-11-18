@@ -49,7 +49,7 @@ export default defineConfig([pack(house)], { driftTokens: 120_000 });
 
 ## Defining a pack
 
-A pack is a module: `definePack("name", { … })`, whose values are sentences. It lives in `guards/` or in a package of its own, in the same shape.
+A pack is a module: `definePack("name", { … })`, whose values are sentences. It lives in a file of your repo or in a package of its own, in the same shape. These pages keep a repo's own packs in `guards/`. The name is a convention: the config imports a pack by its path, so any folder works.
 
 ```
 import { command, definePack, guardrail } from "@jawache/flow";
