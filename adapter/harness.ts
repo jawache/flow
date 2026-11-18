@@ -255,7 +255,7 @@ export interface Transcripts {
 }
 
 /** What flow's own verbs decide with: the harness's name, the moments it delivers and what it registers. */
-export type HarnessFacts = Pick<Harness, "id" | "name" | "delivers" | "registering" | "detect" | "trustNote">;
+export type HarnessFacts = Pick<Harness, "id" | "name" | "delivers" | "registering" | "detect" | "trustNote" | "noHookNote">;
 
 /**
  * A harness, as the rest of flow sees it.
@@ -280,6 +280,8 @@ export interface Harness {
   readonly detect: { readonly folder: string; readonly program: string };
   /** What a person must do in the harness before it runs flow's hooks, or null when nothing. `flow init` warns of it. */
   readonly trustNote: string | null;
+  /** What `flow status` says beside a registered harness none of whose hooks has run: the likely reason, or null when there is none to give. */
+  readonly noHookNote: string | null;
   /** The harness's machine-wide settings file, where flow 0.3 wrote. Read for a warning, and cleaned by `flow uninstall --machine`: never written by `flow init`. */
   readonly machineSettingsPath: () => string;
   readonly registering: Registering;

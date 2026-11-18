@@ -23,6 +23,7 @@ import type {
   HarnessFacts,
   HookCost,
   HookPayload,
+  Registration,
   HookResult,
   Registering,
   Spawn,
@@ -2348,7 +2349,7 @@ function harnessFitting({ harness, settings, lastRan }: StatusHarness, now: numb
   const ok = unregistered.length === 0 && stale.length === 0;
   const ran = lastRan === null ? "no hook has run here" : `last hook ran ${ago(lastRan, now)}`;
   const detail = ok
-    ? `registered · ${ran}`
+    ? `registered · ${ran}${lastRan === null && harness.noHookNote !== null ? `\n${harness.noHookNote}` : ""}`
     : [
         unregistered.length === 0 ? "" : unregisteredText(path, unregistered),
         stale.length === 0
@@ -3736,4 +3737,259 @@ export function shellReadRows(payload: HookPayload, root: string, home?: string)
   if (text(payload.tool_name) !== "Bash" || command === "") return [];
   const where = { cwd: shellCwd(payload, root), root, home };
   return bashReads(parseShellSteps(command, where), where).reads.map((path) => ({ kind: "read", tool: "Bash", path }));
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// A HARNESS'S HOOKS FILE — what flow registers in it, read and written
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * One hook flow registers, as `HooksFile.registered` states it: the event, its matcher, and what goes
+ * unjudged without it. Not a settings file's entry, which is a `Registration`.
+ */
+export interface HooksFileHook {
+  readonly hook: HookEvent;
+  readonly matcher?: string;
+  readonly unregistered: string;
+}
+
+/** What one harness's settings file asks of flow's registrations: which hooks, what each runs, and which ones an older flow wrote. */
+export interface HooksFile {
+  /** The hooks flow registers, in order. */
+  readonly registered: readonly HooksFileHook[];
+  /** The hooks an older flow registered that this one does not: the host's name for each, and the word its command ends in. */
+  readonly retired: ReadonlyMap<string, string>;
+  /** The command a registration runs for one hook. */
+  readonly command: (hook: HookEvent) => string;
+}
+
+/**
+ * Reading and writing flow's registrations in a harness's hooks file, for a file shaped as `hooks`:
+ * an object of arrays of entries, each with a `matcher` and the commands it runs. Claude Code's
+ * settings file and Codex's `hooks.json` are both that, so the two share these and differ in what
+ * they register and the command it runs.
+ *
+ * Every function is pure: the file's JSON comes in and the JSON to write comes out.
+ */
+export function hooksFileOf(spec: HooksFile): Pick<Registering, "registrations" | "hooks" | "registeredEvents" | "staleRegistrations" | "bareRegistrations" | "withRegistrations" | "withoutRegistrations"> & { readonly ourHookCommand: (command: string) => boolean; readonly bareHook: (command: string) => HookEvent | null } {
+  const REGISTERED = spec.registered;
+  const RETIRED = spec.retired;
+  const HOOK_REGISTRATIONS: readonly Registration[] = REGISTERED.map(({ hook, matcher }) => ({
+    event: HOST_EVENT[hook],
+    command: spec.command(hook),
+    ...(matcher === undefined ? {} : { matcher }),
+  }));
+
+  /**
+   * What goes unjudged while each registration is missing, by the host's own name for its event — what
+   * `flow status` says beside the fix. Derived from `REGISTERED`, so it cannot name an event flow does
+   * not register.
+   */
+  const HOOK_COSTS: readonly HookCost[] = REGISTERED.map(({ hook, unregistered }) => ({ event: HOST_EVENT[hook], unregistered }));
+
+  /**
+   * Is this registration OURS?
+   *
+   * The rule that says "this is ours" is the rule that would say "this may be removed", so it is
+   * narrow on purpose: the flow binary — by either name it legitimately goes by, with any path in
+   * front — invoking `hook <event>` for an event this build actually answers. A `work hook stop` from
+   * the engine flow replaces is NOT ours; sweeping those is the crossing's job, with that engine's own
+   * recogniser.
+   */
+  function ourHookCommand(command: string): boolean {
+    const match = /(^|[\s"'/\\])(?:flow|flow\.mjs)["']?\s+hook\s+([a-z-]+)\s*$/.exec(command.trim());
+    return match?.[2] !== undefined && (isHookEvent(match[2]) || [...RETIRED.values()].includes(match[2]));
+  }
+
+  /** Every hook array in a settings file, by event. Loose: it is somebody's hand-edited JSON. */
+  function hookArrays(settings: unknown): Record<string, unknown[]> {
+    const held = (settings && typeof settings === "object" ? settings : {}) as { hooks?: unknown };
+    const hooks = (held.hooks && typeof held.hooks === "object" ? held.hooks : {}) as Record<string, unknown>;
+    const out: Record<string, unknown[]> = {};
+    for (const [event, value] of Object.entries(hooks)) if (Array.isArray(value)) out[event] = value;
+    return out;
+  }
+
+  /** Is this one entry of a hook array a registration of ours? */
+  function isOurs(entry: unknown): boolean {
+    return commandsOf(entry).some((command) => ourHookCommand(command));
+  }
+
+  /** The command of one hook inside an entry, or null when it has none. Loose, like everything read out of the file. */
+  function commandOf(held: unknown): string | null {
+    const command = (held as { command?: unknown } | null)?.command;
+    return typeof command === "string" ? command : null;
+  }
+
+  /** The commands of one entry of a hook array. */
+  function commandsOf(entry: unknown): string[] {
+    const inner = (entry as { hooks?: unknown } | null)?.hooks;
+    if (!Array.isArray(inner)) return [];
+    return inner.flatMap((held) => commandOf(held) ?? []);
+  }
+
+  /** The events this settings file already calls flow for. What makes init idempotent and status honest. */
+  function registeredEvents(settings: unknown): string[] {
+    const out: string[] = [];
+    for (const [event, entries] of Object.entries(hookArrays(settings))) if (!RETIRED.has(event) && entries.some(isOurs)) out.push(event);
+    return out;
+  }
+
+  /**
+   * The events an older flow registered in a way this build does not: a matcher other than the one
+   * this build asks for, such as PreToolUse on every tool where only `Bash` has anything to wait for,
+   * and a hook this build no longer registers at all (`RETIRED`). Each is its own red line, rather
+   * than disappearing inside "registered", and `flow init` rewrites or removes it.
+   */
+  function staleRegistrations(settings: unknown): string[] {
+    const arrays = hookArrays(settings);
+    const matcherChanged = HOOK_REGISTRATIONS.filter((registration) =>
+      (arrays[registration.event] ?? []).some(
+        (entry) => isOurs(entry) && (entry as { matcher?: unknown }).matcher !== registration.matcher,
+      ),
+    ).map((registration) => registration.event);
+    const retired = [...RETIRED.keys()].filter((event) => (arrays[event] ?? []).some(isOurs));
+    return [...matcherChanged, ...retired];
+  }
+
+  /**
+   * flow's own registration in the OLD shape, the bare `flow hook <event>`: the word it answers to, or
+   * null when the command is anything else. It finds flow on the PATH alone, so a repo with flow only
+   * as a dev dependency answers none of its hooks. A command with a path to the binary is not this
+   * shape: it names the copy it runs, and that is somebody's choice.
+   */
+  function bareHook(command: string): HookEvent | null {
+    const word = /^flow\s+hook\s+([a-z-]+)$/.exec(command.trim())?.[1];
+    return word !== undefined && isHookEvent(word) ? word : null;
+  }
+
+  /** The events this settings file calls flow for in the old shape — see `bareHook`. */
+  function bareRegistrations(settings: unknown): string[] {
+    return Object.entries(hookArrays(settings))
+      .filter(([, entries]) => entries.some((entry) => commandsOf(entry).some((command) => bareHook(command) !== null)))
+      .map(([event]) => event);
+  }
+
+  /** An event's entries without flow's own commands: an entry left with no hook goes. */
+  function withoutOurs(entries: readonly unknown[]): unknown[] {
+    return entries.flatMap((entry) => {
+      if (!isOurs(entry)) return [entry];
+      const shared = entry as Record<string, unknown> & { hooks: unknown[] };
+      const kept = shared.hooks.filter((inner) => {
+        const command = commandOf(inner);
+        return command === null || !ourHookCommand(command);
+      });
+      return kept.length === 0 ? [] : [{ ...shared, hooks: kept }];
+    });
+  }
+
+  /**
+   * The settings file's hooks, with flow's own entries on those events rewritten in place: a stale
+   * matcher made today's, an old-shape command (`bareHook`) made today's, and an event this build no
+   * longer registers (`RETIRED`) taken out. FLOW'S OWN ENTRIES ARE FLOW'S TO REWRITE, and these are
+   * the only three changes flow makes. Adding a second entry beside either instead would fire flow
+   * twice for every event the old one already answers.
+   */
+  function rewrittenOurs(settings: unknown, stale: ReadonlySet<string>, bare: ReadonlySet<string>): Record<string, unknown> {
+    const held = (settings && typeof settings === "object" ? settings : {}) as Record<string, unknown>;
+    const arrays = hookArrays(settings);
+    const hooks: Record<string, unknown> = { ...(held["hooks"] as Record<string, unknown> | undefined) };
+    const matcherOf = new Map(HOOK_REGISTRATIONS.map((r) => [r.event, r.matcher]));
+    const emptied = new Set<string>();
+    for (const event of new Set([...stale, ...bare])) {
+      if (RETIRED.has(event)) {
+        const left = withoutOurs(arrays[event] ?? []);
+        if (left.length === 0) emptied.add(event);
+        else hooks[event] = left;
+        continue;
+      }
+      hooks[event] = (arrays[event] ?? []).map((entry) => {
+        if (!isOurs(entry)) return entry;
+        const ours = entry as Record<string, unknown> & { hooks: unknown[] };
+        return {
+          ...ours,
+          ...(stale.has(event) ? { matcher: matcherOf.get(event) } : {}),
+          hooks: ours.hooks.map((inner) => {
+            const command = commandOf(inner);
+            const word = command === null ? null : bareHook(command);
+            return word === null ? inner : { ...(inner as Record<string, unknown>), command: spec.command(word) };
+          }),
+        };
+      });
+    }
+    return Object.fromEntries(Object.entries(hooks).filter(([event]) => !emptied.has(event)));
+  }
+
+  /**
+   * A settings file with flow's registrations in it — a NEW object, added to, and with flow's own
+   * entries brought up to date.
+   *
+   * It is somebody's file and holds far more than us, so nothing of anyone else's is rewritten and
+   * nothing is removed: a registration on our event that belongs to another tool keeps its place and
+   * flow stands beside it. Adding what is already there is skipped, which is the whole of what makes
+   * `flow init` idempotent — a second run has nothing to say.
+   */
+  function withRegistrations(settings: unknown): { settings: unknown; changed: string[] } {
+    const base = (settings && typeof settings === "object" ? settings : {}) as Record<string, unknown>;
+    const already = new Set(registeredEvents(settings));
+    const wanted = HOOK_REGISTRATIONS.filter((r) => !already.has(r.event));
+    const stale = new Set(staleRegistrations(settings));
+    const bare = new Set(bareRegistrations(settings));
+    if (wanted.length === 0 && stale.size === 0 && bare.size === 0) return { settings: base, changed: [] };
+
+    const arrays = hookArrays(settings);
+    const hooks = rewrittenOurs(settings, stale, bare);
+    for (const registration of wanted) {
+      hooks[registration.event] = [
+        ...(arrays[registration.event] ?? []),
+        {
+          ...(registration.matcher === undefined ? {} : { matcher: registration.matcher }),
+          hooks: [{ type: "command", command: registration.command }],
+        },
+      ];
+    }
+    // THE REPORT, in registration order: each event added, rewritten or removed, once, with why.
+    const changed: string[] = [];
+    for (const event of new Set([...HOOK_REGISTRATIONS.map((r) => r.event), ...bare, ...RETIRED.keys()])) {
+      const why = [
+        ...(stale.has(event) && RETIRED.has(event) ? ["removed: flow no longer registers it"] : []),
+        ...(stale.has(event) && !RETIRED.has(event) ? ["matcher brought up to date"] : []),
+        ...(bare.has(event) ? [`now runs the flow in ${PACKAGE_DIR} first`] : []),
+      ];
+      if (why.length > 0) changed.push(`${event} (${why.join(", ")})`);
+      else if (!already.has(event) && !RETIRED.has(event)) changed.push(event);
+    }
+    return { settings: { ...base, hooks }, changed };
+  }
+
+  /**
+   * A settings file with flow's registrations taken out — a NEW object, and the reverse of
+   * `withRegistrations`.
+   *
+   * On the events flow registers, each hook whose command is flow's (`ourHookCommand`, so an older
+   * flow's bare `flow hook <event>` goes too) is removed; an entry left with no hook goes, an event left
+   * with no entry goes, and a `hooks` key left empty goes. Every other key, event and hook is kept as
+   * it was. `removed` names the events, in registration order, empty when there was nothing of flow's.
+   */
+  function withoutRegistrations(settings: unknown): { settings: unknown; removed: string[] } {
+    const arrays = hookArrays(settings);
+    const removed = [...HOOK_REGISTRATIONS.map((r) => r.event), ...RETIRED.keys()].filter((event) => (arrays[event] ?? []).some(isOurs));
+    if (removed.length === 0) return { settings, removed: [] };
+
+    const held = settings as Record<string, unknown>;
+    const ours = new Set(removed);
+    const hooks: Record<string, unknown> = {};
+    for (const [event, value] of Object.entries(held["hooks"] as Record<string, unknown>)) {
+      if (!ours.has(event)) {
+        hooks[event] = value;
+        continue;
+      }
+      const left = withoutOurs(value as unknown[]);
+      if (left.length > 0) hooks[event] = left;
+    }
+    const rest = Object.fromEntries(Object.entries(held).filter(([key]) => key !== "hooks"));
+    return { settings: Object.keys(hooks).length === 0 ? rest : { ...held, hooks }, removed };
+  }
+
+  return { registrations: HOOK_REGISTRATIONS, hooks: HOOK_COSTS, ourHookCommand, bareHook, registeredEvents, staleRegistrations, bareRegistrations, withRegistrations, withoutRegistrations };
 }

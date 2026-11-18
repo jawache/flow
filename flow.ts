@@ -37,6 +37,7 @@ import { entriesOrThrow, FlowConfigError } from "./errors.ts";
 import { loadConfig, type FlowConfig, type LoadedEntry } from "./language/domain.ts";
 import { runCases, type CaseResult } from "./checks/domain.ts";
 import { claudeCode } from "./adapter/claude/claude.ts";
+import { codex } from "./adapter/codex/codex.ts";
 import { commitEntry, registerGrammars } from "./adapter/shell.ts";
 import { facts } from "./adapter/archive.ts";
 import { hookEntry } from "./adapter/hook.ts";
@@ -53,8 +54,9 @@ import { diffRows, replay, type Row } from "./engine/domain.ts";
 import { loadRecording, readRowsFile } from "./engine/state.ts";
 
 // THE HARNESSES this binary runs for. The one place flow chooses them; everything below takes a
-// `Harness` and names none. The first is the one a hook of its own words is run for.
-const harnesses = [claudeCode] as const;
+// `Harness` and names none. The first is the one a hook payload that no harness claims is run as, and
+// the one `flow facts` reads the transcripts of.
+const harnesses = [claudeCode, codex] as const;
 const harness = claudeCode;
 
 const argv = process.argv.slice(2);

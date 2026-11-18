@@ -44,6 +44,7 @@ export const claudeCode: Harness = {
   name: "Claude Code",
   detect: { folder: ".claude", program: "claude" },
   trustNote: null,
+  noHookNote: null,
   events: HOOK_EVENTS,
   delivers: DELIVERS,
   claims,

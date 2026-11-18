@@ -2078,6 +2078,15 @@ describe("the line for a registered harness in flow status", () => {
     expect(status(both).fittings.filter((f) => f.id === "claude-code" || f.id === "other").map((f) => f.id)).toEqual(["claude-code", "other"]);
   });
 
+  it("names the likely reason under a harness none of whose hooks has run, when the harness has one", () => {
+    const noted = { ...other, noHookNote: "Other runs a hook only once it is approved" };
+    const facts = statusFacts({});
+    const reported = (lastRan: string | null) =>
+      status({ ...facts, harnesses: [{ harness: noted, settings: noted.registering.withRegistrations({}).settings, lastRan }] }).fittings.find((f) => f.id === "other");
+    expect(reported(null)).toEqual({ id: "other", ok: true, detail: "registered · no hook has run here\nOther runs a hook only once it is approved", lastRan: null });
+    expect(reported("2026-11-18T11:57:00.000Z")?.detail, "a hook has run: nothing to explain").toBe("registered · last hook ran 3 minutes ago");
+  });
+
   it("says how long ago, in the unit that fits", () => {
     const at = (ms: number): string => ago(new Date(NOW - ms).toISOString(), NOW);
     expect(at(0)).toBe("just now");

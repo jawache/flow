@@ -969,6 +969,7 @@ describe("flow uninstall", () => {
         "  - .flow/ — flow's state and logs",
         "  - node_modules/@jawache/flow — the link `flow init` made",
         `  - .claude/settings.json — ${LISTED}`,
+        `  - .codex/hooks.json — ${LISTED}`,
         "  · kept flow.config.ts and the packs it imports — `flow init` wires this repo again.",
         "  next: `npm uninstall @jawache/flow` — removes the package.",
       ]);
