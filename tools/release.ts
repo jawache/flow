@@ -5,7 +5,7 @@
 // off), and a second commit above it that holds dist/. The tag points at the second, and the branch
 // stays at the first, so the branch never holds built files and the tag always does. A project
 // installs the tag with `npm i -D github:jawache/flow#v<version>`, and npm builds nothing, because
-// the tagged package.json has no script it would run.
+// the tagged package.json has no script it would run (`justfile.node.noPackageScripts` refuses one at the release commit).
 //
 //   node tools/release.ts cut     the release commit, the release build, the commit that holds dist/, the tag
 //   node tools/release.ts check   the same, in a throwaway clone, then the tag installed with scripts off and run
@@ -14,11 +14,10 @@
 // judges every commit; the branch is switched back to the release commit afterwards.
 // Nothing here pushes, and nothing publishes.
 
-import { spawnSync, type SpawnSyncOptions } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { installScripts } from "./domain.ts";
 
 const PACKAGE = resolve(import.meta.dirname, "..");
 
@@ -26,14 +25,14 @@ const PACKAGE = resolve(import.meta.dirname, "..");
 const BUILT = ["dist/flow.mjs", "dist/index.mjs", "dist/packs.mjs", "dist/types"] as const;
 
 /** Run a program in `cwd`, showing its output, and stop the release when it fails. */
-function run(program: string, args: readonly string[], cwd: string, extra: SpawnSyncOptions = {}): void {
-  const ran = spawnSync(program, args, { cwd, stdio: "inherit", ...extra });
+function run(program: string, args: readonly string[], cwd: string): void {
+  const ran = spawnSync(program, args, { cwd, stdio: "inherit" });
   if (ran.status !== 0) throw new Error(`${program} ${args.join(" ")} failed (exit ${String(ran.status)}) in ${cwd}`);
 }
 
 /** Run a program in `cwd` and return what it printed, trimmed. */
-function out(program: string, args: readonly string[], cwd: string, env: NodeJS.ProcessEnv = process.env): string {
-  const ran = spawnSync(program, args, { cwd, encoding: "utf8", env });
+function out(program: string, args: readonly string[], cwd: string): string {
+  const ran = spawnSync(program, args, { cwd, encoding: "utf8" });
   if (ran.status !== 0) throw new Error(`${program} ${args.join(" ")} failed (exit ${String(ran.status)}): ${ran.stderr}`);
   return ran.stdout.trim();
 }
@@ -57,24 +56,24 @@ function cut(repo: string): string {
     run("git", ["tag", "-a", `v${version}`, "-m", `v${version}`], repo);
   } catch (error) {
     // The branch is put back whatever refused, so the caller sees the refusal and a repo as it was.
-    spawnSync("git", ["reset", "-q", "--hard"], { cwd: repo });
+    spawnSync("git", ["reset", "-q"], { cwd: repo });
     spawnSync("git", ["switch", "-q", branch === "" ? release : branch], { cwd: repo });
     throw error;
   }
-  // The commit gate rebuilt dist/ as a dev build while it judged the commit. The release build is what the
-  // commit holds, so the folder is put back to it before the branch, which holds no dist/, is switched to.
+  // The commit gate rebuilt dist/ as a dev build while it judged the commit, and switching to the
+  // branch, which does not track dist/, removes the files the tag tracks. So the folder is put back to
+  // the working tree alone, from the tag: the release build, which this repo's guard loads, and nothing staged.
   run("git", ["restore", "--", "dist"], repo);
   run("git", ["switch", "-q", branch === "" ? release : branch], repo);
+  run("git", ["restore", "--source", `v${version}`, "--worktree", "--", ...BUILT], repo);
   return version;
 }
 
-/** Every file under `dir`, relative to it, not entering a node_modules folder. */
-function files(dir: string, at = ""): string[] {
-  return readdirSync(join(dir, at)).flatMap((name) => {
-    const rel = at === "" ? name : `${at}/${name}`;
-    if (name === "node_modules") return [];
-    return statSync(join(dir, rel)).isDirectory() ? files(dir, rel) : [rel];
-  });
+/** Every file under `dir`, relative to it. */
+function files(dir: string): string[] {
+  return readdirSync(dir, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => join(entry.parentPath, entry.name).slice(dir.length + 1));
 }
 
 /** The release, made in a throwaway clone and installed from its tag as a project would. */
@@ -102,8 +101,7 @@ function check(): void {
     process.stdout.write(`  release commit  ${out("git", ["log", "-1", "--format=%h %s", `${tag}^`], clone)}\n`);
     process.stdout.write(`  tagged commit   ${out("git", ["log", "-1", "--format=%h %s", tag], clone)}\n`);
 
-    const scripts = installScripts(out("git", ["show", `${tag}:package.json`], clone));
-    if (scripts.length > 0) throw new Error(`the tag's package.json names ${scripts.join(", ")}, which npm runs on install: a tag holds built files and builds nothing`);
+    if (!existsSync(join(clone, "dist", "flow.mjs"))) throw new Error("dist/flow.mjs is missing from the clone after the release: this repo's guard cannot load without it");
     if (out("git", ["ls-tree", "-r", "--name-only", `${tag}^`, "dist"], clone) !== "")
       throw new Error("the release commit holds dist/: only the tag's commit may");
 

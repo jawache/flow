@@ -24,7 +24,7 @@ build:
     node esbuild.mjs
     just emit-types
 
-[doc("Build as it ships: minified, and with NO sourcemap comment — the map is not in the package's published files list, so a dev build would point at a file that isn't there.")]
+[doc("Build as it ships: minified, and with NO sourcemap comment — the map is not among the files a release tag holds, so a dev build would point at a file that isn't there.")]
 build-release:
     node esbuild.mjs --production
     just emit-types

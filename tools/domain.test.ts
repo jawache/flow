@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 import {
   migrationGuide,
   nextVersion,
-  installScripts,
   checksCalled,
   checksDefined,
   codeImports,
@@ -314,16 +313,6 @@ describe("the release's migration guide — one page per version, named by the v
     const dry = "✔ bumping version in package.json from 0.2.1 to 0.2.2\n✔ bumping version in package-lock.json from 0.2.1 to 0.2.2\n";
     expect(nextVersion(dry)).toBe("0.2.2");
     expect(nextVersion("✔ outputting changes to CHANGELOG.md\n")).toBeNull();
-  });
-});
-
-describe("a tag's package.json — no script npm would run on install", () => {
-  it("names each install-time script it carries, and ignores the comment key and every other script", () => {
-    expect(installScripts(JSON.stringify({ scripts: { "//": "just", prepare: "x", build: "y", test: "z" } }))).toStrictEqual(["prepare", "build"]);
-  });
-  it("names none when there are no scripts, and refuses a file it cannot read", () => {
-    expect(installScripts(JSON.stringify({ name: "a" }))).toStrictEqual([]);
-    expect(installScripts("{")).toStrictEqual(["prepare", "prepack", "build", "install", "postinstall"]);
   });
 });
 
