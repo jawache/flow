@@ -1741,6 +1741,16 @@ export default defineConfig([pack(demo)]);
     expect(greeting).not.toHaveProperty("subject");
   });
 
+  it("does not spend a note on a refused command — the retry that runs is briefed", () => {
+    const ask = (command: string): Ran => send("pre-tool-use", { session_id: "refused-note", tool_name: "Bash", tool_input: { command }, cwd: tree });
+    const refused = ask("git log --oneline && echo TODO");
+    expect(refused.code, "the command is refused").toBe(2);
+    expect(refused.stdout).toBe("");
+    const retried = ask("git log --oneline");
+    expect(retried.code).toBe(0);
+    expect(told(retried)).toBe("# breadcrumb: demo.history (command)\nThe journal owns the past.");
+  });
+
   it("leaves the meta row as it was: no agent, no agentType, and v 1", () => {
     const [meta] = rows(tree, "agents");
     expect(Object.keys(meta ?? {}).sort()).toEqual(["branch", "harness", "kind", "session", "started", "v", "worktree"]);
