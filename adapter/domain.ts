@@ -2155,7 +2155,7 @@ export interface StatusFacts {
    */
   readonly grammars: readonly { readonly name: string; readonly libraryPath: string; readonly present: boolean }[];
   /**
-   * Who last worked in this worktree, from the marker the write rail leaves. Null when nobody has.
+   * Who last worked in this worktree, from the marker a tool call leaves. Null when nobody has.
    * `mode` is the permission mode its last recorded call stated, null when none did; `steer` is auto
    * mode's steer as its transcript last stated it, asked only under auto mode.
    */

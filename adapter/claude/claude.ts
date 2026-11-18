@@ -142,7 +142,7 @@ export function projectRoot(cwd: string): string {
  * The transcript is why. It is a couple of megabytes on a working session and a hook fires on every
  * single tool call, so reading it eagerly would put a multi-megabyte read and parse in front of
  * every write the agent makes. Three answers come out of that one file and each rail needs a
- * different subset of them: the write rail needs none.
+ * different subset of them: the command rail needs none.
  */
 interface Session {
   readonly root: string;

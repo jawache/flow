@@ -135,7 +135,7 @@ export function currentBranch(root: string): string | null {
 }
 
 /**
- * WHO LAST WORKED IN THIS WORKTREE, and what they were wearing — the marker the write rail leaves,
+ * WHO LAST WORKED IN THIS WORKTREE, and what they were wearing — the marker a tool call leaves,
  * read the one way.
  *
  * Both surfaces that ask outside a session ask it: the commit gate, deciding whether an

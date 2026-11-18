@@ -3,8 +3,7 @@
 // This is the file that knows what a hook payload and a transcript line mean, so it is the file
 // where the harness's shape is pinned. Four claims carry it:
 //
-//   PAYLOAD → EVENT     the would-be file rebuilt in memory, the delete targets a Bash line
-//                       carries, and silence for anything flow was not asked for.
+//   PAYLOAD → EVENT     the command and the files a Bash line carries, and silence for anything flow was not asked for.
 //   EFFECT → RESULT     one refusal spelling — exit 2, the text on stderr — and one injection
 //                       spelling, the decision object.
 //   THE TRANSCRIPT      the four dialect leaks that used to live in a pure home: drift's token

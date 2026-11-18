@@ -114,7 +114,7 @@ export function ridesRefusal(moment: BreadcrumbMoment): boolean {
  *
  * Every answer is a FUNCTION rather than a value, and that is not ceremony: a hook fires on every
  * tool call, and the turn's actions cost a whole transcript to work out. Asking only when the
- * moment needs it means the write rail — by far the most frequent — never opens the file at all.
+ * moment needs it means the command rail — by far the most frequent — never opens the file at all.
  */
 export interface EventWorld {
   /** The repo root. Event paths are repo-relative, because that is how every `on` glob is written. */
