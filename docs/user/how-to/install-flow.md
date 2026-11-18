@@ -14,10 +14,10 @@ Each project has its own copy of flow, its own config and its own hooks. Nothing
 
    ```
    cd my-repo
-   npm i -D github:jawache/flow#v0.4.0
+   npm i -D --allow-git=root github:jawache/flow#v0.4.0
    ```
 
-   The tag holds flow's built files, so nothing is built on your machine. The lockfile records the exact commit, and every clone runs that commit after `npm install`.
+   The tag holds flow's built files, so nothing is built on your machine. The lockfile records the exact commit, and every clone runs that commit after `npm install`. npm 12 installs a git dependency only when told to, and `--allow-git=root` allows it only for a package the project's own `package.json` names.
 
 2. Check the install. It prints the version of the tag:
 

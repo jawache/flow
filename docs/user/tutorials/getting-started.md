@@ -15,7 +15,7 @@ First, go into the repo and install flow from GitHub, at a release tag:
 ```
 cd my-repo              # any git repo
 npm init -y             # only if the repo has no package.json
-npm i -D github:jawache/flow#v0.4.0
+npm i -D --allow-git=root github:jawache/flow#v0.4.0
 ```
 
 Let's check it worked: `npx flow --version` prints `0.4.0`.
@@ -39,6 +39,7 @@ Which harnesses run agents in this repo?
 Then it lists what it is about to write. Go ahead. The output should look like this:
 
 ```
+! Codex: runs a project's hooks only in a folder it trusts, and only once each hook is approved. Trust this folder in Codex, then approve flow's hooks with /hooks. A hook that `flow init` rewrites must be approved again (docs/user/reference/codex.md#the-two-trust-gates).
 flow init — created:
   + flow.config.ts
   + .githooks/commit-msg
@@ -46,7 +47,6 @@ flow init — created:
   + .claude/settings.json — SessionStart · SubagentStart · PreToolUse · PostToolUse · Stop · SubagentStop
   + .codex/hooks.json — SessionStart · SubagentStart · PreToolUse · PostToolUse · Stop · SubagentStop
   + git config core.hooksPath .githooks
-  codex: trust this folder in Codex, then approve the hooks with /hooks. Until both are done, Codex runs no hook.
   next: `flow status` — what is bound, and what is not wired yet.
 ```
 

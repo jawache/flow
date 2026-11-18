@@ -11,7 +11,7 @@ This guide shows you how to move one project from the flow it pins to a newer re
 2. Change the pin:
 
    ```
-   npm i -D github:jawache/flow#v0.4.0
+   npm i -D --allow-git=root github:jawache/flow#v0.4.0
    ```
 
 3. Make the changes each guide lists, in order.

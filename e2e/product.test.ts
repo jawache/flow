@@ -1468,7 +1468,7 @@ describe.runIf(process.env["FLOW_TUTORIAL"])("the Getting started tutorial's tra
       return asQuoted(ran.stdout || ran.stderr, mine, firstTime);
     };
     try {
-      expect(said(["init"]), "§2").toBe(page("flow init — created:"));
+      expect(said(["init"]), "§2").toBe(page("! Codex:"));
       // §3 — "Replace the file with this": the page's own config, then the status it quotes.
       writeFileSync(join(mine, "flow.config.ts"), `${page("import { banCommands")}\n`);
       expect(said(["status"]), "§4 status").toBe(page("flow is ON —"));
