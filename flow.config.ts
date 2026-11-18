@@ -59,11 +59,9 @@ const PURE = ["**/domain.ts", "glob.ts"];
 export default defineConfig([
   // ── the guard's own orientation and self-protection ──
   //
-  // ONE PARAMETER: where this repo keeps the packs it writes itself, which is `guards/` and one
-  // file, house.ts. Both of the pack's path-scoped entries take it — the nudge when you edit the
-  // guard, and the refusal to delete it — so the folder is named here, once, and the pack never
-  // knew the word. This is flow's own self-protection, bound in flow's own repo, which is the
-  // shortest description of what this whole file is for.
+  // flow's own self-protection takes no parameter: the note saying what is steering you, no
+  // `flow uninstall` from an agent, and no commit that deletes the config, the gate or a hook
+  // registration. The packs this repo writes itself are guarded by `house.noDeleteGuards`.
   pack(flow),
 
   // ── git: commit headers, computed versions, nothing destroys uncommitted work ──

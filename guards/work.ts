@@ -1,181 +1,20 @@
-// flow/packs/work.ts — the WORK LIFECYCLE's rungs.
+// flow/guards/work.ts — what a repo that runs the `work` lifecycle tells its agents about the record.
 //
-// EVERY ONE OF THEM READS HOST-WRITTEN EVIDENCE AND NOTHING ELSE. `spawnedAs` enforces the order
-// the 335-transcript probe settled (flow F3): the host's agent type decides and ends the read;
-// the brief is consulted only for the buckets the harness treats as generic; the parent is the
-// absence of both. A session's own claim about itself is never consulted, because a permission that
-// rests on a claim rests on a lie.
-//
-// The trap the order exists to close: a verifier is briefed with what the builder did, so a read
-// that keyed on the brief first would dress a checker as a builder.
-//
-// The agent type names and brief needles below are TODAY'S work, and this pack moves into work's
-// own package when work-core rewrites these rules as edit-time rails over the plan.
+// ONE BREADCRUMB. The command rules this pack carried (a builder may not run the parent's `work plan`
+// verbs, a parent does not tick a box, nobody files an inbox item) are gone: flow 0.4 judges a
+// command by its words and not by who runs it, and those rules are work's own to keep, in work.
 
-import {
-  banCommands,
-  breadcrumb,
-  command,
-  defineCategory,
-  definePack,
-  guardrail,
-  spawnedAs,
-  fileChange,
-} from "@jawache/flow";
+import { breadcrumb, definePack, fileChange } from "@jawache/flow";
 
 /**
- * The harness's typeless spawn buckets — the ONLY ones whose brief may be read.
+ * What the `work` lifecycle's record needs a session to know.
  *
- * `general-purpose` and `claude` are Claude Code's catch-alls: they carry no information about
- * what the spawn was for, and they hid 27 of 61 builders on the probe. Every other agent type
- * names its own rung, so reading its brief could only ever overrule the host.
- */
-const GENERIC = ["general-purpose", "claude"] as const;
-
-/** The top-level chat: not spawned, no agent type. The supervisor's rung. */
-export const parent = defineCategory("parent", spawnedAs({ parent: true }));
-
-/**
- * A supervised builder — one phase of a plan, its own to write.
+ * IT IMPORTS NOTHING FROM WORK. It is a plain consumer of flow's public door, like every other
+ * pack here.
  *
- * The two brief needles are the two sentences a builder's own brief always carries, and they
- * recover every builder the generic buckets hid.
- */
-export const builder = defineCategory(
-  "builder",
-  spawnedAs({
-    types: ["builder"],
-    generic: GENERIC,
-    brief: ["Follow `/work build`", "Follow /work build", "You are the builder"],
-  }),
-);
-
-/**
- * The WORK LIFECYCLE's rungs: who is acting, and what each rung may do.
- *
- * A pack for repos that run the `work` lifecycle skill — spec · plan · start · build · review ·
- * reflect · complete. It names the two rungs the lifecycle has that a command rule binds to (parent ·
- * builder), binds a rule to each to keep them from doing each other's jobs, and adds the rule about the
- * command that writes the journal: the inbox is the human's queue. One breadcrumb is about the
- * record itself: Node code run from a `.work/` that is a link needs the settings that keep the
- * link's path.
- *
- * IT IMPORTS NOTHING FROM WORK. It is a plain consumer of flow's public door, exactly like every
- * other pack here, and it knows the work CLI only as command strings on a rail. That is what lets
- * flow ship it without depending on the tool it is about.
- *
- * flow ships no category names and never will: what a rung is called is a property of the way a
- * team works, not of a guard engine. These two are the WORK lifecycle's, defined here beside the
- * rules that bind to them — a builder may not do a parent's job, and a parent does not tick a
- * builder's box.
- *
- * @install The `work` CLI and its lifecycle skill. Every rule here reads a `work …` command line,
- * so in a repo that does not run the lifecycle they are rules that can never fire.
- * @adopt Bind it only in a repo whose tasks are actually run through the lifecycle. The rung
- * rules are scoped to categories this pack defines, so they judge nobody until a session is
- * classified as a builder or a parent — a human at a keyboard is neither.
+ * @install The `work` CLI, which keeps its record in a `.work/` folder that may be a link.
  */
 export const work = definePack("work", {
-  // ── THE LADDER, mechanised ──
-  //
-  // Two rules, one per rung, and each is a sentence the lifecycle skill's mode files already
-  // state in prose: a builder owns its phase and not the plan, a parent supervises and does not tick a box it did not build. They are RULES rather than mode
-  // files because a rung is assigned by the harness that spawned you, and a rule that reads the
-  // host's agent type cannot be talked out of it — which is the whole reason `.for(…)` exists.
-  //
-  // They are also what makes the two categories real. A category nothing names is never
-  // classified and never shown: `flow status` lists the ones some entry binds to, so an unbound
-  // one would be config that reads as armed and costs nothing to be wrong about.
-  planIsTheParents: guardrail()
-    .at(command)
-    .for(builder)
-    .everywhere()
-    .description("A builder owns its phase, not the plan — the verdict, the amendment and the cost record are the parent's.")
-    .check(
-      banCommands({
-        ban: ["work plan verdict", "work plan amend", "work save", "work task", "work cost record"],
-      }),
-    )
-    .message(
-      [
-        "You are a builder, and this command is the parent's. Yours: `work plan status` · `work plan tick` · `work plan decision`.",
-        "A verdict or an amendment needs the whole plan in view, and you can only see one phase. `work cost record` is worse than refused — it would succeed: every record is an INCREMENT since the last stamp, so filing one mid-phase bills the phase before yours for work it never did.",
-        "What you have is an ask. Say it to the parent — what you hit, what your boxes do not cover, what you would do — and carry on with the boxes that are yours while you wait.",
-      ].join("\n"),
-    )
-    .test({
-      pass: [
-        "work plan status --json",
-        "work plan tick F7.B1 --evidence diff:abc123",
-        "work cost",
-        // A note that spells the command out, in a heredoc, is not running it.
-        "cat > note.md <<'EOF'\nwork plan verdict F7 --pass --cite x\nEOF",
-      ],
-      block: [
-        "work plan verdict F7 --pass --cite x",
-        "work save",
-        "work cost record F7",
-        "work plan status\nwork plan amend F7 --add x",
-        // The program by its path, and an option in front of its words: the command is still `work plan verdict`.
-        "/usr/local/bin/work plan verdict F7 --pass --cite x",
-        "work --verbose plan verdict F7 --pass --cite x",
-      ],
-    }),
-
-  ticksAreTheChilds: guardrail()
-    .at(command)
-    .for(parent)
-    .everywhere()
-    .description("The parent records verdicts; a box is ticked by the child that built it, with its evidence.")
-    .check(banCommands({ ban: ["work plan tick"] }))
-    .message(
-      "A box is ticked by the rung that built it. You are supervising: you did not do the work, so you cannot supply the evidence, and a tick whose proof came from reading a report is exactly the provenance the journal exists to prevent. If a child left a box unticked, that is the finding — record the verdict on it.",
-    )
-    .test({
-      pass: ["work plan verdict F7 --pass --cite x", "cat > note.md <<'EOF'\nwork plan tick F7.B1 --evidence diff:abc\nEOF"],
-      block: [
-        "work plan tick F7.B1 --evidence diff:abc",
-        "work plan status\nwork plan tick F7.B1 --evidence diff:abc",
-        // The program by its path, and an option in front of its words.
-        "/usr/local/bin/work plan tick F7.B1 --evidence diff:abc",
-        "work --verbose plan tick F7.B1 --evidence diff:abc",
-      ],
-    }),
-
-  // ── the two rules about the commands that write the journal ──
-
-  noAgentInboxItems: guardrail()
-    .at(command)
-    .everywhere()
-    .description("The inbox is the human's speccing queue — an agent raises a finding in chat, never files one.")
-    // Matched against the program that runs and its arguments, so prose that merely mentions the
-    // verb — an echo, a heredoc being written — is not an invocation.
-    .check(banCommands({ ban: ["work inbox new"] }))
-    .message(
-      [
-        "`work inbox new` is the human's own door, and this command rail is only ever crossed by an agent — a person typing in a terminal has no hooks in front of them. So the fact that this fired means an agent is filing.",
-        "The inbox is a SPECCING QUEUE, not a findings drawer: every item in it is something its owner has decided to think about, and an item nobody chose to add is a decision taken away from them and returned as a chore. Work is born through `/work spec`, which only a clear human instruction opens.",
-        "What you have is a finding. Say it in the chat — headline, why it matters, what you would do — and let the human decide whether it becomes an item, a spec, or nothing.",
-      ].join("\n"),
-    )
-    .test({
-      pass: [
-        "work inbox list",
-        'echo "the human runs work inbox new themselves" >> note.md',
-        // …or named in another command's argument, which is prose about it.
-        'git commit -m "docs: the human runs work inbox new themselves"',
-        "cat > note.md <<'EOF'\nwork inbox new --summary x\nEOF",
-      ],
-      block: [
-        'work inbox new --summary "a thing"',
-        "echo hi && work inbox new --summary x",
-        "echo hi\nwork inbox new --summary x",
-        // The program by its path, and an option in front of its words.
-        "/usr/local/bin/work inbox new --summary x",
-        "work --verbose inbox new --summary x",
-      ],
-    }),
-
   // ── the record ──
 
   /**

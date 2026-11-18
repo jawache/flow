@@ -22,6 +22,7 @@ import {
   definePack,
   depcruise,
   guardrail,
+  protectedPath,
   session,
   fileChange,
 } from "@jawache/flow";
@@ -516,6 +517,19 @@ export const house = definePack("house", (repo: Terrain) => ({
         { staged: ["package.json"], world: { fs: { "package.json": '{ "version": "0.2.2" }', "docs/user/migrations/0.2.2.md": "# Upgrade to 0.2.2" } } },
       ],
       block: [{ staged: ["package.json"], world: { fs: { "package.json": '{ "version": "0.2.2" }' } } }],
+    }),
+
+  // The `flow` pack protects the config, the gate and the hook registrations, and takes no
+  // parameter, so the folder this repo keeps its own packs in is a rule of its own. Changing a
+  // pack is what this repo does all day: only a commit that deletes one is refused.
+  noDeleteGuards: guardrail()
+    .at(commit)
+    .description("Refuses a commit that deletes a pack of this repo's own, in guards/.")
+    .check((ctx) => protectedPath({ paths: ["guards/**"] })({ ...ctx, staged: [] }))
+    .message("This commit deletes a pack from guards/, which flow.config.ts binds. There is no bypass: `override(pack.entry).disabled(\"why\")` in flow.config.ts is the visible, committed route.")
+    .test({
+      pass: [{ staged: ["guards/git.ts"] }, { staged: [], deleted: ["src/a.ts"] }],
+      block: [{ staged: [], deleted: ["guards/git.ts"] }],
     }),
 
   breadcrumbSaysWhy: guardrail()
