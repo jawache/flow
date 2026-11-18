@@ -51,7 +51,7 @@ For you when you need an exact command, verb, moment or field: each page describ
 
 ### The stock checks — one page each
 
-flow ships sixteen configured checks. You import one and pass it to `.check(…)`. Each page lists its options and a real example.
+flow ships fifteen configured checks. You import one and pass it to `.check(…)`. Each page lists its options and a real example.
 
 | Check | Reads | Checks |
 | --- | --- | --- |
@@ -63,7 +63,6 @@ flow ships sixteen configured checks. You import one and pass it to `.check(…)
 | [`commitMessage`](./checks/commit-message.md) | commit message | a header format, and banned text |
 | [`commitReason`](./checks/commit-reason.md) | commit message · staged set | this commit needs a reason recorded in its message |
 | [`docLinks`](./checks/doc-links.md) | file body | every docs page and section the file cites exists |
-| [`substitutionInProse`](./checks/substitution-in-prose.md) | command line | a backtick the shell would run in a command that records prose |
 | [`protectedPath`](./checks/protected-path.md) | staged set · deleted paths | paths a commit must not change or delete (or are append-only) |
 | [`siblingExists`](./checks/sibling-exists.md) | file path | a file's required companion exists |
 | [`canonicalFiles`](./checks/canonical-files.md) | file path | only approved names in a folder |
