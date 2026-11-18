@@ -16,11 +16,13 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
-import { defineConfig, loadConfig, pack, type LoadResult } from "../index.ts";
-import { rails } from "../__fixtures__/engine-pack.ts";
-import { alreadyRead, appendRows, markRead } from "../engine/state.ts";
-import { facts, projectDir, readStore, readTranscript } from "./archive.ts";
+import { defineConfig, loadConfig, pack, type LoadResult } from "../../index.ts";
+import { rails } from "../../__fixtures__/engine-pack.ts";
+import { alreadyRead, appendRows, markRead } from "../../engine/state.ts";
+import { facts } from "../archive.ts";
+import { claudeCode } from "./claude.ts";
 import { projectFolderName } from "./domain.ts";
+import { projectDir, readStore, readTranscript } from "./store.ts";
 
 let repo: string;
 let home: string;
@@ -122,16 +124,16 @@ describe("which checkout a conversation belongs to", () => {
     conversation(sibling, "theirs");
     mkdirSync(sibling, { recursive: true });
 
-    const read = facts(repo, regime, { home });
+    const read = facts(repo, regime, claudeCode, { home });
     expect(read.selection.analyse.map((c) => c.id)).toEqual(["mine"]);
     expect(read.selection.counts.backlog).toBe(1);
   });
 
   it("carries each conversation's own branch and start, so a run can be scoped to one", () => {
     conversation(repo, "mine");
-    expect(facts(repo, regime, { home, branch: "main" }).selection.analyse).toHaveLength(1);
-    expect(facts(repo, regime, { home, branch: "other" }).selection.analyse).toHaveLength(0);
-    expect(facts(repo, regime, { home }).selection.analyse[0]?.started).toBe("2026-09-04T10:00:00.000Z");
+    expect(facts(repo, regime, claudeCode, { home, branch: "main" }).selection.analyse).toHaveLength(1);
+    expect(facts(repo, regime, claudeCode, { home, branch: "other" }).selection.analyse).toHaveLength(0);
+    expect(facts(repo, regime, claudeCode, { home }).selection.analyse[0]?.started).toBe("2026-09-04T10:00:00.000Z");
   });
 });
 
@@ -145,12 +147,12 @@ describe("the backlog's memory", () => {
 
     // A capped run marks what it covered and defers the rest — which is what stops skipped
     // history being declared done and lost.
-    const capped = facts(repo, regime, { home, limit: 1, mark: true });
+    const capped = facts(repo, regime, claudeCode, { home, limit: 1, mark: true });
     expect(capped.marked).toBe(1);
     expect(capped.selection.excluded).toHaveLength(1);
     expect(alreadyRead(repo).size).toBe(1);
 
-    const next = facts(repo, regime, { home });
+    const next = facts(repo, regime, claudeCode, { home });
     expect(next.selection.counts.backlog).toBe(1);
     expect(next.selection.analyse.map((c) => c.id)).toEqual(capped.selection.excluded.map((e) => e.id));
 
@@ -161,7 +163,7 @@ describe("the backlog's memory", () => {
     conversation(repo, "one");
     conversation(repo, "two");
     markRead(repo, ["two"]);
-    const read = facts(repo, regime, { home, session: "two" });
+    const read = facts(repo, regime, claudeCode, { home, session: "two" });
     expect(read.selection.analyse.map((c) => c.id)).toEqual(["two"]);
   });
 });
@@ -183,7 +185,7 @@ describe("the reading, assembled", () => {
       { kind: "guardrail", moment: "write", id: "rails.everyone", subject: "src/a.ts", out: "deny" },
     ]);
 
-    const read = facts(repo, regime, { home });
+    const read = facts(repo, regime, claudeCode, { home });
     expect(read.health.blocked).toBe(null);
     expect(read.coverage).toEqual({ analysed: 1, withRecord: 1, narrativeOnly: 0 });
     // NUMBERS — from the rows, and from nowhere else.
@@ -217,7 +219,7 @@ describe("the reading, assembled", () => {
     conversation(repo, "one", { agent: "agent-1", meta: { agentType: "builder", toolUseId: "toolu_9", model: "opus" } });
     conversation(repo, "one", { agent: "agent-2" });
 
-    const read = facts(repo, regime, { home });
+    const read = facts(repo, regime, claudeCode, { home });
     expect(read.actors).toEqual([
       // The parent asked for a generic bucket; the host wrote down what it really was. The join names
       // the actor for cost attribution, after the fact; a live session is classified from its hook message.
@@ -237,7 +239,7 @@ describe("the reading, assembled", () => {
         }),
       ],
     });
-    const read = facts(repo, regime, { home });
+    const read = facts(repo, regime, claudeCode, { home });
     // The rows can only answer for sessions flow was installed for; this conversation has none,
     // and the transcript still says where the work went.
     expect(read.coverage.withRecord).toBe(0);
@@ -247,7 +249,7 @@ describe("the reading, assembled", () => {
 
   it("a conversation with no record of its own is narrative-only, and the health line says so", () => {
     conversation(repo, "one");
-    const read = facts(repo, regime, { home });
+    const read = facts(repo, regime, claudeCode, { home });
     expect(read.health.blocked).toContain("NOT ARMED");
     expect(read.coverage).toEqual({ analysed: 1, withRecord: 0, narrativeOnly: 1 });
     expect(read.metrics.span.tools).toBe(0);
@@ -256,13 +258,13 @@ describe("the reading, assembled", () => {
   it("a regime that will not load reads as nothing bound, rather than as a crash", () => {
     conversation(repo, "one");
     const broken: LoadResult = { ok: false, refusals: [{ code: "unknown-key", entry: "rails.everyone", detail: "x" }] };
-    const read = facts(repo, broken, { home });
+    const read = facts(repo, broken, claudeCode, { home });
     expect(read.moments.totals).toEqual({ guardrails: 0, breadcrumbs: 0, disabled: 0 });
     expect(read.metrics.guardrails).toEqual([]);
   });
 
   it("a repo with no store at all still answers — every read here is fail-safe", () => {
-    const read = facts(repo, regime, { home });
+    const read = facts(repo, regime, claudeCode, { home });
     expect(read.store.exists).toBe(false);
     expect(read.selection.counts).toEqual({ backlog: 0, analysed: 0, excluded: 0 });
     expect(read.narrative.stats.edits).toBe(0);

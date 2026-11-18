@@ -38,7 +38,8 @@ import {
   git as runGit,
   type Ran,
 } from "./harness.ts";
-import { FLOW_OFF, PRE_COMMIT, SET_HOOKS_PATH } from "../adapter/domain.ts";
+import { PRE_COMMIT, SET_HOOKS_PATH } from "../adapter/domain.ts";
+import { FLOW_OFF } from "../adapter/claude/domain.ts";
 
 let repo: string;
 

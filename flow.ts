@@ -35,20 +35,24 @@ import { VERSION } from "./version.ts";
 import { entriesOrThrow, FlowConfigError } from "./errors.ts";
 import { loadConfig, type FlowConfig, type LoadedEntry } from "./language/domain.ts";
 import { runCases, type CaseResult } from "./checks/domain.ts";
-import { commitEntry, hookEntry, registerGrammars } from "./adapter/claude.ts";
+import { claudeCode } from "./adapter/claude/claude.ts";
+import { commitEntry, registerGrammars } from "./adapter/shell.ts";
 import { facts } from "./adapter/archive.ts";
 import {
   CONFIG_FILE,
-  HOOK_EVENTS,
   configLoadFault,
   formatFacts,
   loadsAsStrippedModule,
   snip,
-  type HookResult,
 } from "./adapter/domain.ts";
+import type { HookResult } from "./adapter/harness.ts";
 import { runInit, runStatus, runUninstall, type VerbResult } from "./adapter/product.ts";
 import { diffRows, replay, type Row } from "./engine/domain.ts";
 import { loadRecording, readRowsFile } from "./engine/state.ts";
+
+// THE HARNESS this binary runs for. The one place flow chooses one; everything below takes it as a
+// `Harness` and names none.
+const harness = claudeCode;
 
 const argv = process.argv.slice(2);
 
@@ -265,7 +269,7 @@ async function readFacts(args: readonly string[]): Promise<number> {
   const load = existsSync(join(root, CONFIG_FILE)) ? loadConfig(await loadFile(CONFIG_FILE)) : ({ ok: true, entries: [] } as const);
   const limit = flag(args, "limit");
   const since = flag(args, "since");
-  const read = facts(root, load, {
+  const read = facts(root, load, harness, {
     session: flag(args, "session"),
     branch: flag(args, "branch"),
     limit: limit === null || limit === "" ? null : Number(limit),
@@ -302,7 +306,7 @@ if (argv.includes("--version") || argv.includes("-v")) {
   // Git's hook, not the harness's: it carries no payload on stdin, so it never reaches the reader.
   perform(await commitEntry(rest.slice(1), process.cwd()));
 } else if (verb === "hook") {
-  perform(await hookEntry(rest[0] ?? "", process.cwd()));
+  perform(await harness.run(rest[0] ?? "", process.cwd()));
 } else if (verb === "commit") {
   // The name an older pre-commit hook calls. Kept so those commits still run the gate;
   // `flow status` tells the repo to update the hook, and the file list it passes is ignored.
@@ -311,9 +315,9 @@ if (argv.includes("--version") || argv.includes("-v")) {
   // The product surface. Each answers with the same three edges every other verb does, which is why
   // none of them writes to a stream or picks an exit code of its own.
   let answer: VerbResult;
-  if (verb === "init") answer = runInit(process.cwd(), rest);
-  else if (verb === "uninstall") answer = runUninstall(process.cwd(), rest);
-  else answer = await runStatus(process.cwd(), rest);
+  if (verb === "init") answer = runInit(process.cwd(), rest, harness);
+  else if (verb === "uninstall") answer = runUninstall(process.cwd(), rest, harness);
+  else answer = await runStatus(process.cwd(), rest, harness);
   if (answer.stdout) process.stdout.write(answer.stdout);
   if (answer.stderr) process.stderr.write(answer.stderr);
   process.exitCode = answer.exitCode;
@@ -335,7 +339,7 @@ if (argv.includes("--version") || argv.includes("-v")) {
       "                         --machine also removes flow's hooks from the machine-wide settings file",
       "  flow status [--json]   what is bound here, at which moments — and what is not wired yet",
       "  flow test [config]     run every bound entry's cases (default: flow.config.ts)",
-      `  flow hook <event>      a harness hook, payload on stdin — ${HOOK_EVENTS.join(" · ")}`,
+      `  flow hook <event>      a harness hook, payload on stdin — ${harness.events.join(" · ")}`,
       "  flow hook commit       the git pre-commit gate, over the staged changes — --all for the whole tree",
       "  flow replay <file>     a recorded session, back through the engine — --against <log> diffs it",
       "  flow facts             what the record and the conversations say about this repo — --json for all of it",

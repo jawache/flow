@@ -1,10 +1,11 @@
-// flow/adapter/archive.ts — the ARCHIVAL shell: the harness's transcript store, read after the fact.
+// flow/adapter/archive.ts — the ARCHIVAL shell: a harness's transcript store, read after the fact.
 //
-// Its twin next door (claude.ts) is handed a payload and answers in milliseconds. This one is
-// handed a repo and asked what happened here — so it opens the host's own store, reads flow's
-// recorded rows back, and hands both to the layers that decide what they mean. It makes no
-// decisions itself: the store's layout, a transcript's narrative, the shape of a reading and every
-// number drawn from a row are settled in the two domain files. This opens files.
+// Its twin, the harness's own shell, is handed a payload and answers in milliseconds. This one is
+// handed a repo and asked what happened here — so it opens the harness's store through the
+// `Transcripts` the harness gives it (harness.ts), reads flow's recorded rows back, and hands both
+// to the layers that decide what they mean. It makes no decisions itself: the store's layout and a
+// transcript's narrative are the harness's, the shape of a reading and every number drawn from a
+// row are in domain.ts. This opens files.
 //
 // TWO SOURCES, KEPT STRICTLY APART, because that separation IS the report:
 //
@@ -18,33 +19,26 @@
 // ever show a repo what it already knew.
 //
 // Read-only over the harness's folder, always: nothing here creates, moves or deletes anything
-// under `~/.claude`, and nothing caches — the files are appended to live by the very session doing
+// in the harness's store, and nothing caches — the files are appended to live by the very session doing
 // the reading, so the only honest read is a fresh one.
 
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { LoadResult } from "../language/domain.ts";
 import { metrics, momentsView, terrain, universe, type Bound, type Row } from "../engine/domain.ts";
 import { alreadyRead, markRead, readHistory } from "../engine/state.ts";
-import { runCommand } from "./claude.ts";
+import { readText, runCommand } from "./shell.ts";
+import type { Harness, Steer, StoredTranscript } from "./harness.ts";
 import {
   CONFIG_FILE,
-  classifyStore,
   health,
   joinSpawn,
   mergeNarratives,
   mismatchesIn,
   modesOf,
   narrative,
-  parseEvents,
-  projectFolderName,
   recipeTools,
   selectSessions,
-  spawnMeta,
-  spawnsIn,
-  steerOf,
-  transcriptHead,
   uncoveredAreas,
   guardPaths,
   weakenedAfterBlock,
@@ -53,111 +47,9 @@ import {
   type Narrative,
   type SelectOpts,
   type Selection,
-  type SpawnMeta,
   type SpawnRecord,
-  type Steer,
-  type TranscriptRef,
   type Weakening,
 } from "./domain.ts";
-
-/** A file's text, or null. Every read here is fail-safe: a report with a hole beats no report. */
-function textOf(path: string): string | null {
-  try {
-    return readFileSync(path, "utf8");
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Where this harness keeps a working directory's conversations.
- *
- * Under the host's own folder, and `CLAUDE_CONFIG_DIR` moves that folder — the host honours it for
- * the store as it does for settings.json, so a store read from `~/.claude` regardless would be
- * somebody else's. A `home` passed in is taken as the user's home and wins: that is a test naming
- * its own world.
- */
-export function projectDir(cwd: string, home?: string): string {
-  const root = home === undefined ? process.env["CLAUDE_CONFIG_DIR"] || join(homedir(), ".claude") : join(home, ".claude");
-  return join(root, "projects", projectFolderName(cwd));
-}
-
-/**
- * The flat listing `classifyStore` sorts: every file at the top of the folder, plus every file
- * inside each session's `subagents/`.
- *
- * Walked by the two shapes that exist rather than recursively, because the harness writes exactly
- * two and a general walk over a folder this size would read directories nobody wants.
- */
-function listing(dir: string): string[] {
-  const read = (at: string): string[] => {
-    try {
-      return readdirSync(at, { withFileTypes: true }).map((entry) => (entry.isDirectory() ? `${entry.name}/` : entry.name));
-    } catch {
-      return [];
-    }
-  };
-  const out: string[] = [];
-  for (const name of read(dir)) {
-    if (!name.endsWith("/")) {
-      out.push(name);
-      continue;
-    }
-    const folder = name.slice(0, -1);
-    for (const child of read(join(dir, folder, "subagents"))) if (!child.endsWith("/")) out.push(`${folder}/subagents/${child}`);
-  }
-  return out.sort();
-}
-
-/** One conversation in the store, with everything findable about it without opening it twice. */
-export interface StoredTranscript {
-  readonly ref: TranscriptRef;
-  readonly file: string;
-  readonly bytes: number;
-  readonly mtimeMs: number;
-}
-
-export interface Store {
-  /** Where we looked, whether or not it was there — so a miss can name the path. */
-  readonly dir: string;
-  readonly exists: boolean;
-  readonly transcripts: readonly StoredTranscript[];
-  /** Files in the folder that are not transcripts. Reported, never guessed at. */
-  readonly ignored: readonly string[];
-}
-
-/** What the harness has recorded for this working directory. A missing folder is a fact, not an error. */
-export function readStore(cwd: string, home?: string): Store {
-  const dir = projectDir(cwd, home);
-  if (!existsSync(dir)) return { dir, exists: false, transcripts: [], ignored: [] };
-  const { transcripts, ignored } = classifyStore(listing(dir));
-  return {
-    dir,
-    exists: true,
-    transcripts: transcripts.map((ref) => {
-      const file = join(dir, ref.path);
-      let bytes = 0;
-      let mtimeMs = 0;
-      try {
-        const stat = statSync(file);
-        bytes = stat.size;
-        mtimeMs = stat.mtimeMs;
-      } catch {
-        /* a file that vanished between the listing and the stat is still worth naming */
-      }
-      return { ref, file, bytes, mtimeMs };
-    }),
-    ignored,
-  };
-}
-
-/** One transcript's bytes, and the sidecar beside it if there is one. */
-export function readTranscript(dir: string, held: StoredTranscript): { jsonl: string; meta: SpawnMeta | null } {
-  return {
-    jsonl: textOf(held.file) ?? "",
-    meta: held.ref.meta === null ? null : spawnMeta(textOf(join(dir, held.ref.meta))),
-  };
-}
 
 // ── the whole reading ────────────────────────────────────────────────────────
 
@@ -186,10 +78,11 @@ function trackedPaths(root: string): string[] {
  * and the universe comes back empty — which is honest, and reads as "nothing is bound" rather
  * than as a crash.
  */
-export function facts(root: string, load: LoadResult, opts: FactsOpts = {}): Facts {
+export function facts(root: string, load: LoadResult, harness: Harness, opts: FactsOpts = {}): Facts {
   const home = opts.home ?? homedir();
   const nowMs = opts.nowMs ?? Date.now();
-  const store = readStore(root, opts.home);
+  const { transcripts } = harness;
+  const store = transcripts.readStore(root, opts.home);
 
   // ONE PASS PER FILE, and one read per file. A transcript is a couple of megabytes, there is one
   // per conversation this repo has ever had, and the three opening facts below used to cost three
@@ -204,8 +97,8 @@ export function facts(root: string, load: LoadResult, opts: FactsOpts = {}): Fac
       children.set(stored.ref.session, beside);
       continue;
     }
-    const jsonl = textOf(stored.file) ?? "";
-    const head = transcriptHead(jsonl);
+    const jsonl = readText(root, stored.file) ?? "";
+    const head = transcripts.head(jsonl);
     // WHICH WORKTREE, answered from inside the records. The store folder's name collapses dots and
     // slashes to dashes, so two checkouts of one repo can share it; a conversation whose own `cwd`
     // is somebody else's checkout is somebody else's conversation.
@@ -232,10 +125,10 @@ export function facts(root: string, load: LoadResult, opts: FactsOpts = {}): Fac
   const history = readHistory(root);
   const bySession = new Map(history.map((s) => [s.session, s.rows]));
   const bound: Bound[] = load.ok ? universe(load.entries) : [];
-  const tools = recipeTools(textOf(join(root, "justfile")) ?? "");
+  const tools = recipeTools(readText(root, "justfile") ?? "");
   // What counts as "somebody edited the guard" here: the config, the packs it imports, and the
   // host's registration files. Read from the config's text once, not per session.
-  const guarded = guardPaths(textOf(join(root, CONFIG_FILE)));
+  const guarded = guardPaths(readText(root, CONFIG_FILE), harness.registering.hostSurface);
 
   const readings: { session: string; read: Narrative }[] = [];
   const weakened: Weakening[] = [];
@@ -246,22 +139,22 @@ export function facts(root: string, load: LoadResult, opts: FactsOpts = {}): Fac
     const rows = bySession.get(candidate.id) ?? [];
     if (rows.length > 0) withRecord += 1;
     const jsonl = held.get(candidate.id) ?? "";
-    const events = parseEvents(jsonl, root, home);
+    const events = transcripts.events(jsonl, root, home);
     // The conversation's own stream is where its shell writes come from: a transcript says what
     // ran, and only flow's diff knows what that changed.
     readings.push({ session: candidate.id, read: narrative(events, tools, rows) });
-    ran.push({ rows, steer: steerOf(jsonl) });
+    ran.push({ rows, steer: transcripts.steer(jsonl) });
     weakened.push(...weakenedAfterBlock(rows, events, guarded));
 
     // THE JOIN, at the one place that has both halves: the parent's own spawn blocks, and the
     // sidecar the host wrote beside each child's transcript.
-    const spawns = spawnsIn(jsonl);
+    const spawns = transcripts.spawns(jsonl);
     for (const child of children.get(candidate.id) ?? [])
       actors.push({
         ...joinSpawn({
           session: candidate.id,
           agent: child.ref.agent ?? "",
-          meta: child.ref.meta === null ? null : spawnMeta(textOf(join(store.dir, child.ref.meta))),
+          meta: child.ref.meta === null ? null : transcripts.spawnMeta(readText(root, join(store.dir, child.ref.meta))),
           spawns,
         }),
       });
@@ -270,6 +163,7 @@ export function facts(root: string, load: LoadResult, opts: FactsOpts = {}): Fac
   const recorded = metrics({ sessions: history, entries: bound, nowMs });
   const read = mergeNarratives(readings);
   return {
+    host: harness.name,
     root,
     store: { dir: store.dir, exists: store.exists, ignored: store.ignored },
     selection,

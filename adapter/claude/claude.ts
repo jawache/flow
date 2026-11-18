@@ -1,273 +1,37 @@
-// flow/adapter/claude.ts — the adapter's SHELL: the live side of Claude Code, wired.
+// flow/adapter/claude/claude.ts — the Claude Code adapter's SHELL: the live side of Claude Code, wired.
 //
 // Everything it acts on was decided somewhere else. The dialect is next door in domain.ts (a
 // payload's meaning, a transcript's meaning, what a refusal looks like); the judgement is the
 // engine's (`guard`, `brief`); the rules are the config's. This file opens files, runs commands,
 // asks git what it knows, and hands the answers over. It makes no decisions a reader has to reason
-// about — which is what makes the two questions of §7 it owns ("which repo is this", "where is the
-// session log") the only harness knowledge that had to live in a shell.
+// about.
 //
-// THREE ENTRY POINTS, and they are the whole live surface:
+// It is the one file that hands the rest of flow a `Harness` (../harness.ts), as `claudeCode`: flow.ts
+// chooses it, and nothing else outside this folder imports it.
+//
+// THE LIVE SURFACE:
 //
 //   runHook(event)   one of the hook events flow answers — stdin in, a HookResult out
-//   runCommit(files) the git pre-commit gate, handed the staged set
-//   realWorld(root)  the `World` a check reaches through: exec · fs · git
+//   hookEntry(event) a hook end to end: read stdin, run it, answer the way the event must
 //
-// IT FAILS IN TWO DIRECTIONS ON PURPOSE, and the split is the whole doctrine:
-//
-//   THE GUARD fails LOUD. A classifier that throws, a check that crashes, a bound command that is
-//   missing — every one of them BLOCKS, carrying the reason. The engine decides that; this file
-//   just does not soften it. A config that will not load is loud the other way: it goes to
-//   `whileBroken`, which lets every call through and hands the agent the load error with each one,
-//   and the commit gate refuses every commit until the config loads. 2026-08-22 is why it must
-//   never be silent: this repo's own config was broken for a day, the fault notice fired on every
-//   hook, and the human never saw one.
-//
-//   THE TELEMETRY fails SAFE and silent. A log that cannot be written must never be the reason a
-//   write is refused — `.flow/` answers with a boolean and this file does not look. State is a
-//   de-duplication convenience, and losing it re-shows a breadcrumb, which is the harmless
-//   direction.
+// THE GUARD fails LOUD and THE TELEMETRY fails SAFE, as in shell.ts, which holds the git gate and
+// the world a check reaches through.
 
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, readSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isatty } from "node:tty";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
-import {
-  loadConfig,
-  type Category,
-  type ExecResult,
-  type FlowConfig,
-  refusalText,
-  type LoadResult,
-  type Grammar,
-  type Settings,
-  type TurnAction,
-  type World,
-} from "../language/domain.ts";
-import {
-  afterCompaction,
-  brief,
-  FLOW_DIR,
-  sanitise,
-  categoriesIn,
-  fault,
-  judgedDeletions,
-  guard,
-  recorder,
-  runRows,
-  UNNAMED_COMMIT,
-  type AgentOf,
-  type Block,
-  type Identity,
-  type Marks,
-  type Notice,
-  type Outcome,
-  type RecordedStep,
-  type Row,
-  type SessionState,
-} from "../engine/domain.ts";
-import { quoteArg, useGrammars } from "../checks/domain.ts";
-import {
-  appendRows,
-  appendSteps,
-  commitAttribution,
-  ensureFlowDir,
-  isOff,
-  isRecording,
-  loadState,
-  saveState,
-  stickyIdentity,
-  writeMarker,
-} from "../engine/state.ts";
-import {
-  ALLOW,
-  CONFIG_FILE,
-  configLoadFault,
-  branchFromHead,
-  callKey,
-  callRecord,
-  forgettable,
-  overlapping,
-  deltaFault,
-  AFTER_CALL,
-  readFault,
-  hermeticEnv,
-  isHookEvent,
-  pathLines,
-  stagedChanges,
-  treeChanges,
-  commitScope,
-  type CommitScope,
-  type StagedChanges,
-  sessionFactsFrom,
-  agentOf,
-  ownTranscriptPath,
-  refused,
-  reversal,
-  toEvent,
-  toResult,
-  tokensFromTranscript,
-  toolRow,
-  shellReadRows,
-  writeRows,
-  mismatchRow,
-  turnActions,
-  agentSettingOf,
-  nothingBound,
-  awaitsBrief,
-  holdsForBrief,
-  ridesRefusal,
-  whileBroken,
-  included,
-  authored,
-  nulPaths,
-  snapshotPathspecs,
-  visibility,
-  reachesAnotherWorktree,
-  outsideOf,
-  untoldWorktrees,
-  worktreeFolders,
-  workedPaths,
-  type AdapterEvent,
-  type Answer,
-  type CallRecord,
-  type Change,
-  type Delta,
-  type RevertScope,
-  type EventWorld,
-  type HookEvent,
-  type HookPayload,
-  type HookResult,
-  type Refused,
-  type Shown,
-} from "./domain.ts";
+import { basename, dirname, join, resolve } from "node:path";
+import { type Category, refusalText, type LoadResult, type Settings, type TurnAction } from "../../language/domain.ts";
+import { afterCompaction, brief, FLOW_DIR, sanitise, categoriesIn, guard, recorder, runRows, type AgentOf, type Identity, type Marks, type Notice, type Outcome, type RecordedStep, type Row, type SessionState } from "../../engine/domain.ts";
+import { appendRows, appendSteps, ensureFlowDir, isOff, isRecording, loadState, saveState, stickyIdentity, writeMarker } from "../../engine/state.ts";
+import { ALLOW, hermeticEnv, nulPaths, type AdapterEvent, type CallRecord, type Change, type Refused, type RevertScope } from "../domain.ts";
+import { AFTER_CALL, agentOf, agentSettingOf, authored, awaitsBrief, callKey, callRecord, deltaFault, forgettable, holdsForBrief, included, isHookEvent, mismatchRow, nothingBound, outsideOf, overlapping, ownTranscriptPath, reachesAnotherWorktree, readFault, reversal, ridesRefusal, sessionFactsFrom, shellReadRows, snapshotPathspecs, toEvent, toResult, tokensFromTranscript, toolRow, turnActions, type Answer, type Delta, type EventWorld, type HookEvent, type HookPayload, type Shown, untoldWorktrees, visibility, whileBroken, workedPaths, worktreeFolders, writeRows } from "./domain.ts";
+import type { Harness, HookResult } from "../harness.ts";
+import { DELIVERS, HOOK_COSTS, HOOK_EVENTS, HOOK_REGISTRATIONS, HOST_SURFACE, REPO_SETTINGS, bareRegistrations, listsFlow, machineDiffers, parseEvents, registeredEvents, settingsFileFor, spawnMeta, spawnsIn, staleRegistrations, steerOf, transcriptHead, withMachineCommandsUpToDate, withRegistrations, withoutRegistrations } from "./domain.ts";
+import { readStore, readTranscript } from "./store.ts";
+import { currentBranch, inRepo, loadRegime, readText, realWorld } from "../shell.ts";
 
-// ════════════════════════════════════════════════════════════════════════════════════════════════
-// THE WORLD — what a check reaches through, and the only place flow runs anything
-// ════════════════════════════════════════════════════════════════════════════════════════════════
-
-/** How much of a tool's output a check may be handed. Generous — a failing suite is verbose. */
-const MAX_OUTPUT = 16 * 1024 * 1024;
-
-/**
- * Run one command the way a check means it — through a shell, in the repo, hermetically.
- *
- * `bash -lc` because the commands checks build are shell text, not argv: `just test && npx tsc`, a
- * heredoc writing dependency-cruiser's config, a pipeline. The old engine ran its tools the same
- * way, and the login shell is what makes a version manager's PATH available to a gate that git
- * spawned.
- *
- * A MISSING BINARY IS `{ code: 127 }`, NEVER A THROW, and the fail-loud proof stands on it: the
- * engine turns a non-zero exit into a block naming the entry and the command, so `just` not being
- * installed refuses the commit instead of passing it. bash answers 127 itself; the only case left
- * is bash being unspawnable, which is the same fact one level up and is answered the same way.
- */
-export function runCommand(command: string, root: string, env = hermeticEnv(process.env)): ExecResult {
-  const result = spawnSync("bash", ["-lc", command], {
-    cwd: root,
-    encoding: "utf8",
-    maxBuffer: MAX_OUTPUT,
-    // Git's hook variables would aim any nested `git` at the in-progress commit. See GIT_HOOK_ENV.
-    env,
-  });
-  if (result.error) return { stdout: "", stderr: `flow could not run a command: ${result.error.message}`, code: 127 };
-  // `status` is null when a signal killed the process. That is a failure, and 1 says so — the one
-  // code that must never be invented is 0.
-  return { stdout: result.stdout, stderr: result.stderr, code: result.status ?? 1 };
-}
-
-/** A repo-relative path, made absolute. Every path a check sees is relative; disk is not. */
-function inRepo(root: string, path: string): string {
-  return isAbsolute(path) ? path : join(root, path);
-}
-
-/** A file's text, or null when it is not there / not readable. */
-export function readText(root: string, path: string): string | null {
-  try {
-    return readFileSync(inRepo(root, path), "utf8");
-  } catch {
-    return null;
-  }
-}
-
-/**
- * THE WORLD a check reads through — the three capabilities, live.
- *
- * The whole promise of `.test()` cases rests on this object being interchangeable with the recorded
- * one a case drives: same three methods, same shapes, and the check cannot tell which it has. That
- * is also what F5's replay is: a third implementation of this interface, reading a fixture.
- *
- * git is asked in PATH LISTS and never in a status format. The old engine parsed
- * `git status --porcelain=v1` with a fixed-width slice and had a war story about eating the first
- * character of a path; the checks now ask questions whose answers are one path per line, so there
- * is no column to slice and no porcelain parser anywhere in flow.
- */
-export function realWorld(root: string): World {
-  return {
-    exec: (command: string): Promise<ExecResult> => Promise.resolve(runCommand(command, root)),
-    fs: {
-      read: (path: string): Promise<string> => Promise.resolve(readText(root, path) ?? ""),
-      exists: (path: string): Promise<boolean> => Promise.resolve(existsSync(inRepo(root, path))),
-    },
-    git: {
-      diff: (path?: string): Promise<string> =>
-        Promise.resolve(runCommand(path ? `git diff -- ${quoteArg(path)}` : "git diff", root).stdout),
-      stagedFiles: (): Promise<string[]> =>
-        Promise.resolve(pathLines(runCommand("git diff --cached --name-only --diff-filter=ACM", root).stdout)),
-    },
-  };
-}
-
-/**
- * The branch this checkout has out, read from its own `HEAD` — no subprocess, and none wanted.
- *
- * The marker is keyed on the branch because a worktree IS a branch: `git worktree add` refuses to
- * check the same one out twice, so two worktrees committing at once cannot clobber each other's
- * answer and mis-attribute a commit.
- *
- * A LINKED WORKTREE keeps its `.git` as a FILE naming the real gitdir, and that indirection is the
- * whole reason this is more than one read: resolve it, or every worktree reports the main
- * checkout's branch and the collision the naming scheme prevents comes straight back. Outside a git
- * repo there is one checkout and the bare marker name is correct.
- */
-export function currentBranch(root: string): string | null {
-  try {
-    const dotgit = join(root, ".git");
-    const gitdir = statSync(dotgit).isDirectory()
-      ? dotgit
-      : resolve(root, /gitdir:\s*(.+)/.exec(readFileSync(dotgit, "utf8"))?.[1]?.trim() ?? "");
-    return branchFromHead(readFileSync(join(gitdir, "HEAD"), "utf8"));
-  } catch {
-    return null;
-  }
-}
-
-/**
- * WHO LAST WORKED IN THIS WORKTREE, and what they were wearing — the marker the write rail leaves,
- * read the one way.
- *
- * Both surfaces that ask outside a session ask it: the commit gate, deciding whether an
- * actor-scoped rule applies to a commit nobody is in the room for, and `flow status`, naming the
- * session a person is about to join. Asked twice in two places, the two could come to disagree about
- * who is here — and a rule that fires at the gate for a wearer status never showed is the exact
- * surprise the marker exists to prevent.
- *
- * `who` is null when the marker is missing, stale or malformed, and then the wearer wears NOTHING
- * rather than a guess: there is no transcript and no hook message out here, so the stored verdict is
- * the only truthful answer there can be.
- */
-export function wearer(root: string): {
-  readonly branch: string | null;
-  readonly session: string;
-  readonly who: AgentOf | null;
-  readonly wearing: readonly string[];
-} {
-  const branch = currentBranch(root);
-  const { session, who } = commitAttribution(root, branch);
-  return { branch, session, who, wearing: who === null ? [] : (loadState(root, session, who.agent).categories ?? []) };
-}
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE SNAPSHOT — the tree before a call, the tree after it, and the way back
@@ -712,66 +476,6 @@ export function projectRoot(cwd: string): string {
   return process.env["CLAUDE_PROJECT_DIR"] || cwd;
 }
 
-/**
- * What this repo's config amounts to. Three outcomes, and they are three different facts.
- *
- * `none` is a repo that has never heard of flow, and it must be SILENT: the hooks are registered
- * once in the host's settings and fire in every repo the agent visits, so a missing config is the
- * ordinary case and blocking on it would make flow unusable the moment it was installed.
- *
- * `broken` is the opposite fact and must never be silent: a config file that is THERE and will
- * not even import is a guard that cannot run. The hook rail hands it to `whileBroken`, which lets
- * every call through with the load error, and the commit gate refuses. (A config that imports and
- * then will not load — `load.ok === false` — is the same fact and gets the same two answers.)
- */
-export type Regime =
-  | { readonly kind: "none" }
-  | { readonly kind: "loaded"; readonly config: FlowConfig; readonly load: LoadResult }
-  | { readonly kind: "broken"; readonly message: string };
-
-/**
- * Register the grammars this config declared, with their library paths made absolute.
- *
- * ONE SPELLING, called by both doors that read a config — the CLI's `loadFile` and the hook rail's
- * `loadRegime` — because which grammars exist must not depend on which verb you typed. The path is
- * resolved against the CONFIG'S OWN ROOT rather than the process's cwd: a hook runs wherever the
- * harness happened to be, which is the whole reason `projectRoot` exists.
- *
- * It is here rather than in the adapter's pure half because `join` is an effect-shaped answer about
- * this machine, and `adapter/domain.ts` is a pure home.
- */
-export function grammarsAt(settings: Settings, root: string): readonly Grammar[] {
-  return (settings.grammars ?? []).map((grammar) =>
-    isAbsolute(grammar.libraryPath) ? grammar : { ...grammar, libraryPath: join(root, grammar.libraryPath) },
-  );
-}
-
-export function registerGrammars(settings: Settings, root: string): void {
-  useGrammars(grammarsAt(settings, root), existsSync);
-}
-
-export async function loadRegime(root: string): Promise<Regime> {
-  const path = join(root, CONFIG_FILE);
-  if (!existsSync(path)) return { kind: "none" };
-  try {
-    const module = (await import(pathToFileURL(path).href)) as { default?: unknown };
-    const config = module.default as FlowConfig | undefined;
-    if (!config || typeof config !== "object" || !Array.isArray(config.bindings))
-      return {
-        kind: "broken",
-        message: `flow: ${CONFIG_FILE} has no default export from \`defineConfig([…])\` — that call IS the config, and its result is what flow reads.`,
-      };
-    registerGrammars(config.settings, root);
-    return { kind: "loaded", config, load: loadConfig(config) };
-  } catch (error) {
-    // `configLoadFault`, not a sentence of its own: the same breakage reaches a person through
-    // `flow test` and through a blocked hook, and a guard that describes it two ways is a guard
-    // nobody learns to read. It is also where the node floor is named, once.
-    return { kind: "broken", message: configLoadFault(CONFIG_FILE, (error as Error).message, process.versions.node) };
-  }
-}
-
-
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE RUN — one payload, from stdin to an exit code
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -1214,113 +918,6 @@ function marksWithout(briefed: Marks, before: Marks, unshown: readonly string[])
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// THE COMMIT GATE — the moment no harness delivers
-// ════════════════════════════════════════════════════════════════════════════════════════════════
-
-/**
- * A git question about the commit in progress, asked WITH git's hook variables — the one place flow
- * keeps them. Inside a pre-commit hook `GIT_INDEX_FILE` names the index being committed, and
- * `git commit -a` or `git commit <path>` stage into a temporary one, so without it git describes the
- * wrong index: an empty one, for both. A check's own commands stay hermetic (`runCommand`).
- */
-function askGit(command: string, root: string): ExecResult {
-  return runCommand(command, root, process.env);
-}
-
-/**
- * What the commit changes, asked of git ONCE, whoever called the gate — the files it will hold,
- * which of them are new, which are as the last commit has them (`--all` only), and which it removes.
- *
- * A git that cannot answer is a refusal, never an empty commit: a gate that read "nothing staged"
- * off a failed command would pass everything.
- */
-function readChanges(
-  root: string,
-  scope: CommitScope,
-): { readonly ok: true; readonly staged: StagedChanges } | { readonly ok: false; readonly why: string } {
-  const ask = scope === "staged" ? "git diff --cached --name-status --no-renames -z" : "git ls-files --cached --others --exclude-standard -z";
-  const listed = askGit(ask, root);
-  if (listed.code !== 0)
-    return { ok: false, why: `flow could not ask git what this commit changes (\`${ask}\` exited ${listed.code}): ${listed.stderr.trim()}` };
-  if (scope === "staged") return { ok: true, staged: stagedChanges(listed.stdout) };
-  // The whole tree: every file git can see that is on disk, measured against the last commit.
-  const present = [...new Set(listed.stdout.split("\0"))].filter((path) => path !== "" && existsSync(inRepo(root, path)));
-  const tree = askGit("git ls-tree -r --name-only -z HEAD", root);
-  const differs = askGit("git diff --name-only --no-renames -z HEAD", root);
-  return { ok: true, staged: treeChanges(present, tree, differs, () => askGit("git rev-parse -q --verify HEAD", root).code === 0) };
-}
-
-/**
- * Every `at(commit)` guardrail over the staged set — the half of the promise the PreToolUse rail
- * cannot make.
- *
- * It fires with no agent in the room: a human commit, a merge, CI. That is why it is a verb of the
- * binary rather than a hook, why it is in `DELIVERS` even though the harness supplies nothing here,
- * and why every harness gets the gates for free.
- *
- * WHO IT IS comes from the marker the PreToolUse rail left — session AND agent — so a commit's rows
- * land in the session that caused them and an actor-scoped rule fires at this moment as honestly as
- * at any other. The classification itself is never re-derived here: there is no transcript and no
- * hook message outside a session, so the STORED verdict is the only truthful answer, and a fresh commit
- * on a stale or absent marker wears nothing rather than wearing a guess.
- */
-export async function runCommit(root: string, scope: CommitScope): Promise<HookResult> {
-  const regime = await loadRegime(root);
-  if (regime.kind === "none") return ALLOW;
-  if (isOff(root)) return ALLOW;
-  // THE GATE USES THE ENGINE'S OWN FAULT, not `whileBroken` next door, and the difference is the
-  // point rather than an oversight: `whileBroken` lets every call through, and the commit gate is
-  // the one rail that stays shut. Everything written while flow was off reaches a commit only once
-  // the config loads and every guardrail has checked it — so this rail refuses however the config
-  // broke: the import fault here, and a load refusal through `guard()`'s own `!load.ok` branch below.
-  if (regime.kind === "broken") return refused([{ moment: "commit", block: fault(regime.message) }]) ?? ALLOW;
-  const changes = readChanges(root, scope);
-  if (!changes.ok) return refused([{ moment: "commit", block: fault(changes.why) }]) ?? ALLOW;
-  const { files, added, unchanged, deleted } = changes.staged;
-  const { load } = regime;
-  // Nothing to judge is a pass only for a config that loaded: one that did not refuses every commit,
-  // empty or not, through `guard()`'s own `!load.ok` branch.
-  if (load.ok && files.length === 0 && deleted.length === 0) return ALLOW;
-
-  const { branch, session, who, wearing } = wearer(root);
-  // The gate is where the expensive checks live — a suite, a type-check, a whole dependency
-  // cruise — so it is also where a recording is worth the most: replaying a refused commit is the
-  // one thing you cannot do by re-running it, because the working tree has moved on since.
-  const tape = isRecording(root) ? recorder(realWorld(root)) : null;
-  // A deleted file is no longer on disk, so what it held is read from the last commit — and only
-  // for a deletion some rule will judge.
-  const gone = judgedDeletions(load.ok ? load.entries : [], deleted).map((path) => ({
-    path,
-    content: askGit(`git show ${quoteArg(`HEAD:${path}`)}`, root).stdout,
-  }));
-  const outcome = await guard({
-    load,
-    event: { moment: "commit", staged: files, added, unchanged, deleted: gone, wearing },
-    world: tape?.world ?? realWorld(root),
-    off: false,
-  });
-  if (tape !== null)
-    appendSteps(root, session, [
-      {
-        rail: "guard",
-        moment: "commit",
-        staged: files,
-        ...(added === undefined ? {} : { added }),
-        ...(unchanged.length === 0 ? {} : { unchanged }),
-        ...(gone.length === 0 ? {} : { deleted: gone }),
-        wearing,
-        world: tape.taken(),
-      },
-    ]);
-  appendRows({ root, session, branch, who: who ?? UNNAMED_COMMIT }, runRows("commit", outcome, files.length + gone.length));
-
-  const blocks: Refused[] = outcome.effects
-    .filter((effect): effect is Block => effect.do === "block")
-    .map((block) => ({ moment: "commit", block }));
-  return refused(blocks) ?? ALLOW;
-}
-
-// ════════════════════════════════════════════════════════════════════════════════════════════════
 // STDIN — the first question of §7, and the one the old engine got wrong quietly
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
@@ -1432,20 +1029,48 @@ export async function hookEntry(event: string, cwd: string): Promise<HookResult>
   }
 }
 
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE HARNESS — Claude Code, as the rest of flow sees it
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
 /**
- * The git gate, end to end — `flow hook commit`, or `flow hook commit --all` for the whole tree.
- *
- * It takes no file list: git is asked. `flow commit <files…>`, the name an older hook still calls,
- * arrives here with `legacy` set and its list is dropped, because git's answer is the only list — a
- * second source of the staged set is two answers that can disagree.
+ * The host's machine-wide settings file. `CLAUDE_CONFIG_DIR` is the host's own documented override,
+ * honoured here rather than hard-coding a home, because it is also the seam that lets `flow init` be
+ * driven over a throwaway directory instead of somebody's real setup.
  */
-export async function commitEntry(args: readonly string[], cwd: string, legacy = false): Promise<HookResult> {
-  const scope = commitScope(args, legacy);
-  if (scope === null)
-    return {
-      stdout: "",
-      stderr: `flow hook commit takes no files — it asks git what the commit changes. Pass --all to judge the whole tree instead. Got: ${args.join(" ")}\n`,
-      exitCode: 2,
-    };
-  return runCommit(resolve(cwd), scope);
+function machineSettingsPath(): string {
+  return join(process.env["CLAUDE_CONFIG_DIR"] || join(homedir(), ".claude"), "settings.json");
 }
+
+/** Claude Code. The one value flow.ts chooses, and what the rest of flow is handed in its place. */
+export const claudeCode: Harness = {
+  name: "Claude Code",
+  events: HOOK_EVENTS,
+  delivers: DELIVERS,
+  run: hookEntry,
+  machineSettingsPath,
+  registering: {
+    repoFile: REPO_SETTINGS,
+    hostSurface: HOST_SURFACE,
+    hooks: HOOK_COSTS,
+    registrations: HOOK_REGISTRATIONS,
+    settingsFileFor,
+    listsFlow,
+    registeredEvents,
+    staleRegistrations,
+    bareRegistrations,
+    machineDiffers,
+    withRegistrations,
+    withoutRegistrations,
+    withMachineCommandsUpToDate,
+  },
+  transcripts: {
+    readStore,
+    readTranscript,
+    events: parseEvents,
+    head: transcriptHead,
+    spawns: spawnsIn,
+    spawnMeta,
+    steer: steerOf,
+  },
+};
