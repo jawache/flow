@@ -22,9 +22,9 @@ import { homedir } from "node:os";
 import { isatty } from "node:tty";
 import { basename, dirname, join, posix } from "node:path";
 import { type Category, refusalText, type LoadResult, type Settings, type TurnAction } from "../language/domain.ts";
-import { brief, categoriesIn, DELETED, guard, recorder, runRows, type AgentOf, type Identity, type Marks, type Notice, type Outcome, type RecordedStep, type Row, type Tree } from "../engine/domain.ts";
+import { brief, categoriesIn, DELETED, guard, recorder, runRows, type AgentOf, type Identity, type Marks, type Notice, type Outcome, type RecordedStep, type Row, type SessionState, type Tree } from "../engine/domain.ts";
 import { appendRows, appendSteps, isOff, isRecording, loadState, readRows, stickyIdentity, updateState, writeMarker } from "../engine/state.ts";
-import { agentOf, ALLOW, awaitsBrief, changeEvents, changeRow, commitRange, editedFile, folderChanges, foldersToLook, hermeticEnv, holdsForBrief, isHookEvent, namedChange, nothingBound, outsideOf, opensCall, reachesAnotherWorktree, readFault, ridesRefusal, sessionFactsFrom, shellChangesOf, shellReadRows, statusPaths, toEvent, toResult, toolRow, whileBroken, withShellChanges, workedPaths, worktreeFolders, worktreesWorkedIn, type AdapterEvent, type Answer, type BriefAdapterEvent, type EventWorld, type HookEvent, type Refused, type Shown } from "./domain.ts";
+import { agentOf, ALLOW, awaitsBrief, changeEvents, changeRow, commitRange, editedFile, folderChanges, foldersToLook, hermeticEnv, holdsForBrief, isHookEvent, namedChange, nothingBound, noticesThatCouldShow, outsideOf, opensCall, reachesAnotherWorktree, readFault, ridesRefusal, sessionFactsFrom, shellChangesOf, shellReadRows, statusPaths, toEvent, toResult, toolRow, whileBroken, withShellChanges, workedPaths, worktreeFolders, worktreesWorkedIn, type AdapterEvent, type Answer, type BriefAdapterEvent, type EventWorld, type HookEvent, type Refused, type Shown } from "./domain.ts";
 import type { Harness, HookPayload, HookResult } from "./harness.ts";
 import { currentBranch, loadRegime, readText, realWorld } from "./shell.ts";
 
@@ -456,20 +456,34 @@ async function judge(args: {
   // changed are found in here too, from the "before" the state holds, so two hooks cannot each find
   // the same change. The lock is held for a decision and no IO: git, the prose files, the transcript
   // and the real paths are all read BEFORE it, because a hook that waits gives up after seconds.
-  const tokens = briefEvents.length > 0 || hook === "post-tool-use" ? session.tokens() : 0;
-  const bodies = new Map<string, string>();
-  if (load.ok && (briefEvents.length > 0 || hook === "post-tool-use"))
-    for (const entry of load.entries)
-      if (entry.spec.kind === "breadcrumb" && entry.spec.file !== undefined) bodies.set(entry.spec.file, readText(session.root, entry.spec.file) ?? "");
+  const stored = loadState(session.root, session.id, session.who.agent);
   const written = hook === "post-tool-use" ? editedFile(payload) : null;
   const edited = written === null ? null : realPath(posix.resolve(session.root, written));
-  const stored = loadState(session.root, session.id, session.who.agent);
   const committed = new Map<string, { readonly head: string | null; readonly files: string[] }>();
   if (hook === "post-tool-use")
     for (const [folder, after] of looked) {
       const before = stored.trees?.[folder] ?? null;
       if (before !== null) committed.set(folder, { head: before.head, files: committedBetween(folder, before, after) });
     }
+  /** The paths this call changed, against these "before" trees. The commits stand while the "before" is the one they were listed against. */
+  const changedAgainst = (trees: SessionState["trees"]): string[] => {
+    const found: string[] = [];
+    for (const [folder, after] of looked) {
+      const before = trees?.[folder] ?? null;
+      const made = committed.get(folder);
+      const between = before !== null && made !== undefined && made.head === before.head ? made.files : [];
+      found.push(...folderChanges({ before, after, committed: between, named: namedChange(edited, folder) }));
+    }
+    return [...new Set(found)];
+  };
+  // THE TRANSCRIPT AND THE PROSE FILES are read only for what could be shown: the notices these
+  // events could show, judged from the state read above. A call that changed no file under a
+  // breadcrumb's globs reads neither.
+  const probed = hook === "post-tool-use" ? [...briefEvents, ...changeEvents(changedAgainst(stored.trees), load.ok ? load.entries : [])] : briefEvents;
+  const couldShow = noticesThatCouldShow({ load, events: probed, marks: compacted ? {} : stored.marks, wearing: identity.wearing, settings });
+  const bodies = new Map<string, string>();
+  for (const notice of couldShow) if (notice.file !== undefined && !bodies.has(notice.file)) bodies.set(notice.file, readText(session.root, notice.file) ?? "");
+  const tokens = couldShow.length > 0 || steps !== null ? session.tokens() : 0;
   updateState(session.root, session.id, session.who.agent, (state) => {
     let marks: Marks = compacted ? {} : state.marks;
     // THE NOTES HELD FOR THE BRIEF: held by a subagent's start that judged them without it, and let
@@ -478,15 +492,7 @@ async function judge(args: {
 
     const all = [...briefEvents];
     if (hook === "post-tool-use") {
-      const found: string[] = [];
-      for (const [folder, after] of looked) {
-        const before = state.trees?.[folder] ?? null;
-        const made = committed.get(folder);
-        // The commits were listed against the "before" this hook read first; they stand while the state still holds it.
-        const between = before !== null && made !== undefined && made.head === before.head ? made.files : [];
-        found.push(...folderChanges({ before, after, committed: between, named: namedChange(edited, folder) }));
-      }
-      const changed = [...new Set(found)];
+      const changed = changedAgainst(state.trees);
       const row = changeRow(typeof payload.tool_name === "string" ? payload.tool_name : "", changed);
       if (row !== null) rows.push(row);
       all.push(...changeEvents(changed, load.ok ? load.entries : []));

@@ -15,8 +15,8 @@
 // child_process and no process.env here — the bytes are handed over. The reaching is the shells':
 // shell.ts for what every harness shares, product.ts for the verbs, archive.ts for `flow facts`.
 
-import { followSteps, GIT_VALUE_OPTS, gitCommand, inScope, isBreadcrumbMoment, isGuardrailMoment, isOption, parseCommandLine, parseShellSteps, programName, resolveFrom, stepCommands, type BreadcrumbMoment, type Ctx, type EntrySpec, type ExecResult, type GuardrailMoment, type LoadedEntry, type LoadResult, type Moment, type Refusal, type SessionFacts, type ShellCommand, type ShellStart, type ShellStep, type TurnAction } from "../language/domain.ts";
-import { covers, FLOW_DIR, fires, formatBlock, insideRepo, momentsView, namedAgent, universe, watching, type AgentOf, type Block, type Cause, type Bound, type Metrics, type MomentsView, type Row, type TerrainNode, type Tree } from "../engine/domain.ts";
+import { followSteps, GIT_VALUE_OPTS, gitCommand, inScope, isBreadcrumbMoment, isGuardrailMoment, isOption, parseCommandLine, parseShellSteps, programName, resolveFrom, stepCommands, type BreadcrumbMoment, type Ctx, type EntrySpec, type ExecResult, type GuardrailMoment, type LoadedEntry, type LoadResult, type Moment, type Refusal, type SessionFacts, type Settings, type ShellCommand, type ShellStart, type ShellStep, type TurnAction } from "../language/domain.ts";
+import { brief, covers, FLOW_DIR, fires, formatBlock, insideRepo, momentsView, namedAgent, universe, watching, type AgentOf, type Block, type Cause, type Bound, type Marks, type Metrics, type Notice, type MomentsView, type Row, type TerrainNode, type Tree } from "../engine/domain.ts";
 import { gitCommands, missingGrammarText, quoteArg } from "../checks/domain.ts";
 import type {
   Delivered,
@@ -3550,6 +3550,17 @@ export function foldersToLook(hook: HookEvent, tool: string, worked: () => reado
 export function changeEvents(paths: readonly string[], entries: readonly LoadedEntry[]): BriefAdapterEvent[] {
   const bound = entries.filter((entry) => entry.spec.kind === "breadcrumb" && fires(entry.spec, "file-change"));
   return paths.filter((path) => bound.some((entry) => inScope(entry.spec, path))).map((path) => ({ rail: "brief", moment: "file-change", path }));
+}
+
+/**
+ * The notices these events could show, whatever the session has drifted to: the breadcrumbs that
+ * fire at them, bind to the agent, are in scope, and are unmarked or marked and so due again. The
+ * shell reads the transcript for the drift, and the prose files, only when this is not empty — a
+ * call that changed no file under a breadcrumb's globs reads neither.
+ */
+export function noticesThatCouldShow(args: { load: LoadResult; events: readonly BriefAdapterEvent[]; marks: Marks; wearing: readonly string[]; settings: Settings }): Notice[] {
+  const { load, events, marks, wearing, settings } = args;
+  return events.flatMap((event) => brief({ load, event: { moment: event.moment, path: event.path, command: event.command, wearing, tokens: Number.POSITIVE_INFINITY }, marks, settings }).notices);
 }
 
 /** The row that records a call's changed files. Null when it changed none. */

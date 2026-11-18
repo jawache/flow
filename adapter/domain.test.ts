@@ -6,7 +6,7 @@
 // settings file, its transcripts — is proved in that harness's folder.
 import { describe, it, expect } from "vitest";
 import { DELETED, type Bound, type Row, type Tree } from "../engine/domain.ts";
-import { changeEvents, changeRow, changedBy, commitRange, editedFile, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
+import { changeEvents, noticesThatCouldShow, changeRow, changedBy, commitRange, editedFile, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
 import { breadcrumb, defineConfig, definePack, fileChange, loadConfig, pack, session } from "../index.ts";
 import type { Ctx, TurnAction } from "../language/domain.ts";
 import { ranSinceEdit } from "../checks/domain.ts";
@@ -2317,6 +2317,15 @@ describe("where a hook looks at git", () => {
     expect(foldersToLook("pre-tool-use", "Edit", worked, "/repo")).toEqual([]);
     expect(foldersToLook("post-tool-use", "", worked, "/repo")).toEqual([]);
     for (const hook of ["stop", "subagent-stop", "notification"] as const) expect(foldersToLook(hook, "Bash", worked, "/repo")).toEqual([]);
+  });
+
+  it("could show nothing for a change no breadcrumb's globs reach, so the shell reads no transcript and no prose file for it", () => {
+    const config = defineConfig([pack(definePack("notes", { src: breadcrumb().at(fileChange).on("src/**").file("notes/src.md"), greeting: breadcrumb().at(session).text("hello") }))]);
+    const loaded = loadConfig(config);
+    const entries = loaded.ok ? loaded.entries : [];
+    const could = (paths: string[], marks: Record<string, number> = {}) => noticesThatCouldShow({ load: loaded, events: changeEvents(paths, entries), marks, wearing: [], settings: config.settings });
+    expect(could(["docs/x.md"]), "a path under no breadcrumb's globs").toEqual([]);
+    expect(could(["src/a.ts"]).map((notice) => [notice.entry, notice.file])).toEqual([["notes.src", "notes/src.md"]]);
   });
 
   it("makes one breadcrumb event of each changed path a file-change breadcrumb reaches, and a row only when something changed", () => {
