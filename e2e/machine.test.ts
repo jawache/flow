@@ -165,7 +165,6 @@ const only = (entry: Shipped, libraryPath: string): string =>
  * re-export — is caught here by name.
  */
 const ENTRIES: readonly string[] = [
-  "flow.editingTheGuardrails",
   "flow.noDeleteGuardrails",
   "flow.noUninstall",
   "flow.orientation",

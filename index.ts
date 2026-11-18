@@ -129,7 +129,7 @@ export {
   commit,
   turnEnd,
   session,
-  touch,
+  fileChange,
   type Moment,
   type GuardrailMoment,
   type BreadcrumbMoment,

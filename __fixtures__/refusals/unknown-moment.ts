@@ -3,9 +3,9 @@
 // `push` was accepted for a year and fired by nothing. Moments are imported values now, so a
 // moment that does not exist is a name that does not resolve. A guardrail at `session`, which has
 // no rail to refuse at, and a breadcrumb at `commit`, which has no rail to add text at, do not
-// compile either. `write` and `delete` are no moments at all: flow stops no write and no delete.
+// compile either, and nor does a guardrail at `fileChange`, which has already happened. `write` and `delete` are no moments at all: flow stops no write and no delete.
 
-import { definePack, breadcrumb, commit, guardrail, session, type Check } from "../../index.ts";
+import { definePack, breadcrumb, commit, fileChange, guardrail, session, type Check } from "../../index.ts";
 
 const passes: Check = (ctx) => ctx.ok();
 
@@ -18,6 +18,13 @@ export default definePack("rogue", {
   startsEarly: guardrail()
     // @refusal Argument of type '"session"' is not assignable
     .at(session)
+    .check(passes)
+    .message("m")
+    .test({ block: ["x"] }),
+
+  noRailAfterTheFact: guardrail()
+    // @refusal Argument of type '"file-change"' is not assignable
+    .at(fileChange)
     .check(passes)
     .message("m")
     .test({ block: ["x"] }),

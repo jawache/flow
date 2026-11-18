@@ -26,7 +26,7 @@ import {
   guardrail,
   siblingExists,
   symbolsInSibling,
-  touch,
+  fileChange,
 } from "@jawache/flow";
 
 /** Where a repo's pure code lives, and what proves it. Stated by the repo; nothing is defaulted. */
@@ -104,7 +104,7 @@ export const fcis = definePack("fcis", (repo: Convention) => {
      * pure file because a guardrail refused it, learns nothing, and puts the next one back.
      */
     fcis: breadcrumb()
-      .at(touch)
+      .at(fileChange)
       .on(...repo.homes)
       .description("The functional-core/imperative-shell mental model, for when you're working in pure-core code.")
       .text(

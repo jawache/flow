@@ -14,7 +14,7 @@ import {
   commit,
   command,
   session,
-  touch,
+  fileChange,
   programName,
   type Check,
 } from "../index.ts";
@@ -38,7 +38,7 @@ export const house = definePack("house", {
   orientation: breadcrumb().at(session).text("You are in the demo repo."),
 
   ssr: breadcrumb()
-    .at(touch)
+    .at(fileChange)
     .on("src/pages/**")
     .ignore("src/pages/admin/**")
     .file("guards/notes/ssr.md")

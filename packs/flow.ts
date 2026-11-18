@@ -2,16 +2,15 @@
 //
 // AND THEY ARE THE `flow` PACK NOW, not `guard`, which is a rename worth its churn: every entry in
 // every pack here is a guardrail or a breadcrumb, so `guard.` as a prefix said nothing that was not
-// already true of `git.` and `tdd.`. What these four are actually about is FLOW — the config file,
+// already true of `git.` and `tdd.`. What these three are actually about is FLOW — the config file,
 // the packs it imports, the gate that runs them — and `flow.noDeleteGuardrails` names the thing
 // being protected where `guard.noDeleteGuardrails` named the category it belongs to.
 //
 // Subtlety: WHERE those packs live is a mandatory parameter. One repo's name for the folder used to
-// be written into both scopes below, so every other repo bound two rules over a folder it does not
-// have — a nudge that never fires and a delete refusal that protects nothing, both counted as
-// armed. That is the exact failure flow exists to make impossible.
+// be written into the scope below, so every other repo bound a rule over a folder it does not
+// have — a delete refusal that protects nothing, counted as armed. That is the exact failure flow exists to make impossible.
 //
-// FOUR ENTRIES, and the count is the pack's definition rather than a coincidence: this is flow's
+// THREE ENTRIES, and the count is the pack's definition rather than a coincidence: this is flow's
 // self-protection and nothing else. Two entries that used to sit here left when the packs moved
 // into the package, because neither was about the guard — `noAgentInboxItems` is the work
 // lifecycle's and is in `work`, and the prose-substitution rule's `git commit` / `gh` head is in
@@ -36,7 +35,6 @@ import {
   protectedPath,
   session,
   shellCommands,
-  touch,
   type Check,
   type ShellCommand,
 } from "../index.ts";
@@ -104,8 +102,8 @@ export interface Home {
    * its own packs in, and `[]` in a repo whose rules are all written inline in the config.
    *
    * MANDATORY, and empty is a real answer rather than the absence of one. An unstated list is a
-   * list nobody reviews, and here it decides what two rules watch: the nudge when you edit the
-   * guard, and the refusal to delete it. Both name it and neither defaults.
+   * list nobody reviews, and here it decides what two rules watch: the refusal to
+   * delete the guard. It names the folders and does not default.
    *
    * The engine reads the same folders out of the config's imports (`guardPaths`), for the
    * weaken-after-block report, because that report must answer while the config will not load
@@ -113,25 +111,13 @@ export interface Home {
    * loads, so it is stated once, here, and typed.
    */
   readonly packs: readonly string[];
-
-  /**
-   * The harness's own permission surface — the files an agent's tools and permissions are declared
-   * in. Defaults to Claude Code's: `.claude/settings.json`, `.claude/settings.local.json`,
-   * `.claude/agents/**` and `.claude/skills/**`.
-   *
-   * The edit nudge fires on these as well as on the guard itself, because a tool list and a hook
-   * registration decide what any rule here can ever see. A repo on another harness names its own
-   * files; a repo with none passes `[]`.
-   */
-  readonly hostSurface?: readonly string[];
 }
 
 /**
  * flow's own orientation and self-protection, as a pack any repo binds.
  *
- * Every guarded repo wants these four: a note saying what is steering you, a nudge when you edit
- * the steering itself, a refusal when a commit would delete it, and a refusal when an agent runs
- * `flow uninstall`, which removes the guard without deleting a file the delete refusal watches.
+ * Every guarded repo wants these three: a note saying what is steering you, a refusal when a commit
+ * would delete the steering, and a refusal when an agent runs `flow uninstall`, which removes the guard without deleting a file the delete refusal watches.
  *
  * @setup A `flow.config.ts` at the repo root and a folder for the packs the repo writes itself —
  * whatever it is called, named here as the `packs` parameter. `flow init` writes both.
@@ -139,7 +125,6 @@ export interface Home {
  * not it agrees with a single other opinion in this package.
  */
 export const flow = definePack("flow", (repo: Home) => {
-  const hostSurface = repo.hostSurface ?? [".claude/settings.json", ".claude/settings.local.json", ".claude/agents/**", ".claude/skills/**"];
   return {
     /**
      * Without it, an agent works in a guarded repo without knowing it is guarded: a refusal arrives
@@ -150,33 +135,10 @@ export const flow = definePack("flow", (repo: Home) => {
       .description("What the guard layer is and how it steers — shown at the start of every session.")
       .text(
         [
-          "This repo is guarded by flow. A guardrail refuses a commit or a command, and a breadcrumb is text shown to you in the area you are working in. Nothing stops you writing or deleting a file in the working tree, so a file is judged when it is staged: the commit is refused, with the guardrail's message, until it passes. A command is judged before it runs, by its words. A breadcrumb is shown for a file you name in a tool call or read with a command such as `cat`.",
+          "This repo is guarded by flow. A guardrail refuses a commit or a command, and a breadcrumb is text shown to you at a moment, such as the area you changed. Nothing stops you writing or deleting a file in the working tree, so a file is judged when it is staged: the commit is refused, with the guardrail's message, until it passes. A command is judged before it runs, by its words. A breadcrumb is shown at the start of a session, before a command, when you hand back, and after a tool call that changed a file it is about.",
           "The whole guard is `flow.config.ts` — every rule that fires is reachable from that one file, whether it comes from a pack the config imports or from a pack this repo writes itself. Nothing resolves at run time and nothing defaults: what you read there is what fires. Authoring a new entry is always welcome; never loosen a guardrail to get an edit through — that is the user's call.",
           "There is no bypass token anywhere in this system. A guardrail is on or off, and turning one off is `override(pack.entry).disabled(\"why\")` in flow.config.ts — a committed change, visible in review.",
           "If the config will not load, flow is off: no guardrail and no breadcrumb fires, and the load error comes with every call instead — at session start, before each command, after each other tool call and at turn-end — so the guard is never off without you reading that it is. Edits and commands go through, so you fix the config the way you do any other work, `npm ci` for a missing package included. The commit gate refuses every commit until the config loads again, so nothing written while flow was off reaches a commit before every guardrail has checked it.",
-        ].join("\n"),
-      ),
-
-    // The default host surface is deliberately one wider than the engine's own list —
-    // `.claude/skills/**`, because a skill is prose an agent reads and is worth a word of caution
-    // before you edit it. The engine keeps the narrower list for a different question; the argument
-    // for not sharing one is written out at HOST_SURFACE in the adapter's pure home.
-    /**
-     * Without it, the steering layer gets edited like any other file — a rule loosened in passing,
-     * a hook rewritten mid-task — and the guard changes without anybody deciding that it should.
-     */
-    editingTheGuardrails: breadcrumb()
-      .at(touch)
-      .on("flow.config.ts", ...repo.packs, ...hostSurface)
-      .description("A nudge when you edit the guardrails themselves; it never blocks.")
-      .text(
-        [
-          "You are editing the guardrails themselves.",
-          "If this edit weakens, disables or removes a guardrail or a permission because it just blocked you — stop and confirm with the user first.",
-          "Authoring new entries is always fine; loosening one to get an edit through is the user's call, not yours.",
-          "An AGENT DEFINITION is a permission surface too: its `tools:` list decides what that agent can do, and the installed link is live — the file you are editing is the one that takes effect, with nothing between your edit and every future session. Widening a tool list, or adding a permissionMode, is the user's call — a mode added as a hardening is as likely to be a loosening.",
-          "Whatever you are authoring here — a `.message(…)`, a finding format, a warning — name what was SEEN (which file, which commit, which command) and what that specific cause wants done. A condition that cannot produce a distinguishing message is two rules, not one: split it. A detector that emits the same sentence for causes the reader must answer differently teaches them to talk past it, and then fails silently on the one occasion it was right.",
-          "Every guardrail carries its own cases. Add the block case first — a rule whose block case passes is a rule that catches nothing, and `flow test` is what says so.",
         ].join("\n"),
       ),
 

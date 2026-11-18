@@ -33,6 +33,7 @@ describe("the public surface", () => {
       "escapeRe",
       "execPasses",
       "faultsOf",
+      "fileChange",
       "gitCommand",
       "gitCommands",
       "gitDirPrefix",
@@ -53,7 +54,6 @@ describe("the public surface", () => {
       "spawnedAs",
       "symbolsInSibling",
       "textBan",
-      "touch",
       "turnEnd",
       "withFaults",
     ]);

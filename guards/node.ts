@@ -1,6 +1,6 @@
 // flow/packs/node.ts — package.json discipline.
 
-import { breadcrumb, commit, commitReason, defineCheck, definePack, guardrail, touch, type Check } from "@jawache/flow";
+import { breadcrumb, commit, commitReason, defineCheck, definePack, guardrail, fileChange, type Check } from "@jawache/flow";
 
 // ── node: the lockfile moves with the dependency, not with the file ──────────
 
@@ -74,7 +74,7 @@ export const node = definePack("node", {
    * versions of solved problems — code with no users, no reviewers and no fixes coming.
    */
   dependencies: breadcrumb()
-    .at(touch)
+    .at(fileChange)
     .on("package.json", ...LOCKFILES)
     .description("When to reach for a package, how to vet it, and what a commit that adds one owes.")
     .text(

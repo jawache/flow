@@ -1,6 +1,6 @@
 // flow/packs/docs.ts — two documentation audiences, one folder, nothing replicated.
 
-import { breadcrumb, canonicalFiles, commit, definePack, guardrail, touch } from "@jawache/flow";
+import { breadcrumb, canonicalFiles, commit, definePack, guardrail, fileChange } from "@jawache/flow";
 
 /** The two facts about a repo's docs folder the pack cannot know: where it is, and what may sit loose in it. */
 export interface Doors {
@@ -46,7 +46,7 @@ export const docs = definePack("docs", (repo: Doors = {}) => {
      * already says, which go stale silently while still reading as true.
      */
     docs: breadcrumb()
-      .at(touch)
+      .at(fileChange)
       .on(`${root}/**`)
       .description("The two audiences, the admission test, and the discipline that keeps docs true.")
       .text(
@@ -67,7 +67,7 @@ export const docs = definePack("docs", (repo: Doors = {}) => {
      * style guide — so nothing in it is one repo's taste.
      */
     userDocsStyle: breadcrumb()
-      .at(touch)
+      .at(fileChange)
       .on(`${root}/user/**`)
       .description("The ruled style of docs/user — markdown, the four Diátaxis kinds, the language rules, captured output.")
       .text(

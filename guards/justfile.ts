@@ -11,7 +11,7 @@ import {
   guardrail,
   jsonInvariant,
   session,
-  touch,
+  fileChange,
   type Check,
 } from "@jawache/flow";
 
@@ -146,7 +146,7 @@ export const justfile = definePack("justfile", (repo: Catalogue) => {
    * no recipe pointing at it and nobody finds it again.
    */
   toolsHome: breadcrumb()
-    .at(touch)
+    .at(fileChange)
     .on(`${tools}/**`)
     .description(`The fork every file in ${tools}/ faces — catalogue entry, or one-shot.`)
     .text(

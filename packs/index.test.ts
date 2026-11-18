@@ -31,26 +31,11 @@ describe("the packs surface", () => {
   });
 
   // THE GUARD PACK'S SCOPE, which is a parameter for the same reason the recipes are: one repo's
-  // folder name was written into both of its path-scoped entries, so every other repo bound a nudge
-  // that never fires and a delete refusal that protects nothing — while `flow status` counted both
-  // as armed. A message can be read; a scope has to be looked at, which is what this does.
+  // folder name was written into its path-scoped entry, so every other repo bound a delete refusal
+  // that protects nothing — while `flow status` counted it as armed. A message can be read; a
+  // scope has to be looked at, which is what this does.
   it("scopes the flow pack on the folder the repo says its packs are in, and on no other", async () => {
     const entries = (homes: readonly string[]) => loaded(loadConfig(defineConfig([pack(packs.flow, { packs: homes })])));
-    const scope = (homes: readonly string[], id: string): readonly string[] =>
-      (entries(homes).find((entry) => entry.id === id)?.spec as { on?: readonly string[] }).on ?? [];
-
-    expect(scope(["rules/**", "policy/*.ts"], "flow.editingTheGuardrails")).toContain("rules/**");
-    expect(scope(["rules/**", "policy/*.ts"], "flow.editingTheGuardrails")).toContain("policy/*.ts");
-    // Empty is a real answer — the config IS the whole guard — and the nudge still covers it and
-    // the host's registrations, and nothing invented.
-    expect(scope([], "flow.editingTheGuardrails")).toStrictEqual([
-      "flow.config.ts",
-      ".claude/settings.json",
-      ".claude/settings.local.json",
-      ".claude/agents/**",
-      ".claude/skills/**",
-    ]);
-
     // The delete refusal is about a commit's deleted paths, which a rule with `.on(…)` is never
     // asked about, so it names its paths in its check. Looked at the same way: the deletion of a
     // file in a folder the repo named is refused, and of one in a folder it did not name is not.

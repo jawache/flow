@@ -100,7 +100,7 @@ export interface Seam {
  * The orientation is at SESSION, and that is the whole design. Models arrive with a trained
  * aversion to env files — usually correct, and reinforced by permission denials — which is exactly
  * wrong for the dotenvx model, where the committed files are encrypted and reading them is the
- * expected way to work. A touch breadcrumb cannot fix that: the sessions where an agent silently
+ * expected way to work. A file-change breadcrumb cannot fix that: the sessions where an agent silently
  * avoids env work are the sessions it never fires in. So it is said up front, every time.
  *
  * Three tiers, and every value lives in exactly one: committed-and-encrypted (`.env*`), local

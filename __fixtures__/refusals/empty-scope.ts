@@ -7,14 +7,14 @@
 // What the compiler can see is a LITERAL empty call. A spread list that turns out empty at run time
 // — `.on(...repo.files)` — is the load's `empty-scope` refusal to catch. Both halves, always.
 
-import { definePack, defineConfig, pack, override, guardrail, breadcrumb, write, touch, type Check } from "../../index.ts";
+import { definePack, defineConfig, pack, override, guardrail, breadcrumb, commit, fileChange, type Check } from "../../index.ts";
 import { house } from "../demo-pack.ts";
 
 const passes: Check = (ctx) => ctx.ok();
 
 export const rogue = definePack("rogue", {
   emptyOn: guardrail()
-    .at(write)
+    .at(commit)
     // @refusal Expected 1 arguments, but got 0
     .on()
     .check(passes)
@@ -22,7 +22,7 @@ export const rogue = definePack("rogue", {
     .test({ block: [{ path: "src/a.ts", content: "x" }] }),
 
   emptyIgnore: guardrail()
-    .at(write)
+    .at(commit)
     .on("src/**")
     // @refusal Expected 1 arguments, but got 0
     .ignore()
@@ -31,10 +31,10 @@ export const rogue = definePack("rogue", {
     .test({ block: [{ path: "src/a.ts", content: "x" }] }),
 
   // @refusal Expected 1 arguments, but got 0
-  noteOn: breadcrumb().at(touch).on().text("t"),
+  noteOn: breadcrumb().at(fileChange).on().text("t"),
 
   // @refusal Expected 1 arguments, but got 0
-  noteIgnore: breadcrumb().at(touch).on("docs/**").ignore().text("t"),
+  noteIgnore: breadcrumb().at(fileChange).on("docs/**").ignore().text("t"),
 });
 
 export default defineConfig([

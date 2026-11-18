@@ -98,7 +98,7 @@ export type BreadcrumbMoment = (typeof BREADCRUMB_MOMENTS)[number];
 export type Moment = GuardrailMoment | BreadcrumbMoment;
 
 export const GUARDRAIL_MOMENTS: readonly GuardrailMoment[] = Object.keys(PHASES) as GuardrailMoment[];
-export const BREADCRUMB_MOMENTS = ["session", "touch", "command", "turn-end"] as const;
+export const BREADCRUMB_MOMENTS = ["session", "file-change", "command", "turn-end"] as const;
 
 // ── the words, as values ─────────────────────────────────────────────────────
 //
@@ -110,7 +110,8 @@ export const command = "command" as const;
 export const commit = "commit" as const;
 export const turnEnd = "turn-end" as const;
 export const session = "session" as const;
-export const touch = "touch" as const;
+/** `fileChange` and `turnEnd` are spelled so because a symbol has no hyphen: the moments are called "file-change" and "turn-end". */
+export const fileChange = "file-change" as const;
 
 /** The engine phases a moment list fires at — deduped, in declaration order. */
 export function phasesOf(at: readonly GuardrailMoment[]): string[] {
@@ -132,14 +133,14 @@ export function isBreadcrumbMoment(m: string): m is BreadcrumbMoment {
 /**
  * The moments whose events NAME A PATH — and therefore the only ones `.on()` / `.ignore()` narrow.
  *
- * The commit gate carries the staged set; a touch carries the file the tool call was about. The
+ * The commit gate carries the staged set; a file change carries each file the tool call changed. The
  * other three carry no path at all: a command guard's patterns ARE its scope, a turn-end is about
  * what the actor did, and a session start is about the session. The engine expresses the same fact
  * at run time — `subjectsOf` consults `inScope` for exactly these moments, and `brief` narrows a
  * note only when the event names a path — and stating it here is what lets a scope that would
  * narrow NOTHING be refused rather than quietly ignored.
  */
-export const PATH_MOMENTS = ["commit", "touch"] as const;
+export const PATH_MOMENTS = ["commit", "file-change"] as const;
 export type PathMoment = (typeof PATH_MOMENTS)[number];
 
 /** Does this moment carry a path for `on` / `ignore` to narrow? */
@@ -405,7 +406,7 @@ export type World = Pick<Ctx, "exec" | "fs" | "git">;
 // words inside a quoted argument, so nothing in flow decides what a command does by matching the
 // line. `unbash` reads it as bash; this section reduces its tree to the one shape a check needs:
 // the simple commands, each with the program that actually runs. docs/user/reference/ctx.md
-// states the fields, and docs/user/explanation/what-the-guard-sees.md § The parse is the why.
+// states the fields, and docs/user/explanation/what-flow-reads.md § At a command: the parse is the why.
 //
 // What cost time to find in unbash: a word's `parts` is a lazy getter, so the walk below reads it
 // by name and never by `Object.keys`; a parse error inside a nested script sits on THAT script's

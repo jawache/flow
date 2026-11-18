@@ -19,7 +19,7 @@ import {
   definePack,
   guardrail,
   session,
-  touch,
+  fileChange,
   spawnedAs,
   turnEnd,
   type Ctx,
@@ -146,12 +146,12 @@ export const rails = definePack("rails", {
   retired: guardrail().at(commit).disabled("superseded by everyone"),
 
   notes: {
-    /** An area note: shown on first touch of its area, and again once the session has drifted. */
-    area: breadcrumb().at(touch).on("src/**").text("src/ is the product — its tests sit beside it."),
+    /** An area note: shown after the first change in its area, and again once the session has drifted. */
+    area: breadcrumb().at(fileChange).on("src/**").text("src/ is the product — its tests sit beside it."),
     /** The session greeting. It survives a compaction, because the host re-delivers it. */
     orientation: breadcrumb().at(session).text("This repo is guarded by flow."),
     /** A note scoped to an actor, and one whose prose lives in a file rather than inline. */
-    forBuilders: breadcrumb().at(touch).on("src/**").for(builder).file("docs/builder.md"),
+    forBuilders: breadcrumb().at(fileChange).on("src/**").for(builder).file("docs/builder.md"),
     /** A note about a COMMAND, scoped to the lines it is about rather than to a file. */
     installing: breadcrumb().at(command).on("npm install*", "npm i *").text("Restart the dev server after an install."),
   },

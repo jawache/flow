@@ -20,7 +20,7 @@ import {
   definePack,
   guardrail,
   spawnedAs,
-  touch,
+  fileChange,
 } from "@jawache/flow";
 
 /**
@@ -184,7 +184,7 @@ export const work = definePack("work", {
    * that does not name the link.
    */
   nodeInTheRecord: breadcrumb()
-    .at(touch)
+    .at(fileChange)
     .on(".work/**")
     .description("Node code run from a linked record needs the Node settings that keep the link's path.")
     .text(

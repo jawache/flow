@@ -23,7 +23,7 @@ import {
   depcruise,
   guardrail,
   session,
-  touch,
+  fileChange,
 } from "@jawache/flow";
 
 /**
@@ -166,7 +166,7 @@ export const house = definePack("house", (repo: Terrain) => ({
       [
         "You are in `flow` — guardrails and breadcrumbs as code for coding agents. One npm package, `@jawache/flow`: the engine, the `flow` binary, and the one pack it ships, `flow`. A guarded repo's whole guard is one TypeScript file that imports from here.",
         "TWO DOORS, and never a layer path from outside either: `index.ts` is the GRAMMAR's (`@jawache/flow` — what a pack or a config is written in), and `packs/index.ts` is the CONTENT's (`@jawache/flow/packs` — the one pack the package ships). Both are exact-list tested; adding or dropping an export is a deliberate edit, never drift.",
-        "Layout is by PIPELINE STAGE, not by topic — `language → checks → engine → adapter`, one `domain.ts` per layer, fenced one way. See the layout breadcrumb, which fires on first touch of a layer folder.",
+        "Layout is by PIPELINE STAGE, not by topic — `language → checks → engine → adapter`, one `domain.ts` per layer, fenced one way. See the layout breadcrumb, which is shown after the first change in a layer folder.",
         "THE GUARD HERE IS flow ITSELF. `flow.config.ts` at the root binds `flow`, the one pack from `@jawache/flow/packs` — resolved through `node_modules/@jawache/flow`, a link back to this checkout — plus ten packs written here in `guards/`, shipped to nobody: nine that began as fleet discipline, `driven`, and `house`. flow guarding flow is the dogfood: a door that stopped exporting, a rule that stopped loading or a bundle that stopped building refuses this repo's own next commit first. `just guard-status` answers whether the guard is working; `just test-rules` runs every bound rule's cases. flow's state is `.flow/` at the repo root, self-ignoring, never committed.",
         "Commands live in the justfile (`just` lists them) — `just build` · `just typecheck` · `just test` (takes a test file and a name) · `just guard-status`; `just link` is for the main checkout only, never a worktree, which runs its own build. TWO suites answer two different questions and both are gates: `just test-rules` (`flow test`) proves the rules THIS repo binds, and `just test-packs` — the machine test — proves the one pack the package SHIPS, in a throwaway repo that has never heard of flow. Tests are vitest; `just test-coverage` gates the pure home.",
         "Docs are two audiences: `docs/user/` is markdown for people (entered through `docs/user/index.md`, foldered by Diátaxis kind, plus one reference page per stock check under `docs/user/checks/`, one migration guide per release under `docs/user/migrations/`), `docs/agent/` is archival context pulled on demand. `.work/` is the gitignored journal.",
@@ -180,7 +180,7 @@ export const house = definePack("house", (repo: Terrain) => ({
    * survives only as long as whoever knows it is in the room.
    */
   layout: breadcrumb()
-    .at(touch)
+    .at(fileChange)
     .on("language/**", "checks/**", "engine/**", "adapter/**", "packs/**", "tools/**")
     .description("How the package is laid out — the pipeline layers, one domain.ts each, and the one shared file.")
     .text(
@@ -209,7 +209,7 @@ export const house = definePack("house", (repo: Terrain) => ({
    * Five hand-written scanners grew that way before the parse replaced them all.
    */
   shellParse: breadcrumb()
-    .at(touch)
+    .at(fileChange)
     .on("language/domain.ts", "checks/domain.ts", "engine/domain.ts", "adapter/domain.ts", "adapter/claude/domain.ts", "adapter/codex/domain.ts", "packs/**", "guards/**")
     .description("Every reading of a shell command goes through the one parse — never a regex or a splitter over the raw line.")
     .text(
@@ -220,7 +220,7 @@ export const house = definePack("house", (repo: Terrain) => ({
         "· The parse lacks a fact the rule needs? Add it to the parse in `language/domain.ts`, and its row to `docs/user/reference/ctx.md`, so every reader gets it.",
         "· `ctx.commands` is null when the line does not parse. Read null as \"cannot tell\": stand aside, or look for the command's program and arguments in the line as whole words, the way `banCommands` does; never fall back to splitting or lexing it yourself.",
         "· A pattern that spans commands on purpose sets `banCommands`' `wholeLine`, which matches the line less its heredoc bodies, cut by the same parse (`elideHeredocBodies`).",
-        "How the parse works and what it cannot know: `docs/user/explanation/what-the-guard-sees.md` § The parse.",
+        "How the parse works and what it cannot know: `docs/user/reference/parse.md`, and why: `docs/user/explanation/what-flow-reads.md` § At a command: the parse.",
       ].join("\n"),
     ),
 
@@ -536,18 +536,18 @@ export const house = definePack("house", (repo: Terrain) => ({
       pass: [
         {
           staged: ["packs/x.ts"],
-          world: { fs: { "packs/x.ts": "  /** Without it, nobody knows which door they are behind. */\n  docs: breadcrumb()\n    .at(touch)\n" } },
+          world: { fs: { "packs/x.ts": "  /** Without it, nobody knows which door they are behind. */\n  docs: breadcrumb()\n    .at(fileChange)\n" } },
         },
         // A guardrail owes nothing here: its message is the explanation.
         { staged: ["packs/x.ts"], world: { fs: { "packs/x.ts": "  docsShape: guardrail()\n    .at(commit)\n" } } },
       ],
       block: [
-        { staged: ["packs/x.ts"], world: { fs: { "packs/x.ts": "  docs: breadcrumb()\n    .at(touch)\n" } } },
+        { staged: ["packs/x.ts"], world: { fs: { "packs/x.ts": "  docs: breadcrumb()\n    .at(fileChange)\n" } } },
         // A `//` note is not a doc comment: a tool reading doc comments does not see it, and this is
         // exactly the shape every pack carried before the convention.
         {
           staged: ["packs/x.ts"],
-          world: { fs: { "packs/x.ts": "  // the two audiences, in one place\n  docs: breadcrumb()\n    .at(touch)\n" } },
+          world: { fs: { "packs/x.ts": "  // the two audiences, in one place\n  docs: breadcrumb()\n    .at(fileChange)\n" } },
         },
       ],
     }),

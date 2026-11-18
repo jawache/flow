@@ -5,7 +5,7 @@
 // nothing in a repo whose gate is `npm run typecheck`, and would say so in the refusal too.
 
 
-import { astGrep, commit, breadcrumb, definePack, escapeRe, execPasses, guardrail, jsonInvariant, touch } from "@jawache/flow";
+import { astGrep, commit, breadcrumb, definePack, escapeRe, execPasses, guardrail, jsonInvariant, fileChange } from "@jawache/flow";
 
 /** What this pack cannot know: the two gate recipes, and whether the repo has shared config files. */
 export interface Gates {
@@ -111,7 +111,7 @@ export const typescript = definePack("typescript", (repo: Gates) => {
    * nothing ever said to model them out.
    */
     strictTypesNoInvalidStates: breadcrumb()
-      .at(touch)
+      .at(fileChange)
       .on("**/tsconfig*.json", "eslint.config.*")
       .description("Use the type system as a design tool — strict stays on, impossible states stay impossible.")
       .text(

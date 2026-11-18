@@ -65,7 +65,7 @@ import {
   REFUSAL_CODES,
   session,
   type SessionFacts,
-  touch,
+  fileChange,
   turnEnd,
   type Unanswered,
   verdict,
@@ -85,7 +85,7 @@ describe("the moment vocabulary", () => {
   });
 
   it("is the four breadcrumb words, which are not the same list", () => {
-    expect(BREADCRUMB_MOMENTS).toEqual(["session", "touch", "command", "turn-end"]);
+    expect(BREADCRUMB_MOMENTS).toEqual(["session", "file-change", "command", "turn-end"]);
   });
 
   it("says which of them a NOTE's scope can narrow — the paths, plus the command line", () => {
@@ -100,7 +100,7 @@ describe("the moment vocabulary", () => {
 
   it("exports each word as a value, so a config imports it rather than spelling it", () => {
     expect([command, commit, turnEnd]).toEqual(["command", "commit", "turn-end"]);
-    expect([session, touch]).toEqual(["session", "touch"]);
+    expect([session, fileChange]).toEqual(["session", "file-change"]);
   });
 
 });
@@ -145,7 +145,7 @@ describe("the moment guards", () => {
 
 describe("PATH_MOMENTS — the moments a path scope can narrow", () => {
   it("is the two whose events name a file", () => {
-    expect(PATH_MOMENTS).toEqual(["commit", "touch"]);
+    expect(PATH_MOMENTS).toEqual(["commit", "file-change"]);
   });
 
   it("excludes every moment that carries no path — a command, a turn, a session start", () => {
@@ -1359,7 +1359,7 @@ describe("breadcrumb()", () => {
   });
 
   it("can point at a file instead, for prose too long to sit in the sentence", () => {
-    const spec = breadcrumb().at(touch).on("src/pages/**").file("guards/notes/ssr.md").spec;
+    const spec = breadcrumb().at(fileChange).on("src/pages/**").file("guards/notes/ssr.md").spec;
     expect(spec.file).toBe("guards/notes/ssr.md");
     expect("text" in spec).toBe(false);
   });
@@ -1616,7 +1616,7 @@ describe("overlay — a spoken key replaces the pack's WHOLE key, nothing merges
   });
 
   it("leaves a breadcrumb's prose alone when the override says none", () => {
-    const note = breadcrumb().at(touch).file("docs/long-note.md").spec;
+    const note = breadcrumb().at(fileChange).file("docs/long-note.md").spec;
     const { spec, source } = overlay(note, { on: ["docs/**"] });
     expect(spec.kind === "breadcrumb" && spec.file).toBe("docs/long-note.md");
     expect(source["file"]).toBe("pack");
@@ -1624,8 +1624,8 @@ describe("overlay — a spoken key replaces the pack's WHOLE key, nothing merges
 });
 
 describe("overlay — a breadcrumb's prose is one key in two forms, and an override replaces it", () => {
-  const fileNote = breadcrumb().at(touch).on("docs/**").file("docs/long-note.md").spec;
-  const textNote = breadcrumb().at(touch).on("docs/**").text("One inline sentence.").spec;
+  const fileNote = breadcrumb().at(fileChange).on("docs/**").file("docs/long-note.md").spec;
+  const textNote = breadcrumb().at(fileChange).on("docs/**").text("One inline sentence.").spec;
 
   it("an override's `.text(…)` replaces a pack's `.file(…)`, and the prose is the override's", () => {
     const { spec, source } = overlay(fileNote, { text: "Shorter, inline." });
@@ -1980,7 +1980,7 @@ describe("the load refuses", () => {
 
   it("an empty `.ignore()` from the pack as empty-scope, on a breadcrumb", () => {
     const note = definePack("note", {
-      x: breadcrumb().at(touch).on("docs/**").ignore(...none).text("hi"),
+      x: breadcrumb().at(fileChange).on("docs/**").ignore(...none).text("hi"),
     });
     expect(refusalsOf([pack(note)])).toEqual([
       {
@@ -1993,7 +1993,7 @@ describe("the load refuses", () => {
   });
 
   it("both verbs empty in the pack, refused once naming both", () => {
-    const bare = definePack("bare", { x: breadcrumb().at(touch).on(...none).ignore(...none).text("hi") });
+    const bare = definePack("bare", { x: breadcrumb().at(fileChange).on(...none).ignore(...none).text("hi") });
     expect(refusalsOf([pack(bare)])).toEqual([
       {
         code: "empty-scope",
@@ -2027,7 +2027,7 @@ describe("the load refuses", () => {
   });
 
   it("an empty scope split between the pack and an override, saying who said each and where to fix it", () => {
-    const mixed = definePack("mixed", { x: breadcrumb().at(touch).on(...none).text("hi") });
+    const mixed = definePack("mixed", { x: breadcrumb().at(fileChange).on(...none).text("hi") });
     expect(refusalsOf([pack(mixed), override(mixed.x).ignore(...none)])).toEqual([
       {
         code: "empty-scope",
@@ -2080,7 +2080,7 @@ describe("the load refuses", () => {
   });
 
   it("but not an override's prose over a pack's other form — it replaces it, and loads", () => {
-    const files = definePack("files", { note: breadcrumb().at(touch).on("docs/**").file("docs/long-note.md") });
+    const files = definePack("files", { note: breadcrumb().at(fileChange).on("docs/**").file("docs/long-note.md") });
     const [entry] = loadOrThrow([pack(files), override(files.note).text("One inline sentence.")]);
     expect(entry?.spec.kind === "breadcrumb" && entry.spec.text).toBe("One inline sentence.");
   });
