@@ -20,11 +20,11 @@
 // refuses them at the commit, but the rails are not the reason: a check that reads the world
 // directly cannot be driven by a case and cannot be replayed.
 //
-//   PATTERNS      the one regex sweep — textBan · a command in words — banCommands · substitutionInProse
-//   PATHS         protectedPath · oneWriter · siblingExists · canonicalFiles
-//   CONTENT       jsonInvariant · symbolsInSibling
+//   PATTERNS      the one regex sweep — textBan · a command in words — banCommands
+//   PATHS         protectedPath · siblingExists · canonicalFiles
+//   CONTENT       jsonInvariant · symbolsInSibling · docLinks
 //   THE COMMIT    changeTogether
-//   COMMANDS      the parse read as git · commitReason
+//   COMMANDS      the parse read as git · commitMessage · commitReason
 //   THE TURN      ranSinceEdit
 //   TOOLS         execPasses · depcruise · astGrep, each orchestrating, never reimplementing
 //   CASES         the canned ctx a `.test()` case becomes, and the runner that walks them
@@ -56,7 +56,6 @@ import type {
   Moment,
   Scope,
   ShellCommand,
-  ShellSubstitution,
   TurnAction,
   Unanswered,
   Verdict,
@@ -100,8 +99,7 @@ function touched(ctx: Ctx): { readonly path: string; readonly content: string } 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 //
 // A regex is for TEXT: a file's contents, a line matched whole. Which command runs is not text —
-// it is a program and its arguments in the parse — so `banCommands` and the heads of
-// `substitutionInProse` name a command in words and compare it with each command there, and a
+// it is a program and its arguments in the parse — so `banCommands` names a command in words and compares it with each command there, and a
 // regex stays only for `wholeLine`, a pattern across two commands on purpose.
 
 /** One pattern that matched, and the 1-based line it matched on. */
@@ -219,7 +217,7 @@ function compiledPatterns(entries: readonly string[]): {
 }
 
 /**
- * A command named in words — a `banCommands` entry, a `substitutionInProse` head — as the parse
+ * A command named in words — a `banCommands` entry — as the parse
  * reads it: its program without its path, and its arguments as compared.
  */
 interface CommandInWords {
@@ -293,142 +291,46 @@ function wordsInLine(banned: CommandInWords, line: string): boolean {
   return words.every((re) => re.test(line));
 }
 
-/**
- * Refuse a command that records permanent prose when the shell would run a BACKTICK substitution
- * while building it — a commit message, a PR or issue body, a journal entry.
- *
- * `heads` are the commands that record prose, each in words, `"gh pr"`, matched as `banCommands`
- * matches an entry: the same program, less its path, and every argument of the head among the
- * command's, compared whole. A head's words are found anywhere among the arguments, so a bare word
- * passed as an option's value counts too: `"gh pr"` refuses `gh run list --branch pr`. A head that
- * is not one command in words refuses to load, as an entry does. `gitSubcommands` names git's own,
- * `commit`, and is read through `gitCommand`: git's options sit between `git` and its subcommand,
- * so `-C '/a b' commit` is `commit` there, where the containment of `"git commit"` would also take
- * `git log --grep commit`.
- *
- * The verdict reads the parse, never the line: a backtick the shell runs is one the parse lists as
- * the command's substitution — in a double-quoted or bare argument, or in an unquoted heredoc the
- * command is fed. A single-quoted argument, an escaped backtick and a QUOTED heredoc run nothing,
- * so none is refused, and neither is a backtick in another command on the same line. A `$( … )`
- * substitution is the sanctioned way to feed a heredoc into an argument, so it is not refused
- * itself; what it runs is, when that holds a backtick — the unquoted `"$(cat <<EOF … EOF)"`
- * message. A line that does not parse is not judged.
- *
- * A CORE CHECK because TWO PACKS SHARE IT: `git` polices `git commit` and the `gh` verbs, which
- * every repo binds, and `work` the lifecycle verbs, which only a repo running the work lifecycle
- * binds. Anything two packs share is a core check; a copy in each is how the two would drift
- * while both still read as armed.
- */
-export const substitutionInProse = defineCheck(
-  (opts: { heads: readonly string[]; gitSubcommands?: readonly string[] }): Check => {
-    const { commands: heads, faults } = commandsInWords(
-      opts.heads,
-      (head) =>
-        `names the head \`${head}\`, which is not one command in words. Name a program and the arguments that make it record prose, such as "gh pr".`,
-    );
-    return withFaults((ctx) => {
-      const hits = (shellCommands(ctx) ?? []).flatMap((c) => {
-        const sub = gitCommand(c)?.subcommand;
-        const head = sub != null && opts.gitSubcommands?.includes(sub) === true ? `git ${sub}` : heads.find((h) => commandIs(h, c))?.entry;
-        if (head === undefined) return [];
-        return backticksRun(c.substitutions).map((run) => `\`${head}\` would run \`${run}\` and record its output in place of the backticks`);
-      });
-      return answer(ctx, hits);
-    }, faults);
-  },
-);
-
-/**
- * The backtick substitutions a command's own substitutions run, through any `$( … )` among them:
- * a `$( … )` lists the commands it runs at any depth, and each of those its own substitutions.
- */
-function backticksRun(substitutions: readonly ShellSubstitution[]): string[] {
-  return substitutions.flatMap((s) =>
-    s.backtick ? [s.text] : s.commands.flatMap((c) => c.substitutions.filter((t) => t.backtick).map((t) => t.text)),
-  );
-}
-
-/**
- * What a blocked prose-writing command is told, and it is the same sentence whichever pack caught
- * it: the mechanism, the absence of an undo, and the fix.
- *
- * ONE constant rather than a message per pack. The sentence never named the verb that was blocked
- * — it names the shape — so two copies would be two places for the same advice to drift, and the
- * copy that drifted would still read as correct.
- */
-export const SUBSTITUTION_MESSAGE = [
-  "You are recording prose through a shell command, and a backtick in a double-quoted argument or an unquoted heredoc is not Markdown — the shell RUNS it and splices its output into your text before the command ever sees it.",
-  "On an append-only record there is no undo: no amend, no redact. And once the binary has argv the splice has already happened, so this is the only moment it can be caught.",
-  "Fix: SINGLE-quote the argument (backticks are literal there), escape each backtick as \\` inside the double quotes, or feed the prose on stdin with a QUOTED heredoc — `git commit -F -` plus `<<'EOF'`, which this rule treats as safe.",
-].join("\n");
-
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // PATHS — claims about where a file is, never about what is in it
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 /**
- * Refuse a hand-edit of a protected path.
+ * Refuse a commit that changes or deletes a file under `paths`.
  *
- * The entry's `.on()` IS the protected set and the engine has already filtered on it, so any file
- * that reaches this check is protected by definition: matching it is the violation. There is no
- * second list of paths inside the check: a rule that could be scoped one way and protect another
- * is a rule whose two halves can disagree in silence.
+ * CALLED ONCE PER COMMIT, with no `.on(…)`: the protected set is the option, so the check reads the
+ * commit's own facts — the staged paths, the paths the last commit does not have and the paths it
+ * deletes — and a deletion is a path like any other. A rule scoped with `.on(…)` is asked about
+ * files, one at a time, and never about a deleted one. A rename is a deletion of the old path plus
+ * an add of the new one, so it is refused by its old path.
  *
  * `existingOnly` is what an APPEND-ONLY tree needs: a migrations folder, where yesterday's file is
- * history and may never move while today's is the whole point of the folder. Absent means no
- * narrowing — every write to a protected path is refused — which is the empty value rather than a
- * default a reader has to know about.
+ * history and may never move while today's is the whole point of the folder. A file is new when
+ * the last commit does not have it (`ctx.added`). Absent means no narrowing, which is the empty
+ * value rather than a default a reader has to know about.
  *
- * Either way, a file identical to the last commit's copy is not an edit, and passes. Only `flow
- * hook commit --all` hands one over: it judges the whole tree, and a real commit never stages a
- * file it leaves as it was.
+ * Either way, a file identical to the last commit's copy is not a change, and passes. Only `flow
+ * hook commit --all` lists one (`ctx.unchanged`): it judges the whole tree, and a real commit
+ * never stages a file it leaves as it was.
  */
 export const protectedPath = defineCheck(
-  (opts: { existingOnly?: boolean }): Check =>
-    async (ctx) => {
-      const { path } = touched(ctx);
-      if (ctx.file?.unchanged === true) return ctx.ok();
-      if (opts.existingOnly === true) {
-        // "Already there" means before THIS change. Before an Edit the tree still answers that.
-        // After a shell command, and at commit, the tree holds the file either way, so the event
-        // says instead: from the snapshot taken before the command, or from the last commit. A
-        // delete has no would-be file to ask about, and the entry's scope is what protects it.
-        if (ctx.moment !== "delete" && !(ctx.file?.existed ?? (await ctx.fs.exists(path)))) return ctx.ok();
-        return ctx.fail(
-          `'${path}' is append-only — an existing file here is history and may not be edited or deleted (adding a new one is fine)`,
-        );
-      }
-      return ctx.fail(`'${path}' is a protected path (do not edit directly)`);
-    },
-);
-
-// ── ACTORS — who made the change, never what it says ─────────────────────────────────────────────
-
-/**
- * Only the listed categories may change a file: a write or a delete by any other actor is refused.
- *
- * It reads `ctx.actor` — the categories the acting session wears, recognised from what the host
- * wrote about it, never from a claim it made — and nothing about the file. A session wearing none
- * of `writers` is refused whatever it wrote, and one wearing none at all is refused too: "no
- * category" is not "every category".
- *
- * `.for(…)` on an entry says which actors a RULE applies to; this says which actors may WRITE. Both
- * read the same categories, and they answer different questions — a rule for a checker says what a
- * checker may not do, this says that everybody but a builder may not write.
- *
- * An empty `writers` is refused at load: it would refuse every change by everyone, which is a
- * frozen worktree, not a rule about who writes it.
- */
-export const oneWriter = defineCheck(
-  (opts: { writers: readonly string[] }): Check =>
+  (opts: { paths: readonly string[]; existingOnly?: boolean }): Check =>
     withFaults(
       (ctx) => {
-        if (ctx.actor.some((category) => opts.writers.includes(category))) return ctx.ok();
-        const who = ctx.actor.length === 0 ? "an actor with no category" : `an actor wearing ${ctx.actor.join(", ")}`;
-        const what = ctx.moment === "delete" ? "deleted" : "written";
-        return ctx.fail(`${ctx.file?.path ?? "a file"} was ${what} by ${who} — only ${opts.writers.join(" or ")} may change files here`);
+        const same = new Set(ctx.unchanged ?? []);
+        const fresh = new Set(opts.existingOnly === true ? (ctx.added ?? []) : []);
+        const changed = (ctx.staged ?? []).filter((path) => !same.has(path) && !fresh.has(path) && matchAny(path, opts.paths));
+        const deleted = (ctx.deleted ?? []).filter((path) => matchAny(path, opts.paths));
+        const why =
+          opts.existingOnly === true
+            ? "is append-only — an existing file here is history and may not be changed or deleted (adding a new one is fine)"
+            : "is a protected path (do not change or delete it)";
+        return answer(ctx, [
+          ...changed.map((path) => `'${path}' ${why}: this commit changes it`),
+          ...deleted.map((path) => `'${path}' ${why}: this commit deletes it`),
+        ]);
       },
-      opts.writers.length === 0 ? ["lists no `writers`, so it would refuse every change by every actor. Name the categories allowed to write."] : [],
+      opts.paths.length === 0 ? ["lists no `paths`, so it protects nothing. Name the files a commit must not change or delete."] : [],
     ),
 );
 
@@ -739,6 +641,87 @@ export const symbolsInSibling = defineCheck(
     },
 );
 
+/**
+ * The anchor each heading of a Markdown page makes, as GitHub makes it: the text in lower case,
+ * punctuation removed, each space a hyphen, and a repeat of one anchor numbered `-1`, `-2`.
+ * A heading inside a fenced block is no heading. Link and image syntax in a heading gives its text.
+ */
+export function headingAnchors(markdown: string): Set<string> {
+  const anchors = new Set<string>();
+  const seen = new Map<string, number>();
+  let fence: string | null = null;
+  for (const line of markdown.split("\n")) {
+    const mark = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+    if (mark !== undefined) {
+      if (fence === null) fence = mark;
+      else if (mark[0] === fence[0] && mark.length >= fence.length) fence = null;
+      continue;
+    }
+    if (fence !== null) continue;
+    const heading = /^ {0,3}#{1,6}[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/.exec(line)?.[1];
+    if (heading === undefined) continue;
+    const base = heading
+      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\p{M} _-]/gu, "")
+      .replace(/ /g, "-");
+    const n = seen.get(base) ?? 0;
+    seen.set(base, n + 1);
+    anchors.add(n === 0 ? base : `${base}-${n}`);
+  }
+  return anchors;
+}
+
+/** A path of path characters, then optionally `#` and an anchor. Trailing dots belong to the sentence. */
+const CITATION = /[A-Za-z0-9_@+\-./]+(?:#[\p{L}\p{N}_-]+)?/gu;
+
+/** One citation in a file: its line, the page it names and the anchor it names, if any. */
+export interface Citation {
+  readonly line: number;
+  readonly page: string;
+  readonly anchor: string | null;
+}
+
+/** Every token of the text that is a path matching `pages`, with its line. */
+export function citations(text: string, pages: readonly string[]): Citation[] {
+  const out: Citation[] = [];
+  text.split("\n").forEach((line, index) => {
+    for (const [token] of line.matchAll(CITATION)) {
+      const [raw = "", anchor] = token.split("#");
+      const page = raw.replace(/\.+$/, "");
+      if (page !== "" && matchAny(page, pages)) out.push({ line: index + 1, page, anchor: anchor ?? null });
+    }
+  });
+  return out;
+}
+
+/**
+ * Every docs page, and section of one, the staged file cites must exist.
+ *
+ * A citation is a path matching `pages`, and `#anchor` after it names a heading by the anchor
+ * GitHub makes for it. A page is read once for all the anchors the file cites in it. The check
+ * judges the file the call is about, so a page renamed in a commit judges the files that cite it
+ * only when they are staged too.
+ */
+export const docLinks = defineCheck(
+  (opts: { pages: readonly string[] }): Check =>
+    withFaults(
+      async (ctx) => {
+        const { content } = touched(ctx);
+        const anchorsOf = new Map<string, Set<string> | null>();
+        const hits: string[] = [];
+        for (const { line, page, anchor } of citations(content, opts.pages)) {
+          if (!anchorsOf.has(page)) anchorsOf.set(page, (await ctx.fs.exists(page)) ? headingAnchors(await ctx.fs.read(page)) : null);
+          const anchors = anchorsOf.get(page);
+          if (anchors === null) hits.push(`line ${line}: ${page} — there is no such page`);
+          else if (anchor !== null && !anchors?.has(anchor)) hits.push(`line ${line}: ${page}#${anchor} — the page has no heading with that anchor`);
+        }
+        return answer(ctx, hits, "\n");
+      },
+      opts.pages.length === 0 ? ["lists no `pages`, so no path is a citation. Name the globs of the pages that may be cited."] : [],
+    ),
+);
+
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE COMMIT — claims about the set of files moving together
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -986,6 +969,44 @@ export function reasonHits(o: ReasonInput): string[] {
       `Put \`${token}: <why>\` on a line of its own in the message; the act is fine, doing it silently is not.`,
   ];
 }
+
+/**
+ * Hold the commit message to a format, and ban text in it.
+ *
+ * `header` is a regex the FIRST line of the message must match; `ban` is a list of regexes, and any
+ * line of the message matching any of them blocks. Both read `ctx.message`, the message as git
+ * records it, so a message typed in an editor, passed with `-m` or read from a file is judged the
+ * same way. Under `flow hook commit --all` there is no commit, so no message, and nothing to judge.
+ *
+ * At least one of the two is required, and a pattern that is not a regex refuses to load: a check
+ * that could never fail would load, count and arm nothing.
+ */
+export const commitMessage = defineCheck(
+  (opts: { header?: string; ban?: readonly string[] }): Check => {
+    const faults: string[] = [];
+    if (opts.header === undefined && (opts.ban ?? []).length === 0)
+      faults.push("sets neither `header` nor `ban`, so it judges nothing. Set a header format, a list of banned patterns, or both.");
+    for (const pattern of [...(opts.header === undefined ? [] : [opts.header]), ...(opts.ban ?? [])]) {
+      try {
+        new RegExp(pattern);
+      } catch (error) {
+        faults.push(`holds /${pattern}/, which is not a regex: ${(error as Error).message}.`);
+      }
+    }
+    return withFaults((ctx) => {
+      const message = ctx.message;
+      if (message == null) return ctx.ok();
+      const lines = message.split("\n");
+      const first = lines[0] ?? "";
+      const hits: string[] = [];
+      if (opts.header !== undefined && !new RegExp(opts.header).test(first))
+        hits.push(`the first line of the message, "${first}", does not match /${opts.header}/`);
+      for (const hit of patternHits(message, opts.ban ?? []))
+        hits.push(`line ${hit.line} of the message matches /${hit.pattern}/: "${lines[hit.line - 1]}"`);
+      return answer(ctx, hits);
+    }, faults);
+  },
+);
 
 /**
  * This commit needs a reason recorded, and here is whether it gave one.
@@ -1783,10 +1804,10 @@ export interface CommitFileFacts {
 
 /**
  * The facts a commit puts on EVERY ctx it makes, whichever file the call is about: the staged
- * paths, the paths added and deleted, and the message. The live gate and a case build them here.
+ * paths, the paths added, unchanged and deleted, and the message. The live gate and a case build them here.
  */
 export function commitFacts(staged: readonly string[], commit: CommitFileFacts): Partial<Ctx> {
-  return { staged, added: commit.added ?? [], deleted: commit.deleted ?? [], message: commit.message === undefined ? "" : commit.message };
+  return { staged, added: commit.added ?? [], unchanged: commit.unchanged ?? [], deleted: commit.deleted ?? [], message: commit.message === undefined ? "" : commit.message };
 }
 
 /** The shape a case's `deleted` is written in: a list of paths, or each path with the content it had. */

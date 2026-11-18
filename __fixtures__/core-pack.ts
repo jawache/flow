@@ -17,14 +17,15 @@ import {
   banCommands,
   canonicalFiles,
   changeTogether,
+  commitMessage,
   commitReason,
+  docLinks,
   depcruise,
   execPasses,
   jsonInvariant,
   protectedPath,
   ranSinceEdit,
   siblingExists,
-  substitutionInProse,
   symbolsInSibling,
   textBan,
 } from "../checks/domain.ts";
@@ -45,27 +46,35 @@ export const core = definePack("core", {
     .message("Never force-push — the history is shared.")
     .test({ pass: ["git push origin feature/x"], block: ["git push --force origin main"] }),
 
-  noBacktickInProse: guardrail()
-    .at(command)
-    .check(substitutionInProse({ heads: ["gh pr", "gh issue"], gitSubcommands: ["commit"] }))
-    .message("A backtick in a double-quoted body runs as a command — single-quote it, or use a quoted heredoc.")
-    .test({ pass: ["gh issue comment 1 --body 'run `just test` first'"], block: ['gh issue comment 1 --body "run `just test` first"'] }),
-
   generatedIsProtected: guardrail()
-    .at(write)
-    .on("src/generated/**")
-    .check(protectedPath({}))
+    .at(commit)
+    .check(protectedPath({ paths: ["src/generated/**"] }))
     .message("src/generated is written by the codegen — edit its source, not its output.")
-    .test({ pass: [], block: [{ path: "src/generated/api.ts", content: "x" }] }),
+    .test({ pass: [{ staged: ["src/a.ts"] }], block: [{ staged: ["src/generated/api.ts"] }, { staged: [], deleted: ["src/generated/api.ts"] }] }),
 
   migrationsAppendOnly: guardrail()
-    .at(write)
-    .on("migrations/**")
-    .check(protectedPath({ existingOnly: true }))
+    .at(commit)
+    .check(protectedPath({ paths: ["migrations/**"], existingOnly: true }))
     .message("A migration already applied is history — add a new one instead.")
     .test({
-      pass: [{ path: "migrations/003.sql", content: "-- new" }],
-      block: [{ path: "migrations/001.sql", content: "-- edited", world: { fs: { "migrations/001.sql": "-- old" } } }],
+      pass: [{ staged: ["migrations/003.sql"], added: ["migrations/003.sql"] }],
+      block: [{ staged: ["migrations/001.sql"], added: [] }],
+    }),
+
+  conventionalHeader: guardrail()
+    .at(commit)
+    .check(commitMessage({ header: "^(feat|fix|chore)(\\([a-z0-9-]+\\))?: .+" }))
+    .message("The first line is `type(scope): description`.")
+    .test({ pass: [{ message: "fix(parse): read a heredoc" }], block: [{ message: "wip" }] }),
+
+  docLinksResolve: guardrail()
+    .at(commit)
+    .on("src/**/*.ts")
+    .check(docLinks({ pages: ["docs/**/*.md"] }))
+    .message("This file cites a docs page or section that does not exist.")
+    .test({
+      pass: [{ path: "src/a.ts", content: "// docs/guide.md#start", world: { fs: { "docs/guide.md": "# Start\n" } } }],
+      block: [{ path: "src/a.ts", content: "// docs/guide.md#end", world: { fs: { "docs/guide.md": "# Start\n" } } }],
     }),
 
   everyModuleIsTested: guardrail()

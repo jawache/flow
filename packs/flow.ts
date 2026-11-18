@@ -33,7 +33,6 @@ import {
   deletion,
   guardrail,
   programName,
-  protectedPath,
   session,
   shellCommands,
   touch,
@@ -184,7 +183,8 @@ export const flow = definePack("flow", (repo: Home) => {
       .at(deletion)
       .on("flow.config.ts", ...repo.packs, ".githooks/commit-msg")
       .description("Stops a command from deleting the committed guard surface. No bypass — disable entries in the file instead.")
-      .check(protectedPath({}))
+      // Every file the entry's scope hands it is a deletion of a guard file. Task 6 binds it at commit.
+      .check((ctx) => ctx.fail(`'${ctx.file?.path ?? "a guard file"}' is part of this repo's guard`))
       .message(
         "That command would delete this repo's guard surface (flow.config.ts binds every rule; the packs it imports are where this repo writes its own; .githooks/commit-msg is what runs them at the gate). Deleting any of them is the same attack. There is no bypass — `override(pack.entry).disabled(\"why\")` inside flow.config.ts is the visible, committed route.",
       )

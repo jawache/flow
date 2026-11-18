@@ -25,8 +25,6 @@ import {
   quoteArg,
   session,
   shellCommands,
-  substitutionInProse,
-  SUBSTITUTION_MESSAGE,
   write,
   type Check,
   type Ctx,
@@ -443,8 +441,7 @@ const ROBOT = "\u{1F916}";
 /**
  * The commands that record prose, a pull request's and an issue's title, body and comments, in
  * words: each run bare, and through `work gh`, the wrapper a repo driven by work runs it as. The
- * backtick rule names them as its heads, and the attribution rule reads the same commands through
- * `isGhProse`.
+ * attribution rule reads them through `isGhProse`.
  */
 const GH_PROSE_HEADS = ["gh pr", "gh issue", "work gh pr", "work gh issue"];
 
@@ -563,6 +560,7 @@ export const git = definePack("git", (repo: Release) => {
         "Commit headers speak Conventional Commits — `type(scope)!: description`. The TYPE is your judgement: `fix` patches behaviour, `feat` adds it, `refactor` changes neither (and must not change test expectations); a `!` or a `BREAKING CHANGE:` footer drives the SemVer major. The grammar is enforced; the choice is yours.",
         `The version number is computed from this history at release (\`${repo.release}\`) — never hand-edit a version field or a changelog.`,
         "A `git checkout` / `git restore` / `reset --hard` / `clean -f` that would silently wipe uncommitted work is blocked outright — there is no bypass token. Set the edits aside first, with `git stash push -m <your label> -- <path>` or a work-in-progress commit, and never with a plain `git stash`, which every worktree shares.",
+        "A backtick inside a double-quoted commit message, or a pull request or issue body, is run by the shell before git sees the text. Single-quote the text, or feed it on stdin through a quoted heredoc.",
         "`gh repo delete` / `archive` / `rename`, `gh release delete` and `gh api` with the DELETE method are refused. So is a call that only names those words, such as `gh repo view delete`. Every other `gh` call runs, under the person's own login.",
       ].join("\n"),
     ),
@@ -974,52 +972,6 @@ export const git = definePack("git", (repo: Release) => {
         // that looks exactly like a header. A check that searched the whole message would pass this
         // and every other well-meaning commit whose subject was never written.
         { message: "tidied things up\n\nfeat: the thing I actually did" },
-      ],
-    }),
-
-  // The commands in THIS pack that write a permanent record — `git commit` and the `gh pr` and
-  // `gh issue` verbs, run bare or through `work gh`. The lifecycle's own prose-writing verbs are
-  // the same rule in the `work` pack, and the shared check is `substitutionInProse`, a core check
-  // beside `banCommands`: a repo that binds only `git` still gets the half every repo has.
-  noShellSubstitutionInProse: guardrail()
-    .at(command)
-    .description("A backtick the shell would run in a commit message or a PR or issue body (double-quoted, bare, or in an unquoted heredoc) is live command substitution, not Markdown.")
-    .check(substitutionInProse({ heads: GH_PROSE_HEADS, gitSubcommands: ["commit"] }))
-    .message(SUBSTITUTION_MESSAGE)
-    .test({
-      pass: [
-        "git commit -F - <<'EOF'\nfix: a `thing`\nEOF",
-        "git commit -m 'fix: run `just test` first'",
-        // The message fed through a QUOTED heredoc in a `$( … )`, the form an agent is taught.
-        "git commit -m \"$(cat <<'EOF'\nfix: run `just test` first\nEOF\n)\"",
-        // #10: prose on stdin through a quoted heredoc, where the shell runs nothing…
-        "gh pr create --body-file - <<'EOF'\nRun \"`just test`\" before merging.\nEOF",
-        // …and a gh command, then a quoted heredoc that belongs to another command.
-        "gh issue view 35 --json body --jq .body > body.md\npython3 - <<'EOF'\nnew = f\"\"\"- **Docs** `work` starts the daemon\"\"\"\nEOF",
-        "gh issue view 1 > old.md\ncat > new.md <<'EOF'\nsay \"run `just test`\"\nEOF",
-        // #11: an escaped backtick is a literal one, inside the prose or in a grep after it.
-        String.raw`gh issue comment 1 --body "run \`just test\` first"`,
-        String.raw`gh issue view 10 --json body --jq .body | grep -n "x\\\\\`"`,
-      ],
-      block: [
-        'git commit -m "fix: run `just test` first"',
-        'gh pr create --body "see `just gate`"',
-        // #11: the backtick substitutes, so the comment would record what `just test` prints.
-        'gh issue comment 1 --body "run `just test` first"',
-        // …run through `work gh`, as a repo driven by work runs every gh call.
-        'work gh issue comment 1 --body "run `just test` first"',
-        // gh run by its path is still gh.
-        '/opt/homebrew/bin/gh pr create --body "see `just gate`"',
-        // The backtick sits in the body of a multi-line message.
-        'git commit -m "fix: a thing\n\nrun `just test` first"',
-        // A message written in an unquoted heredoc inside the argument: the backtick still runs.
-        'git commit -m "$(cat <<EOF\nfix: run `just test` first\nEOF\n)"',
-        // …and an unquoted heredoc fed to the commit on stdin, where the shell runs it too.
-        "git commit -F - <<EOF\nfix: run `just test` first\nEOF",
-        // git's own options before `commit`, read through the parse: a value with a space, and a
-        // long option with its value apart.
-        "git -C '/a b' commit -m \"fix: `date`\"",
-        "git --git-dir /x commit -m \"fix: `date`\"",
       ],
     }),
 

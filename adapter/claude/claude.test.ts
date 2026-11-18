@@ -22,6 +22,11 @@ import {
 import { readText } from "../shell.ts";
 import { CALL_LIFETIME_MS, overlapping } from "./domain.ts";
 
+// The snapshot's rails are judged with a write rule written inline: `protectedPath` reads a commit.
+// A change to a file already there is refused, and so is every deletion.
+const EXISTING_ONLY = `async (ctx) => (ctx.moment === "delete" || (ctx.file?.existed ?? (await ctx.fs.exists(ctx.file?.path ?? ""))) ? ctx.fail("existing") : ctx.ok())`;
+const ANY_CHANGE = `(ctx) => (ctx.file?.unchanged === true ? ctx.ok() : ctx.fail("protected"))`;
+
 let repo: string;
 
 const git = (...args: string[]): void => {
@@ -222,12 +227,12 @@ describe("the snapshot — the tree before a call, the tree after it, and the wa
     const door = new URL("../../index.ts", import.meta.url).pathname;
     writeFileSync(
       join(repo, "flow.config.ts"),
-      `import { defineConfig, definePack, deletion, guardrail, pack, protectedPath, write } from ${JSON.stringify(door)};
+      `import { defineConfig, definePack, deletion, guardrail, pack, write } from ${JSON.stringify(door)};
 const demo = definePack("demo", {
   keepEnv: guardrail()
     .at(write, deletion)
     .on(".env")
-    .check(protectedPath({ existingOnly: true }))
+    .check(${EXISTING_ONLY})
     .message("The .env stays.")
     .test({ pass: [{ path: ".env", content: "new" }], block: [{ path: ".env", content: "x", world: { fs: { ".env": "old" } } }] }),
 });
@@ -246,12 +251,12 @@ export default defineConfig([pack(demo)], { snapshotInclude: [".env"] });
   });
 
   // #146: a call that changes what the snapshot can see. Each rule here refuses any write to .env.
-  const keepEnvConfig = `import { defineConfig, definePack, deletion, guardrail, pack, protectedPath, write } from ${JSON.stringify(new URL("../../index.ts", import.meta.url).pathname)};
+  const keepEnvConfig = `import { defineConfig, definePack, deletion, guardrail, pack, write } from ${JSON.stringify(new URL("../../index.ts", import.meta.url).pathname)};
 const demo = definePack("demo", {
   keepEnv: guardrail()
     .at(write, deletion)
     .on(".env")
-    .check(protectedPath({}))
+    .check(${ANY_CHANGE})
     .message("The .env stays.")
     .test({ pass: [{ path: "a.ts", content: "new" }], block: [{ path: ".env", content: "x" }] }),
 });
@@ -473,12 +478,12 @@ export default defineConfig([pack(demo)]);
     const door = new URL("../../index.ts", import.meta.url).pathname;
     writeFileSync(
       join(repo, "flow.config.ts"),
-      `import { defineConfig, definePack, guardrail, pack, protectedPath, write } from ${JSON.stringify(door)};
+      `import { defineConfig, definePack, guardrail, pack, write } from ${JSON.stringify(door)};
 const demo = definePack("demo", {
   keepA: guardrail()
     .at(write)
     .on("a.ts")
-    .check(protectedPath({ existingOnly: true }))
+    .check(${EXISTING_ONLY})
     .message("a.ts stays.")
     .test({ pass: [{ path: "b.ts", content: "new" }], block: [{ path: "a.ts", content: "x", world: { fs: { "a.ts": "old" } } }] }),
 });

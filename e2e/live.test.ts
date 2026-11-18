@@ -52,6 +52,12 @@ let repo: string;
  * repo's own pack beside the package's. The folder name is this fixture's choice and nothing
  * else's — `guards/` is where this repo happens to keep them, and the engine knows no such word.
  */
+
+// The write-rail tests below are judged by a rule written inline: `protectedPath` reads a commit.
+// A change to a file already there is refused, and so is every deletion.
+const EXISTING_ONLY = `async (ctx) => (ctx.file?.unchanged === true ? ctx.ok() : ctx.moment === "delete" || (ctx.file?.existed ?? (await ctx.fs.exists(ctx.file?.path ?? ""))) ? ctx.fail("'" + ctx.file?.path + "' is append-only") : ctx.ok())`;
+const ANY_CHANGE = `(ctx) => (ctx.file?.unchanged === true ? ctx.ok() : ctx.fail("protected"))`;
+
 const HOUSE = (packageRoot: string): string => fixturePack("repo-pack", join(packageRoot, "index.ts"));
 
 /** What the temp repo's own guard says. A few entries, at least one per rail this suite drives. */
@@ -72,7 +78,7 @@ const demo = definePack("demo", {
   appendOnly: guardrail()
     .at(write, deletion, commit)
     .on("migrations/**")
-    .check(protectedPath({ existingOnly: true }))
+    .check(${EXISTING_ONLY})
     .message("A migration already written is history — add a new one instead.")
     .test({
       pass: [
@@ -89,9 +95,15 @@ const demo = definePack("demo", {
   keepGenerated: guardrail()
     .at(write, deletion, commit)
     .on("gen/**")
-    .check(protectedPath({}))
+    .check(${ANY_CHANGE})
     .message("Machine-written: edit its source, then re-run the build.")
     .test({ block: [{ path: "gen/a.ts", content: "" }] }),
+
+  keepVendor: guardrail()
+    .at(commit)
+    .check(protectedPath({ paths: ["vendor/**"] }))
+    .message("Vendored code is read-only: take a new release instead.")
+    .test({ pass: [{ staged: ["src/a.ts"] }], block: [{ staged: ["vendor/a.txt"] }, { staged: [], deleted: ["vendor/a.txt"] }] }),
 
   noForce: guardrail()
     .at(command)
@@ -538,13 +550,15 @@ describe("the commit gate", () => {
       runGit(other, ["add", "migrations"]);
       const first = gateHere();
       expect(first.code, `before the first commit every file is new: ${first.stderr}`).toBe(0);
-      // Committed past the gate, for --all to find as committed: a file only a plain protectedPath
+      // Committed past the gate, for --all to find as committed: a file only a plain protected-file rule
       // covers, and one holding the marker the content rule noSecrets bans.
       mkdirSync(join(other, "gen"));
       writeFileSync(join(other, "gen", "a.ts"), "export const a = 1;\n");
       mkdirSync(join(other, "src"));
       writeFileSync(join(other, "src", "marked.ts"), "// DO-NOT-COMMIT\n");
-      runGit(other, ["add", "gen", "src"]);
+      mkdirSync(join(other, "vendor"));
+      writeFileSync(join(other, "vendor", "a.txt"), "vendored\n");
+      runGit(other, ["add", "gen", "src", "vendor"]);
       runGit(other, ["commit", "-q", "-m", "one"]);
     });
     afterAll(() => {
@@ -597,7 +611,7 @@ describe("the commit gate", () => {
       // whatever happens here: only the append-only rule's lines are this test's business.
       const clean = gateHere(["hook", "commit", "--all"]);
       expect(clean.stderr, "every migration is as committed").not.toContain("demo.appendOnly");
-      expect(clean.stderr, "a plain protectedPath passes a file as committed").not.toContain("demo.keepGenerated");
+      expect(clean.stderr, "a plain protected-file rule passes a file as committed").not.toContain("demo.keepGenerated");
       expect(clean.stderr, "a content rule still reads a file as committed").toContain("✗ demo.noSecrets · src/marked.ts");
       writeFileSync(migration("001.sql"), "drop table a;\n");
       writeFileSync(join(other, "gen", "a.ts"), "export const a = 2;\n");
@@ -609,6 +623,31 @@ describe("the commit gate", () => {
         expect(edited.stderr).toContain("✗ demo.keepGenerated · gen/a.ts");
       } finally {
         reset();
+      }
+    });
+
+    it("protectedPath refuses a commit that changes or deletes a file under its paths, once per commit, and passes --all over one as committed", () => {
+      const vendored = join(other, "vendor", "a.txt");
+      expect(gateHere(["hook", "commit", "--all"]).stderr, "as committed, --all lists it unchanged").not.toContain("demo.keepVendor");
+      writeFileSync(vendored, "edited\n");
+      runGit(other, ["add", "vendor"]);
+      try {
+        const edit = gateHere();
+        expect(edit.code).toBe(2);
+        expect(edit.stderr).toContain("demo.keepVendor");
+        expect(edit.stderr).toContain("'vendor/a.txt' is a protected path");
+        expect(edit.stderr).toContain("changes it");
+      } finally {
+        runGit(other, ["reset", "-q", "--hard"]);
+      }
+      runGit(other, ["rm", "-q", "vendor/a.txt"]);
+      try {
+        const gone = gateHere();
+        expect(gone.code).toBe(2);
+        expect(gone.stderr).toContain("'vendor/a.txt' is a protected path");
+        expect(gone.stderr).toContain("deletes it");
+      } finally {
+        runGit(other, ["reset", "-q", "--hard"]);
       }
     });
 
@@ -916,11 +955,11 @@ describe("the delta rail — every change to the tree, judged the moment it has 
   });
 });
 
-describe("several agents in one worktree — overlap, background commands, and one writer", () => {
+describe("several agents in one worktree — overlap, background commands, and a checker that does not write", () => {
   // THE PROOF OF F5, in a worktree of its own: a config that sets revert: "all" and binds the work
-  // pack with its writers named, so the three things this phase adds meet in one place — a revert
-  // narrowed by an overlapping call, a background command's later write judged like any other, and
-  // a write by the wrong actor refused whichever tool made it.
+  // pack, so the three things this phase adds meet in one place — a revert narrowed by an
+  // overlapping call, a background command's later write judged like any other, and a write by a
+  // checker refused whichever tool made it.
   let tree: string;
   let ids = 0;
   const OVERLAP_CONFIG = (packageRoot: string): string => `
@@ -936,7 +975,7 @@ const demo = definePack("demo", {
     .test({ pass: [{ path: "src/a.ts", content: "ok" }], block: [{ path: "src/a.ts", content: "TODO" }] }),
 });
 
-export default defineConfig([pack(demo), pack(work, { writers: ["builder", "parent"] })], { revert: "all" });
+export default defineConfig([pack(demo), pack(work)], { revert: "all" });
 `;
   const sh = (command: string): number => spawnSync("bash", ["-c", command], { cwd: tree }).status ?? -1;
   const at = (path: string): string | null => (existsSync(join(tree, path)) ? readFileSync(join(tree, path), "utf8") : null);
@@ -1045,7 +1084,7 @@ export default defineConfig([pack(demo), pack(work, { writers: ["builder", "pare
     expect(call.before().code).toBe(0);
     expect(sh("echo 'export const fixed = 7;' > src/b.ts")).toBe(0);
     const answer = call.after();
-    expect(answer.stderr).toContain("src/b.ts was written by an actor wearing checker");
+    expect(answer.stderr).toContain("✗ work.checkersDoNotWrite · src/b.ts");
     expect(answer.code).toBe(2);
   });
 
@@ -1069,7 +1108,7 @@ export default defineConfig([pack(demo), pack(work, { writers: ["builder", "pare
     expect(at("src/h.ts")).toBe("export const h = 7;\n");
   });
 
-  it("refuses and reverts a write by an actor that is not a writer, naming who wrote it", () => {
+  it("refuses and reverts a write by a checker, whichever tool made it", () => {
     const checker = spawned("v1", "verifier");
     const call = bash(checker, "echo 'export const fixed = 1;' > src/b.ts");
     expect(call.before().code).toBe(0);
@@ -1077,9 +1116,8 @@ export default defineConfig([pack(demo), pack(work, { writers: ["builder", "pare
     const answer = call.after();
     expect(answer.code).toBe(2);
     expect(answer.stderr).toContain("flow — write reverted after it landed:");
-    expect(answer.stderr).toContain("✗ work.builderWrites · src/b.ts");
-    expect(answer.stderr).toContain("Only the builder changes files in this worktree — hand your finding back instead of fixing it.");
-    expect(answer.stderr).toContain("src/b.ts was written by an actor wearing checker — only builder or parent may change files here");
+    expect(answer.stderr).toContain("✗ work.checkersDoNotWrite · src/b.ts");
+    expect(answer.stderr).toContain("a judge that edits the thing it is judging has destroyed the evidence");
     expect(at("src/b.ts")).toBe("export const b = 2;\n");
     // The same actor through the Edit tool is refused before anything lands.
     const edit = send("pre-tool-use", {
@@ -1090,7 +1128,7 @@ export default defineConfig([pack(demo), pack(work, { writers: ["builder", "pare
     });
     expect(edit.code).toBe(2);
     expect(edit.stderr).toContain("flow — blocked before the write landed");
-    expect(edit.stderr).toContain("work.builderWrites");
+    expect(edit.stderr).toContain("work.checkersDoNotWrite");
     expect(at("src/b.ts")).toBe("export const b = 2;\n");
   });
 });
@@ -1104,7 +1142,7 @@ describe("files git puts in place — a checkout is neither judged nor written b
   let ids = 0;
   const session = "checkout";
   const CHECKOUT_CONFIG = (packageRoot: string): string => `
-import { definePack, defineConfig, deletion, guardrail, pack, protectedPath, write } from ${JSON.stringify(join(packageRoot, "index.ts"))};
+import { definePack, defineConfig, deletion, guardrail, pack, write } from ${JSON.stringify(join(packageRoot, "index.ts"))};
 
 const demo = definePack("demo", {
   noTodo: guardrail()
@@ -1117,7 +1155,7 @@ const demo = definePack("demo", {
   appendOnly: guardrail()
     .at(write, deletion)
     .on("migrations/**")
-    .check(protectedPath({ existingOnly: true }))
+    .check(${EXISTING_ONLY})
     .message("A migration already written is history.")
     .test({
       pass: [{ path: "migrations/002.sql", content: "new" }],
@@ -1128,7 +1166,7 @@ const demo = definePack("demo", {
   keepHook: guardrail()
     .at(deletion)
     .on(".githooks/pre-commit")
-    .check(protectedPath({}))
+    .check(${ANY_CHANGE})
     .message("The commit gate stays.")
     .test({ block: [{ path: ".githooks/pre-commit", content: "" }] }),
 });
@@ -1349,13 +1387,13 @@ describe("a call that widens snapshotInclude — a file already on disk enters, 
     const elsewhere = mkdtempSync(join(tmpdir(), "flow-include-next-"));
     try {
       const config = (include: string): string => `
-import { definePack, defineConfig, deletion, guardrail, pack, protectedPath, write } from ${JSON.stringify(join(PACKAGE, "index.ts"))};
+import { definePack, defineConfig, deletion, guardrail, pack, write } from ${JSON.stringify(join(PACKAGE, "index.ts"))};
 
 const demo = definePack("demo", {
   keepEnv: guardrail()
     .at(write, deletion)
     .on(".env")
-    .check(protectedPath({}))
+    .check(${ANY_CHANGE})
     .message("The .env stays.")
     .test({ pass: [{ path: "a.ts", content: "new" }], block: [{ path: ".env", content: "x" }] }),
 });
@@ -2191,7 +2229,7 @@ describe("flow facts — the record and the conversations, read back", () => {
     expect(read.metrics.headline.blocks).toBeGreaterThan(0);
     expect(read.metrics.span.tools).toBeGreaterThan(0);
     expect(read.metrics.guardrails.find((g) => g.id === "demo.noTodo")?.hits).toBeGreaterThan(0);
-    expect(read.moments.totals).toMatchObject({ guardrails: 9, breadcrumbs: 2 });
+    expect(read.moments.totals).toMatchObject({ guardrails: 10, breadcrumbs: 2 });
     expect(read.terrain.some((n) => n.path === "src")).toBe(true);
   });
 
@@ -2216,6 +2254,7 @@ describe("every row names the agent it came from, and a breadcrumb row what was 
   let ids = 0;
   const AGENTS_CONFIG = (packageRoot: string): string => `
 import { breadcrumb, command, commit, definePack, defineConfig, guardrail, pack, session, touch, write } from ${JSON.stringify(join(packageRoot, "index.ts"))};
+
 
 const demo = definePack("demo", {
   noTodo: guardrail()

@@ -19,11 +19,7 @@ import {
   defineCategory,
   definePack,
   guardrail,
-  oneWriter,
   spawnedAs,
-  substitutionInProse,
-  SUBSTITUTION_MESSAGE,
-  deletion,
   touch,
   write,
 } from "@jawache/flow";
@@ -73,31 +69,15 @@ export const checker = defineCategory(
   }),
 );
 
-/** The rungs that may be named as writers — a checker is the rung that never writes. */
-export type Writer = "builder" | "parent";
-
-/** What a repo may say about how it runs the lifecycle. Every field is optional. */
-export interface Rungs {
-  /**
-   * The rungs allowed to change files in a worktree, turning on ONE WRITER: a write or a delete by
-   * any other actor is refused — an Edit before it lands, anything else put back after.
-   *
-   * OPTIONAL, and with no list there is no entry at all. One writer is for a worktree several
-   * agents share with one builder in it; in a repo where a helper agent of any other kind is
-   * expected to write, it would refuse that helper's every change, so it is off until a repo asks.
-   */
-  readonly writers?: readonly Writer[];
-}
-
 /**
  * The WORK LIFECYCLE's rungs: who is acting, and what each rung may do.
  *
  * A pack for repos that run the `work` lifecycle skill — spec · plan · start · build · review ·
  * reflect · complete. It names the three rungs the lifecycle has (parent · builder · checker),
- * binds one rule per rung to keep them from doing each other's jobs, and adds the two rules about
- * the commands that write the journal: the inbox is the human's queue, and prose recorded through
- * a shell is prose the shell can rewrite first. One breadcrumb is about the record itself: Node
- * code run from a `.work/` that is a link needs the settings that keep the link's path.
+ * binds one rule per rung to keep them from doing each other's jobs, and adds the rule about the
+ * command that writes the journal: the inbox is the human's queue. One breadcrumb is about the
+ * record itself: Node code run from a `.work/` that is a link needs the settings that keep the
+ * link's path.
  *
  * IT IMPORTS NOTHING FROM WORK. It is a plain consumer of flow's public door, exactly like every
  * other pack here, and it knows the work CLI only as command strings on a rail. That is what lets
@@ -108,13 +88,12 @@ export interface Rungs {
  * rules that bind to them — a builder may not do a parent's job, a checker may not write.
  *
  * @install The `work` CLI and its lifecycle skill. Every rule here reads a `work …` command line,
- * so in a repo that does not run the lifecycle they are five rules that can never fire.
+ * so in a repo that does not run the lifecycle they are rules that can never fire.
  * @adopt Bind it only in a repo whose tasks are actually run through the lifecycle. The three rung
  * rules are scoped to categories this pack defines, so they judge nobody until a session is
- * classified as a builder or a checker — a human at a keyboard is neither. Name `writers` to let
- * only those rungs change files in the worktree.
+ * classified as a builder or a checker — a human at a keyboard is neither.
  */
-export const work = definePack("work", (repo: Rungs = {}) => ({
+export const work = definePack("work", () => ({
   // ── THE LADDER, mechanised ──
   //
   // Three rules, one per rung, and each is a sentence the lifecycle skill's mode files already
@@ -227,34 +206,6 @@ export const work = definePack("work", (repo: Rungs = {}) => ({
       ],
     }),
 
-  // The lifecycle's half of the prose-substitution rule; `git`'s half covers `git commit` and the
-  // `gh` verbs, and both bind the one core check, beside `banCommands`. The verbs named here write
-  // to an APPEND-ONLY journal, which is the half of the rule with no undo of any kind.
-  noShellSubstitutionInProse: guardrail()
-    .at(command)
-    .everywhere()
-    .description("A backtick the shell would run in a work verb that records prose (double-quoted, bare, or in an unquoted heredoc) is live command substitution, not Markdown.")
-    .check(substitutionInProse({ heads: ["work plan", "work task", "work recap", "work record", "work spec", "work complete"] }))
-    .message(SUBSTITUTION_MESSAGE)
-    .test({
-      pass: [
-        "work plan decision 'chose the `chain` builder' --chose x --reverse y",
-        "work plan status --json",
-        // An escaped backtick is literal, and a backtick in the next command is not this one's.
-        String.raw`work plan decision "chose the \`chain\` builder" --chose x --reverse y`,
-        "work plan status --json; echo `date`",
-        // A verb's words are whole arguments: `task-list` is not `task`.
-        'work task-list "`date`"',
-      ],
-      block: [
-        'work plan decision "chose the `chain` builder" --chose x --reverse y',
-        'work plan decision "chose the builder\n\nbecause `chain` reads better" --chose x --reverse y',
-        'work plan decision "$(cat <<EOF\nchose the `chain` builder\nEOF\n)" --chose x --reverse y',
-        // work run by its path is still work.
-        '/usr/local/bin/work plan decision "chose the `chain` builder" --chose x --reverse y',
-      ],
-    }),
-
   // ── the record ──
 
   /**
@@ -269,27 +220,4 @@ export const work = definePack("work", (repo: Rungs = {}) => ({
     .text(
       '`.work/` links out of the repo. Run Node code there with `NODE_OPTIONS="--preserve-symlinks --preserve-symlinks-main"`, or it cannot find the repo\'s packages. Call the tool by `node_modules/.bin/<tool>`: that setting breaks `npx`.',
     ),
-
-  // ── ONE WRITER, when the repo names its writers ──
-  //
-  // The rung rules above say what each rung may not do. This says who may write at all, and it
-  // reads the actor rather than the tool, so a heredoc, a script and an Edit are the same change:
-  // an Edit is refused before it lands, anything else is put back after it has.
-  ...(repo.writers === undefined
-    ? {}
-    : {
-        builderWrites: guardrail()
-          .at(write, deletion)
-          .description("Only the named rungs change files in this worktree — a checker or a stray helper hands its finding back.")
-          .check(oneWriter({ writers: repo.writers }))
-          .message(
-            repo.writers.includes("builder")
-              ? "Only the builder changes files in this worktree — hand your finding back instead of fixing it."
-              : "Only the parent chat changes files in this worktree — hand your finding back instead of fixing it.",
-          )
-          .test({
-            pass: [{ path: "src/x.ts", content: "", actor: repo.writers.slice(0, 1) }],
-            block: [{ path: "src/x.ts", content: "", actor: ["checker"] }],
-          }),
-      }),
 }));

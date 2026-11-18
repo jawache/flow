@@ -25,19 +25,25 @@ import {
   definePack,
   guardrail,
   loadConfig,
-  oneWriter,
   pack,
   override,
-  protectedPath,
   touch,
   turnEnd,
   write,
+  type Check,
   type Ctx,
   type LoadResult,
   type Refusal,
   type SessionFacts,
   type World,
 } from "../index.ts";
+/** A per-file rule, as the commit fan-out hands a file: an existing file, one the last commit has, is refused. */
+const existingFile: Check = async (ctx) => {
+  const f = ctx.file;
+  if (f === undefined || f.unchanged === true) return ctx.ok();
+  return (f.existed ?? (await ctx.fs.exists(f.path))) ? ctx.fail("existing") : ctx.ok();
+};
+
 // Straight from the language layer, not through the public door: `cannedWorld` is how flow drives a
 // recorded world, not something a config or a pack imports, so it has no business on that surface.
 import {
@@ -415,16 +421,16 @@ describe("what an entry is run against", () => {
         })
         .message("x")
         .test({ pass: [{ path: "a", content: "" }], block: [{ path: "a", content: "TODO" }] }),
-      builderWrites: guardrail()
+      builderOnly: guardrail()
         .at(write)
-        .check(oneWriter({ writers: ["builder"] }))
+        .check((ctx) => (ctx.actor.includes("builder") ? ctx.ok() : ctx.fail(`an actor wearing ${ctx.actor.join(", ")}`)))
         .message("Only the builder writes.")
         .test({ block: [{ path: "a", content: "", actor: ["checker"] }] }),
     });
     const load = loadConfig(defineConfig([pack(spy)]));
     expect(blockedIds(await guard({ load, event: wrote("a.ts", "x", ["builder"]), world: world() }))).toEqual([]);
     const refused = await guard({ load, event: wrote("a.ts", "x", ["checker"]), world: world() });
-    expect(blockedIds(refused)).toEqual(["spy.builderWrites"]);
+    expect(blockedIds(refused)).toEqual(["spy.builderOnly"]);
     expect(blocks(refused)[0]?.detail).toContain("an actor wearing checker");
     expect(seen).toEqual([["builder"], ["checker"]]);
   });
@@ -503,7 +509,7 @@ describe("what an entry is run against", () => {
             appendOnly: guardrail()
               .at(commit)
               .on("m/**")
-              .check(protectedPath({ existingOnly: true }))
+              .check(existingFile)
               .message("history")
               .test({ block: [{ staged: ["m/1.sql"], added: [], world: { fs: { "m/1.sql": "" } } }] }),
           }),
@@ -1679,7 +1685,7 @@ describe("replay — a recorded session, run again with no repo and no harness",
   });
 
   it("keeps which files a recorded --all commit held as committed, so an append-only rule passes them again", async () => {
-    const check = protectedPath({ existingOnly: true });
+    const check = existingFile;
     const appendOnly = guardrail()
       .at(commit)
       .on("m/**")

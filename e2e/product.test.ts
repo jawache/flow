@@ -36,6 +36,10 @@ import {
   type Ran,
 } from "./harness.ts";
 
+// The test below judges a write with a rule written inline: `protectedPath` reads a commit.
+const ANY_CHANGE = `(ctx) => (ctx.file?.unchanged === true ? ctx.ok() : ctx.fail("protected"))`;
+
+
 let home: string;
 /**
  * A directory holding one `flow` shim, which runs the build under test: the PATH's flow. A repo
@@ -204,11 +208,11 @@ describe("flow status", () => {
       writeFileSync(join(edge, ".gitignore"), ".env.keys\n.DS_Store\ndist/\n");
       mkdirSync(join(edge, "src"));
       writeFileSync(join(edge, "src", ".DS_Store"), "x");
-      const config = (settings: string): string => `import { defineConfig, definePack, guardrail, pack, protectedPath, write } from "@jawache/flow";
+      const config = (settings: string): string => `import { defineConfig, definePack, guardrail, pack, write } from "@jawache/flow";
 const edge = definePack("edge", {
-  keys: guardrail().at(write).on(".env.keys").check(protectedPath({})).message("no").test({ pass: [], block: [{ path: ".env.keys", content: "x" }] }),
-  app: guardrail().at(write).on("dist/app.js").check(protectedPath({})).message("no").test({ pass: [], block: [{ path: "dist/app.js", content: "x" }] }),
-  src: guardrail().at(write).on("src/**").check(protectedPath({})).message("no").test({ pass: [], block: [{ path: "src/a.ts", content: "x" }] }),
+  keys: guardrail().at(write).on(".env.keys").check(${ANY_CHANGE}).message("no").test({ pass: [], block: [{ path: ".env.keys", content: "x" }] }),
+  app: guardrail().at(write).on("dist/app.js").check(${ANY_CHANGE}).message("no").test({ pass: [], block: [{ path: "dist/app.js", content: "x" }] }),
+  src: guardrail().at(write).on("src/**").check(${ANY_CHANGE}).message("no").test({ pass: [], block: [{ path: "src/a.ts", content: "x" }] }),
 });
 export default defineConfig([pack(edge)]${settings});
 `;

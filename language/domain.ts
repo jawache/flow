@@ -356,6 +356,8 @@ export interface Ctx {
   readonly staged?: readonly string[] | undefined;
   /** commit: the staged paths the last commit does not have. Empty when git could not say, as under `--all` with no answer. */
   readonly added?: readonly string[] | undefined;
+  /** commit: the staged paths identical to the last commit's copy, which only `flow hook commit --all` lists. A check about changes skips them. */
+  readonly unchanged?: readonly string[] | undefined;
   /** commit: the paths the commit deletes. A rename is a deletion of the old path plus an add of the new one. */
   readonly deleted?: readonly string[] | undefined;
   /**

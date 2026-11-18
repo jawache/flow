@@ -6,7 +6,7 @@
 // own spelling, so a repo that has wrapped them in recipes says so and a repo that has not is
 // still told something it can type. The recipes worth having are on this pack's page, to copy.
 
-import { breadcrumb, commit, definePack, guardrail, protectedPath, session, textBan, write } from "@jawache/flow";
+import { breadcrumb, commit, definePack, guardrail, session, textBan, write } from "@jawache/flow";
 
 /**
  * The local-only files every dotenvx repo has: the decryption key, and the per-environment
@@ -244,7 +244,9 @@ export const secrets = definePack("secrets", (repo: Seam = {}) => {
     .at(commit)
     .on(...localFiles)
     .description("The decryption key and the local overlays can never be committed — the backstop when gitignore breaks.")
-    .check(protectedPath({}))
+    // Per file, not `protectedPath`: that check also refuses a commit that DELETES a protected path,
+    // and removing a key file from history's next commit is the repair this rule asks for.
+    .check((ctx) => (ctx.file === undefined || ctx.file.unchanged === true ? ctx.ok() : ctx.fail(`'${ctx.file.path}' is machine-local`)))
     .message(
       "This file is machine-local and must never be committed: `.env.keys` is the decryption key for every sealed value in this repo, and the `.local` overlays hold real, unencrypted values. The gitignore normally stops this — if you got here, the gitignore is broken.",
     )
