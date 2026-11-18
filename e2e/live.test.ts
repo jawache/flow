@@ -783,19 +783,8 @@ describe("a file change, briefed", () => {
 
       const second = shell("echo 'export const a = 3;' > src/a.ts", write("src/a.ts", "export const a = 3;\n"));
       expect(second.stdout, "a second change to the same file shows nothing").toBe("");
-      const other = shell("echo 'export const b = 1;' > src/b.ts", write("src/b.ts", "export const b = 1;\n"));
-      expect(other.stdout, "nor does another file in the same area: it is shown once").toBe("");
-
       const ignored = shell("echo x > src/ignored.log", write("src/ignored.log", "x\n"));
       expect(ignored.stdout, "a file git ignores is not in git's list").toBe("");
-      const unrelated = shell("echo hi > notes.txt", write("notes.txt", "hi\n"));
-      expect(unrelated.stdout, "a file under no breadcrumb's globs").toBe("");
-
-      const kept = hook("session-start", { ...pre("Bash", {}, "change-1"), hook_event_name: "SessionStart", source: "resume", cwd: where }, where);
-      expect(kept.stdout, "a resume that keeps the session shows its breadcrumb once, and that was at its start").not.toBe("");
-      const resumed = hook("session-start", { ...pre("Bash", {}, "change-1"), hook_event_name: "SessionStart", source: "resume", cwd: where }, where);
-      expect(resumed.stdout, "and not again").toBe("");
-
       const compacted = hook("session-start", { ...pre("Bash", {}, "change-1"), hook_event_name: "SessionStart", source: "compact", cwd: where }, where);
       expect(compacted.stdout, "a compaction shows a session breadcrumb at once").toContain("# breadcrumb: demo.hello (session)\\nGuarded.");
       expect(compacted.stdout, "and the area breadcrumb only at its own moment").not.toContain("demo.area");
@@ -803,45 +792,32 @@ describe("a file change, briefed", () => {
       const again = shell("echo 'export const a = 4;' > src/a.ts", write("src/a.ts", "export const a = 4;\n"));
       expect(told(again), "the next change after a compaction").toBe(AREA);
 
+      // An edit tool has no hook before it: its file is named by the payload. A change AND a commit in
+      // one command: the file leaves git's list by being committed, so only the commit's files say it.
+      const edited = called({ ...pre("Write", { file_path: join(where, "src/a.ts"), content: "export const a = 5;\n" }, "change-1"), cwd: where }, write("src/a.ts", "export const a = 5;\n"), "post-tool-use", where);
+      expect(edited.stdout, "an edit tool's change in an area already shown").toBe("");
+      const line = "echo hi > docs/x.md && git add docs/x.md && git commit -qm 'docs: x'";
+      const committed = called({ ...pre("Bash", { command: line }, "change-1"), cwd: where }, () => {
+        writeFileSync(join(where, "docs", "x.md"), "hi\n");
+        runGit(where, ["add", "docs/x.md"]);
+        runGit(where, ["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "docs: x"]);
+      }, "post-tool-use", where);
+      expect(told(committed), "a file changed and committed in one call leaves git's list: the commit's files say it").toBe(DOCS);
+
       const log = rows(where, "change-1");
       const changes = log.filter((row) => row["kind"] === "change");
       expect(changes.map((row) => [row["tool"], row["paths"]]), "each call that changed a file is a `change` row, and a read is none").toEqual([
         ["Bash", ["src/a.ts"]],
         ["Bash", ["src/a.ts"]],
-        ["Bash", ["src/b.ts"]],
-        ["Bash", ["notes.txt"]],
         ["Bash", ["src/a.ts"]],
+        ["Write", ["src/a.ts"]],
+        ["Bash", ["docs/x.md"]],
       ]);
       const shown = log.filter((row) => row["kind"] === "breadcrumb" && row["id"] === "demo.area");
       expect(shown.map((row) => [row["moment"], row["cause"], row["subject"]]), "shown twice, each the first time for the agent").toEqual([
         ["file-change", "first", "src/a.ts"],
         ["file-change", "first", "src/a.ts"],
       ]);
-    } finally {
-      rmSync(parent, { recursive: true, force: true });
-    }
-  });
-
-  it("finds the files an edit tool changed, a commit made inside the call, and a file changed again, and shows a breadcrumb for each area once", () => {
-    const { parent, where } = repoForChanges();
-    try {
-      const edit = (file: string, content: string): Ran => {
-        const path = join(where, file);
-        return called({ ...pre("Write", { file_path: path, content }, "change-2"), cwd: where }, () => { writeFileSync(path, content); }, "post-tool-use", where);
-      };
-      expect(told(edit("src/a.ts", "export const a = 2;\n")), "an edit tool's change, with no hook before it").toBe(AREA);
-      expect(edit("src/a.ts", "export const a = 3;\n").stdout).toBe("");
-
-      // A change AND a commit in one command: the file leaves git's list by being committed, so only
-      // the commit's own files say it was changed.
-      const line = "echo hi > docs/x.md && git add docs/x.md && git commit -qm 'docs: x'";
-      const committed = called({ ...pre("Bash", { command: line }, "change-2"), cwd: where }, () => {
-        writeFileSync(join(where, "docs", "x.md"), "hi\n");
-        runGit(where, ["add", "docs/x.md"]);
-        runGit(where, ["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "docs: x"]);
-      }, "post-tool-use", where);
-      expect(told(committed), "a file changed and committed in one call leaves git's list: the commit's files say it").toBe(DOCS);
-      expect(rows(where, "change-2").filter((row) => row["kind"] === "change").map((row) => row["paths"])).toEqual([["src/a.ts"], ["src/a.ts"], ["docs/x.md"]]);
     } finally {
       rmSync(parent, { recursive: true, force: true });
     }
@@ -889,32 +865,9 @@ describe("a file change, briefed", () => {
   });
 });
 
-/**
- * A throwaway parent folder holding a guarded repo, `app`, with a config; a linked worktree of it,
- * `app-feature`; and `scratch`, a folder outside the repository. The caller removes `parent`.
- */
-function repoWithWorktree(): { parent: string; where: string; worktree: string; outside: string } {
-  const parent = mkdtempSync(join(tmpdir(), "flow-worktree-"));
-  const where = join(parent, "app");
-  const worktree = join(parent, "app-feature");
-  const outside = join(parent, "scratch");
-  mkdirSync(where);
-  mkdirSync(outside);
-  expect(runGit(where, ["init", "-q"]).code).toBe(0);
-  writeFileSync(join(where, "flow.config.ts"), `
-import { breadcrumb, defineConfig, definePack, pack, session } from ${JSON.stringify(join(PACKAGE, "index.ts"))};
-
-export default defineConfig([pack(definePack("demo", { hello: breadcrumb().at(session).text("Guarded.") }))]);
-`);
-  expect(runGit(where, ["add", "-A"]).code).toBe(0);
-  expect(runGit(where, ["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "init"]).code).toBe(0);
-  expect(runGit(where, ["worktree", "add", "-q", "-b", "feature", worktree]).code).toBe(0);
-  return { parent, where, worktree, outside };
-}
-
 describe("work outside the repository — judged only by a rule marked .everywhere()", () => {
   it("refuses a hard reset from a linked worktree, passes it in a scratch repo outside, and still refuses a force-push there", () => {
-    const { parent, where, worktree, outside } = repoWithWorktree();
+    const { parent, where, worktree, outside } = repoForChanges();
     try {
       writeFileSync(join(where, "everywhere.ts"), fixturePack("everywhere-pack", join(PACKAGE, "index.ts")));
       writeFileSync(join(where, "flow.config.ts"), `

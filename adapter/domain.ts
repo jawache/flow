@@ -3363,7 +3363,7 @@ function knownFolders(commands: readonly ShellCommand[] | null): string[] {
 
 /**
  * Every place a call worked, absolute: the file an edit tool wrote, or the folders a shell command
- * ran in (`commandFolders`). What the decision (`untoldWorktrees`) places in a worktree.
+ * ran in (`commandFolders`). What `worktreesWorkedIn` places in a worktree.
  */
 export function workedPaths(payload: HookPayload, root: string, home: string | undefined): string[] {
   const written = editedFile(payload);

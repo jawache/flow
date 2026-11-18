@@ -102,7 +102,7 @@ export interface Home {
    * its own packs in, and `[]` in a repo whose rules are all written inline in the config.
    *
    * MANDATORY, and empty is a real answer rather than the absence of one. An unstated list is a
-   * list nobody reviews, and here it decides what two rules watch: the refusal to
+   * list nobody reviews, and here it decides what the rule watches: the refusal to
    * delete the guard. It names the folders and does not default.
    *
    * The engine reads the same folders out of the config's imports (`guardPaths`), for the
