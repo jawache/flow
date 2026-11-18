@@ -25,7 +25,7 @@ A citation is a link you can click in an editor: the page's path from the repo r
 
 A refusal lists each citation that does not resolve, with its line, and says whether the page or the anchor is missing.
 
-The check judges the staged files in `.on(…)`. A commit that renames a page does not judge the files that cite it, unless they are staged too. `flow hook commit --all` judges every file.
+The check judges the staged files in `.on(…)`. A commit that renames a page does not judge the files that cite it, unless they are staged too. `flow hook commit --all` judges every file `.on(…)` matches.
 
 ## Example
 

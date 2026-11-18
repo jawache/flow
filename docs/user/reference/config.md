@@ -104,7 +104,7 @@ A case is a canned `ctx`. Its shape picks which moment's dialect it speaks, and 
 | --- | --- |
 | `"a string"` or `{ command }` | command |
 | `{ path, content }` | commit, with that one file staged. Add `existed: true` or `existed: false` to say whether the last commit has the file: it sets `ctx.file.existed` |
-| `{ staged }` | commit. Add `added: [...]` to list the staged paths the last commit does not have: it sets `ctx.added` and each file's `ctx.file.existed`. Add `unchanged: [...]` to list the staged paths identical to the last commit, as `flow hook commit --all` passes them: it sets each one's `ctx.file.unchanged`. Add `deleted: [...]` to list the paths the commit deletes: it sets `ctx.deleted` |
+| `{ staged }` | commit. Add `added: [...]` to list the staged paths the last commit does not have: it sets `ctx.added` and each file's `ctx.file.existed`. Add `deleted: [...]` to list the paths the commit deletes: it sets `ctx.deleted` |
 | `{ message }` | commit: it sets `ctx.message`. Add `staged`, as above. A case with no `message` has an empty one |
 | `{ actions }` | turn-end |
 

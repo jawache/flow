@@ -49,6 +49,15 @@ Which commits are judged:
 | `git cherry-pick`, `git revert`, `git rebase` | nothing. Git runs no hook that can refuse them |
 | `git commit --no-verify` | nothing. Git skips the hook |
 
+## The whole repo, with `--all`
+
+`flow hook commit --all` runs the commit rules over the whole repo, with no commit. It finds files that break a rule before anyone stages them, such as every file that still cites a page you renamed.
+
+- **A rule with `.on(…)`** is called once for each file its globs match, with that file in `ctx.file`. Every file git lists counts, tracked or untracked.
+- **A rule with no `.on(…)`** does not run. It judges a commit: what the commit adds, changes and deletes, and its message. With no commit, there is nothing to judge.
+- **No file counts as changed.** `ctx.staged`, `ctx.added` and `ctx.deleted` are empty, and `ctx.message` is `null`.
+- **`ctx.file.existed`** is `true` when the last commit has the file.
+
 ## The file-change moment
 
 A `file-change` breadcrumb is shown after a tool call that changed a file under its `.on(…)` globs.

@@ -29,8 +29,8 @@ A check declares no moments, no schema and no `kind`. The entry's `.at(…)` set
 
 | Field | Is |
 | --- | --- |
-| `ctx.file` | The staged file this call is about, `{ path, content, existed, unchanged }`, at the commit moment, in a rule with `.on(…)`. See [ctx.file](#ctxfile) |
-| `ctx.staged` | The paths the commit adds or changes, at the commit moment, in every call that moment makes. Under `flow hook commit --all`, every file git lists |
+| `ctx.file` | The staged file this call is about, `{ path, content, existed }`, at the commit moment, in a rule with `.on(…)`. See [ctx.file](#ctxfile) |
+| `ctx.staged` | The paths the commit adds or changes, at the commit moment, in every call that moment makes. Empty under `flow hook commit --all`, which has no commit |
 | `ctx.deleted` | The paths the commit deletes, as a list of strings, at the commit moment, in every call that moment makes |
 | `ctx.message` | The commit message as git records it, at the commit moment, in every call that moment makes. `null` under `flow hook commit --all`, which has no commit |
 | `ctx.command` | The shell command line, at the command moment |
@@ -46,7 +46,6 @@ A check declares no moments, no schema and no `kind`. The entry's `.at(…)` set
 
 - **`content`** is the file as staged.
 - **`existed`** is `true` if the last commit has the file, and `false` if it does not.
-- **`unchanged`** is `true` on a file identical to the one in the last commit. Only `flow hook commit --all` passes such a file to a rule. On every other file, `unchanged` is not set.
 
 ### ctx.commands
 
@@ -67,8 +66,8 @@ const noBareGh = defineCheck((_opts: Record<string, never>) => (ctx) => {
 
 | At | The check reads |
 | --- | --- |
-| `commit` (with `.on`) | The check is called once per staged file in scope that the commit adds or changes. `ctx.file` = `{ path, content, existed }`, with `ctx.staged`, `ctx.deleted` and `ctx.message` for the whole commit. Under `flow hook commit --all`, `ctx.file` also has `unchanged: true` when the file is identical to the one in the last commit. |
-| `commit` (no `.on`) | `ctx.staged`, `ctx.deleted` and `ctx.message`: the whole commit, in one call |
+| `commit` (with `.on`) | The check is called once per staged file in scope that the commit adds or changes. `ctx.file` = `{ path, content, existed }`, with `ctx.staged`, `ctx.deleted` and `ctx.message` for the whole commit. Under `flow hook commit --all`, it is called once per file in scope that git lists. See [the whole repo, with `--all`](./moments.md#the-whole-repo-with---all) |
+| `commit` (no `.on`) | `ctx.staged`, `ctx.deleted` and `ctx.message`: the whole commit, in one call. Not called under `flow hook commit --all` |
 | `command` | `ctx.command`: the line about to run, and `ctx.commands`: that line parsed |
 | `turn-end` | `ctx.turn`: the changed files and the commands of the turn |
 | any | `ctx.actor`, `ctx.fs`, `ctx.exec`, `ctx.git` and `ctx.moment` |

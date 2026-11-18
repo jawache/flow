@@ -6,7 +6,7 @@ summary: "reads: staged set · deleted paths · fires at: commit"
 
 Refuses a commit that changes or deletes a file under the paths you name. It is called once per commit, with no `.on(…)`, and reads the commit's staged paths and its deleted paths. An agent can still change a protected file in the working tree. The commit is where it is refused.
 
-A file identical to the one in the last commit passes. Only `flow hook commit --all` lists such a file, because it lists every file in the repo and most of them are as committed.
+It has no `.on(…)`, so `flow hook commit --all`, which makes no commit, does not run it.
 
 ## Options
 
