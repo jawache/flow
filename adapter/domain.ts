@@ -20,7 +20,7 @@ import { covers, FLOW_DIR, formatBlock, insideRepo, momentsView, universe, watch
 import { gitCommands, missingGrammarText, quoteArg } from "../checks/domain.ts";
 import type {
   Delivered,
-  Harness,
+  HarnessFacts,
   HookCost,
   HookResult,
   Registering,
@@ -425,16 +425,6 @@ export function refused(refusals: readonly Refused[], undone?: Undone): HookResu
 }
 
 /**
- * The tools that CHANGE a file — which names count as an edit is harness knowledge, and this is the
- * one set.
- *
- * There were two in the old engine and they had already drifted: the recorder's knew about
- * `NotebookEdit` and the turn-end rule's did not, so a notebook edit was work for the log and not
- * work for the rule watching for work. A fact about the host's tool names belongs in one place.
- */
-export const EDIT_TOOLS: ReadonlySet<string> = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
-
-/**
  * The branch a worktree has out, from the text of its own `HEAD` — the session marker's key.
  *
  * A ref name, or the short sha when HEAD is detached, or null when there is nothing there. It is
@@ -746,8 +736,8 @@ export function narrative(events: readonly TranscriptEvent[], tools: readonly st
     // THE one edit-tool set, the same one the flight recorder stamps a row with. There were two
     // in the old engine and they had already drifted; a fact about the host's tool names is
     // spelled once in this file and read everywhere.
-    if (EDIT_TOOLS.has(event.name)) {
-      if (event.name === "Write") writes += 1;
+    if (event.action === "edit" || event.action === "write") {
+      if (event.action === "write") writes += 1;
       else edits += 1;
       const here = insideRepo(event.path);
       if (here && event.path === loopPath) {
@@ -763,11 +753,11 @@ export function narrative(events: readonly TranscriptEvent[], tools: readonly st
       if (here) touched[event.path] = (touched[event.path] ?? 0) + 1;
       continue;
     }
-    if (event.name === "Read") {
+    if (event.action === "read") {
       if (insideRepo(event.path)) touched[event.path] = (touched[event.path] ?? 0) + 1;
       continue;
     }
-    if (event.name !== "Bash") continue;
+    if (event.action !== "shell") continue;
     // A file read through the shell is a touch like a Read is; a searched directory is not a file.
     for (const path of event.reads ?? []) {
       touched[path] = (touched[path] ?? 0) + 1;
@@ -912,7 +902,7 @@ export function weakenedAfterBlock(
     .map((row) => ({ entry: typeof row["id"] === "string" ? row["id"] : null, ts: row["ts"] as string }));
   const edits = events
     .filter((e): e is Extract<TranscriptEvent, { kind: "use" }> => e.kind === "use")
-    .filter((e) => (e.name === "Edit" || e.name === "Write") && e.ts !== null && isGuardPath(e.path, paths))
+    .filter((e) => (e.action === "edit" || e.action === "write") && e.ts !== null && isGuardPath(e.path, paths))
     .sort((a, b) => (a.ts as string).localeCompare(b.ts as string));
 
   const out: Weakening[] = [];
@@ -1070,7 +1060,7 @@ export function health({ armed, rows, withRecord, analysed }: HealthArgs): Healt
 export interface SpawnRecord {
   /** The conversation that spawned it. */
   readonly session: string;
-  /** The `agent-…` stem — its own transcript's name. */
+  /** The harness's id for the subagent. */
   readonly agent: string;
   /** The host's answer. Null when the sidecar was absent or would not parse: spawned, as what unknown. */
   readonly agentType: string | null;
@@ -1815,7 +1805,7 @@ export function scaffold(empty: boolean): string {
 /** What the shell found before anything was written. Every one is a stat, not a judgement. */
 export interface InitFacts {
   /** The harness flow is being set up for. */
-  readonly harness: Harness;
+  readonly harness: HarnessFacts;
   readonly root: string;
   /** `--empty`: the wiring, with no demo. */
   readonly empty: boolean;
@@ -2037,7 +2027,7 @@ export function initCode(plan: InitPlan, failures: readonly string[]): 0 | 1 {
 /** What the shell found before anything was removed. Every one is a stat, not a judgement. */
 export interface UninstallFacts {
   /** The harness flow is being taken out of. */
-  readonly harness: Harness;
+  readonly harness: HarnessFacts;
   readonly hasConfig: boolean;
   /** The gate as it stands, or null when there is none. */
   readonly gateText: string | null;
@@ -2271,7 +2261,7 @@ export interface Fitting {
 /** Everything status was able to read. Gathering it is the shell's job; judging it is not. */
 export interface StatusFacts {
   /** The harness flow is reporting on. */
-  readonly harness: Harness;
+  readonly harness: HarnessFacts;
   readonly root: string;
   readonly version: string;
   readonly off: boolean;
@@ -2398,6 +2388,8 @@ export interface Status {
   readonly session: StatusFacts["session"];
   /** Entries bound only at moments this harness cannot deliver. Loaded, counted, and dark. */
   readonly dark: readonly string[];
+  /** The moments the harness delivers: what a dark entry's line says it carries. */
+  readonly delivers: Delivered;
   readonly fittings: readonly Fitting[];
   readonly refusals: readonly Refusal[];
   readonly green: boolean;
@@ -2692,6 +2684,7 @@ export function status(facts: StatusFacts): Status {
     categories: [...new Set(entries.flatMap((entry) => entry.categories))].sort(),
     session: facts.session,
     dark,
+    delivers: facts.harness.delivers,
     fittings,
     refusals,
     green: redLines({ refusals, dark, fittings }).length === 0,
@@ -2719,7 +2712,7 @@ function entryLines(entry: Bound): string[] {
  * which headline, whether a moment table is printable at all, when the close goes red — each of
  * those is a judgement about what a reader most needs to know, and in a shell not one has a test.
  */
-export function statusLines(s: Status, carried: Delivered): string[] {
+export function statusLines(s: Status): string[] {
   if (!s.armed)
     return [`flow is OFF — every rail is silenced (${FLOW_DIR}/off is there). Delete that file to turn it back on.`];
 
@@ -2753,7 +2746,7 @@ export function statusLines(s: Status, carried: Delivered): string[] {
   for (const id of s.dark)
     lines.push(
       `  ✗ ${id}: bound only at a moment nothing delivers here — it loads, it counts, and it will never fire. ` +
-        `This adapter carries ${carried.guard.join(" · ")} for a guardrail and ${carried.brief.join(" · ")} for a breadcrumb.`,
+        `This adapter carries ${s.delivers.guard.join(" · ")} for a guardrail and ${s.delivers.brief.join(" · ")} for a breadcrumb.`,
     );
   lines.push(
     s.green

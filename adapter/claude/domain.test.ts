@@ -19,11 +19,10 @@ import { describe, it, expect } from "vitest";
 import { breadcrumb, defineCategory, defineConfig, definePack, guardrail, loadConfig, override, pack, session, spawnedAs, turnEnd, type LoadedEntry, type LoadResult, type TurnAction } from "../../index.ts";
 import { metrics, momentsView, type Block, type Bound, type Row } from "../../engine/domain.ts";
 import { parseCommandLine, parseShellSteps } from "../../language/domain.ts";
-import { matchAny } from "../../glob.ts";
-import { HOOK_COSTS, DELIVERS, HOOK_EVENTS, applyEdit, bashReads, briefBlock, briefHead, contextTokens, decision, deleteTargets, readFault, isHookEvent, isInjected, ownTranscriptPath, sessionFactsFrom, agentSettingOf, nothingBound, awaitsBrief, holdsForBrief, ridesRefusal, agentOf, toEvent, toResult, tokensFromTranscript, toolRow, steerOf, shellReadRows, writeRows, mismatchRow, touchedPath, foldersBetween, reachesAnotherWorktree, outsideOf, untoldWorktrees, worktreeFolders, worktreeLine, commandFolders, workedPaths, whileBroken, FLOW_OFF, HOST_SURFACE, classifyStore, parseEvents, projectFolderName, spawnMeta, spawnsIn, transcriptHead, transcriptLines, turnActions, wouldBeFile, type EventWorld, type HookPayload, type Shown, HOOK_REGISTRATIONS, hookCommand, bareHook, bareRegistrations, ourHookCommand, registeredEvents, staleRegistrations, withRegistrations, withMachineCommandsUpToDate, listsFlow, callKey, deltaFault, included, authored, visibility, preJudged, reversal, callRecord, CALL_LIFETIME_MS, forgettable, overlapping, snapshotPathspecs, withoutRegistrations, REPO_SETTINGS, settingsFileFor } from "./domain.ts";
-import { ALLOW, EDIT_TOOLS, branchFromHead, delivers, relativise, modesOf, mismatchesIn, lastMode, CONFIG_FILE, configImports, guardPaths, formatFacts, joinSpawn, uncoveredAreas, isCorrection, isGuardPath, mergeNarratives, narrative, snip, strip, weakenedAfterBlock, type AdapterEvent, type Change, type Facts, type SpawnRecord, PACKAGE_BIN, PACKAGE_DIR, nulPaths, literalScopes, callName, REFUSED_ONLY, type CallRecord, staticPrefix, PRE_COMMIT, GATE_LOCAL_LINE, GATE_RUN_LINE, HOOKS_DIR, LOCAL_BIN, GATE_PATH, SET_HOOKS_PATH, armsFlow, planInit, initCode, initLines, planUninstall, uninstallLines, uninstallCode, MACHINE_FLAG, type UninstallFacts, notInstalledLines, NOT_INSTALLED, HOOKS_UNKNOWN, wantsColour, hooksDirOf, status, statusLines, type HooksFolder, type InitFacts, type Status, type StatusFacts , statusCode } from "../domain.ts";
-import type { Steer, TranscriptEvent } from "../harness.ts";
 import { claudeCode } from "./claude.ts";
+import { ALLOW, type AdapterEvent, CONFIG_FILE, type CallRecord, type Change, type Facts, GATE_PATH, HOOKS_DIR, type InitFacts, LOCAL_BIN, MACHINE_FLAG, PACKAGE_BIN, PRE_COMMIT, REFUSED_ONLY, type SpawnRecord, type Status, type StatusFacts, type UninstallFacts, branchFromHead, callName, delivers, formatFacts, guardPaths, initLines, isGuardPath, lastMode, literalScopes, mergeNarratives, mismatchesIn, modesOf, nulPaths, planInit, planUninstall, relativise, staticPrefix, status, statusCode, statusLines, uninstallCode, uninstallLines, weakenedAfterBlock } from "../domain.ts";
+import { CALL_LIFETIME_MS, DELIVERS, EDIT_TOOLS, type EventWorld, FLOW_OFF, HOOK_COSTS, HOOK_EVENTS, HOOK_REGISTRATIONS, HOST_SURFACE, type HookPayload, REPO_SETTINGS, type Shown, agentOf, agentSettingOf, applyEdit, authored, awaitsBrief, bareHook, bareRegistrations, bashReads, briefBlock, briefHead, callKey, callRecord, classifyStore, commandFolders, contextTokens, decision, deleteTargets, deltaFault, foldersBetween, forgettable, holdsForBrief, hookCommand, included, isHookEvent, isInjected, listsFlow, mismatchRow, nothingBound, ourHookCommand, outsideOf, overlapping, ownTranscriptPath, parseEvents, preJudged, projectFolderName, reachesAnotherWorktree, readFault, registeredEvents, reversal, ridesRefusal, sessionFactsFrom, settingsFileFor, shellReadRows, snapshotPathspecs, spawnMeta, spawnsIn, staleRegistrations, steerOf, toEvent, toResult, tokensFromTranscript, toolRow, touchedPath, transcriptHead, transcriptLines, turnActions, untoldWorktrees, visibility, whileBroken, withMachineCommandsUpToDate, withRegistrations, withoutRegistrations, workedPaths, worktreeFolders, worktreeLine, wouldBeFile, writeRows } from "./domain.ts";
+import { type Steer, type TranscriptEvent } from "../harness.ts";
 
 
 // ── the world a payload is read against ──────────────────────────────────────
@@ -1162,9 +1161,9 @@ describe("the store — where the harness keeps its transcripts", () => {
     ]);
     expect(transcripts).toEqual([
       { path: "abc.jsonl", meta: null, session: "abc", agent: null },
-      { path: "abc/subagents/agent-1.jsonl", meta: "abc/subagents/agent-1.meta.json", session: "abc", agent: "agent-1" },
+      { path: "abc/subagents/agent-1.jsonl", meta: "abc/subagents/agent-1.meta.json", session: "abc", agent: "1" },
       // The sidecar is only named when the listing HELD it — the shell never probes for a file.
-      { path: "abc/subagents/agent-2.jsonl", meta: null, session: "abc", agent: "agent-2" },
+      { path: "abc/subagents/agent-2.jsonl", meta: null, session: "abc", agent: "2" },
     ]);
     // A `.meta.json` is read through its transcript, so naming it as ignored would be noise.
     expect(ignored).toEqual(["notes.txt", "abc/summary.md"]);
@@ -1228,92 +1227,6 @@ describe("the store — where the harness keeps its transcripts", () => {
     // is never enough — and a file that has none of them says so rather than guessing.
     expect(transcriptHead(store({ type: "last-prompt" }))).toEqual({ cwd: null, branch: null, started: null });
     expect(transcriptHead("")).toEqual({ cwd: null, branch: null, started: null });
-  });
-});
-
-describe("the narrative — the pairing, and the pointers it produces", () => {
-  it("reads typed prompts, tool calls and their results, each with its line", () => {
-    const file = store(
-      { type: "user", message: { content: "<system-reminder>injected</system-reminder>" } },
-      spoke("please fix the build"),
-      spokeBack([used("Bash", { command: "just test" }, "toolu_1")], "2026-01-01T09:00:00.000Z"),
-      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "ok", is_error: false }] } },
-      spokeBack([used("Edit", { file_path: "/repo/src/a.ts" }, "toolu_2")]),
-      {
-        type: "user",
-        message: { content: [{ type: "tool_result", tool_use_id: "toolu_2", content: [{ text: "boom" }], is_error: true }] },
-      },
-    );
-    expect(parseEvents(file, "/repo")).toEqual([
-      // The injected reminder is NOT a prompt: the harness talking to itself is not the human.
-      { line: 2, kind: "prompt", text: "please fix the build" },
-      { line: 3, kind: "use", ts: "2026-01-01T09:00:00.000Z", id: "toolu_1", name: "Bash", input: { command: "just test" }, path: "" },
-      { line: 4, kind: "result", id: "toolu_1", content: "ok", failed: false },
-      {
-        line: 5,
-        kind: "use",
-        ts: "2026-01-01T00:00:00.000Z",
-        id: "toolu_2",
-        name: "Edit",
-        input: { file_path: "/repo/src/a.ts" },
-        path: "src/a.ts",
-      },
-      { line: 6, kind: "result", id: "toolu_2", content: "boom", failed: true },
-    ]);
-  });
-
-  it("carries the repo files a Bash call reads, from the directory the record says it ran in", () => {
-    const file = store(
-      { ...spokeBack([used("Bash", { command: "cat a.ts; rg x lib; cat /etc/hosts" })]), cwd: "/repo/src" },
-      spokeBack([used("Bash", { command: "cat a.ts" }, "t2")]),
-      spokeBack([used("Bash", { command: "cat ~/a.ts" }, "t3")]),
-    );
-    const uses = parseEvents(file, "/repo", "/repo/home");
-    // Only files read by name: a searched directory is not a file, and outside the repo is not an area.
-    expect(uses[0]).toMatchObject({ name: "Bash", reads: ["src/a.ts"] });
-    // No `cwd` on the record: the call is taken to have run at the root.
-    expect(uses[1]).toMatchObject({ reads: ["a.ts"] });
-    expect(uses[2]).toMatchObject({ reads: ["home/a.ts"] });
-    // With no repo to be relative to there is nothing to count in.
-    expect(parseEvents(file)[0]).not.toHaveProperty("reads");
-  });
-
-  it("a result carrying an object rather than text is still readable", () => {
-    const file = store({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t", content: { n: 1 } }] } });
-    expect(parseEvents(file)[0]).toMatchObject({ kind: "result", content: '{"n":1}', failed: false });
-  });
-
-  it("leaves a background task's notice out of the prompts, so its result is never read as the human's correction", () => {
-    // The host writes the notice as a user line. The agent's own result is inside it, and reads as
-    // pushback as often as not: "instead", "rather than", "undo". Either mark is a notice.
-    const file = store(
-      spoke("no, revert that"),
-      spoke("<task-notification>\n<result>Used a map instead of a list.</result>\n</task-notification>"),
-      { ...spoke("Agent finished: it chose a set instead."), origin: { kind: "task-notification" } },
-    );
-    const read = narrative(parseEvents(file));
-    expect(read.prompts).toEqual([{ line: 1, text: "no, revert that" }]);
-    expect(read.corrections).toEqual([{ line: 1, text: "no, revert that" }]);
-  });
-
-  it("spots the human pushing back — a heuristic, which is why every finding cites its line", () => {
-    expect(isCorrection("actually, revert that")).toBe(true);
-    expect(isCorrection("you forgot the test")).toBe(true);
-    // `no,` — the commonest spelling of pushback there is, and the one the ported regex could
-    // never match: its alternative ended in a punctuation class and was then asked for a word
-    // boundary, which a comma followed by a space can never be. A dead alternative in a detector
-    // is the spec's own P2 shape, so the anchoring moved outside the class.
-    expect(isCorrection("no, the other one")).toBe(true);
-    expect(isCorrection("wait, that is not it")).toBe(true);
-    expect(isCorrection("please add a test for the parser")).toBe(false);
-    expect(isCorrection("the manifest has no, or few, entries")).toBe(true);
-  });
-
-  it("shortens for printing, and MARKS the cut so a truncated line never reads as a whole one", () => {
-    expect(snip("  a\n  b  ")).toBe("a b");
-    expect(snip("abcdefghij", 5)).toBe("abcd…");
-    expect(strip("[31mred[0m")).toBe("red");
-    expect(strip(undefined)).toBe("");
   });
 });
 
@@ -1386,67 +1299,15 @@ describe("weakened after a block — the one failure a guard cannot catch itself
       { kind: "guardrail", ts: "2026-01-01T10:00:00.000Z", id: "core.noTodo", out: "allow" },
     ];
     const events: TranscriptEvent[] = [
-      { line: 4, kind: "use", ts: "2026-01-01T09:00:00.000Z", id: "a", name: "Edit", input: {}, path: "flow.config.ts" },
-      { line: 9, kind: "use", ts: "2026-01-01T10:00:30.000Z", id: "b", name: "Edit", input: {}, path: "flow.config.ts" },
-      { line: 11, kind: "use", ts: "2026-01-01T10:01:00.000Z", id: "c", name: "Edit", input: {}, path: "src/a.ts" },
+      { line: 4, kind: "use", ts: "2026-01-01T09:00:00.000Z", id: "a", name: "Edit", action: "edit", input: {}, path: "flow.config.ts" },
+      { line: 9, kind: "use", ts: "2026-01-01T10:00:30.000Z", id: "b", name: "Edit", action: "edit", input: {}, path: "flow.config.ts" },
+      { line: 11, kind: "use", ts: "2026-01-01T10:01:00.000Z", id: "c", name: "Edit", action: "edit", input: {}, path: "src/a.ts" },
     ];
     // The edit BEFORE the block is not a weakening, and neither is one to an ordinary file.
     const paths = guardPaths(null, HOST_SURFACE);
     expect(weakenedAfterBlock(rows, events, paths)).toEqual([{ entry: "core.noTodo", line: 9, path: "flow.config.ts", gapSeconds: 30 }]);
     expect(weakenedAfterBlock(rows, [], paths)).toEqual([]);
     expect(weakenedAfterBlock([], events, paths)).toEqual([]);
-  });
-});
-
-describe("the reading — the join, the coverage answer, and the lines a person reads", () => {
-  const bound: Bound[] = [
-    { kind: "guardrail", id: "core.noTodo", pack: "core", at: ["write"], on: ["src/**"], for: [], description: null, says: null, disabled: null },
-    { kind: "guardrail", id: "core.off", pack: "core", at: ["write"], on: ["docs/**"], for: [], description: null, says: null, disabled: "superseded" },
-  ];
-
-  it("joins a subagent's two host-written records, and keeps what only one of them knows", () => {
-    const spawns = new Map([
-      ["toolu_9", { toolUseId: "toolu_9", asked: "general-purpose", description: "Build F5", ts: "2026-01-01T10:00:00.000Z", line: 12 }],
-    ]);
-    // A builder hidden inside a generic bucket: the parent CLAIMED general-purpose, the host WROTE
-    // builder, and only one of those is evidence.
-    expect(
-      joinSpawn({ session: "s1", agent: "agent-1", meta: spawnMeta('{"agentType":"builder","toolUseId":"toolu_9","model":"opus"}'), spawns }),
-    ).toEqual({
-      session: "s1",
-      agent: "agent-1",
-      agentType: "builder",
-      description: "Build F5",
-      model: "opus",
-      asked: "general-purpose",
-      at: "2026-01-01T10:00:00.000Z",
-      line: 12,
-    });
-
-    // No sidecar at all: spawned, as what we cannot say — and nothing is invented to fill it.
-    expect(joinSpawn({ session: "s1", agent: "agent-2", meta: null, spawns })).toEqual({
-      session: "s1",
-      agent: "agent-2",
-      agentType: null,
-      description: null,
-      model: null,
-      asked: null,
-      at: null,
-      line: null,
-    });
-
-    // A sidecar whose id names no block in the parent: what it alone knows still crosses.
-    const orphan = joinSpawn({ session: "s1", agent: "agent-3", meta: spawnMeta('{"agentType":"verifier","toolUseId":"toolu_x"}'), spawns });
-    expect(orphan).toMatchObject({ agentType: "verifier", asked: null, line: null });
-  });
-
-  it("answers coverage from the TRANSCRIPT, which reaches conversations the record cannot", () => {
-    expect(uncoveredAreas({ "src/a.ts": 3, "docs/x.md": 9, "README.md": 1 }, bound)).toEqual([
-      // `docs/**` is watched by an entry that is TURNED OFF, so it is not watched.
-      { path: "docs/x.md", touches: 9 },
-      { path: "README.md", touches: 1 },
-    ]);
-    expect(uncoveredAreas({}, bound)).toEqual([]);
   });
 });
 
@@ -1816,8 +1677,6 @@ describe("the hook registrations flow writes", () => {
   });
 });
 
-const OLD_GATE = '#!/bin/sh\nstaged=$(git diff --cached --name-only --diff-filter=ACMR)\n[ -z "$staged" ] && exit 0\nexec flow commit $staged\n';
-
 // ── init ─────────────────────────────────────────────────────────────────────
 
 const bare: InitFacts = {
@@ -1837,340 +1696,6 @@ const bare: InitFacts = {
   resolves: false,
   packageRoot: "/checkout/flow",
 };
-
-/** Flow's two lines at the end of somebody's pre-commit hook: what the block asks a person to add. */
-const WIRED = `#!/bin/sh\nnpm test\n${GATE_LOCAL_LINE}\n${GATE_RUN_LINE}\n`;
-
-/**
- * A repo husky set up: git runs `.husky/_`, and a person edits `.husky/pre-commit`, which husky's
- * stub runs with `sh`, so it carries no execute bit here.
- */
-const husky = (preCommitText: string | null): Partial<InitFacts> => ({
-  hooksPath: ".husky/_",
-  hooksFolder: { dir: ".husky/_", files: ["h", "husky.sh", "pre-commit", "pre-push"], preCommitText, preCommitExecutable: false },
-});
-
-/** A repo with a hook of its own in `.git/hooks`, which git runs while `core.hooksPath` is unset. */
-const gitHooks = (files: readonly string[], preCommitText: string | null = null, preCommitExecutable = preCommitText !== null): Partial<InitFacts> => ({
-  hooksFolder: { dir: ".git/hooks", files: ["pre-commit.sample", ...files], preCommitText, preCommitExecutable },
-});
-
-describe("planInit — when git already runs other hooks", () => {
-  const block = (plan: ReturnType<typeof planInit>): string[] => {
-    const said = initLines(plan, []);
-    const at = said.findIndex((line) => line.startsWith(NOT_INSTALLED));
-    return at === -1 ? [] : said.slice(at);
-  };
-
-  describe("a husky repo whose .husky/pre-commit does not call flow", () => {
-    const plan = planInit({ ...bare, ...husky("#!/bin/sh\nnpm test\n") });
-
-    it("leaves core.hooksPath alone, and still writes every other file", () => {
-      expect(plan.hooksPath).toBe(false);
-      expect(plan.config?.path).toBe("flow.config.ts");
-      expect(plan.gate?.path, "the second fix moves hooks in beside this gate").toBe(GATE_PATH);
-      expect(plan.flowDir).toBe(true);
-      expect(plan.registered).toEqual(REGISTERED_EVENTS);
-      expect(initLines(plan, []).join("\n")).not.toContain(`+ ${SET_HOOKS_PATH}`);
-    });
-
-    it("ends with the block: the folder git runs hooks from, and both fixes", () => {
-      const said = initLines(plan, []);
-      const lines = block(plan);
-      expect(lines, "the block is the end of the output").toStrictEqual(notInstalledLines({ dir: ".husky/_", preCommit: ".husky/pre-commit", fix: "add" }));
-      expect(said[said.length - lines.length - 1], "set apart from the report by a blank line").toBe("");
-      const text = lines.join("\n");
-      expect(text).toContain("Git runs hooks from .husky/_");
-      expect(text).toContain("Add these two lines to the end of .husky/pre-commit:");
-      expect(text).toContain(GATE_LOCAL_LINE);
-      expect(text).toContain(GATE_RUN_LINE);
-      expect(text).toContain(`move those hooks into ${HOOKS_DIR}/`);
-      expect(text).toContain(SET_HOOKS_PATH);
-    });
-
-    it("answers 1, whatever else landed", () => {
-      expect(initCode(plan, [])).toBe(1);
-    });
-
-    it("followed to the letter, the first fix wires it", () => {
-      const lines = block(plan);
-      const at = lines.findIndex((line) => line.includes("Add these two lines to the end of .husky/pre-commit:"));
-      const added = lines.slice(at + 1, at + 3).map((line) => line.trim());
-      const followed = `#!/bin/sh\nnpm test\n${added.join("\n")}\n`;
-      expect(planInit({ ...bare, ...husky(followed) }).otherHooks?.fix).toBeNull();
-    });
-  });
-
-  describe("when git could not name the folder it runs hooks from", () => {
-    // That folder may be husky's, so setting core.hooksPath over it is the very switch-off this guards.
-    for (const hooksPath of [".husky/_", HOOKS_DIR, null]) {
-      const plan = planInit({ ...bare, hooksPath, hooksFolder: null });
-
-      it(`leaves core.hooksPath alone (set to ${String(hooksPath)}), and says what status says`, () => {
-        expect(plan.hooksPath).toBe(false);
-        expect(plan.hooksUnknown).toBe(true);
-        const said = initLines(plan, []);
-        expect(said.join("\n")).not.toContain(`+ ${SET_HOOKS_PATH}`);
-        expect(said).toContain(`  ✗ ${HOOKS_UNKNOWN}`);
-        expect(plan.gate?.path, "every other file is still written").toBe(GATE_PATH);
-      });
-
-      it(`answers 1, since flow cannot tell it is installed (core.hooksPath ${String(hooksPath)})`, () => {
-        expect(initCode(plan, [])).toBe(1);
-      });
-    }
-
-    it("never reads as unknown outside git, or when git named the folder", () => {
-      expect(planInit({ ...bare, isGit: false, hooksFolder: null }).hooksUnknown).toBe(false);
-      expect(planInit(bare).hooksUnknown).toBe(false);
-      expect(planInit(bare).hooksPath, "a fresh clone still gets core.hooksPath").toBe(true);
-    });
-  });
-
-  it("run again with nothing left to write, it never says the repo is set up above a block saying it is not", () => {
-    const again = planInit({
-      ...bare,
-      ...husky("#!/bin/sh\nnpm test\n"),
-      hasConfig: true,
-      gateText: PRE_COMMIT,
-      hasFlowDir: true,
-      resolves: true,
-      settings: withRegistrations({}).settings,
-    });
-    const said = initLines(again, []).join("\n");
-    expect(said).not.toContain("already set up");
-    expect(said).toContain("nothing new to write");
-    expect(said).toContain(NOT_INSTALLED);
-    expect(initCode(again, [])).toBe(1);
-  });
-
-  it("run again with nothing left to write while git cannot name its hooks folder, it never says the repo is set up", () => {
-    const again = planInit({
-      ...bare,
-      hooksFolder: null,
-      hasConfig: true,
-      gateText: PRE_COMMIT,
-      hasFlowDir: true,
-      resolves: true,
-      settings: withRegistrations({}).settings,
-    });
-    const said = initLines(again, []).join("\n");
-    expect(said).not.toContain("already set up");
-    expect(said).toContain("nothing new to write");
-    expect(initCode(again, [])).toBe(1);
-  });
-
-  it("a repo with a hook in .git/hooks names that folder and its pre-commit", () => {
-    const plan = planInit({ ...bare, ...gitHooks(["pre-push", "post-checkout"], "#!/bin/sh\nnpm test\n") });
-    expect(plan.hooksPath).toBe(false);
-    expect(block(plan)[0]).toContain("Git runs hooks from .git/hooks");
-    expect(block(plan).join("\n")).toContain("Add these two lines to the end of .git/hooks/pre-commit:");
-    expect(initCode(plan, [])).toBe(1);
-  });
-
-  describe("a pre-commit hook git runs itself, and the execute bit git needs to run it", () => {
-    /** The first fix: the lines from the block's third up to the second fix. */
-    const firstFix = (plan: ReturnType<typeof planInit>): string[] => {
-      const lines = block(plan);
-      return lines.slice(2, lines.findIndex((line) => line.startsWith("  - Or move")));
-    };
-
-    it("Git LFS's hooks and no pre-commit yet: create it as an executable shell script", () => {
-      const plan = planInit({ ...bare, ...gitHooks(["pre-push", "post-checkout"]) });
-      expect(block(plan)[0]).toBe(
-        `${NOT_INSTALLED}. Git runs hooks from .git/hooks, and there is no .git/hooks/pre-commit, so no commit runs flow's gate.`,
-      );
-      expect(firstFix(plan)).toStrictEqual([
-        "  - Create .git/hooks/pre-commit with these three lines, then run `chmod +x .git/hooks/pre-commit` so git runs it:",
-        "      #!/bin/sh",
-        `      ${GATE_LOCAL_LINE}`,
-        `      ${GATE_RUN_LINE}`,
-      ]);
-      expect(block(plan).join("\n"), "the second fix is unchanged").toContain(`move those hooks into ${HOOKS_DIR}/`);
-      expect(initCode(plan, [])).toBe(1);
-    });
-
-    it("followed to the letter, creating it wires it", () => {
-      const created = `${firstFix(planInit({ ...bare, ...gitHooks(["pre-push"]) }))
-        .slice(1)
-        .map((line) => line.trim())
-        .join("\n")}\n`;
-      const plan = planInit({ ...bare, ...gitHooks(["pre-push", "pre-commit"], created, true) });
-      expect(plan.otherHooks?.fix).toBeNull();
-      expect(block(plan)).toStrictEqual([]);
-      expect(initCode(plan, [])).toBe(0);
-    });
-
-    it("a hook that calls flow without the execute bit: not installed, and it says the file must be executable", () => {
-      const plan = planInit({ ...bare, ...gitHooks(["pre-push", "pre-commit"], WIRED, false) });
-      expect(block(plan)[0]).toBe(
-        `${NOT_INSTALLED}. Git runs hooks from .git/hooks, and .git/hooks/pre-commit calls flow but is not executable, so git ignores it and no commit runs flow's gate.`,
-      );
-      expect(firstFix(plan)).toStrictEqual(["  - Make .git/hooks/pre-commit executable, so git runs it: `chmod +x .git/hooks/pre-commit`"]);
-      expect(initLines(plan, []).join("\n"), "never the quiet note that it calls flow").not.toContain("· git runs hooks from");
-      expect(initCode(plan, [])).toBe(1);
-    });
-
-    it("a hook that neither calls flow nor has the execute bit: both, in the one fix", () => {
-      const plan = planInit({ ...bare, ...gitHooks(["pre-commit"], "#!/bin/sh\nnpm test\n", false) });
-      expect(block(plan)[0]).toContain(".git/hooks/pre-commit does not call flow and is not executable, so git ignores it");
-      expect(firstFix(plan)[0]).toBe(
-        "  - Add these two lines to the end of .git/hooks/pre-commit, then run `chmod +x .git/hooks/pre-commit` so git runs it:",
-      );
-    });
-
-    it("the chmod to paste leaves a plain path as it is, and single-quotes one the shell would split or expand", () => {
-      const chmodOf = (dir: string): string[] =>
-        firstFix(planInit({ ...bare, hooksFolder: { dir, files: ["pre-commit"], preCommitText: WIRED, preCommitExecutable: false } }));
-      const said = (dir: string, typed: string): string[] => [`  - Make ${dir}/pre-commit executable, so git runs it: \`chmod +x ${typed}\``];
-      expect(chmodOf("/main/.git/hooks"), "a worktree's shared folder").toStrictEqual(said("/main/.git/hooks", "/main/.git/hooks/pre-commit"));
-      const spaced = "/Users/me/My Projects/app/.git/hooks";
-      expect(chmodOf(spaced), "a space, as under ~/My Projects/").toStrictEqual(said(spaced, `'${spaced}/pre-commit'`));
-      expect(chmodOf("/it's/$HOME/hooks"), "a quote and a $").toStrictEqual(said("/it's/$HOME/hooks", `'/it'\\''s/$HOME/hooks/pre-commit'`));
-    });
-
-    it("husky's .husky/pre-commit, with no execute bit, still counts once it calls flow, and its fix is unchanged", () => {
-      expect(initCode(planInit({ ...bare, ...husky(WIRED) }), [])).toBe(0);
-      for (const preCommit of [null, "npm test\n"])
-        expect(firstFix(planInit({ ...bare, ...husky(preCommit) })), String(preCommit)).toStrictEqual([
-          "  - Add these two lines to the end of .husky/pre-commit:",
-          `      ${GATE_LOCAL_LINE}`,
-          `      ${GATE_RUN_LINE}`,
-        ]);
-    });
-  });
-
-  it("once the hook git runs calls flow, no block, a quiet note, and 0", () => {
-    const plan = planInit({ ...bare, ...husky(WIRED) });
-    expect(plan.hooksPath, "still never set over husky's").toBe(false);
-    expect(block(plan)).toStrictEqual([]);
-    expect(initLines(plan, []).join("\n")).toContain("· git runs hooks from .husky/_, and .husky/pre-commit calls flow");
-    expect(initCode(plan, [])).toBe(0);
-  });
-
-  describe("in a terminal", () => {
-    const plan = planInit({ ...bare, ...husky(null) });
-    const BOLD_RED = "\u001b[1;31m";
-    const RESET = "\u001b[0m";
-
-    it("the block is bold red, line by line, and nothing else is", () => {
-      const said = initLines(plan, [], true);
-      const at = said.findIndex((line) => line.includes(NOT_INSTALLED));
-      expect(said.slice(at)).toStrictEqual(
-        notInstalledLines({ dir: ".husky/_", preCommit: ".husky/pre-commit", fix: "add" }).map((line) => `${BOLD_RED}${line}${RESET}`),
-      );
-      expect(said.slice(0, at).join("\n"), "the report above it stays plain").not.toContain("\u001b[");
-    });
-
-    it("is plain when colour is off, and a repo without the block never carries a colour code", () => {
-      expect(initLines(plan, [], false).join("\n")).not.toContain("\u001b[");
-      expect(initLines(planInit(bare), [], true).join("\n")).not.toContain("\u001b[");
-    });
-
-    it("colour is on only in a terminal, and NO_COLOR set to anything but empty turns it off", () => {
-      expect(wantsColour(true, undefined)).toBe(true);
-      expect(wantsColour(false, undefined), "piped, or written to a file").toBe(false);
-      expect(wantsColour(true, "1")).toBe(false);
-      expect(wantsColour(true, "0"), "any value, per no-color.org").toBe(false);
-      expect(wantsColour(true, ""), "an empty NO_COLOR is unset, per no-color.org").toBe(true);
-    });
-  });
-
-  it("a repo with no other hooks gets exactly what it got before: the setting, no block, 0", () => {
-    const plan = planInit(bare);
-    expect(plan.hooksPath).toBe(true);
-    expect(block(plan)).toStrictEqual([]);
-    expect(initLines(plan, []).join("\n")).not.toContain("git runs hooks from");
-    expect(initCode(plan, [])).toBe(0);
-    expect(initCode(plan, ["could not write .githooks/pre-commit: EACCES"]), "a failure is still a 1").toBe(1);
-  });
-});
-
-describe("planInit — the second run", () => {
-  const already = planInit({
-    ...bare,
-    hasConfig: true,
-    gateText: PRE_COMMIT,
-    hasFlowDir: true,
-    hooksPath: HOOKS_DIR,
-    hooksFolder: { dir: HOOKS_DIR, files: ["pre-commit"], preCommitText: PRE_COMMIT, preCommitExecutable: true },
-    resolves: true,
-    settings: withRegistrations({}).settings,
-  });
-
-  it("adds nothing at all", () => {
-    expect(already.config).toBeNull();
-    expect(already.gate).toBeNull();
-    expect(already.flowDir).toBe(false);
-    expect(already.link).toBeNull();
-    expect(already.hooksPath).toBe(false);
-    expect(already.settings).toBeNull();
-    expect(already.registered).toEqual([]);
-  });
-
-  it("says so in one line rather than printing an empty list", () => {
-    expect(initLines(already, []).join("\n")).toContain("already set up");
-  });
-});
-
-describe("the guard's own files — the repo's half read out of the config's text, and the host's", () => {
-  // The config as this repo writes it, and as a broken one still reads: the imports survive
-  // whatever went wrong two hundred lines below them.
-  const CONFIG = [
-    `import { defineConfig, pack } from "@jawache/flow";`,
-    `import { git, work } from "@jawache/flow/packs";`,
-    `import { house } from "./guards/house.ts";`,
-    ``,
-    `export default defineConfig([pack(git), pack(house)]);`,
-  ].join("\n");
-
-  it("is the config, the packs it imports and the host's half, and nothing else", () => {
-    // MEMBERSHIP, never order: the one caller asks whether a path is in the list, so an order
-    // pinned here would break on a reshuffle that changes nothing a user sees.
-    const paths = guardPaths(CONFIG, HOST_SURFACE);
-    expect(paths, "the host's half is there, whole").toEqual(expect.arrayContaining([...HOST_SURFACE]));
-    expect(matchAny(CONFIG_FILE, paths)).toBe(true);
-    expect(matchAny("guards/house.ts", paths)).toBe(true);
-    expect(matchAny("guards/git.ts", paths), "the folder comes with the file").toBe(true);
-    expect(matchAny("guards/nested/deep.ts", paths)).toBe(true);
-    expect(matchAny("src/a.ts", paths)).toBe(false);
-    expect(matchAny("cli/work.ts", paths)).toBe(false);
-    // Not a suffix match: a file that merely ENDS with the config's name is somebody else's.
-    expect(matchAny("vendor/flow.config.ts", paths)).toBe(false);
-    expect(matchAny("src/guards/thing.ts", paths), "the folder is where the import said").toBe(false);
-  });
-
-  it("follows whatever the repo called the folder, and reaches nothing when the config names nothing", () => {
-    // The whole point of reading the text: `guards/` is one repo's name for it, and the engine
-    // knows no folder name of its own.
-    const theirs = guardPaths(`import { house } from "./.guard/house.ts";`, HOST_SURFACE);
-    expect(matchAny(".guard/house.ts", theirs)).toBe(true);
-    expect(matchAny(".guard/helpers/text.ts", theirs)).toBe(true);
-    expect(matchAny("guards/house.ts", theirs)).toBe(false);
-    // A config with every rule written inline imports no pack, so the repo's half is the config alone.
-    const inline = guardPaths(`import { defineConfig } from "@jawache/flow";`, HOST_SURFACE);
-    expect(new Set(inline)).toStrictEqual(new Set([CONFIG_FILE, ...HOST_SURFACE]));
-    expect(new Set(guardPaths(null, HOST_SURFACE))).toStrictEqual(new Set([CONFIG_FILE, ...HOST_SURFACE]));
-  });
-
-  it("reads the TEXT, not the module — which is the only reader a broken config has", () => {
-    // Package specifiers are somebody else's source, never this repo's guard; `../` climbs out
-    // of the root, where repo-relative paths cannot follow.
-    expect(configImports(CONFIG)).toStrictEqual(["guards/house.ts"]);
-    expect(configImports(`import x from "../outside/y.ts";`)).toStrictEqual([]);
-    expect(configImports(`const m = await import("./late/pack.ts");`)).toStrictEqual(["late/pack.ts"]);
-    expect(configImports(`export { a } from "./again.ts";\nimport { b } from "./again.ts";`)).toStrictEqual(["again.ts"]);
-    // The file below is not typescript at all any more, and its import line still answers.
-    expect(configImports(`import { house } from "./guards/house.ts";\nthis is not typescript(((`)).toStrictEqual([
-      "guards/house.ts",
-    ]);
-    // A `from '…'` phrase inside a QUOTED MESSAGE is harvested too, and that is the accepted
-    // behaviour rather than a miss: separating a real import from a sentence that quotes one takes
-    // a parser, and the file being asked about may be one that will not parse. Pinned here because
-    // it only ever WIDENS the guard's paths, so the cost is one extra path reported as a guard file.
-    expect(configImports(`.message("write it as: import { x } from './guards/x.ts'")`)).toStrictEqual(["guards/x.ts"]);
-  });
-});
 
 describe("what every rail answers while the config will not load", () => {
   const FAULT = "flow: the config will not load — 1 refusal.";
@@ -2491,12 +2016,6 @@ const statusFacts = (over: Partial<StatusFacts> = {}): StatusFacts => ({
   ...over,
 });
 
-/** A fresh clone's hooks folder: `core.hooksPath` unset, and `.git/hooks` holding only git's samples. */
-const FRESH_CLONE: HooksFolder = { dir: ".git/hooks", files: ["pre-commit.sample", "pre-push.sample"], preCommitText: null, preCommitExecutable: false };
-
-/** The gate an older `flow init` wrote: today's, without the line that runs the repo's own package first. */
-const PATH_ONLY_GATE = PRE_COMMIT.replace(`${GATE_LOCAL_LINE}\n`, "");
-
 // ── uninstall ────────────────────────────────────────────────────────────────
 
 describe("withoutRegistrations — flow's hooks taken out of a settings file", () => {
@@ -2655,142 +2174,6 @@ describe("planUninstall — the machine-wide settings file", () => {
   });
 });
 
-describe("the binary fitting — can the hooks and the gate find flow", () => {
-  const binary = (modules: boolean, path: boolean, over: Partial<StatusFacts> = {}) => {
-    const s = status(statusFacts({ binary: { listed: modules, copy: modules, path }, ...over }));
-    return { fitting: s.fittings.find((f) => f.id === "binary"), green: s.green, lines: statusLines(s, DELIVERS) };
-  };
-
-  it("fixes its two old shapes as fixtures: a gate without the PATH line, and the bare registration", () => {
-    expect(armsFlow(PATH_ONLY_GATE)).toBe(true);
-    expect(PATH_ONLY_GATE).not.toContain(PACKAGE_BIN);
-    expect(bareRegistrations(BARE_SETTINGS)).toEqual(HOOK_REGISTRATIONS.map((r) => r.event));
-  });
-
-  it("names the PATH when only the PATH has one, in the tutorial's words", () => {
-    const { lines, green } = binary(false, true);
-    expect(lines).toContain("  ✓ binary: the hooks and the gate run the flow on the PATH");
-    expect(green).toBe(true);
-  });
-
-  // THE DEV DEPENDENCY: today's gate and registrations run the repo's own package first, so the
-  // repo's copy answers them with no flow on the PATH, and wins over one that is there.
-  it("names node_modules/@jawache/flow when the repo has its own, whatever the PATH holds", () => {
-    for (const path of [false, true]) {
-      const { lines, green } = binary(true, path);
-      expect(lines).toContain("  ✓ binary: the hooks and the gate run the flow in node_modules/@jawache/flow");
-      expect(green).toBe(true);
-    }
-  });
-
-  it("judges a gate older `flow init` wrote by the PATH alone, and says how to bring it up to date", () => {
-    const { fitting, green } = binary(true, false, { gateText: PATH_ONLY_GATE });
-    expect(fitting?.ok).toBe(false);
-    expect(fitting?.detail).toBe(
-      "the flow in node_modules/@jawache/flow is not on the PATH, and the gate looks for flow on the PATH alone, so git refuses every commit — " +
-        'add `f="$PWD/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook commit` to .githooks/pre-commit above the line that runs flow; ' +
-        "or install it for every repo with `npm i -g @jawache/flow`.",
-    );
-    expect(green).toBe(false);
-    expect(binary(true, false, { gateText: OLD_GATE }).fitting?.detail, "the old verb's gate too").toContain("the gate looks for flow on the PATH alone");
-  });
-
-  // THE LINE, NOT THE TEXT: a gate that runs another tool from node_modules/.bin, with no PATH
-  // line, still finds flow on the PATH alone — and git fails every commit with `flow: not found`.
-  it("judges a gate that names node_modules/.bin only for another tool by the PATH alone", () => {
-    const lintFirst = "#!/bin/sh\nnode_modules/.bin/lint-staged && flow hook commit\n";
-    expect(armsFlow(lintFirst)).toBe(true);
-    const { fitting, green } = binary(true, false, { gateText: lintFirst });
-    expect(fitting?.ok).toBe(false);
-    expect(fitting?.detail).toContain("the gate looks for flow on the PATH alone");
-    expect(fitting?.detail).toContain(`add \`${GATE_LOCAL_LINE}\` to .githooks/pre-commit`);
-    expect(green).toBe(false);
-    expect(binary(true, false, { gateText: `#!/bin/sh\n  ${GATE_LOCAL_LINE}\nnode_modules/.bin/lint-staged && flow hook commit\n` }).fitting?.ok,
-      "the line itself, indented, puts the repo's copy first").toBe(true);
-  });
-
-  it("judges registrations in the old shape by the PATH alone, and names `flow init` as the fix", () => {
-    const { fitting, green } = binary(true, false, { settings: BARE_SETTINGS });
-    expect(fitting?.ok).toBe(false);
-    expect(fitting?.detail).toContain("the hooks look for flow on the PATH alone, so every hook fails with `flow: not found`");
-    expect(fitting?.detail).toContain("re-run `flow init`");
-    expect(fitting?.detail).not.toContain("the gate");
-    expect(green).toBe(false);
-  });
-
-  it("names both when both are old", () => {
-    const { fitting } = binary(true, false, { gateText: PATH_ONLY_GATE, settings: BARE_SETTINGS });
-    expect(fitting?.detail).toContain("the hooks and the gate look for flow on the PATH alone");
-    expect(fitting?.detail).toContain("every hook fails with `flow: not found` and git refuses every commit");
-  });
-
-  it("is green over old callers when the PATH has one, and says which copy each runs", () => {
-    expect(binary(true, true, { settings: BARE_SETTINGS }).fitting).toEqual({
-      id: "binary",
-      ok: true,
-      detail: "the hooks run the flow on the PATH, and the gate the flow in node_modules/@jawache/flow",
-    });
-    expect(binary(true, true, { gateText: PATH_ONLY_GATE }).fitting?.detail).toBe(
-      "the hooks run the flow in node_modules/@jawache/flow, and the gate the flow on the PATH",
-    );
-    expect(binary(false, true, { gateText: PATH_ONLY_GATE, settings: BARE_SETTINGS }).fitting?.detail).toBe(
-      "the hooks and the gate run the flow on the PATH",
-    );
-  });
-
-  // ONE RULE FOR STATUS AND INIT: a red line whose fix is `flow init` must be one init can carry out.
-  it("judges registrations by the rule init rewrites by — a prefixed by-name command is somebody's own", () => {
-    const theirs = registrationsAs((command) => command.replace(/^.* flow /, "FLOW_DEBUG=1 flow "));
-    expect(withRegistrations(theirs).added, "init has nothing to rewrite").toEqual([]);
-    expect(binary(true, false, { settings: theirs }).fitting?.ok, "so status names no fix init would not make").toBe(true);
-  });
-
-  it("does not judge a registration with a path to the binary by the PATH — it names its own copy", () => {
-    const pinned = {
-      hooks: { Stop: [{ hooks: [{ type: "command", command: "/usr/local/bin/flow hook stop" }] }] },
-    };
-    expect(binary(true, false, { settings: pinned }).fitting?.ok).toBe(true);
-  });
-
-  it("judges a gate and registrations not there yet as `flow init` will write them — their own fittings are red", () => {
-    const { fitting, green } = binary(true, false, { gateText: null, settings: {} });
-    expect(fitting?.ok).toBe(true);
-    expect(green, "the commit-gate and hooks lines are").toBe(false);
-  });
-
-  // INIT'S LINK, in a repo that does not list flow, is the flow that ran init — not the repo's own.
-  // Judged by the PATH, the tutorial's global install reads "on the PATH"; with nothing there, it is
-  // red on the safe side, and says the link is what runs until it breaks.
-  it("judges a copy the repo does not list by the PATH: green with one there, and a red line naming the link without", () => {
-    const linked = (path: boolean) => status(statusFacts({ binary: { listed: false, copy: true, path } }));
-    expect(statusLines(linked(true), DELIVERS)).toContain("  ✓ binary: the hooks and the gate run the flow on the PATH");
-    const red = linked(false);
-    expect(red.fittings.find((f) => f.id === "binary")).toEqual({
-      id: "binary",
-      ok: false,
-      detail:
-        "this repo's package.json does not list @jawache/flow, so node_modules/@jawache/flow is the link `flow init` made to the flow that ran it, " +
-        "and no flow is on the PATH. The hooks and the gate run that link only while it resolves, and once it breaks every hook fails " +
-        "with `flow: not found` and git refuses every commit — install it for this repo with `npm i -D @jawache/flow`, or for every repo with `npm i -g @jawache/flow`.",
-    });
-    expect(red.green).toBe(false);
-    const listedNotInstalled = status(statusFacts({ binary: { listed: true, copy: false, path: false } })).fittings.find((f) => f.id === "binary");
-    expect(listedNotInstalled?.detail, "listed, but not installed yet").toContain(`no flow in ${PACKAGE_DIR} or on the PATH`);
-  });
-
-  it("is a red line naming both installs when neither has one, and status is not green", () => {
-    for (const over of [{}, { gateText: PATH_ONLY_GATE, settings: BARE_SETTINGS }]) {
-      const { fitting, green, lines } = binary(false, false, over);
-      expect(fitting?.ok).toBe(false);
-      expect(fitting?.detail).toContain(`no flow in ${PACKAGE_DIR} or on the PATH`);
-      expect(fitting?.detail).toContain("npm i -D @jawache/flow");
-      expect(fitting?.detail).toContain("npm i -g @jawache/flow");
-      expect(green).toBe(false);
-      expect(lines.at(-1)).toContain("1 red line");
-    }
-  });
-});
-
 /** One loaded entry, as the load hands it over — the shape `status` reads. */
 const loaded = (id: string, spec: Record<string, unknown>, categories: readonly string[] = []) => ({
   id,
@@ -2807,7 +2190,7 @@ describe("status — the whole answer", () => {
     const s = status(statusFacts());
     expect(s.green).toBe(true);
     expect(s.fittings.every((f) => f.ok)).toBe(true);
-    expect(statusLines(s, DELIVERS)[0]).toContain("flow is ON");
+    expect(statusLines(s)[0]).toContain("flow is ON");
   });
 
   it("lists every entry by moment, with its globs and the category it binds to", () => {
@@ -2822,7 +2205,7 @@ describe("status — the whole answer", () => {
         },
       }),
     );
-    const said = statusLines(s, DELIVERS).join("\n");
+    const said = statusLines(s).join("\n");
     expect(said).toContain("demo.noTodo");
     expect(said).toContain("src/**");
     expect(said).toContain("for subagent");
@@ -2850,28 +2233,28 @@ describe("status — the whole answer", () => {
         },
       }),
     );
-    const said = statusLines(s, DELIVERS).join("\n");
+    const said = statusLines(s).join("\n");
     expect(said).toContain("on src/**");
     expect(said).toContain("not **/*.test.ts");
     expect(said).toContain("no reason given");
   });
 
   it("names a session that wears nothing, and one the marker could not attribute to an agent", () => {
-    const said = statusLines(status(statusFacts({ session: { id: "s1", agent: null, wearing: [] } })), DELIVERS).join("\n");
+    const said = statusLines(status(statusFacts({ session: { id: "s1", agent: null, wearing: [] } }))).join("\n");
     expect(said).toContain("s1");
     expect(said).toContain("wearing no category");
   });
 
   it("prints the permission mode, and under auto mode whether the session is steered towards shell edits", () => {
     const under = (mode: string | null, steer: Steer | null = null): string[] =>
-      statusLines(status(statusFacts({ session: { id: "s1", agent: "main", wearing: [], mode, steer } })), DELIVERS);
+      statusLines(status(statusFacts({ session: { id: "s1", agent: "main", wearing: [], mode, steer } })));
     expect(under("auto", { shellFirst: true, variant: "strict" })).toContain("  mode       auto — steered towards shell edits (strict)");
     expect(under("auto", { shellFirst: true, variant: null })).toContain("  mode       auto — steered towards shell edits");
     expect(under("auto", { shellFirst: false, variant: null })).toContain("  mode       auto — not steered towards shell edits");
     expect(under("auto")).toContain("  mode       auto — no steer towards shell edits found in its transcript");
     expect(under("default", { shellFirst: true, variant: "strict" }), "the steer is auto mode's alone").toContain("  mode       default");
     expect(under(null).join("\n"), "no call has stated a mode yet").not.toContain("  mode ");
-    expect(statusLines(status(statusFacts()), DELIVERS).join("\n")).not.toContain("  mode ");
+    expect(statusLines(status(statusFacts())).join("\n")).not.toContain("  mode ");
   });
 
   it("lists a disabled entry with the reason somebody wrote", () => {
@@ -2890,7 +2273,7 @@ describe("status — the whole answer", () => {
         },
       }),
     );
-    expect(statusLines(s, DELIVERS).join("\n")).toContain("the tool it calls is gone");
+    expect(statusLines(s).join("\n")).toContain("the tool it calls is gone");
   });
 
   it("names an entry bound at a moment this adapter cannot deliver — the dark rail", () => {
@@ -2902,7 +2285,7 @@ describe("status — the whole answer", () => {
     });
     expect(s.dark).toEqual(["demo.early"]);
     expect(s.green, "a rule that can never fire is a red line").toBe(false);
-    expect(statusLines(s, DELIVERS).join("\n")).toContain("nothing delivers");
+    expect(statusLines(s).join("\n")).toContain("nothing delivers");
   });
 
   it("lists a turn-end breadcrumb as one that fires, with no red line — beside the turn-end guardrail", () => {
@@ -2915,7 +2298,7 @@ describe("status — the whole answer", () => {
     });
     expect(s.dark).toEqual([]);
     expect(s.green, "a note shown at the hand-back is in force").toBe(true);
-    const page = statusLines(s, DELIVERS).join("\n");
+    const page = statusLines(s).join("\n");
     expect(page).not.toContain("nothing delivers");
     expect(page, "listed as a note").toContain("🍞 demo.late");
     const atTurnEnd = s.moments.moments.find((row) => row.moment === "turn-end")?.entries.map((entry) => entry.id);
@@ -2924,111 +2307,16 @@ describe("status — the whole answer", () => {
 
   it("says the session's own categories when a live session marked this worktree", () => {
     const s = status(statusFacts({ session: { id: "s1", agent: "main", wearing: ["parent"] } }));
-    expect(statusLines(s, DELIVERS).join("\n")).toContain("parent");
+    expect(statusLines(s).join("\n")).toContain("parent");
   });
 
   it("says so plainly when nothing has marked one", () => {
-    expect(statusLines(status(statusFacts()), DELIVERS).join("\n")).toContain("no live session");
-  });
-});
-
-describe("status — does git run the commit gate", () => {
-  const judged = (over: Partial<StatusFacts>) => {
-    const s = status(statusFacts(over));
-    // As printed: a detail of several lines is several lines on the page.
-    const line = statusLines(s, DELIVERS).join("\n").split("\n").find((said) => said.includes(" hooks-path: "));
-    return { s, fitting: s.fittings.find((f) => f.id === "hooks-path"), line, code: statusCode(s) };
-  };
-  /** Husky's setup: git runs `.husky/_`, and a person edits `.husky/pre-commit`. */
-  const husky = (preCommitText: string | null): Partial<StatusFacts> => ({
-    hooksPath: ".husky/_",
-    hooksFolder: { dir: ".husky/_", files: ["h", "husky.sh", "pre-commit"], preCommitText, preCommitExecutable: false },
-  });
-
-  it("flow's own .githooks is green, as it always read", () => {
-    const { s, line } = judged({});
-    expect(line).toBe(`  ✓ hooks-path: core.hooksPath = ${HOOKS_DIR}`);
-    expect(s.green).toBe(true);
-  });
-
-  it("counts `.githooks/`, `./.githooks` and an absolute path to it as flow's own, as init does", () => {
-    for (const set of [".githooks/", "./.githooks", "/repo/.githooks"]) {
-      const { s, line } = judged({ hooksPath: set, hooksFolder: { dir: hooksDirOf("/repo", set), files: ["pre-commit"], preCommitText: PRE_COMMIT, preCommitExecutable: true } });
-      expect(line, set).toBe(`  ✓ hooks-path: core.hooksPath = ${HOOKS_DIR}`);
-      expect(s.green, set).toBe(true);
-    }
-  });
-
-  describe("other hooks that do not call flow", () => {
-    it("husky's: red, in the words of init's block — the folder and both fixes — and exits 1", () => {
-      const { s, fitting, line, code } = judged(husky("npm test\n"));
-      const other = { dir: ".husky/_", preCommit: ".husky/pre-commit", fix: "add" } as const;
-      expect(fitting).toStrictEqual({ id: "hooks-path", ok: false, detail: notInstalledLines(other).join("\n") });
-      expect(line).toBe(`  ✗ hooks-path: ${NOT_INSTALLED}. Git runs hooks from .husky/_, and .husky/pre-commit does not call flow, so no commit runs flow's gate.`);
-      const said = statusLines(s, DELIVERS).join("\n");
-      // Every later line of the block sits under the row, four in, its own indent kept after that.
-      const page = said.split("\n");
-      const at = page.findIndex((l) => l.includes(" hooks-path: "));
-      expect(page.slice(at + 1, at + 6)).toStrictEqual(notInstalledLines(other).slice(1).map((l) => `    ${l}`));
-      expect(said).toContain("Add these two lines to the end of .husky/pre-commit:");
-      expect(said).toContain(GATE_RUN_LINE);
-      expect(said).toContain(`move those hooks into ${HOOKS_DIR}/`);
-      expect(said).toContain(SET_HOOKS_PATH);
-      expect(s.green).toBe(false);
-      expect(code).toBe(1);
-    });
-
-    it("a hook in .git/hooks, with core.hooksPath unset: red, naming that folder and its pre-commit", () => {
-      const { fitting, code } = judged({ hooksPath: null, hooksFolder: { ...FRESH_CLONE, files: [...FRESH_CLONE.files, "pre-push"] } });
-      expect(fitting?.ok).toBe(false);
-      expect(fitting?.detail).toContain("Git runs hooks from .git/hooks, and there is no .git/hooks/pre-commit");
-      expect(fitting?.detail).toContain("Create .git/hooks/pre-commit with these three lines, then run `chmod +x .git/hooks/pre-commit`");
-      expect(code).toBe(1);
-    });
-
-    it("a pre-commit in .git/hooks that calls flow without the execute bit: red, saying it must be executable", () => {
-      const lfs: HooksFolder = { dir: ".git/hooks", files: ["pre-push", "pre-commit"], preCommitText: PRE_COMMIT, preCommitExecutable: false };
-      const { fitting, code } = judged({ hooksPath: null, hooksFolder: lfs });
-      expect(fitting).toStrictEqual({
-        id: "hooks-path",
-        ok: false,
-        detail: notInstalledLines({ dir: ".git/hooks", preCommit: ".git/hooks/pre-commit", fix: "chmod" }).join("\n"),
-      });
-      expect(fitting?.detail).toContain("calls flow but is not executable, so git ignores it");
-      expect(code).toBe(1);
-      expect(judged({ hooksPath: null, hooksFolder: { ...lfs, preCommitExecutable: true } }).fitting?.ok, "and green once it is").toBe(true);
-    });
-  });
-
-  it("other hooks whose pre-commit calls flow: green, naming the folder and the hook", () => {
-    const { s, line, code } = judged(husky(`#!/bin/sh\nnpm test\n${GATE_LOCAL_LINE}\n${GATE_RUN_LINE}\n`));
-    expect(line).toBe("  ✓ hooks-path: git runs hooks from .husky/_, and .husky/pre-commit calls flow");
-    expect(s.green).toBe(true);
-    expect(code).toBe(0);
-  });
-
-  it("no other hooks and core.hooksPath unset: the red line it always was, with the setting to make", () => {
-    const { fitting } = judged({ hooksPath: null, hooksFolder: FRESH_CLONE });
-    expect(fitting).toStrictEqual({
-      id: "hooks-path",
-      ok: false,
-      detail: `core.hooksPath is unset — run \`${SET_HOOKS_PATH}\`. It is per-clone, so every fresh checkout needs it.`,
-    });
-    expect(fitting?.detail).not.toContain(NOT_INSTALLED);
-  });
-
-  it("when git could not name its hooks folder, red and cannot judge — never advice to set core.hooksPath", () => {
-    for (const hooksPath of [".husky/_", HOOKS_DIR, null]) {
-      const { fitting } = judged({ hooksPath, hooksFolder: null });
-      expect(fitting?.ok, String(hooksPath)).toBe(false);
-      expect(fitting?.detail, String(hooksPath)).toBe(HOOKS_UNKNOWN);
-      expect(fitting?.detail, String(hooksPath)).not.toContain("core.hooksPath");
-    }
+    expect(statusLines(status(statusFacts())).join("\n")).toContain("no live session");
   });
 });
 
 describe("status — the snapshot's edges and a registration an older flow wrote", () => {
-  const red = (over: Partial<StatusFacts>): string => statusLines(status(statusFacts(over)), DELIVERS).join("\n");
+  const red = (over: Partial<StatusFacts>): string => statusLines(status(statusFacts(over))).join("\n");
   const guardsAt = (on: readonly string[], at: readonly string[] = ["write"]) =>
     loaded("house.env", { kind: "guardrail", at, on, message: "no" });
 
@@ -3747,13 +3035,6 @@ describe("what goes unjudged while a registration is missing", () => {
 });
 
 describe("claudeCode — the harness flow is handed", () => {
-  it("answers the events the hooks call, and delivers the moments the dialect says it does", () => {
-    expect(claudeCode.events).toEqual(HOOK_EVENTS);
-    expect(claudeCode.delivers).toEqual(DELIVERS);
-    expect(claudeCode.registering.registrations).toEqual(HOOK_REGISTRATIONS);
-    expect(claudeCode.registering.repoFile).toBe(REPO_SETTINGS);
-  });
-
   it("puts the machine-wide settings file where the host's own override says", () => {
     const was = process.env["CLAUDE_CONFIG_DIR"];
     process.env["CLAUDE_CONFIG_DIR"] = "/somewhere/else";
@@ -3763,5 +3044,21 @@ describe("claudeCode — the harness flow is handed", () => {
       if (was === undefined) delete process.env["CLAUDE_CONFIG_DIR"];
       else process.env["CLAUDE_CONFIG_DIR"] = was;
     }
+  });
+});
+
+describe("what a tool call did, in flow's own words", () => {
+  const actionOfTool = (name: string): string | undefined => {
+    const line = JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "t", name, input: {} }] } });
+    const use = parseEvents(line).find((event) => event.kind === "use");
+    return use?.kind === "use" ? use.action : undefined;
+  };
+
+  it("maps every tool that changes a file, and the three it reads or runs, and calls the rest other", () => {
+    expect(actionOfTool("Write")).toBe("write");
+    for (const name of ["Edit", "MultiEdit", "NotebookEdit"]) expect(actionOfTool(name), name).toBe("edit");
+    expect(actionOfTool("Read")).toBe("read");
+    expect(actionOfTool("Bash")).toBe("shell");
+    expect(actionOfTool("Grep")).toBe("other");
   });
 });

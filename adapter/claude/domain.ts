@@ -3,8 +3,8 @@ import { followSteps, GIT_VALUE_OPTS, gitCommand, isOption, parseCommandLine, pa
 import { fires, insideRepo, namedAgent, type AgentOf, type Cause, type Row } from "../../engine/domain.ts";
 import { posix } from "node:path";
 import { matchAny } from "../../glob.ts";
-import { ALLOW, CONFIG_FILE, EDIT_TOOLS, PACKAGE_DIR, REFUSED_ONLY, listed, refused, relativise, repoFirst, staticPrefix, text, type AdapterEvent, type CallRecord, type Change, type Refused, type RevertScope, type Undone } from "../domain.ts";
-import type { HookCost, HookResult, Registration, Spawn, SpawnMeta, Steer, TranscriptEvent, TranscriptHead, TranscriptRef } from "../harness.ts";
+import { ALLOW, CONFIG_FILE, PACKAGE_DIR, REFUSED_ONLY, listed, refused, relativise, repoFirst, staticPrefix, text, type AdapterEvent, type CallRecord, type Change, type Refused, type RevertScope, type Undone } from "../domain.ts";
+import type { HookCost, HookResult, ToolAction, Registration, Spawn, SpawnMeta, Steer, TranscriptEvent, TranscriptHead, TranscriptRef } from "../harness.ts";
 
 
 
@@ -1805,7 +1805,7 @@ export function classifyStore(paths: readonly string[]): {
         path,
         meta: present.has(meta) ? meta : null,
         session: parts[0] ?? "",
-        agent: (parts[2] ?? "").slice(0, -".jsonl".length),
+        agent: (parts[2] ?? "").slice("agent-".length, -".jsonl".length),
       });
       continue;
     }
@@ -1958,6 +1958,7 @@ export function parseEvents(jsonl: string, root = "", home?: string): Transcript
         ts: line.ts,
         id: text(block.id),
         name,
+        action: actionOf(name),
         input,
         path: relativise(text(input["file_path"] ?? input["notebook_path"]), root),
         ...(reads.length === 0 ? {} : { reads }),
@@ -1965,6 +1966,24 @@ export function parseEvents(jsonl: string, root = "", home?: string): Transcript
     }
   }
   return out;
+}
+
+/**
+ * The tools that CHANGE a file — which names count as an edit is harness knowledge, and this is the
+ * one set.
+ *
+ * There were two in the old engine and they had already drifted: the recorder's knew about
+ * `NotebookEdit` and the turn-end rule's did not, so a notebook edit was work for the log and not
+ * work for the rule watching for work. A fact about the host's tool names belongs in one place.
+ */
+export const EDIT_TOOLS: ReadonlySet<string> = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
+
+/** What a tool call did, in flow's words: the product's reading of a transcript never sees a tool name. */
+function actionOf(tool: string): ToolAction {
+  if (tool === "Write") return "write";
+  if (EDIT_TOOLS.has(tool)) return "edit";
+  if (tool === "Read") return "read";
+  return tool === "Bash" ? "shell" : "other";
 }
 
 /** A tool result's text, whichever of the three shapes the host wrote it in. */

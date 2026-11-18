@@ -29,7 +29,7 @@ import { ALLOW, hermeticEnv, nulPaths, type AdapterEvent, type CallRecord, type 
 import { AFTER_CALL, agentOf, agentSettingOf, authored, awaitsBrief, callKey, callRecord, deltaFault, forgettable, holdsForBrief, included, isHookEvent, mismatchRow, nothingBound, outsideOf, overlapping, ownTranscriptPath, reachesAnotherWorktree, readFault, reversal, ridesRefusal, sessionFactsFrom, shellReadRows, snapshotPathspecs, toEvent, toResult, tokensFromTranscript, toolRow, turnActions, type Answer, type Delta, type EventWorld, type HookEvent, type HookPayload, type Shown, untoldWorktrees, visibility, whileBroken, workedPaths, worktreeFolders, writeRows } from "./domain.ts";
 import type { Harness, HookResult } from "../harness.ts";
 import { DELIVERS, HOOK_COSTS, HOOK_EVENTS, HOOK_REGISTRATIONS, HOST_SURFACE, REPO_SETTINGS, bareRegistrations, listsFlow, machineDiffers, parseEvents, registeredEvents, settingsFileFor, spawnMeta, spawnsIn, staleRegistrations, steerOf, transcriptHead, withMachineCommandsUpToDate, withRegistrations, withoutRegistrations } from "./domain.ts";
-import { readStore, readTranscript } from "./store.ts";
+import { configRoot, readStore, readTranscript } from "./store.ts";
 import { currentBranch, inRepo, loadRegime, readText, realWorld } from "../shell.ts";
 
 
@@ -970,7 +970,7 @@ function readStdin(): string {
  * Throwing instead does NOT fix it, and that is the trap worth stating: the caller's outer catch
  * allows too. The read has to report, and each event has to answer in the way that suits it.
  */
-export function readPayload(): PayloadRead {
+function readPayload(): PayloadRead {
   // HAND-RUN: a person typing `flow hook stop` has no payload and must not block on stdin forever.
   // Asked of fd 0 itself, never of `process.stdin`: merely reading that property opens a stream on
   // fd 0 and the stream makes it NON-BLOCKING (#12). `isatty(0)` leaves fd 0 blocking, so on an
@@ -1014,7 +1014,7 @@ export function readPayload(): PayloadRead {
  * Everything is wrapped: a hook that throws is a hook that wedges a session, and an unknown event
  * is silence rather than a usage message in front of the model.
  */
-export async function hookEntry(event: string, cwd: string): Promise<HookResult> {
+async function hookEntry(event: string, cwd: string): Promise<HookResult> {
   try {
     if (!isHookEvent(event)) return ALLOW;
     const read = readPayload();
@@ -1039,7 +1039,7 @@ export async function hookEntry(event: string, cwd: string): Promise<HookResult>
  * driven over a throwaway directory instead of somebody's real setup.
  */
 function machineSettingsPath(): string {
-  return join(process.env["CLAUDE_CONFIG_DIR"] || join(homedir(), ".claude"), "settings.json");
+  return join(configRoot(), "settings.json");
 }
 
 /** Claude Code. The one value flow.ts chooses, and what the rest of flow is handed in its place. */

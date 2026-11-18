@@ -1,4 +1,4 @@
-// flow/adapter/archive.test.ts — the archival shell, against a real store on disk.
+// flow/adapter/claude/archive.test.ts — the archival shell, against a real store on disk.
 //
 // A SHELL suite, written like one: a temp repo, a temp `~/.claude` beside it laid out exactly as
 // the host lays one out, and the assertions are about what comes back rather than about which
@@ -223,9 +223,9 @@ describe("the reading, assembled", () => {
     expect(read.actors).toEqual([
       // The parent asked for a generic bucket; the host wrote down what it really was. The join names
       // the actor for cost attribution, after the fact; a live session is classified from its hook message.
-      { session: "one", agent: "agent-1", agentType: "builder", description: "Build F5", model: "opus", asked: "general-purpose", at: "2026-09-04T10:01:00.000Z", line: 3 },
+      { session: "one", agent: "1", agentType: "builder", description: "Build F5", model: "opus", asked: "general-purpose", at: "2026-09-04T10:01:00.000Z", line: 3 },
       // Spawned, as what we cannot say — and nothing is invented to fill it in.
-      { session: "one", agent: "agent-2", agentType: null, description: null, model: null, asked: null, at: null, line: null },
+      { session: "one", agent: "2", agentType: null, description: null, model: null, asked: null, at: null, line: null },
     ]);
   });
 

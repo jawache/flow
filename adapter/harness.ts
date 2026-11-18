@@ -42,7 +42,7 @@ export interface TranscriptRef {
   /** The sidecar's path, only when the listing actually held it — never a probe. */
   readonly meta: string | null;
   readonly session: string;
-  /** Null for a top-level session; the `agent-…` stem for a subagent. */
+  /** Null for a top-level session; the harness's id for a subagent. */
   readonly agent: string | null;
 }
 
@@ -90,6 +90,9 @@ export interface Spawn {
   readonly line: number;
 }
 
+/** What a tool call did, whichever harness's tool it was: `write` makes a whole file, `edit` changes part of one. */
+export type ToolAction = "edit" | "write" | "read" | "shell" | "other";
+
 /** One thing that happened in a conversation, with the line it happened on. */
 export type TranscriptEvent =
   | { readonly line: number; readonly kind: "prompt"; readonly text: string }
@@ -100,6 +103,8 @@ export type TranscriptEvent =
       readonly ts: string | null;
       readonly id: string;
       readonly name: string;
+      /** What the call did, in flow's own words: the harness maps its tool names to one of these. */
+      readonly action: ToolAction;
       readonly input: Record<string, unknown>;
       /** The file the call names, repo-relative. Empty when it names none. */
       readonly path: string;
@@ -200,7 +205,7 @@ export interface Transcripts {
   /** One transcript's bytes, and the sidecar beside it if there is one. */
   readonly readTranscript: (dir: string, held: StoredTranscript) => { jsonl: string; meta: SpawnMeta | null };
   /** What the conversation did, in order. */
-  readonly events: (jsonl: string, root: string, home?: string) => TranscriptEvent[];
+  readonly events: (jsonl: string, root?: string, home?: string) => TranscriptEvent[];
   /** The conversation's first facts: when it started, on which branch, in which folder. */
   readonly head: (jsonl: string) => TranscriptHead;
   /** The subagents the conversation started, by the host's id for each. */
@@ -210,6 +215,9 @@ export interface Transcripts {
   /** What the session ran under: the permission mode, and whether the host steers it towards shell edits. */
   readonly steer: (jsonl: string) => Steer | null;
 }
+
+/** What flow's own verbs decide with: the harness's name, the moments it delivers and what it registers. */
+export type HarnessFacts = Pick<Harness, "name" | "delivers" | "registering">;
 
 /**
  * A harness, as the rest of flow sees it.

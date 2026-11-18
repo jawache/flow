@@ -243,8 +243,8 @@ function liveSession(root: string, harness: Harness): StatusFacts["session"] {
 function transcriptOf(root: string, session: string, agent: string, harness: Harness): string {
   const { transcripts } = harness;
   const store = transcripts.readStore(root);
-  const stem = agent === "main" ? null : `agent-${agent}`;
-  const held = store.transcripts.find((t) => t.ref.session === session && t.ref.agent === stem);
+  const id = agent === "main" ? null : agent;
+  const held = store.transcripts.find((t) => t.ref.session === session && t.ref.agent === id);
   return held === undefined ? "" : transcripts.readTranscript(store.dir, held).jsonl;
 }
 
@@ -535,5 +535,5 @@ export async function runStatus(cwd: string, args: readonly string[], harness: H
   const answer = status(facts);
   const exitCode = statusCode(answer);
   if (args.includes("--json")) return { stdout: `${JSON.stringify(answer, null, 2)}\n`, stderr: "", exitCode };
-  return { stdout: `${statusLines(answer, harness.delivers).join("\n")}\n`, stderr: "", exitCode };
+  return { stdout: `${statusLines(answer).join("\n")}\n`, stderr: "", exitCode };
 }

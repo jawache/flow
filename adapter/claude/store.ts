@@ -15,16 +15,21 @@ import { classifyStore, projectFolderName, spawnMeta } from "./domain.ts";
 
 
 /**
+ * The folder Claude Code keeps its own files in: settings, projects. `CLAUDE_CONFIG_DIR` moves it, and
+ * the host honours that for the store as it does for settings.json, so one read from `~/.claude`
+ * regardless would be somebody else's. A `home` passed in is taken as the user's home and wins: that is
+ * a test naming its own world.
+ */
+export function configRoot(home?: string): string {
+  return home === undefined ? process.env["CLAUDE_CONFIG_DIR"] || join(homedir(), ".claude") : join(home, ".claude");
+}
+
+/**
  * Where this harness keeps a working directory's conversations.
- *
- * Under the host's own folder, and `CLAUDE_CONFIG_DIR` moves that folder — the host honours it for
- * the store as it does for settings.json, so a store read from `~/.claude` regardless would be
- * somebody else's. A `home` passed in is taken as the user's home and wins: that is a test naming
- * its own world.
+ * One folder per working directory, under `projects/` in `configRoot`.
  */
 export function projectDir(cwd: string, home?: string): string {
-  const root = home === undefined ? process.env["CLAUDE_CONFIG_DIR"] || join(homedir(), ".claude") : join(home, ".claude");
-  return join(root, "projects", projectFolderName(cwd));
+  return join(configRoot(home), "projects", projectFolderName(cwd));
 }
 
 /**
