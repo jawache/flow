@@ -71,7 +71,6 @@ import {
   recordPath,
   recordingFile,
   recordingHeader,
-  afterCompaction,
   covers,
   diffRows,
   insideRepo,
@@ -999,16 +998,12 @@ describe("a breadcrumb across one session", () => {
 });
 
 describe("a compaction", () => {
-  it("leaves no mark, so every breadcrumb is earned again", () => {
-    expect(afterCompaction()).toEqual({});
-  });
-
   it("shows a session breadcrumb again at once, as the compacted session starts, and any other at its next moment", () => {
     const marks: Marks = { "rails.notes.orientation": 0, "rails.notes.area": 40_000 };
     const quiet = briefing({ event: { moment: "session", tokens: 500, wearing: [] }, marks });
     expect(quiet.notices, "a resume that keeps the session shows it no more").toEqual([]);
 
-    const after = afterCompaction();
+    const after: Marks = {};
     const started = briefing({ event: { moment: "session", tokens: 500, wearing: [] }, marks: after });
     expect(noticeIds(started)).toEqual(["rails.notes.orientation"]);
     expect(started.notices[0]?.cause).toBe("session");

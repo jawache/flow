@@ -22,7 +22,7 @@ import { homedir } from "node:os";
 import { isatty } from "node:tty";
 import { basename, dirname, join, posix } from "node:path";
 import { type Category, refusalText, type LoadResult, type Settings, type TurnAction } from "../language/domain.ts";
-import { afterCompaction, brief, categoriesIn, DELETED, guard, recorder, runRows, type AgentOf, type Identity, type Marks, type Notice, type Outcome, type RecordedStep, type Row, type Tree } from "../engine/domain.ts";
+import { brief, categoriesIn, DELETED, guard, recorder, runRows, type AgentOf, type Identity, type Marks, type Notice, type Outcome, type RecordedStep, type Row, type Tree } from "../engine/domain.ts";
 import { appendRows, appendSteps, isOff, isRecording, loadState, readRows, stickyIdentity, updateState, writeMarker } from "../engine/state.ts";
 import { agentOf, ALLOW, awaitsBrief, changeEvents, changeRow, commitRange, editedFile, folderChanges, foldersToLook, hermeticEnv, holdsForBrief, isHookEvent, namedChange, nothingBound, outsideOf, opensCall, reachesAnotherWorktree, readFault, ridesRefusal, sessionFactsFrom, shellChangesOf, shellReadRows, statusPaths, toEvent, toResult, toolRow, whileBroken, withShellChanges, workedPaths, worktreeFolders, worktreesWorkedIn, type AdapterEvent, type Answer, type BriefAdapterEvent, type EventWorld, type HookEvent, type Refused, type Shown } from "./domain.ts";
 import type { Harness, HookPayload, HookResult } from "./harness.ts";
@@ -279,12 +279,6 @@ function lookAt(folders: readonly string[]): Map<string, Tree> {
   return looked;
 }
 
-/** What this agent last saw in these folders, now what git lists: the "before" of its next call. */
-function remember(session: Session, looked: ReadonlyMap<string, Tree>): void {
-  if (looked.size === 0) return;
-  updateState(session.root, session.id, session.who.agent, (state) => ({ ...state, trees: { ...state.trees, ...Object.fromEntries(looked) } }));
-}
-
 /** The world a payload is read against — disk, and the turn, asked only if the moment needs them. */
 function eventWorld(root: string, session: Session, heldForBrief?: boolean): EventWorld {
   return {
@@ -295,12 +289,6 @@ function eventWorld(root: string, session: Session, heldForBrief?: boolean): Eve
     home: homedir(),
     heldForBrief,
   };
-}
-
-/** A note's prose: inline, or the repo file it named. The shell resolves it; a pure home cannot. */
-function prose(root: string, notice: Notice): string {
-  if (notice.text !== undefined) return notice.text;
-  return notice.file === undefined ? "" : (readText(root, notice.file) ?? "");
 }
 
 /**
@@ -365,7 +353,6 @@ export async function runHook(harness: Harness, hook: HookEvent, payload: HookPa
   // tool with no hook before it. A session's start is a look too, so a change made before the first
   // call is not that call's.
   const looked = lookAt(off ? [] : foldersToLook(hook, tool, () => workedFolders(session, payload), realPath(root)));
-  if (hook === "pre-tool-use") remember(session, looked);
 
   // READ AFTER the identity was settled, deliberately: `stickyIdentity` writes the classification
   // into this same file.
@@ -467,22 +454,37 @@ async function judge(args: {
   // calls together — and each reads the marks, decides, and writes them: without the lock the second
   // write drops the first's marks, and the same breadcrumb is shown again. The files the call
   // changed are found in here too, from the "before" the state holds, so two hooks cannot each find
-  // the same change.
+  // the same change. The lock is held for a decision and no IO: git, the prose files, the transcript
+  // and the real paths are all read BEFORE it, because a hook that waits gives up after seconds.
+  const tokens = briefEvents.length > 0 || hook === "post-tool-use" ? session.tokens() : 0;
+  const bodies = new Map<string, string>();
+  if (load.ok && (briefEvents.length > 0 || hook === "post-tool-use"))
+    for (const entry of load.entries)
+      if (entry.spec.kind === "breadcrumb" && entry.spec.file !== undefined) bodies.set(entry.spec.file, readText(session.root, entry.spec.file) ?? "");
+  const written = hook === "post-tool-use" ? editedFile(payload) : null;
+  const edited = written === null ? null : realPath(posix.resolve(session.root, written));
+  const stored = loadState(session.root, session.id, session.who.agent);
+  const committed = new Map<string, { readonly head: string | null; readonly files: string[] }>();
+  if (hook === "post-tool-use")
+    for (const [folder, after] of looked) {
+      const before = stored.trees?.[folder] ?? null;
+      if (before !== null) committed.set(folder, { head: before.head, files: committedBetween(folder, before, after) });
+    }
   updateState(session.root, session.id, session.who.agent, (state) => {
-    let marks: Marks = compacted ? afterCompaction() : state.marks;
+    let marks: Marks = compacted ? {} : state.marks;
     // THE NOTES HELD FOR THE BRIEF: held by a subagent's start that judged them without it, and let
     // go by the first call that judges them again. A refused call judges none, so they stay held.
     let held = state.heldForBrief === true;
 
     const all = [...briefEvents];
     if (hook === "post-tool-use") {
-      const written = editedFile(payload);
-      const edited = written === null ? null : realPath(posix.resolve(session.root, written));
       const found: string[] = [];
       for (const [folder, after] of looked) {
         const before = state.trees?.[folder] ?? null;
-        const committed = before === null ? [] : committedBetween(folder, before, after);
-        found.push(...folderChanges({ before, after, committed, named: namedChange(edited, folder) }));
+        const made = committed.get(folder);
+        // The commits were listed against the "before" this hook read first; they stand while the state still holds it.
+        const between = before !== null && made !== undefined && made.head === before.head ? made.files : [];
+        found.push(...folderChanges({ before, after, committed: between, named: namedChange(edited, folder) }));
       }
       const changed = [...new Set(found)];
       const row = changeRow(typeof payload.tool_name === "string" ? payload.tool_name : "", changed);
@@ -503,11 +505,11 @@ async function judge(args: {
         ...(event.path === undefined ? {} : { path: event.path }),
         ...(event.command === undefined ? {} : { command: event.command }),
         wearing: identity.wearing,
-        tokens: session.tokens(),
+        tokens,
       });
       const briefing = brief({
         load,
-        event: { moment: event.moment, path: event.path, command: event.command, wearing: identity.wearing, tokens: session.tokens() },
+        event: { moment: event.moment, path: event.path, command: event.command, wearing: identity.wearing, tokens },
         marks,
         settings,
         off,
@@ -515,7 +517,7 @@ async function judge(args: {
       const notices: Notice[] = [];
       const unshown: string[] = [];
       for (const notice of briefing.notices) {
-        const body = prose(session.root, notice);
+        const body = notice.text ?? (notice.file === undefined ? "" : (bodies.get(notice.file) ?? ""));
         if (body.trim() === "") {
           // A note whose prose could not be resolved was never shown, so it must not be MARKED shown —
           // that would silence it for the rest of the session and hide the broken `file:` completely.

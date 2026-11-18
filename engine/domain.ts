@@ -637,17 +637,6 @@ export function brief({ load, event, marks, settings, off = false }: BriefArgs):
   return { notices, marks: next };
 }
 
-/**
- * The marks a compaction leaves behind: none.
- *
- * A compaction is the boundary where the agent stops knowing what it was told, and it removes every
- * breadcrumb's text from its context. With no marks, a `session` breadcrumb is shown again at once,
- * as the compacted session starts, and every other breadcrumb the next time its moment happens.
- */
-export function afterCompaction(): Marks {
-  return {};
-}
-
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // RENDERING — what a person reads when a rail refuses
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -1895,7 +1884,7 @@ export interface ReplayArgs {
 /**
  * Run a recording through the engine.
  *
- * It calls the SAME `guard`, `brief`, `afterCompaction` and `runRows` the live path calls — there
+ * It calls the SAME `guard`, `brief` and `runRows` the live path calls — there
  * is no replay engine, only a replay caller, and that is the property being proved. A second
  * implementation here would make a green replay evidence about the replay rather than about the
  * guard.
@@ -1908,7 +1897,7 @@ export async function replay({ load, recording, settings, marks = {} }: ReplayAr
 
   for (const step of recording.steps) {
     if (step.rail === "compaction") {
-      held = afterCompaction();
+      held = {};
       const row: Row = { kind: "compaction" };
       rows.push(row);
       steps.push({ step, effects: [], rows: [row] });
