@@ -6,7 +6,7 @@
 // settings file, its transcripts — is proved in that harness's folder.
 import { describe, it, expect } from "vitest";
 import { DELETED, type Bound, type Row, type Tree } from "../engine/domain.ts";
-import { changeEvents, noticesThatCouldShow, changeRow, changedBy, commitRange, editedFile, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
+import { snipAtWord, changeEvents, noticesThatCouldShow, changeRow, changedBy, commitRange, editedFile, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
 import { breadcrumb, defineConfig, definePack, fileChange, loadConfig, pack, session } from "../index.ts";
 import type { Ctx, TurnAction } from "../language/domain.ts";
 import { ranSinceEdit } from "../checks/domain.ts";
@@ -1104,9 +1104,11 @@ describe("status — the red lines, each carrying its fix", () => {
   });
 
   it("counts the reds it found, so a caller's exit code and the page agree", () => {
-    const s = status(statusFacts({ gateText: null, hooksPath: null, hooksFolder: FRESH_CLONE }));
+    // The gate and core.hooksPath are one `git hook` line, so a repo missing both has one red line naming both fixes.
+    const s = status(statusFacts({ gateText: null, hooksPath: null, hooksFolder: FRESH_CLONE, hasConfig: false, load: null }));
     expect(s.green).toBe(false);
     expect(statusLines(s).at(-1)).toContain("2 red lines");
+    expect(s.fittings.find((f) => f.id === "git hook")?.detail.split("\n")).toHaveLength(2);
   });
 
   it("closes on the same answer the exit code is taken from — never a green page that exits 1", () => {
@@ -1680,7 +1682,7 @@ describe("the binary fitting — can the hooks and the gate find flow", () => {
   it("names node_modules/@jawache/flow when the repo has its own, whatever the PATH holds", () => {
     for (const path of [false, true]) {
       const { lines, green } = binary(true, path);
-      expect(lines).toContain("  ✓ binary: the hooks and the gate run the flow in node_modules/@jawache/flow");
+      expect(lines).toContain( "  ✓ binary: the hooks run this repo's own flow");
       expect(green).toBe(true);
     }
   });
@@ -1797,8 +1799,8 @@ describe("status — does git run the commit gate", () => {
   const judged = (over: StatusOver) => {
     const s = status(statusFacts(over));
     // As printed: a detail of several lines is several lines on the page.
-    const line = statusLines(s).join("\n").split("\n").find((said) => said.includes(" hooks-path: "));
-    return { s, fitting: s.fittings.find((f) => f.id === "hooks-path"), line, code: statusCode(s) };
+    const line = statusLines(s).join("\n").split("\n").find((said) => said.includes(" git hook: "));
+    return { s, fitting: s.fittings.find((f) => f.id === "git hook"), line, code: statusCode(s) };
   };
   /** Husky's setup: git runs `.husky/_`, and a person edits `.husky/commit-msg`. */
   const husky = (commitMsgText: string | null): Partial<StatusFacts> => ({
@@ -1808,14 +1810,14 @@ describe("status — does git run the commit gate", () => {
 
   it("flow's own .githooks is green, as it always read", () => {
     const { s, line } = judged({});
-    expect(line).toBe(`  ✓ hooks-path: core.hooksPath = ${HOOKS_DIR}`);
+    expect(line).toBe(`  ✓ git hook: .githooks/commit-msg runs flow, and core.hooksPath = ${HOOKS_DIR}`);
     expect(s.green).toBe(true);
   });
 
   it("counts `.githooks/`, `./.githooks` and an absolute path to it as flow's own, as init does", () => {
     for (const set of [".githooks/", "./.githooks", "/repo/.githooks"]) {
       const { s, line } = judged({ hooksPath: set, hooksFolder: { dir: hooksDirOf("/repo", set), files: ["commit-msg"], commitMsgText: COMMIT_MSG, commitMsgExecutable: true } });
-      expect(line, set).toBe(`  ✓ hooks-path: core.hooksPath = ${HOOKS_DIR}`);
+      expect(line, set).toBe(`  ✓ git hook: .githooks/commit-msg runs flow, and core.hooksPath = ${HOOKS_DIR}`);
       expect(s.green, set).toBe(true);
     }
   });
@@ -1824,12 +1826,12 @@ describe("status — does git run the commit gate", () => {
     it("husky's: red, in the words of init's block — the folder and both fixes — and exits 1", () => {
       const { s, fitting, line, code } = judged(husky("npm test\n"));
       const other = { dir: ".husky/_", commitMsg: ".husky/commit-msg", fix: "add" } as const;
-      expect(fitting).toStrictEqual({ id: "hooks-path", ok: false, detail: notInstalledLines(other).join("\n") });
-      expect(line).toBe(`  ✗ hooks-path: ${NOT_INSTALLED}. Git runs hooks from .husky/_, and .husky/commit-msg does not call flow, so no commit runs flow's gate.`);
+      expect(fitting).toStrictEqual({ id: "git hook", ok: false, detail: notInstalledLines(other).join("\n") });
+      expect(line).toBe(`  ✗ git hook: ${NOT_INSTALLED}. Git runs hooks from .husky/_, and .husky/commit-msg does not call flow, so no commit runs flow's gate.`);
       const said = statusLines(s).join("\n");
       // Every later line of the block sits under the row, four in, its own indent kept after that.
       const page = said.split("\n");
-      const at = page.findIndex((l) => l.includes(" hooks-path: "));
+      const at = page.findIndex((l) => l.includes(" git hook: "));
       expect(page.slice(at + 1, at + 6)).toStrictEqual(notInstalledLines(other).slice(1).map((l) => `    ${l}`));
       expect(said).toContain("Add these two lines to the end of .husky/commit-msg:");
       expect(said).toContain(GATE_RUN_LINE);
@@ -1851,7 +1853,7 @@ describe("status — does git run the commit gate", () => {
       const lfs: HooksFolder = { dir: ".git/hooks", files: ["pre-push", "commit-msg"], commitMsgText: COMMIT_MSG, commitMsgExecutable: false };
       const { fitting, code } = judged({ hooksPath: null, hooksFolder: lfs });
       expect(fitting).toStrictEqual({
-        id: "hooks-path",
+        id: "git hook",
         ok: false,
         detail: notInstalledLines({ dir: ".git/hooks", commitMsg: ".git/hooks/commit-msg", fix: "chmod" }).join("\n"),
       });
@@ -1863,7 +1865,7 @@ describe("status — does git run the commit gate", () => {
 
   it("other hooks whose commit-msg calls flow: green, naming the folder and the hook", () => {
     const { s, line, code } = judged(husky(`#!/bin/sh\nnpm test\n${GATE_LOCAL_LINE}\n${GATE_RUN_LINE}\n`));
-    expect(line).toBe("  ✓ hooks-path: git runs hooks from .husky/_, and .husky/commit-msg calls flow");
+    expect(line).toBe("  ✓ git hook: git runs hooks from .husky/_, and .husky/commit-msg calls flow");
     expect(s.green).toBe(true);
     expect(code).toBe(0);
   });
@@ -1871,7 +1873,7 @@ describe("status — does git run the commit gate", () => {
   it("no other hooks and core.hooksPath unset: the red line it always was, with the setting to make", () => {
     const { fitting } = judged({ hooksPath: null, hooksFolder: FRESH_CLONE });
     expect(fitting).toStrictEqual({
-      id: "hooks-path",
+      id: "git hook",
       ok: false,
       detail: `core.hooksPath is unset — run \`${SET_HOOKS_PATH}\`. It is per-clone, so every fresh checkout needs it.`,
     });
@@ -2412,5 +2414,17 @@ describe("a turn's shell changes", () => {
     expect(await judged([sed]), "the turn as the transcript tells it: one command, no edit").toBe(true);
     expect(await judged(withShellChanges([sed], changes)), "with the file the command changed").toBe(false);
     expect(await judged(withShellChanges([sed, { did: "run", command: "flow test" }], changes)), "and the tests run after it").toBe(true);
+  });
+});
+
+describe("snipAtWord — a rule's text on the status page, cut at a whole word", () => {
+  it("leaves a short text whole, and marks a cut", () => {
+    expect(snipAtWord("short text", 100)).toBe("short text");
+    expect(snipAtWord("one two three four", 12)).toBe("one two…");
+  });
+  it("cuts after a word that ends exactly at the limit, and never inside one", () => {
+    expect(snipAtWord("abcd efgh ijkl", 10)).toBe("abcd efgh…");
+    expect(snipAtWord("abcd efgh ijkl", 9)).toBe("abcd…");
+    expect(snipAtWord("abcdefghijklmnop", 5)).toBe("…");
   });
 });

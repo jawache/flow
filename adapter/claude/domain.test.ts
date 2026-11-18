@@ -1942,8 +1942,8 @@ describe("status — the whole answer", () => {
     expect(statusLines(s).join("\n")).toContain("parent");
   });
 
-  it("says so plainly when nothing has marked one", () => {
-    expect(statusLines(status(statusFacts())).join("\n")).toContain("no live session");
+  it("prints no session line when nothing has marked one", () => {
+    expect(statusLines(status(statusFacts())).join("\n")).not.toContain("session    ");
   });
 });
 

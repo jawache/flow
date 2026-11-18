@@ -344,6 +344,18 @@ export function snip(value: unknown, n = 140): string {
 }
 
 /**
+ * `snip`, cut at the last whole word: a rule's text in the status page is never cut in the middle of
+ * a word, so the page reads "…is text…" and never "…is text s…".
+ */
+export function snipAtWord(value: unknown, n: number): string {
+  const flat = snip(value, Number.MAX_SAFE_INTEGER);
+  if (flat.length <= n) return flat;
+  const cut = flat.slice(0, n - 1);
+  const whole = flat[n - 1] === " " ? cut : cut.slice(0, Math.max(cut.lastIndexOf(" "), 0));
+  return `${whole.trimEnd()}…`;
+}
+
+/**
  * High-signal pushback — where the human corrected the agent. A HEURISTIC, and the report says so.
  *
  * It is deliberately generous: the cost of a false positive is a coach reading one line that turns
@@ -2346,10 +2358,37 @@ export function lastHookRan(history: readonly { readonly session: string; readon
 /** The harness every session log written before the log named its harness belongs to: the only one flow had. */
 const LOG_BEFORE_HARNESS = "claude-code";
 
-function fittingsOf(facts: StatusFacts): Fitting[] {
+/** Does `.githooks/commit-msg` call flow, as one half of the `git hook` fitting? */
+function commitGate(facts: Pick<StatusFacts, "gateText" | "oldGateText">): Fitting {
   const armed = armsFlow(facts.gateText);
   const old = !armed && armsOldFlow(facts.gateText);
   const olderGate = armsFlow(facts.oldGateText) || armsOldFlow(facts.oldGateText);
+  return {
+    id: "git hook",
+    ok: armed && !olderGate,
+    detail: olderGate
+      ? `${OLD_GATE_PATH} still runs flow, without the commit message — \`flow init\` replaces it with ${GATE_PATH}.`
+      : armed
+        ? `${GATE_PATH} runs flow`
+        : old
+          ? `${GATE_PATH} calls the old \`flow commit\`, which leaves every deleted file unchecked — ${UPDATE_THE_GATE_LINE}.`
+          : facts.gateText === null
+            ? `no ${GATE_PATH} — \`flow init\` arms it. Until then nothing runs at the commit.`
+            : `${GATE_PATH} is here but does not call flow — ${ADD_THE_GATE_LINE}.`,
+  };
+}
+
+/**
+ * THE `git hook` FITTING, one line for the two facts git must hold: the commit-msg hook calls flow,
+ * and git runs the folder it is in. Green joins them, as the tutorial prints it; red names each
+ * half that is not, so the fix of each is on the line.
+ */
+function gitHookFitting(gate: Fitting, path: Fitting): Fitting {
+  if (gate.ok && path.ok) return { id: "git hook", ok: true, detail: path.detail.startsWith("core.hooksPath") ? `${gate.detail}, and ${path.detail}` : path.detail };
+  return { id: "git hook", ok: false, detail: [gate, path].filter((f) => !f.ok).map((f) => f.detail).join("\n") };
+}
+
+function fittingsOf(facts: StatusFacts): Fitting[] {
   return [
     {
       id: "config",
@@ -2358,20 +2397,8 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
         ? facts.configPath
         : `no ${CONFIG_FILE} in ${facts.root} — \`flow init\` writes one, that binds flow's own pack.`,
     },
-    {
-      id: "commit-gate",
-      ok: armed && !olderGate,
-      detail: olderGate
-        ? `${OLD_GATE_PATH} still runs flow, without the commit message — \`flow init\` replaces it with ${GATE_PATH}.`
-        : armed
-        ? `${GATE_PATH} runs \`flow hook commit\` over the staged changes`
-        : old
-          ? `${GATE_PATH} calls the old \`flow commit\`, which leaves every deleted file unchecked — ${UPDATE_THE_GATE_LINE}.`
-          : facts.gateText === null
-            ? `no ${GATE_PATH} — \`flow init\` arms it. Until then nothing runs at the commit.`
-            : `${GATE_PATH} is here but does not call flow — ${ADD_THE_GATE_LINE}.`,
-    },
-    hooksPathFitting(facts),
+    gitHookFitting(commitGate(facts), hooksPathFitting(facts)),
+    binaryFitting(facts),
     // NO GRAMMARS, NO ROW. A repo that declares none has nothing to be told, and a fitting saying so
     // would be a green tick about a feature nobody used.
     ...(facts.grammars.length === 0
@@ -2389,7 +2416,6 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
           },
         ]),
     ...harnessFittings(facts),
-    binaryFitting(facts),
   ];
 }
 
@@ -2474,21 +2500,21 @@ function hooksPathFitting(facts: Pick<StatusFacts, "hooksPath" | "hooksFolder">)
   // telling a husky repo to set `core.hooksPath` is the very advice that turns husky off.
   if (folder === null)
     return {
-      id: "hooks-path",
+      id: "git hook",
       ok: false,
       detail: HOOKS_UNKNOWN,
     };
-  if (folder.dir === HOOKS_DIR) return { id: "hooks-path", ok: true, detail: `core.hooksPath = ${HOOKS_DIR}` };
+  if (folder.dir === HOOKS_DIR) return { id: "git hook", ok: true, detail: `core.hooksPath = ${HOOKS_DIR}` };
   const other = otherHooks(facts.hooksPath, folder);
   if (other === null)
     return {
-      id: "hooks-path",
+      id: "git hook",
       ok: false,
       detail: `core.hooksPath is ${facts.hooksPath ?? "unset"} — run \`${SET_HOOKS_PATH}\`. It is per-clone, so every fresh checkout needs it.`,
     };
   return unwired(other)
-    ? { id: "hooks-path", ok: false, detail: notInstalledLines(other).join("\n") }
-    : { id: "hooks-path", ok: true, detail: wiredLine(other) };
+    ? { id: "git hook", ok: false, detail: notInstalledLines(other).join("\n") }
+    : { id: "git hook", ok: true, detail: wiredLine(other) };
 }
 
 /**
@@ -2516,7 +2542,9 @@ function binaryFitting(facts: Pick<StatusFacts, "binary" | "gateText" | "harness
       ok: true,
       detail:
         byHooks === byGate
-          ? `the hooks and the gate run the flow ${byHooks}`
+          ? byHooks === `in ${PACKAGE_DIR}`
+            ? "the hooks run this repo's own flow"
+            : `the hooks and the gate run the flow ${byHooks}`
           : `the hooks run the flow ${byHooks}, and the gate the flow ${byGate}`,
     };
   const install = `install it for this repo with \`npm i -D github:jawache/flow#v${facts.version}\`.`;
@@ -2630,7 +2658,7 @@ function entryLines(entry: Bound): string[] {
   const mark = entry.disabled !== null ? "○" : entry.kind === "guardrail" ? "✗" : "🍞";
   const lines = [`    ${mark} ${entry.id}${scope.length === 0 ? "" : `  —  ${scope.join(" · ")}`}`];
   if (entry.disabled !== null) lines.push(`        off: ${entry.disabled || "no reason given"}`);
-  else if (entry.says !== null) lines.push(`        ${snip(entry.says, 100)}`);
+  else if (entry.says !== null) lines.push(`        ${snipAtWord(entry.says, 100)}`);
   return lines;
 }
 
@@ -2654,10 +2682,9 @@ export function statusLines(s: Status): string[] {
         ", every one resolved and able to fire",
     `  config     ${s.configPath}`,
     `  state      ${s.root}/${FLOW_DIR}`,
-    `  session    ` +
-      (s.session === null
-        ? "no live session has marked this worktree yet"
-        : `${s.session.id}${s.session.agent === null ? "" : ` · ${s.session.agent}`}, wearing ${s.session.wearing.length === 0 ? "no category" : s.session.wearing.join(" · ")}`),
+    ...(s.session === null
+      ? []
+      : [`  session    ${s.session.id}${s.session.agent === null ? "" : ` · ${s.session.agent}`}, wearing ${s.session.wearing.length === 0 ? "no category" : s.session.wearing.join(" · ")}`]),
   ];
   const mode = s.session?.mode ?? null;
   if (mode !== null) lines.push(`  mode       ${modeLine(mode, s.session?.steer ?? null)}`);

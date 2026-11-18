@@ -112,7 +112,7 @@ export interface PatternHit {
  * Every pattern that matches, per line, in order.
  *
  * A pattern is applied per LINE rather than to the whole text, because a hit has to be able to
- * name one: "matches /TODO/" sends a reader to a file, "line 42: matches /TODO/" sends them to the
+ * name one: "matches TODO" sends a reader to a file, "line 42 matches TODO" sends them to the
  * place. A single-line subject — a command — simply has one line.
  */
 export function patternHits(text: string, patterns: readonly string[]): PatternHit[] {
@@ -137,7 +137,7 @@ export const textBan = defineCheck(
   (opts: { ban: readonly string[] }): Check =>
     (ctx) => {
       const hits = patternHits(touched(ctx).content, opts.ban);
-      return answer(ctx, hits.map((h) => `line ${h.line}: matches /${h.pattern}/`));
+      return answer(ctx, hits.map((h) => `line ${h.line} matches ${h.pattern}`));
     },
 );
 

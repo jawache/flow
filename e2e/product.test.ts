@@ -293,7 +293,7 @@ describe("flow status", () => {
       const world = { home, path: path.join(":") };
 
       const said = runFlow(local, ["status"], world);
-      expect(said.stdout).toContain("✓ binary: the hooks and the gate run the flow in node_modules/@jawache/flow");
+      expect(said.stdout).toContain("✓ binary: the hooks run this repo's own flow");
       expect(said.code, said.stdout).toBe(0);
 
       stageGuardDeletion(local, world);
@@ -628,7 +628,7 @@ describe("flow init, when git already runs other hooks", () => {
 
       const status = flow(lfs, ["status"]);
       expect(status.code).toBe(1);
-      expect(hooksPathOf(status.stdout)).toContain(`✗ hooks-path: ${NOT_INSTALLED}. Git runs hooks from .git/hooks, and .git/hooks/commit-msg calls flow but is not executable`);
+      expect(hooksPathOf(status.stdout)).toContain(`✗ git hook: ${NOT_INSTALLED}. Git runs hooks from .git/hooks, and .git/hooks/commit-msg calls flow but is not executable`);
 
       // What the red line is about: git really does commit past it.
       stageGuardDeletion(lfs, { home, bin });
@@ -674,10 +674,10 @@ describe("flow init, when git already runs other hooks", () => {
   });
 });
 
-/** Status's hooks-path line as printed, with the lines its detail runs on to, up to the next fitting. */
+/** Status's git hook line as printed, with the lines its detail runs on to, up to the next fitting. */
 const hooksPathOf = (stdout: string): string => {
-  const at = stdout.search(/[✓✗] hooks-path: /);
-  expect(at, "status prints a hooks-path line").not.toBe(-1);
+  const at = stdout.search(/[✓✗] git hook: /);
+  expect(at, "status prints a git hook line").not.toBe(-1);
   const next = stdout.slice(at).search(/\n {2}[✓✗] /);
   return stdout.slice(at, next === -1 ? undefined : at + next).trim();
 };
@@ -692,7 +692,7 @@ describe("flow status, when git already runs other hooks", () => {
       const said = flow(husky, ["status"]);
       expect(said.code, said.stdout + said.stderr).toBe(1);
       const line = hooksPathOf(said.stdout);
-      expect(line).toMatch(/^✗ hooks-path: FLOW IS NOT INSTALLED\. Git runs hooks from \.husky\/_/);
+      expect(line).toMatch(/^✗ git hook: FLOW IS NOT INSTALLED\. Git runs hooks from \.husky\/_/);
       expect(line).toContain("Add these two lines to the end of .husky/commit-msg:");
       expect(line).toContain("exec flow hook commit");
       expect(line).toContain("git config core.hooksPath .githooks");
@@ -702,7 +702,7 @@ describe("flow status, when git already runs other hooks", () => {
       expect(json.stdout, "no colour codes in the data").not.toContain("\u001b");
       const read = JSON.parse(json.stdout) as Read;
       expect(read.green).toBe(false);
-      const fitting = read.fittings.find((f) => f.id === "hooks-path");
+      const fitting = read.fittings.find((f) => f.id === "git hook");
       expect(fitting?.ok).toBe(false);
       expect(fitting?.detail.startsWith(`${NOT_INSTALLED}. Git runs hooks from .husky/_`)).toBe(true);
     } finally {
@@ -717,7 +717,7 @@ describe("flow status, when git already runs other hooks", () => {
       writeFileSync(join(husky, ".husky", "commit-msg"), `npm test\n${linesToAdd(first.stdout, ".husky/commit-msg").join("\n")}\n`);
       const said = flow(husky, ["status"]);
       expect(said.code, said.stdout + said.stderr).toBe(0);
-      expect(hooksPathOf(said.stdout)).toBe("✓ hooks-path: git runs hooks from .husky/_, and .husky/commit-msg calls flow");
+      expect(hooksPathOf(said.stdout)).toBe("✓ git hook: git runs hooks from .husky/_, and .husky/commit-msg calls flow");
       expect(said.stdout).not.toContain(NOT_INSTALLED);
     } finally {
       rmSync(husky, { recursive: true, force: true });
@@ -731,7 +731,7 @@ describe("flow status, when git already runs other hooks", () => {
       const said = flow(lfs, ["status"]);
       expect(said.code, said.stdout + said.stderr).toBe(1);
       const line = hooksPathOf(said.stdout);
-      expect(line).toContain(`✗ hooks-path: ${NOT_INSTALLED}. Git runs hooks from .git/hooks`);
+      expect(line).toContain(`✗ git hook: ${NOT_INSTALLED}. Git runs hooks from .git/hooks`);
       expect(line).toContain("Create .git/hooks/commit-msg with these three lines");
     } finally {
       rmSync(lfs, { recursive: true, force: true });
@@ -746,7 +746,7 @@ describe("flow status, when git already runs other hooks", () => {
         git(spelled, ["config", "core.hooksPath", set]);
         const said = flow(spelled, ["status"]);
         expect(said.code, `${set}\n${said.stdout}`).toBe(0);
-        expect(hooksPathOf(said.stdout), set).toBe("✓ hooks-path: core.hooksPath = .githooks");
+        expect(hooksPathOf(said.stdout), set).toBe("✓ git hook: .githooks/commit-msg runs flow, and core.hooksPath = .githooks");
       }
     } finally {
       rmSync(spelled, { recursive: true, force: true });
@@ -758,8 +758,8 @@ describe("flow status, when git already runs other hooks", () => {
     try {
       const said = flow(bare, ["status"]);
       expect(said.code).toBe(1);
-      expect(hooksPathOf(said.stdout)).toBe(
-        "✗ hooks-path: core.hooksPath is unset — run `git config core.hooksPath .githooks`. It is per-clone, so every fresh checkout needs it.",
+      expect(hooksPathOf(said.stdout)).toContain(
+        "core.hooksPath is unset — run `git config core.hooksPath .githooks`. It is per-clone, so every fresh checkout needs it.",
       );
       expect(said.stdout).not.toContain(NOT_INSTALLED);
     } finally {
@@ -1473,17 +1473,30 @@ describe.runIf(process.env["FLOW_TUTORIAL"])("the Getting started tutorial's tra
       writeFileSync(join(mine, "flow.config.ts"), `${page("import { banCommands")}\n`);
       expect(said(["status"]), "§4 status").toBe(page("flow is ON —"));
 
-      // §4 — the gate's refusal, driven the way the page drives it.
-      writeFileSync(join(mine, "bad.txt"), "DO-NOT-COMMIT here\n");
-      runGit(mine, ["add", "bad.txt"]);
-      expect(said(["hook", "commit"]), "§4").toBe(page("flow — commit blocked:"));
+      // §5 — "See a commit refused": a file that breaks house.noTodo, then a message that breaks house.header.
+      mkdirSync(join(mine, "src"));
+      writeFileSync(join(mine, "src", "a.ts"), "// TODO: later\n");
+      runGit(mine, ["add", "src/a.ts"]);
+      expect(said(["hook", "commit"]), "§5 noTodo").toBe(page("flow — commit blocked:\n\n✗ house.noTodo"));
+      writeFileSync(join(mine, "src", "a.ts"), "export const a = 1;\n");
+      runGit(mine, ["add", "src/a.ts"]);
+      const message = join(mine, "msg.txt");
+      writeFileSync(message, "wip\n");
+      expect(said(["hook", "commit", message]), "§5 header").toBe(page("flow — commit blocked:\n\n✗ house.header"));
 
-      // §5 — a banned command, on the rail the host sends it on.
-      const forced = JSON.stringify(pre("Bash", { command: "flow uninstall" }));
-      expect(said(["hook", "pre-tool-use"], forced), "§5").toBe(page("flow — command blocked before it ran:"));
+      // §6 — "See a command refused": the force-push the page names, on the rail the host sends it on.
+      const forced = JSON.stringify(pre("Bash", { command: "git push --force origin main" }));
+      expect(said(["hook", "pre-tool-use"], forced), "§6").toBe(page("flow — command blocked before it ran:"));
 
-      // §6 — the census the page quotes as a comment beside the command.
-      expect(page("flow test").split("\n").at(-1), "§6").toBe(`# ${said(["test"])}`);
+      // §7 — "See a breadcrumb shown": after the first change under src/, once.
+      const changed = JSON.stringify({ ...pre("Write", { file_path: join(mine, "src", "a.ts"), content: "export const a = 1;\n" }, "tutorial-1"), cwd: mine });
+      const shown = runFlow(mine, ["hook", "post-tool-use"], { home: firstTime, bin }, changed);
+      const context = (JSON.parse(shown.stdout) as { hookSpecificOutput: { additionalContext: string } }).hookSpecificOutput.additionalContext;
+      expect(context, "§7").toBe(page("# breadcrumb: house.sourceLayout"));
+      expect(runFlow(mine, ["hook", "post-tool-use"], { home: firstTime, bin }, changed).stdout, "§7, a second change").toBe("");
+
+      // §8 — the census the page quotes as a comment beside the command.
+      expect(page("npx flow test").split("\n").at(-1), "§8").toBe(`# ${said(["test"])}`);
     } finally {
       for (const dir of [mine, firstTime]) rmSync(dir, { recursive: true, force: true });
     }

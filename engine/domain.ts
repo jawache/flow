@@ -1710,12 +1710,12 @@ function treeOrder(a: TerrainNode, b: TerrainNode): number {
 // of one moment and no reader could be expected to know which. flow's moments are the words the
 // config is written in, so the word on the page IS the word in the sentence.
 
-/** The moments, in the order a session meets them. */
+/** The moments, in the order the moments page lists them: the two a guardrail refuses at, then the breadcrumb's. */
 export const MOMENT_ORDER: readonly Moment[] = [
+  "commit",
+  "command",
   "session",
   "file-change",
-  "command",
-  "commit",
   "turn-end",
 ];
 

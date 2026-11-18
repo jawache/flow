@@ -109,7 +109,7 @@ export const flow = definePack("flow", {
     // the attack.
     .check((ctx) => protectedPath({ paths: GUARD_FILES })({ ...ctx, staged: [] }))
     .message(
-      "This commit deletes part of this repo's guard (flow.config.ts binds every rule; .githooks/commit-msg runs them at the gate; .claude/settings.json and .codex/hooks.json register flow's hooks with the harness). There is no bypass — `override(pack.entry).disabled(\"why\")` inside flow.config.ts is the visible, committed route.",
+      "This commit deletes part of this repo's guard. Turn a rule off in flow.config.ts instead.",
     )
     .test({
       pass: [{ staged: ["flow.config.ts"] }, { staged: [".claude/settings.json"] }, { staged: [], deleted: ["src/a.ts"] }, { staged: [], deleted: ["guards/git.ts"] }],
@@ -134,7 +134,7 @@ export const flow = definePack("flow", {
     .description("Refuses `flow uninstall` when an agent runs it. Taking flow off a repo or a machine is the user's call, made in their own terminal.")
     .check(noFlowUninstall({}))
     .message(
-      "`flow uninstall` removes this repo's guard: the commit gate, `core.hooksPath` and flow's hook registrations, and with `--machine` the hooks every repo on this machine runs. An agent does not take off the guard it works under, so there is no bypass. If flow should come off, say so and ask the user to run `flow uninstall` in their own terminal. If a guardrail is in your way, `override(pack.entry).disabled(\"why\")` inside flow.config.ts is the visible, committed route, and it is the user's call too.",
+      "`flow uninstall` removes this repo's guard. Run it yourself, in your own terminal.",
     )
     .test({
       pass: [
