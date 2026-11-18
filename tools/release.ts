@@ -10,8 +10,8 @@
 //   node tools/release.ts cut     the release commit, the release build, the commit that holds dist/, the tag
 //   node tools/release.ts check   the same, in a throwaway clone, then the tag installed with scripts off and run
 //
-// The second commit is written with git's plumbing (a scratch index, write-tree, commit-tree): it
-// moves no branch and needs no checkout, and its parent is the release commit the gate already judged.
+// The second commit is a plain `git commit` on a detached HEAD, so the commit gate judges it as it
+// judges every commit; the branch is switched back to the release commit afterwards.
 // Nothing here pushes, and nothing publishes.
 
 import { spawnSync, type SpawnSyncOptions } from "node:child_process";
@@ -46,18 +46,25 @@ function cut(repo: string): string {
   // LAST of the builds: the commit the tool just made fired the gate, which rebuilds dist/ as a dev build.
   run("just", ["build-release"], repo);
 
-  const head = out("git", ["rev-parse", "HEAD"], repo);
-  const scratch = mkdtempSync(join(tmpdir(), "flow-release-index-"));
+  // The second commit is an ordinary `git commit` on a detached HEAD, so the commit gate judges it
+  // like every other commit, and the branch is never moved: switching back leaves it at the release commit.
+  const branch = spawnSync("git", ["symbolic-ref", "--short", "-q", "HEAD"], { cwd: repo, encoding: "utf8" }).stdout.trim();
+  const release = out("git", ["rev-parse", "HEAD"], repo);
+  run("git", ["switch", "--detach", "-q"], repo);
   try {
-    const env = { ...process.env, GIT_INDEX_FILE: join(scratch, "index") };
-    out("git", ["read-tree", head], repo, env);
-    out("git", ["add", "-f", "--", ...BUILT], repo, env);
-    const tree = out("git", ["write-tree"], repo, env);
-    const built = out("git", ["commit-tree", tree, "-p", head, "-m", `chore(release): v${version} holds the built files`], repo);
-    out("git", ["tag", "-a", `v${version}`, built, "-m", `v${version}`], repo);
-  } finally {
-    rmSync(scratch, { recursive: true, force: true });
+    run("git", ["add", "-f", "--", ...BUILT], repo);
+    run("git", ["commit", "-q", "-m", `chore(release): v${version} holds the built files`], repo);
+    run("git", ["tag", "-a", `v${version}`, "-m", `v${version}`], repo);
+  } catch (error) {
+    // The branch is put back whatever refused, so the caller sees the refusal and a repo as it was.
+    spawnSync("git", ["reset", "-q", "--hard"], { cwd: repo });
+    spawnSync("git", ["switch", "-q", branch === "" ? release : branch], { cwd: repo });
+    throw error;
   }
+  // The commit gate rebuilt dist/ as a dev build while it judged the commit. The release build is what the
+  // commit holds, so the folder is put back to it before the branch, which holds no dist/, is switched to.
+  run("git", ["restore", "--", "dist"], repo);
+  run("git", ["switch", "-q", branch === "" ? release : branch], repo);
   return version;
 }
 
@@ -77,8 +84,17 @@ function check(): void {
     const clone = join(root, "flow");
     run("git", ["clone", "-q", "--local", PACKAGE, clone], PACKAGE);
     for (const key of ["user.name", "user.email"]) run("git", ["config", key, out("git", ["config", key], PACKAGE)], clone);
-    // The clone builds with this checkout's dependencies, and fires no commit hook: core.hooksPath is not cloned.
-    symlinkSync(join(PACKAGE, "node_modules"), join(clone, "node_modules"), "dir");
+    // The clone builds with this checkout's dependencies, and its commits meet the same commit gate
+    // this repo's do: core.hooksPath is per clone, so it is set here, and the gate resolves flow
+    // through the linked node_modules.
+    // node_modules is this checkout's, entry by entry, except `@jawache/flow`, which links to the clone as `just install` does.
+    mkdirSync(join(clone, "node_modules", "@jawache"), { recursive: true });
+    for (const name of readdirSync(join(PACKAGE, "node_modules")))
+      if (name !== "@jawache") symlinkSync(join(PACKAGE, "node_modules", name), join(clone, "node_modules", name));
+    symlinkSync(clone, join(clone, "node_modules", "@jawache", "flow"), "dir");
+    run("git", ["config", "core.hooksPath", ".githooks"], clone);
+    // The gate loads flow.config.ts through that link, so the bundles it imports exist first.
+    run("just", ["build"], clone);
 
     const version = cut(clone);
     const tag = `v${version}`;
