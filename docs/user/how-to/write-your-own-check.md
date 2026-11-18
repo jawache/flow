@@ -92,8 +92,8 @@ A pack is a TypeScript module, so sharing it is a move, not a rewrite. The entri
    export default defineConfig([
      pack(flow),
      pack(tests, { run: "just test" }),
-     override(flow.noDeleteGuardrails).on("flow.config.ts", ".githooks/**", ".claude/settings.json", ".codex/hooks.json", "guards/**"),   // this repo's scope
-     override(tests.commitRunsTests).disabled("this repo's suite runs in CI"),                                                           // visible opt-out
+     override(flow.orientation).text("This repo is guarded by flow. Run `just` first."),     // this repo's words
+     override(tests.commitRunsTests).disabled("this repo's suite runs in CI"),           // visible opt-out
    ]);
    ```
 

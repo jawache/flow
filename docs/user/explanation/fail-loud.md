@@ -11,7 +11,7 @@ If `flow.config.ts` will not load, flow turns every guardrail and breadcrumb off
 | Moment | What flow does |
 | --- | --- |
 | **Session start** | Shows the load error in place of the breadcrumbs. |
-| **Command, change** | Lets the call through, and passes the load error to the agent with it. |
+| **Command, file-change** | Lets the call through, and passes the load error to the agent with it. |
 | **Turn-end** | Reports the load error, and the turn ends. |
 | **Commit** | Refuses the commit, with the load error. |
 | **`flow status`** | Prints the load error, and exits 2. |

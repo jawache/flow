@@ -13,7 +13,7 @@ A session's subagents write to the same file as the session that started them. T
 A breadcrumb that a `builder` subagent was shown when it first changed `engine/state.ts`:
 
 ```json
-{"ts":"2026-10-16T13:32:09.364Z","seq":3,"agent":"a6009b558b4c9155c","agentType":"builder","kind":"breadcrumb","moment":"change","id":"house.layout","cause":"first","subject":"engine/state.ts"}
+{"ts":"2026-10-16T13:32:09.364Z","seq":3,"agent":"a6009b558b4c9155c","agentType":"builder","kind":"breadcrumb","moment":"file-change","id":"house.layout","cause":"first","subject":"engine/state.ts"}
 ```
 
 ## The fields on every row
@@ -64,7 +64,7 @@ The first line of the file. It has no `ts`, `seq`, `agent` or `agentType`.
 
 | Field | What it holds |
 | --- | --- |
-| `moment` | The [moment](./moments.md) the rules ran at: `session`, `change`, `command`, `commit` or `turn-end` |
+| `moment` | The [moment](./moments.md) the rules ran at: `session`, `file-change`, `command`, `commit` or `turn-end` |
 | `subjects` | How many subjects the rules ran on: the files staged at `commit`, and 1 at every other moment |
 | `rules` | One object per guardrail in force at the moment: `id`, `evaluated` (the subjects it ran on), `hits` (the subjects it refused) and `silenced` (1 when its `.for(…)` binds it to another kind of agent, so it did not run) |
 
@@ -109,7 +109,7 @@ The first line of the file. It has no `ts`, `seq`, `agent` or `agentType`.
 
 | Field | What it holds |
 | --- | --- |
-| `moment` | `session`, `change`, `command` or `turn-end` |
+| `moment` | `session`, `file-change`, `command` or `turn-end` |
 | `id` | The entry's id, such as `house.layout` |
 | `cause` | Why flow showed it: `session` at the start of a session, `first` the first time a matching file changed or a matching command ran, and `drift` when it was shown again after the context grew by `driftTokens` |
 | `subject` | The file or the command line that showed it. Only on rows whose `cause` is `first` or `drift` |

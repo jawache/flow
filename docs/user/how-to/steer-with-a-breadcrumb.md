@@ -17,7 +17,7 @@ This guide shows you how to show the agent a note, without refusing anything. A 
    });
    ```
 
-   Add `breadcrumb`, and `session` or `change`, to the import.
+   Add `breadcrumb`, and `session` or `fileChange`, to the import.
 
 2. Add the breadcrumb for your case, from the sections below.
 
@@ -52,7 +52,7 @@ An agent that only reads and reports does not need the notes a builder needs. [H
 
 ```
 workerRuntime: breadcrumb()
-  .at(change)
+  .at(fileChange)
   .on("src/pages/api/**")
   .text("This code runs in a Worker: no Node natives, env per request, gate auth first."),
 ```

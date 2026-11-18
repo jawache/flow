@@ -12,9 +12,9 @@ Each term below is used with this meaning on every page of these docs.
 | **pack** | A TypeScript module grouping entries: `definePack("name", { … })`. It lives in `guards/` or in a package of its own, in the same shape. See [defining a pack](./config.md#defining-a-pack) |
 | **bind** | `pack(x)` in `flow.config.ts`: turn a pack's entries on. See [the config verbs](./config.md#the-config-verbs) |
 | **override** | `override(pack.entry).<key>(…)`: change one thing about a bound entry. Each key replaces the pack's whole value. See [override one entry of a pack](../how-to/write-your-own-check.md#override-one-entry-of-a-pack) |
-| **moment** | When a rule runs: `commit · command · session · change · turn-end`. See [moments](./moments.md) |
+| **moment** | When a rule runs: `commit · command · session · file-change · turn-end`. See [moments](./moments.md) |
 | **guardrail** | A rule that refuses a commit or a command, or holds a turn open |
-| **breadcrumb** | A note shown to the agent, at a session's start, when a file changes, before a command or at turn-end |
+| **breadcrumb** | A note shown to the agent, at a session's start, after a file changes, before a command or at turn-end |
 | **harness** | The program that runs the agent and calls flow's hooks: Claude Code or Codex |
 | **trust gate** | One of the two conditions Codex sets before it runs a project's hooks: the folder is trusted, and each hook is approved. See [the two trust gates](./codex.md#the-two-trust-gates) |
 | **redirect** | A command guardrail whose message names the command to run instead. See [how to block or redirect a command](../how-to/block-a-command.md#redirect-a-command) |

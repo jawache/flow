@@ -57,7 +57,7 @@ Notice the first line it created: `flow.config.ts`. That file is the whole guard
 Open `flow.config.ts`. It binds one pack, `flow`, which protects the guard itself. Let's add a pack of our own, written out in full. Replace the file with this:
 
 ```
-import { banCommands, breadcrumb, change, command, commit, commitMessage, defineConfig, definePack, guardrail, pack, textBan } from "@jawache/flow";
+import { banCommands, breadcrumb, command, commit, commitMessage, defineConfig, definePack, fileChange, guardrail, pack, textBan } from "@jawache/flow";
 import { flow } from "@jawache/flow/packs";
 
 export const house = definePack("house", {
@@ -85,7 +85,7 @@ export const house = definePack("house", {
 
   // A breadcrumb: a note, shown after the first change under src/.
   sourceLayout: breadcrumb()
-    .at(change)
+    .at(fileChange)
     .on("src/**")
     .text("Code under src/ is pure: no file or network access. Put those in shell/."),
 });
@@ -111,7 +111,7 @@ flow is ON — 5 guardrails · 2 breadcrumbs, every one resolved and able to fir
   config     …/my-repo/flow.config.ts
   state      …/my-repo/.flow
   commit
-    ✗ flow.noDeleteGuardrails  —  on flow.config.ts .githooks/commit-msg .claude/settings.json .codex/hooks.json
+    ✗ flow.noDeleteGuardrails
         This commit deletes part of this repo's guard. Turn a rule off in flow.config.ts instead.
     ✗ house.noTodo  —  on src/**
         No TODOs — do it now, or track it properly.
@@ -125,7 +125,7 @@ flow is ON — 5 guardrails · 2 breadcrumbs, every one resolved and able to fir
   session
     🍞 flow.orientation
         This repo is guarded by flow. A guardrail refuses a commit or a command, and a breadcrumb is a note…
-  change
+  file-change
     🍞 house.sourceLayout  —  on src/**
         Code under src/ is pure: no file or network access. Put those in shell/.
   ✓ config: …/my-repo/flow.config.ts
@@ -202,7 +202,7 @@ Adjust the command, then retry.
 In the same session, ask the agent to add a function to `src/a.ts`. After its first change under `src/`, the agent is shown the note:
 
 ```
-# breadcrumb: house.sourceLayout (change)
+# breadcrumb: house.sourceLayout (file-change)
 Code under src/ is pure: no file or network access. Put those in shell/.
 ```
 

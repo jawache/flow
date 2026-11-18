@@ -41,7 +41,7 @@ For you when you need an exact command, verb, moment or field: each page describ
 
 - [The flow command](./reference/cli.md): every `flow` command, what `flow init` writes and `flow uninstall` removes, what `flow status` reports, the one pack flow ships, the two switch files and the exit codes.
 - [The config](./reference/config.md): `flow.config.ts`, its settings, every verb of a guardrail and a breadcrumb, cases, categories, and what the loader refuses.
-- [Moments](./reference/moments.md): the five moments a rule runs at, and exactly when each one happens.
+- [Moments](./reference/moments.md): the five moments a rule runs at, exactly when each one happens, and which take a guardrail or a breadcrumb.
 - [What a check is given](./reference/ctx.md): the contract a check is written to, and every field of `ctx` at each moment.
 - [The command parse](./reference/parse.md): how a shell line becomes a list of commands, what each holds, and everything the parse follows.
 - [flow under Claude Code](./reference/claude-code.md): the hooks, the payload fields, how an agent's type is learned, and the transcript.
@@ -64,7 +64,7 @@ flow ships sixteen configured checks. You import one and pass it to `.check(…)
 | [`commitReason`](./checks/commit-reason.md) | commit message · staged set | this commit needs a reason recorded in its message |
 | [`docLinks`](./checks/doc-links.md) | file body | every docs page and section the file cites exists |
 | [`substitutionInProse`](./checks/substitution-in-prose.md) | command line | a backtick the shell would run in a command that records prose |
-| [`protectedPath`](./checks/protected-path.md) | file path | paths a commit must not change or delete (or are append-only) |
+| [`protectedPath`](./checks/protected-path.md) | staged set · deleted paths | paths a commit must not change or delete (or are append-only) |
 | [`siblingExists`](./checks/sibling-exists.md) | file path | a file's required companion exists |
 | [`canonicalFiles`](./checks/canonical-files.md) | file path | only approved names in a folder |
 | [`changeTogether`](./checks/change-together.md) | staged set | files that must change in the same commit |

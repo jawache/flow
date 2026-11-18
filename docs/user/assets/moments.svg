@@ -16,7 +16,7 @@
 <text x="20" y="182">harness</text>
 <rect class="b" x="105" y="162" width="250" height="32" rx="6"/><text x="117" y="183">after a tool call</text>
 <path class="l" d="M355 178H420" marker-end="url(#a)"/><text class="s" x="364" y="172">calls</text>
-<rect class="m" x="424" y="162" width="110" height="32" rx="6"/><text x="436" y="183">change</text>
+<rect class="m" x="424" y="162" width="110" height="32" rx="6"/><text x="436" y="183">file-change</text>
 <text class="s" x="560" y="183">breadcrumb shown</text>
 <text x="20" y="228">harness</text>
 <rect class="b" x="105" y="208" width="250" height="32" rx="6"/><text x="117" y="229">an agent hands back</text>

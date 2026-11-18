@@ -38,7 +38,7 @@ This is why a command guardrail is for an exact command you can name, such as a 
 
 After each tool call, flow compares git's list of changed paths with the list before the call. The paths that are new or changed again are what the call changed. flow stores no file content for this.
 
-The list has one use: a breadcrumb bound at `change` is shown when a path under its globs is in it. The same list is written to the session log.
+The list has one use: a breadcrumb bound at `file-change` is shown when a path under its globs is in it. The same list is written to the session log.
 
 **What flow does not see after a call:**
 

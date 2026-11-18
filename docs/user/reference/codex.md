@@ -15,7 +15,7 @@ When Codex is chosen, `flow init` registers six hooks in the repository's `.code
 | `SessionStart` | every source | `flow hook session-start` | the `session` moment. With the source `compact`, a [compaction](./moments.md#when-a-breadcrumb-is-shown-again) |
 | `SubagentStart` | every agent | `flow hook subagent-start` | the `session` moment, for the subagent |
 | `PreToolUse` | `Bash` | `flow hook pre-tool-use` | the `command` moment |
-| `PostToolUse` | every tool | `flow hook post-tool-use` | the `change` moment |
+| `PostToolUse` | every tool | `flow hook post-tool-use` | the `file-change` moment |
 | `Stop` | none | `flow hook stop` | the `turn-end` moment, for the main session |
 | `SubagentStop` | none | `flow hook subagent-stop` | the `turn-end` moment, for a subagent |
 

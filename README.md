@@ -72,7 +72,7 @@ The tag holds flow's built files, and the lockfile pins the commit. flow is not 
 
 ## How it works
 
-`flow init` registers flow with Claude Code and Codex, and adds a git hook. The harness then runs `flow` when a session or a subagent starts, before a shell command, after a tool call, and when an agent hands back. Git runs flow at every commit, once it has the message. Each time, flow loads `flow.config.ts` and runs the rules bound to that moment: `commit`, `command`, `session`, `change` or `turn-end`. A guardrail refuses by exiting with code 2, which the harness and git both treat as "do not go ahead", and its message is shown to the agent. A breadcrumb never refuses: its text is added to the agent's context. [Moments](./docs/user/reference/moments.md) describes each one.
+`flow init` registers flow with Claude Code and Codex, and adds a git hook. The harness then runs `flow` when a session or a subagent starts, before a shell command, after a tool call, and when an agent hands back. Git runs flow at every commit, once it has the message. Each time, flow loads `flow.config.ts` and runs the rules bound to that moment: `commit`, `command`, `session`, `file-change` or `turn-end`. A guardrail refuses by exiting with code 2, which the harness and git both treat as "do not go ahead", and its message is shown to the agent. A breadcrumb never refuses: its text is added to the agent's context. [Moments](./docs/user/reference/moments.md) describes each one.
 
 ## Working on flow
 

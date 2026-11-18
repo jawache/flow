@@ -23,7 +23,7 @@ This guide shows you how to refuse a commit because of what a staged file holds,
 
 3. Run `flow test`.
 
-A rule at `commit` with `.on(…)` is called once per staged file in scope, with the file as staged.
+A rule at `commit` with `.on(…)` is called once per staged file in scope, with the file as staged. It is never called for a file the commit deletes.
 
 ## Ban a pattern
 
@@ -61,15 +61,25 @@ strictStaysOn: guardrail()
 ```
 keepGenerated: guardrail()
   .at(commit)
-  .on("src/generated/**")
-  .check(protectedPath({}))
+  .check(protectedPath({ paths: ["src/generated/**"] }))
   .message("Machine-written — edit the source the header names, then re-run the build.")
-  .test({ block: [{ path: "src/generated/api.ts", content: "" }, { staged: [], deleted: { "src/generated/api.ts": "" } }] }),
+  .test({
+    pass:  [{ staged: ["src/app.ts"] }],
+    block: [{ staged: ["src/generated/api.ts"] }, { staged: [], deleted: ["src/generated/api.ts"] }],
+  }),
 ```
 
-`protectedPath` refuses a commit that changes or deletes any file in `.on(…)`. An agent can still change the file in the working tree. The commit is where it is refused.
+`protectedPath` refuses a commit that changes or deletes any file under `paths`. It takes no `.on(…)`: it is called once, with the whole commit. An agent can still change the file in the working tree. The commit is where it is refused.
 
-- **If you want to keep existing files but allow new ones**, such as in a migrations folder, pass `protectedPath({ existingOnly: true })`. A rename is refused by its old path.
+- **If you want to keep existing files but allow new ones**, such as in a migrations folder, pass `existingOnly: true`. A rename is refused by its old path.
+- **If you want to refuse only a deletion**, write a check of your own that reads the paths the commit deletes:
+
+  ```
+  .check((ctx) => {
+    const gone = (ctx.deleted ?? []).filter((path) => path.startsWith("migrations/"));
+    return gone.length === 0 ? ctx.ok() : ctx.fail("this commit deletes " + gone.join(", "));
+  })
+  ```
 
 ## Require a sibling test
 

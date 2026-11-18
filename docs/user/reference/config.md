@@ -72,7 +72,7 @@ A guardrail is a rule that refuses a commit or a command, or holds a turn open. 
 | Verb | Value | Meaning |
 | --- | --- | --- |
 | `.at(…moments)` | moments | **Mandatory.** When it runs. See [moments](./moments.md) |
-| `.on(…globs)` | globs | The files it judges at `commit`. With no `.on(…)`, a commit rule is called once, with the whole staged set. `.on()` with no globs is refused. A command rule takes none |
+| `.on(…globs)` | globs | The files it judges at `commit`: the rule is called once per staged file that matches. With no `.on(…)`, a commit rule is called once, with the whole commit. `.on()` with no globs is refused. A command rule takes none |
 | `.ignore(…globs)` | globs | Carve-outs from `.on(…)`. `.ignore()` with no globs is refused |
 | `.for(…categories)` | categories | Binds the rule to actors. It runs only for an agent that has at least one of the categories. With no `.for(…)`, it runs for every agent |
 | `.everywhere()` | none | At `command`, also judges a command that runs outside the repository. See [a command outside the repository](./parse.md#a-command-outside-the-repository) |
@@ -88,7 +88,7 @@ A breadcrumb is a note shown to the agent. It has no rail to block with, so it h
 
 | Verb | Value | Meaning |
 | --- | --- | --- |
-| `.at(…moments)` | `session · change · command · turn-end` | **Mandatory.** When the note shows. Each time a `turn-end` note shows, the agent takes one more turn to read it. See [the turn-end moment](./moments.md#the-turn-end-moment) |
+| `.at(…moments)` | `session · file-change · command · turn-end` | **Mandatory.** When the note shows. Each time a `turn-end` note shows, the agent takes one more turn to read it. See [the turn-end moment](./moments.md#the-turn-end-moment) |
 | `.on(…globs)` | globs | What the note is about: the files whose change shows it, or, at `command`, the command lines it is about (`"npm install*"`). `.on()` with no globs is refused |
 | `.ignore(…globs)` | globs | Carve-outs from `.on(…)`. `.ignore()` with no globs is refused |
 | `.for(…categories)` | categories | Binds the note to actors. Only an agent that has at least one of the categories is shown it. At `session`, this is how a breadcrumb is chosen by the type of agent |
@@ -104,7 +104,7 @@ A case is a canned `ctx`. Its shape picks which moment's dialect it speaks, and 
 | --- | --- |
 | `"a string"` or `{ command }` | command |
 | `{ path, content }` | commit, with that one file staged. Add `existed: true` or `existed: false` to say whether the last commit has the file: it sets `ctx.file.existed` |
-| `{ staged }` | commit. Add `added: [...]` to list the staged paths the last commit does not have: it sets each file's `ctx.file.existed`. Add `unchanged: [...]` to list the staged paths identical to the last commit, as `flow hook commit --all` passes them: it sets each one's `ctx.file.unchanged`. Add `deleted: { path: content }` to list the files the commit deletes, each with its content as the last commit has it: it sets `ctx.deleted` to their paths, and a `protectedPath` rule is called with each one |
+| `{ staged }` | commit. Add `added: [...]` to list the staged paths the last commit does not have: it sets `ctx.added` and each file's `ctx.file.existed`. Add `unchanged: [...]` to list the staged paths identical to the last commit, as `flow hook commit --all` passes them: it sets each one's `ctx.file.unchanged`. Add `deleted: [...]` to list the paths the commit deletes: it sets `ctx.deleted` |
 | `{ message }` | commit: it sets `ctx.message`. Add `staged`, as above. A case with no `message` has an empty one |
 | `{ actions }` | turn-end |
 
@@ -179,7 +179,7 @@ Each refusal is a closed code that includes the entry it names. The loader check
 | `missing-parameter` | A pack with a mandatory typed parameter was bound without it |
 | `unknown-entry` | An override names an entry the pack does not have |
 | `unknown-key` | A verb outside the closed set |
-| `unknown-moment` | A moment the entry's kind has no rail for: a breadcrumb at `commit`, or a guardrail at `session` or `change` |
+| `unknown-moment` | A moment the entry's kind has no rail for: a breadcrumb at `commit`, or a guardrail at `session` or `file-change`. [Moments](./moments.md#the-moments) says which kind each moment takes, and why |
 | `unknown-setting` | A key in the settings that flow does not have. `revert` and `snapshotInclude` are refused this way, and the refusal names [the 0.4 migration guide](../migrations/0.4.0.md) |
 | `missing-mandatory` | A guardrail without `.at`, `.check` or `.message`, or a breadcrumb without `.at` or without `.text`/`.file`. A disabled entry is exempt |
 | `undeclared-category` | `.for(…)` a category nothing declared |

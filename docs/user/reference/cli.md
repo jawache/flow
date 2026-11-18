@@ -96,7 +96,7 @@ flow ships one pack, behind `@jawache/flow/packs`. It has three entries:
 | `flow.noUninstall` | guardrail | `command` | Refuses `flow uninstall`, in any folder |
 | `flow.noDeleteGuardrails` | guardrail | `commit` | Refuses a commit that deletes `flow.config.ts`, `.githooks/commit-msg`, `.claude/settings.json` or `.codex/hooks.json` |
 
-To protect your own pack files too, override the entry's `.on(…)` with the full list.
+To protect your own pack files too, add a rule of your own with [`protectedPath`](../checks/protected-path.md).
 
 ### When git already runs other hooks
 

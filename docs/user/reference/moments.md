@@ -8,17 +8,21 @@ A moment is when a rule runs. A guardrail runs at one or more moments, set with 
 
 ## The moments
 
-Moments are imported symbols: `commit · command · session · change · turnEnd`.
+Moments are imported symbols: `commit · command · session · fileChange · turnEnd`.
 
-| Symbol | Moment | Guardrail | Breadcrumb | Runs |
-| --- | --- | --- | --- | --- |
-| `commit` | commit | yes | no | Git is about to record a commit. A guardrail judges the staged files, the files the commit deletes, and the commit message. See [the commit moment](#the-commit-moment) |
-| `command` | command | yes | yes | Before a shell command runs. A guardrail refuses it. A breadcrumb is shown before it runs, scoped by `.on(…)` to the commands it is about |
-| `session` | session | no | yes | A session starts, resumes or is cleared, and a subagent starts or is resumed. A breadcrumb bound with `.for(…)` is shown only to an agent of that category |
-| `change` | change | no | yes | After a tool call that changed a file matching the breadcrumb's `.on(…)`. A created file and a deleted file are changes. See [the change moment](#the-change-moment) |
-| `turnEnd` | turn-end | yes | yes | An agent hands back: the main session or a subagent. A guardrail holds the turn open. A breadcrumb is shown. See [the turn-end moment](#the-turn-end-moment) |
+Two facts about a moment decide what it takes. A guardrail needs a moment that is before the thing happens, so there is something to refuse. A breadcrumb needs a moment where flow can add text to the agent's context.
 
-`turnEnd` is spelled that way because a symbol has no hyphen. The moment is called "turn-end".
+| Symbol | Moment | When | Before the thing? | Text to the agent? | Takes |
+| --- | --- | --- | --- | --- | --- |
+| `commit` | commit | Git is about to record a commit. See [the commit moment](#the-commit-moment) | yes | no: git calls flow, not the harness | a guardrail, which refuses the commit |
+| `command` | command | Before a shell command runs | yes | yes | a guardrail, which refuses the command, and a breadcrumb, scoped by `.on(…)` to the commands it is about |
+| `turnEnd` | turn-end | An agent is about to hand back: the main session or a subagent. See [the turn-end moment](#the-turn-end-moment) | yes | yes | a guardrail, which holds the turn open, and a breadcrumb |
+| `session` | session | A session starts, resumes or is cleared, and a subagent starts or is resumed | nothing to refuse | yes | a breadcrumb. Bound with `.for(…)`, it is shown only to an agent of that category |
+| `fileChange` | file-change | After a tool call that changed a file. A created file and a deleted file are changes. See [the file-change moment](#the-file-change-moment) | no: it has happened | yes | a breadcrumb, scoped by `.on(…)` to the files it is about |
+
+A guardrail at `session` or `file-change`, and a breadcrumb at `commit`, do not compile.
+
+`fileChange` and `turnEnd` are spelled that way because a symbol has no hyphen. The moments are called "file-change" and "turn-end".
 
 Which hook of each harness delivers each moment is on [flow under Claude Code](./claude-code.md) and [flow under Codex](./codex.md).
 
@@ -30,10 +34,10 @@ Someone who commits in an editor writes the message first. The commit is refused
 
 - **The staged changes** are read from git: the files the commit adds, changes and deletes.
 - **A rename** is, to git, a deletion of the old path plus an add of the new one.
-- **A rule with no `.on(…)`** is called once, with the whole staged set in `ctx.staged` and the deleted paths in `ctx.deleted`.
+- **A rule with no `.on(…)`** is called once, with the whole commit.
 - **A rule with `.on(…)`** is called once per added or changed file in scope, with that file in `ctx.file`.
-- **A file the commit deletes** is passed only to a rule whose check is [`protectedPath`](../checks/protected-path.md): the rule is also called once per deleted file in scope, with `ctx.file.deleted` set to `true`. Your own check reads the deleted paths from `ctx.deleted`.
-- **Every call has the message,** in `ctx.message`.
+- **The files the commit deletes** are a list of paths, `ctx.deleted`, in every call. No rule is called for a deleted file. A rule that judges deletions reads the list, as [`protectedPath`](../checks/protected-path.md) does.
+- **Every call has the message,** in `ctx.message`, and the staged paths, in `ctx.staged`.
 - **The message** is as git records it: comment lines, and the diff that `git commit -v` adds, are removed.
 
 Which commits are judged:
@@ -45,9 +49,9 @@ Which commits are judged:
 | `git cherry-pick`, `git revert`, `git rebase` | nothing. Git runs no hook that can refuse them |
 | `git commit --no-verify` | nothing. Git skips the hook |
 
-## The change moment
+## The file-change moment
 
-A `change` breadcrumb is shown after a tool call that changed a file under its `.on(…)` globs.
+A `file-change` breadcrumb is shown after a tool call that changed a file under its `.on(…)` globs.
 
 - **What changed** is found by comparing git's list of changed paths before and after the call. Any tool counts: Edit, Write, a shell command, a script the command ran.
 - **A file git ignores** is not in git's list, so its change shows no breadcrumb.
