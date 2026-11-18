@@ -64,7 +64,7 @@ test-rules:
     just build
     node dist/flow.mjs test
 
-[doc("THE MACHINE TEST — the sibling of test-rules, asked about the PACK the package ships instead of this repo. In a throwaway repo that has never heard of flow: `flow init`, the `flow` pack bound bare beside two packs the repo writes, `flow status` green, each pack's own cases run, and a live refusal driven at commit · turn-end. Exit 0 answers 'did the shipped pack break'; a red line names it.")]
+[doc("THE MACHINE TEST — the sibling of test-rules, asked about the one pack the package ships, `flow`, instead of this repo. In a throwaway repo that has never heard of flow: `flow init`, the `flow` pack bound bare beside two packs the repo writes, `flow status` green, each pack's own cases run, and a live refusal driven at commit · turn-end. Exit 0 answers 'did the shipped pack break'; a red line names it.")]
 test-packs:
     # No build step: the test builds the bundles itself, because the thing under test is the
     # INSTALLED package — `@jawache/flow` and `@jawache/flow/packs` resolved through the link
@@ -99,64 +99,27 @@ gate: build
 guard-status: build
     node dist/flow.mjs status
 
-[doc("Build the binary, then put `flow` on PATH from this checkout (npm link) — the dogfood loop, and how you run flow while you are changing it. A guarded repo installs `@jawache/flow` from npm instead.")]
-link:
-    just build
-    npm link
-    # NO backticks in this message: just hands recipe lines to the shell, which would run them as
-    # command substitution.
-    @echo 'flow now runs from this checkout. Undo with: npm unlink -g @jawache/flow'
-    @echo 'Next, in any repo you want guarded — this one included:  flow init'
-
-[doc("Cut a release, locally: compute the next version from the conventional commits since the last tag, write CHANGELOG.md, stamp package.json and the lockfile, and make ONE `chore(release): x.y.z` commit tagged `vx.y.z`. Refused until docs/user/migrations/<version>.md exists. Nothing is pushed and nothing is published. Preview it with `just release-dry` first.")]
+[doc("Cut a release, locally: compute the next version from the conventional commits since the last tag, write CHANGELOG.md, stamp package.json and the lockfile, and make the `chore(release): x.y.z` commit on this branch. Then build for release and make a second commit above it that holds dist/, and tag THAT one `vx.y.z`. The branch stays at the first commit. Refused until docs/user/migrations/<version>.md exists. Nothing is pushed and nothing is published. Preview it with `just release-dry` first.")]
 release:
-    # The version being cut needs its migration guide — the page a repo that uses flow follows to
+    # The version being cut needs its migration guide, the page a repo that uses flow follows to
     # upgrade. Asked first, for the same no-rollback reason as the gate below.
     node tools/release-guide.ts
     # The gate runs FIRST, before a byte is written. commit-and-tag-version has no rollback: its
     # own `git commit` fires .githooks/commit-msg, and a gate failure there aborts the release with
-    # the version already stamped and CHANGELOG.md already written, but nothing committed and no
-    # tag — a half-release you then have to unpick by hand. Running the same gate up front turns
-    # that into a clean refusal. The hook still runs on the release commit: this ADDS a check, it
-    # does not replace one, and there is no `--no-verify` anywhere in here.
+    # the version already stamped and CHANGELOG.md already written, but nothing committed. Running
+    # the same gate up front turns that into a clean refusal. There is no `--no-verify` in here.
     just gate
-    # Config in .versionrc.mjs. The version is computed from the commit headers, never chosen —
-    # which is what `git/node/no-hand-edited-version` blocks a hand edit in favour of.
-    npx commit-and-tag-version
-    # LAST, so dist/ holds the release build when `npm publish` follows. The gate the release commit
-    # fires rebuilds dist/ as a DEV build — the e2e suites build the binary they spawn — and
-    # `npm publish` packs dist/ as it stands, with no build of its own (`package.json` has no
-    # scripts, by this repo's own rule). 0.3.2 shipped the dev build, sourcemap comment and all,
-    # because nothing here rebuilt it after the gate.
-    just build-release
-    @echo ''
-    @echo 'Local only — nothing was pushed and nothing was published. dist/ is the release build.'
-    @echo 'To share the release:  git push --follow-tags origin HEAD'
-    @echo 'To publish it:         just build-release && npm publish   (in a terminal; the build again, in case anything rebuilt dist/ since)'
+    # The release commit, the release build, the commit that holds dist/ and the tag on it: all in
+    # tools/release.ts, which pushes nothing.
+    node tools/release.ts cut
 
 [doc("What `just release` WOULD do, and nothing else: the version it computes and the changelog entry it would write, printed. Touches no file, makes no commit, cuts no tag.")]
 release-dry:
     npx commit-and-tag-version --dry-run
 
-[doc("Everything that must be true before publishing: the full gate, a clean build, and the exact tarball npm would upload. Never publishes — `npm publish` stays yours to type.")]
+[doc("Everything that must be true before a release: the full gate, the commit suite, the tutorial against the binary, and then the release itself, made in a throwaway clone: the release commit, the commit that holds dist/ and the tag. The tag is installed into a scratch folder with `npm i -D --ignore-scripts`, and the installed dist/flow.mjs runs. Pushes nothing, and leaves this repo as it was.")]
 release-check:
     just gate
     just test-commit
     just test-tutorial
-    just build-release
-    npm pack --dry-run
-    # READ THE FILE LIST ABOVE before typing the publish line. It is the whole of what strangers
-    # get, `files` is an allowlist, and a package is not unpublishable after 72 hours.
-    #
-    # IN A REAL TERMINAL, and that is not a style note: npm's `otplease` helper rethrows EOTP when
-    # stdin or stdout is not a TTY, so a publish run through anything that captures output — a
-    # subprocess, an agent's shell, CI without a token — fails at the two-factor step instead of
-    # prompting, and can never reach the browser. Learned at 0.1.0.
-    #
-    # AND IT RETURNS BEFORE IT IS VISIBLE. npm answers the publish with 202 Accepted — the upload is
-    # taken, not yet served — so the registry can still say the old version for a minute or two
-    # afterwards. Learned at 0.1.1. `npm view @jawache/flow version` is the honest check, and a
-    # consumer's `npm i -D @jawache/flow@<new>` that 404s a few seconds after a successful publish is
-    # this, not a failed release: wait, then ask again.
-    @echo ''
-    @echo 'To publish, in a terminal:  npm publish'
+    node tools/release.ts check

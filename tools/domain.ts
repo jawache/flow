@@ -513,6 +513,22 @@ export function nextVersion(dryRun: string): string | null {
   return /bumping version in package\.json from \S+ to (\S+)/.exec(dryRun)?.[1] ?? null;
 }
 
+/** The scripts npm runs when it installs a git dependency, and so the ones a release's package.json must not carry. */
+const INSTALL_SCRIPTS = ["prepare", "prepack", "build", "install", "postinstall"] as const;
+
+/** The install-time scripts a package.json names: a tag that holds built files must name none, or npm builds on the user's machine. */
+export function installScripts(packageJson: string): string[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(packageJson);
+  } catch {
+    return [...INSTALL_SCRIPTS];
+  }
+  const scripts: unknown = typeof parsed === "object" && parsed !== null && "scripts" in parsed ? parsed.scripts : undefined;
+  if (typeof scripts !== "object" || scripts === null) return [];
+  return INSTALL_SCRIPTS.filter((name) => name in scripts);
+}
+
 // ══ THE PACKAGE'S OWN LINKS — every page npm uploads, followed inside it; why: tools/package.test.ts ══
 
 /** The paths `npm pack --dry-run --json` would upload, read off its report: none when it cannot be read, and no entry without a path. */
