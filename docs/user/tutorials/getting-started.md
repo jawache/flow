@@ -175,8 +175,9 @@ git commit -m "wip"
 ```
 flow — commit blocked:
 
-✗ house.header · wip
+✗ house.header
   The first line is `type: description`, such as `fix: read a quoted heredoc`.
+    the first line of the message, "wip", does not match /^(feat|fix|docs|chore): .+/
 
 Fix the above, then commit again.
 ```
