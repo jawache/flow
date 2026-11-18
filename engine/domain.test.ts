@@ -26,7 +26,8 @@ import {
   loadConfig,
   pack,
   override,
-  touch,
+  fileChange,
+  session,
   turnEnd,
   type Check,
   type Ctx,
@@ -100,6 +101,10 @@ import {
   nextSeq,
   offPath,
   readState,
+  DELETED,
+  LOCK_STALE_MS,
+  lockIsStale,
+  lockPath,
   runRows,
   attribution,
   UNNAMED_COMMIT,
@@ -853,7 +858,7 @@ describe("work outside the repository", () => {
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 function touched(path: string, tokens: number, wearing: readonly string[] = []): BriefEvent {
-  return { moment: "touch", path, tokens, wearing };
+  return { moment: "file-change", path, tokens, wearing };
 }
 
 /** Brief over the fixture regime. `settings` is required by the type, which is fix 1's whole point. */
@@ -863,10 +868,11 @@ const briefing = (over: Omit<BriefArgs, "load" | "settings"> & Partial<BriefArgs
 const noticeIds = (b: Briefing): (string | null)[] => b.notices.map((n) => n.entry);
 
 describe("a breadcrumb across one session", () => {
-  it("shows on first touch of its area, and records where it showed", () => {
+  it("shows after the first change in its area, and records where it showed", () => {
     const first = briefing({ event: touched("src/a.ts", 40_000), marks: {} });
     expect(noticeIds(first)).toEqual(["rails.notes.area"]);
-    expect(first.notices[0]?.cause).toBe("first-touch");
+    expect(first.notices[0]?.cause).toBe("first");
+    expect(first.notices[0]?.moment, "the moment that showed it, for the header").toBe("file-change");
     expect(first.notices[0]?.subject).toBe("src/a.ts");
     expect(first.marks).toEqual({ "rails.notes.area": 40_000 });
   });
@@ -881,7 +887,7 @@ describe("a breadcrumb across one session", () => {
     const drifted = briefing({ event: touched("src/b.ts", 250_000), marks: { "rails.notes.area": 40_000 } });
     expect(noticeIds(drifted)).toEqual(["rails.notes.area"]);
     expect(drifted.notices[0]?.cause).toBe("drift");
-    expect(drifted.notices[0]?.subject, "the touch that re-showed it, not the one that first did").toBe("src/b.ts");
+    expect(drifted.notices[0]?.subject, "the change that re-showed it, not the one that first did").toBe("src/b.ts");
     expect(drifted.marks).toEqual({ "rails.notes.area": 250_000 });
   });
 
@@ -918,28 +924,22 @@ describe("a breadcrumb across one session", () => {
     expect(again.notices).toEqual([]);
   });
 
-  it("shows no note bound to paths for a file outside the repository, and still one bound to none", () => {
+  it("shows a note bound to paths only for a changed file in them, and one bound to none for any", () => {
     const load = loadConfig(
       defineConfig([
         pack(
           definePack("notes", {
-            /** Bound to paths, which an absolute path outside matches too. */
-            typescript: breadcrumb().at(touch).on("**/*.ts").text("ts"),
-            /** Bound to none. */
-            everyTouch: breadcrumb().at(touch).text("any"),
+            typescript: breadcrumb().at(fileChange).on("**/*.ts").text("ts"),
+            everyChange: breadcrumb().at(fileChange).text("any"),
           }),
         ),
       ]),
     );
-    const path = "/tmp/r/src/a.ts";
-    expect(noticeIds(brief({ load, settings: {}, event: { ...touched(path, 10), outside: [path] }, marks: {} }))).toEqual(["notes.everyTouch"]);
-    expect(noticeIds(brief({ load, settings: {}, event: touched(path, 10), marks: {} })), "the same path, inside").toEqual([
-      "notes.typescript",
-      "notes.everyTouch",
-    ]);
+    expect(noticeIds(brief({ load, settings: {}, event: touched("src/a.ts", 10), marks: {} }))).toEqual(["notes.typescript", "notes.everyChange"]);
+    expect(noticeIds(brief({ load, settings: {}, event: touched("docs/a.md", 10), marks: {} })), "a file outside the globs").toEqual(["notes.everyChange"]);
   });
 
-  it("never shows a note for an area this touch is not in", () => {
+  it("never shows a note for an area this change is not in", () => {
     expect(briefing({ event: touched("docs/a.md", 10), marks: {} }).notices).toEqual([]);
   });
 
@@ -953,20 +953,20 @@ describe("a breadcrumb across one session", () => {
     expect(scoped?.text).toBeUndefined();
   });
 
-  it("greets at the session moment, and the greeting does not repeat at the first touch", () => {
+  it("greets at the session moment, and the greeting does not repeat on a resume that keeps the session", () => {
     const opened = briefing({ event: { moment: "session", tokens: 0, wearing: [] }, marks: {} });
     expect(noticeIds(opened)).toEqual(["rails.notes.orientation"]);
     expect(opened.notices[0]?.cause).toBe("session");
-    expect(opened.notices[0]?.subject, "a greeting fires on no touch").toBeUndefined();
+    expect(opened.notices[0]?.subject, "a greeting fires on no file or command").toBeUndefined();
     const again = briefing({ event: { moment: "session", tokens: 100, wearing: [] }, marks: opened.marks });
     expect(again.notices).toEqual([]);
   });
 
-  it("shows a turn-end note first-touch, with no path to narrow it", () => {
+  it("shows a turn-end note the first time, with no path to narrow it", () => {
     const handBack = loadConfig(defineConfig([pack(definePack("t", { recap: breadcrumb().at(turnEnd).text("Write the recap.") }))]));
     const first = brief({ load: handBack, event: { moment: "turn-end", tokens: 1_000, wearing: [] }, marks: {}, settings: {} });
     expect(noticeIds(first), "a hand-back names no path, and nothing narrows the note away").toEqual(["t.recap"]);
-    expect(first.notices[0]?.cause).toBe("first-touch");
+    expect(first.notices[0]?.cause).toBe("first");
     expect(first.marks).toEqual({ "t.recap": 1_000 });
   });
 
@@ -977,11 +977,11 @@ describe("a breadcrumb across one session", () => {
     expect(ended.notices[0]?.subject).toBeUndefined();
   });
 
-  it("gives a touch with no file a note with no subject, rather than an empty one", () => {
-    const anywhere = loadConfig(defineConfig([pack(definePack("touches", { anyFile: breadcrumb().at(touch).text("Mind the layout.") }))]));
-    const shown = brief({ load: anywhere, event: { moment: "touch", tokens: 0, wearing: [] }, marks: {}, settings: {} });
-    expect(noticeIds(shown)).toEqual(["touches.anyFile"]);
-    expect(shown.notices[0]?.cause).toBe("first-touch");
+  it("gives a file-change with no file a note with no subject, rather than an empty one", () => {
+    const anywhere = loadConfig(defineConfig([pack(definePack("changes", { anyFile: breadcrumb().at(fileChange).text("Mind the layout.") }))]));
+    const shown = brief({ load: anywhere, event: { moment: "file-change", tokens: 0, wearing: [] }, marks: {}, settings: {} });
+    expect(noticeIds(shown)).toEqual(["changes.anyFile"]);
+    expect(shown.notices[0]?.cause).toBe("first");
     expect(shown.notices[0]?.subject).toBeUndefined();
   });
 
@@ -999,21 +999,51 @@ describe("a breadcrumb across one session", () => {
 });
 
 describe("a compaction", () => {
-  const entries = regime.ok ? regime.entries : [];
-
-  it("clears the area marks so they re-brief, and keeps the session's", () => {
-    const before: Marks = { "rails.notes.area": 120_000, "rails.notes.orientation": 0, "rails.notes.forBuilders": 90 };
-    expect(afterCompaction(before, entries)).toEqual({ "rails.notes.orientation": 0 });
+  it("leaves no mark, so every breadcrumb is earned again", () => {
+    expect(afterCompaction()).toEqual({});
   });
 
-  it("re-shows the area note at the next touch, as the first touch it now is", () => {
-    const after = afterCompaction({ "rails.notes.area": 120_000 }, entries);
-    const shown = briefing({ event: touched("src/a.ts", 130_000), marks: after });
-    expect(shown.notices[0]?.cause).toBe("first-touch");
+  it("shows a session breadcrumb again at once, as the compacted session starts, and any other at its next moment", () => {
+    const marks: Marks = { "rails.notes.orientation": 0, "rails.notes.area": 40_000 };
+    const quiet = briefing({ event: { moment: "session", tokens: 500, wearing: [] }, marks });
+    expect(quiet.notices, "a resume that keeps the session shows it no more").toEqual([]);
+
+    const after = afterCompaction();
+    const started = briefing({ event: { moment: "session", tokens: 500, wearing: [] }, marks: after });
+    expect(noticeIds(started)).toEqual(["rails.notes.orientation"]);
+    expect(started.notices[0]?.cause).toBe("session");
+
+    const changed = briefing({ event: touched("src/a.ts", 600), marks: started.marks });
+    expect(noticeIds(changed), "the area note waits for its own moment").toEqual(["rails.notes.area"]);
+    expect(changed.notices[0]?.cause).toBe("first");
+  });
+});
+
+describe("a session breadcrumb bound with .for(…)", () => {
+  const welcome = loadConfig(
+    defineConfig([
+      pack(
+        definePack("notes", {
+          everyone: breadcrumb().at(session).text("For everyone."),
+          builders: breadcrumb().at(session).for(builder).text("For a builder."),
+        }),
+      ),
+    ]),
+  );
+  const startedAs = (type: string | undefined): (string | null)[] => {
+    const seen = identify(undefined, facts({ agentType: type }), [builder, parent]);
+    return noticeIds(brief({ load: welcome, settings: {}, event: { moment: "session", tokens: 0, wearing: seen.wearing }, marks: {} }));
+  };
+
+  it("is shown only to an agent of that category", () => {
+    expect(startedAs("builder")).toEqual(["notes.everyone", "notes.builders"]);
+    expect(startedAs("verifier"), "a subagent of another type").toEqual(["notes.everyone"]);
   });
 
-  it("leaves a mark for an entry the regime no longer has — nothing to keep is nothing kept", () => {
-    expect(afterCompaction({ "gone.note": 1 }, entries)).toEqual({});
+  it("is shown at a subagent's start when the type it was started as says so, and not to the session that started it", () => {
+    const main = identify(undefined, facts({ subagent: false }), [builder, parent]);
+    expect(main.wearing).toEqual(["parent"]);
+    expect(noticeIds(brief({ load: welcome, settings: {}, event: { moment: "session", tokens: 0, wearing: main.wearing }, marks: {} }))).toEqual(["notes.everyone"]);
   });
 });
 
@@ -1030,7 +1060,7 @@ describe("the drift threshold", () => {
 
   it("names its causes in one closed vocabulary", () => {
     const cause: Cause = "drift";
-    expect([...CAUSES]).toEqual(["session", "first-touch", "drift", "fault"]);
+    expect([...CAUSES]).toEqual(["session", "first", "drift", "fault"]);
     expect(CAUSES).toContain(cause);
   });
 });
@@ -1073,7 +1103,7 @@ describe("formatting a refusal", () => {
   it("gathers every block into one message, and ignores the notices beside them", () => {
     const effects: Effect[] = [
       { do: "block", entry: "a.b", message: "m", subject: null, detail: "" },
-      { do: "notice", entry: "a.note", text: "hi", file: undefined, cause: "first-touch", subject: "src/a.ts" },
+      { do: "notice", entry: "a.note", text: "hi", file: undefined, cause: "first", subject: "src/a.ts" },
       { do: "block", entry: "c.d", message: "n", subject: null, detail: "" },
     ];
     expect(formatBlocks(effects)).toBe("✗ a.b\n  m\n✗ c.d\n  n");
@@ -1130,10 +1160,24 @@ describe("a session × agent's own state", () => {
     expect(readState('{"categories":[],"marks":{}}').categories).toEqual([]);
   });
 
-  it("keeps the worktrees the agent was told flow does not guard, beside the marks", () => {
-    expect(readState('{"marks":{},"worktrees":["/r/wt"]}')).toEqual({ marks: {}, worktrees: ["/r/wt"] });
-    expect(readState('{"marks":{},"worktrees":["/r/wt",7]}')).toEqual({ marks: {} });
-    expect(readState('{"marks":{},"worktrees":[]}')).toEqual({ marks: {} });
+  it("keeps what git last listed in each working folder, beside the marks, and ignores the worktrees list a 0.3 state file holds", () => {
+    const trees = { "/r": { head: "abc", files: { "a.ts": "h" } } };
+    expect(readState(JSON.stringify({ marks: {}, trees }))).toEqual({ marks: {}, trees });
+    expect(readState('{"marks":{},"trees":{}}')).toEqual({ marks: {} });
+    expect(readState('{"marks":{},"trees":{"/r":{"head":"abc","files":{"a.ts":3}}}}')).toEqual({ marks: {}, trees: { "/r": { head: "abc", files: {} } } });
+    expect(readState('{"marks":{},"worktrees":["/r/wt"]}')).toEqual({ marks: {} });
+  });
+
+  it("tells a hook that died holding the lock from one that is still working, and keeps the lock beside the state file", () => {
+    expect(lockIsStale(0)).toBe(false);
+    expect(lockIsStale(LOCK_STALE_MS)).toBe(false);
+    expect(lockIsStale(LOCK_STALE_MS + 1)).toBe(true);
+    expect(lockPath("/r", "s", "a")).toBe(`${statePath("/r", "s", "a")}.lock`);
+  });
+
+  it("holds a deleted file's hash as one word, which no content hash is", () => {
+    expect(DELETED).toBe("-");
+    expect(readState(JSON.stringify({ marks: {}, trees: { "/r": { head: null, files: { "gone.ts": DELETED } } } })).trees).toEqual({ "/r": { head: null, files: { "gone.ts": "-" } } });
   });
 
   it("keeps a subagent's notes held for its brief, beside the marks", () => {
@@ -1212,7 +1256,7 @@ describe("the log's layout", () => {
 
   it("names its row kinds in one closed vocabulary", () => {
     const kind: RowKind = "run";
-    expect([...ROW_KINDS]).toEqual(["meta", "tool", "breadcrumb", "guardrail", "compaction", "run", "read"]);
+    expect([...ROW_KINDS]).toEqual(["meta", "tool", "breadcrumb", "guardrail", "compaction", "run", "read", "change"]);
     expect(ROW_KINDS).toContain(kind);
   });
 
@@ -1352,7 +1396,7 @@ describe("the record — blocks, lead, gaps", () => {
 
   it("counts blocks, and reads the lead from the calls between a show and the edit it steered", () => {
     const rows: Row[] = [
-      row("breadcrumb", { moment: "touch", id: "rails.notes.area", cause: "first-touch" }),
+      row("breadcrumb", { moment: "file-change", id: "rails.notes.area", cause: "first" }),
       toolRowFor("src/a.ts"),
       toolRowFor("src/a.ts", true),
       row("guardrail", { moment: "commit", id: "rails.everyone", out: "deny", subject: "src/a.ts" }),
@@ -1361,7 +1405,7 @@ describe("the record — blocks, lead, gaps", () => {
     expect(read.headline.blocks).toBe(1);
     const area = read.breadcrumbs.find((b) => b.id === "rails.notes.area");
     expect(area?.shown).toBe(1);
-    expect(area?.byCause["first-touch"]).toBe(1);
+    expect(area?.byCause["first"]).toBe(1);
     // The show rode on tool call 0; the first in-scope edit is call 2. A lead of 2.
     expect(area?.lead.median).toBe(2);
     expect(area?.lead.buckets["1-5"]).toBe(1);
@@ -1369,7 +1413,7 @@ describe("the record — blocks, lead, gaps", () => {
   });
 
   it("a show with no in-scope edit after it is counted, never scored as a lead of zero", () => {
-    const rows: Row[] = [row("breadcrumb", { moment: "touch", id: "rails.notes.area", cause: "drift" }), toolRowFor("docs/a.md", true)];
+    const rows: Row[] = [row("breadcrumb", { moment: "file-change", id: "rails.notes.area", cause: "drift" }), toolRowFor("docs/a.md", true)];
     const read = metrics({ sessions: [{ session: "s1", rows }], entries: bound, nowMs });
     const area = read.breadcrumbs.find((b) => b.id === "rails.notes.area");
     expect(area?.lead).toEqual({ median: null, buckets: { "0": 0, "1-5": 0, "6-19": 0, "20+": 0 }, noEdit: 1 });
@@ -1377,12 +1421,47 @@ describe("the record — blocks, lead, gaps", () => {
     expect(LEAD_BUCKETS).toEqual(["0", "1-5", "6-19", "20+"]);
   });
 
+  it("counts a file as changed from the `change` rows, whichever tool changed it, and does not count an edit tool's file twice", () => {
+    const rows: Row[] = [
+      row("tool", { tool: "Bash", command: "sed -i s/a/b/ docs/a.md" }),
+      row("change", { tool: "Bash", paths: ["docs/a.md", "docs/b.md", "/tmp/x"] }),
+      toolRowFor("src/a.ts", true),
+      row("change", { tool: "Edit", paths: ["src/a.ts"] }),
+    ];
+    const read = metrics({ sessions: [{ session: "s1", rows }], entries: bound, nowMs });
+    expect(read.heat.edits, "a path outside the repo is no node of the tree").toEqual({ "docs/a.md": 1, "docs/b.md": 1, "src/a.ts": 1 });
+    expect(read.gaps, "docs is watched by nothing, and was changed by a shell command").toEqual([{ area: "docs", edits: 2 }]);
+  });
+
+  it("reads a chat logged before `change` rows from its edit tools' rows", () => {
+    const read = metrics({ sessions: [{ session: "old", rows: [toolRowFor("docs/a.md", true)] }], entries: bound, nowMs });
+    expect(read.heat.edits).toEqual({ "docs/a.md": 1 });
+  });
+
+  it("measures a file-change show's lead to the next change after the call that showed it, and a session show's to the first change of any file", () => {
+    const rows: Row[] = [
+      row("breadcrumb", { moment: "session", id: "rails.notes.orientation", cause: "session" }),
+      toolRowFor("docs/x.md"),
+      toolRowFor("src/a.ts", true),
+      row("change", { tool: "Edit", paths: ["src/a.ts"] }),
+      row("breadcrumb", { moment: "file-change", id: "rails.notes.area", cause: "first", subject: "src/a.ts" }),
+      toolRowFor("docs/y.md"),
+      toolRowFor("docs/z.md"),
+      toolRowFor("src/b.ts", true),
+      row("change", { tool: "Edit", paths: ["src/b.ts"] }),
+    ];
+    const read = metrics({ sessions: [{ session: "s1", rows }], entries: bound, nowMs });
+    const lead = (id: string) => read.breadcrumbs.find((b) => b.id === id)?.lead;
+    expect(lead("rails.notes.area"), "shown on call 2, the next in-scope change is on call 5 — not the one that showed it").toMatchObject({ median: 3, noEdit: 0 });
+    expect(lead("rails.notes.orientation"), "shown before any call, the first change is on call 2").toMatchObject({ median: 2, noEdit: 0 });
+  });
+
   it("a shell read is a touch at the call it rode on, and no call of its own", () => {
     // A `cat` on call 2 read src/b.ts: the file is touched, and neither the tool count nor the
     // distance a lead is measured over moves for it.
     const rows: Row[] = [
       toolRowFor("docs/x.md"),
-      row("breadcrumb", { moment: "touch", id: "rails.notes.area", cause: "first-touch" }),
+      row("breadcrumb", { moment: "file-change", id: "rails.notes.area", cause: "first" }),
       row("tool", { tool: "Bash", command: "cat src/b.ts" }),
       row("read", { tool: "Bash", path: "src/b.ts" }),
       row("read", { tool: "Bash", path: "/tmp/elsewhere" }),
@@ -1523,9 +1602,9 @@ describe("the record — the DEAD reading, which retires a rule if it is wrong",
 
   it("ignores rows it cannot read rather than counting them as something", () => {
     const rows: Row[] = [
-      row("breadcrumb", { moment: "touch", cause: "first-touch" }), // no id
+      row("breadcrumb", { moment: "file-change", cause: "first" }), // no id
       row("guardrail", { moment: "commit", out: "deny" }), // no id
-      row("breadcrumb", { moment: "touch", id: "rails.notes.area", cause: "not-a-cause" }),
+      row("breadcrumb", { moment: "file-change", id: "rails.notes.area", cause: "not-a-cause" }),
       row("run", { moment: "commit", rules: [{ evaluated: 3 }, null] }),
     ];
     const read = metrics({ sessions: [{ session: "s1", rows }], entries: bound, nowMs });
@@ -1536,7 +1615,7 @@ describe("the record — the DEAD reading, which retires a rule if it is wrong",
   });
 
   it("an even number of leads averages the two middles — 1.5 is a real answer", () => {
-    const shown = (): Row[] => [row("breadcrumb", { moment: "touch", id: "rails.notes.area", cause: "first-touch" })];
+    const shown = (): Row[] => [row("breadcrumb", { moment: "file-change", id: "rails.notes.area", cause: "first" })];
     const read = metrics({
       sessions: [
         { session: "a", rows: [...shown(), toolRowFor("src/a.ts", true)] },
@@ -1734,30 +1813,30 @@ describe("replay — a recorded session, run again with no repo and no harness",
     expect(asNobody.rows.filter((r) => r.kind === "guardrail").map((r) => r["id"])).not.toContain("rails.buildersOnly");
   });
 
-  it("threads the marks, so first touch · drift · compaction all replay — not just the blocks", async () => {
-    const touch = (tokens: number): RecordedStep => ({ rail: "brief", moment: "touch", path: "src/a.ts", wearing: [], tokens });
+  it("threads the marks, so first change · drift · compaction all replay — not just the blocks", async () => {
+    const touch = (tokens: number): RecordedStep => ({ rail: "brief", moment: "file-change", path: "src/a.ts", wearing: [], tokens });
     const result = await replay({
       load: regime,
       settings: { driftTokens: 100 },
       recording: recording([
         { rail: "brief", moment: "session", wearing: [], tokens: 0 },
-        touch(10), // first touch of the area
+        touch(10), // the first change in the area
         touch(20), // quiet — the context has barely moved
         touch(500), // drifted past the threshold
-        { rail: "compaction" }, // the area mark is cleared; the session mark holds
-        touch(600), // first touch again, because the agent no longer knows
+        { rail: "compaction" }, // every mark is cleared
+        { rail: "brief", moment: "session", wearing: [], tokens: 600 }, // the compacted session starts: the greeting again, at once
+        touch(610), // the area note again, because the agent no longer knows
       ]),
     });
     const shows = result.rows.filter((r) => r.kind === "breadcrumb").map((r) => `${r["id"] as string} ${r["cause"] as string}`);
     expect(shows).toEqual([
       "rails.notes.orientation session",
-      "rails.notes.area first-touch",
+      "rails.notes.area first",
       "rails.notes.area drift",
-      "rails.notes.area first-touch",
+      "rails.notes.orientation session",
+      "rails.notes.area first",
     ]);
-    // The session note is NOT re-shown after the compaction: the host re-delivers orientation at
-    // exactly that moment, and clearing its mark would print the greeting twice.
-    expect(result.marks["rails.notes.orientation"]).toBe(0);
+    expect(result.marks["rails.notes.orientation"], "marked again where it was shown again").toBe(600);
     expect(result.steps.filter((s) => s.step.rail === "compaction")[0]?.rows).toEqual([{ kind: "compaction" }]);
   });
 
@@ -1812,23 +1891,23 @@ describe("diffRows — the proof is an EMPTY diff", () => {
       { side: "replay", at: 1, row: "guardrail commit rails.everyone deny a.ts" },
     ]);
     expect(diffRows(live, invented)).toEqual([{ side: "live", at: 1, row: "guardrail commit rails.everyone deny a.ts" }]);
-    expect(diffRows([row("breadcrumb", { moment: "touch", id: "x", cause: "drift" })], [])).toEqual([
-      { side: "replay", at: 0, row: "breadcrumb touch x drift" },
+    expect(diffRows([row("breadcrumb", { moment: "file-change", id: "x", cause: "drift" })], [])).toEqual([
+      { side: "replay", at: 0, row: "breadcrumb file-change x drift" },
     ]);
   });
 
   it("catches a note shown for the wrong file, when both rows name one", () => {
-    const shown = (subject: string): Row => row("breadcrumb", { moment: "touch", id: "x", cause: "first-touch", subject });
+    const shown = (subject: string): Row => row("breadcrumb", { moment: "file-change", id: "x", cause: "first", subject });
     expect(diffRows([shown("src/a.ts")], [shown("src/b.ts")])).toEqual([
-      { side: "replay", at: 0, row: "breadcrumb touch x first-touch src/a.ts" },
-      { side: "live", at: 0, row: "breadcrumb touch x first-touch src/b.ts" },
+      { side: "replay", at: 0, row: "breadcrumb file-change x first src/a.ts" },
+      { side: "live", at: 0, row: "breadcrumb file-change x first src/b.ts" },
     ]);
     expect(diffRows([shown("src/a.ts")], [shown("src/a.ts")])).toEqual([]);
   });
 
   it("still agrees with a live log written before breadcrumb rows named their subject", () => {
-    const replayed = row("breadcrumb", { moment: "touch", id: "x", cause: "first-touch", subject: "src/a.ts" });
-    const old = row("breadcrumb", { moment: "touch", id: "x", cause: "first-touch" });
+    const replayed = row("breadcrumb", { moment: "file-change", id: "x", cause: "first", subject: "src/a.ts" });
+    const old = row("breadcrumb", { moment: "file-change", id: "x", cause: "first" });
     expect(diffRows([replayed], [old])).toEqual([]);
     expect(diffRows([old], [replayed])).toEqual([]);
   });
@@ -1906,7 +1985,7 @@ describe("the recording file — appended live, read back whole", () => {
       JSON.stringify({ rail: "guard", moment: "commit", staged: ["a.ts"], wearing: [] }),
       "{ this is not json",
       JSON.stringify({ rail: "compaction" }),
-      JSON.stringify({ rail: "brief", moment: "touch", path: "a.ts", wearing: [], tokens: 5 }),
+      JSON.stringify({ rail: "brief", moment: "file-change", path: "a.ts", wearing: [], tokens: 5 }),
       JSON.stringify({ kind: "not-a-step" }),
       "[1,2]",
       "",

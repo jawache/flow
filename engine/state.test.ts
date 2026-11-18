@@ -7,12 +7,14 @@
 // answers instead of throwing when the disk says no.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { defineCategory, type SessionFacts } from "../index.ts";
 import { builder, parent } from "../__fixtures__/engine-pack.ts";
-import { FLOW_DIR, logFile, offPath, recordPath, recordingFile, statePath, type RecordedStep, type Row } from "./domain.ts";
+import { FLOW_DIR, LOCK_STALE_MS, lockPath, logFile, offPath, recordPath, recordingFile, statePath, type RecordedStep, type Row, type SessionState } from "./domain.ts";
 import {
   alreadyRead,
   appendRows,
@@ -27,9 +29,9 @@ import {
   readHistory,
   readRows,
   readRowsFile,
-  saveState,
   sessionIds,
   stickyIdentity,
+  updateState,
   writeMarker,
   type LogContext,
 } from "./state.ts";
@@ -80,32 +82,72 @@ describe("the off switch", () => {
   });
 });
 
+/** Put this state down whole, the way a hook would after deciding. */
+const put = (session: string, agent: string, state: SessionState): SessionState => updateState(root, session, agent, () => state);
+
 describe("one session × agent's state", () => {
   it("round-trips the sticky verdict and the marks", () => {
-    expect(saveState(root, "sess-1", "agent-9", { categories: ["builder"], marks: { "a.b": 42 } })).toBe(true);
+    put("sess-1", "agent-9", { categories: ["builder"], marks: { "a.b": 42 } });
     expect(loadState(root, "sess-1", "agent-9")).toEqual({ categories: ["builder"], marks: { "a.b": 42 } });
+  });
+
+  it("round-trips the paths git last listed in a working folder, and drops what is not a tree", () => {
+    const trees = { "/repo": { head: "abc", files: { "src/a.ts": "h1", "gone.ts": "-" } }, "/repo.wt": { head: null, files: {} } };
+    put("sess-1", "agent-9", { marks: {}, trees });
+    expect(loadState(root, "sess-1", "agent-9")).toEqual({ marks: {}, trees });
+    writeFileSync(statePath(root, "sess-1", "agent-9"), JSON.stringify({ marks: {}, trees: { "/repo": { files: { "a.ts": 7 } }, "/x": "no", "/y": { head: 1, files: { "b.ts": "h" } } } }));
+    expect(loadState(root, "sess-1", "agent-9").trees, "a path with no hash is dropped, and a folder with no files is not a tree").toEqual({ "/repo": { head: null, files: {} }, "/y": { head: null, files: { "b.ts": "h" } } });
   });
 
   it("reads nothing-known before anything has been written, and after it has been corrupted", () => {
     expect(loadState(root, "sess-1", "agent-9")).toEqual({ marks: {} });
-    saveState(root, "sess-1", "agent-9", { marks: { x: 1 } });
+    put("sess-1", "agent-9", { marks: { x: 1 } });
     writeFileSync(statePath(root, "sess-1", "agent-9"), "{ half a fi");
     expect(loadState(root, "sess-1", "agent-9")).toEqual({ marks: {} });
   });
 
   it("keeps two agents of one session apart — the identity unit is the pair", () => {
-    saveState(root, "sess-1", "parent", { categories: ["parent"], marks: {} });
-    saveState(root, "sess-1", "child", { categories: ["builder"], marks: {} });
+    put("sess-1", "parent", { categories: ["parent"], marks: {} });
+    put("sess-1", "child", { categories: ["builder"], marks: {} });
     expect(loadState(root, "sess-1", "parent").categories).toEqual(["parent"]);
     expect(loadState(root, "sess-1", "child").categories).toEqual(["builder"]);
   });
 
-  it("drops the write rather than throwing when the path cannot be written", () => {
+  it("drops the write rather than throwing when the path cannot be written, and still answers with the state it made", () => {
     const blocked = mkdtempSync(join(tmpdir(), "flow-blocked-"));
     writeFileSync(join(blocked, FLOW_DIR), "in the way");
-    expect(saveState(blocked, "s", "a", { marks: {} })).toBe(false);
+    expect(updateState(blocked, "s", "a", () => ({ marks: { a: 1 } }))).toEqual({ marks: { a: 1 } });
     expect(loadState(blocked, "s", "a")).toEqual({ marks: {} });
     rmSync(blocked, { recursive: true, force: true });
+  });
+});
+
+describe("two hooks at once cannot drop each other's marks", () => {
+  /** A hook, as a process of its own: it shows `count` breadcrumbs, one mark each, as fast as it can. */
+  const hook = (tag: string, count: number): Promise<number | null> => {
+    const here = fileURLToPath(new URL("./state.ts", import.meta.url));
+    const script = `import { updateState } from ${JSON.stringify(here)};
+      for (let i = 0; i < ${count}; i++) updateState(${JSON.stringify(root)}, "s", "a", (state) => ({ ...state, marks: { ...state.marks, ["${tag}" + i]: i } }));`;
+    return new Promise((resolve) => {
+      const child = spawn(process.execPath, ["--input-type=module", "-e", script], { stdio: "ignore" });
+      child.on("exit", resolve);
+    });
+  };
+
+  it("keeps every mark two processes write against one state file", async () => {
+    const codes = await Promise.all([hook("a", 30), hook("b", 30), hook("c", 30)]);
+    expect(codes, "every hook finished").toEqual([0, 0, 0]);
+    expect(Object.keys(loadState(root, "s", "a").marks), "ninety marks, none dropped").toHaveLength(90);
+    expect(existsSync(lockPath(root, "s", "a")), "and the lock is let go").toBe(false);
+  });
+
+  it("takes over the lock of a hook that died holding it, and never waits for one that did not", () => {
+    mkdirSync(join(root, FLOW_DIR, "state"), { recursive: true });
+    mkdirSync(lockPath(root, "s", "a"));
+    const old = new Date(Date.now() - LOCK_STALE_MS - 1000);
+    utimesSync(lockPath(root, "s", "a"), old, old);
+    expect(updateState(root, "s", "a", (state) => ({ ...state, marks: { done: 1 } })).marks).toEqual({ done: 1 });
+    expect(loadState(root, "s", "a").marks).toEqual({ done: 1 });
   });
 });
 
@@ -124,7 +166,7 @@ describe("the sticky verdict, tied to disk", () => {
   });
 
   it("keeps the marks it found — the verdict and the notes share one file", () => {
-    saveState(root, "sess-1", "agent-9", { marks: { "a.b": 7 } });
+    put("sess-1", "agent-9", { marks: { "a.b": 7 } });
     stickyIdentity(root, "sess-1", "agent-9", spawned, [builder]);
     expect(loadState(root, "sess-1", "agent-9")).toEqual({ categories: ["builder"], marks: { "a.b": 7 } });
   });

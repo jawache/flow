@@ -15,7 +15,7 @@
 //   CATEGORIES      who a session is — the settled classification order, and the sticky verdict
 //   MATCHING        which entries an event reaches, and what subjects they are run against
 //   THE RUN         the guardrail rails: effects, tallies, and fail-loud when anything is wrong
-//   BRIEFING        the breadcrumb rails: drift arithmetic, first touch, and compaction
+//   BRIEFING        the breadcrumb rails: drift arithmetic, the first showing, and compaction
 //   RENDERING       what a person reads when a rail refuses
 //   THE STATE HOME  `.flow/` — one constant, and the layouts every writer and reader agree on
 //   THE UNIVERSE    what the log's ids mean today — an entry's scope, in the log's own words
@@ -247,15 +247,13 @@ export interface GuardEvent extends CommitFileFacts {
 /** One event the breadcrumb rails carry. A note has no rail to block, so it has no world either. */
 export interface BriefEvent {
   readonly moment: BreadcrumbMoment;
-  /** touch: the path the tool call is about. A call carrying no path narrows nothing. */
+  /** file-change: one file the tool call changed, relative to the working folder it changed in. Every other moment carries none, and narrows nothing. */
   readonly path?: string | undefined;
   /** command: the line about to run — what a command note's `on` is matched against. */
   readonly command?: string | undefined;
   readonly wearing: readonly string[];
   /** How far this session has drifted, in context tokens. The adapter measures it. */
   readonly tokens: number;
-  /** Where this event works outside the repository, as on a `GuardEvent`: here, the `path`. */
-  readonly outside?: readonly string[] | undefined;
 }
 
 /** Does this entry fire at this moment at all? A disabled entry is inert and never does. */
@@ -391,8 +389,12 @@ export interface Block {
   readonly detail: string;
 }
 
-/** Why a breadcrumb is showing. Closed, and every recorded row carries one of these words. */
-export const CAUSES = ["session", "first-touch", "drift", "fault"] as const;
+/**
+ * Why a breadcrumb is showing. Closed, and every recorded row carries one of these words: `session`
+ * at a session's start, `first` the first time its moment happened for the agent, `drift` once the
+ * context has grown by `driftTokens` since, and `fault` for the load error.
+ */
+export const CAUSES = ["session", "first", "drift", "fault"] as const;
 export type Cause = (typeof CAUSES)[number];
 
 /** A note being shown. Never a rail — a breadcrumb informs and cannot refuse. */
@@ -404,6 +406,8 @@ export interface Notice {
   /** The file the prose lives in, when it did not. The shell resolves it; a pure home cannot. */
   readonly file: string | undefined;
   readonly cause: Cause;
+  /** The moment that showed it. Absent on the load error, which no moment showed. */
+  readonly moment?: BreadcrumbMoment | undefined;
   /**
    * What the event that showed it was about: the repo-relative path, or the command line, as a
    * guardrail row's subject is. Absent when the event carries no file or command, such as a
@@ -551,8 +555,8 @@ async function ask(check: Check, ctx: Ctx): Promise<Verdict> {
 //
 // The arithmetic is the old engine's, with its transcript reading left behind — how far a session
 // has drifted is a NUMBER the adapter measures, not a file this layer opens. What survives is the
-// decision it feeds: a note shows on first touch, and again once the context has moved on by more
-// than the threshold, and never otherwise.
+// decision it feeds: a note shows the first time its moment happens, and again once the context has
+// moved on by more than the threshold, and never otherwise.
 
 /** Entry id → the context size, in tokens, at which it was last shown. */
 export type Marks = Readonly<Record<string, number>>;
@@ -597,8 +601,8 @@ export interface Briefing {
  * note and the finer notes layered on top. The old engine scored matches by glob length and then
  * used only the sign of the score, a narrowing rule already abandoned in fact; it is not carried.
  *
- * A `session` breadcrumb shows once at the session moment and is MARKED there, which is why the
- * first touch afterwards does not repeat what the greeting has just said.
+ * A breadcrumb shows once, and is MARKED where it showed: a `session` one at the session moment,
+ * so a resume that keeps the session does not say it again, and any other at its own moment.
  */
 export function brief({ load, event, marks, settings, off = false }: BriefArgs): Briefing {
   if (off) return { notices: [], marks };
@@ -615,45 +619,33 @@ export function brief({ load, event, marks, settings, off = false }: BriefArgs):
     if (entry.spec.kind !== "breadcrumb" || !fires(entry.spec, event.moment)) continue;
     if (!bindsTo(entry, event.wearing)) continue;
     // A path narrows only when the event carries one: `session` and `turn-end` are about the whole
-    // session, so an entry scoped with `on` at those moments is simply not narrowed by it.
+    // session, so an entry scoped with `on` at those moments is simply not narrowed by it. A
+    // `file-change` event carries the one file, and an entry shows when it is in scope.
     if (event.path !== undefined && !inScope(entry.spec, event.path)) continue;
-    // A note bound to paths is about this repository's files, so a file outside it shows none.
-    if (event.path !== undefined && entry.spec.on !== undefined && (event.outside ?? []).includes(event.path)) continue;
     // AT `command`, THE SUBJECT IS THE COMMAND LINE, and the scope is not optional in practice: a
     // command note without one would show on every shell call in the session. An unscoped one is
     // still legal and still shows — the grammar refuses a scope that narrows nothing, never a
     // missing one — so the test is the scope's, not the event's.
     if (event.command !== undefined && !inScope(entry.spec, event.command)) continue;
     const last = next[entry.id];
-    const cause: Cause = event.moment === "session" ? "session" : last === undefined ? "first-touch" : "drift";
+    const cause: Cause = event.moment === "session" ? "session" : last === undefined ? "first" : "drift";
     if (last !== undefined && (cause !== "drift" || event.tokens - last < limit)) continue;
     const subject = event.path ?? event.command;
-    notices.push({ do: "notice", entry: entry.id, text: entry.spec.text, file: entry.spec.file, cause, subject });
+    notices.push({ do: "notice", entry: entry.id, text: entry.spec.text, file: entry.spec.file, cause, moment: event.moment, subject });
     next[entry.id] = event.tokens;
   }
   return { notices, marks: next };
 }
 
 /**
- * The marks a compaction leaves behind: the session's, and nothing else.
+ * The marks a compaction leaves behind: none.
  *
- * A compaction is the boundary where the agent stops knowing what it was told, so every AREA note
- * has to be earned again — clearing their marks re-briefs them at the next touch. The session notes
- * are kept because the host re-delivers orientation at the same moment, and clearing those too
- * would print the greeting twice in a row.
- *
- * Their cause on re-showing is `first-touch`, deliberately and not for want of a fifth word: after
- * a compaction it IS the agent's first touch of that area, and a separate cause would name the
- * mechanism that cleared the mark rather than what the reader is looking at.
+ * A compaction is the boundary where the agent stops knowing what it was told, and it removes every
+ * breadcrumb's text from its context. With no marks, a `session` breadcrumb is shown again at once,
+ * as the compacted session starts, and every other breadcrumb the next time its moment happens.
  */
-export function afterCompaction(marks: Marks, entries: readonly LoadedEntry[]): Marks {
-  // `fires`, not a second at-includes-session read: "does this entry show at this moment" is one
-  // question with one answer, and asking it here by hand meant a disabled session breadcrumb kept
-  // its mark for free while `brief` would never have shown it.
-  const keep = new Set(entries.filter((e) => fires(e.spec, "session")).map((e) => e.id));
-  const out: Record<string, number> = {};
-  for (const [id, at] of Object.entries(marks)) if (keep.has(id)) out[id] = at;
-  return out;
+export function afterCompaction(): Marks {
+  return {};
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -710,10 +702,11 @@ export const LOG_VERSION = 2;
  * Every kind a log row may be. Closed — a reader that meets another word has met corruption.
  *
  * `read` is what went ROUND the tool rows: a file a shell command read by name. A `tool` row says a
- * call happened; this says what it touched, so the coverage and lead numbers count work done
- * through the shell as well as through Read.
+ * call happened; this says what it touched, so the coverage numbers count work done through the
+ * shell as well as through Read. `change` is the files a call changed, from git's list of changed
+ * paths, whichever tool changed them.
  */
-export const ROW_KINDS = ["meta", "tool", "breadcrumb", "guardrail", "compaction", "run", "read"] as const;
+export const ROW_KINDS = ["meta", "tool", "breadcrumb", "guardrail", "compaction", "run", "read", "change"] as const;
 export type RowKind = (typeof ROW_KINDS)[number];
 
 export function flowDir(root: string): string {
@@ -730,10 +723,25 @@ export function logFile(root: string, session: string): string {
   return join(flowDir(root), "log", `${sanitise(session)}.jsonl`);
 }
 
-/** One session × agent's own state: the categories it wears, its breadcrumb marks, and the worktrees it was told about. */
+/** One session × agent's own state: the categories it wears, its breadcrumb marks, and the paths git last listed as changed in each working folder. */
 export function statePath(root: string, session: string, agent: string): string {
   return join(flowDir(root), "state", `${sanitise(session)}-${sanitise(agent)}.json`);
 }
+
+/**
+ * What git lists as changed in one working folder, at one moment: the commit it has out, and a hash
+ * of the content of each listed path. A path git ignores is not listed, and a deleted one holds
+ * `DELETED`. Nothing else of a file is kept.
+ */
+export interface Tree {
+  /** The commit the folder has out, or null before the first commit. */
+  readonly head: string | null;
+  /** Repo-relative path → hash of its content. */
+  readonly files: Readonly<Record<string, string>>;
+}
+
+/** What a listed path holds when the file is gone. */
+export const DELETED = "-";
 
 /**
  * What one session × agent's state file holds.
@@ -747,10 +755,11 @@ export interface SessionState {
   readonly categories?: readonly string[] | undefined;
   readonly marks: Marks;
   /**
-   * The other worktrees of the repository this session × agent has been told flow does not guard,
-   * by absolute path. Each is told once; absent means none has been.
+   * What git listed as changed in each working folder the last time this agent looked, by the
+   * folder's absolute path: the "before" of its next call. No file content is kept, only a hash.
+   * Absent means no folder has been looked at yet.
    */
-  readonly worktrees?: readonly string[] | undefined;
+  readonly trees?: Readonly<Record<string, Tree>> | undefined;
   /**
    * A subagent's session notes, held at its start until its brief can be read, and judged at its
    * first tool call that runs. Absent means nothing is held.
@@ -775,21 +784,53 @@ export function readState(text: string | null | undefined): SessionState {
     return { marks: {} };
   }
   if (typeof raw !== "object" || raw === null) return { marks: {} };
-  const held = raw as { categories?: unknown; marks?: unknown; worktrees?: unknown; heldForBrief?: unknown };
+  const held = raw as { categories?: unknown; marks?: unknown; trees?: unknown; heldForBrief?: unknown };
   const strings = (value: unknown): string[] | undefined =>
     Array.isArray(value) && value.every((item) => typeof item === "string") ? value : undefined;
   const categories = strings(held.categories);
-  const worktrees = strings(held.worktrees);
   const marks: Record<string, number> = {};
   if (typeof held.marks === "object" && held.marks !== null)
     for (const [id, at] of Object.entries(held.marks as Record<string, unknown>))
       if (typeof at === "number" && Number.isFinite(at)) marks[id] = at;
+  const trees: Record<string, Tree> = {};
+  if (typeof held.trees === "object" && held.trees !== null)
+    for (const [folder, tree] of Object.entries(held.trees as Record<string, unknown>)) {
+      const read = treeFrom(tree);
+      if (read !== null) trees[folder] = read;
+    }
   return {
     ...(categories === undefined ? {} : { categories }),
     marks,
-    ...(worktrees === undefined || worktrees.length === 0 ? {} : { worktrees }),
+    ...(Object.keys(trees).length === 0 ? {} : { trees }),
     ...(held.heldForBrief === true ? { heldForBrief: true } : {}),
   };
+}
+
+/** One stored tree, or null when it is not one. Read off disk, so anything may be there. */
+function treeFrom(raw: unknown): Tree | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const held = raw as { head?: unknown; files?: unknown };
+  if (typeof held.files !== "object" || held.files === null) return null;
+  const files: Record<string, string> = {};
+  for (const [path, hash] of Object.entries(held.files as Record<string, unknown>)) if (typeof hash === "string") files[path] = hash;
+  return { head: typeof held.head === "string" ? held.head : null, files };
+}
+
+/**
+ * How long a state file's lock may be held before it is taken for a dead hook's. A hook holds it for
+ * the milliseconds it takes to read and write one small file, so ten seconds is a process that was
+ * killed between taking it and letting go.
+ */
+export const LOCK_STALE_MS = 10_000;
+
+/** Is a lock this old a dead hook's? `ageMs` is an argument because a clock inside a decision cannot be tested. */
+export function lockIsStale(ageMs: number): boolean {
+  return ageMs > LOCK_STALE_MS;
+}
+
+/** The lock beside one state file: a folder, because making one is atomic and fails when it exists. */
+export function lockPath(root: string, session: string, agent: string): string {
+  return `${statePath(root, session, agent)}.lock`;
 }
 
 /**
@@ -1067,9 +1108,10 @@ export function universe(entries: readonly LoadedEntry[]): Bound[] {
 // The settled vocabulary, one word per thing, everywhere:
 //
 //   Blocks   how many times a guardrail refused something. A news count, no target.
-//   Lead     per SHOW of a touch breadcrumb: the distance, in TOOL CALLS, to the first edit of a
-//            file its globs cover, within one chat. 0 = it arrived with the edit; 1 = shown on the
-//            read immediately before it, the ideal; large = shown so far ahead it may be buried.
+//   Lead     per SHOW of a file-change or session breadcrumb: the distance, in TOOL CALLS, to the
+//            first change after it of a file its globs cover (any file, for a session breadcrumb,
+//            which has none), within one chat. 1 = the next call changed one; large = the work it
+//            was shown for came long after, and it may be buried.
 //   Gaps     edits in areas no entry's globs reach, ranked by edit count. The list IS the finding.
 //   Dead     an entry whose scope has matched nothing over an ample lifetime — config that is
 //            fiction. Named individually, because "3 dead" is not actionable and a name is.
@@ -1250,7 +1292,8 @@ export function subjectOf(row: Row): string | null {
 }
 
 /**
- * Did this row record a file being CHANGED?
+ * Did this row record a file being CHANGED by an edit tool? `change` rows say it for every tool; this
+ * is how a log written before them says it.
  *
  * It reads a flag the ROW carries rather than a set of tool names, and that is the seam holding:
  * which of a harness's tools change a file is harness knowledge, so the adapter decides it once
@@ -1333,14 +1376,30 @@ export function metrics({ sessions, entries, nowMs, minSessions = 15, minDays = 
     const pending: { id: string; at: number }[] = [];
     const taught = new Set<string>();
     let toolIndex = 0;
+    // A file counts as changed from the `change` rows, whichever tool changed it. A chat logged
+    // before those rows is read from its edit tools' rows, so its history still counts.
+    const changeRows = rows.some((row) => row.kind === "change");
+
+    /** One file changed at the call now being read. A path outside the repo is no file a glob could reach. */
+    const changed = (path: string): void => {
+      if (!insideRepo(path)) return;
+      edited[path] = (edited[path] ?? 0) + 1;
+      edits.push({ at: toolIndex, path });
+      if (!scoped.some((e) => covers(e, path))) uncovered[path] = (uncovered[path] ?? 0) + 1;
+    };
 
     for (const row of rows) {
       const ts = field(row, "ts");
       if (ts !== null) stamps.push(ts);
 
+      if (row.kind === "change") {
+        const paths = Array.isArray(row["paths"]) ? (row["paths"] as unknown[]) : [];
+        for (const path of paths) if (typeof path === "string") changed(path);
+        continue;
+      }
+
       // WHAT A CALL DID BEYOND WHAT IT NAMED. A file a shell command read is a touch, placed at the
-      // call it rode on — it is not a call of its own, so the tool count and the lead's distance do
-      // not move for it.
+      // call it rode on — it is not a call of its own, so the tool count does not move for it.
       const tool = row.kind === "tool";
       if (tool || row.kind === "read") {
         if (tool) {
@@ -1348,16 +1407,12 @@ export function metrics({ sessions, entries, nowMs, minSessions = 15, minDays = 
           tools += 1;
         }
         const path = field(row, "path");
-        // Everything the lead, the gap list and the tree need — ONE walk over the rows, and one
-        // decision about whether anything was watching. A path outside the repo is not a file any
-        // glob could reach, so it is neither a node of the tree nor a gap in it nor an edit a
-        // breadcrumb could have steered.
+        // Everything the gap list and the tree need — ONE walk over the rows, and one decision
+        // about whether anything was watching. A path outside the repo is neither a node of the
+        // tree nor a gap in it.
         if (path === null || !insideRepo(path)) continue;
         touches[path] = (touches[path] ?? 0) + 1;
-        if (!tool || !isEdit(row)) continue;
-        edited[path] = (edited[path] ?? 0) + 1;
-        edits.push({ at: toolIndex, path });
-        if (!scoped.some((e) => covers(e, path))) uncovered[path] = (uncovered[path] ?? 0) + 1;
+        if (tool && !changeRows && isEdit(row)) changed(path);
         continue;
       }
       // Past a compaction the message is gone, so a block after it teaches anew rather than repeating.
@@ -1373,9 +1428,10 @@ export function metrics({ sessions, entries, nowMs, minSessions = 15, minDays = 
         const cause = field(row, "cause");
         if (cause !== null && (CAUSES as readonly string[]).includes(cause)) held.byCause[cause as Cause] += 1;
         if (ts !== null && (held.last === null || ts > held.last)) held.last = ts;
-        // Only a TOUCH show has a lead to measure. A session show arrives by construction at the
-        // moment it is wanted, so scoring it would dilute the one number that can be wrong.
-        if (field(row, "moment") === "touch" && (byId.get(id)?.on?.length ?? 0) > 0) pending.push({ id, at: toolIndex });
+        // A show has a lead to measure when it came at a moment that is about the work to come: a
+        // file change, or a session's start.
+        const moment = field(row, "moment");
+        if (moment === "file-change" || moment === "session") pending.push({ id, at: toolIndex });
         continue;
       }
       if (row.kind === "run") {
@@ -1406,12 +1462,13 @@ export function metrics({ sessions, entries, nowMs, minSessions = 15, minDays = 
       }
     }
 
-    // Lead, once the chat is whole: the first in-scope edit at or after the call the breadcrumb
-    // rode on. "At" is what makes 0 mean late — the edit that triggered the show IS the work
-    // arriving, and a breadcrumb delivered then had nothing left to steer.
+    // Lead, once the chat is whole: the first in-scope change after the call the breadcrumb rode
+    // on. After it, and not at it: a file-change breadcrumb is shown by the change that triggered
+    // it, which is nothing left to steer. A breadcrumb with no globs counts a change of any file.
     for (const p of pending) {
       const entry = byId.get(p.id);
-      const hit = entry === undefined ? undefined : edits.find((e) => e.at >= p.at && covers(entry, e.path));
+      const scope = (entry?.on?.length ?? 0) > 0;
+      const hit = entry === undefined ? undefined : edits.find((e) => e.at > p.at && (!scope || covers(entry, e.path)));
       const held = showsOf(p.id);
       if (hit === undefined) held.noEdit += 1;
       else held.samples.push(hit.at - p.at);
@@ -1667,7 +1724,7 @@ function treeOrder(a: TerrainNode, b: TerrainNode): number {
 /** The moments, in the order a session meets them. */
 export const MOMENT_ORDER: readonly Moment[] = [
   "session",
-  "touch",
+  "file-change",
   "command",
   "commit",
   "turn-end",
@@ -1758,9 +1815,8 @@ export type RecordedStep =
       readonly command?: string | undefined;
       readonly wearing: readonly string[];
       readonly tokens: number;
-      readonly outside?: BriefEvent["outside"];
     }
-  /** The host compacted: every area mark is cleared, the session marks hold. */
+  /** The host compacted: every mark is cleared. */
   | { readonly rail: "compaction" };
 
 export interface Recording {
@@ -1852,7 +1908,7 @@ export async function replay({ load, recording, settings, marks = {} }: ReplayAr
 
   for (const step of recording.steps) {
     if (step.rail === "compaction") {
-      held = load.ok ? afterCompaction(held, load.entries) : held;
+      held = afterCompaction();
       const row: Row = { kind: "compaction" };
       rows.push(row);
       steps.push({ step, effects: [], rows: [row] });
@@ -1883,7 +1939,7 @@ export async function replay({ load, recording, settings, marks = {} }: ReplayAr
     }
     const briefing = brief({
       load,
-      event: { moment: step.moment, path: step.path, command: step.command, wearing: step.wearing, tokens: step.tokens, outside: step.outside },
+      event: { moment: step.moment, path: step.path, command: step.command, wearing: step.wearing, tokens: step.tokens },
       marks: held,
       settings,
     });
