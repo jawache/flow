@@ -1,10 +1,10 @@
 ---
-summary: "install flow from GitHub at a tag, wire it into a repo with `flow init`, and remove it with `flow uninstall`"
+summary: "install flow from GitHub at a tag, set it up in a repo with `flow init`, and remove it with `flow uninstall`"
 ---
 
 # How to install and pin flow in a project
 
-This guide shows you how to install flow in one project at a fixed version, wire it in, and remove it. flow needs **Node 24 or later**, npm and git.
+This guide shows you how to install flow in one project at a fixed version, set it up, and remove it. flow needs **Node 24 or later**, npm and git.
 
 Each project has its own copy of flow, its own config and its own hooks. Nothing is installed for the whole machine.
 
@@ -36,7 +36,7 @@ npm pkg set private=true
 
 Add `node_modules/` to `.gitignore`.
 
-## Wire it into the repo
+## Set it up in the repo
 
 1. Run `flow init`:
 
@@ -44,9 +44,9 @@ Add `node_modules/` to `.gitignore`.
    npx flow init
    ```
 
-   It asks which harnesses run agents in the repo, with the ones it detects already selected, and warns you about anything it finds, such as hooks git already runs. Then it writes `flow.config.ts`, the git hook, `.githooks/commit-msg`, and `.flow/`, and registers flow's hooks for each harness you chose: Claude Code in `.claude/settings.json`, Codex in `.codex/hooks.json`. Each question is listed in [the command reference](../reference/cli.md#what-flow-init-asks).
+   It prompts for the harnesses that run agents in the repo, with the ones it detects already selected. It warns you about what it finds, such as hooks git already runs. Then it writes `flow.config.ts`, the git hook, `.githooks/commit-msg`, and `.flow/`, and registers flow's hooks for each harness you chose: Claude Code in `.claude/settings.json`, Codex in `.codex/hooks.json`. Each prompt is listed in [the command reference](../reference/cli.md#what-flow-init-prompts-for).
 
-2. If you chose Codex, do the two steps `flow init` warns of: trust the folder in Codex, and approve the hooks with `/hooks`. Until both are done, Codex runs no hook. See [the two trust gates](../reference/codex.md#the-two-trust-gates).
+2. If you chose Codex, do the two steps `flow init` names: trust the folder in Codex, and approve the hooks with `/hooks`. Until both are done, Codex runs no hook. See [the two trust gates](../reference/codex.md#the-two-trust-gates).
 
 3. Check the guard:
 
@@ -55,14 +55,14 @@ Add `node_modules/` to `.gitignore`.
    npx flow test        # do the rules do what they claim? every rule's own cases, run
    ```
 
-   A red line in `flow status` names its own fix, and the command exits non-zero, so a setup script can call it and read the exit code.
+   A red line in `flow status` names its own fix. The command then exits non-zero, so a setup script can read the exit code.
 
 4. Commit `package.json`, the lockfile, `flow.config.ts`, the packs it imports, `.githooks/`, and the registration file of each harness you chose: `.claude/settings.json`, `.codex/hooks.json`.
 
 ## Variants
 
-- **If a script or an agent runs `flow init`**, it asks nothing and registers the harnesses it detects. Name them with `--harness claude-code,codex` to be exact.
-- **If you want an empty config**, run `npx flow init --empty`. It writes the same wiring with a config that binds no pack.
+- **If a script or an agent runs `flow init`**, it prompts for nothing and registers the harnesses it detects. Name them with `--harness claude-code,codex` to be exact.
+- **If you want an empty config**, run `npx flow init --empty`. It writes the same files with a config that binds no pack.
 - **If you already have a config or a git hook**, run `flow init` anyway. It never writes over `flow.config.ts` or a hook in `.githooks/`, and adds only what is missing.
 - **If git already runs other hooks**, such as husky's, `flow init` leaves them alone and prints `FLOW IS NOT INSTALLED`, with the lines to add to your own hooks. [When git already runs other hooks](../reference/cli.md#when-git-already-runs-other-hooks) has the steps.
 - **If you cloned a repo that already uses flow**, run `npm install`, then `npx flow init`. `core.hooksPath` is a setting of one clone, so each clone needs it.
@@ -77,7 +77,7 @@ Run `flow uninstall` before you remove the package. Removing the package alone l
 > [!IMPORTANT]
 > Run `flow uninstall` in your own terminal. The `flow` pack refuses it when an agent runs it, because it removes the guard.
 
-1. Remove the wiring:
+1. Remove what `flow init` wrote:
 
    ```
    npx flow uninstall

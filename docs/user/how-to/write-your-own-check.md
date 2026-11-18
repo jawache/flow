@@ -1,10 +1,10 @@
 ---
-summary: "a check no stock one expresses, with `defineCheck`; a pack a second repo imports; and one entry of a pack changed or turned off"
+summary: "write a check no stock one expresses, share a pack with a second repo, and change or turn off one entry of a pack"
 ---
 
 # How to write your own check, and share rules as a pack
 
-This guide shows you how to write a check of your own, for a rule that no stock check expresses, how to share a pack of rules with a second repo, and how to change one entry of a pack you bind.
+This guide shows you three things: how to write a check of your own, how to share a pack of rules with a second repo, and how to change one entry of a pack you bind.
 
 Most rules are a [stock check](../index.md#the-stock-checks--one-page-each) plus a sentence, and a structural code pattern is `astGrep`, with no code at all. Write your own check when it needs real logic: it reads a companion file, computes something, or holds an invariant no stock check expresses.
 
@@ -47,8 +47,8 @@ A check that throws while it runs never passes quietly. Live, the entry blocks, 
 
 A pack is a TypeScript module, so sharing it is a move, not a rewrite. The entries stay as they are, and each repo still binds the pack with one `pack(…)` line.
 
-1. **Move the pack file** from the repo's `guards/` folder into a package of its own, in its own repository.
-2. **Name flow as a peer dependency** of that package, so the pack uses the copy of flow its project has and installs none of its own:
+1. **Move the pack file** from the repo's `guards/` folder into a package of its own, in its own repo.
+2. **Name flow as a peer dependency** of that package. The pack then uses the copy of flow its project has:
 
    ```
    "peerDependencies": { "@jawache/flow": ">=0.4.0" }

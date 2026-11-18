@@ -55,7 +55,7 @@ A `file-change` breadcrumb is shown after a tool call that changed a file under 
 
 - **What changed** is found by comparing git's list of changed paths before and after the call. Any tool counts: Edit, Write, a shell command, a script the command ran.
 - **A file git ignores** is not in git's list, so its change shows no breadcrumb.
-- **Another worktree of the same repository** is read too, when the call worked in it. The rules are those of the config in the folder the session started in.
+- **Another worktree of the same repo** is read too, when the call worked in it. The rules are those of the config in the folder the session started in.
 - **The breadcrumb is shown after the first change,** with the tool's result. The agent reads it before its next call.
 
 ## The turn-end moment

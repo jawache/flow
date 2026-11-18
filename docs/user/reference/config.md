@@ -75,7 +75,7 @@ A guardrail is a rule that refuses a commit or a command, or holds a turn open. 
 | `.on(…globs)` | globs | The files it judges at `commit`: the rule is called once per staged file that matches. With no `.on(…)`, a commit rule is called once, with the whole commit. `.on()` with no globs is refused. A command rule takes none |
 | `.ignore(…globs)` | globs | Carve-outs from `.on(…)`. `.ignore()` with no globs is refused |
 | `.for(…categories)` | categories | Binds the rule to actors. It runs only for an agent that has at least one of the categories. With no `.for(…)`, it runs for every agent |
-| `.everywhere()` | none | At `command`, also judges a command that runs outside the repository. See [a command outside the repository](./parse.md#a-command-outside-the-repository) |
+| `.everywhere()` | none | At `command`, also judges a command that runs outside the repo. See [a command outside the repo](./parse.md#a-command-outside-the-repo) |
 | `.check(fn)` | a check | **Mandatory.** A function of `ctx`, or a stock check such as `textBan({…})` |
 | `.message(str)` | string | **Mandatory.** What the blocked person reads |
 | `.description(str)` | string | What the entry is for, for the reader |
@@ -84,15 +84,15 @@ A guardrail is a rule that refuses a commit or a command, or holds a turn open. 
 
 ## A breadcrumb
 
-A breadcrumb is a note shown to the agent. It has no rail to block with, so it has no `.check(…)` or `.message(…)`. It has prose instead.
+A breadcrumb is text shown to the agent. It has no rail to block with, so it has no `.check(…)` or `.message(…)`. It has prose instead.
 
 | Verb | Value | Meaning |
 | --- | --- | --- |
-| `.at(…moments)` | `session · file-change · command · turn-end` | **Mandatory.** When the note shows. Each time a `turn-end` note shows, the agent takes one more turn to read it. See [the turn-end moment](./moments.md#the-turn-end-moment) |
-| `.on(…globs)` | globs | What the note is about: the files whose change shows it, or, at `command`, the command lines it is about (`"npm install*"`). `.on()` with no globs is refused |
+| `.at(…moments)` | `session · file-change · command · turn-end` | **Mandatory.** When the breadcrumb is shown. Each time a `turn-end` breadcrumb is shown, the agent takes one more turn to read it. See [the turn-end moment](./moments.md#the-turn-end-moment) |
+| `.on(…globs)` | globs | What the breadcrumb is about: the files whose change shows it, or, at `command`, the command lines it is about (`"npm install*"`). `.on()` with no globs is refused |
 | `.ignore(…globs)` | globs | Carve-outs from `.on(…)`. `.ignore()` with no globs is refused |
-| `.for(…categories)` | categories | Binds the note to actors. Only an agent that has at least one of the categories is shown it. At `session`, this is how a breadcrumb is chosen by the type of agent |
-| `.text(str)` / `.file(path)` | prose | The note itself. Exactly one of the two is mandatory. A breadcrumb with both is refused. On an override, either one replaces the pack's prose, whichever of the two the pack used |
+| `.for(…categories)` | categories | Binds the breadcrumb to actors. Only an agent that has at least one of the categories is shown it. At `session`, this is how a breadcrumb is chosen by the type of agent |
+| `.text(str)` / `.file(path)` | prose | The breadcrumb's text. Exactly one of the two is mandatory. A breadcrumb with both is refused. On an override, either one replaces the pack's prose, whichever of the two the pack used |
 | `.description(str)` | string | What the entry is for, for the reader |
 | `.disabled(why)` | string | Turns the entry off, on the record. The reason prints in `flow status` |
 

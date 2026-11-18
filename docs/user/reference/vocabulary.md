@@ -14,7 +14,7 @@ Each term below is used with this meaning on every page of these docs.
 | **override** | `override(pack.entry).<key>(…)`: change one thing about a bound entry. Each key replaces the pack's whole value. See [override one entry of a pack](../how-to/write-your-own-check.md#override-one-entry-of-a-pack) |
 | **moment** | When a rule runs: `commit · command · session · file-change · turn-end`. See [moments](./moments.md) |
 | **guardrail** | A rule that refuses a commit or a command, or holds a turn open |
-| **breadcrumb** | A note shown to the agent, at a session's start, after a file changes, before a command or at turn-end |
+| **breadcrumb** | Text shown to the agent, at a session's start, after a file changes, before a command or at turn-end |
 | **harness** | The program that runs the agent and calls flow's hooks: Claude Code or Codex |
 | **trust gate** | One of the two conditions Codex sets before it runs a project's hooks: the folder is trusted, and each hook is approved. See [the two trust gates](./codex.md#the-two-trust-gates) |
 | **redirect** | A command guardrail whose message names the command to run instead. See [how to block or redirect a command](../how-to/block-a-command.md#redirect-a-command) |
@@ -23,7 +23,7 @@ Each term below is used with this meaning on every page of these docs.
 | **ctx** | The one argument a check is called with, and its only access to the world: the event facts (`file · staged · deleted · message · command · turn · actor · moment`) and the effects (`fs · exec · git`). See [what a check is given](./ctx.md) |
 | **category** | A name with its recognizer, `defineCategory`, read from evidence the harness wrote and bound with `.for(…)`. See [categories](./config.md#categories) |
 | **case** | A canned `ctx` that must pass or must block, included on the entry as `.test({ pass, block })`. A guardrail with no block case does not load. See [cases](./config.md#cases) |
-| **fitting** | What `flow status` checks beyond the rules: the config loads, git runs the two commit hooks, each harness's hooks are registered, and the `flow` they run is found. See [the flow command](./cli.md) |
+| **fitting** | What `flow status` checks beyond the rules: the config loads, git runs the commit hook, each harness's hooks are registered, and the `flow` they run is found. See [the flow command](./cli.md) |
 
 ---
 

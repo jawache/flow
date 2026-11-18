@@ -4,7 +4,7 @@ summary: "from an unguarded repo to a refused commit, a refused command and a br
 
 # Getting started
 
-In this tutorial, we will guard a git repo with flow, see a commit refused, see a command refused before it runs, see a breadcrumb shown to an agent, and run every rule's own test cases. It takes about ten minutes, and every command below is real, so run each one as you read.
+In this tutorial, we guard a git repo with flow. We see a commit refused, a command refused before it runs, and a breadcrumb shown to an agent. Then we run every rule's own test cases. It takes about ten minutes, and every command below is real, so run each one as you read.
 
 You need **Node 24 or later**, git, and a git repo to guard. A throwaway repo is fine. For steps 6 and 7 you need Claude Code or Codex.
 
@@ -28,7 +28,7 @@ Now run `flow init`:
 npx flow init
 ```
 
-It asks which harnesses run agents in this repo. Select both, so the rest of this tutorial works under either:
+It prompts for the harnesses that run agents in this repo. Select both, so the rest of this tutorial works under either:
 
 ```
 Which harnesses run agents in this repo?
@@ -83,7 +83,7 @@ export const house = definePack("house", {
     .message("Force-pushing rewrites history everyone else has. Push a correcting commit, or ask first.")
     .test({ pass: ["git push origin main"], block: ["git push --force origin main"] }),
 
-  // A breadcrumb: a note, shown after the first change under src/.
+  // A breadcrumb: text shown to the agent after its first change under src/.
   sourceLayout: breadcrumb()
     .at(fileChange)
     .on("src/**")
@@ -124,7 +124,7 @@ flow is ON — 5 guardrails · 2 breadcrumbs, every one resolved and able to fir
         Force-pushing rewrites history everyone else has. Push a correcting commit, or ask first.
   session
     🍞 flow.orientation
-        This repo is guarded by flow. A guardrail refuses a commit or a command, and a breadcrumb is a note…
+        This repo is guarded by flow. A guardrail refuses a commit or a command, and a breadcrumb is text…
   file-change
     🍞 house.sourceLayout  —  on src/**
         Code under src/ is pure: no file or network access. Put those in shell/.
@@ -137,7 +137,7 @@ flow is ON — 5 guardrails · 2 breadcrumbs, every one resolved and able to fir
 green — every rule loads, every fitting is in place.
 ```
 
-Notice the last line: green. Every rule loads, and every fitting it needs is in place. A fitting is a piece of wiring flow depends on, such as the git hook or a harness's hook registrations. If something were not in place, `flow status` would print a red line with its fix, and exit with a non-zero code.
+Notice the last line: green. Every rule loads, and every fitting it needs is in place. A fitting is something flow depends on outside the rules, such as the git hook or a harness's hook registrations. If something were not in place, `flow status` would print a red line with its fix, and exit with a non-zero code.
 
 ## 5 · See a commit refused
 
@@ -199,14 +199,14 @@ Adjust the command, then retry.
 
 ## 7 · See a breadcrumb shown
 
-In the same session, ask the agent to add a function to `src/a.ts`. After its first change under `src/`, the agent is shown the note:
+In the same session, ask the agent to add a function to `src/a.ts`. After its first change under `src/`, the agent is shown the breadcrumb:
 
 ```
 # breadcrumb: house.sourceLayout (file-change)
 Code under src/ is pure: no file or network access. Put those in shell/.
 ```
 
-Ask the agent what it was just told about `src/`. It repeats the note. When it changes `src/a.ts` a second time, it is not shown the note again.
+Ask the agent what it was just told about `src/`. It repeats the breadcrumb's text. The agent is shown the breadcrumb once: a second change to `src/a.ts` shows nothing.
 
 ## 8 · Run every rule's own cases
 
@@ -234,7 +234,7 @@ We now have a repo that guards itself:
 
 - **A commit** is judged on its staged files and its message, and refused when a rule says no.
 - **A named command** is refused before it runs.
-- **A breadcrumb** tells an agent about an area when it first changes a file there.
+- **A breadcrumb** is shown to an agent when it first changes a file in an area.
 - **Every rule** proves itself with its own cases, through `flow test`.
 
 Anyone who clones the repo and runs `npm install` and `npx flow init` gets the same guard.

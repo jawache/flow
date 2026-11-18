@@ -1,32 +1,44 @@
 ---
-summary: "about flow: the two kinds of guidance, why the commit is the centre, where a rule goes, the one file and its packs"
+summary: "about flow: the two kinds of guidance, the five moments, why content is judged at the commit, where a rule goes, the one file and its packs"
 ---
 
 # How flow works
 
-flow refuses an agent's mistake at the commit, refuses a short list of commands outright, and steers the rest with notes.
+flow gives a coding agent two kinds of guidance, at five moments of its work.
 
-An agent working in your codebase makes confident mistakes. It commits code that fails the lint, writes a dependency in without telling you, or force-pushes over history. flow judges at two moments:
+## Two kinds of guidance
 
-- **A commit** is refused before git records it, on the staged files and the message.
-- **A command** is refused before it runs, when it is one you named.
+- **A guardrail** refuses. It is a check that refuses a commit or a command, or holds a turn open, and says why.
+- **A breadcrumb** tells. It is text shown to the agent, such as "this code runs in a Worker, no Node natives".
 
-Everything else an agent does, flow leaves alone or answers with a note.
+flow has no warnings. A rule either refuses or it is a breadcrumb. An agent learns to read past a warning.
 
-## Two kinds of guidance, and nothing in between
+## Five moments
 
-- **A breadcrumb** steers. It is a note shown to the agent: at the start of a session, when a file in an area changes, before a command, or at turn-end. One example is "this code runs in a Worker, no Node natives".
-- **A guardrail** blocks. It is a check that refuses a commit or a command, or holds a turn open, and says why.
+A moment is when a rule runs. What a moment takes follows from two facts about it:
 
-There are no warnings. A rule either blocks or it is a breadcrumb. In our view a warning is a third kind that an agent learns to read past, which is why flow does not have one.
+- **A guardrail needs a moment before the thing happens.** After it, there is nothing to refuse.
+- **A breadcrumb needs a moment where flow can add text to the agent's context.**
 
-## Why the commit is the centre
+| Moment | When | Takes |
+| --- | --- | --- |
+| `commit` | git is about to record a commit | a guardrail |
+| `command` | before a shell command runs | a guardrail, a breadcrumb |
+| `turn-end` | an agent is about to hand back | a guardrail, a breadcrumb |
+| `session` | a session or a subagent starts | a breadcrumb |
+| `file-change` | after a tool call changed a file | a breadcrumb |
 
-An agent changes files through many doors: an edit tool, `sed -i`, a heredoc, a script, a recipe. Under some harnesses every write is a shell command. A rule that judges each write as it lands has to work out what a shell line changed, and it is wrong whenever it cannot fully read the line.
+![The harness's hooks and git's hook, each delivering one of flow's five moments](../assets/moments.svg)
 
-A commit has none of that. Git holds the staged files and the message whole, whatever tool wrote them. A rule at the commit judges real content, once, at the point where work becomes history. It runs for every harness, and for a person committing in a terminal.
+The harness is the program that runs the agent: Claude Code or Codex. It calls flow at four of the moments. Git calls flow at the commit. The same `flow.config.ts` guards a repo under both harnesses. [Moments](../reference/moments.md) has each one exactly.
 
-So content rules live at the commit: the lint, the tests, the coverage bar, a banned pattern, a protected file, the format of the message. An agent may write a file that breaks a rule, and it finds out when it commits. Until then the mistake is in the working tree, where it is recoverable.
+## Why content is judged at the commit
+
+An agent writes a file in many ways: an edit tool, `sed -i`, a heredoc, a script, a recipe. Under Codex every write is a shell command. A rule that judges each write must work out what a shell line changed. It is wrong each time it cannot read the line in full.
+
+At a commit, git holds the staged files and the message whole, whichever tool wrote them. A commit rule judges that content once, before the work becomes history. It runs under every harness, and for a person who commits in a terminal.
+
+So every content rule is a commit rule: the lint, the tests, the coverage bar, a banned pattern, a protected file, the format of the message. flow does not stop a write. An agent that writes a file against a rule is refused when it commits. Until then the file is in the working tree, and git still has the last commit.
 
 ## Where a rule goes
 
@@ -38,17 +50,17 @@ So content rules live at the commit: the lint, the tests, the coverage bar, a ba
 | A recoverable mistake, such as discarding your own edits | Nothing, or a breadcrumb |
 | Who may do what | The agent's tool list, in the harness, or a guardrail bound to that type of agent |
 
-A command guardrail is for an exact command you can name in words. A rule that has to guess what a shell line does is a rule for the commit, or a breadcrumb.
+A command guardrail is for an exact command you can name in words. A rule about what a shell line does to a file is a commit rule, or a breadcrumb.
 
 ## `flow.config.ts` is the whole guard
 
-`flow.config.ts` is one TypeScript file at the repo root, and a rule that cannot be reached from it does not run. There is no rule library on the machine, and nothing resolves at run time. No rule is on unless the file binds it, so the file lists exactly what runs.
+`flow.config.ts` is one TypeScript file at the repo root. A rule that cannot be reached from it does not run. There is no rule library on the machine, and nothing resolves at run time. So the file lists exactly what runs.
 
-The file is code for a reason. A misspelled verb is a red squiggle in your editor, and a rule that cannot compile never loads. The mistake shows where you write it, before anything runs.
+The file is code for a reason. A misspelled verb is a red squiggle in your editor, and a rule that does not compile never loads. The mistake shows where you write it, before anything runs.
 
 ## Packs and overrides
 
-The file has two verbs: it binds **packs**, and it states **overrides**. That is what keeps it short: the rules are in the packs, and the config is the list of them.
+The file has two verbs: it binds **packs**, and it states **overrides**. The rules are in the packs, so the config stays short: it is the list of them.
 
 ```
 import { defineConfig, override, pack } from "@jawache/flow";
@@ -65,16 +77,16 @@ export default defineConfig([
 - **`pack(x)`** binds a pack and every entry in it.
 - **`override(x.entry)`** states only what it changes, such as a different `.on(…)`, a different `.message(…)`, or `.disabled("why")`. Everything it leaves out comes from the pack. It can never change the entry's `.check(…)` or `.test(…)`.
 
-An override replaces the key it names. A narrowed `.on(…)` is the whole list, never a merge. Where two repos disagree about one entry, the second one overrides it instead of forking the pack. The override is a committed line in its config, so the difference between the repos stays visible, and `flow status` prints the reason for an entry turned off with `.disabled("why")`.
+An override replaces the key it names. A narrowed `.on(…)` is the whole list, never a merge. Where two repos disagree about one entry, the second one overrides it. It does not fork the pack. The override is a committed line in its config, so the difference between the repos stays visible. `flow status` prints the reason for an entry turned off with `.disabled("why")`.
 
-## A pack is just code
+## A pack is code
 
 A pack is an ordinary TypeScript module. flow ships one, `flow`, which protects the guard itself. Every other pack is yours:
 
-- **In `guards/`.** A pack about your repo's own terrain, such as its house rules.
-- **In a package of its own.** Rules worth giving to a second repo. Each repo installs the package and imports the pack.
+- **In `guards/`.** A pack about your repo's own rules.
+- **In a package of its own.** Rules that a second repo also needs. Each repo installs the package and imports the pack.
 
-Nothing about the rules changes when a pack moves from one to the other. Only the import path changes. A pack that needs a fact about the repo declares it as a mandatory typed parameter, so a pack cannot apply another repo's assumptions without saying so. [How to write your own check, and share rules as a pack](../how-to/write-your-own-check.md) gives the steps.
+The rules are the same in both places. Only the import path differs. A pack that needs a fact about the repo declares it as a mandatory typed parameter. A config that binds the pack without the fact does not compile. [How to write your own check, and share rules as a pack](../how-to/write-your-own-check.md) gives the steps.
 
 ## A sentence states the whole rule
 
@@ -86,17 +98,22 @@ noForcePush: guardrail()
   .test({ pass: ["git push origin main"], block: ["git push --force origin main"] }),
 ```
 
-- **Each verb is one part of the rule.** `.at(…)` is when it runs, `.on(…)` and `.ignore(…)` are which files, `.for(…)` is which actor, `.check(…)` is the question, `.message(…)` is what the blocked agent reads, and `.test({ pass, block })` is what proves it. A verb written twice is a compile error.
-- **A check is a function of `ctx`,** and it reaches the world only through it. Because of that one rule, the same check runs live, runs in a test case, and replays from a recording with no repo at all.
+Each verb is one part of the rule:
+
+| Verb | Part |
+| --- | --- |
+| `.at(…)` | when it runs |
+| `.on(…)`, `.ignore(…)` | which files |
+| `.for(…)` | which actor |
+| `.check(…)` | the question |
+| `.message(…)` | what the refused agent reads |
+| `.test({ pass, block })` | what proves it |
+
+- **A verb written twice is a compile error.**
+- **A check is a function of `ctx`,** and `ctx` is its only access to files, commands and git. So the same check runs live, runs in a test case, and replays from a recording with no repo.
 - **A category reads evidence the harness wrote.** [Rules bound to who](./rules-bound-to-who.md) explains why.
-- **Every rule has its own cases.** A guardrail with no block case does not load, because a block case is what proves it catches something.
-
-## Two harnesses, one config
-
-![The harness's hooks and git's hook, each delivering one of flow's five moments](../assets/moments.svg)
-
-flow plugs into a harness, the program that runs the agent, and into git. The harness calls flow at a session's start, before a shell command, after a tool call and at turn-end. Git calls flow at the commit, once it has the message. flow runs under Claude Code and Codex, and the same `flow.config.ts` guards a repository under both.
+- **Every rule has its own cases.** A guardrail with no block case does not load. A block case is what proves the rule refuses something.
 
 ---
 
-[Index](../index.md) · when each rule runs: [the moments](../reference/moments.md) · every verb: [the config reference](../reference/config.md) · what flow can and cannot see: [what flow sees](./what-flow-sees.md) · try it: [getting started](../tutorials/getting-started.md)
+[Index](../index.md) · when each rule runs: [the moments](../reference/moments.md) · every verb: [the config reference](../reference/config.md) · what flow can and cannot read: [what flow reads](./what-flow-reads.md) · try it: [getting started](../tutorials/getting-started.md)

@@ -21,7 +21,7 @@ So the agent can repair the config the way it does any other work: with the edit
 You see the fault in three places. Delete a `.message(…)` from an entry and save:
 
 - **Your editor** marks the line in red, because the config is TypeScript. This needs the editor to resolve `@jawache/flow`'s types.
-- **The next command in a session** carries the load error to the agent.
+- **The next command in a session** passes the load error to the agent.
 - **`flow status`** prints the fault and names the entry. The first line names the version of flow that is running:
 
 ```
@@ -38,11 +38,11 @@ A guard must never be off without anyone reading that it is off. A config that w
 Refusing every call as well costs more than it buys:
 
 - **It refuses the repair.** The fix for a missing package is a command such as `npm ci`, and a guard that refuses every command refuses that one too.
-- **Content is judged at the commit anyway.** flow never judges a write as it lands. Once the config loads, the commit judges the staged files against every content rule, as it always does.
+- **Content is judged at the commit.** Once the config loads, a commit judges the staged files against every content rule.
 
 ## What is off while the config will not load
 
-Every guardrail is off until the config loads again. The ones a later commit cannot make up for are the guardrails on commands. A rule that refuses a force-push is one. While the config will not load, that command runs.
+Every guardrail is off until the config loads again. A later commit cannot judge a command that has already run. A rule that refuses a force-push is one example. While the config does not load, that command runs.
 
 The agent can put flow in this state itself. Deleting one `.message(…)` from the config is an ordinary edit, and the config then does not load.
 
@@ -50,7 +50,7 @@ The window lasts until the config loads again. The agent has the load error on e
 
 ## Every commit is refused
 
-A commit turns work in the tree into history. The git hook refuses while the config will not load, so nothing reaches a commit until every commit rule has judged it.
+A commit turns work in the tree into history. The git hook refuses every commit while the config does not load. So every commit is judged by every commit rule.
 
 ## When flow cannot report
 
@@ -61,7 +61,7 @@ flow reports a fault only while it runs. Two failures stop it from running at al
 
 Run `flow status` to check for both:
 
-- **A harness's line is red** when its file in the repository does not call flow for every hook.
+- **A harness's line is red** when its file in the repo does not call flow for every hook.
 - **Its `binary` line is red** when the hooks cannot find `flow`.
 
 ---

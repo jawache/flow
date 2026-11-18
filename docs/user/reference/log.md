@@ -32,7 +32,7 @@ Two subagents of the same type have the same `agentType` and different `agent` v
 
 ### Commit rows
 
-The commit moment runs in git's commit-message hook. No agent calls it. Its rows name the agent whose tool call last ran in the worktree, when that call was in the last 4 hours, and go into that agent's session log. When no call was that recent, the rows go into `.flow/log/commit.jsonl` with `agent` set to `commit`.
+The commit moment runs in git's commit-message hook. No agent calls it. Its rows name the agent whose tool call last ran in the worktree, when that call was in the last 4 hours. They go into that agent's session log. When no call was that recent, the rows go into `.flow/log/commit.jsonl` with `agent` set to `commit`.
 
 ## The kinds of row
 

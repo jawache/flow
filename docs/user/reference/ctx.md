@@ -50,7 +50,7 @@ A check declares no moments, no schema and no `kind`. The entry's `.at(…)` set
 
 ### ctx.commands
 
-`ctx.commands` lists every simple command in the line, in the order they appear, including commands nested inside another. A rule without `.everywhere()` is passed only those [inside the repository](./parse.md#a-command-outside-the-repository).
+`ctx.commands` lists every simple command in the line, in the order they appear, including commands nested inside another. A rule without `.everywhere()` is passed only those [inside the repo](./parse.md#a-command-outside-the-repo).
 
 `ctx.commands` is `null` when the line does not parse, for example when a quote never closes. A check reads `null` as "cannot tell", and the stock checks then pass, except `banCommands`, which refuses the line when the program and every argument it names appear in it as whole words.
 

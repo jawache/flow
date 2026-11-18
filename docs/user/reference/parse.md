@@ -43,19 +43,19 @@ This page is the boundary of the parse. It states everything that is followed. N
 
 A shell feature is added to this page only when incidents counted from real sessions call for it.
 
-## A command outside the repository
+## A command outside the repo
 
-A command rule judges only commands that run inside the repository, unless it is marked `.everywhere()`.
+A command rule judges only commands that run inside the repo, unless it is marked `.everywhere()`.
 
 - **A command is inside** when the folder it runs in is.
-- **A folder is inside** when git names this repository for it, so every worktree of this repository is inside.
+- **A folder is inside** when git names this repo for it. So every worktree of this repo is inside.
 - **A folder flow cannot tell,** such as after `cd "$(mktemp -d)"`, counts as inside.
 
 So `cd /tmp/r && git init && git commit --no-verify -m init` runs: a rule against `--no-verify` is not passed that commit.
 
 ## How a guardrail names a command
 
-A command rule names a command in words, never with a regex over the line. `"git push --force"` is the program `git` and the arguments `push` and `--force`, and flow compares them with each command in the parse, one whole argument at a time. [`banCommands`](../checks/ban-commands.md#how-a-command-is-matched) has the matching rules.
+A command rule names a command in words, never with a regex over the line. `"git push --force"` is the program `git` and the arguments `push` and `--force`. flow compares them with each command in the parse, one whole argument at a time. [`banCommands`](../checks/ban-commands.md#how-a-command-is-matched) has the matching rules.
 
 A regex is for text: a commit message or a file's contents.
 
@@ -68,7 +68,7 @@ A rule that names `git push --force`, against four lines:
 | `git push --force origin main` | `git push --force origin main` | refuses |
 | `echo "never git push --force"` | `echo` with one argument | passes: the words are text passed to `echo` |
 | `bash -c "cd api && git push --force"` | `bash`, then nested `cd api` and `git push --force` in the folder `api` | refuses |
-| `R=/tmp/scratch; git -C $R push --force` | `git -C /tmp/scratch push --force`, in the folder `/tmp/scratch` | passes: that folder is outside the repository. Refuses when the rule is `.everywhere()` |
+| `R=/tmp/scratch; git -C $R push --force` | `git -C /tmp/scratch push --force`, in the folder `/tmp/scratch` | passes: that folder is outside the repo. Refuses when the rule is `.everywhere()` |
 
 A loop and a substitution in one line:
 
@@ -78,13 +78,13 @@ for d in api web; do (cd $d && npm test > "$(git rev-parse --short HEAD).log"); 
 
 | Command | `folder` | `nested` | `redirects` |
 | --- | --- | --- | --- |
-| `cd api` | the repository | `false` | none |
+| `cd api` | the repo | `false` | none |
 | `npm test` | `api` | `false` | `>` to the substitution, as written |
 | `git rev-parse --short HEAD` | `api` | `true` | none |
-| `cd web` | the repository | `false` | none |
+| `cd web` | the repo | `false` | none |
 | `npm test` | `web` | `false` | `>` to the substitution, as written |
 | `git rev-parse --short HEAD` | `web` | `true` | none |
 
 ---
 
-[Index](../index.md) · what a check is given: [ctx](./ctx.md) · the stock check that names commands: [`banCommands`](../checks/ban-commands.md) · why flow parses: [what flow sees](../explanation/what-flow-sees.md)
+[Index](../index.md) · what a check is given: [ctx](./ctx.md) · the stock check that names commands: [`banCommands`](../checks/ban-commands.md) · why flow parses: [what flow reads](../explanation/what-flow-reads.md)

@@ -4,7 +4,7 @@ summary: "run a guardrail, or show a breadcrumb, only for one type of agent, wit
 
 # How to bind a rule to a type of agent
 
-This guide shows you how to make a rule apply to one type of agent and not another, such as a breadcrumb only builders are shown, or a guardrail only subagents meet.
+This guide shows you how to make a rule apply to one type of agent and not another. Two examples: a breadcrumb shown only to builders, and a guardrail that runs only for subagents.
 
 1. Declare a category in the pack that holds your repo's rules. Add `defineCategory` and `spawnedAs` to the import:
 
@@ -37,7 +37,7 @@ A rule with no `.for(…)` applies to every agent.
 
 - **If the rule is a breadcrumb at the start of a session**, see [how to steer with a breadcrumb](./steer-with-a-breadcrumb.md#for-a-type-of-agent).
 - **If a type is generic**, such as `general-purpose`, the type says nothing about the job. `spawnedAs` can read the brief the agent was started with: [categories](../reference/config.md#categories) lists the keys.
-- **If you want to stop a type of agent writing files at all**, take the write tools out of that agent's tool list in the harness. flow does not stop a write.
+- **If you want to stop a type of agent writing files at all**, take the write tools out of that agent's tool list in the harness. flow judges a write at the commit.
 
 ---
 

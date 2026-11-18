@@ -4,7 +4,7 @@ summary: "reads: commit message · fires at: commit"
 
 # `commitMessage`
 
-Holds the commit message to a format, and bans text in it. It reads the message as git records it, in git's commit-message hook, so a message typed in an editor, passed with `-m` or read from a file is judged the same way.
+Holds the commit message to a format, and bans text in it. It reads the message as git records it. A message typed in an editor, passed with `-m` or read from a file is judged the same way.
 
 ## Options
 
@@ -15,7 +15,7 @@ Holds the commit message to a format, and bans text in it. It reads the message 
 
 At least one of the two is required. A refusal names the header as written, or the banned line.
 
-## Example — a header format
+## Example: a header format
 
 ```
 conventionalHeader: guardrail()
@@ -25,7 +25,7 @@ conventionalHeader: guardrail()
   .test({ pass: [{ message: "fix(parse): read a quoted heredoc" }], block: [{ message: "wip" }] }),
 ```
 
-## Example — banned text
+## Example: banned text
 
 ```
 noAttribution: guardrail()

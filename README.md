@@ -1,6 +1,6 @@
 # flow
 
-**Guardrails and breadcrumbs for AI coding agents, written as code.** flow judges an agent's work at the commit, refuses a short list of commands outright, and steers the rest with notes. The rules are one TypeScript file in your repo. When a commit or a command breaks a rule, flow refuses it and tells the agent why, in your words. flow works with [Claude Code](https://claude.com/claude-code) and [Codex](https://developers.openai.com/codex), and its commit rules run for people too.
+**Guardrails and breadcrumbs for AI coding agents, written as code.** A guardrail refuses a commit or a command. A breadcrumb is text shown to the agent when it applies. The rules are one TypeScript file in your repo. When a commit or a command breaks a rule, flow refuses it and tells the agent why, in your words. flow works with [Claude Code](https://claude.com/claude-code) and [Codex](https://developers.openai.com/codex), and its commit rules run for people too.
 
 Instructions in an `AGENTS.md` or `CLAUDE.md` file are advice: an agent can misread or skip them, more often as a session grows long. A flow guardrail runs every time, at the moment it applies, and a refused action does not happen.
 
@@ -8,12 +8,12 @@ Not to be confused with Flow, Meta's JavaScript type checker. No relation.
 
 ## Why use flow
 
-- **The commit is judged on real content.** A git hook runs your rules over the staged files, the files the commit deletes, and the message, whichever tool wrote them and whoever commits: the lint, the tests, a coverage bar, a banned pattern, a protected file, the format of the message.
+- **The commit is judged on real content.** A git hook runs your rules over the staged files, the deleted files and the message. It runs whichever tool wrote them and whoever commits. Typical rules: the lint, the tests, a coverage bar, a banned pattern, a protected file, the format of the message.
 - **A named command is stopped before it runs.** A force-push, a `gh repo delete`, a raw command your repo has a recipe for: the rule refuses the command, and the agent gets the rule's message instead of the command's output.
-- **Recoverable mistakes are not blocked.** flow does not stop a write. An agent finds out at the commit, while the mistake is still in the working tree.
-- **Notes arrive when they matter.** A breadcrumb is a note shown to the agent at the start of a session, chosen by the type of agent, or the first time it changes a file in a given area, instead of one long instruction file read once at the start.
+- **A recoverable mistake is left to the commit.** An agent can write any file in the working tree. A file that breaks a rule is refused when it is committed.
+- **A breadcrumb is shown when it applies.** At the start of a session it is chosen by the type of agent. In an area of the code it is shown the first time the agent changes a file there. It replaces one long instruction file read once at the start.
 - **Rules are tested code.** Each rule lists the inputs it must let through and the inputs it must refuse. A rule with no refusal case does not load, `flow test` runs every case, and your editor flags a mistyped rule, because the rules are TypeScript.
-- **A broken guard is never silent.** If the config does not load, every guardrail and breadcrumb is off, the agent is given the load error with every command, and every commit is refused until the config loads.
+- **A broken guard is never silent.** If the config does not load, every guardrail and breadcrumb is off. The agent is given the load error with every command. Every commit is refused until the config loads.
 - **Rules can depend on who is acting.** A guardrail or a breadcrumb can apply only to one type of agent. flow identifies an agent from what the harness records about it, never from what the agent says about itself.
 - **Your rules are yours.** flow ships one small pack, which protects the guard itself. Every other rule is in your repo, or in a package of packs you share between your repos.
 
@@ -52,7 +52,7 @@ npx flow status
 
 The tag holds flow's built files, and the lockfile pins the commit. flow is not on npm, and nothing is installed for the whole machine. [How to install and pin flow](./docs/user/how-to/install-flow.md) has the details, including a project that is not a Node project.
 
-`flow init` asks which harnesses you use, then writes `flow.config.ts`, a git hook, and flow's hook registrations for each one, all inside the repo. `flow status` lists every rule and checks the wiring: green means every rule loads and is in place. Then follow [Getting started](./docs/user/tutorials/getting-started.md), which takes you from an unguarded repo to a refused commit, a refused command and a breadcrumb shown.
+`flow init` prompts for the harnesses you use, then writes `flow.config.ts`, a git hook, and flow's hook registrations for each one, all inside the repo. `flow status` lists every rule and checks the wiring: green means every rule loads and is in place. Then follow [Getting started](./docs/user/tutorials/getting-started.md), which takes you from an unguarded repo to a refused commit, a refused command and a breadcrumb shown.
 
 ## Documentation
 
@@ -72,7 +72,7 @@ The tag holds flow's built files, and the lockfile pins the commit. flow is not 
 
 ## How it works
 
-`flow init` registers flow with Claude Code and Codex, and adds a git hook. The harness then runs `flow` when a session or a subagent starts, before a shell command, after a tool call, and when an agent hands back. Git runs flow at every commit, once it has the message. Each time, flow loads `flow.config.ts` and runs the rules bound to that moment: `commit`, `command`, `session`, `file-change` or `turn-end`. A guardrail refuses by exiting with code 2, which the harness and git both treat as "do not go ahead", and its message is shown to the agent. A breadcrumb never refuses: its text is added to the agent's context. [Moments](./docs/user/reference/moments.md) describes each one.
+`flow init` registers flow with the harness, and adds a git hook. The harness then runs `flow` at four moments: when a session or a subagent starts, before a shell command, after a tool call, and when an agent hands back. Git runs flow at every commit, once it has the message. Each time, flow loads `flow.config.ts` and runs the rules bound to that moment: `commit`, `command`, `session`, `file-change` or `turn-end`. A guardrail refuses by exiting with code 2. The harness and git both treat that as "do not go ahead", and the agent is shown the guardrail's message. A breadcrumb never refuses: its text is added to the agent's context. [Moments](./docs/user/reference/moments.md) describes each one.
 
 ## Working on flow
 

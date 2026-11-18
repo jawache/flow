@@ -4,7 +4,7 @@ summary: "refuse a shell command before it runs, or point the agent at the comma
 
 # How to block or redirect a command
 
-This guide shows you how to refuse a shell command before it runs. Keep these rules for an exact command that cannot be undone, such as a force-push, and for a command your repo has a sanctioned way to run.
+This guide shows you how to refuse a shell command before it runs. Use these rules for two kinds of command: an exact command that cannot be undone, such as a force-push, and a command your repo has a sanctioned way to run.
 
 1. Open the pack that holds your repo's rules. If you have none, create `guards/house.ts` and bind it with `pack(house)` in `flow.config.ts`:
 
@@ -59,8 +59,8 @@ The [`banCommands` reference](../checks/ban-commands.md#how-a-command-is-matched
 ## Variants
 
 - **If the rule is about a commit message**, judge the message at `commit`, where git has it whole. See [how to check the commit message](./check-the-commit-message.md).
-- **If the rule should also judge a command that runs outside the repository**, such as a force-push from any folder, chain `.everywhere()`.
-- **If a flag must be told apart from its value**, such as `-n` from a value in `-mn`, write a check of your own over [`ctx.commands`](../reference/ctx.md#ctxcommands) that reads the arguments in order. [How to write your own check](./write-your-own-check.md) gives the steps.
+- **If the rule should also judge a command that runs outside the repo**, such as a force-push from any folder, chain `.everywhere()`.
+- **If a flag must be told apart from its value**, such as `-n` from a value in `-mn`, write a check of your own. It reads the arguments in order from [`ctx.commands`](../reference/ctx.md#ctxcommands). [How to write your own check](./write-your-own-check.md) gives the steps.
 - **If a pattern must span two commands**, such as `curl … | sh`, set `wholeLine: true`. Each entry in `ban` is then a regex, tried against the whole command line.
 
 ---

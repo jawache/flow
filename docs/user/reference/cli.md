@@ -10,7 +10,7 @@ summary: "every `flow` command, what `flow init` writes and `flow uninstall` rem
 
 | Command | What it does |
 | --- | --- |
-| `flow init [--empty] [--harness <names>]` | Asks which harnesses to register, then writes `flow.config.ts`, the git hook and `.flow/`, sets `core.hooksPath`, and registers flow's hooks for each harness you chose, inside the repository. See [what `flow init` asks](#what-flow-init-asks). `--empty` writes a config that binds no pack. Run it again at any time: it writes only what is missing, and never writes over `flow.config.ts` or `.githooks/commit-msg` once they exist. It does change one thing you may have set yourself, the hook registrations, listed under [what `flow init` writes](#what-flow-init-writes). When git already runs other hooks, it leaves them alone and prints that flow is not installed, as described under [when git already runs other hooks](#when-git-already-runs-other-hooks) |
+| `flow init [--empty] [--harness <names>]` | Prompts for the harnesses to register, then writes `flow.config.ts`, the git hook and `.flow/`, sets `core.hooksPath`, and registers flow's hooks for each harness you chose, inside the repo. See [what `flow init` prompts for](#what-flow-init-prompts-for). `--empty` writes a config that binds no pack. Run it again at any time: it writes only what is missing, and never writes over `flow.config.ts` or `.githooks/commit-msg` once they exist. It does change one thing you may have set yourself, the hook registrations, listed under [what `flow init` writes](#what-flow-init-writes). When git already runs other hooks, it leaves them alone and prints that flow is not installed, as described under [when git already runs other hooks](#when-git-already-runs-other-hooks) |
 | `flow uninstall [--machine]` | Removes what `flow init` wrote in this repo, except `flow.config.ts`. `--machine` also removes the hooks that flow 0.3 wrote to the machine-wide Claude Code settings file. Prints each thing it removed, then the `npm uninstall` command to run next. Each removal is listed under [what `flow uninstall` removes](#what-flow-uninstall-removes). The `flow` pack refuses it when an agent runs it |
 | `flow status [--json]` | Lists every bound rule by moment, and checks each fitting. A fitting that is not in place is a red line with its fix. See [what `flow status` reports](#what-flow-status-reports) |
 | `flow test [config]` | Runs every bound rule's `.test()` cases. The default config is `flow.config.ts` |
@@ -39,12 +39,12 @@ The report's corrections are prompts a person typed that read as pushback, such 
 
 The report counts a file as changed from the log's [`change` rows](./log.md#change), whichever tool changed it.
 
-## What `flow init` asks
+## What `flow init` prompts for
 
 In a terminal, `flow init` is interactive.
 
-1. **It detects the harnesses.** A harness is detected when its folder is in the repository, `.claude/` or `.codex/`, or its program is on the `PATH`, `claude` or `codex`.
-2. **It asks which to register,** with each detected harness already selected:
+1. **It detects the harnesses.** A harness is detected by its folder in the repo, `.claude/` or `.codex/`, or by its program on the `PATH`, `claude` or `codex`.
+2. **It prompts for the harnesses to register,** with each detected harness already selected:
 
    ```
    Which harnesses run agents in this repo?
@@ -61,11 +61,11 @@ In a terminal, `flow init` is interactive.
    | flow's hooks are also in the machine-wide settings file | flow 0.3 wrote them. Each hook would run twice. The warning gives the command that removes them |
    | Codex runs no hook until you trust the folder and approve the hooks | Codex is chosen. See [the two trust gates](./codex.md#the-two-trust-gates) |
 
-4. **It lists the files it is about to write, and asks to go ahead.**
+4. **It lists the files it is about to write, and prompts for a yes.**
 
-When `flow init` is not run in a terminal, as when an agent or a script runs it, it asks nothing. It registers the detected harnesses, or both when it detects none, prints the warnings, and writes.
+When `flow init` is not run in a terminal, as when an agent or a script runs it, it prompts for nothing. It registers the detected harnesses, or both when it detects none, prints the warnings, and writes.
 
-`--harness` names the harnesses and skips the question: `--harness claude-code`, `--harness codex` or `--harness claude-code,codex`.
+`--harness` names the harnesses and skips the prompt: `--harness claude-code`, `--harness codex` or `--harness claude-code,codex`.
 
 ## What `flow init` writes
 
@@ -79,9 +79,9 @@ When `flow init` is not run in a terminal, as when an agent or a script runs it,
 | `.codex/hooks.json` | Codex's hook registrations, listed on [flow under Codex](./codex.md#the-hooks). Written when Codex is chosen |
 | `core.hooksPath` | Set to `.githooks`, so git runs the hook. `flow init` sets it only when it is unset and `.git/hooks` holds no hooks. It is a setting of one clone, so run `flow init` in every new clone |
 
-`flow init` writes every registration inside the repository, whatever the repository is. It writes nothing to a machine-wide file.
+`flow init` writes every registration inside the repo, whatever the repo is. It writes nothing to a machine-wide file.
 
-- **A registration an older `flow init` wrote in the repo's file** is rewritten in place to the 0.4 command and matcher, and one for an event flow no longer uses is removed.
+- **A registration an older `flow init` wrote in the repo's file** is rewritten in place to the 0.4 command and matcher. One for an event flow no longer uses is removed.
 - **When `flow init` adds or rewrites a registration,** it writes the whole file back as JSON indented by two spaces. Every key already in the file is kept.
 
 Every hook runs the repo's own `@jawache/flow` package first, then the `flow` on the `PATH` that git and the harness use. They never run a `flow` in the repo's `node_modules/.bin`, because any package can install one there. If neither has it, each hook fails with `flow: not found`, every commit is refused, and `flow status` prints a red `binary` line. [How to install and pin flow](../how-to/install-flow.md) puts `flow` there.
@@ -92,7 +92,7 @@ flow ships one pack, behind `@jawache/flow/packs`. It has three entries:
 
 | Entry | Kind | Moment | What it does |
 | --- | --- | --- | --- |
-| `flow.orientation` | breadcrumb | `session` | Tells the agent the repository is guarded, and that turning a guardrail off is a change to `flow.config.ts` |
+| `flow.orientation` | breadcrumb | `session` | Tells the agent the repo is guarded, and that turning a guardrail off is a change to `flow.config.ts` |
 | `flow.noUninstall` | guardrail | `command` | Refuses `flow uninstall`, in any folder |
 | `flow.noDeleteGuardrails` | guardrail | `commit` | Refuses a commit that deletes `flow.config.ts`, `.githooks/commit-msg`, `.claude/settings.json` or `.codex/hooks.json` |
 
@@ -146,7 +146,7 @@ Once the `commit-msg` hook git runs calls flow, and is executable when git runs 
 | `config` | `flow.config.ts` loads |
 | `git hook` | git runs the `commit-msg` hook, and it calls flow |
 | `binary` | the `flow` the hooks run is found |
-| one line per registered harness | the harness's hooks are registered in the repository. The line also says when one of its hooks last ran here, from the session log |
+| one line per registered harness | the harness's hooks are registered in the repo. The line also says when one of its hooks last ran here, from the session log |
 
 For Codex with no hook run, the line names the two trust gates as the likely reason:
 
@@ -175,7 +175,7 @@ For Codex with no hook run, the line names the two trust gates as the likely rea
 A hook has two codes: 0 lets the action go ahead, and 2 refuses it and shows standard error to the agent.
 
 - **A blocked action** exits 2, from every hook of a harness and from the git hook, with the message on standard error.
-- **A config that does not load** exits 2 from the git hook only. Every hook of a harness exits 0: `pre-tool-use`, `post-tool-use`, `session-start` and `subagent-start` pass the load error to the agent as a note, and `stop` and `subagent-stop` write it to standard error and let the turn end.
+- **A config that does not load** exits 2 from the git hook only. Every hook of a harness exits 0: `pre-tool-use`, `post-tool-use`, `session-start` and `subagent-start` pass the load error to the agent as added text, and `stop` and `subagent-stop` write it to standard error and let the turn end.
 
 These commands exit 1:
 

@@ -76,8 +76,8 @@ flow ships sixteen configured checks. You import one and pass it to `.check(…)
 
 For you when you want to know why flow is built the way it is.
 
-- [How flow works](./explanation/how-flow-works.md): the two kinds of guidance, why the commit is the centre, where a rule goes, and why one file is the whole guard.
-- [What flow sees](./explanation/what-flow-sees.md): what flow reads at a commit, at a command and after a call, and what it does not see.
+- [How flow works](./explanation/how-flow-works.md): the two kinds of guidance, the five moments, why content is judged at the commit, where a rule goes, and why one file is the whole guard.
+- [What flow reads](./explanation/what-flow-reads.md): what flow reads at a commit, at a command and after a tool call, and what it cannot read.
 - [Rules bound to who, not what](./explanation/rules-bound-to-who.md): categories, and why they read evidence the harness wrote.
 - [Fail loud](./explanation/fail-loud.md): why a config that will not load turns flow off and reports it on every call, and why every commit is refused until it loads.
 

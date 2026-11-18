@@ -4,7 +4,7 @@ summary: "about categories: why a rule can depend on the actor, and why the acto
 
 # Rules bound to who, not what
 
-A rule can give a different answer to the same act depending on who does it, and flow decides who from evidence the harness wrote, never from what the agent says about itself.
+A rule can give a different answer to the same act depending on who does it. flow decides who from evidence the harness wrote, never from the agent's own words.
 
 ## The same act, a different answer
 
@@ -16,7 +16,7 @@ const subagent = defineCategory("subagent", (facts) => facts.subagent);
 
 A guardrail bound to this category can refuse a commit from a subagent and let the same commit from the main session through. The act is the same and the actor is different, so the answer is different.
 
-It matters most for breadcrumbs at the start of a session. A builder goes on to commit, run recipes and change code, so it needs the notes about all three. A reviewer reads and reports, and needs few of them. A breadcrumb bound with `.for(builder)` is shown to the one and not the other.
+It matters most for breadcrumbs at the start of a session. A builder goes on to commit, run recipes and change code, so it needs the breadcrumbs about all three. A reviewer reads and reports, and needs few of them. A breadcrumb bound with `.for(builder)` is shown to the one and not the other.
 
 What an agent can do at all, such as whether a reviewer may write files, is set by the agent's tool list in the harness. flow does not stop a write.
 

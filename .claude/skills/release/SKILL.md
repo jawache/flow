@@ -56,7 +56,7 @@ The guide is `docs/user/migrations/<version>.md`. Its fixed shape, and where to 
 just release-check
 ```
 
-This runs the full gate, the commit suite and a minified production build. Then it makes the release's two commits and its tag in a throwaway clone, installs flow from that tag into a scratch folder with `npm i -D --ignore-scripts`, and runs the installed `dist/flow.mjs --version`. It pushes nothing, and leaves this repo as it was.
+This runs the full gate, the commit suite and a minified production build. Then it makes the release's two commits and its tag in a throwaway clone. It installs flow from that tag into a scratch folder with `npm i -D --ignore-scripts`, and runs the installed `dist/flow.mjs --version`. It pushes nothing, and leaves this repo as it was.
 
 - **Read the file list** at the end. It is exactly what a project gets in `node_modules/@jawache/flow`. `files` in `package.json` is the allowlist. A file missing from the list, or one that must not ship, is a fix to `files` before the release.
 - **A red line** is fixed on the branch, committed, and the check run again.
