@@ -5,7 +5,11 @@
 // `__fixtures__/host.ts`, so this file names none; what is one harness's own — its payloads, its
 // settings file, its transcripts — is proved in that harness's folder.
 import { describe, it, expect } from "vitest";
-import { type Bound, type Row } from "../engine/domain.ts";
+import { DELETED, type Bound, type Row, type Tree } from "../engine/domain.ts";
+import { changeEvents, changeRow, changedBy, commitRange, editedFile, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
+import { breadcrumb, defineConfig, definePack, fileChange, loadConfig, pack, session } from "../index.ts";
+import type { Ctx, TurnAction } from "../language/domain.ts";
+import { ranSinceEdit } from "../checks/domain.ts";
 import { missingGrammarText } from "../checks/domain.ts";
 import { matchAny } from "../glob.ts";
 import { host } from "../__fixtures__/host.ts";
@@ -2182,7 +2186,7 @@ describe("the seven events, and the moments honestly delivered", () => {
     expect(DELIVERS.brief).toContain("turn-end");
     expect(DELIVERS.guard, "commit is delivered — by the git gate, not by the harness").toContain("commit");
     expect(delivers("breadcrumb", "session", DELIVERS)).toBe(true);
-    expect(delivers("breadcrumb", "touch", DELIVERS)).toBe(true);
+    expect(delivers("breadcrumb", "file-change", DELIVERS)).toBe(true);
     expect(delivers("guardrail", "session", DELIVERS), "a guardrail has no session rail at all").toBe(false);
     expect(DELIVERS.guard, "flow stops no write and no delete").toEqual(["command", "commit", "turn-end"]);
   });
@@ -2211,5 +2215,200 @@ describe("whose a transcript is — recorded in the repo, or inside it", () => {
     expect(belongsToRepo("/repo/.claude/worktrees/y", "/repo", nested), "a folder that only shares a name prefix").toBe(true);
     expect(belongsToRepo("/other", "/repo", nested)).toBe(false);
     expect(belongsToRepo("/repository", "/repo", [])).toBe(false);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE CHANGED PATHS OF A CALL
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+const tree = (files: Record<string, string>, head: string | null = "c1"): Tree => ({ head, files });
+
+describe("git's list of changed paths", () => {
+  it("reads a path from each entry of `git status --porcelain=v1 -z`: modified, added, deleted and untracked", () => {
+    const out = [" M src/a.ts", "A  src/new.ts", " D gone.ts", "?? notes.md", "UU both.ts"].join("\0") + "\0";
+    expect(statusPaths(out)).toEqual(["src/a.ts", "src/new.ts", "gone.ts", "notes.md", "both.ts"]);
+    expect(statusPaths("")).toEqual([]);
+  });
+
+  it("lists a rename's old path too, which is gone, and a path with a space whole", () => {
+    expect(statusPaths(["R  new name.ts", "old name.ts", " M b.ts"].join("\0") + "\0")).toEqual(["new name.ts", "old name.ts", "b.ts"]);
+  });
+
+  it("leaves out a folder, which git lists for a repository nested in this one", () => {
+    expect(statusPaths(["?? .claude/worktrees/agent-1/", "?? a.ts"].join("\0") + "\0")).toEqual(["a.ts"]);
+  });
+});
+
+describe("the paths a call changed — git's list before and after", () => {
+  it("is a path that is listed now and was not before", () => {
+    expect(changedBy(tree({ "a.ts": "h1" }), tree({ "a.ts": "h1", "b.ts": "h2" }), [])).toEqual(["b.ts"]);
+  });
+
+  it("is a path already listed whose content differs, which is a file changed again", () => {
+    expect(changedBy(tree({ "a.ts": "h1", "b.ts": "h2" }), tree({ "a.ts": "h9", "b.ts": "h2" }), [])).toEqual(["a.ts"]);
+  });
+
+  it("is a path no longer listed: put back to the commit's content, or committed", () => {
+    expect(changedBy(tree({ "a.ts": "h1" }), tree({}), [])).toEqual(["a.ts"]);
+  });
+
+  it("is a file the call deleted, and a file already deleted that stays deleted is not a change", () => {
+    expect(changedBy(tree({ "a.ts": "h1" }), tree({ "a.ts": DELETED }), [])).toEqual(["a.ts"]);
+    expect(changedBy(tree({ "a.ts": DELETED }), tree({ "a.ts": DELETED }), [])).toEqual([]);
+  });
+
+  it("is nothing when the lists are the same", () => {
+    expect(changedBy(tree({ "a.ts": "h1" }), tree({ "a.ts": "h1" }), [])).toEqual([]);
+  });
+
+  it("adds the files of a commit made inside the call, which leave git's list by being committed", () => {
+    const before = tree({}, "c1");
+    const after = tree({}, "c2");
+    expect(commitRange(before, after)).toBe("c1..c2");
+    expect(changedBy(before, after, ["src/a.ts", "docs/b.md"])).toEqual(["docs/b.md", "src/a.ts"]);
+  });
+
+  it("names no commit range when the call made no commit, or one side has no commit", () => {
+    expect(commitRange(tree({}, "c1"), tree({}, "c1"))).toBeNull();
+    expect(commitRange(tree({}, null), tree({}, "c1"))).toBeNull();
+    expect(commitRange(tree({}, "c1"), tree({}, null))).toBeNull();
+  });
+
+  it("lists each path once, sorted", () => {
+    expect(changedBy(tree({}), tree({ "z.ts": "h", "a.ts": "h" }), ["a.ts"])).toEqual(["a.ts", "z.ts"]);
+  });
+});
+
+describe("a folder's changes when its 'before' was never taken", () => {
+  it("is what an edit tool named, relative to that folder, and nothing for a call that names none", () => {
+    expect(namedChange("/repo.wt/src/a.ts", "/repo.wt")).toBe("src/a.ts");
+    expect(namedChange("/repo.wt/src/a.ts", "/repo"), "a file in another folder").toBeNull();
+    expect(namedChange("/repo2/a.ts", "/repo"), "a folder that only shares a name prefix").toBeNull();
+    expect(namedChange(null, "/repo")).toBeNull();
+  });
+
+  it("names only the files an edit tool changes: a read, a search and a shell command change none", () => {
+    expect(editedFile({ tool_name: "Write", tool_input: { file_path: "/repo/a.ts" } })).toBe("/repo/a.ts");
+    expect(editedFile({ tool_name: "NotebookEdit", tool_input: { notebook_path: "/repo/n.ipynb" } })).toBe("/repo/n.ipynb");
+    for (const tool of ["Read", "Grep", "Bash"]) expect(editedFile({ tool_name: tool, tool_input: { file_path: "/repo/a.ts", command: "ls" } }), tool).toBeNull();
+  });
+
+  it("compares with the 'before' when there is one, and falls back to the named file when there is none", () => {
+    const after = tree({ "b.ts": "h" });
+    expect(folderChanges({ before: tree({}), after, committed: [], named: "a.ts" })).toEqual(["b.ts"]);
+    expect(folderChanges({ before: null, after, committed: [], named: "a.ts" })).toEqual(["a.ts"]);
+    expect(folderChanges({ before: null, after, committed: [], named: null })).toEqual([]);
+  });
+});
+
+describe("where a hook looks at git", () => {
+  const worked = (): string[] => ["/repo", "/repo.wt"];
+
+  it("looks in every folder the call worked in, before a shell command and after any tool", () => {
+    expect(foldersToLook("pre-tool-use", "Bash", worked, "/repo")).toEqual(["/repo", "/repo.wt"]);
+    expect(foldersToLook("post-tool-use", "Edit", worked, "/repo")).toEqual(["/repo", "/repo.wt"]);
+    expect(foldersToLook("post-tool-use", "Bash", worked, "/repo")).toEqual(["/repo", "/repo.wt"]);
+  });
+
+  it("looks in the guarded folder as a session or a subagent starts, and nowhere for any other hook", () => {
+    expect(foldersToLook("session-start", "", worked, "/repo")).toEqual(["/repo"]);
+    expect(foldersToLook("subagent-start", "", worked, "/repo")).toEqual(["/repo"]);
+    expect(foldersToLook("pre-tool-use", "Edit", worked, "/repo")).toEqual([]);
+    expect(foldersToLook("post-tool-use", "", worked, "/repo")).toEqual([]);
+    for (const hook of ["stop", "subagent-stop", "notification"] as const) expect(foldersToLook(hook, "Bash", worked, "/repo")).toEqual([]);
+  });
+
+  it("makes one breadcrumb event of each changed path a file-change breadcrumb reaches, and a row only when something changed", () => {
+    const loaded = loadConfig(
+      defineConfig([
+        pack(
+          definePack("notes", {
+            src: breadcrumb().at(fileChange).on("src/**").ignore("src/gen/**").text("src"),
+            greeting: breadcrumb().at(session).text("hello"),
+          }),
+        ),
+      ]),
+    );
+    const entries = loaded.ok ? loaded.entries : [];
+    expect(changeEvents(["src/a.ts", "docs/x.md", "src/gen/b.ts", "src/c.ts"], entries)).toEqual([
+      { rail: "brief", moment: "file-change", path: "src/a.ts" },
+      { rail: "brief", moment: "file-change", path: "src/c.ts" },
+    ]);
+    expect(changeEvents([], entries)).toEqual([]);
+    const everywhere = loadConfig(defineConfig([pack(definePack("notes", { any: breadcrumb().at(fileChange).text("any") }))]));
+    expect(changeEvents(["docs/x.md"], everywhere.ok ? everywhere.entries : []), "a breadcrumb with no globs reaches every path").toHaveLength(1);
+    expect(changeEvents(["src/a.ts"], []), "no breadcrumb, no event").toEqual([]);
+    expect(changeRow("Bash", ["a.ts"])).toEqual({ kind: "change", tool: "Bash", paths: ["a.ts"] });
+    expect(changeRow("Bash", [])).toBeNull();
+  });
+});
+
+describe("a turn's shell changes", () => {
+  const row = (agent: string, kind: string, rest: Record<string, unknown>): Row => ({ kind: kind as Row["kind"], agent, ...rest });
+
+  it("pairs each shell call that changed files with its command, from the rows of one agent", () => {
+    const rows: Row[] = [
+      row("main", "tool", { tool: "Bash", command: "sed -i s/a/b/ guards/x.ts" }),
+      row("main", "change", { tool: "Bash", paths: ["guards/x.ts"] }),
+      row("main", "tool", { tool: "Bash", command: "ls" }),
+      row("a1", "tool", { tool: "Bash", command: "touch other.ts" }),
+      row("a1", "change", { tool: "Bash", paths: ["other.ts"] }),
+      row("main", "tool", { tool: "Edit", path: "src/a.ts" }),
+      row("main", "change", { tool: "Edit", paths: ["src/a.ts"] }),
+    ];
+    expect(shellChangesOf(rows, "main")).toEqual([{ command: "sed -i s/a/b/ guards/x.ts", paths: ["guards/x.ts"] }]);
+    expect(shellChangesOf(rows, "a1")).toEqual([{ command: "touch other.ts", paths: ["other.ts"] }]);
+  });
+
+  it("puts each file a command changed into the turn as an edit, just before the command's own run", () => {
+    const actions: TurnAction[] = [
+      { did: "run", command: "sed -i s/a/b/ guards/x.ts" },
+      { did: "run", command: "flow test" },
+    ];
+    expect(withShellChanges(actions, [{ command: "sed -i s/a/b/ guards/x.ts", paths: ["guards/x.ts", "guards/y.ts"] }])).toEqual([
+      { did: "edit", path: "guards/x.ts" },
+      { did: "edit", path: "guards/y.ts" },
+      { did: "run", command: "sed -i s/a/b/ guards/x.ts" },
+      { did: "run", command: "flow test" },
+    ]);
+  });
+
+  it("matches a command run twice with its own call, from the latest, and leaves a call of an earlier turn alone", () => {
+    const actions: TurnAction[] = [
+      { did: "run", command: "make" },
+      { did: "run", command: "flow test" },
+      { did: "run", command: "make" },
+    ];
+    const changes = [
+      { command: "make", paths: ["earlier-turn.ts"] },
+      { command: "make", paths: ["first.ts"] },
+      { command: "make", paths: ["second.ts"] },
+    ];
+    expect(withShellChanges(actions, changes).map((action) => (action.did === "edit" ? `edit ${action.path}` : action.command))).toEqual([
+      "edit first.ts",
+      "make",
+      "flow test",
+      "edit second.ts",
+      "make",
+    ]);
+  });
+
+  it("changes nothing for a turn whose commands changed no file", () => {
+    const actions: TurnAction[] = [{ did: "run", command: "ls" }];
+    expect(withShellChanges(actions, [])).toEqual(actions);
+  });
+
+  it("is what ranSinceEdit reads: a file a shell command changed, with no edit tool in the turn, holds the turn until the tests run", async () => {
+    const check = ranSinceEdit({ edited: ["guards/**"], mustRun: "flow test" });
+    const judged = async (actions: readonly TurnAction[]): Promise<boolean> => {
+      const ctx = { turn: actions, ok: () => ({ ok: true }), fail: (detail?: string) => ({ ok: false, detail }) } as unknown as Ctx;
+      return (await check(ctx)).ok;
+    };
+    const changes = [{ command: "sed -i s/a/b/ guards/x.ts", paths: ["guards/x.ts"] }];
+    const sed: TurnAction = { did: "run", command: "sed -i s/a/b/ guards/x.ts" };
+    expect(await judged([sed]), "the turn as the transcript tells it: one command, no edit").toBe(true);
+    expect(await judged(withShellChanges([sed], changes)), "with the file the command changed").toBe(false);
+    expect(await judged(withShellChanges([sed, { did: "run", command: "flow test" }], changes)), "and the tests run after it").toBe(true);
   });
 });

@@ -114,7 +114,7 @@ export function contextTokens(usage: Usage | undefined): number {
  *
  * The LAST message carrying usage, because that is the current size; an earlier one describes a
  * context that no longer exists. Unreadable or absent is 0, which the engine reads as "no drift
- * yet": a note then shows on first touch and not again, which is the harmless direction.
+ * yet": a note then shows at its first moment and not again, which is the harmless direction.
  */
 export function tokensFromTranscript(jsonl: string): number {
   const raw = jsonl.split("\n");
@@ -583,7 +583,7 @@ export function agentSettingOf(jsonl: string): string | null {
  *
  * The matchers are the host's. PreToolUse takes `Bash` alone: the one thing flow refuses before it
  * happens is a shell command, so no other tool's call has anything to wait for. PostToolUse takes
- * `*`, because any tool's call can name a file a breadcrumb is about. There is no hook before the
+ * `*`, because any tool's call can change a file a breadcrumb is about. There is no hook before the
  * Edit and Write tools, and none after a failed call: flow stops no write and no delete.
  *
  * DERIVED, not re-typed: the host's name for an event and the word this binary answers to are both
@@ -599,7 +599,7 @@ const REGISTERED: readonly HooksFileHook[] = [
   { hook: "session-start", matcher: "startup|resume|clear|compact", unregistered: "no note is shown when a session starts" },
   { hook: "subagent-start", unregistered: "no note is shown when a subagent starts" },
   { hook: "pre-tool-use", matcher: "Bash", unregistered: "no rule judges a command before it runs" },
-  { hook: "post-tool-use", matcher: "*", unregistered: "no note is shown for the file a tool call names" },
+  { hook: "post-tool-use", matcher: "*", unregistered: "no note is shown for a file a tool call changed" },
   { hook: "stop", unregistered: "no turn-end rule runs when the main chat hands back" },
   { hook: "subagent-stop", unregistered: "no turn-end rule runs when a subagent hands back" },
 ];

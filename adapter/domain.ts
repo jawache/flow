@@ -15,8 +15,8 @@
 // child_process and no process.env here — the bytes are handed over. The reaching is the shells':
 // shell.ts for what every harness shares, product.ts for the verbs, archive.ts for `flow facts`.
 
-import { followSteps, GIT_VALUE_OPTS, gitCommand, isBreadcrumbMoment, isGuardrailMoment, isOption, parseCommandLine, parseShellSteps, programName, resolveFrom, stepCommands, type BreadcrumbMoment, type Ctx, type EntrySpec, type ExecResult, type GuardrailMoment, type LoadedEntry, type LoadResult, type Moment, type Refusal, type SessionFacts, type ShellCommand, type ShellStart, type ShellStep, type TurnAction } from "../language/domain.ts";
-import { covers, FLOW_DIR, fires, formatBlock, insideRepo, momentsView, namedAgent, universe, watching, type AgentOf, type Block, type Cause, type Bound, type Metrics, type MomentsView, type Row, type TerrainNode } from "../engine/domain.ts";
+import { followSteps, GIT_VALUE_OPTS, gitCommand, inScope, isBreadcrumbMoment, isGuardrailMoment, isOption, parseCommandLine, parseShellSteps, programName, resolveFrom, stepCommands, type BreadcrumbMoment, type Ctx, type EntrySpec, type ExecResult, type GuardrailMoment, type LoadedEntry, type LoadResult, type Moment, type Refusal, type SessionFacts, type ShellCommand, type ShellStart, type ShellStep, type TurnAction } from "../language/domain.ts";
+import { covers, FLOW_DIR, fires, formatBlock, insideRepo, momentsView, namedAgent, universe, watching, type AgentOf, type Block, type Cause, type Bound, type Metrics, type MomentsView, type Row, type TerrainNode, type Tree } from "../engine/domain.ts";
 import { gitCommands, missingGrammarText, quoteArg } from "../checks/domain.ts";
 import type {
   Delivered,
@@ -120,9 +120,13 @@ export type AdapterEvent =
   | {
       readonly rail: "brief";
       readonly moment: BreadcrumbMoment;
+      /** file-change: one file the call changed, relative to the working folder it changed in. */
       readonly path?: string | undefined;
       readonly command?: string | undefined;
     };
+
+/** An event for the breadcrumb rail. */
+export type BriefAdapterEvent = Extract<AdapterEvent, { readonly rail: "brief" }>;
 
 /** An absolute path inside the repo → the repo-relative spelling every glob is written against. */
 export function relativise(path: string, root: string): string {
@@ -2824,9 +2828,9 @@ export const HOST_EVENT: Record<HookEvent, string> = {
  *     (`toResult`), so the agent is held and told at once rather than held, then told on the next.
  *   · command BRIEFING is delivered, on the same PreToolUse answer the command guardrails use: when
  *     nothing blocks, the hook's `additionalContext` carries the note, and when something does, the
- *     refusal wins — which is the right order, since a blocked command is not about to run. The
- *     files a Bash command reads ride that same answer as touches (`bashReads`), so an area's note
- *     arrives before the output does.
+ *     refusal wins — which is the right order, since a blocked command is not about to run.
+ *   · file-change BRIEFING is delivered on the PostToolUse answer, after the call has run, for the
+ *     files git lists as changed (`changedBy`): the agent reads it before its next call.
  *
  * It is two lists rather than one because a moment is delivered for a KIND of entry: `command` and
  * `turn-end` are words in both vocabularies, and another harness may carry one rail there and not
@@ -2834,7 +2838,7 @@ export const HOST_EVENT: Record<HookEvent, string> = {
  */
 export const DELIVERS = {
   guard: ["command", "commit", "turn-end"] as readonly GuardrailMoment[],
-  brief: ["session", "touch", "command", "turn-end"] as readonly BreadcrumbMoment[],
+  brief: ["session", "file-change", "command", "turn-end"] as readonly BreadcrumbMoment[],
 };
 
 /**
@@ -2880,13 +2884,12 @@ export interface EventWorld {
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// BASH READS — the files a shell command reads, for the touch breadcrumb
+// BASH READS — the files a shell command reads, for the log's `read` rows
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 //
 // Under auto mode most contact with an area is a `cat`, a `grep` or a `sed -n` whose payload names
-// no path, so a touch breadcrumb keyed on `file_path` never saw it. This names those paths from the
-// command line, BEFORE it runs, so the note rides the PreToolUse answer and arrives ahead of the
-// output.
+// no path, so a `tool` row alone cannot say which files a session read. This names those paths from
+// the command line, BEFORE it runs, and `flow facts` counts them. No breadcrumb is shown for a read.
 //
 // READ FROM THE PARSE (#45), the one every rule that judges a shell command reads, so a heredoc
 // body, a quoted argument or a commit message is never a command here either. The table below
@@ -2897,9 +2900,9 @@ export interface EventWorld {
 // labelled reads at 100% precision. That lexer had itself won flow F3's bake-off against
 // tree-sitter-bash and shell functions shadowing the read commands.
 //
-// BEST-EFFORT AND FAILING OPEN, on purpose. A breadcrumb is guidance, not a refusal: a word that
-// cannot be settled from the line — a `$(…)`, an unknown variable — is left out rather than
-// guessed at, and a line that does not parse names nothing.
+// BEST-EFFORT AND FAILING OPEN, on purpose. A word that cannot be settled from the line — a
+// `$(…)`, an unknown variable — is left out rather than guessed at, and a line that does not parse
+// names nothing.
 //
 // THE WALK IS THE PARSE'S (`followSteps` in language/), the same one that gives every command in
 // `ctx.commands` its `folder`, so where a `cd` leaves the shell is worked out in one place.
@@ -3158,9 +3161,8 @@ export function bashReads(steps: readonly ShellStep[] | null, where: BashWhere):
 /**
  * A payload → every event it carries. ZERO OR MORE, and the plural is not hedging.
  *
- * One Bash call is genuinely several moments — the command about to run, the command's own note,
- * and each file it reads — and the old engine ran two evaluations off that one hook for exactly this
- * reason. A signature returning one event would push the second rail back into the shell, where it
+ * One Bash call is genuinely several moments — the command about to run, and the command's own
+ * note — and the old engine ran two evaluations off that one hook for exactly this reason. A signature returning one event would push the second rail back into the shell, where it
  * could not be tested as a decision.
  *
  * An event flow was not asked for answers with an empty list, never with an invented moment.
@@ -3179,7 +3181,7 @@ export function toEvent(hook: HookEvent, payload: HookPayload, world: EventWorld
       // the brief is in its own transcript by now, so a note bound to a category it recognises can
       // match. Every guard event still comes first, so a refused call leaves them held. Only a shell
       // command comes through here, so a subagent that has run none has them with the first call
-      // that names a file (`post-tool-use`).
+      // that runs (`post-tool-use`).
       const events = callEvents(payload, world);
       if (world.heldForBrief !== true) return events;
       const at = events.findIndex((event) => event.rail === "brief");
@@ -3187,14 +3189,11 @@ export function toEvent(hook: HookEvent, payload: HookPayload, world: EventWorld
       return at === -1 ? [...events, held] : [...events.slice(0, at), held, ...events.slice(at)];
     }
 
-    case "post-tool-use": {
-      // THE PATH THE TOOL NAMED, as a touch. A pathless call is SILENCE, not a pathless touch
-      // event: the engine narrows a breadcrumb by `on` only when the event names a path, so a touch
-      // carrying none would show every area note at once.
-      const named = touchedPath(payload, world.root);
-      const touch: AdapterEvent[] = named === null ? [] : [{ rail: "brief", moment: "touch", path: named }];
-      return world.heldForBrief === true ? [{ rail: "brief", moment: "session" }, ...touch] : touch;
-    }
+    case "post-tool-use":
+      // The files the call changed are not in the payload: git says which, and the shell asks it
+      // (`changedBy`), then makes an event of each (`changeEvents`). What is here is only the
+      // session notes a subagent's start held.
+      return world.heldForBrief === true ? [{ rail: "brief", moment: "session" }] : [];
 
     case "stop":
     case "subagent-stop":
@@ -3243,11 +3242,6 @@ function callEvents(payload: HookPayload, world: EventWorld): AdapterEvent[] {
     const commands = steps === null ? null : stepCommands(steps);
     const events: AdapterEvent[] = [{ rail: "guard", moment: "command", command, commands, start: { cwd, home: world.home } }];
     events.push({ rail: "brief", moment: "command", command });
-    // THE FILES IT READS, as touches on this same answer — so an area's note arrives with the
-    // command briefing, before the output does, rather than never (a Bash payload names no
-    // path for the post-tool-use rail to steer on).
-    const { reads, searched } = bashReads(steps, { cwd, root: world.root, home: world.home });
-    for (const path of new Set([...reads, ...searched])) events.push({ rail: "brief", moment: "touch", path });
     return events;
   }
   return [];
@@ -3313,21 +3307,14 @@ export function nothingBound(hook: HookEvent, entries: readonly LoadedEntry[], r
   return !recording && hook === "subagent-stop" && !entries.some((entry) => fires(entry.spec, "turn-end"));
 }
 
-/** What a post-tool-use call was about, repo-relative: a path, or nothing this rail can steer on. */
-export function touchedPath(payload: HookPayload, root: string): string | null {
-  const input = payload.tool_input ?? {};
-  const named = input["file_path"] ?? input["notebook_path"] ?? input["path"] ?? input["glob"];
-  return named ? relativise(text(named), root) : null;
-}
-
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// ANOTHER WORKTREE — a call that works in another worktree of the repository, even a nested one
+// WHERE A CALL WORKED — the working folders of the repository, even a nested one
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 //
-// flow guards the folder the session started in. A call that writes into another worktree of the
-// same repository, or a command that runs in one, works where no guardrail and no breadcrumb
-// reaches, so the agent is told, once per worktree, to stop and have a session started there.
-// Nothing is refused: the message rides beside the call's result. docs/user/explanation/what-the-guard-sees.md § Another worktree.
+// A call may work in another worktree of the same repository: an Edit or Write of a file there, or a
+// command that runs there. The rules are those of the config in the folder the session started in,
+// and git's list of changed paths is read in each worktree the call worked in
+// (docs/user/reference/moments.md § The file-change moment).
 
 /** Is `path` the folder `dir`, or inside it? Both absolute. */
 function within(path: string, dir: string): boolean {
@@ -3420,13 +3407,14 @@ function beyondRoot(path: string, root: string, marked: (dir: string) => boolean
 //
 // A folder is inside when git names this repository for it, so every worktree of it is inside. The
 // engine decides which rules are passed what; this says where the event works outside.
-// docs/user/explanation/what-the-guard-sees.md § Work outside the repository.
+// docs/user/reference/parse.md § A command outside the repo.
 
 /**
- * Where an event works outside the repository, by the names the engine reads (`GuardEvent.outside`):
- * the `folder` of each command that runs outside, and the path of a touched file outside. A command with no
- * folder is inside. `gitIn` answers whether a folder holds a `.git`, and `sameRepository` whether git
- * names this repository for a folder; it is asked only of a folder `gitIn` cannot clear.
+ * Where an event works outside the repository, by the name the engine reads (`GuardEvent.outside`):
+ * the `folder` of each command that runs outside. A command with no folder is inside. `gitIn`
+ * answers whether a folder holds a `.git`, and `sameRepository` whether git names this repository
+ * for a folder; it is asked only of a folder `gitIn` cannot clear. A breadcrumb has no world of
+ * its own: the paths of a file-change are git's own, inside a worktree of this repository.
  */
 export function outsideOf(
   event: AdapterEvent,
@@ -3435,12 +3423,7 @@ export function outsideOf(
   sameRepository: (folder: string) => boolean,
 ): string[] {
   const out = (folder: string): boolean => beyondRoot(folder, root, gitIn) && !sameRepository(folder);
-  if (event.rail === "guard") return event.moment === "command" ? knownFolders(event.commands ?? null).filter(out) : [];
-  const path = event.path;
-  if (path === undefined) return [];
-  const absolute = posix.resolve(root, path);
-  // The file itself may not exist yet, nor its folder: the folder is what is placed.
-  return beyondRoot(absolute, root, gitIn) && !sameRepository(posix.dirname(absolute)) ? [path] : [];
+  return event.rail === "guard" && event.moment === "command" ? knownFolders(event.commands ?? null).filter(out) : [];
 }
 
 /** The working folders `git worktree list --porcelain` lists; a bare repository has none. */
@@ -3453,46 +3436,185 @@ export function worktreeFolders(porcelain: string): string[] {
 }
 
 /**
- * THE DECISION: the worktrees to tell the agent about now. Each path is placed in the worktree that
- * holds it, the deepest when worktrees nest. The session's own worktree is the deepest one holding
- * the guarded folder, and only that one is skipped: a session started in a nested worktree is told
- * about the one around it. One already in `told` was said before, to this session and agent. Each
- * is named once, in the order the paths came.
+ * The other worktrees a call worked in: each path is placed in the worktree that holds it, the
+ * deepest when worktrees nest, and the session's own is left out. The session's own worktree is the
+ * deepest one holding the guarded folder, so a session started in a nested worktree reads the one
+ * around it. Each is named once, in the order the paths came.
  */
-export function untoldWorktrees(args: {
+export function worktreesWorkedIn(args: {
   readonly paths: readonly string[];
   readonly root: string;
   readonly worktrees: readonly string[];
-  readonly told: readonly string[];
 }): string[] {
-  const { paths, root, worktrees, told } = args;
+  const { paths, root, worktrees } = args;
   const holding = (path: string): string | undefined =>
     worktrees.filter((worktree) => within(path, worktree)).sort((a, b) => b.length - a.length)[0];
   const own = holding(root);
   const out: string[] = [];
   for (const path of paths) {
     const holder = holding(path);
-    if (holder === undefined || holder === own || told.includes(holder) || out.includes(holder)) continue;
+    if (holder === undefined || holder === own || out.includes(holder)) continue;
     out.push(holder);
   }
   return out;
 }
 
-/** What the agent is told about one worktree flow does not guard. */
-export function worktreeLine(root: string, worktree: string): string {
-  return (
-    `flow guards ${root}, the folder this session started in. It does not guard the git worktree ${worktree}: ` +
-    `no guardrail judges what you change there and no breadcrumb is shown for it, until the commit gate runs. ` +
-    `Stop your work in ${worktree} and tell the user to start a Claude Code session in that folder, ` +
-    `because flow guards a worktree only from a session started in it. ` +
-    `If you are a subagent, stop and report this to the agent that started you.`
-  );
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE CHANGED PATHS OF A CALL — git's list before and after, compared
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+//
+// What a tool call changed is not read from the tool: any tool counts, a shell command and a script
+// it ran included. It is found by comparing what git lists as changed in the working folder before
+// and after the call (docs/user/explanation/what-flow-reads.md § After a tool call: the changed
+// paths). The list holds a hash of each path's content, so a file that was already changed and is
+// changed again is told from one that is not. A file git ignores is not in git's list. This section
+// is the decision; the shell asks git and hashes the files.
+
+/**
+ * The paths `git status --porcelain=v1 -z --untracked-files=all` lists. An entry is `XY path`, and
+ * a rename or a copy is followed by the path it came from, which is listed as well: the file is
+ * gone from there. A folder, which git lists for a repository nested in this one, is not a file.
+ */
+export function statusPaths(stdout: string): string[] {
+  const fields = stdout.split("\0");
+  const out: string[] = [];
+  for (let i = 0; i < fields.length; i++) {
+    const field = fields[i] ?? "";
+    if (field.length < 4) continue;
+    const moved = field[0] === "R" || field[0] === "C" || field[1] === "R" || field[1] === "C";
+    out.push(field.slice(3));
+    if (moved && fields[i + 1] !== undefined && fields[i + 1] !== "") out.push(fields[++i] as string);
+  }
+  return [...new Set(out)].filter((path) => !path.endsWith("/"));
+}
+
+/**
+ * The commits a call made, as the range git is asked for, or null when it made none or one side has
+ * no commit to name. A commit takes its files out of git's list, so a call that changes a file and
+ * commits it leaves the file in neither list: the commit's own files are changes of the call.
+ */
+export function commitRange(before: Tree, after: Tree): string | null {
+  return before.head !== null && after.head !== null && before.head !== after.head ? `${before.head}..${after.head}` : null;
+}
+
+/**
+ * The paths a call changed in one working folder, sorted: a path git lists now and did not before,
+ * a path whose content differs, a path git listed before and does not now (it was put back, or
+ * committed), and the files of a commit made inside the call (`committed`, from `commitRange`).
+ */
+export function changedBy(before: Tree, after: Tree, committed: readonly string[]): string[] {
+  const out = new Set<string>(committed);
+  for (const [path, hash] of Object.entries(after.files)) if (before.files[path] !== hash) out.add(path);
+  for (const path of Object.keys(before.files)) if (!(path in after.files)) out.add(path);
+  return [...out].sort();
+}
+
+/**
+ * The file an edit tool's call named, as an absolute path with its links resolved (`absolute`, which
+ * the shell makes of `editedFile`), relative to one working folder; null when there is none or it is
+ * outside the folder. It is what a call whose "before" was never taken is left with: a first call,
+ * or a call in a worktree this agent has not worked in, has nothing to compare.
+ */
+export function namedChange(absolute: string | null, folder: string): string | null {
+  return absolute !== null && within(absolute, folder) ? relativise(absolute, folder) : null;
+}
+
+/** The paths one working folder's call changed: compared with its "before", or what the call named when it has none. */
+export function folderChanges(args: {
+  readonly before: Tree | null;
+  readonly after: Tree;
+  readonly committed: readonly string[];
+  readonly named: string | null;
+}): string[] {
+  const { before, after, committed, named } = args;
+  if (before === null) return named === null ? [] : [named];
+  return changedBy(before, after, committed);
+}
+
+/**
+ * The working folders to look at for this hook: where the call worked, before a shell command and
+ * after any tool; the guarded folder, as a session or a subagent starts; none for the rest. `worked`
+ * is asked only when it is needed, since it may cost a call to git.
+ */
+export function foldersToLook(hook: HookEvent, tool: string, worked: () => readonly string[], root: string): readonly string[] {
+  if (hook === "session-start" || hook === "subagent-start") return [root];
+  if (hook === "post-tool-use" && tool !== "") return worked();
+  return hook === "pre-tool-use" && tool === "Bash" ? worked() : [];
+}
+
+/**
+ * The events a changed set of paths makes for the breadcrumb rail: one for each path that a
+ * breadcrumb bound at `file-change` reaches. A path none reaches shows nothing and writes no row, so
+ * it makes no event, and a recording holds none of it either.
+ */
+export function changeEvents(paths: readonly string[], entries: readonly LoadedEntry[]): BriefAdapterEvent[] {
+  const bound = entries.filter((entry) => entry.spec.kind === "breadcrumb" && fires(entry.spec, "file-change"));
+  return paths.filter((path) => bound.some((entry) => inScope(entry.spec, path))).map((path) => ({ rail: "brief", moment: "file-change", path }));
+}
+
+/** The row that records a call's changed files. Null when it changed none. */
+export function changeRow(tool: string, paths: readonly string[]): Row | null {
+  return paths.length === 0 ? null : { kind: "change", tool, paths: [...paths] };
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// A TURN'S SHELL CHANGES — the files a shell command changed, as the turn's own actions
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+//
+// The harness's transcript says which files an edit tool changed and which commands ran. It cannot
+// say which files a command changed, and under Codex every change is one. The log can: the `change`
+// row after a shell call. A turn-end rule reads `ctx.turn`, so the two are joined here, once, and
+// `ranSinceEdit` counts a file a shell command changed without knowing the shell exists.
+
+/** One shell command, and the files its call changed. */
+export interface ShellChange {
+  readonly command: string;
+  readonly paths: readonly string[];
+}
+
+/**
+ * The shell calls of one agent that changed files, in order, from its rows: a `Bash` call's `tool`
+ * row is followed by its `change` row. A call that changed nothing has no `change` row.
+ */
+export function shellChangesOf(rows: readonly Row[], agent: string): ShellChange[] {
+  const out: ShellChange[] = [];
+  let command: string | null = null;
+  for (const row of rows) {
+    if (row["agent"] !== agent) continue;
+    if (row.kind === "tool") command = row["tool"] === "Bash" && typeof row["command"] === "string" ? row["command"] : null;
+    else if (row.kind === "change" && command !== null && row["tool"] === "Bash" && Array.isArray(row["paths"])) {
+      out.push({ command, paths: (row["paths"] as unknown[]).filter((path): path is string => typeof path === "string") });
+      command = null;
+    }
+  }
+  return out;
+}
+
+/**
+ * The turn's actions with each file a shell command changed put in as an edit, just before the
+ * command's own run: a command that changes a file and then runs the tests did not run them after
+ * the change, and one that only runs them is not an edit. Each `run` is matched with the latest
+ * shell call that has its command and was not matched yet, so a command run twice is told apart.
+ */
+export function withShellChanges(actions: readonly TurnAction[], changes: readonly ShellChange[]): TurnAction[] {
+  const unmatched = [...changes];
+  const before = new Map<number, readonly string[]>();
+  for (let i = actions.length - 1; i >= 0; i--) {
+    const action = actions[i] as TurnAction;
+    if (action.did !== "run") continue;
+    const at = unmatched.map((change) => change.command).lastIndexOf(action.command);
+    if (at === -1) continue;
+    before.set(i, (unmatched.splice(at, 1)[0] as ShellChange).paths);
+  }
+  return actions.flatMap((action, i) => [...(before.get(i) ?? []).map((path): TurnAction => ({ did: "edit", path })), action]);
 }
 
 /** A note with its prose resolved: a `file:` breadcrumb is read by the shell, never here. */
 export interface Shown {
   readonly entry: string | null;
   readonly cause: Cause;
+  /** The moment that showed it; the header names it. Absent on the load error. */
+  readonly moment?: BreadcrumbMoment | undefined;
   readonly body: string;
 }
 
@@ -3500,8 +3622,6 @@ export interface Shown {
 export interface Answer {
   readonly refused: readonly Refused[];
   readonly shown: readonly Shown[];
-  /** The other worktrees the call worked in that the agent is told, now, flow does not guard. */
-  readonly unguarded?: { readonly root: string; readonly worktrees: readonly string[] } | undefined;
 }
 
 /**
@@ -3528,11 +3648,10 @@ export const FLOW_OFF = `flow is OFF until ${CONFIG_FILE} loads: every command g
  * later can check; the agent is told on every call that they are off.
  *
  * TOLD BEFORE THE CALL, ONCE. The load error rides the answer to a session start and to every
- * command about to run — one notice per answer, however many events the payload carried. A touch
- * never carries it, on either rail: a Read is not told, and a Bash call is told by its command, not
- * by the files it reads. So the after-call rail, whose events are touches, stays silent: the agent
- * was told when the call was asked for, and saying it again with the result is the same sentence
- * twice.
+ * command about to run — one notice per answer, however many events the payload carried. A file
+ * change never carries it, on either rail: a Bash call is told by its command, not by the files it
+ * changed. So the after-call rail, whose events are file changes, stays silent: the agent was told
+ * when the call was asked for, and saying it again with the result is the same sentence twice.
  *
  * TURN-END IS TOLD, NOT REFUSED. Holding a turn open on a broken config prevents nothing — the
  * commit gate stays shut — while it does stop the agent handing back to the one person who can fix
@@ -3569,16 +3688,15 @@ export function opensCall(hook: HookEvent, tool: string): boolean {
 
 /**
  * Does this event's answer carry the load error? A session start, and a command not yet run. Not a
- * touch, and not turn-end, on either rail, which is told on stderr instead.
+ * file change, and not turn-end, on either rail, which is told on stderr instead.
  */
 function carriesTheNotice(event: AdapterEvent): boolean {
-  return event.moment !== "touch" && event.moment !== "turn-end";
+  return event.moment !== "file-change" && event.moment !== "turn-end";
 }
 
 /**
  * What a broken config answers with. `opens` is `opensCall` for this hook: the first hook of a
- * call carries the notice whatever events it made, so a Read's touch is not the only thing the
- * agent hears.
+ * call carries the notice whatever events it made, so a Read, which makes none, is told too.
  */
 export function whileBroken(events: readonly AdapterEvent[], message: string, opens = false): Outage {
   const body = `${message}\n\n${FLOW_OFF}`;
@@ -3593,14 +3711,15 @@ export function whileBroken(events: readonly AdapterEvent[], message: string, op
  * The block of prose a set of notes is injected as.
  *
  * The header says `breadcrumb` because that is the mechanism's name everywhere else — in the
- * config, in the log, in `flow status`. The injected block was the last place the old system spoke
+ * config, in the log, in `flow status` — and names the moment that showed it, as the tutorial prints
+ * it; the load error, which no moment showed, names its cause. The injected block was the last place the old system spoke
  * one word to the agent and printed another to the human, and a mechanism you hear one name for and
  * read another about is one you cannot look up.
  */
 export function briefBlock(shown: readonly Shown[]): string {
   return shown
     .filter((note) => note.body.trim() !== "")
-    .map((note) => `# breadcrumb: ${note.entry ?? "flow"} (${note.cause})\n${note.body}`)
+    .map((note) => `# breadcrumb: ${note.entry ?? "flow"} (${note.moment ?? note.cause})\n${note.body}`)
     .join("\n\n");
 }
 
@@ -3618,15 +3737,11 @@ export function briefBlock(shown: readonly Shown[]): string {
  * exception. Notes beside a refusal go on stderr after it: the host reads that stderr as the
  * agent's next instruction, and its hooks reference says no JSON field on stdout can override an
  * exit 2, so stderr is the one place both are sure to arrive. Only a held turn's refusal carries
- * them: the shell judges no notes once something refused (`ridesRefusal`). The line for each other
- * worktree a call worked in (`worktreeLine`) rides whichever channel the answer already uses.
+ * them: the shell judges no notes once something refused (`ridesRefusal`).
  */
 export function toResult(hook: HookEvent, answer: Answer): HookResult {
   const refusal = refused(answer.refused);
-  // The worktree lines come first, because they tell the agent to stop.
-  const { unguarded: other } = answer;
-  const unguarded = other === undefined ? [] : other.worktrees.map((worktree) => worktreeLine(other.root, worktree));
-  const prose = [...unguarded, briefBlock(answer.shown)].filter((part) => part !== "").join("\n\n");
+  const prose = briefBlock(answer.shown);
   if (refusal !== null)
     return prose === "" ? refusal : { ...refusal, stderr: `${refusal.stderr}\n${prose}\n` };
   if (prose === "") return ALLOW;

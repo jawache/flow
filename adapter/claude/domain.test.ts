@@ -19,7 +19,7 @@ import { breadcrumb, defineCategory, defineConfig, definePack, guardrail, loadCo
 import { metrics, momentsView, type Block, type Bound, type Row } from "../../engine/domain.ts";
 import { parseCommandLine, parseShellSteps } from "../../language/domain.ts";
 import { claudeCode } from "./claude.ts";
-import { type AdapterEvent, agentOf, ALLOW, awaitsBrief, bashReads, branchFromHead, briefBlock, commandFolders, COMMIT_MSG, CONFIG_FILE, decision, EDIT_TOOLS, type EventWorld, type Facts, FLOW_OFF, foldersBetween, formatFacts, GATE_PATH, guardPaths, holdsForBrief, HOOKS_DIR, type InitFacts, initLines, isGuardPath, isHookEvent, lastMode, LOCAL_BIN, MACHINE_FLAG, mergeNarratives, modesOf, nothingBound, opensCall, outsideOf, PACKAGE_BIN, planInit, planUninstall, reachesAnotherWorktree, readFault, relativise, ridesRefusal, sessionFactsFrom, shellReadRows, type Shown, type SpawnRecord, type Status, status, statusCode, type StatusFacts, statusLines, toEvent, toolRow, toResult, touchedPath, uninstallCode, type UninstallFacts, uninstallLines, untoldWorktrees, weakenedAfterBlock, whileBroken, workedPaths, worktreeFolders, worktreeLine } from "../domain.ts";
+import { type AdapterEvent, agentOf, ALLOW, awaitsBrief, bashReads, branchFromHead, briefBlock, commandFolders, COMMIT_MSG, CONFIG_FILE, decision, EDIT_TOOLS, type EventWorld, type Facts, FLOW_OFF, foldersBetween, formatFacts, GATE_PATH, guardPaths, holdsForBrief, HOOKS_DIR, type InitFacts, initLines, isGuardPath, isHookEvent, lastMode, LOCAL_BIN, MACHINE_FLAG, mergeNarratives, modesOf, nothingBound, opensCall, outsideOf, PACKAGE_BIN, planInit, planUninstall, reachesAnotherWorktree, readFault, relativise, ridesRefusal, sessionFactsFrom, shellReadRows, type Shown, type SpawnRecord, type Status, status, statusCode, type StatusFacts, statusLines, toEvent, toolRow, toResult, uninstallCode, type UninstallFacts, uninstallLines, weakenedAfterBlock, whileBroken, workedPaths, worktreeFolders, worktreesWorkedIn } from "../domain.ts";
 import { HOST_SURFACE, REPO_SETTINGS, agentSettingOf, bareHook, briefHead, classifyStore, contextTokens, hookCommand, hooksFile, isInjected, ourHookCommand, ownTranscriptPath, parseEvents, projectFolderName, spawnMeta, spawnsIn, steerOf, tokensFromTranscript, transcriptHead, transcriptLines, turnActions } from "./domain.ts";
 
 const { registrations: HOOK_REGISTRATIONS, hooks: HOOK_COSTS, registeredEvents, staleRegistrations, bareRegistrations, withRegistrations, withoutRegistrations } = hooksFile;
@@ -305,16 +305,12 @@ describe("toEvent — one payload, every moment it carries", () => {
     expect(toEvent("subagent-start", { ...started, agent_type: "leader" }, { ...world(), sessionAgent: () => "leader" }), "the session's own agent").toStrictEqual([]);
   });
 
-  it("adds the session notes held for the brief to a subagent's call, after its guard events and before its notes", () => {
+  it("adds the session notes held for the brief to a subagent's call, after its guard events", () => {
     const held = { ...world(), heldForBrief: true };
-    const read = toEvent("post-tool-use", pre("Read", { file_path: "/repo/src/a.ts" }), held);
-    expect(read, "the first call that names a file, held notes first").toStrictEqual([
+    expect(toEvent("post-tool-use", pre("Read", { file_path: "/repo/src/a.ts" }), held), "the first call that runs, held notes only").toStrictEqual([
       { rail: "brief", moment: "session" },
-      { rail: "brief", moment: "touch", path: "src/a.ts" },
     ]);
-    expect(toEvent("post-tool-use", pre("Read", { file_path: "/repo/src/a.ts" }), world()), "nothing held: only the touch").toStrictEqual([
-      { rail: "brief", moment: "touch", path: "src/a.ts" },
-    ]);
+    expect(toEvent("post-tool-use", pre("Read", { file_path: "/repo/src/a.ts" }), world()), "nothing held: no event, since a read changed nothing").toStrictEqual([]);
     const bash = toEvent("pre-tool-use", pre("Bash", { command: "git status" }), held).map((event) => `${event.rail}:${event.moment}`);
     expect(bash).toStrictEqual(["guard:command", "brief:session", "brief:command"]);
   });
@@ -350,33 +346,14 @@ describe("toEvent — one payload, every moment it carries", () => {
       expect(toEvent("pre-tool-use", pre(tool, edit), world({ "src/a.ts": "old" })), tool).toStrictEqual([]);
   });
 
-  it("turns each file a Bash call reads or searches into a touch on the same answer, from where the shell stands", () => {
-    // The note has to arrive BEFORE the output: a Bash payload names no path, so the post-tool-use
-    // rail has nothing to steer on, and a touch there would be after the agent read the file.
+  it("shows nothing for the files a Bash call reads, and nothing for a call after it ran: what a call changed is git's to say", () => {
+    // A read is not a change. The files a command reads are still recorded as `read` rows
+    // (`shellReadRows`), and the breadcrumb rail has no event for them.
     const command = "cat a.ts && rg x lib ~/n.md";
     const events = toEvent("pre-tool-use", { ...pre("Bash", { command }), cwd: "/repo/src" }, { ...world(), home: "/repo/home" });
-    expect(events).toStrictEqual([
-      { rail: "guard", moment: "command", command, commands: parseCommandLine(command, { cwd: "/repo/src", home: "/repo/home" }), start: { cwd: "/repo/src", home: "/repo/home" } },
-      { rail: "brief", moment: "command", command },
-      { rail: "brief", moment: "touch", path: "src/a.ts" },
-      { rail: "brief", moment: "touch", path: "src/lib" },
-      { rail: "brief", moment: "touch", path: "home/n.md" },
-    ]);
-    // No `cwd` on the payload: the shell is taken to stand at the repo root. A path read AND
-    // searched is one touch, not two.
-    expect(toEvent("pre-tool-use", pre("Bash", { command: "cat a.ts; ls a.ts" }), world()).slice(2)).toStrictEqual([
-      { rail: "brief", moment: "touch", path: "a.ts" },
-    ]);
-  });
-
-  it("turns a post-tool-use call on a file into a touch, and a pathless one into silence", () => {
-    expect(toEvent("post-tool-use", pre("Read", { file_path: "/repo/docs/x.md" }), world())).toStrictEqual([
-      { rail: "brief", moment: "touch", path: "docs/x.md" },
-    ]);
-    // A touch event with no path would show EVERY area breadcrumb rather than none — the engine
-    // narrows by `on` only when the event names a path. Silence, and the note arrives on the next
-    // file the session touches.
-    expect(toEvent("post-tool-use", pre("Bash", { command: "ls" }), world())).toStrictEqual([]);
+    expect(events.map((event) => `${event.rail}:${event.moment}`)).toStrictEqual(["guard:command", "brief:command"]);
+    for (const tool of ["Read", "Grep", "Bash", "Edit", "Write"])
+      expect(toEvent("post-tool-use", pre(tool, { file_path: "/repo/docs/x.md" }), world()), `${tool}: the changed files are found by comparing git's list`).toStrictEqual([]);
   });
 
   it("turns a stop into turn-end carrying the turn's actions, and honours the host's loop-breaker", () => {
@@ -395,12 +372,6 @@ describe("toEvent — one payload, every moment it carries", () => {
     expect(toEvent("pre-tool-use", {}, world())).toStrictEqual([]);
     expect(toEvent("pre-tool-use", pre("Bash", {}), world())).toStrictEqual([]);
     expect(toEvent("notification", { session_id: "s" }, world())).toStrictEqual([]);
-  });
-
-  it("reads what a post-tool-use call was about, path tools and searches alike", () => {
-    expect(touchedPath(pre("Grep", { pattern: "x", path: "/repo/src" }), ROOT)).toBe("src");
-    expect(touchedPath(pre("NotebookEdit", { notebook_path: "/repo/n.ipynb" }), ROOT)).toBe("n.ipynb");
-    expect(touchedPath(pre("Bash", { command: "ls" }), ROOT)).toBeNull();
   });
 });
 
@@ -471,7 +442,7 @@ describe("toResult — one refusal spelling, one injection spelling", () => {
   it("refuses before it injects — a rail that blocks has nothing to add", () => {
     const result = toResult("pre-tool-use", {
       refused: [{ moment: "command", block: block() }],
-      shown: [{ entry: "a", cause: "first-touch", body: "hello" }],
+      shown: [{ entry: "a", cause: "first", body: "hello" }],
     });
     expect(result.exitCode).toBe(2);
     expect(result.stdout).toBe("");
@@ -485,12 +456,13 @@ describe("toResult — one refusal spelling, one injection spelling", () => {
     ).toStrictEqual(ALLOW);
   });
 
-  it("heads each note with the mechanism's own name and its cause", () => {
+  it("heads each note with the mechanism's own name and the moment that showed it, and the load error with its cause", () => {
     const text = briefBlock([
-      { entry: "area", cause: "first-touch", body: "one" },
-      { entry: "drifted", cause: "drift", body: "two" },
+      { entry: "area", cause: "first", moment: "file-change", body: "one" },
+      { entry: "drifted", cause: "drift", moment: "command", body: "two" },
+      { entry: null, cause: "fault", body: "three" },
     ]);
-    expect(text).toBe("# breadcrumb: area (first-touch)\none\n\n# breadcrumb: drifted (drift)\ntwo");
+    expect(text).toBe("# breadcrumb: area (file-change)\none\n\n# breadcrumb: drifted (command)\ntwo\n\n# breadcrumb: flow (fault)\nthree");
   });
 
   it("names the event in a decision object", () => {
@@ -740,7 +712,7 @@ describe("a turn-end note — a breadcrumb shown when an agent hands back", () =
   // When a note shows — first, then after drift, and for which categories — is the engine's
   // `brief`, the same at every moment. These pin what the adapter adds: the hand-back asks for its
   // notes, and they reach the agent on the host's two channels.
-  const recap: Shown = { entry: "t.recap", cause: "first-touch", body: "Write the recap before you hand back." };
+  const recap: Shown = { entry: "t.recap", cause: "first", moment: "turn-end", body: "Write the recap before you hand back." };
   const subagent: HookPayload = {
     session_id: "s1",
     transcript_path: "/c/p/s1.jsonl",
@@ -760,7 +732,7 @@ describe("a turn-end note — a breadcrumb shown when an agent hands back", () =
       expect(result.exitCode, "a note is not a refusal: the host keeps the agent going for one more turn").toBe(0);
       expect(result.stderr).toBe("");
       expect(JSON.parse(result.stdout)).toStrictEqual({
-        hookSpecificOutput: { hookEventName: name, additionalContext: "# breadcrumb: t.recap (first-touch)\nWrite the recap before you hand back." },
+        hookSpecificOutput: { hookEventName: name, additionalContext: "# breadcrumb: t.recap (turn-end)\nWrite the recap before you hand back." },
       });
     }
   });
@@ -779,14 +751,14 @@ describe("a turn-end note — a breadcrumb shown when an agent hands back", () =
 
   it("passes a guardrail refusal and a note at the same hand-back to the agent together", () => {
     expect(ridesRefusal("turn-end"), "a held turn is told its notes").toBe(true);
-    for (const moment of ["session", "touch", "command"] as const) expect(ridesRefusal(moment), `${moment}: a refused call is not`).toBe(false);
+    for (const moment of ["session", "file-change", "command"] as const) expect(ridesRefusal(moment), `${moment}: a refused call is not`).toBe(false);
     for (const hook of ["stop", "subagent-stop"] as const) {
       const held = toResult(hook, { refused: [{ moment: "turn-end", block: block() }], shown: [recap] });
       expect(held.exitCode, "still held").toBe(2);
       expect(held.stdout, "exit 2 is read from stderr, so both are there").toBe("");
       expect(held.stderr).toContain("flow — turn held open");
       expect(held.stderr).toContain("No TODOs in shipped code.");
-      expect(held.stderr).toContain("# breadcrumb: t.recap (first-touch)\nWrite the recap before you hand back.");
+      expect(held.stderr).toContain("# breadcrumb: t.recap (turn-end)\nWrite the recap before you hand back.");
       expect(held.stderr.indexOf("turn held open"), "the refusal first, then the note").toBeLessThan(held.stderr.indexOf("# breadcrumb"));
     }
   });
@@ -1518,10 +1490,10 @@ describe("what every rail answers while the config will not load", () => {
     });
 
     it("tells the agent once per answer, however many events the payload carried", () => {
-      // One Bash call is a command, its own note and each file it reads — four events here, and the
-      // agent needs the sentence once.
+      // One Bash call is a command and its own note — two events, and the agent needs the sentence
+      // once.
       const events = toEvent("pre-tool-use", pre("Bash", { command: "rm src/a.ts && cat src/b.ts" }), world({ "src/a.ts": "a", "src/b.ts": "b" }));
-      expect(events.length).toBeGreaterThan(2);
+      expect(events.length).toBeGreaterThan(1);
       expect(whileBroken(events, FAULT).shown).toHaveLength(1);
     });
 
@@ -1531,8 +1503,9 @@ describe("what every rail answers while the config will not load", () => {
 
     it("tells the agent at the first hook of a call: after a Read, which no hook came before, and not after a Bash call, which was told when it asked", () => {
       const read = pre("Read", { file_path: "/repo/src/a.ts" });
-      const events = toEvent("post-tool-use", read, world());
-      expect(events, "the file the call named was touched").toStrictEqual([{ rail: "brief", moment: "touch", path: "src/a.ts" }]);
+      // What an after-call hook carries is the files the call changed, which the shell finds in git.
+      const events: AdapterEvent[] = [{ rail: "brief", moment: "file-change", path: "src/a.ts" }];
+      expect(toEvent("post-tool-use", read, world()), "nothing in the payload names a change").toStrictEqual([]);
       expect(opensCall("post-tool-use", "Read")).toBe(true);
       expect(whileBroken(events, FAULT, opensCall("post-tool-use", "Read")).shown.map((note) => note.body)).toStrictEqual([TOLD]);
       expect(opensCall("post-tool-use", "Bash")).toBe(false);
@@ -2010,7 +1983,7 @@ describe("status — a registration an older flow wrote", () => {
   });
 
   // Each event carries its own rails, so a missing one costs those and no others: a file without
-  // PreToolUse and SubagentStop still shows the note for a file a tool call names and judges the main chat's hand-back.
+  // PreToolUse and SubagentStop still shows the note for a file a tool call changed and judges the main chat's hand-back.
   it("names only the rails of the missing events as not firing", () => {
     const hooks = { ...without("SubagentStop").hooks, PreToolUse: undefined };
     expect(status(statusFacts({ settings: { hooks } })).fittings.find((f) => f.id === "claude-code")?.detail).toBe(
@@ -2023,18 +1996,17 @@ describe("status — a registration an older flow wrote", () => {
   });
 });
 
-describe("another worktree of the repository — told once, never refused", () => {
+describe("another worktree of the repository — read when a call works in it", () => {
   const root = "/code/app";
   const worktrees = ["/code/app", "/code/app.worktrees/feature", "/code/app.worktrees/fix"];
-  const tell = (paths: readonly string[], told: readonly string[] = []): string[] => untoldWorktrees({ paths, root, worktrees, told });
+  const tell = (paths: readonly string[]): string[] => worktreesWorkedIn({ paths, root, worktrees });
 
   it("names the worktree a path in another worktree is in", () => {
     expect(tell(["/code/app.worktrees/feature/src/a.ts"])).toEqual(["/code/app.worktrees/feature"]);
   });
 
-  it("names it no more once this session and agent was told", () => {
-    expect(tell(["/code/app.worktrees/feature/src/a.ts"], ["/code/app.worktrees/feature"])).toEqual([]);
-    expect(tell(["/code/app.worktrees/fix/b.ts"], ["/code/app.worktrees/feature"]), "another worktree is its own").toEqual(["/code/app.worktrees/fix"]);
+  it("names each worktree once, in the order the paths came", () => {
+    expect(tell(["/code/app.worktrees/fix/b.ts", "/code/app.worktrees/feature/a.ts", "/code/app.worktrees/fix/c.ts"])).toEqual(["/code/app.worktrees/fix", "/code/app.worktrees/feature"]);
   });
 
   it("names nothing for a path outside the repository that is none of its worktrees", () => {
@@ -2046,23 +2018,22 @@ describe("another worktree of the repository — told once, never refused", () =
   });
 
   it("counts the worktree that holds the guarded folder as the session's own", () => {
-    expect(untoldWorktrees({ paths: ["/code/app/lib/x.ts"], root: "/code/app/packages/web", worktrees, told: [] })).toEqual([]);
+    expect(worktreesWorkedIn({ paths: ["/code/app/lib/x.ts"], root: "/code/app/packages/web", worktrees })).toEqual([]);
   });
 
-  it("tells a session started in a nested worktree about the worktree around it", () => {
+  it("reads the worktree around a session started in a nested worktree", () => {
     expect(
-      untoldWorktrees({ paths: ["/code/app/src/a.ts"], root: "/code/app/.claude/worktrees/agent-1", worktrees: [...worktrees, "/code/app/.claude/worktrees/agent-1"], told: [] }),
+      worktreesWorkedIn({ paths: ["/code/app/src/a.ts"], root: "/code/app/.claude/worktrees/agent-1", worktrees: [...worktrees, "/code/app/.claude/worktrees/agent-1"] }),
     ).toEqual(["/code/app"]);
   });
 
   it("places a path in the deepest worktree that holds it, and names each worktree once", () => {
     const nested = [...worktrees, "/code/app.worktrees/feature/.claude/worktrees/agent-1"];
     expect(
-      untoldWorktrees({
+      worktreesWorkedIn({
         paths: ["/code/app.worktrees/feature/.claude/worktrees/agent-1/a.ts", "/code/app.worktrees/feature/a.ts", "/code/app.worktrees/feature/b.ts"],
         root,
         worktrees: nested,
-        told: [],
       }),
     ).toEqual(["/code/app.worktrees/feature/.claude/worktrees/agent-1", "/code/app.worktrees/feature"]);
   });
@@ -2079,7 +2050,7 @@ describe("another worktree of the repository — told once, never refused", () =
 
   it("names a worktree nested inside the guarded folder, as Claude Code makes for a subagent", () => {
     expect(
-      untoldWorktrees({ paths: ["/code/app/.claude/worktrees/agent-1/a.ts"], root, worktrees: [...worktrees, "/code/app/.claude/worktrees/agent-1"], told: [] }),
+      worktreesWorkedIn({ paths: ["/code/app/.claude/worktrees/agent-1/a.ts"], root, worktrees: [...worktrees, "/code/app/.claude/worktrees/agent-1"] }),
     ).toEqual(["/code/app/.claude/worktrees/agent-1"]);
   });
 
@@ -2116,14 +2087,12 @@ describe("another worktree of the repository — told once, never refused", () =
     expect(commandFolders({ tool_name: "Write", tool_input: { file_path: "/code/app.worktrees/feature/a.ts" }, cwd: "/code/app.worktrees/fix" }, root, "/home/me")).toEqual([]);
   });
 
-  it("tells a command run in another worktree, by its cwd or a cd, once, and nothing for a cd outside the repository", () => {
-    const ran = (command: string, cwd = root, told: readonly string[] = []): string[] =>
-      tell(workedPaths({ tool_name: "Bash", tool_input: { command }, cwd }, root, "/home/me"), told);
+  it("names the worktree a command ran in, by its cwd or a cd, and nothing for a cd outside the repository", () => {
+    const ran = (command: string, cwd = root): string[] => tell(workedPaths({ tool_name: "Bash", tool_input: { command }, cwd }, root, "/home/me"));
     expect(ran("npm test", "/code/app.worktrees/feature"), "the session's folder is in the worktree").toEqual(["/code/app.worktrees/feature"]);
     expect(ran("cd /code/app.worktrees/fix/src && npm test"), "a cd into it").toEqual(["/code/app.worktrees/fix"]);
     expect(ran("cd /tmp/scratch && ls; cd ../../code/app-other"), "a cd outside the repository, to none of its worktrees").toEqual([]);
     expect(ran("cd src && ls"), "a cd inside the guarded folder").toEqual([]);
-    expect(ran("cd /code/app.worktrees/feature && ls", root, ["/code/app.worktrees/feature"]), "already told, by a write or a command").toEqual([]);
   });
 
   it("asks git for a folder a command ran in that is itself a nested worktree, and never for the guarded folder", () => {
@@ -2139,41 +2108,6 @@ describe("another worktree of the repository — told once, never refused", () =
       "worktree /code/app.worktrees/feature\nHEAD def\ndetached\nprunable gitdir file points to non-existent location\n";
     expect(worktreeFolders(porcelain)).toEqual(["/code/app", "/code/app.worktrees/feature"]);
     expect(worktreeFolders("")).toEqual([]);
-  });
-
-  it("rides beside the call's result and refuses nothing, before the notes", () => {
-    const answer = toResult("post-tool-use", {
-      refused: [],
-      shown: [{ entry: "a.b", cause: "first-touch", body: "a note" }],
-      unguarded: { root, worktrees: ["/code/app.worktrees/feature"] },
-    });
-    expect(answer.exitCode).toBe(0);
-    expect(answer.stderr).toBe("");
-    const context = (JSON.parse(answer.stdout) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } }).hookSpecificOutput;
-    expect(context.hookEventName).toBe("PostToolUse");
-    expect(context.additionalContext).toBe(`${worktreeLine(root, "/code/app.worktrees/feature")}\n\n# breadcrumb: a.b (first-touch)\na note`);
-  });
-
-  it("rides beside a refusal on stderr, before the notes", () => {
-    const block: Block = { do: "block", entry: "demo.noTodo", message: "No TODOs.", subject: "src/a.ts", detail: "" };
-    const answer = toResult("post-tool-use", {
-      refused: [{ moment: "commit", block }],
-      shown: [{ entry: "a.b", cause: "first-touch", body: "a note" }],
-      unguarded: { root, worktrees: ["/code/app.worktrees/feature"] },
-    });
-    expect(answer.exitCode).toBe(2);
-    const line = worktreeLine(root, "/code/app.worktrees/feature");
-    expect(answer.stderr).toContain(line);
-    expect(answer.stderr.indexOf(line)).toBeLessThan(answer.stderr.indexOf("# breadcrumb: a.b (first-touch)"));
-    expect(answer.stderr.indexOf("No TODOs.")).toBeLessThan(answer.stderr.indexOf(line));
-  });
-
-  it("tells the agent both folders, to stop, and to have a session started there", () => {
-    const line = worktreeLine(root, "/code/app.worktrees/feature");
-    expect(line).toContain("flow guards /code/app, the folder this session started in.");
-    expect(line).toContain("It does not guard the git worktree /code/app.worktrees/feature");
-    expect(line).toContain("Stop your work in /code/app.worktrees/feature and tell the user to start a Claude Code session in that folder");
-    expect(line).toContain("If you are a subagent, stop and report this to the agent that started you.");
   });
 });
 
@@ -2217,11 +2151,9 @@ describe("outsideOf — where a call works outside the repository", () => {
     expect(outsideOf(ran('cd "$(mktemp -d)" && git commit -m init'), root, none, same)).toEqual([]);
   });
 
-  it("names a touched file outside by its own path, and no moment but a command's a guard's", () => {
+  it("names nothing for a moment but a command's, and nothing for a breadcrumb: a changed path is git's own, inside a worktree of the repository", () => {
     expect(outsideOf({ rail: "guard", moment: "commit" }, root, none, same)).toEqual([]);
-    expect(outsideOf({ rail: "brief", moment: "touch", path: "/tmp/r/a.ts" }, root, none, same)).toEqual(["/tmp/r/a.ts"]);
-    expect(outsideOf({ rail: "brief", moment: "touch", path: "src/a.ts" }, root, none, same)).toEqual([]);
-    expect(outsideOf({ rail: "brief", moment: "touch", path: ".scratch/tmp/r/a.ts" }, root, nestedRepo, same)).toEqual([".scratch/tmp/r/a.ts"]);
+    expect(outsideOf({ rail: "brief", moment: "file-change", path: "src/a.ts" }, root, none, same)).toEqual([]);
     expect(outsideOf({ rail: "brief", moment: "session" }, root, none, same)).toEqual([]);
   });
 });

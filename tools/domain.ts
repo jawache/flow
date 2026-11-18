@@ -210,9 +210,9 @@ export function frontMatterFields(markdown: string): ReadonlyMap<string, string>
 
 // ══ THE BASH CORPUS SCORE ═══════════════════════════════════════════════════
 //
-// How well a function names what a Bash command touches, measured. A breadcrumb fires on first
-// contact with an area, and under auto mode most contact is a Bash `cat`, `grep` or `sed -n` whose
-// payload names no path. Any mechanism that claims to recover those paths — a table of literal
+// How well a function names what a Bash command touches, measured. `flow facts` counts the files a session
+// read, and under auto mode most reads are a Bash `cat`, `grep` or `sed -n` whose payload names no
+// path. Any mechanism that claims to recover those paths — a table of literal
 // arguments, a shell grammar, shell functions shadowing the read commands — is an EXTRACTOR:
 // `(command, cwd) → {reads, writes}`. What follows scores one against
 // `__fixtures__/bash-corpus/corpus.json`, 150 real commands labelled by hand, and says per mechanism

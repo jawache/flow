@@ -16,14 +16,15 @@
 // the world a check reaches through.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readSync, realpathSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, lstatSync, readFileSync, readlinkSync, readSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isatty } from "node:tty";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, posix } from "node:path";
 import { type Category, refusalText, type LoadResult, type Settings, type TurnAction } from "../language/domain.ts";
-import { afterCompaction, brief, categoriesIn, guard, recorder, runRows, type AgentOf, type Identity, type Marks, type Notice, type Outcome, type RecordedStep, type Row, type SessionState } from "../engine/domain.ts";
-import { appendRows, appendSteps, isOff, isRecording, loadState, saveState, stickyIdentity, writeMarker } from "../engine/state.ts";
-import { agentOf, ALLOW, awaitsBrief, hermeticEnv, holdsForBrief, isHookEvent, nothingBound, outsideOf, opensCall, reachesAnotherWorktree, readFault, ridesRefusal, sessionFactsFrom, shellReadRows, toEvent, toResult, toolRow, untoldWorktrees, whileBroken, workedPaths, worktreeFolders, type AdapterEvent, type Answer, type EventWorld, type HookEvent, type Refused, type Shown } from "./domain.ts";
+import { afterCompaction, brief, categoriesIn, DELETED, guard, recorder, runRows, type AgentOf, type Identity, type Marks, type Notice, type Outcome, type RecordedStep, type Row, type Tree } from "../engine/domain.ts";
+import { appendRows, appendSteps, isOff, isRecording, loadState, readRows, stickyIdentity, updateState, writeMarker } from "../engine/state.ts";
+import { agentOf, ALLOW, awaitsBrief, changeEvents, changeRow, commitRange, editedFile, folderChanges, foldersToLook, hermeticEnv, holdsForBrief, isHookEvent, namedChange, nothingBound, outsideOf, opensCall, reachesAnotherWorktree, readFault, ridesRefusal, sessionFactsFrom, shellChangesOf, shellReadRows, statusPaths, toEvent, toResult, toolRow, whileBroken, withShellChanges, workedPaths, worktreeFolders, worktreesWorkedIn, type AdapterEvent, type Answer, type BriefAdapterEvent, type EventWorld, type HookEvent, type Refused, type Shown } from "./domain.ts";
 import type { Harness, HookPayload, HookResult } from "./harness.ts";
 import { currentBranch, loadRegime, readText, realWorld } from "./shell.ts";
 
@@ -44,7 +45,7 @@ function runGit(root: string, args: readonly string[]): { readonly ok: boolean; 
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// ANOTHER WORKTREE — the folders git lists for this repository, read only when a call leaves root
+// WORKING FOLDERS — the folders git lists for this repository, read only when a call leaves root
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 /**
@@ -159,20 +160,25 @@ function sessionOf(harness: Harness, payload: HookPayload, root: string): Sessio
   const { transcripts } = harness;
   const path = transcripts.own(payload);
   const transcript = once((): string | null => (path === null ? null : readText(root, path)));
+  const id = typeof payload.session_id === "string" && payload.session_id !== "" ? payload.session_id : "unknown";
+  const who = agentOf(payload);
   return {
     harness,
     root,
-    id: typeof payload.session_id === "string" && payload.session_id !== "" ? payload.session_id : "unknown",
-    who: agentOf(payload),
+    id,
+    who,
     branch: currentBranch(root),
     transcript,
     tokens: once((): number => {
       const text = transcript();
       return text === null ? 0 : transcripts.tokens(text);
     }),
+    // The transcript says what the edit tools changed and which commands ran; the log says which
+    // files each command changed. `ctx.turn` is the two together.
     turn: once((): readonly TurnAction[] => {
       const text = transcript();
-      return text === null ? [] : transcripts.turn(text, root);
+      const actions = text === null ? [] : transcripts.turn(text, root);
+      return withShellChanges(actions, shellChangesOf(readRows(root, id), who.agent));
     }),
     // The PARENT's transcript, `transcript_path` as sent: the session's own agent is its record.
     sessionAgent: once((): string | null => {
@@ -205,23 +211,78 @@ function identityOf(session: Session, payload: HookPayload, categories: readonly
   return stickyIdentity(session.root, session.id, session.who.agent, facts, categories, !briefPending);
 }
 
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// THE CHANGED PATHS — git's list of changed paths, taken before and after a call
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+//
+// The decision, which paths a call changed, is `changedBy` and `folderChanges` (domain.ts). What is
+// here asks git and hashes the files it lists, and keeps what it found as the "before" of the next
+// call. Nothing of a file's content is stored, only its hash.
+
+/** Files over this size are told apart by their size and modification time, not read. */
+const HASH_LIMIT_BYTES = 32 * 1024 * 1024;
+
+/** A listed path's content, as a hash: `DELETED` when the file is gone, and a link by where it points. */
+function hashOf(file: string): string {
+  try {
+    const found = lstatSync(file);
+    if (found.isSymbolicLink()) return `link:${readlinkSync(file)}`;
+    if (found.size > HASH_LIMIT_BYTES) return `big:${found.size}:${found.mtimeMs}`;
+    return createHash("sha1").update(readFileSync(file)).digest("hex");
+  } catch {
+    return DELETED;
+  }
+}
+
 /**
- * The other worktrees of the repository this call worked in that this session and agent has not
- * been told about, now remembered as told; null when there are none. The paths are the file an edit
- * tool wrote, or the folders a shell command ran in (`workedPaths`). git is asked only when one of
- * them may be in another worktree.
+ * What git lists as changed in one working folder now: the commit it has out, and a hash of each
+ * listed path. Null when git cannot say, such as a folder that is not a repository. An ignored file is
+ * not listed.
  */
-function worktreesToTell(session: Session, payload: HookPayload): { root: string; worktrees: string[] } | null {
+function takeTree(folder: string): Tree | null {
+  const status = runGit(folder, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+  if (!status.ok) return null;
+  const head = runGit(folder, ["rev-parse", "--verify", "-q", "HEAD"]);
+  const files: Record<string, string> = {};
+  for (const path of statusPaths(status.stdout.toString("utf8"))) files[path] = hashOf(join(folder, path));
+  return { head: head.ok ? head.stdout.toString("utf8").trim() : null, files };
+}
+
+/** The files of the commits made between two looks at a folder, or none when it made none. */
+function committedBetween(folder: string, before: Tree, after: Tree): string[] {
+  const range = commitRange(before, after);
+  if (range === null) return [];
+  const listed = runGit(folder, ["diff", "--name-only", "-z", range]);
+  return listed.ok ? listed.stdout.toString("utf8").split("\0").filter((path) => path !== "") : [];
+}
+
+/**
+ * The working folders a call worked in: the guarded folder, and each other worktree of the
+ * repository that an edit tool wrote in or a shell command ran in (`workedPaths`). git is asked for
+ * the worktrees only when one of the paths may be in another worktree.
+ */
+function workedFolders(session: Session, payload: HookPayload): string[] {
   const root = realPath(session.root);
   // Each folder once: a command can return to one with `cd -`, and two names can be one folder.
   const paths = [...new Set([...new Set(workedPaths(payload, session.root, homedir()))].map(realPath))];
-  if (!reachesAnotherWorktree(paths, root, holdsGit)) return null;
-  const stored = loadState(session.root, session.id, session.who.agent);
-  const told = stored.worktrees ?? [];
-  const worktrees = untoldWorktrees({ paths, root, worktrees: repoWorktrees(session.root), told });
-  if (worktrees.length === 0) return null;
-  saveState(session.root, session.id, session.who.agent, { ...stored, worktrees: [...told, ...worktrees] });
-  return { root, worktrees };
+  const others = reachesAnotherWorktree(paths, root, holdsGit) ? worktreesWorkedIn({ paths, root, worktrees: repoWorktrees(session.root) }) : [];
+  return [root, ...others];
+}
+
+/** Each of these folders, as git lists it now. A folder git cannot read is left out. */
+function lookAt(folders: readonly string[]): Map<string, Tree> {
+  const looked = new Map<string, Tree>();
+  for (const folder of folders) {
+    const tree = takeTree(folder);
+    if (tree !== null) looked.set(folder, tree);
+  }
+  return looked;
+}
+
+/** What this agent last saw in these folders, now what git lists: the "before" of its next call. */
+function remember(session: Session, looked: ReadonlyMap<string, Tree>): void {
+  if (looked.size === 0) return;
+  updateState(session.root, session.id, session.who.agent, (state) => ({ ...state, trees: { ...state.trees, ...Object.fromEntries(looked) } }));
 }
 
 /** The world a payload is read against — disk, and the turn, asked only if the moment needs them. */
@@ -264,7 +325,6 @@ export async function runHook(harness: Harness, hook: HookEvent, payload: HookPa
   if (isCall(hook) && !off && session.id !== "unknown") writeMarker(root, session.id, session.who, session.branch);
 
   const tool = typeof payload.tool_name === "string" ? payload.tool_name : "";
-  const afterCall = hook === "post-tool-use" && !off && tool !== "";
 
   // THE CONFIG WILL NOT LOAD. `kind: "broken"` is a module that would not import; a LoadResult
   // carrying refusals is a module that imported and whose grammar was refused. Both are the same
@@ -299,14 +359,17 @@ export async function runHook(harness: Harness, hook: HookEvent, payload: HookPa
   // its notes bound to a category wait for its first tool call. Asked once, for both.
   const briefPending = awaitsBrief(hook, session.transcript());
   const identity = identityOf(session, payload, categoriesIn(entries), briefPending);
-  // ANOTHER WORKTREE, after the call: the agent is told once that flow does not guard it. Asked
-  // before the state is read, which `judge` saves again with its marks.
-  const unguarded = afterCall ? worktreesToTell(session, payload) : null;
-  // READ AFTER the identity was settled, deliberately: `stickyIdentity` writes the classification
-  // into this same file, and `judge` saves `stored` forward whole. A read taken before it would
-  // write the categories back out of existence on the next breadcrumb.
-  const stored = loadState(root, session.id, session.who.agent);
+  // WHAT GIT LISTS AS CHANGED, in each working folder the call worked in. Before a shell command it
+  // is the "before" of that call, kept for the hook that follows it. After any call it is the
+  // "after", compared in `judge` with the "before": a shell command's own, or the last look for a
+  // tool with no hook before it. A session's start is a look too, so a change made before the first
+  // call is not that call's.
+  const looked = lookAt(off ? [] : foldersToLook(hook, tool, () => workedFolders(session, payload), realPath(root)));
+  if (hook === "pre-tool-use") remember(session, looked);
 
+  // READ AFTER the identity was settled, deliberately: `stickyIdentity` writes the classification
+  // into this same file.
+  const stored = loadState(root, session.id, session.who.agent);
   const events = toEvent(hook, payload, eventWorld(root, session, stored.heldForBrief === true));
   const rows: Row[] = [];
 
@@ -321,18 +384,16 @@ export async function runHook(harness: Harness, hook: HookEvent, payload: HookPa
 
   const steps: RecordedStep[] = [];
 
-  const answer = await judge({ events, session, stored, load, settings: config.settings, identity, briefPending, off, hook, payload, rows, steps: taping ? steps : null });
+  const answer = await judge({ events, session, load, settings: config.settings, identity, briefPending, off, hook, payload, rows, steps: taping ? steps : null, looked });
   if (!off) appendRows({ root, session: session.id, harness: harness.id, branch: session.branch, who: session.who }, rows);
   if (taping) appendSteps(root, session.id, steps);
-  return toResult(hook, unguarded === null ? answer : { ...answer, unguarded });
+  return toResult(hook, answer);
 }
 
 /** The middle of the run: every event through the engine, and the rows that record what happened. */
 async function judge(args: {
   readonly events: readonly AdapterEvent[];
   readonly session: Session;
-  /** This session × agent's state, as it stood once the identity was settled. */
-  readonly stored: SessionState;
   readonly load: LoadResult;
   readonly settings: Settings;
   readonly identity: Identity;
@@ -344,118 +405,135 @@ async function judge(args: {
   readonly rows: Row[];
   /** Where the replayable steps go, or null when this repo is not recording. */
   readonly steps: RecordedStep[] | null;
+  /** What git lists as changed in each working folder now, taken before the call's events were read. */
+  readonly looked: ReadonlyMap<string, Tree>;
 }): Promise<Answer> {
-  const { events, session, stored, load, settings, identity, briefPending, off, hook, payload, rows, steps } = args;
+  const { events, session, load, settings, identity, briefPending, off, hook, payload, rows, steps, looked } = args;
   const blocked: Refused[] = [];
   const shown: Shown[] = [];
   const world = realWorld(session.root);
   const inRepository = sameRepository(session.root);
 
-  // A COMPACTION is the boundary where the agent stops knowing what it was told, so every area note
-  // has to be earned again. The host announces it on the session rail (`source: "compact"`), which
-  // is why flow registers no compaction hook of its own — a second registration on one moment is
-  // the duplicate the hook grammar exists to prevent.
+  // A COMPACTION is the boundary where the agent stops knowing what it was told, and it removes
+  // every breadcrumb's text from its context. The host announces it on the session rail (`source:
+  // "compact"`), which is why flow registers no compaction hook of its own — a second registration
+  // on one moment is the duplicate the hook grammar exists to prevent.
   const compacted = hook === "session-start" && payload.source === "compact";
-  // THE NOTES HELD FOR THE BRIEF: held by a subagent's start that judged them without it, and let
-  // go by the first call that judges them again. A refused call judges none, so they stay held.
-  let held = stored.heldForBrief === true;
-  let marks: Marks = compacted && load.ok ? afterCompaction(stored.marks, load.entries) : stored.marks;
   if (compacted && !off) rows.push({ kind: "compaction" });
   if (compacted) steps?.push({ rail: "compaction" });
 
   for (const event of events) {
-    if (event.rail === "guard") {
-      // The recorder wraps the world rather than replacing it: what a check reached for is kept as
-      // it was answered AT THAT INSTANT — the file's bytes then, the command's real exit code —
-      // because re-deriving it tomorrow answers differently, and a recording that cannot reproduce
-      // yesterday's block is not a recording.
-      const tape = steps === null ? null : recorder(world);
-      const outside = outsideOf(event, session.root, holdsGit, inRepository);
-      const outcome = await guard({
-        load,
-        event: {
-          moment: event.moment,
-          command: event.command,
-          commands: event.commands,
-          turn: event.turn,
-          wearing: identity.wearing,
-          outside,
-        },
-        world: tape?.world ?? world,
-        faults: identity.faults,
-        off,
-      });
-      steps?.push({
-        rail: "guard",
-        moment: event.moment,
-        ...(event.command === undefined ? {} : { command: event.command }),
-        ...(event.turn === undefined ? {} : { turn: event.turn }),
-        // Where the line started rides with the answer, so a replay parses it to the same folders.
-        ...(outside.length === 0 ? {} : { outside, ...(event.start === undefined ? {} : { start: event.start }) }),
-        wearing: identity.wearing,
-        world: tape?.taken() ?? {},
-      });
-      for (const effect of outcome.effects)
-        if (effect.do === "block")
-          blocked.push({ moment: event.moment, block: effect });
-      if (!off) rows.push(...runRows(event.moment, outcome, 1));
-      continue;
-    }
-
-    // A REFUSED CALL CARRIES NO NOTES, and this is the one place it is kept from them: a note is not
-    // judged for it, so `toResult` is handed none, and nothing is marked shown to stay silent until
-    // drift. A blocked `cat` whose file is next read by the retried command then briefs on the
-    // retry, which is the call that runs. A held TURN is the exception: its note is judged, and
-    // `toResult` passes it to the agent with the refusal.
-    if (blocked.length > 0 && !ridesRefusal(event.moment)) continue;
-    if (event.moment === "session") held = briefPending && load.ok && holdsForBrief(load.entries);
+    if (event.rail !== "guard") continue;
+    // The recorder wraps the world rather than replacing it: what a check reached for is kept as
+    // it was answered AT THAT INSTANT — the file's bytes then, the command's real exit code —
+    // because re-deriving it tomorrow answers differently, and a recording that cannot reproduce
+    // yesterday's block is not a recording.
+    const tape = steps === null ? null : recorder(world);
     const outside = outsideOf(event, session.root, holdsGit, inRepository);
-    steps?.push({
-      rail: "brief",
-      moment: event.moment,
-      ...(event.path === undefined ? {} : { path: event.path }),
-      ...(event.command === undefined ? {} : { command: event.command }),
-      ...(outside.length === 0 ? {} : { outside }),
-      wearing: identity.wearing,
-      tokens: session.tokens(),
-    });
-    const briefing = brief({
+    const outcome = await guard({
       load,
       event: {
         moment: event.moment,
-        path: event.path,
         command: event.command,
+        commands: event.commands,
+        turn: event.turn,
         wearing: identity.wearing,
-        tokens: session.tokens(),
         outside,
       },
-      marks,
-      settings,
+      world: tape?.world ?? world,
+      faults: identity.faults,
       off,
     });
-    const notices: Notice[] = [];
-    const unshown: string[] = [];
-    for (const notice of briefing.notices) {
-      const body = prose(session.root, notice);
-      if (body.trim() === "") {
-        // A note whose prose could not be resolved was never shown, so it must not be MARKED shown —
-        // that would silence it for the rest of the session and hide the broken `file:` completely.
-        if (notice.entry !== null) unshown.push(notice.entry);
-        continue;
-      }
-      notices.push(notice);
-      shown.push({ entry: notice.entry, cause: notice.cause, body });
-    }
-    marks = marksWithout(briefing.marks, marks, unshown);
-    // A note that SHOWED is a row; a touch where nothing showed is not. The `tool` row already
-    // records that the call happened, and a run row per touch with no tallies in it would double
-    // the log to say the same thing twice.
-    if (!off && notices.length > 0)
-      rows.push(...runRows(event.moment, { effects: notices, tallies: [] } satisfies Outcome, 1));
+    steps?.push({
+      rail: "guard",
+      moment: event.moment,
+      ...(event.command === undefined ? {} : { command: event.command }),
+      ...(event.turn === undefined ? {} : { turn: event.turn }),
+      // Where the line started rides with the answer, so a replay parses it to the same folders.
+      ...(outside.length === 0 ? {} : { outside, ...(event.start === undefined ? {} : { start: event.start }) }),
+      wearing: identity.wearing,
+      world: tape?.taken() ?? {},
+    });
+    for (const effect of outcome.effects)
+      if (effect.do === "block")
+        blocked.push({ moment: event.moment, block: effect });
+    if (!off) rows.push(...runRows(event.moment, outcome, 1));
   }
 
-  if (!off && (marks !== stored.marks || held !== (stored.heldForBrief === true)))
-    saveState(session.root, session.id, session.who.agent, { ...stored, marks, heldForBrief: held ? true : undefined });
+  const briefEvents = events.filter((event): event is BriefAdapterEvent => event.rail === "brief");
+  if (off || (briefEvents.length === 0 && looked.size === 0)) return { refused: blocked, shown };
+
+  // THE BREADCRUMBS, under the state's lock. Two hooks of one agent can run at once — it made two
+  // calls together — and each reads the marks, decides, and writes them: without the lock the second
+  // write drops the first's marks, and the same breadcrumb is shown again. The files the call
+  // changed are found in here too, from the "before" the state holds, so two hooks cannot each find
+  // the same change.
+  updateState(session.root, session.id, session.who.agent, (state) => {
+    let marks: Marks = compacted ? afterCompaction() : state.marks;
+    // THE NOTES HELD FOR THE BRIEF: held by a subagent's start that judged them without it, and let
+    // go by the first call that judges them again. A refused call judges none, so they stay held.
+    let held = state.heldForBrief === true;
+
+    const all = [...briefEvents];
+    if (hook === "post-tool-use") {
+      const written = editedFile(payload);
+      const edited = written === null ? null : realPath(posix.resolve(session.root, written));
+      const found: string[] = [];
+      for (const [folder, after] of looked) {
+        const before = state.trees?.[folder] ?? null;
+        const committed = before === null ? [] : committedBetween(folder, before, after);
+        found.push(...folderChanges({ before, after, committed, named: namedChange(edited, folder) }));
+      }
+      const changed = [...new Set(found)];
+      const row = changeRow(typeof payload.tool_name === "string" ? payload.tool_name : "", changed);
+      if (row !== null) rows.push(row);
+      all.push(...changeEvents(changed, load.ok ? load.entries : []));
+    }
+
+    for (const event of all) {
+      // A REFUSED CALL CARRIES NO NOTES, and this is the one place it is kept from them: a note is not
+      // judged for it, so `toResult` is handed none, and nothing is marked shown to stay silent until
+      // drift. A held TURN is the exception: its note is judged, and `toResult` passes it to the
+      // agent with the refusal.
+      if (blocked.length > 0 && !ridesRefusal(event.moment)) continue;
+      if (event.moment === "session") held = briefPending && load.ok && holdsForBrief(load.entries);
+      steps?.push({
+        rail: "brief",
+        moment: event.moment,
+        ...(event.path === undefined ? {} : { path: event.path }),
+        ...(event.command === undefined ? {} : { command: event.command }),
+        wearing: identity.wearing,
+        tokens: session.tokens(),
+      });
+      const briefing = brief({
+        load,
+        event: { moment: event.moment, path: event.path, command: event.command, wearing: identity.wearing, tokens: session.tokens() },
+        marks,
+        settings,
+        off,
+      });
+      const notices: Notice[] = [];
+      const unshown: string[] = [];
+      for (const notice of briefing.notices) {
+        const body = prose(session.root, notice);
+        if (body.trim() === "") {
+          // A note whose prose could not be resolved was never shown, so it must not be MARKED shown —
+          // that would silence it for the rest of the session and hide the broken `file:` completely.
+          if (notice.entry !== null) unshown.push(notice.entry);
+          continue;
+        }
+        notices.push(notice);
+        shown.push({ entry: notice.entry, cause: notice.cause, moment: notice.moment, body });
+      }
+      marks = marksWithout(briefing.marks, marks, unshown);
+      // A note that SHOWED is a row; a call where nothing showed is not. The `tool` row already
+      // records that the call happened, and a run row per call with no tallies in it would double
+      // the log to say the same thing twice.
+      if (notices.length > 0) rows.push(...runRows(event.moment, { effects: notices, tallies: [] } satisfies Outcome, 1));
+    }
+
+    return { ...state, marks, trees: looked.size === 0 ? state.trees : { ...state.trees, ...Object.fromEntries(looked) }, heldForBrief: held ? true : undefined };
+  });
   return { refused: blocked, shown };
 }
 

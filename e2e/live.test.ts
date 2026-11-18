@@ -39,7 +39,7 @@ const HOUSE = (packageRoot: string): string => fixturePack("repo-pack", join(pac
 
 /** What the temp repo's own guard says. A few entries, at least one per rail this suite drives. */
 const CONFIG = (packageRoot: string): string => `
-import { breadcrumb, command, commit, definePack, defineConfig, guardrail, pack, protectedPath, session, touch, turnEnd } from ${JSON.stringify(
+import { breadcrumb, command, commit, definePack, defineConfig, guardrail, pack, protectedPath, session, fileChange, turnEnd } from ${JSON.stringify(
   join(packageRoot, "index.ts"),
 )};
 import { builder, house } from "./guards/house.ts";
@@ -112,7 +112,7 @@ const demo = definePack("demo", {
 
   orientation: breadcrumb().at(session).text("This repo is guarded by flow."),
 
-  area: breadcrumb().at(touch).on("src/**").text("src/ is the product — its tests sit beside it."),
+  area: breadcrumb().at(fileChange).on("src/**").text("src/ is the product — its tests sit beside it."),
 });
 
 // The repo's own pack is bound beside the demo one, which is how a real config reads: the package's
@@ -722,32 +722,170 @@ describe("the commit gate", () => {
 });
 
 // After the commit gate on purpose: these sessions write the marker the gate reads.
-describe("a shell read, briefed", () => {
-  it("briefs the area a `cat` reads BEFORE it runs, on the PreToolUse answer, and stays quiet on the second", () => {
-    // Under auto mode most contact with an area is a shell read whose payload names no path. The
-    // note rides the same answer the command guardrails use, so it arrives ahead of the output.
-    // The shell stands in src/, so the relative path is resolved from there.
-    const cat = { ...pre("Bash", { command: "cd .. && cat src/a.ts | head -5" }, "live-5"), cwd: join(repo, "src") };
-    const first = hook("pre-tool-use", cat);
-    expect(first.code).toBe(0);
-    expect(first.stderr).toBe("");
-    const decision = JSON.parse(first.stdout) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } };
-    expect(decision.hookSpecificOutput.hookEventName).toBe("PreToolUse");
-    expect(decision.hookSpecificOutput.additionalContext).toBe(
-      "# breadcrumb: demo.area (first-touch)\nsrc/ is the product — its tests sit beside it.",
-    );
-    const again = hook("pre-tool-use", { ...pre("Bash", { command: "cat src/a.ts" }, "live-5"), cwd: repo });
-    expect(again.code).toBe(0);
-    expect(again.stdout, "shown once, until the session drifts past the threshold").toBe("");
+/**
+ * A repo of its own for the file-change journey: a session breadcrumb, a note about `src/` and one
+ * about `docs/`, bound at `fileChange`; a repo with a first commit, a linked worktree of it, and a
+ * folder outside it. `src/ignored.log` is ignored by git. The caller removes `parent`.
+ */
+function repoForChanges(): { parent: string; where: string; worktree: string; outside: string } {
+  const parent = mkdtempSync(join(tmpdir(), "flow-change-"));
+  const where = join(parent, "app");
+  const worktree = join(parent, "app-feature");
+  const outside = join(parent, "scratch");
+  mkdirSync(join(where, "src"), { recursive: true });
+  mkdirSync(join(where, "docs"));
+  mkdirSync(outside);
+  expect(runGit(where, ["init", "-q"]).code).toBe(0);
+  writeFileSync(join(where, ".gitignore"), "*.log\n.flow/\n");
+  writeFileSync(join(where, "src", "a.ts"), "export const a = 1;\n");
+  writeFileSync(join(where, "flow.config.ts"), `
+import { breadcrumb, defineConfig, definePack, fileChange, pack, session } from ${JSON.stringify(join(PACKAGE, "index.ts"))};
+
+export default defineConfig([
+  pack(
+    definePack("demo", {
+      hello: breadcrumb().at(session).text("Guarded."),
+      area: breadcrumb().at(fileChange).on("src/**").text("src/ is the product — its tests sit beside it."),
+      docs: breadcrumb().at(fileChange).on("docs/**").text("docs/ is for people."),
+    }),
+  ),
+]);
+`);
+  expect(runGit(where, ["add", "-A"]).code).toBe(0);
+  expect(runGit(where, ["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "init"]).code).toBe(0);
+  expect(runGit(where, ["worktree", "add", "-q", "-b", "feature", worktree]).code).toBe(0);
+  return { parent, where, worktree, outside };
+}
+
+/** What a hook answered to the agent, or nothing. */
+const told = (ran: Ran): string => (ran.stdout === "" ? "" : (JSON.parse(ran.stdout) as { hookSpecificOutput: { additionalContext: string } }).hookSpecificOutput.additionalContext);
+
+/** The breadcrumb text, headed as the agent reads it. */
+const AREA = "# breadcrumb: demo.area (file-change)\nsrc/ is the product — its tests sit beside it.";
+const DOCS = "# breadcrumb: demo.docs (file-change)\ndocs/ is for people.";
+
+describe("a file change, briefed", () => {
+  it("shows a breadcrumb after a shell command changes a file under its globs, once; a read shows nothing; after a compaction the next change shows it again", () => {
+    const { parent, where } = repoForChanges();
+    try {
+      const shell = (line: string, effect: () => void): Ran => called({ ...pre("Bash", { command: line }, "change-1"), cwd: where }, effect, "post-tool-use", where);
+      const write = (file: string, content: string) => (): void => { writeFileSync(join(where, file), content); };
+
+      const read = shell("cat src/a.ts", () => undefined);
+      expect(read.code, read.stderr).toBe(0);
+      expect(read.stdout, "a read of a file under the globs shows nothing").toBe("");
+
+      const first = shell("echo 'export const a = 2;' > src/a.ts", write("src/a.ts", "export const a = 2;\n"));
+      expect(first.code, first.stderr).toBe(0);
+      const decision = JSON.parse(first.stdout) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } };
+      expect(decision.hookSpecificOutput.hookEventName).toBe("PostToolUse");
+      expect(decision.hookSpecificOutput.additionalContext, "shown after the call, with its result").toBe(AREA);
+
+      const second = shell("echo 'export const a = 3;' > src/a.ts", write("src/a.ts", "export const a = 3;\n"));
+      expect(second.stdout, "a second change to the same file shows nothing").toBe("");
+      const other = shell("echo 'export const b = 1;' > src/b.ts", write("src/b.ts", "export const b = 1;\n"));
+      expect(other.stdout, "nor does another file in the same area: it is shown once").toBe("");
+
+      const ignored = shell("echo x > src/ignored.log", write("src/ignored.log", "x\n"));
+      expect(ignored.stdout, "a file git ignores is not in git's list").toBe("");
+      const unrelated = shell("echo hi > notes.txt", write("notes.txt", "hi\n"));
+      expect(unrelated.stdout, "a file under no breadcrumb's globs").toBe("");
+
+      const kept = hook("session-start", { ...pre("Bash", {}, "change-1"), hook_event_name: "SessionStart", source: "resume", cwd: where }, where);
+      expect(kept.stdout, "a resume that keeps the session shows its breadcrumb once, and that was at its start").not.toBe("");
+      const resumed = hook("session-start", { ...pre("Bash", {}, "change-1"), hook_event_name: "SessionStart", source: "resume", cwd: where }, where);
+      expect(resumed.stdout, "and not again").toBe("");
+
+      const compacted = hook("session-start", { ...pre("Bash", {}, "change-1"), hook_event_name: "SessionStart", source: "compact", cwd: where }, where);
+      expect(compacted.stdout, "a compaction shows a session breadcrumb at once").toContain("# breadcrumb: demo.hello (session)\\nGuarded.");
+      expect(compacted.stdout, "and the area breadcrumb only at its own moment").not.toContain("demo.area");
+
+      const again = shell("echo 'export const a = 4;' > src/a.ts", write("src/a.ts", "export const a = 4;\n"));
+      expect(told(again), "the next change after a compaction").toBe(AREA);
+
+      const log = rows(where, "change-1");
+      const changes = log.filter((row) => row["kind"] === "change");
+      expect(changes.map((row) => [row["tool"], row["paths"]]), "each call that changed a file is a `change` row, and a read is none").toEqual([
+        ["Bash", ["src/a.ts"]],
+        ["Bash", ["src/a.ts"]],
+        ["Bash", ["src/b.ts"]],
+        ["Bash", ["notes.txt"]],
+        ["Bash", ["src/a.ts"]],
+      ]);
+      const shown = log.filter((row) => row["kind"] === "breadcrumb" && row["id"] === "demo.area");
+      expect(shown.map((row) => [row["moment"], row["cause"], row["subject"]]), "shown twice, each the first time for the agent").toEqual([
+        ["file-change", "first", "src/a.ts"],
+        ["file-change", "first", "src/a.ts"],
+      ]);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
   });
 
-  it("does not spend a note on a refused command — the retry that runs is briefed", () => {
-    const refused = hook("pre-tool-use", { ...pre("Bash", { command: "cat src/a.ts && git push --force" }, "live-6"), cwd: repo });
-    expect(refused.code).toBe(2);
-    expect(refused.stdout).toBe("");
-    const retried = hook("pre-tool-use", { ...pre("Bash", { command: "cat src/a.ts && git push" }, "live-6"), cwd: repo });
-    expect(retried.code).toBe(0);
-    expect(retried.stdout).toContain("# breadcrumb: demo.area (first-touch)");
+  it("finds the files an edit tool changed, a commit made inside the call, and a file changed again, and shows a breadcrumb for each area once", () => {
+    const { parent, where } = repoForChanges();
+    try {
+      const edit = (file: string, content: string): Ran => {
+        const path = join(where, file);
+        return called({ ...pre("Write", { file_path: path, content }, "change-2"), cwd: where }, () => { writeFileSync(path, content); }, "post-tool-use", where);
+      };
+      expect(told(edit("src/a.ts", "export const a = 2;\n")), "an edit tool's change, with no hook before it").toBe(AREA);
+      expect(edit("src/a.ts", "export const a = 3;\n").stdout).toBe("");
+
+      // A change AND a commit in one command: the file leaves git's list by being committed, so only
+      // the commit's own files say it was changed.
+      const line = "echo hi > docs/x.md && git add docs/x.md && git commit -qm 'docs: x'";
+      const committed = called({ ...pre("Bash", { command: line }, "change-2"), cwd: where }, () => {
+        writeFileSync(join(where, "docs", "x.md"), "hi\n");
+        runGit(where, ["add", "docs/x.md"]);
+        runGit(where, ["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "docs: x"]);
+      }, "post-tool-use", where);
+      expect(told(committed), "a file changed and committed in one call leaves git's list: the commit's files say it").toBe(DOCS);
+      expect(rows(where, "change-2").filter((row) => row["kind"] === "change").map((row) => row["paths"])).toEqual([["src/a.ts"], ["src/a.ts"], ["docs/x.md"]]);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it("reads another worktree of the repo when the call worked in it, by the config of the folder the session started in", () => {
+    const { parent, where, worktree, outside } = repoForChanges();
+    try {
+      // The worktree's own config says something else: it is the session folder's that judges.
+      writeFileSync(join(worktree, "flow.config.ts"), readFileSync(join(where, "flow.config.ts"), "utf8").replace("src/ is the product", "THE WORKTREE'S OWN WORDS"));
+      const write = (path: string, agent?: string): Ran => {
+        const payload = { ...pre("Write", { file_path: path, content: "x\n" }, "worktree"), ...(agent === undefined ? {} : { agent_id: agent, agent_type: "general-purpose" }) };
+        return called(payload, () => { writeFileSync(path, "x\n"); }, "post-tool-use", where);
+      };
+      const shell = (line: string, who: string, cwd = where): Ran =>
+        called({ ...pre("Bash", { command: line }, who), cwd }, () => { spawnSync("bash", ["-c", line], { cwd }); }, "post-tool-use", where);
+      mkdirSync(join(worktree, "docs"));
+
+      const written = write(join(worktree, "src", "new.ts"));
+      expect(written.code, written.stderr).toBe(0);
+      expect(told(written), "an edit tool's file in another worktree, judged by the session folder's config").toBe(AREA);
+      expect(readFileSync(join(worktree, "src", "new.ts"), "utf8"), "the call went through and nothing was written back").toBe("x\n");
+      expect(written.stdout, "and no message that flow does not guard the worktree").not.toContain("does not guard");
+
+      const viaShell = shell(`cd ${worktree} && echo hi > docs/y.md`, "worktree-shell");
+      expect(told(viaShell), "a command that ran in the worktree: its before and after are the worktree's").toBe(DOCS);
+      const viaSession = shell("echo hi > docs/z.md", "worktree-cwd", worktree);
+      expect(told(viaSession), "a command whose session folder is the worktree").toBe(DOCS);
+
+      const subagent = write(join(worktree, "src", "agent.ts"), "agent-1");
+      expect(told(subagent), "a subagent is shown it for itself").toBe(AREA);
+
+      const nested = join(where, ".claude", "worktrees", "agent-2");
+      expect(runGit(where, ["worktree", "add", "-q", "-b", "agent-2", nested]).code).toBe(0);
+      expect(told(write(join(nested, "src", "n.ts"), "agent-2")), "a worktree nested under the session folder").toBe(AREA);
+
+      const elsewhere = shell(`cd ${outside} && echo hi > e.ts`, "worktree-out");
+      expect(elsewhere.code, elsewhere.stderr).toBe(0);
+      expect(told(elsewhere), "a folder outside the repository is no worktree of it").toBe("");
+      const log = rows(where, "worktree-out").filter((row) => row["kind"] === "change");
+      expect(log, "and a change there is no change of the repo").toEqual([]);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
   });
 });
 
@@ -773,91 +911,6 @@ export default defineConfig([pack(definePack("demo", { hello: breadcrumb().at(se
   expect(runGit(where, ["worktree", "add", "-q", "-b", "feature", worktree]).code).toBe(0);
   return { parent, where, worktree, outside };
 }
-
-/** Did flow's answer tell the agent it does not guard this worktree? */
-const toldAbout = (answer: Ran, folder: string): boolean => answer.stdout.includes(`It does not guard the git worktree ${realpathSync(folder)}`);
-
-describe("a write into another worktree of the repository — told once to stop, never refused (#174)", () => {
-  it("tells the agent once per worktree, a subagent for itself, a worktree nested under .claude/worktrees too, and nothing for a folder outside the repository", () => {
-    const { parent, where, worktree, outside } = repoWithWorktree();
-    try {
-      const write = (path: string, agent?: string): Ran => {
-        const payload = { ...pre("Write", { file_path: path, content: "x\n" }, "worktree"), ...(agent === undefined ? {} : { agent_id: agent, agent_type: "general-purpose" }) };
-        return called(payload, () => { writeFileSync(path, "x\n"); }, "post-tool-use", where);
-      };
-
-      const first = write(join(worktree, "a.ts"));
-      expect(first.code, first.stderr).toBe(0);
-      expect(toldAbout(first, worktree), `the first write into the worktree tells the agent; flow said:\n${first.stdout}`).toBe(true);
-      expect(first.stdout).toContain(`flow guards ${realpathSync(where)}, the folder this session started in.`);
-      expect(readFileSync(join(worktree, "a.ts"), "utf8"), "the call went through and nothing was written back").toBe("x\n");
-
-      const second = write(join(worktree, "b.ts"));
-      expect(second.code).toBe(0);
-      expect(toldAbout(second, worktree), "a second write into the same worktree is not told again").toBe(false);
-
-      const subagent = write(join(worktree, "c.ts"), "agent-1");
-      expect(toldAbout(subagent, worktree), "a subagent is told for itself").toBe(true);
-
-      const elsewhere = write(join(outside, "d.ts"));
-      expect(elsewhere.code).toBe(0);
-      expect(elsewhere.stdout, "a folder outside the repository is not a worktree of it").toBe("");
-
-      // A worktree NESTED inside the guarded folder, where Claude Code puts a subagent's own with
-      // `isolation: "worktree"`: its `.git` file is what makes flow ask git.
-      const nested = join(where, ".claude", "worktrees", "agent-2");
-      expect(runGit(where, ["worktree", "add", "-q", "-b", "agent-2", nested]).code).toBe(0);
-      const inNested = write(join(nested, "e.ts"), "agent-2");
-      expect(inNested.code, inNested.stderr).toBe(0);
-      expect(toldAbout(inNested, nested), `a write into the nested worktree tells the subagent; flow said:\n${inNested.stdout}`).toBe(true);
-      expect(readFileSync(join(nested, "e.ts"), "utf8")).toBe("x\n");
-      expect(toldAbout(write(join(nested, "f.ts"), "agent-2"), nested), "and only once").toBe(false);
-      const inRoot = write(join(where, "g.ts"), "agent-2");
-      expect(inRoot.code, inRoot.stderr).toBe(0);
-      expect(inRoot.stdout, "a write in the guarded folder itself is not told").toBe("");
-    } finally {
-      rmSync(parent, { recursive: true, force: true });
-    }
-  });
-});
-
-describe("a command run in another worktree of the repository — told once to stop, never refused (#174)", () => {
-  it("tells the agent once for a cd into the worktree, once for a session folder there, and nothing for a cd outside the repository or a worktree a write already told", () => {
-    const { parent, where, worktree, outside } = repoWithWorktree();
-    try {
-      const command = (line: string, who: string, cwd = where): Ran =>
-        called({ ...pre("Bash", { command: line }, who), cwd }, () => { spawnSync("bash", ["-c", line], { cwd }); }, "post-tool-use", where);
-
-      const first = command(`cd ${worktree} && touch a.ts`, "worktree-cmd");
-      expect(first.code, first.stderr).toBe(0);
-      expect(toldAbout(first, worktree), `a cd into the worktree tells the agent; flow said:\n${first.stdout}`).toBe(true);
-      expect(first.stdout).toContain(`flow guards ${realpathSync(where)}, the folder this session started in.`);
-      expect(existsSync(join(worktree, "a.ts")), "the call went through").toBe(true);
-
-      const second = command(`cd ${worktree} && touch b.ts`, "worktree-cmd");
-      expect(second.code, second.stderr).toBe(0);
-      expect(toldAbout(second, worktree), "a second command in the same worktree is not told again").toBe(false);
-
-      const sessionThere = command("touch c.ts", "worktree-cwd", worktree);
-      expect(sessionThere.code, sessionThere.stderr).toBe(0);
-      expect(toldAbout(sessionThere, worktree), `a command whose session folder is in the worktree tells the agent; flow said:\n${sessionThere.stdout}`).toBe(true);
-      expect(toldAbout(command("touch d.ts", "worktree-cwd", worktree), worktree), "and only once").toBe(false);
-
-      const elsewhere = command(`cd ${outside} && touch e.ts`, "worktree-cmd-out");
-      expect(elsewhere.code, elsewhere.stderr).toBe(0);
-      expect(elsewhere.stdout, "a folder outside the repository is not a worktree of it").toBe("");
-
-      const path = join(worktree, "f.ts");
-      const wrote = called({ ...pre("Write", { file_path: path, content: "x\n" }, "worktree-write") }, () => { writeFileSync(path, "x\n"); }, "post-tool-use", where);
-      expect(toldAbout(wrote, worktree), "the Edit or Write tool tells it first").toBe(true);
-      const after = command(`cd ${worktree} && ls`, "worktree-write");
-      expect(after.code, after.stderr).toBe(0);
-      expect(toldAbout(after, worktree), "a worktree a write already told is not told again by a command").toBe(false);
-    } finally {
-      rmSync(parent, { recursive: true, force: true });
-    }
-  });
-});
 
 describe("work outside the repository — judged only by a rule marked .everywhere()", () => {
   it("refuses a hard reset from a linked worktree, passes it in a scratch repo outside, and still refuses a force-push there", () => {
@@ -914,7 +967,12 @@ describe("a subagent's drift and turn, read from its own transcript — never it
     transcript_path: parent,
     ...payload,
   });
-  const read = (): Ran => called(asSubagent({ tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } }));
+  /** The subagent changes a file of its own, new each time: a change in `src/`, which the area note is about. */
+  let changed = 0;
+  const read = (): Ran => {
+    const path = join(repo, "src", `drift-${++changed}.ts`);
+    return called(asSubagent({ tool_name: "Write", tool_input: { file_path: path, content: "x\n" } }), () => { writeFileSync(path, "x\n"); });
+  };
 
   beforeAll(() => {
     ({ parent, own } = subagentTranscripts(join(repo, ".t"), SESSION, AGENT));
@@ -923,7 +981,7 @@ describe("a subagent's drift and turn, read from its own transcript — never it
   it("measures drift on the subagent's own context, so a note comes back when IT has moved on", () => {
     writeFileSync(parent, lines(prompt("go"), usage(400_000)));
     writeFileSync(own, lines(prompt("look at src"), usage(1_000)));
-    expect(read().stdout, "first touch").toContain("src/ is the product");
+    expect(read().stdout, "the first change").toContain("src/ is the product");
 
     writeFileSync(parent, lines(prompt("go"), usage(900_000)));
     expect(read().stdout, "the parent has drifted, the subagent has not").toBe("");
@@ -1019,7 +1077,7 @@ describe("a turn-end note, shown when an agent hands back — at Stop and Subage
   // hand-back above. One note, one turn-end rule, and a drift of 50,000 tokens.
   let notes: string;
   let ids = 0;
-  const NOTE = "# breadcrumb: notes.recap (first-touch)\nWrite the recap before you hand back.";
+  const NOTE = "# breadcrumb: notes.recap (turn-end)\nWrite the recap before you hand back.";
 
   const usage = (tokens: number): string =>
     JSON.stringify({ type: "assistant", message: { usage: { input_tokens: 10, cache_read_input_tokens: tokens } } });
@@ -1091,7 +1149,7 @@ export default defineConfig([pack(notes)], { driftTokens: 50_000 });
     expect(soon.code).toBe(0);
     expect(soon.stdout, "49,999 tokens on: not yet").toBe("");
     expect(context(stop([usage(51_000)], {}, session)), "50,000 tokens on").toStrictEqual(
-      told("Stop", "# breadcrumb: notes.recap (drift)\nWrite the recap before you hand back."),
+      told("Stop", "# breadcrumb: notes.recap (turn-end)\nWrite the recap before you hand back."),
     );
   });
 
@@ -1354,33 +1412,38 @@ describe("a recorded session, replayed", () => {
     rmSync(join(repo, ".flow", "record"), { force: true });
   });
 
-  it("drives a whole session: greeting, first touch, drift, compaction, two blocks and a commit", () => {
-    // 1 — the greeting. The session breadcrumb shows, and is MARKED there.
+  it("drives a whole session: greeting, first change, drift, compaction, two blocks and a commit", () => {
+    // 1 — the greeting. The session breadcrumb shows, and is MARKED there. Git's list is read here
+    // too, so what was changed before the first call is not that call's.
     const greeting = hook("session-start", inSession({ source: "startup" }));
     expect(greeting.code).toBe(0);
     expect(greeting.stdout).toContain("This repo is guarded by flow.");
 
-    // 2 — first touch of the area. The area note shows.
-    const first = called(inSession({ tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } }));
+    // The files this session changes, each one new, so each is a change git's list shows.
+    const changes = (file: string): Ran => {
+      const path = join(repo, "src", file);
+      return called(inSession({ tool_name: "Write", tool_input: { file_path: path, content: "x\n" } }), () => { writeFileSync(path, "x\n"); });
+    };
+
+    // 2 — the first change in the area. The area note shows.
+    const first = changes("rec-1.ts");
     expect(first.stdout).toContain("src/ is the product");
 
     // 3 — the same area again, with the context barely moved. It stays quiet.
-    const quiet = called(inSession({ tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } }));
+    const quiet = changes("rec-2.ts");
     expect(quiet.stdout).toBe("");
 
     // 4 — the session has drifted past the threshold. The note is earned again.
     drifted(400_000);
-    const again = called(inSession({ tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } }));
+    const again = changes("rec-3.ts");
     expect(again.stdout).toContain("src/ is the product");
 
-    // 5 — a compaction. Every AREA mark is cleared; the SESSION mark is deliberately kept, so the
-    // greeting is not printed a second time in a row — which is why this rail says nothing at all
-    // even though it is the moment that re-arms everything else.
+    // 5 — a compaction. Every mark is cleared, so the SESSION breadcrumb is shown again at once.
     const compacted = hook("session-start", inSession({ source: "compact" }));
-    expect(compacted.stdout, "the session note keeps its mark across a compaction").toBe("");
+    expect(compacted.stdout, "the greeting, again, as the compacted session starts").toContain("This repo is guarded by flow.");
 
-    // 6 — first touch again, because after a compaction it genuinely is one.
-    const relearned = called(inSession({ tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } }));
+    // 6 — the next change in the area, because after a compaction it is one again.
+    const relearned = changes("rec-4.ts");
     expect(relearned.stdout).toContain("src/ is the product");
 
     // 7 and 8 — two rails refuse, which is what the replay has to land again.
@@ -1399,12 +1462,12 @@ describe("a recorded session, replayed", () => {
     expect(records[0]).toEqual({ v: 1, session: SESSION });
     expect(tapeSteps(repo, SESSION)).toEqual([
       "brief session",
-      "brief touch",
-      "brief touch",
-      "brief touch",
+      "brief file-change",
+      "brief file-change",
+      "brief file-change",
       "compaction",
       "brief session",
-      "brief touch",
+      "brief file-change",
       // The refused pushes record their guard and nothing else: a refusal carries no notes, so none
       // is judged — or marked shown — behind them.
       "guard command",
@@ -1436,8 +1499,8 @@ describe("a recorded session, replayed", () => {
     // …and it really did replay the whole thing rather than agreeing about nothing.
     expect(answer.stdout).toContain("demo.noForce");
     expect(answer.stdout).toContain("demo.suitePasses");
-    expect(answer.stdout).toContain("demo.area · touch · first-touch");
-    expect(answer.stdout).toContain("demo.area · touch · drift");
+    expect(answer.stdout).toContain("demo.area · file-change · first");
+    expect(answer.stdout).toContain("demo.area · file-change · drift");
     expect(answer.stdout).toContain("demo.orientation · session · session");
   });
 
@@ -1542,13 +1605,13 @@ describe("flow facts — the record and the conversations, read back", () => {
   });
 });
 
-describe("every row names the agent it came from, and a breadcrumb row what was touched (#15)", () => {
+describe("every row names the agent it came from, and a breadcrumb row what showed it (#15)", () => {
   // A worktree of its own, so the marker the commit gate reads is the one these calls leave and
   // nothing the suite above wrote. The config is the least that makes every kind of row: a session
   // note, an area note, a command note, and a rule at the command and at the commit.
   let tree: string;
   const AGENTS_CONFIG = (packageRoot: string): string => `
-import { breadcrumb, command, commit, definePack, defineConfig, guardrail, pack, session, touch } from ${JSON.stringify(join(packageRoot, "index.ts"))};
+import { breadcrumb, command, commit, definePack, defineConfig, guardrail, pack, session, fileChange } from ${JSON.stringify(join(packageRoot, "index.ts"))};
 
 
 const demo = definePack("demo", {
@@ -1567,7 +1630,7 @@ const demo = definePack("demo", {
     .message("No TODOs in a command.")
     .test({ pass: ["echo ok"], block: ["echo TODO"] }),
   orientation: breadcrumb().at(session).text("This repo is guarded by flow."),
-  area: breadcrumb().at(touch).on("src/**").text("src/ is the product."),
+  area: breadcrumb().at(fileChange).on("src/**").text("src/ is the product."),
   history: breadcrumb().at(command).on("git log*").text("The journal owns the past."),
 });
 
@@ -1603,9 +1666,10 @@ export default defineConfig([pack(demo)]);
     mkdirSync(join(tree, "src"), { recursive: true });
     writeFileSync(join(tree, "src", "a.ts"), "export const a = 1;\n");
 
-    // The parent: a session start, and a Read of the area.
+    // The parent: a session start, a Read of the area, and a file written in it.
     expect(send("session-start", { session_id: "agents", source: "startup" }).code).toBe(0);
     call({}, "Read", { file_path: join(tree, "src/a.ts") });
+    call({}, "Write", { file_path: join(tree, "src/m.ts"), content: "export const m = 1;\n" }, "echo 'export const m = 1;' > src/m.ts");
     // A subagent whose message carries no type.
     call(UNTYPED, "Read", { file_path: join(tree, "src/a.ts") });
     // A builder: a command a note matches, then one that reads the area by name and has a TODO in it
@@ -1634,7 +1698,7 @@ export default defineConfig([pack(demo)]);
     expect(all.length).toBeGreaterThan(0);
     for (const row of all) expect(typeof row["agent"], JSON.stringify(row)).toBe("string");
     expect(new Set(all.map((row) => row["agent"]))).toEqual(new Set(["main", "a77untyped", "a6009b558b4c9155c"]));
-    expect(kinds(from("main"))).toEqual(["breadcrumb", "run", "tool"]);
+    expect(kinds(from("main"))).toEqual(["breadcrumb", "change", "run", "tool"]);
     expect(kinds(from("a6009b558b4c9155c"))).toEqual(["breadcrumb", "guardrail", "read", "run", "tool"]);
   });
 
@@ -1662,15 +1726,16 @@ export default defineConfig([pack(demo)]);
   const crumb = (agent: string, id: string): Record<string, unknown> | undefined =>
     from(agent).find((row) => row["kind"] === "breadcrumb" && row["id"] === id);
 
-  it("names the file whose first touch showed an area note, repo-relative", () => {
-    expect(crumb("main", "demo.area")).toMatchObject({ cause: "first-touch", subject: "src/a.ts" });
+  it("names the file whose first change showed an area note, repo-relative, and the files a call changed on a `change` row", () => {
+    expect(crumb("main", "demo.area")).toMatchObject({ moment: "file-change", cause: "first", subject: "src/m.ts" });
+    expect(from("main").find((row) => row["kind"] === "change")).toMatchObject({ tool: "Write", paths: ["src/m.ts"] });
   });
 
   it("names the command line that showed a command note", () => {
-    expect(crumb("a6009b558b4c9155c", "demo.history")).toMatchObject({ moment: "command", cause: "first-touch", subject: "git log --oneline -1" });
+    expect(crumb("a6009b558b4c9155c", "demo.history")).toMatchObject({ moment: "command", cause: "first", subject: "git log --oneline -1" });
   });
 
-  it("writes no subject on a session note's row, which fired on no touch", () => {
+  it("writes no subject on a session note's row, which fired on no file", () => {
     const greeting = crumb("main", "demo.orientation");
     expect(greeting).toMatchObject({ moment: "session", cause: "session" });
     expect(greeting).not.toHaveProperty("subject");
