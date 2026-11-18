@@ -237,7 +237,7 @@ export const house = definePack("house", (repo: Terrain) => ({
    */
   shellParse: breadcrumb()
     .at(touch)
-    .on("language/domain.ts", "checks/domain.ts", "engine/domain.ts", "adapter/domain.ts", "packs/**", "guards/**")
+    .on("language/domain.ts", "checks/domain.ts", "engine/domain.ts", "adapter/domain.ts", "adapter/claude/domain.ts", "packs/**", "guards/**")
     .description("Every reading of a shell command goes through the one parse — never a regex or a splitter over the raw line.")
     .text(
       [
