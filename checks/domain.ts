@@ -174,7 +174,7 @@ export const textBan = defineCheck(
 export const banCommands = defineCheck(
   (opts: { ban: readonly string[]; wholeLine?: boolean }): Check => {
     if (opts.wholeLine === true) {
-      const { patterns, faults } = compiledPatterns(opts.ban);
+      const { patterns, faults } = compiledPatterns(opts.ban, (pattern) => `bans /${pattern}/ under \`wholeLine: true\``);
       return withFaults((ctx) => {
         const line = ctx.command ?? "";
         const subject = elideHeredocBodies(line) ?? line;
@@ -197,10 +197,10 @@ export const banCommands = defineCheck(
 );
 
 /**
- * Each `wholeLine` entry compiled once, when the rule loads, and a load fault for each that is not
+ * Each pattern compiled once, when the rule loads, and a load fault for each that is not
  * a regex: a pattern that does not compile would otherwise throw on every command that runs.
  */
-function compiledPatterns(entries: readonly string[]): {
+function compiledPatterns(entries: readonly string[], opening: (pattern: string) => string): {
   patterns: readonly { readonly pattern: string; readonly re: RegExp }[];
   faults: readonly string[];
 } {
@@ -210,7 +210,7 @@ function compiledPatterns(entries: readonly string[]): {
     try {
       patterns.push({ pattern, re: new RegExp(pattern) });
     } catch (error) {
-      faults.push(`bans /${pattern}/ under \`wholeLine: true\`, which is not a regex: ${(error as Error).message}.`);
+      faults.push(`${opening(pattern)}, which is not a regex: ${(error as Error).message}.`);
     }
   }
   return { patterns, faults };
@@ -676,14 +676,14 @@ export function headingAnchors(markdown: string): Set<string> {
 const CITATION = /[A-Za-z0-9_@+\-./]+(?:#[\p{L}\p{N}_-]+)?/gu;
 
 /** One citation in a file: its line, the page it names and the anchor it names, if any. */
-export interface Citation {
+interface Citation {
   readonly line: number;
   readonly page: string;
   readonly anchor: string | null;
 }
 
 /** Every token of the text that is a path matching `pages`, with its line. */
-export function citations(text: string, pages: readonly string[]): Citation[] {
+function citations(text: string, pages: readonly string[]): Citation[] {
   const out: Citation[] = [];
   text.split("\n").forEach((line, index) => {
     for (const [token] of line.matchAll(CITATION)) {
@@ -983,26 +983,23 @@ export function reasonHits(o: ReasonInput): string[] {
  */
 export const commitMessage = defineCheck(
   (opts: { header?: string; ban?: readonly string[] }): Check => {
-    const faults: string[] = [];
+    const header = compiledPatterns(opts.header === undefined ? [] : [opts.header], (pattern) => `holds /${pattern}/`);
+    const ban = compiledPatterns(opts.ban ?? [], (pattern) => `holds /${pattern}/`);
+    const faults = [...header.faults, ...ban.faults];
     if (opts.header === undefined && (opts.ban ?? []).length === 0)
       faults.push("sets neither `header` nor `ban`, so it judges nothing. Set a header format, a list of banned patterns, or both.");
-    for (const pattern of [...(opts.header === undefined ? [] : [opts.header]), ...(opts.ban ?? [])]) {
-      try {
-        new RegExp(pattern);
-      } catch (error) {
-        faults.push(`holds /${pattern}/, which is not a regex: ${(error as Error).message}.`);
-      }
-    }
     return withFaults((ctx) => {
       const message = ctx.message;
       if (message == null) return ctx.ok();
       const lines = message.split("\n");
       const first = lines[0] ?? "";
       const hits: string[] = [];
-      if (opts.header !== undefined && !new RegExp(opts.header).test(first))
-        hits.push(`the first line of the message, "${first}", does not match /${opts.header}/`);
-      for (const hit of patternHits(message, opts.ban ?? []))
-        hits.push(`line ${hit.line} of the message matches /${hit.pattern}/: "${lines[hit.line - 1]}"`);
+      for (const { pattern, re } of header.patterns)
+        if (!re.test(first)) hits.push(`the first line of the message, "${first}", does not match /${pattern}/`);
+      for (const { pattern, re } of ban.patterns)
+        lines.forEach((line, index) => {
+          if (re.test(line)) hits.push(`line ${index + 1} of the message matches /${pattern}/: "${line}"`);
+        });
       return answer(ctx, hits);
     }, faults);
   },

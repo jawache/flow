@@ -27,6 +27,7 @@ import {
   loadConfig,
   pack,
   override,
+  protectedPath,
   touch,
   turnEnd,
   write,
@@ -1685,10 +1686,9 @@ describe("replay — a recorded session, run again with no repo and no harness",
   });
 
   it("keeps which files a recorded --all commit held as committed, so an append-only rule passes them again", async () => {
-    const check = existingFile;
+    const check = protectedPath({ paths: ["m/**"], existingOnly: true });
     const appendOnly = guardrail()
       .at(commit)
-      .on("m/**")
       .check(check)
       .message("history")
       .test({ block: [{ staged: ["m/1.sql"], added: [], world: { fs: { "m/1.sql": "" } } }] });
@@ -1705,7 +1705,7 @@ describe("replay — a recorded session, run again with no repo and no harness",
     const denied = async (s: RecordedStep): Promise<unknown[]> =>
       (await replay({ load, settings: {}, recording: recording([s]) })).rows.filter((r) => r.kind === "guardrail").map((r) => r["subject"]);
     expect(await denied(step(["m/1.sql"])), "as committed").toEqual([]);
-    expect(await denied(step()), "the same step, edited").toEqual(["m/1.sql"]);
+    expect(await denied(step()), "the same step, edited: one refusal for the commit").toEqual([null]);
   });
 
   it("a reach the recording never answered is REPORTED — a replay carrying one is not evidence", async () => {

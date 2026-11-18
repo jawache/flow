@@ -62,7 +62,7 @@ const HOUSE = (packageRoot: string): string => fixturePack("repo-pack", join(pac
 
 /** What the temp repo's own guard says. A few entries, at least one per rail this suite drives. */
 const CONFIG = (packageRoot: string): string => `
-import { breadcrumb, command, commit, definePack, defineConfig, deletion, guardrail, pack, protectedPath, session, touch, turnEnd, write } from ${JSON.stringify(
+import { breadcrumb, command, commit, definePack, defineConfig, deletion, guardrail, pack, session, touch, turnEnd, write } from ${JSON.stringify(
   join(packageRoot, "index.ts"),
 )};
 import { builder, house } from "./guards/house.ts";
@@ -98,12 +98,6 @@ const demo = definePack("demo", {
     .check(${ANY_CHANGE})
     .message("Machine-written: edit its source, then re-run the build.")
     .test({ block: [{ path: "gen/a.ts", content: "" }] }),
-
-  keepVendor: guardrail()
-    .at(commit)
-    .check(protectedPath({ paths: ["vendor/**"] }))
-    .message("Vendored code is read-only: take a new release instead.")
-    .test({ pass: [{ staged: ["src/a.ts"] }], block: [{ staged: ["vendor/a.txt"] }, { staged: [], deleted: ["vendor/a.txt"] }] }),
 
   noForce: guardrail()
     .at(command)
@@ -556,9 +550,7 @@ describe("the commit gate", () => {
       writeFileSync(join(other, "gen", "a.ts"), "export const a = 1;\n");
       mkdirSync(join(other, "src"));
       writeFileSync(join(other, "src", "marked.ts"), "// DO-NOT-COMMIT\n");
-      mkdirSync(join(other, "vendor"));
-      writeFileSync(join(other, "vendor", "a.txt"), "vendored\n");
-      runGit(other, ["add", "gen", "src", "vendor"]);
+      runGit(other, ["add", "gen", "src"]);
       runGit(other, ["commit", "-q", "-m", "one"]);
     });
     afterAll(() => {
@@ -623,31 +615,6 @@ describe("the commit gate", () => {
         expect(edited.stderr).toContain("✗ demo.keepGenerated · gen/a.ts");
       } finally {
         reset();
-      }
-    });
-
-    it("protectedPath refuses a commit that changes or deletes a file under its paths, once per commit, and passes --all over one as committed", () => {
-      const vendored = join(other, "vendor", "a.txt");
-      expect(gateHere(["hook", "commit", "--all"]).stderr, "as committed, --all lists it unchanged").not.toContain("demo.keepVendor");
-      writeFileSync(vendored, "edited\n");
-      runGit(other, ["add", "vendor"]);
-      try {
-        const edit = gateHere();
-        expect(edit.code).toBe(2);
-        expect(edit.stderr).toContain("demo.keepVendor");
-        expect(edit.stderr).toContain("'vendor/a.txt' is a protected path");
-        expect(edit.stderr).toContain("changes it");
-      } finally {
-        runGit(other, ["reset", "-q", "--hard"]);
-      }
-      runGit(other, ["rm", "-q", "vendor/a.txt"]);
-      try {
-        const gone = gateHere();
-        expect(gone.code).toBe(2);
-        expect(gone.stderr).toContain("'vendor/a.txt' is a protected path");
-        expect(gone.stderr).toContain("deletes it");
-      } finally {
-        runGit(other, ["reset", "-q", "--hard"]);
       }
     });
 
@@ -2229,7 +2196,7 @@ describe("flow facts — the record and the conversations, read back", () => {
     expect(read.metrics.headline.blocks).toBeGreaterThan(0);
     expect(read.metrics.span.tools).toBeGreaterThan(0);
     expect(read.metrics.guardrails.find((g) => g.id === "demo.noTodo")?.hits).toBeGreaterThan(0);
-    expect(read.moments.totals).toMatchObject({ guardrails: 10, breadcrumbs: 2 });
+    expect(read.moments.totals).toMatchObject({ guardrails: 9, breadcrumbs: 2 });
     expect(read.terrain.some((n) => n.path === "src")).toBe(true);
   });
 

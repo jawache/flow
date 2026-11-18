@@ -93,7 +93,7 @@ export const checker = defineCategory(
  * rules are scoped to categories this pack defines, so they judge nobody until a session is
  * classified as a builder or a checker — a human at a keyboard is neither.
  */
-export const work = definePack("work", () => ({
+export const work = definePack("work", {
   // ── THE LADDER, mechanised ──
   //
   // Three rules, one per rung, and each is a sentence the lifecycle skill's mode files already
@@ -220,4 +220,4 @@ export const work = definePack("work", () => ({
     .text(
       '`.work/` links out of the repo. Run Node code there with `NODE_OPTIONS="--preserve-symlinks --preserve-symlinks-main"`, or it cannot find the repo\'s packages. Call the tool by `node_modules/.bin/<tool>`: that setting breaks `npx`.',
     ),
-}));
+});

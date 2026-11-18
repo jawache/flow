@@ -16,6 +16,7 @@ import {
   commit,
   defineCheck,
   definePack,
+  commitMessage,
   escapeRe,
   gitCommands,
   gitDirPrefix,
@@ -341,29 +342,6 @@ const noDestructiveGh = defineCheck((_opts: Record<string, never>): Check => {
     return deletes ? ctx.fail("`gh api` with the DELETE method") : ctx.ok();
   };
 });
-
-/** Does this header line speak Conventional Commits for the given type set? */
-export function isConventional(header: string, types: readonly string[]): boolean {
-  const alt = types.map(escapeRe).join("|");
-  return new RegExp(`^(${alt})(\\([^)]+\\))?!?: .+`).test(header.split("\n")[0] ?? "");
-}
-
-/**
- * The commit header must speak Conventional Commits v1.0.0, checked in git's commit-message hook.
- *
- * `types` is stated, never defaulted: the accepted words are the whole content of the rule, and a
- * private list inside a script is a rule a reader of the entry cannot check.
- */
-const conventionalCommit = defineCheck(
-  (opts: { types: readonly string[] }): Check =>
-    (ctx) => {
-      const message = ctx.message;
-      if (message == null) return ctx.ok(); // no message: `flow hook commit --all` judges no commit
-      return isConventional(message, opts.types)
-        ? ctx.ok()
-        : ctx.fail(`commit header "${message.split("\n")[0] ?? ""}" is not Conventional Commits (type(scope)!: description)`);
-    },
-);
 
 /**
  * A release commit's header — the ONE shape allowed to write a version by hand.
@@ -948,7 +926,7 @@ export const git = definePack("git", (repo: Release) => {
     conventionalCommitFormat: guardrail()
     .at(commit)
     .description("The commit header must speak Conventional Commits v1.0.0 (checked in git's commit-message hook).")
-    .check(conventionalCommit({ types }))
+    .check(commitMessage({ header: `^(${types.map(escapeRe).join("|")})(\\([^)]+\\))?!?: .+` }))
     .message(
       [
         "Commit header must match Conventional Commits v1.0.0: type(scope)!: description — e.g. `fix(auth): renew session on token refresh`.",
