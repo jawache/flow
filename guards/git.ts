@@ -76,8 +76,10 @@ function skipsVerify(args: readonly string[]): boolean {
 }
 
 /**
- * Each way a command line writes a commit the commit gate never runs on, or [] when it writes
- * none: `git commit --no-verify` or `-n`, and `-c core.hooksPath=…` before any subcommand. The git commands are read from the parse, so a `git commit -n` inside a quoted
+ * Each way a command line writes a commit or a ref the commit gate never runs on, or [] when it
+ * writes none: `git commit --no-verify` or `-n`, `-c core.hooksPath=…` before any subcommand, and
+ * git's plumbing that writes commits and refs directly (`commit-tree`, `update-ref`,
+ * `hash-object -w`). The git commands are read from the parse, so a `git commit -n` inside a quoted
  * argument or a heredoc body is not one.
  */
 export function gateSkips(facts: Pick<Ctx, "command" | "commands">): string[] {
@@ -89,6 +91,9 @@ export function gateSkips(facts: Pick<Ctx, "command" | "commands">): string[] {
       if (/^core\.hookspath=/i.test(setting)) out.push("`-c core.hooksPath=…` runs git with another hooks folder");
     }
     if (subcommand === "commit" && skipsVerify(args)) out.push("`git commit --no-verify` (or `-n`) skips the commit-msg hook");
+    if (subcommand === "commit-tree") out.push("`git commit-tree` writes a commit with no hook");
+    if (subcommand === "update-ref") out.push("`git update-ref` moves a ref with no hook");
+    if (subcommand === "hash-object" && args.includes("-w")) out.push("`git hash-object -w` writes an object with no hook");
   }
   return out;
 }
@@ -514,10 +519,10 @@ export const git = definePack("git", (repo: Release) => {
    */
   noGateSkip: guardrail()
     .at(command)
-    .description("Blocks a commit the commit gate never runs on — --no-verify, -n, -c core.hooksPath=….")
+    .description("Blocks a commit the commit gate never runs on — --no-verify, -n, -c core.hooksPath=…, commit-tree, update-ref, hash-object -w.")
     .check(noGateSkip({}))
     .message(
-      "That git command makes a commit without the commit gate judging it. Commit normally and fix what the gate refuses. There is no opt-out token; a repo whose workflow needs one of these disables this entry in flow.config.ts, visibly.",
+      "That git command makes a commit, or moves a ref, without the commit gate judging it. Commit normally and fix what the gate refuses. There is no opt-out token; a repo whose workflow needs one of these disables this entry in flow.config.ts, visibly.",
     )
     .test({
       pass: [
@@ -531,7 +536,6 @@ export const git = definePack("git", (repo: Release) => {
         "git log -n 3",
         "git -c user.name=me commit -m 'fix: a thing'",
         "git hash-object src/a.ts",
-        "git update-ref refs/heads/main abc123",
         "git push --no-verify",
       ],
       block: [
@@ -547,6 +551,9 @@ export const git = definePack("git", (repo: Release) => {
         "cd /tmp && git --git-dir /r/.git --work-tree /r commit --no-verify -m 'fix: a thing'",
         "cd /tmp && GIT_DIR=/r/.git git commit --no-verify -m 'fix: a thing'",
         "cd /tmp && GIT_WORK_TREE=/r git commit --no-verify -m 'fix: a thing'",
+        'git commit-tree HEAD^{tree} -p HEAD -m "fix: a thing"',
+        "git update-ref refs/heads/main abc123",
+        "echo hi | git hash-object -w --stdin",
       ],
     }),
 
