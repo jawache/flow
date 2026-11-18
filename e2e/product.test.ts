@@ -814,6 +814,38 @@ function asQuoted(output: string, repo: string, settingsHome: string): string {
     .trim();
 }
 
+/** The fenced block in the README that opens with this line. */
+const quoted = (opening: string): string => fenced(join(PACKAGE, "README.md"), opening);
+
+/** Code with its indentation taken off every line: a block quoted at the margin, compared. */
+const unindented = (code: string): string =>
+  code
+    .split("\n")
+    .map((line) => line.trim())
+    .join("\n");
+
+describe("the README's example", () => {
+  // The scaffold binds only the shipped pack, so the rule the README shows lives in the config the
+  // Getting started tutorial has the reader write. That config is the one the README's rule is held to.
+  it("quotes a rule from the tutorial's config, and the refusal it really prints", () => {
+    const shown = newRepo();
+    const firstTime = mkdtempSync(join(tmpdir(), "flow-readme-"));
+    try {
+      expect(flow(shown, ["init"], firstTime).code).toBe(0);
+      const written = paged(join("tutorials", "getting-started.md"), "import { banCommands");
+      expect(unindented(written), "the rule is the tutorial's own, word for word").toContain(unindented(quoted("noForcePush: guardrail()")));
+      writeFileSync(join(shown, "flow.config.ts"), `${written}\n`);
+
+      const forced = JSON.stringify(pre("Bash", { command: "git push --force origin main" }));
+      const ran = runFlow(shown, ["hook", "pre-tool-use"], { home: firstTime, bin }, forced);
+      expect(ran.code).toBe(2);
+      expect(asQuoted(ran.stderr, shown, firstTime)).toBe(quoted("flow — command blocked before it ran:"));
+    } finally {
+      for (const dir of [shown, firstTime]) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 // ── the guarded repo's own module system ─────────────────────────────────────
 //
 // THE TABLE THAT WOULD HAVE CAUGHT IT. Node decides a `.ts` file's module system from the nearest
@@ -1423,6 +1455,12 @@ const paged = (page: string, opening: string): string => fenced(join(PACKAGE, "d
 describe.runIf(process.env["FLOW_TUTORIAL"])("the Getting started tutorial's transcripts", () => {
   it("are what `flow init`, `flow status`, `flow test` and both refusals really print", () => {
     const mine = newRepo();
+    // STEP 1 OF THE PAGE: `npm init -y` and `npm i -D github:jawache/flow#v…`. The repo lists flow
+    // as a dev dependency and holds it in node_modules, here the build under test, so `flow init`
+    // writes no link and warns of no missing install, as it does on a repo that followed step 1.
+    writeFileSync(join(mine, "package.json"), JSON.stringify({ name: "my-repo", devDependencies: { "@jawache/flow": "github:jawache/flow" } }));
+    mkdirSync(join(mine, "node_modules", "@jawache"), { recursive: true });
+    symlinkSync(builtPackage(), join(mine, "node_modules", "@jawache", "flow"), "dir");
     const firstTime = mkdtempSync(join(tmpdir(), "flow-quickstart-"));
     const page = (opening: string): string => paged(join("tutorials", "getting-started.md"), opening);
     const said = (args: readonly string[], stdin = ""): string => {
@@ -1431,7 +1469,9 @@ describe.runIf(process.env["FLOW_TUTORIAL"])("the Getting started tutorial's tra
     };
     try {
       expect(said(["init"]), "§2").toBe(page("flow init — created:"));
-      expect(said(["status"]), "§3").toBe(page("flow is ON —"));
+      // §3 — "Replace the file with this": the page's own config, then the status it quotes.
+      writeFileSync(join(mine, "flow.config.ts"), `${page("import { banCommands")}\n`);
+      expect(said(["status"]), "§4 status").toBe(page("flow is ON —"));
 
       // §4 — the gate's refusal, driven the way the page drives it.
       writeFileSync(join(mine, "bad.txt"), "DO-NOT-COMMIT here\n");
