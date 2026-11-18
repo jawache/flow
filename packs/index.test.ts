@@ -30,28 +30,19 @@ describe("the packs surface", () => {
     expect(Object.keys(packs).sort()).toEqual(["flow"]);
   });
 
-  // THE GUARD PACK'S SCOPE, which is a parameter for the same reason the recipes are: one repo's
-  // folder name was written into its path-scoped entry, so every other repo bound a delete refusal
-  // that protects nothing — while `flow status` counted it as armed. A message can be read; a
-  // scope has to be looked at, which is what this does.
-  it("scopes the flow pack on the folder the repo says its packs are in, and on no other", async () => {
-    const entries = (homes: readonly string[]) => loaded(loadConfig(defineConfig([pack(packs.flow, { packs: homes })])));
-    // The delete refusal is about a commit's deleted paths, which a rule with `.on(…)` is never
-    // asked about, so it names its paths in its check. Looked at the same way: the deletion of a
-    // file in a folder the repo named is refused, and of one in a folder it did not name is not.
-    const refuses = async (homes: readonly string[], deleted: string): Promise<boolean> => {
-      const check = (entries(homes).find((entry) => entry.id === "flow.noDeleteGuardrails")?.spec as { check: Check }).check;
-      return !(await check(commitOf([], [deleted]))).ok;
-    };
-    expect(await refuses(["rules/**", "policy/*.ts"], "rules/a.ts")).toBe(true);
-    expect(await refuses(["rules/**", "policy/*.ts"], "policy/b.ts")).toBe(true);
-    expect(await refuses(["rules/**"], "guards/a.ts"), "a folder the repo did not name").toBe(false);
-    expect(await refuses([], "flow.config.ts")).toBe(true);
-    expect(await refuses([], ".githooks/commit-msg")).toBe(true);
-    expect(await refuses([], "src/a.ts")).toBe(false);
+  // THE PACK TAKES NO PARAMETER: it protects four named files, and a repo that keeps its own packs
+  // in a folder adds a `protectedPath` rule of its own. Looked at the way the rule is asked at a
+  // commit: a deletion is refused, a change is not.
+  it("binds with no parameter, and refuses the deletion of the four guard files and nothing else", async () => {
+    const entries = loaded(loadConfig(defineConfig([pack(packs.flow)])));
+    expect(entries.map((entry) => entry.id).sort()).toEqual(["flow.noDeleteGuardrails", "flow.noUninstall", "flow.orientation"]);
+    const check = (entries.find((entry) => entry.id === "flow.noDeleteGuardrails")?.spec as { check: Check }).check;
+    const refuses = async (deleted: string): Promise<boolean> => !(await check(commitOf([], [deleted]))).ok;
+    for (const file of ["flow.config.ts", ".githooks/commit-msg", ".claude/settings.json", ".codex/hooks.json"]) expect(await refuses(file), file).toBe(true);
+    expect(await refuses("src/a.ts")).toBe(false);
+    expect(await refuses("guards/a.ts")).toBe(false);
     // Changing the config is what a repo does all day: only a deletion is refused.
-    const change = (entries([]).find((entry) => entry.id === "flow.noDeleteGuardrails")?.spec as { check: Check }).check;
-    expect((await change(commitOf(["flow.config.ts"], []))).ok).toBe(true);
+    expect((await check(commitOf(["flow.config.ts"], []))).ok).toBe(true);
   });
 
 });

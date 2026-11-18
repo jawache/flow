@@ -32,6 +32,7 @@ import {
   pre,
   settingsHome,
   shimBin,
+  stageGuardDeletion,
   subagentStopPayload,
   subagentTranscripts,
   flow as runFlow,
@@ -65,7 +66,7 @@ interface Shipped {
 const bind = (entry: Shipped): string => `pack(${entry.pack}${entry.params === "" ? "" : `, ${entry.params}`})`;
 
 /** The one shipped pack, `rules/**` handed over as the folder this repo keeps its own packs in. */
-const FLOW: Shipped = { pack: "flow", params: '{ packs: ["rules/**"] }', cases: 36, guardrails: 2 };
+const FLOW: Shipped = { pack: "flow", params: "", cases: 40, guardrails: 2 };
 /** The stranger's own pack — the second binding, and the only turn-end rule in the config. */
 const HOUSE: Shipped = { pack: "house", params: "", cases: 2, guardrails: 1, from: "../rules/house.ts" };
 
@@ -102,8 +103,7 @@ const MISSING_LIBRARY = "grammars/nowhere.so";
  *
  * ONE RULE, and it is at turn-end deliberately: the shipped pack carries no turn-end
  * guardrail, so the rail would otherwise go undriven here — and "no pack ships one" is a fact about
- * the pack, not about the moment. This is also what `flow`'s `packs: ["rules/**"]`
- * parameter is pointed at, so the delete refusal below is protecting a file that really exists.
+ * the pack, not about the moment.
  *
  * It is the fixture `live.test.ts` drives too (flow/__fixtures__/repo-pack.ts), with its import
  * repointed at the bare specifier — which is the one this repo can resolve, because `flow init`
@@ -343,14 +343,9 @@ describe("the machine test", () => {
     step("cases", `  cases      ${total} green over ${measured.reduce((sum, m) => sum + m.guardrails, 0)} guardrails, pack by pack`, "  live");
   });
 
-  it("refuses the delete — the guard surface named by a parameter", () => {
-    // A commit that deletes a file of `rules/`, the stranger's pack folder, handed to the flow pack
-    // as `packs`. The file has to be in the last commit to be deleted by this one, and one the
-    // config does not import, or the config itself would no longer load.
-    writeFileSync(join(repo, "rules", "spare.ts"), "export {};\n");
-    runGit(repo, ["add", "rules"]);
-    runGit(repo, ["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "chore: rules", "--no-verify", "--", "rules"]);
-    runGit(repo, ["rm", "-q", "rules/spare.ts"]);
+  it("refuses the delete — a commit that takes flow.config.ts out", () => {
+    // The file stays in the working tree, so the config still loads: only the commit deletes it.
+    stageGuardDeletion(repo);
     try {
       refusal("delete", flow(["hook", "commit"]), "flow.noDeleteGuardrails");
     } finally {

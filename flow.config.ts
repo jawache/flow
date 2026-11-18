@@ -64,7 +64,7 @@ export default defineConfig([
   // guard, and the refusal to delete it — so the folder is named here, once, and the pack never
   // knew the word. This is flow's own self-protection, bound in flow's own repo, which is the
   // shortest description of what this whole file is for.
-  pack(flow, { packs: ["guards/**"] }),
+  pack(flow),
 
   // ── git: commit headers, computed versions, nothing destroys uncommitted work ──
   //

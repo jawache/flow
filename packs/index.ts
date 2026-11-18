@@ -14,4 +14,4 @@
 // has one way of going wrong and it is silent — a symbol that quietly stops being public, found by
 // somebody else's install.
 
-export { flow, type Home } from "./flow.ts";
+export { flow } from "./flow.ts";

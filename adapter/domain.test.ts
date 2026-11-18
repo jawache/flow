@@ -394,21 +394,14 @@ describe("the message as git records it", () => {
 });
 
 describe("the scaffolded config", () => {
-  it("is a readable demo: the four ruled entries, a category, and one pack", () => {
-    const demo = scaffold(false);
-    expect(demo).toContain('from "@jawache/flow"');
-    expect(demo).toContain("definePack");
-    expect(demo).toContain("defineCategory");
-    expect(demo).toContain("--force");
-    expect(demo).toContain("subagent");
-    expect(demo.split("\n").length, "one screen — the whole claim of the demo").toBeLessThan(80);
-  });
-
-  it("never contains the marker its own gate refuses — a config that blocks itself", () => {
-    // The gate greps staged content for a marker, and the config is a staged file. Spelled whole it
-    // would refuse the commit that added it, which is the exact self-reference this demo is here to
-    // teach: the entry builds the word rather than writing it.
-    expect(scaffold(false)).not.toContain("DO-NOT-COMMIT");
+  it("binds the flow pack alone, with no parameter, in one screen", () => {
+    const config = scaffold(false);
+    expect(config).toContain('import { defineConfig, pack } from "@jawache/flow";');
+    expect(config).toContain('import { flow } from "@jawache/flow/packs";');
+    expect(config).toContain("  pack(flow),\n");
+    expect(config.match(/pack\(/g), "one pack, and no other").toHaveLength(2);
+    expect(config).not.toContain("definePack");
+    expect(config.split("\n").length).toBeLessThan(25);
   });
 
   it("is an empty config, and nothing else, when asked for one", () => {

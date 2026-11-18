@@ -28,6 +28,7 @@ import {
   settingsHome,
   sh,
   shimBin,
+  stageGuardDeletion,
   BREAKS,
   bindInConfig,
   fixturePack,
@@ -171,31 +172,26 @@ describe("the scaffolded config", () => {
     expect(tested.stdout).toContain("all green");
   });
 
-  it("blocks the force-push it bans — UAT step 3", () => {
-    const answer = hook(repo, "pre-tool-use", pre("Bash", { command: "git push --force origin main" }, "demo-1"), {
+  it("blocks `flow uninstall` from an agent — UAT step 3", () => {
+    const answer = hook(repo, "pre-tool-use", pre("Bash", { command: "flow uninstall" }, "demo-1"), {
       home,
     });
     expect(answer.code).toBe(2);
-    expect(answer.stderr).toContain("demo.noForcePush");
-    expect(answer.stderr).toContain("Force-pushing rewrites history");
+    expect(answer.stderr).toContain("flow.noUninstall");
+    expect(answer.stderr).toContain("removes this repo's guard");
   });
 
-  it("refuses the commit of a marked file at git's own hook, and passes the same commit once it is clean — UAT step 4", () => {
-    const marked = join(repo, "secret.txt");
-    // Built rather than written, for the same reason the config builds it: this file must not carry
-    // the marker either, or the suite would refuse its own commit.
-    const MARKER = ["DO", "NOT", "COMMIT"].join("-");
-    writeFileSync(marked, `${MARKER} — an api key would go here\n`);
-    git(repo, ["add", "secret.txt"]);
+  it("refuses at git's own hook the commit that deletes flow.config.ts, and passes the same commit once the file stays — UAT step 4", () => {
+    stageGuardDeletion(repo, { home });
 
-    const refused = git(repo, ["commit", "-m", "test: a marked file"]);
+    const refused = git(repo, ["commit", "-m", "test: delete the guard"]);
     expect(refused.code, "git refuses when the gate exits non-zero").not.toBe(0);
-    expect(refused.stderr).toContain("demo.noMarkedFiles");
-    expect(refused.stderr).toContain("carries the marker");
+    expect(refused.stderr).toContain("flow.noDeleteGuardrails");
 
-    writeFileSync(marked, "an api key would go here\n");
-    git(repo, ["add", "secret.txt"]);
-    const passed = git(repo, ["commit", "-m", "test: a clean file"]);
+    git(repo, ["add", "flow.config.ts"]);
+    writeFileSync(join(repo, "note.txt"), "a note\n");
+    git(repo, ["add", "note.txt"]);
+    const passed = git(repo, ["commit", "-m", "test: a note"]);
     expect(passed.code, passed.stdout + passed.stderr).toBe(0);
   });
 });
@@ -206,9 +202,8 @@ describe("flow status", () => {
     expect(said.code, said.stdout + said.stderr).toBe(0);
     expect(said.stdout).toContain("flow is ON");
     expect(said.stdout, "flow's own self-protection is bound by default").toContain("flow.orientation");
-    expect(said.stdout).toContain("demo.noForcePush");
-    expect(said.stdout).toContain("for subagent");
-    expect(said.stdout).toContain("categories subagent");
+    expect(said.stdout).toContain("flow.noUninstall");
+    expect(said.stdout).toContain("flow.noDeleteGuardrails");
     expect(said.stdout).toContain("green — every rule loads");
   });
 
@@ -219,7 +214,7 @@ describe("flow status", () => {
       fittings: { id: string; ok: boolean }[];
     };
     expect(read.green).toBe(true);
-    expect(read.categories).toEqual(["subagent"]);
+    expect(read.categories).toEqual([]);
     expect(read.fittings.every((f) => f.ok)).toBe(true);
   });
 
@@ -301,21 +296,19 @@ describe("flow status", () => {
       expect(said.stdout).toContain("✓ binary: the hooks and the gate run the flow in node_modules/@jawache/flow");
       expect(said.code, said.stdout).toBe(0);
 
-      const MARKER = ["DO", "NOT", "COMMIT"].join("-");
-      writeFileSync(join(local, "secret.txt"), `${MARKER} — an api key would go here\n`);
-      runGit(local, ["add", "secret.txt"], world);
-      const refused = runGit(local, ["commit", "-m", "test: a marked file"], world);
+      stageGuardDeletion(local, world);
+      const refused = runGit(local, ["commit", "-m", "test: delete the guard"], world);
       expect(refused.code, "git refuses when the gate exits non-zero").not.toBe(0);
-      expect(refused.stderr, "flow refused it, not `flow: not found` and not the other flow").toContain("demo.noMarkedFiles");
+      expect(refused.stderr, "flow refused it, not `flow: not found` and not the other flow").toContain("flow.noDeleteGuardrails");
 
       const written = JSON.parse(readFileSync(join(local, ".claude", "settings.json"), "utf8")) as {
         hooks: Record<string, { hooks: { command: string }[] }[]>;
       };
       const registered = written.hooks["PreToolUse"]?.[0]?.hooks[0]?.command;
       expect(registered).toBe('f="$CLAUDE_PROJECT_DIR/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook pre-tool-use; exec flow hook pre-tool-use');
-      const answered = sh(local, registered ?? "", world, JSON.stringify(pre("Bash", { command: "git push --force origin main" }, "dev-dep-1")));
+      const answered = sh(local, registered ?? "", world, JSON.stringify(pre("Bash", { command: "flow uninstall" }, "dev-dep-1")));
       expect(answered.code, answered.stderr).toBe(2);
-      expect(answered.stderr).toContain("demo.noForcePush");
+      expect(answered.stderr).toContain("flow.noUninstall");
     } finally {
       for (const dir of [local, nodeOnly]) rmSync(dir, { recursive: true, force: true });
     }
@@ -340,18 +333,16 @@ describe("flow status", () => {
       expect(existsSync(join(below, "node_modules")), "init links nothing: @jawache/flow resolves from above").toBe(false);
       expect(flow(below, ["status"]).stdout).toContain("✓ binary: the hooks and the gate run the flow on the PATH");
 
-      const MARKER = ["DO", "NOT", "COMMIT"].join("-");
-      writeFileSync(join(below, "secret.txt"), `${MARKER} — an api key would go here\n`);
-      git(below, ["add", "secret.txt"]);
-      const refused = git(below, ["commit", "-m", "test: a marked file"]);
+      stageGuardDeletion(below, { home, bin });
+      const refused = git(below, ["commit", "-m", "test: delete the guard"]);
       expect(refused.code, "git refuses when the gate exits non-zero").not.toBe(0);
-      expect(refused.stderr, "the PATH's flow refused it").toContain("demo.noMarkedFiles");
+      expect(refused.stderr, "the PATH's flow refused it").toContain("flow.noDeleteGuardrails");
 
       const registered = (settings(below)["hooks"] as Record<string, { hooks: { command: string }[] }[]>)["PreToolUse"]?.[0]?.hooks[0]?.command;
       expect(registered).toContain("; exec flow hook pre-tool-use");
-      const answered = sh(below, registered ?? "", { home, bin }, JSON.stringify(pre("Bash", { command: "git push --force origin main" }, "fallback-1")));
+      const answered = sh(below, registered ?? "", { home, bin }, JSON.stringify(pre("Bash", { command: "flow uninstall" }, "fallback-1")));
       expect(answered.code, answered.stderr).toBe(2);
-      expect(answered.stderr).toContain("demo.noForcePush");
+      expect(answered.stderr).toContain("flow.noUninstall");
     } finally {
       rmSync(above, { recursive: true, force: true });
     }
@@ -570,12 +561,11 @@ describe("flow init, when git already runs other hooks", () => {
       expect(again.stdout).toContain("git runs hooks from .husky/_, and .husky/commit-msg calls flow");
       expect(git(husky, ["config", "--get", "core.hooksPath"]).stdout.trim()).toBe(".husky/_");
 
-      // Wired, the gate really runs through husky's stub: the scaffold's marker rule refuses.
-      writeFileSync(join(husky, "secret.txt"), `${["DO", "NOT", "COMMIT"].join("-")}\n`);
-      git(husky, ["add", "secret.txt"]);
-      const refused = git(husky, ["commit", "-m", "test: a marked file"]);
+      // Wired, the gate really runs through husky's stub: the scaffold's delete refusal fires.
+      stageGuardDeletion(husky, { home, bin });
+      const refused = git(husky, ["commit", "-m", "test: delete the guard"]);
       expect(refused.code, "git refuses when husky's hook runs the gate").not.toBe(0);
-      expect(refused.stderr).toContain("demo.noMarkedFiles");
+      expect(refused.stderr).toContain("flow.noDeleteGuardrails");
     } finally {
       rmSync(husky, { recursive: true, force: true });
     }
@@ -612,11 +602,10 @@ describe("flow init, when git already runs other hooks", () => {
       expect(again.stdout).toContain("git runs hooks from .git/hooks, and .git/hooks/commit-msg calls flow");
       expect(flow(lfs, ["status"]).code).toBe(0);
 
-      writeFileSync(join(lfs, "secret.txt"), `${["DO", "NOT", "COMMIT"].join("-")}\n`);
-      git(lfs, ["add", "secret.txt"]);
-      const refused = git(lfs, ["commit", "-m", "test: a marked file"]);
+      stageGuardDeletion(lfs, { home, bin });
+      const refused = git(lfs, ["commit", "-m", "test: delete the guard"]);
       expect(refused.code, "git refuses when its own commit-msg runs the gate").not.toBe(0);
-      expect(refused.stderr).toContain("demo.noMarkedFiles");
+      expect(refused.stderr).toContain("flow.noDeleteGuardrails");
     } finally {
       rmSync(lfs, { recursive: true, force: true });
     }
@@ -642,9 +631,8 @@ describe("flow init, when git already runs other hooks", () => {
       expect(hooksPathOf(status.stdout)).toContain(`✗ hooks-path: ${NOT_INSTALLED}. Git runs hooks from .git/hooks, and .git/hooks/commit-msg calls flow but is not executable`);
 
       // What the red line is about: git really does commit past it.
-      writeFileSync(join(lfs, "secret.txt"), `${["DO", "NOT", "COMMIT"].join("-")}\n`);
-      git(lfs, ["add", "secret.txt"]);
-      const passed = git(lfs, ["commit", "-m", "test: a marked file"]);
+      stageGuardDeletion(lfs, { home, bin });
+      const passed = git(lfs, ["commit", "-m", "test: delete the guard"]);
       expect(passed.code, "git ignores a hook that is not executable").toBe(0);
       expect(passed.stderr).toContain("not set as executable");
 
@@ -1451,7 +1439,7 @@ describe.runIf(process.env["FLOW_TUTORIAL"])("the Getting started tutorial's tra
       expect(said(["hook", "commit"]), "§4").toBe(page("flow — commit blocked:"));
 
       // §5 — a banned command, on the rail the host sends it on.
-      const forced = JSON.stringify(pre("Bash", { command: "git push --force origin main" }));
+      const forced = JSON.stringify(pre("Bash", { command: "flow uninstall" }));
       expect(said(["hook", "pre-tool-use"], forced), "§5").toBe(page("flow — command blocked before it ran:"));
 
       // §6 — the census the page quotes as a comment beside the command.
@@ -1503,18 +1491,31 @@ describe("the command reference's exit-code table", () => {
       const unwired = newRepo();
       expect(codeIn(unwired, ["status"]), "no config at all — a fitting is missing").toBe(1);
       rmSync(unwired, { recursive: true, force: true });
-      const good = readFileSync(config, "utf8");
+      // The scaffold binds a pack that is not this file's to break, so the breakers below get a
+      // config with a pack of its own written inline, and the shipped one beside it.
+      const good = [
+        'import { banCommands, command, defineConfig, definePack, guardrail, pack } from "@jawache/flow";',
+        'import { flow } from "@jawache/flow/packs";',
+        'export const demo = definePack("demo", {',
+        "  noForcePush: guardrail()",
+        "    .at(command)",
+        '    .check(banCommands({ ban: ["git push --force"] }))',
+        '    .message("Force-pushing rewrites history.")',
+        '    .test({ pass: ["git push origin main"], block: ["git push --force origin main"] }),',
+        "});",
+        "export default defineConfig([pack(flow), pack(demo)]);",
+        "",
+      ].join("\n");
       writeFileSync(config, good.replace('pass: ["git push origin main"]', 'pass: ["git push --force origin main"]'));
       expect(code(["test"]), "a case that should pass, failing").toBe(1);
       writeFileSync(config, good);
 
       // ── 2 · something refused: a rule blocked …
-      writeFileSync(join(repo, "bad.txt"), "DO-NOT-COMMIT here\n");
-      runGit(repo, ["add", "bad.txt"]);
+      stageGuardDeletion(repo, { home, bin });
       expect(code(["hook", "commit"]), "a rule blocked at the gate").toBe(2);
-      const forced = JSON.stringify(pre("Bash", { command: "git push --force origin main" }));
+      const forced = JSON.stringify(pre("Bash", { command: "flow uninstall" }));
       expect(code(["hook", "pre-tool-use"], forced), "a rule blocked at a hook").toBe(2);
-      runGit(repo, ["reset", "bad.txt"]);
+      runGit(repo, ["add", "flow.config.ts"]);
 
       // … or the config would not load — EVERY way it can fail to, from the table `live.test.ts`
       // drives through the hook rail. This is the row that was wrong: status answered 1 for a

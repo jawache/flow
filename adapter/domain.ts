@@ -1648,95 +1648,32 @@ export default defineConfig([]);
 `;
 
 /**
- * THE DEMO — the config `flow init` leaves behind, and the whole of J6.1.
+ * The config `flow init` leaves behind: the one pack flow ships, bound whole.
  *
  * TWO IMPORTS AND THE SPLIT IS THE LESSON. `@jawache/flow` is the grammar a rule is written in;
  * `@jawache/flow/packs` is the content the package ships, bound one `pack(…)` line each. `flow` is
  * bound by default because it is flow's own self-protection — the note saying what is steering you,
- * the nudge when you edit the steering itself, and the refusal when a command would delete it — and
- * every repo running flow wants all three whether or not it wants anything else. `--empty` leaves
- * it out, along with everything else.
- *
- * Its one parameter is `packs`, and the scaffold passes EXACTLY WHAT IT SCAFFOLDS: an empty list,
- * because everything it writes is in the config file itself. That is a real answer rather than a
- * missing one, and the comment beside it says what to add on the day the rules move to a folder —
- * a repo that grows one and forgets to say so has a nudge and a delete refusal watching nothing.
- *
- * Then three entries of this repo's own on one screen: a command ban, a commit gate over staged
- * content, and one rule bound to an ACTOR rather than to a path. It is a worked example of J1.2 as
- * much as a starting guard — a pack written here is written exactly as a published one is, and
- * promoting it would change the import line and nothing else.
- *
- * Written with `String.raw` so the regex inside it is the regex a reader will see: this is source
- * code that generates source code, and a scaffold whose backslashes were eaten on the way out is a
- * config that loads and matches nothing.
+ * the refusal when an agent runs `flow uninstall`, and the refusal when a commit deletes the
+ * guard — and every repo running flow wants all three. It takes no parameter. `--empty` binds
+ * nothing.
  */
-const DEMO_CONFIG = String.raw`// flow.config.ts — this repo's whole guard, and the only file that turns anything on.
+const DEFAULT_CONFIG = String.raw`// flow.config.ts — this repo's whole guard, and the only file that turns anything on.
 //
-// A rule not reachable from here does not run. Everything below is ordinary code: a pack is a
-// module, a check is a function of its ctx, and a category is a name with its recognizer aboard.
-// Nothing defaults — an absent key is absent — so a mistake fails in your editor, not at 3am.
-//
-//   flow status   what is bound, at which moments, and what is not wired yet
-//   flow test     every rule's own cases, run
+// A rule not reachable from here does not run. Bind a pack with ` + "`pack(x)`" + String.raw`, refine one of
+// its entries with ` + "`override(x.entry)`" + String.raw`, and ask ` + "`flow status`" + String.raw` what is live.
 
-import { banCommands, command, commit, defineCategory, defineConfig, definePack, guardrail, pack } from "@jawache/flow";
+import { defineConfig, pack } from "@jawache/flow";
 import { flow } from "@jawache/flow/packs";
 
-// A category is a name and the HOST-WRITTEN evidence that recognises it — never a claim a session
-// made about itself. This one is "the harness sent an agent id with your call", which is what a
-// spawned subagent is and a chat is not.
-const subagent = defineCategory("subagent", (facts) => facts.subagent);
-
-// Spelled in pieces on purpose. Written whole it would appear in this very file, and the gate below
-// greps staged content — so the demo would refuse the commit that added it.
-const MARKER = ["DO", "NOT", "COMMIT"].join("-");
-
-export const demo = definePack("demo", {
-  noForcePush: guardrail()
-    .at(command)
-    .check(banCommands({ ban: ["git push --force", "git push -f", "git push --force-with-lease"] }))
-    .message("Force-pushing rewrites history everyone else has. Push a correcting commit, or ask first.")
-    .test({ pass: ["git push origin main"], block: ["git push --force origin main", "git push --force-with-lease origin main"] }),
-
-  // No .on() here, and that is the sentence rather than an omission: an entry that names no paths is
-  // about THE COMMIT, so it is asked once and handed the whole staged set. (Name paths with .on()
-  // and the gate asks it once per staged file in scope instead, handing over each file.)
-  noMarkedFiles: guardrail()
-    .at(commit)
-    .check(async (ctx) => {
-      for (const path of ctx.staged ?? [])
-        if ((await ctx.fs.read(path)).includes(MARKER)) return ctx.fail(path + " carries the marker");
-      return ctx.ok();
-    })
-    .message("A file carrying the do-not-commit marker is staged. Take the marker out, or unstage the file.")
-    .test({
-      pass: [{ staged: ["a.txt"], world: { fs: { "a.txt": "fine" } } }],
-      block: [{ staged: ["a.txt"], world: { fs: { "a.txt": MARKER } } }],
-    }),
-
-  // The same act, a different wearer, a different answer — a rule bound to WHO rather than to what.
-  chatCommits: guardrail()
-    .at(commit)
-    .for(subagent)
-    .check((ctx) => ctx.fail((ctx.staged ?? []).length + " staged file(s)"))
-    .message("A subagent does not commit — hand the change back to the chat that spawned it.")
-    .test({ pass: [], block: [{ staged: ["a.txt"] }] }),
-});
-
 export default defineConfig([
-  // flow's own self-protection: what is steering you, a nudge when you edit it, and no deleting it.
-  // Its packs list is where YOUR OWN packs live. Everything here is in this file, so it is empty —
-  // move a pack out to a folder of its own and add that folder's glob, or the nudge and the delete
-  // refusal stop covering it.
-  pack(flow, { packs: [] }),
-  pack(demo),
+  // flow's own self-protection: what is steering you, no uninstalling it, and no deleting it.
+  pack(flow),
 ]);
 `;
 
-/** The config file init writes: the demo, or the bare one `--empty` asks for. */
+/** The config file init writes: the one that binds `flow`, or the bare one `--empty` asks for. */
 export function scaffold(empty: boolean): string {
-  return empty ? EMPTY_CONFIG : DEMO_CONFIG;
+  return empty ? EMPTY_CONFIG : DEFAULT_CONFIG;
 }
 
 // ── init ─────────────────────────────────────────────────────────────────────
@@ -1768,7 +1705,7 @@ export interface InitFacts {
   /** The harnesses chosen to register, each with the file its hooks go in. */
   readonly harnesses: readonly InitHarness[];
   readonly root: string;
-  /** `--empty`: the wiring, with no demo. */
+  /** `--empty`: the wiring, with a config that binds nothing. */
   readonly empty: boolean;
   readonly isGit: boolean;
   readonly hasConfig: boolean;
@@ -2421,7 +2358,7 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
       ok: facts.hasConfig,
       detail: facts.hasConfig
         ? facts.configPath
-        : `no ${CONFIG_FILE} in ${facts.root} — \`flow init\` writes one, with a demo you can read in a minute.`,
+        : `no ${CONFIG_FILE} in ${facts.root} — \`flow init\` writes one, that binds flow's own pack.`,
     },
     {
       id: "commit-gate",
