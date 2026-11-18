@@ -37,4 +37,8 @@ export default {
   // three filenames that would silently start mattering the day one of them appeared.
   packageFiles: ['package.json'],
   bumpFiles: ['package.json', 'package-lock.json'],
+  // The release commit changes package.json, and this repo's `node.newDependencyNeedsReason` asks
+  // every such commit for a `new-dep:` line, so the release commit carries the line that says no
+  // dependency moves. The rule is kept as written; the message answers it.
+  releaseCommitMessageFormat: 'chore(release): {{currentTag}}\n\nnew-dep: none — this commit stamps the version and the changelog, and moves no dependency.',
 };
