@@ -27,7 +27,6 @@ import {
   siblingExists,
   symbolsInSibling,
   touch,
-  write,
 } from "@jawache/flow";
 
 /** Where a repo's pure code lives, and what proves it. Stated by the repo; nothing is defaulted. */
@@ -123,7 +122,7 @@ export const fcis = definePack("fcis", (repo: Convention) => {
     // string or inside a comment talking ABOUT the ban, which is exactly the false positive that
     // teaches people to ignore a rule.
     noSideEffectsInPure: guardrail()
-      .at(write, commit)
+      .at(commit)
       .on(...repo.files)
       .ignore("**/*.test.ts")
       .description("Pure code performs no I/O and reads no clock, env or randomness — a structural match, not a regex.")
@@ -160,12 +159,12 @@ export const fcis = definePack("fcis", (repo: Convention) => {
       .test({
         // `new Date(iso)` is a pure parse of an injected value and passes; `new Date()` reads the
         // system clock and does not. That discrimination is the whole reason this parses.
-        pass: [{ path: "cli/pure/a.ts", content: "export const at = (iso: string) => new Date(iso);" }],
-        block: [{ path: "cli/pure/a.ts", content: "export const now = () => new Date();" }],
+        pass: [{ path: "cli/pure/domain.ts", content: "export const at = (iso: string) => new Date(iso);" }],
+        block: [{ path: "cli/pure/domain.ts", content: "export const now = () => new Date();" }],
       }),
 
     noShellInPure: guardrail()
-      .at(write, commit)
+      .at(commit)
       .on(...repo.files)
       .ignore("**/*.test.ts")
       .description("Pure code imports no filesystem, process, socket or OS module — the leak the call-site rule cannot see.")
@@ -190,12 +189,12 @@ export const fcis = definePack("fcis", (repo: Convention) => {
         ].join("\n"),
       )
       .test({
-        pass: [{ path: "cli/pure/a.ts", content: 'import { join } from "node:path";' }],
-        block: [{ path: "cli/pure/a.ts", content: 'import * as fs from "node:fs";' }],
+        pass: [{ path: "cli/pure/domain.ts", content: 'import { join } from "node:path";' }],
+        block: [{ path: "cli/pure/domain.ts", content: 'import * as fs from "node:fs";' }],
       }),
 
     noThrowInPure: guardrail()
-      .at(write, commit)
+      .at(commit)
       .on(...repo.files)
       .ignore("**/*.test.ts")
       .description("Pure decisions return errors as values, never throw control flow.")
@@ -204,25 +203,25 @@ export const fcis = definePack("fcis", (repo: Convention) => {
         "`throw` / Promise.reject in the functional core. Errors are VALUES here — return a Result / tagged union (ok/err) so the failure path shows in the signature and the caller must handle both arms. Adapt thrown errors to Results at the boundary, not inside pure code.",
       )
       .test({
-        pass: [{ path: "cli/pure/a.ts", content: "export const f = () => ({ ok: false as const });" }],
-        block: [{ path: "cli/pure/a.ts", content: 'export const f = () => { throw new Error("x"); };' }],
+        pass: [{ path: "cli/pure/domain.ts", content: "export const f = () => ({ ok: false as const });" }],
+        block: [{ path: "cli/pure/domain.ts", content: 'export const f = () => { throw new Error("x"); };' }],
       }),
 
     // ── test: every pure file is proven ──
     pureHasTest: guardrail()
-      .at(write, commit)
+      .at(commit)
       .on(...repo.files)
       .ignore("**/*.test.ts")
       .description("A pure file has its sibling test — the test-first artefact exists.")
       .check(siblingExists({ sibling }))
       .message("The pure core is test-first (red → green): this file's sibling test, named below, is missing. Write the failing test, then the code.")
       .test({
-        pass: [{ path: "cli/pure/a.ts", content: "", world: { fs: { "cli/pure/a.test.ts": "" } } }],
-        block: [{ path: "cli/pure/b.ts", content: "" }],
+        pass: [{ path: "cli/pure/domain.ts", content: "", world: { fs: { "cli/pure/domain.test.ts": "" } } }],
+        block: [{ path: "cli/pure/domain.ts", content: "" }],
       }),
 
     pureExportsTested: guardrail()
-      .at(write, commit)
+      .at(commit)
       .on(...repo.files)
       .ignore("**/*.test.ts")
       .description("Every pure export is at least referenced in its test — the 'wrote no test' nudge.")
@@ -231,8 +230,8 @@ export const fcis = definePack("fcis", (repo: Convention) => {
         "The exports listed below are never named in this file's test. Write a test that uses each one, then write the change again: a reference is enough, as this is a nudge, not coverage.",
       )
       .test({
-        pass: [{ path: "cli/pure/a.ts", content: "export const x = 1;", world: { fs: { "cli/pure/a.test.ts": "expect(x)" } } }],
-        block: [{ path: "cli/pure/a.ts", content: "export const y = 1;", world: { fs: { "cli/pure/a.test.ts": "nothing" } } }],
+        pass: [{ path: "cli/pure/domain.ts", content: "export const x = 1;", world: { fs: { "cli/pure/domain.test.ts": "expect(x)" } } }],
+        block: [{ path: "cli/pure/domain.ts", content: "export const y = 1;", world: { fs: { "cli/pure/domain.test.ts": "nothing" } } }],
       }),
 
     pureCovered: guardrail()

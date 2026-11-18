@@ -309,7 +309,7 @@ describe("what the archival side has already read", () => {
 });
 
 describe("the recording seam", () => {
-  const step = (path: string): RecordedStep => ({ rail: "guard", moment: "write", file: { path, content: "x" }, wearing: [] });
+  const step = (path: string): RecordedStep => ({ rail: "guard", moment: "commit", staged: [path], wearing: [] });
 
   it("is off until the switch file exists, and a hiccup reads as off rather than as on", () => {
     expect(isRecording(root)).toBe(false);

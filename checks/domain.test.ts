@@ -131,8 +131,8 @@ describe("patternHits — the one regex sweep", () => {
 describe("textBan", () => {
   it("passes clean prose and blocks a banned word, naming the line", async () => {
     const check = textBan({ ban: ["\\bTODO\\b"] });
-    expect(await run(check, "write", file("a.md", "all good here"))).toBeNull();
-    expect(await run(check, "write", file("a.md", "x\nleft a TODO here"))).toContain("line 2");
+    expect(await run(check, "commit", file("a.md", "all good here"))).toBeNull();
+    expect(await run(check, "commit", file("a.md", "x\nleft a TODO here"))).toContain("line 2");
   });
 });
 
@@ -504,8 +504,8 @@ describe("docLinks", () => {
 describe("siblingExists", () => {
   it("passes when the companion is there and names it when it is not", async () => {
     const check = siblingExists({ sibling: "{path}.test.ts" });
-    expect(await run(check, "write", { path: "a/x.ts", content: "", world: { fs: { "a/x.test.ts": "" } } })).toBeNull();
-    expect(await run(check, "write", file("a/y.ts", ""))).toBe("required sibling missing: a/y.test.ts");
+    expect(await run(check, "commit", { path: "a/x.ts", content: "", world: { fs: { "a/x.test.ts": "" } } })).toBeNull();
+    expect(await run(check, "commit", file("a/y.ts", ""))).toBe("required sibling missing: a/y.test.ts");
   });
 });
 
@@ -565,8 +565,8 @@ describe("canonicalFiles", () => {
   });
 
   it("blocks through the check with the fault as its detail", async () => {
-    expect(await run(canonicalFiles(canon), "write", file("src/lib/cart/helpers.ts", ""))).toContain("non-canonical");
-    expect(await run(canonicalFiles(canon), "write", file("src/lib/cart/domain.ts", ""))).toBeNull();
+    expect(await run(canonicalFiles(canon), "commit", file("src/lib/cart/helpers.ts", ""))).toContain("non-canonical");
+    expect(await run(canonicalFiles(canon), "commit", file("src/lib/cart/domain.ts", ""))).toBeNull();
   });
 });
 
@@ -614,8 +614,8 @@ describe("jsonViolations", () => {
 
   it("blocks through the check", async () => {
     const check = jsonInvariant({ assert: [{ path: "scripts", keysPrefixedWith: "//" }] });
-    expect(await run(check, "write", file("package.json", '{"scripts":{"//":"x"}}'))).toBeNull();
-    expect(await run(check, "write", file("package.json", '{"scripts":{"dev":"run"}}'))).toContain("must be prefixed");
+    expect(await run(check, "commit", file("package.json", '{"scripts":{"//":"x"}}'))).toBeNull();
+    expect(await run(check, "commit", file("package.json", '{"scripts":{"dev":"run"}}'))).toContain("must be prefixed");
   });
 });
 
@@ -692,7 +692,7 @@ describe("symbolsInSibling", () => {
   const source = "export function foo(){}\nexport const bar = () => 1;";
 
   it("names an export the sibling never references", async () => {
-    const detail = await run(check, "write", {
+    const detail = await run(check, "commit", {
       path: "a/x.ts",
       content: source,
       world: { fs: { "a/x.test.ts": "test(foo)" } },
@@ -701,7 +701,7 @@ describe("symbolsInSibling", () => {
   });
 
   it("names the test once and lists every unreferenced export on one line", async () => {
-    const detail = await run(check, "write", {
+    const detail = await run(check, "commit", {
       path: "a/x.ts",
       content: source,
       world: { fs: { "a/x.test.ts": "nothing here" } },
@@ -710,7 +710,7 @@ describe("symbolsInSibling", () => {
   });
 
   it("passes when every export is referenced", async () => {
-    const detail = await run(check, "write", {
+    const detail = await run(check, "commit", {
       path: "a/x.ts",
       content: source,
       world: { fs: { "a/x.test.ts": "test(foo); test(bar)" } },
@@ -719,7 +719,7 @@ describe("symbolsInSibling", () => {
   });
 
   it("refuses the second declarator of an export const when the test names only the first", async () => {
-    const detail = await run(check, "write", {
+    const detail = await run(check, "commit", {
       path: "a/x.ts",
       content: "export const a = 1, b = 2;",
       world: { fs: { "a/x.test.ts": "test(a)" } },
@@ -728,7 +728,7 @@ describe("symbolsInSibling", () => {
   });
 
   it("passes a destructured export when the test names every name it binds", async () => {
-    const detail = await run(check, "write", {
+    const detail = await run(check, "commit", {
       path: "a/x.ts",
       content: "export const { a, b: c, ...d } = obj;",
       world: { fs: { "a/x.test.ts": "test(a); test(c); test(d)" } },
@@ -737,7 +737,7 @@ describe("symbolsInSibling", () => {
   });
 
   it("refuses a destructured export for the one bound name the test never names", async () => {
-    const detail = await run(check, "write", {
+    const detail = await run(check, "commit", {
       path: "a/x.ts",
       content: "export const { a, b: c, ...d } = obj;",
       world: { fs: { "a/x.test.ts": "test(a); test(b); test(d)" } },
@@ -747,12 +747,12 @@ describe("symbolsInSibling", () => {
 
   it("reads an array-destructured export as each name it binds", async () => {
     const content = "export const [x, y] = arr;";
-    expect(await run(check, "write", { path: "a/x.ts", content, world: { fs: { "a/x.test.ts": "test(x)" } } })).toBe("not referenced in a/x.test.ts: y");
-    expect(await run(check, "write", { path: "a/x.ts", content, world: { fs: { "a/x.test.ts": "test(x, y)" } } })).toBeNull();
+    expect(await run(check, "commit", { path: "a/x.ts", content, world: { fs: { "a/x.test.ts": "test(x)" } } })).toBe("not referenced in a/x.test.ts: y");
+    expect(await run(check, "commit", { path: "a/x.ts", content, world: { fs: { "a/x.test.ts": "test(x, y)" } } })).toBeNull();
   });
 
   it("a missing sibling is its own honest hit, not a crash", async () => {
-    expect(await run(check, "write", file("a/x.ts", "export const q = 1;"))).toBe("sibling test not found: a/x.test.ts");
+    expect(await run(check, "commit", file("a/x.ts", "export const q = 1;"))).toBe("sibling test not found: a/x.test.ts");
   });
 });
 
@@ -1590,11 +1590,11 @@ describe("astGrep", () => {
   });
 
   it("blocks through the check, and an unknown grammar BLOCKS rather than passing quietly", async () => {
-    expect(await run(astGrep({ rule, language: "tsx" }), "write", file("a.ts", "const p = a ?? new Date();"))).toContain(
+    expect(await run(astGrep({ rule, language: "tsx" }), "commit", file("a.ts", "const p = a ?? new Date();"))).toContain(
       "1:",
     );
-    expect(await run(astGrep({ rule, language: "tsx" }), "write", file("a.ts", "const p = 1;"))).toBeNull();
-    expect(await run(astGrep({ rule, language: "klingon" }), "write", file("a.ts", "x"))).toContain("klingon");
+    expect(await run(astGrep({ rule, language: "tsx" }), "commit", file("a.ts", "const p = 1;"))).toBeNull();
+    expect(await run(astGrep({ rule, language: "klingon" }), "commit", file("a.ts", "x"))).toContain("klingon");
   });
 });
 
@@ -1606,7 +1606,7 @@ describe("readCase — the one ladder over the case union", () => {
   it("reads the dialect a case is written in", () => {
     expect(caseMoment("git push")).toBe("command");
     expect(caseMoment({ command: "git push" })).toBe("command");
-    expect(caseMoment({ path: "a.ts", content: "" })).toBe("write");
+    expect(caseMoment({ path: "a.ts", content: "" }), "a commit of that one file").toBe("commit");
     expect(caseMoment({ staged: [] })).toBe("commit");
     expect(caseMoment({ actions: [] })).toBe("turn-end");
   });
@@ -1614,19 +1614,15 @@ describe("readCase — the one ladder over the case union", () => {
   it("reads the dialect, the facts and the world in ONE pass, so they cannot disagree", () => {
     expect(readCase("git push")).toEqual({ dialect: "command", facts: { command: "git push" }, world: {} });
     const world: CaseWorld = { fs: { "a.ts": "x" } };
-    expect(readCase({ path: "a.ts", content: "x", world })).toEqual({
-      dialect: "write",
-      facts: { file: { path: "a.ts", content: "x" }, actor: [] },
-      world,
+    expect(readCase({ path: "a.ts", content: "x", world })).toMatchObject({
+      dialect: "commit",
+      facts: { staged: ["a.ts"], actor: [] },
+      world: { fs: { "a.ts": "x" } },
     });
     expect(readCase({ command: "ls" }).world).toEqual({});
     expect(readCase({ staged: ["a.ts"] }).facts).toEqual({ staged: ["a.ts"], actor: [] });
     expect(readCase({ message: "wip" })).toMatchObject({ dialect: "commit", facts: { staged: [], actor: [] }, message: "wip" });
     expect(readCase({ staged: [], deleted: ["a.ts", "b.ts"] }), "a list of paths").toMatchObject({ deleted: ["a.ts", "b.ts"] });
-    expect(readCase({ staged: [], deleted: { "a.ts": "old" } }), "each path with the content it had").toMatchObject({
-      deleted: ["a.ts"],
-      gone: [{ path: "a.ts", content: "old" }],
-    });
     expect(readCase({ actions: [{ did: "edit", path: "a.ts" }] }).facts).toEqual({
       turn: [{ did: "edit", path: "a.ts" }],
       actor: [],
@@ -1636,9 +1632,9 @@ describe("readCase — the one ladder over the case union", () => {
   });
 
   it("every dialect is one a guardrail moment can actually be handed", async () => {
-    const dialects: CaseDialect[] = ["command", "write", "commit", "turn-end"];
+    const dialects: CaseDialect[] = ["command", "commit", "commit", "turn-end"];
     const cases: Case[] = ["ls", { path: "a.ts", content: "" }, { staged: [] }, { actions: [] }];
-    const moments = ["command", "write", "commit", "turn-end"];
+    const moments = ["command", "commit", "commit", "turn-end"];
     for (const [i, c] of cases.entries()) {
       expect(readCase(c).dialect).toBe(dialects[i]);
       const result = await runCase(entry({ at: [moments[i] as string] }), (ctx) => ctx.ok(), c, "pass", 0);
@@ -1669,7 +1665,7 @@ describe("cannedCtx", () => {
 
   it("a path the case never mentions simply is not there — absence is an ordinary answer", async () => {
     const missing: Unanswered[] = [];
-    const ctx = cannedCtx("write", file("a.ts", ""), missing);
+    const ctx = cannedCtx("commit", file("a.ts", ""), missing);
     expect(await ctx.fs.exists("b.ts")).toBe(false);
     expect(missing).toEqual([]);
   });
@@ -1696,7 +1692,7 @@ const entry = (over: {
   key: "rule",
   spec: {
     kind: "guardrail",
-    at: (over.at ?? ["write"]) as never,
+    at: (over.at ?? ["commit"]) as never,
     check: over.check ?? ((ctx) => ctx.ok()),
     message: "No.",
     ...(over.on ? { on: over.on } : {}),
@@ -1735,7 +1731,7 @@ describe("runCase", () => {
   });
 
   it("a case in a dialect the entry has no rail for is its own failure, and a loud one", async () => {
-    const result = await runCase(entry({ at: ["write"] }), passes, "git push origin main", "block", 0);
+    const result = await runCase(entry({ at: ["commit"] }), passes, "git push origin main", "block", 0);
     expect(result.ok).toBe(false);
     expect(result.detail).toContain("command dialect");
     const nowhere = await runCase(entry({ at: [] }), passes, file("a.ts", ""), "pass", 0);
@@ -1762,7 +1758,6 @@ describe("runCase", () => {
   it("matches a commit case to a commit moment and a turn case to turn-end", async () => {
     expect((await runCase(entry({ at: ["commit"] }), passes, { staged: [] }, "pass", 0)).ok).toBe(true);
     expect((await runCase(entry({ at: ["turn-end"] }), passes, { actions: [] }, "pass", 0)).ok).toBe(true);
-    expect((await runCase(entry({ at: ["delete"] }), passes, file("a.ts", ""), "pass", 0)).ok).toBe(true);
   });
 
   // The commit fan-out, from a recorded world — the same split `subjectsOf` makes at the live gate.
@@ -1808,15 +1803,6 @@ describe("runCase", () => {
     it("still refuses an unchanged file for what it holds: only an edit rule passes one", async () => {
       const asCommitted = { staged: ["a.ts"], added: [], unchanged: ["a.ts"], world: { fs: { "a.ts": "SECRET" } } };
       expect((await runCase(scoped, banned, asCommitted, "block", 0)).ok).toBe(true);
-    });
-
-    it("asks a case's `deleted` files of an entry bound at delete as well as commit, as deletes", async () => {
-      const check = existingEdit;
-      const gone = { staged: [], deleted: { "m/1.sql": "-- old" } };
-      const both = entry({ at: ["write", "delete", "commit"], on: ["m/**"], check });
-      expect((await runCase(both, check, gone, "block", 0)).ok).toBe(true);
-      const commitOnly = entry({ at: ["commit"], on: ["m/**"], check });
-      expect((await runCase(commitOnly, check, gone, "pass", 0)).ok, "commit alone judges what the commit holds").toBe(true);
     });
 
     it("honours the entry's own ignore list, so an out-of-scope file is never a subject", async () => {
@@ -1866,10 +1852,13 @@ describe("runCase", () => {
       expect((await runCase(appendOnly, existing, { path: "m/2.sql", content: "x", existed: false }, "pass", 0)).ok).toBe(true);
     });
 
-    it("asks no deleted file of a delete rule when the case lists only the paths", async () => {
+    it("asks no deleted path of a rule with `.on(…)`: it is about files the commit holds, and the list is for a rule without one", async () => {
       const check = existingEdit;
-      const both = entry({ at: ["write", "delete", "commit"], on: ["m/**"], check });
-      expect((await runCase(both, check, { staged: [], deleted: ["m/1.sql"] }, "pass", 0)).ok, "no content, no subject").toBe(true);
+      const scopedRule = entry({ at: ["commit"], on: ["m/**"], check });
+      expect((await runCase(scopedRule, check, { staged: [], deleted: ["m/1.sql"] }, "pass", 0)).ok, "a deletion is no subject").toBe(true);
+      const reads: Check = (ctx) => ((ctx.deleted ?? []).includes("m/1.sql") ? ctx.fail("deleted") : ctx.ok());
+      const wholeCommit = entry({ at: ["commit"], check: reads });
+      expect((await runCase(wholeCommit, reads, { staged: [], deleted: ["m/1.sql"] }, "block", 0)).ok).toBe(true);
     });
 
     it("still hands an UNSCOPED commit entry the staged set, once", async () => {
@@ -1883,7 +1872,7 @@ describe("runCase", () => {
 describe("runCases", () => {
   it("walks every bound entry's pass and block lists", async () => {
     const results: CaseResult[] = await runCases([
-      entry({ check: (ctx) => (ctx.file?.content === "bad" ? ctx.fail() : ctx.ok()), test: { pass: [file("a.ts", "ok")], block: [file("a.ts", "bad")] } }),
+      entry({ on: ["**"], check: (ctx) => (ctx.file?.content === "bad" ? ctx.fail() : ctx.ok()), test: { pass: [file("a.ts", "ok")], block: [file("a.ts", "bad")] } }),
     ]);
     expect(results).toHaveLength(2);
     expect(results.every((r) => r.ok)).toBe(true);

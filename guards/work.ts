@@ -21,7 +21,6 @@ import {
   guardrail,
   spawnedAs,
   touch,
-  write,
 } from "@jawache/flow";
 
 /**
@@ -52,29 +51,11 @@ export const builder = defineCategory(
 );
 
 /**
- * Anything spawned to JUDGE rather than to build — the verifier at a phase boundary, and the five
- * review lenses a closing review spawns.
- *
- * One category rather than six, because the rules that bind to it say the same thing to all of
- * them: a reader does not write. The verifier's own agent definition withholds Edit and Write
- * already; this is the half that holds for the lenses too, and it holds at the rail rather than in
- * a frontmatter list somebody can widen.
- */
-export const checker = defineCategory(
-  "checker",
-  spawnedAs({
-    types: ["verifier", "review", "codeops", "docops", "devops", "secops"],
-    generic: GENERIC,
-    brief: ["Follow `/work verify`", "Follow /work verify"],
-  }),
-);
-
-/**
  * The WORK LIFECYCLE's rungs: who is acting, and what each rung may do.
  *
  * A pack for repos that run the `work` lifecycle skill — spec · plan · start · build · review ·
- * reflect · complete. It names the three rungs the lifecycle has (parent · builder · checker),
- * binds one rule per rung to keep them from doing each other's jobs, and adds the rule about the
+ * reflect · complete. It names the two rungs the lifecycle has that a command rule binds to (parent ·
+ * builder), binds a rule to each to keep them from doing each other's jobs, and adds the rule about the
  * command that writes the journal: the inbox is the human's queue. One breadcrumb is about the
  * record itself: Node code run from a `.work/` that is a link needs the settings that keep the
  * link's path.
@@ -84,25 +65,25 @@ export const checker = defineCategory(
  * flow ship it without depending on the tool it is about.
  *
  * flow ships no category names and never will: what a rung is called is a property of the way a
- * team works, not of a guard engine. These three are the WORK lifecycle's, defined here beside the
- * rules that bind to them — a builder may not do a parent's job, a checker may not write.
+ * team works, not of a guard engine. These two are the WORK lifecycle's, defined here beside the
+ * rules that bind to them — a builder may not do a parent's job, and a parent does not tick a
+ * builder's box.
  *
  * @install The `work` CLI and its lifecycle skill. Every rule here reads a `work …` command line,
  * so in a repo that does not run the lifecycle they are rules that can never fire.
- * @adopt Bind it only in a repo whose tasks are actually run through the lifecycle. The three rung
+ * @adopt Bind it only in a repo whose tasks are actually run through the lifecycle. The rung
  * rules are scoped to categories this pack defines, so they judge nobody until a session is
- * classified as a builder or a checker — a human at a keyboard is neither.
+ * classified as a builder or a parent — a human at a keyboard is neither.
  */
 export const work = definePack("work", {
   // ── THE LADDER, mechanised ──
   //
-  // Three rules, one per rung, and each is a sentence the lifecycle skill's mode files already
-  // state in prose: a builder owns its phase and not the plan, a checker reads and does not write,
-  // a parent supervises and does not tick a box it did not build. They are RULES rather than mode
+  // Two rules, one per rung, and each is a sentence the lifecycle skill's mode files already
+  // state in prose: a builder owns its phase and not the plan, a parent supervises and does not tick a box it did not build. They are RULES rather than mode
   // files because a rung is assigned by the harness that spawned you, and a rule that reads the
   // host's agent type cannot be talked out of it — which is the whole reason `.for(…)` exists.
   //
-  // They are also what makes the three categories real. A category nothing names is never
+  // They are also what makes the two categories real. A category nothing names is never
   // classified and never shown: `flow status` lists the ones some entry binds to, so an unbound
   // one would be config that reads as armed and costs nothing to be wrong about.
   planIsTheParents: guardrail()
@@ -140,17 +121,6 @@ export const work = definePack("work", {
         "work --verbose plan verdict F7 --pass --cite x",
       ],
     }),
-
-  checkersDoNotWrite: guardrail()
-    .at(write)
-    .for(checker)
-    .everywhere()
-    .description("A verifier and the review lenses sit at a boundary they must not write to.")
-    .check((ctx) => ctx.fail(`${ctx.file?.path ?? "a file"} — a checker reads`))
-    .message(
-      "You were spawned to JUDGE this work, and a judge that edits the thing it is judging has destroyed the evidence. Report what you found — PASS or FAIL with citations — and let the rung that owns the code change it. (The verifier's own tool list already withholds Edit and Write; this is the half that holds for every review lens too, and it holds at the rail rather than in a frontmatter list somebody can widen.)",
-    )
-    .test({ block: [{ path: "src/thing.ts", content: "x" }] }),
 
   ticksAreTheChilds: guardrail()
     .at(command)

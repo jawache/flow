@@ -125,10 +125,8 @@ export { gitCommands, gitDirPrefix, givesReason, quoteArg, shellCommands } from 
 export { spawnedAs, type SpawnRecipe } from "./engine/domain.ts";
 
 export {
-  write,
   command,
   commit,
-  deletion,
   turnEnd,
   session,
   touch,

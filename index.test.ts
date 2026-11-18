@@ -27,7 +27,6 @@ describe("the public surface", () => {
       "defineCheck",
       "defineConfig",
       "definePack",
-      "deletion",
       "depcruise",
       "docLinks",
       "entriesOrThrow",
@@ -57,7 +56,6 @@ describe("the public surface", () => {
       "touch",
       "turnEnd",
       "withFaults",
-      "write",
     ]);
   });
 

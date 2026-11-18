@@ -5,7 +5,7 @@
 // nothing in a repo whose gate is `npm run typecheck`, and would say so in the refusal too.
 
 
-import { astGrep, commit, breadcrumb, definePack, escapeRe, execPasses, guardrail, jsonInvariant, touch, write } from "@jawache/flow";
+import { astGrep, commit, breadcrumb, definePack, escapeRe, execPasses, guardrail, jsonInvariant, touch } from "@jawache/flow";
 
 /** What this pack cannot know: the two gate recipes, and whether the repo has shared config files. */
 export interface Gates {
@@ -132,7 +132,7 @@ export const typescript = definePack("typescript", (repo: Gates) => {
      * as a bug much later.
      */
     tsconfigStrict: guardrail()
-      .at(write, commit)
+      .at(commit)
       .on("**/tsconfig.json")
       .description(
         base === undefined
@@ -175,7 +175,7 @@ export const typescript = definePack("typescript", (repo: Gates) => {
       ? {}
       : {
           eslintFromBase: guardrail()
-            .at(write, commit)
+            .at(commit)
             .on("eslint.config.js", "eslint.config.mjs")
             .description(`The repo's eslint config imports ${repo.eslintBase}.`)
             .check(

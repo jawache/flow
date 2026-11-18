@@ -19,7 +19,6 @@ import {
   breadcrumb,
   command,
   commit,
-  deletion,
   defineCategory,
   defineConfig,
   definePack,
@@ -30,7 +29,6 @@ import {
   protectedPath,
   touch,
   turnEnd,
-  write,
   type Check,
   type Ctx,
   type LoadResult,
@@ -95,7 +93,6 @@ import {
   formatBlock,
   formatBlocks,
   guard,
-  judgedDeletions,
   identify,
   inScope,
   logFile,
@@ -155,22 +152,28 @@ const regime: LoadResult = loadConfig(defineConfig([pack(rails)]));
  * one builder, and the `afterEach` below makes every unrecorded reach in this suite a failure.
  */
 function world(recorded: CaseWorld = {}, staged?: readonly string[]): World {
-  return cannedWorld(recorded, staged, missed);
+  // The files `wrote` made a commit of, and the suite the fixture's gate runs: a commit reaches every
+  // commit rule, and a test about one is not about the answer another one asks for.
+  return cannedWorld({ ...recorded, fs: { ...held, ...recorded.fs }, exec: { "just test-commit": { code: 0 }, ...recorded.exec } }, staged, missed);
 }
 
 let missed: Unanswered[] = [];
+/** What the commits `wrote` made hold, by path: the world a test builds answers for them. */
+let held: Record<string, string> = {};
 
 beforeEach(() => {
   missed = [];
+  held = {};
 });
 
 afterEach(() => {
   expect(missed, "a check reached for something this test never recorded").toEqual([]);
 });
 
-/** A write event, with whoever it happened to. */
+/** A commit of one file, with whoever it happened to: the file is recorded for the world the test builds. */
 function wrote(path: string, content: string, wearing: readonly string[] = []): GuardEvent {
-  return { moment: "write", file: { path, content }, wearing };
+  held = { ...held, [path]: content };
+  return { moment: "commit", staged: [path], wearing };
 }
 
 const blocks = (outcome: Outcome): Block[] => outcome.effects.filter((e): e is Block => e.do === "block");
@@ -286,12 +289,12 @@ describe("the three filters", () => {
   const entry = (id: string) => entries.find((e) => e.id === id)!;
 
   it("fires only at the moments the entry named", () => {
-    expect(fires(entry("rails.everyone").spec, "write")).toBe(true);
-    expect(fires(entry("rails.everyone").spec, "commit")).toBe(false);
+    expect(fires(entry("rails.everyone").spec, "commit")).toBe(true);
+    expect(fires(entry("rails.everyone").spec, "command")).toBe(false);
   });
 
   it("never fires a disabled entry, at any moment it named", () => {
-    expect(fires(entry("rails.retired").spec, "write")).toBe(false);
+    expect(fires(entry("rails.retired").spec, "commit")).toBe(false);
   });
 
   it("binds to everyone when the entry named no category", () => {
@@ -333,7 +336,6 @@ describe("the three filters", () => {
         load,
         event: {
           moment,
-          file: { path: "src/a.ts", content: "ok" },
           command: "ok",
           staged: ["src/a.ts"],
           turn: [],
@@ -398,7 +400,7 @@ describe("a rule bound to a category", () => {
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 describe("what an entry is run against", () => {
-  it("hands a write rail the would-be file, and scopes it by path", async () => {
+  it("hands a commit rule each staged file it holds, and scopes it by path", async () => {
     const inside = await guard({ load: regime, event: wrote("plan/x.yml", "TODO", ["builder"]), world: world() });
     expect(blockedIds(inside)).toContain("rails.buildersOnly");
     const outside = await guard({ load: regime, event: wrote("docs/x.md", "TODO", ["builder"]), world: world() });
@@ -415,7 +417,8 @@ describe("what an entry is run against", () => {
     const seen: (readonly string[])[] = [];
     const spy = definePack("spy", {
       actor: guardrail()
-        .at(write)
+        .at(commit)
+        .on("**")
         .check((ctx) => {
           seen.push(ctx.actor);
           return ctx.file?.content === "TODO" ? ctx.fail("TODO") : ctx.ok();
@@ -423,7 +426,8 @@ describe("what an entry is run against", () => {
         .message("x")
         .test({ pass: [{ path: "a", content: "" }], block: [{ path: "a", content: "TODO" }] }),
       builderOnly: guardrail()
-        .at(write)
+        .at(commit)
+        .on("**")
         .check((ctx) => (ctx.actor.includes("builder") ? ctx.ok() : ctx.fail(`an actor wearing ${ctx.actor.join(", ")}`)))
         .message("Only the builder writes.")
         .test({ block: [{ path: "a", content: "", actor: ["checker"] }] }),
@@ -555,17 +559,11 @@ describe("what an entry is run against", () => {
     ]);
   });
 
-  it("asks a staged deletion only of an entry bound at delete as well as commit — and asks it AS a delete", async () => {
+  it("asks a staged deletion of no entry: a rule with .on is asked about files the commit holds, and one without reads the list", async () => {
     const both = loadConfig(
       defineConfig([
         pack(
           definePack("log", {
-            appendOnly: guardrail()
-              .at(write, deletion, commit)
-              .on("m/**")
-              .check((ctx) => ctx.fail(`${ctx.moment} of ${ctx.file?.path ?? ""}, which held: ${ctx.file?.content ?? ""}`))
-              .message("history")
-              .test({ block: [{ path: "m/1.sql", content: "" }] }),
             // A content rule: about what the commit will HOLD. A deleted file is not in it, so its
             // old TODO must not block the commit that removes it.
             noTodo: guardrail()
@@ -574,20 +572,23 @@ describe("what an entry is run against", () => {
               .check((ctx) => (ctx.file?.content.includes("TODO") === true ? ctx.fail("TODO") : ctx.ok()))
               .message("no TODO")
               .test({ block: [{ staged: ["a.ts"], world: { fs: { "a.ts": "TODO" } } }] }),
+            // A rule about the deletion itself has no `.on`, and reads the list.
+            keep: guardrail()
+              .at(commit)
+              .check((ctx) => ((ctx.deleted ?? []).includes("m/1.sql") ? ctx.fail("history") : ctx.ok()))
+              .message("keep")
+              .test({ block: [{ staged: [], deleted: ["m/1.sql"] }] }),
           }),
         ),
       ]),
     );
     const outcome = await guard({
       load: both,
-      event: { moment: "commit", staged: [], deleted: ["m/1.sql"], gone: [{ path: "m/1.sql", content: "-- TODO: old" }], wearing: [] },
+      event: { moment: "commit", staged: [], deleted: ["m/1.sql"], wearing: [] },
       world: world(),
     });
-    expect(blocks(outcome).map((b) => [b.entry, b.subject, b.detail])).toEqual([
-      ["log.appendOnly", "m/1.sql", "delete of m/1.sql, which held: -- TODO: old"],
-    ]);
-    // Only what such an entry covers is worth reading out of the last commit.
-    expect(judgedDeletions(both.ok ? both.entries : [], ["m/1.sql", "src/a.ts"])).toEqual(["m/1.sql"]);
+    expect(blocks(outcome).map((b) => [b.entry, b.subject, b.detail])).toEqual([["log.keep", null, "history"]]);
+    expect(tallyFor(outcome, "log.noTodo")).toEqual({ id: "log.noTodo", evaluated: 0, hits: 0, silenced: 0 });
   });
 
   it("hands every call of a commit the message, the added paths and every deleted path, a judged one or not", async () => {
@@ -682,7 +683,6 @@ describe("a broken config blocks until it is fixed", () => {
       wrote("a.ts", "x"),
       { moment: "command", command: "ls", wearing: [] },
       { moment: "commit", staged: ["a.ts"], wearing: [] },
-      { moment: "delete", file: { path: "a.ts", content: "" }, wearing: [] },
       { moment: "turn-end", turn: [], wearing: [] },
     ] as GuardEvent[]) {
       const outcome = await guard({ load: broken, event, world: world() });
@@ -696,7 +696,7 @@ describe("a broken config blocks until it is fixed", () => {
 
 describe("everything else that can be wrong is also a block", () => {
   it("turns a crashing check into a failing one, naming the entry and the error", async () => {
-    const outcome = await guard({ load: regime, event: wrote("a.ts", "fine"), world: world() });
+    const outcome = await guard({ load: regime, event: { moment: "command", command: "explode", wearing: [] }, world: world() });
     const crash = blocks(outcome).find((b) => b.entry === "rails.explodes");
     expect(crash?.detail).toBe("the check threw: cannot read properties of undefined");
   });
@@ -723,7 +723,7 @@ describe("everything else that can be wrong is also a block", () => {
           id: "hand.written",
           pack: "hand",
           key: "written",
-          spec: { kind: "guardrail", at: ["write"], message: "…" },
+          spec: { kind: "guardrail", at: ["commit"], on: ["**"], message: "…" },
           source: {},
           categories: [],
           phases: ["edit"],
@@ -775,9 +775,9 @@ describe("work outside the repository", () => {
   const seen: Record<string, (readonly string[])[]> = { here: [], everywhere: [] };
   const spying = (id: string) =>
     guardrail()
-      .at(command, write)
+      .at(command)
       .check((ctx) => {
-        seen[id]?.push(ctx.commands?.map((c) => c.text) ?? [ctx.file?.path ?? ""]);
+        seen[id]?.push(ctx.commands?.map((c) => c.text) ?? []);
         return ctx.command === "boom" ? ctx.fail("boom") : ctx.ok();
       })
       .message("x")
@@ -813,12 +813,6 @@ describe("work outside the repository", () => {
   it("passes a marked rule every command", async () => {
     await ran("git -C /tmp/r commit -m init && git commit -m bad", ["/tmp/r"]);
     expect(seen["everywhere"]).toEqual([["git -C /tmp/r commit -m init", "git commit -m bad"]]);
-  });
-
-  it("does not pass an unmarked rule a file outside, and passes a marked one it", async () => {
-    await guard({ load, event: { ...wrote("/tmp/r/a.ts", "x"), outside: ["/tmp/r/a.ts"] }, world: world() });
-    expect(seen["here"]).toEqual([]);
-    expect(seen["everywhere"]).toEqual([["/tmp/r/a.ts"]]);
   });
 
   it("judges everything as inside when the event names nothing outside, as in a case", async () => {
@@ -1205,7 +1199,7 @@ describe("the log's layout", () => {
 
   it("names its row kinds in one closed vocabulary", () => {
     const kind: RowKind = "run";
-    expect([...ROW_KINDS]).toEqual(["meta", "tool", "breadcrumb", "guardrail", "compaction", "run", "read", "write", "mismatch"]);
+    expect([...ROW_KINDS]).toEqual(["meta", "tool", "breadcrumb", "guardrail", "compaction", "run", "read"]);
     expect(ROW_KINDS).toContain(kind);
   });
 
@@ -1217,18 +1211,18 @@ describe("the log's layout", () => {
       ],
       tallies: [{ id: "a.b", evaluated: 1, hits: 1, silenced: 0 }],
     };
-    expect(runRows("write", outcome, 1)).toEqual([
-      { kind: "run", moment: "write", subjects: 1, rules: outcome.tallies },
+    expect(runRows("commit", outcome, 1)).toEqual([
+      { kind: "run", moment: "commit", subjects: 1, rules: outcome.tallies },
       {
         kind: "guardrail",
-        moment: "write",
+        moment: "commit",
         id: "a.b",
         subject: "x.ts",
         out: "deny",
         message: "m",
         detail: "d",
       },
-      { kind: "breadcrumb", moment: "write", id: "a.note", cause: "drift", subject: "x.ts" },
+      { kind: "breadcrumb", moment: "commit", id: "a.note", cause: "drift", subject: "x.ts" },
     ]);
   });
 
@@ -1280,7 +1274,7 @@ describe("the universe — what an id means today", () => {
     expect(scoped).toMatchObject({
       kind: "guardrail",
       pack: "rails",
-      at: ["write"],
+      at: ["commit"],
       on: ["plan/**"],
       for: ["builder"],
       disabled: null,
@@ -1348,7 +1342,7 @@ describe("the record — blocks, lead, gaps", () => {
       row("breadcrumb", { moment: "touch", id: "rails.notes.area", cause: "first-touch" }),
       toolRowFor("src/a.ts"),
       toolRowFor("src/a.ts", true),
-      row("guardrail", { moment: "write", id: "rails.everyone", out: "deny", subject: "src/a.ts" }),
+      row("guardrail", { moment: "commit", id: "rails.everyone", out: "deny", subject: "src/a.ts" }),
     ];
     const read = metrics({ sessions: [{ session: "s1", rows }], entries: bound, nowMs });
     expect(read.headline.blocks).toBe(1);
@@ -1370,26 +1364,24 @@ describe("the record — blocks, lead, gaps", () => {
     expect(LEAD_BUCKETS).toEqual(["0", "1-5", "6-19", "20+"]);
   });
 
-  it("a shell write is an edit at the call it rode on, and a shell read a touch — neither is a call", () => {
-    // A heredoc on call 2 wrote src/a.ts: the note shown on call 1 has a lead of 1, and the tree,
-    // the gap list and the tool count read the write as the Edit it stands in for.
+  it("a shell read is a touch at the call it rode on, and no call of its own", () => {
+    // A `cat` on call 2 read src/b.ts: the file is touched, and neither the tool count nor the
+    // distance a lead is measured over moves for it.
     const rows: Row[] = [
       toolRowFor("docs/x.md"),
       row("breadcrumb", { moment: "touch", id: "rails.notes.area", cause: "first-touch" }),
       row("tool", { tool: "Bash", command: "cat src/b.ts" }),
       row("read", { tool: "Bash", path: "src/b.ts" }),
-      row("write", { tool: "Bash", path: "src/a.ts", change: "modified" }),
-      row("write", { tool: "Bash", path: "docs/y.md", change: "created" }),
-      row("write", { tool: "Bash", path: "/tmp/elsewhere", change: "created" }),
+      row("read", { tool: "Bash", path: "/tmp/elsewhere" }),
       row("read", { tool: "Bash" }),
     ];
     const read = metrics({ sessions: [{ session: "s1", rows }], entries: bound, nowMs });
     const area = read.breadcrumbs.find((b) => b.id === "rails.notes.area");
-    expect(area?.lead).toMatchObject({ median: 1, noEdit: 0 });
+    expect(area?.lead).toMatchObject({ median: null, noEdit: 1 });
     expect(read.span.tools).toBe(2);
-    expect(read.heat.touches).toEqual({ "docs/x.md": 1, "src/b.ts": 1, "src/a.ts": 1, "docs/y.md": 1 });
-    expect(read.heat.edits).toEqual({ "src/a.ts": 1, "docs/y.md": 1 });
-    expect(read.gaps).toEqual([{ area: "docs", edits: 1 }]);
+    expect(read.heat.touches).toEqual({ "docs/x.md": 1, "src/b.ts": 1 });
+    expect(read.heat.edits).toEqual({});
+    expect(read.gaps).toEqual([]);
   });
 
   it("an edit no entry's globs reach is a GAP, ranked by its folder's edit count", () => {
@@ -1399,7 +1391,7 @@ describe("the record — blocks, lead, gaps", () => {
   });
 
   it("the same rule blocking the same subject twice in one chat is a REPEAT — unless a compaction sat between", () => {
-    const deny = row("guardrail", { moment: "write", id: "rails.everyone", out: "deny", subject: "a.ts" });
+    const deny = row("guardrail", { moment: "commit", id: "rails.everyone", out: "deny", subject: "a.ts" });
     const once = metrics({ sessions: [{ session: "s1", rows: [deny, deny] }], entries: bound, nowMs });
     expect(once.guardrails.find((g) => g.id === "rails.everyone")?.repeats).toBe(1);
 
@@ -1437,9 +1429,9 @@ describe("the record — the DEAD reading, which retires a rule if it is wrong",
   const nowMs = Date.parse("2026-03-01T00:00:00.000Z");
   /** Enough opportunity that silence is a verdict. One session, thirty-one days of it. */
   const ampleRows = (extra: readonly Row[]): Row[] => [
-    row("run", { moment: "write", subjects: 1, rules: [] }, "2026-01-01T00:00:00.000Z"),
+    row("run", { moment: "commit", subjects: 1, rules: [] }, "2026-01-01T00:00:00.000Z"),
     ...extra,
-    row("run", { moment: "write", subjects: 1, rules: [] }, "2026-02-05T00:00:00.000Z"),
+    row("run", { moment: "commit", subjects: 1, rules: [] }, "2026-02-05T00:00:00.000Z"),
   ];
 
   it("a scoped guardrail that stood on the rail and never once ran is DEAD", () => {
@@ -1496,8 +1488,8 @@ describe("the record — the DEAD reading, which retires a rule if it is wrong",
 
   it("an entry that used to catch things and stopped goes QUIET, with the days since", () => {
     const rows = ampleRows([
-      row("run", { moment: "write", subjects: 1, rules: [{ id: "rails.everyone", evaluated: 1, hits: 1, silenced: 0 }] }, "2026-01-02T00:00:00.000Z"),
-      row("guardrail", { moment: "write", id: "rails.everyone", out: "deny", subject: "a.ts" }, "2026-01-02T00:00:00.000Z"),
+      row("run", { moment: "commit", subjects: 1, rules: [{ id: "rails.everyone", evaluated: 1, hits: 1, silenced: 0 }] }, "2026-01-02T00:00:00.000Z"),
+      row("guardrail", { moment: "commit", id: "rails.everyone", out: "deny", subject: "a.ts" }, "2026-01-02T00:00:00.000Z"),
     ]);
     const read = metrics({ sessions: [{ session: "s1", rows }], entries: bound, nowMs });
     expect(read.headline.quiet).toEqual([{ id: "rails.everyone", lastHit: "2026-01-02T00:00:00.000Z", daysSince: 58 }]);
@@ -1519,9 +1511,9 @@ describe("the record — the DEAD reading, which retires a rule if it is wrong",
   it("ignores rows it cannot read rather than counting them as something", () => {
     const rows: Row[] = [
       row("breadcrumb", { moment: "touch", cause: "first-touch" }), // no id
-      row("guardrail", { moment: "write", out: "deny" }), // no id
+      row("guardrail", { moment: "commit", out: "deny" }), // no id
       row("breadcrumb", { moment: "touch", id: "rails.notes.area", cause: "not-a-cause" }),
-      row("run", { moment: "write", rules: [{ evaluated: 3 }, null] }),
+      row("run", { moment: "commit", rules: [{ evaluated: 3 }, null] }),
     ];
     const read = metrics({ sessions: [{ session: "s1", rows }], entries: bound, nowMs });
     expect(read.headline.blocks).toBe(0);
@@ -1590,19 +1582,19 @@ describe("the terrain — the real tree, with coverage laid over it", () => {
 describe("the moments lens", () => {
   it("arranges the universe by moment, in the order a session meets them", () => {
     const view = momentsView(bound, null);
-    expect(view.moments.map((m) => m.moment)).toEqual(MOMENT_ORDER.filter((m) => m !== "delete"));
+    expect(view.moments.map((m) => m.moment)).toEqual(MOMENT_ORDER);
     expect(view.totals).toEqual({ breadcrumbs: 4, guardrails: 10, disabled: 1 });
   });
 
   it("an entry stands in EVERY moment it fires at, carrying whatever the record says about it", () => {
     const read = metrics({
-      sessions: [{ session: "s1", rows: [row("guardrail", { moment: "write", id: "rails.everyone", out: "deny", subject: "a.ts" })] }],
+      sessions: [{ session: "s1", rows: [row("guardrail", { moment: "commit", id: "rails.everyone", out: "deny", subject: "a.ts" })] }],
       entries: bound,
       nowMs: Date.parse("2026-03-01T00:00:00.000Z"),
     });
     const view = momentsView(bound, read);
-    const writes = view.moments.find((m) => m.moment === "write");
-    const everyone = writes?.entries.find((e) => e.id === "rails.everyone") as MomentEntry;
+    const commits = view.moments.find((m) => m.moment === "commit");
+    const everyone = commits?.entries.find((e) => e.id === "rails.everyone") as MomentEntry;
     expect((everyone.record as GuardrailRecord).hits).toBe(1);
     // An entry the record has never seen still carries a record, zeroed — the reading is "bound,
     // never fired", which is a fact. `null` is reserved for a view drawn with no record at all.
@@ -1626,12 +1618,12 @@ describe("replay — a recorded session, run again with no repo and no harness",
       load: regime,
       settings: {},
       recording: recording([
-        { rail: "guard", moment: "write", file: { path: "a.ts", content: "TODO" }, wearing: [] },
+        { rail: "guard", moment: "commit", staged: ["a.ts"], wearing: [], world: { fs: { "a.ts": "TODO" }, exec: { "just test-commit": { code: 0 } } } },
         { rail: "guard", moment: "command", command: "git push --force", wearing: [] },
       ]),
     });
     const denied = result.rows.filter((r) => r.kind === "guardrail");
-    expect(denied.map((r) => r["id"])).toEqual(["rails.everyone", "rails.explodes", "rails.noForce"]);
+    expect(denied.map((r) => r["id"])).toEqual(["rails.everyone", "rails.noForce"]);
     expect(result.unanswered).toEqual([]);
   });
 
@@ -1720,9 +1712,10 @@ describe("replay — a recorded session, run again with no repo and no harness",
   it("replays who the session WAS — a scoped rule fires for the actor that wore it", async () => {
     const step = (wearing: readonly string[]): RecordedStep => ({
       rail: "guard",
-      moment: "write",
-      file: { path: "plan/a.yml", content: "TODO" },
+      moment: "commit",
+      staged: ["plan/a.yml"],
       wearing,
+      world: { fs: { "plan/a.yml": "TODO" }, exec: { "just test-commit": { code: 0 } } },
     });
     const asBuilder = await replay({ load: regime, settings: {}, recording: recording([step(["builder"])]) });
     expect(asBuilder.rows.filter((r) => r.kind === "guardrail").map((r) => r["id"])).toContain("rails.buildersOnly");
@@ -1764,7 +1757,7 @@ describe("replay — a recorded session, run again with no repo and no harness",
       load: broken,
       settings: {},
       recording: recording([
-        { rail: "guard", moment: "write", file: { path: "a.ts", content: "ok" }, wearing: [] },
+        { rail: "guard", moment: "commit", staged: ["a.ts"], wearing: [], world: { fs: { "a.ts": "ok" } } },
         { rail: "compaction" },
         { rail: "brief", moment: "session", wearing: [], tokens: 0 },
       ]),
@@ -1804,11 +1797,11 @@ describe("diffRows — the proof is an EMPTY diff", () => {
   });
 
   it("names both sides when they disagree, so a lost block reads differently from an invented one", () => {
-    const invented = [...live, row("guardrail", { moment: "write", id: "rails.everyone", out: "deny", subject: "a.ts" })];
+    const invented = [...live, row("guardrail", { moment: "commit", id: "rails.everyone", out: "deny", subject: "a.ts" })];
     expect(diffRows(invented, live)).toEqual([
-      { side: "replay", at: 1, row: "guardrail write rails.everyone deny a.ts" },
+      { side: "replay", at: 1, row: "guardrail commit rails.everyone deny a.ts" },
     ]);
-    expect(diffRows(live, invented)).toEqual([{ side: "live", at: 1, row: "guardrail write rails.everyone deny a.ts" }]);
+    expect(diffRows(live, invented)).toEqual([{ side: "live", at: 1, row: "guardrail commit rails.everyone deny a.ts" }]);
     expect(diffRows([row("breadcrumb", { moment: "touch", id: "x", cause: "drift" })], [])).toEqual([
       { side: "replay", at: 0, row: "breadcrumb touch x drift" },
     ]);
@@ -1900,7 +1893,7 @@ describe("the recording file — appended live, read back whole", () => {
   it("reads a header, then every step, and drops a line it cannot read rather than failing", () => {
     const text = [
       JSON.stringify(recordingHeader("s1")),
-      JSON.stringify({ rail: "guard", moment: "write", file: { path: "a.ts", content: "x" }, wearing: [] }),
+      JSON.stringify({ rail: "guard", moment: "commit", staged: ["a.ts"], wearing: [] }),
       "{ this is not json",
       JSON.stringify({ rail: "compaction" }),
       JSON.stringify({ rail: "brief", moment: "touch", path: "a.ts", wearing: [], tokens: 5 }),

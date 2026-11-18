@@ -1758,19 +1758,17 @@ export const astGrep = defineCheck(
 // checked nothing for four days. A rule whose block case PASSES cannot ship — which is what makes
 // cases a proof rather than a formality.
 
-/** The four dialects a case can be written in — one per kind of event fact. */
-export type CaseDialect = "command" | "write" | "commit" | "turn-end";
+/** The three dialects a case can be written in — one per kind of event fact. */
+export type CaseDialect = "command" | "commit" | "turn-end";
 
 /**
  * WHICH GUARDRAIL MOMENTS SPEAK EACH DIALECT — the one table, and everything else reads it.
  *
- * `write` covers `delete` too, because both carry a path and the delete rail hands over the file
- * that is going away, and `commit`, where a `{ path, content }` case is a commit of that one file
- * (`asCommit`). Nothing else overlaps: a command case can only ever reach a command rail.
+ * A `{ path, content }` case is a commit of that one file (`asCommit`), so it speaks the commit
+ * dialect. Nothing overlaps: a command case can only ever reach a command rail.
  */
 const SPEAKS: Readonly<Record<CaseDialect, readonly GuardrailMoment[]>> = {
   command: ["command"],
-  write: ["write", "delete", "commit"],
   commit: ["commit"],
   "turn-end": ["turn-end"],
 };
@@ -1793,8 +1791,6 @@ export interface CommitFileFacts {
   readonly unchanged?: readonly string[] | undefined;
   /** Every path the commit deletes: `ctx.deleted`. */
   readonly deleted?: readonly string[] | undefined;
-  /** The deletions an entry that fires at `delete` will judge, each with its content as the last commit has it. */
-  readonly gone?: readonly { readonly path: string; readonly content: string }[] | undefined;
   /** The message as git records it. `null` under `--all`; absent, an empty one, as in a case with none. */
   readonly message?: string | null | undefined;
 }
@@ -1805,14 +1801,6 @@ export interface CommitFileFacts {
  */
 export function commitFacts(staged: readonly string[], commit: CommitFileFacts): Partial<Ctx> {
   return { staged, added: commit.added ?? [], unchanged: commit.unchanged ?? [], deleted: commit.deleted ?? [], message: commit.message === undefined ? "" : commit.message };
-}
-
-/** The shape a case's `deleted` is written in: a list of paths, or each path with the content it had. */
-function deletedOf(deleted: Extract<Case, { staged: readonly string[] }>["deleted"]): Pick<CommitFileFacts, "deleted" | "gone"> {
-  if (deleted === undefined) return {};
-  if (Array.isArray(deleted)) return { deleted: deleted as readonly string[] };
-  const record = deleted as Readonly<Record<string, string>>;
-  return { deleted: Object.keys(record), gone: Object.entries(record).map(([path, content]) => ({ path, content })) };
 }
 
 /**
@@ -1848,10 +1836,7 @@ export function readCase(c: Case): {
   // the categories of the session acting, so a case that names none is a session wearing none.
   const actor = { actor: c.actor ?? [] };
   if ("command" in c) return { dialect: "command", facts: { command: c.command, ...actor }, world };
-  if ("path" in c) {
-    const existed = c.existed === undefined ? {} : { existed: c.existed };
-    return { dialect: "write", facts: { file: { path: c.path, content: c.content, ...existed }, ...actor }, world };
-  }
+  if ("path" in c) return readCase(asCommit(c));
   if ("staged" in c || "message" in c)
     return {
       dialect: "commit",
@@ -1859,8 +1844,8 @@ export function readCase(c: Case): {
       world,
       added: c.added,
       unchanged: c.unchanged,
+      deleted: c.deleted,
       message: c.message,
-      ...deletedOf(c.deleted),
     };
   return { dialect: "turn-end", facts: { turn: c.actions, ...actor }, world };
 }
@@ -1880,8 +1865,11 @@ export function caseMoment(c: Case): Moment {
  * evidence about the live rail, which is the whole value of cases existing.
  */
 export function cannedCtx(moment: Moment, c: Case, unanswered: Unanswered[]): Ctx {
-  const { world, facts, ...commit } = cannedParts(moment, c, unanswered);
-  return makeCtx(moment, moment === "commit" ? { ...facts, ...commitFacts(facts.staged ?? [], commit) } : facts, world);
+  const { world, facts, ...commit } = cannedParts(c, unanswered);
+  // A `{ path, content }` case is a commit of one file, and this ctx is that file's call: the file
+  // a rule with `.on(…)` is handed. `caseCtxs` is the door that fans a case out as the gate does.
+  const file = typeof c === "string" || !("path" in c) ? {} : { file: { path: c.path, content: c.content, ...(c.existed === undefined ? {} : { existed: c.existed }) } };
+  return makeCtx(moment, moment === "commit" ? { ...facts, ...file, ...commitFacts(facts.staged ?? [], commit) } : facts, world);
 }
 
 /**
@@ -1889,12 +1877,11 @@ export function cannedCtx(moment: Moment, c: Case, unanswered: Unanswered[]): Ct
  * moment a `{ path, content }` case is a commit of that one file.
  */
 function cannedParts(
-  moment: Moment,
   c: Case,
   unanswered: Unanswered[],
 ): { readonly facts: Partial<Ctx>; readonly world: World } & CommitFileFacts {
-  const { world, facts, added, unchanged, deleted, gone, message } = readCase(moment === "commit" && typeof c !== "string" && "path" in c ? asCommit(c) : c);
-  return { world: cannedWorld(world, facts.staged, unanswered), facts, added, unchanged, deleted, gone, message };
+  const { world, facts, added, unchanged, deleted, message } = readCase(c);
+  return { world: cannedWorld(world, facts.staged, unanswered), facts, added, unchanged, deleted, message };
 }
 
 /**
@@ -1905,7 +1892,7 @@ function cannedParts(
  * four answers the live gate would.
  */
 export async function caseCtxs(entry: LoadedEntry, moment: Moment, c: Case, unanswered: Unanswered[]): Promise<Ctx[]> {
-  const { world, facts, ...commit } = cannedParts(moment, c, unanswered);
+  const { world, facts, ...commit } = cannedParts(c, unanswered);
   const subjects = moment === "commit" ? await commitSubjects(entry, facts, world, commit) : [facts];
   return subjects.map((subject) => makeCtx(subject.moment ?? moment, subject, world));
 }
@@ -1956,8 +1943,8 @@ export async function stagedFiles(
  * that lists `unchanged` says which are identical to the last commit, as `--all` does, and each of
  * those has `unchanged` set.
  *
- * A case's `deleted` files are asked of an entry that fires at `delete` as well as `commit`, each as
- * a delete — the same rule the live gate follows, for the same reason.
+ * A case's `deleted` paths are no subject: a rule with `.on(…)` is asked about files the commit
+ * holds, and one without reads them from `ctx.deleted`.
  */
 async function commitSubjects(
   entry: LoadedEntry,
@@ -1969,13 +1956,7 @@ async function commitSubjects(
   const { spec } = entry;
   const every = { ...facts, ...commitFacts(staged, commit) };
   if (!spec.on) return [every];
-  const out: Partial<Ctx>[] = (await stagedFiles(spec, staged, world, commit)).map((file) => ({ ...every, file }));
-  const atDelete = ((spec.at ?? []) as readonly string[]).includes("delete");
-  for (const { path, content } of commit.gone ?? []) {
-    if (!atDelete || !inScope(spec, path)) continue;
-    out.push({ ...every, moment: "delete", file: { path, content, existed: true } });
-  }
-  return out;
+  return (await stagedFiles(spec, staged, world, commit)).map((file) => ({ ...every, file }));
 }
 
 /** How one case came out. */

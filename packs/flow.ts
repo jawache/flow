@@ -28,11 +28,12 @@
 import {
   breadcrumb,
   command,
+  commit,
   defineCheck,
   definePack,
-  deletion,
   guardrail,
   programName,
+  protectedPath,
   session,
   shellCommands,
   touch,
@@ -129,7 +130,7 @@ export interface Home {
  * flow's own orientation and self-protection, as a pack any repo binds.
  *
  * Every guarded repo wants these four: a note saying what is steering you, a nudge when you edit
- * the steering itself, a refusal when a command would delete it, and a refusal when an agent runs
+ * the steering itself, a refusal when a commit would delete it, and a refusal when an agent runs
  * `flow uninstall`, which removes the guard without deleting a file the delete refusal watches.
  *
  * @setup A `flow.config.ts` at the repo root and a folder for the packs the repo writes itself —
@@ -149,10 +150,10 @@ export const flow = definePack("flow", (repo: Home) => {
       .description("What the guard layer is and how it steers — shown at the start of every session.")
       .text(
         [
-          "This repo is guarded by flow. Guardrails are rules that refuse a change, and every change to the files here is checked against them: a change made with the Edit tool is checked before it is written, and a change made by a shell command is checked the moment it has been written. A refused write is undone, and you are told why. The staged files are checked against the guardrails again at commit. Breadcrumbs are notes about the area you are working in, and you are shown them for any file you name in a tool call or read with a command such as `cat`.",
+          "This repo is guarded by flow. A guardrail refuses a commit or a command, and a breadcrumb is text shown to you in the area you are working in. Nothing stops you writing or deleting a file in the working tree, so a file is judged when it is staged: the commit is refused, with the guardrail's message, until it passes. A command is judged before it runs, by its words. A breadcrumb is shown for a file you name in a tool call or read with a command such as `cat`.",
           "The whole guard is `flow.config.ts` — every rule that fires is reachable from that one file, whether it comes from a pack the config imports or from a pack this repo writes itself. Nothing resolves at run time and nothing defaults: what you read there is what fires. Authoring a new entry is always welcome; never loosen a guardrail to get an edit through — that is the user's call.",
           "There is no bypass token anywhere in this system. A guardrail is on or off, and turning one off is `override(pack.entry).disabled(\"why\")` in flow.config.ts — a committed change, visible in review.",
-          "If the config will not load, flow is off: no guardrail and no breadcrumb fires, and the load error comes with every call instead — at session start, with each write, delete and command, and at turn-end — so the guard is never off without you reading that it is. Writes and commands go through, so you fix the config the way you do any other work, `npm ci` for a missing package included. The commit gate refuses every commit until the config loads again, so nothing written while flow was off reaches a commit before every guardrail has checked it.",
+          "If the config will not load, flow is off: no guardrail and no breadcrumb fires, and the load error comes with every call instead — at session start, before each command, after each other tool call and at turn-end — so the guard is never off without you reading that it is. Edits and commands go through, so you fix the config the way you do any other work, `npm ci` for a missing package included. The commit gate refuses every commit until the config loads again, so nothing written while flow was off reaches a commit before every guardrail has checked it.",
         ].join("\n"),
       ),
 
@@ -180,15 +181,19 @@ export const flow = definePack("flow", (repo: Home) => {
       ),
 
     noDeleteGuardrails: guardrail()
-      .at(deletion)
-      .on("flow.config.ts", ...repo.packs, ".githooks/commit-msg")
-      .description("Stops a command from deleting the committed guard surface. No bypass — disable entries in the file instead.")
-      // Every file the entry's scope hands it is a deletion of a guard file. Task 6 binds it at commit.
-      .check((ctx) => ctx.fail(`'${ctx.file?.path ?? "a guard file"}' is part of this repo's guard`))
+      .at(commit)
+      .description("Refuses a commit that deletes the committed guard surface. No bypass — disable entries in the file instead.")
+      // A deletion is read from the commit's own list, so the staged paths are left out of the
+      // call: changing flow.config.ts or a pack is what a repo does all day, and deleting one is
+      // the attack.
+      .check((ctx) => protectedPath({ paths: ["flow.config.ts", ...repo.packs, ".githooks/commit-msg"] })({ ...ctx, staged: [] }))
       .message(
-        "That command would delete this repo's guard surface (flow.config.ts binds every rule; the packs it imports are where this repo writes its own; .githooks/commit-msg is what runs them at the gate). Deleting any of them is the same attack. There is no bypass — `override(pack.entry).disabled(\"why\")` inside flow.config.ts is the visible, committed route.",
+        "This commit deletes part of this repo's guard (flow.config.ts binds every rule; the packs it imports are where this repo writes its own; .githooks/commit-msg is what runs them at the gate). There is no bypass — `override(pack.entry).disabled(\"why\")` inside flow.config.ts is the visible, committed route.",
       )
-      .test({ block: [{ path: "flow.config.ts", content: "" }, { path: ".githooks/commit-msg", content: "" }] }),
+      .test({
+        pass: [{ staged: ["flow.config.ts"] }, { staged: [], deleted: ["src/a.ts"] }],
+        block: [{ staged: [], deleted: ["flow.config.ts"] }, { staged: ["src/a.ts"], deleted: [".githooks/commit-msg"] }],
+      }),
 
     /**
      * Without it, an agent that hit a guardrail could take the whole guard off with one command.

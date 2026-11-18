@@ -11,7 +11,7 @@
 // proved next door in flow/checks/domain.test.ts, where a failure names the branch rather than the
 // entry.
 
-import { breadcrumb, commit, command, definePack, guardrail, session, turnEnd, write } from "../index.ts";
+import { breadcrumb, commit, command, definePack, guardrail, session, turnEnd } from "../index.ts";
 import {
   astGrep,
   banCommands,
@@ -34,7 +34,7 @@ export const core = definePack("core", {
   orientation: breadcrumb().at(session).text("Every stock check is bound in this repo."),
 
   noTodo: guardrail()
-    .at(write, commit)
+    .at(commit)
     .on("src/**/*.ts")
     .check(textBan({ ban: ["\\bTODO\\b"] }))
     .message("No TODOs — open a journal entry or do it now.")
@@ -78,7 +78,7 @@ export const core = definePack("core", {
     }),
 
   everyModuleIsTested: guardrail()
-    .at(write)
+    .at(commit)
     .on("src/**/*.ts")
     .ignore("**/*.test.ts")
     .check(siblingExists({ sibling: "{path}.test.ts" }))
@@ -89,7 +89,7 @@ export const core = definePack("core", {
     }),
 
   everyExportIsTested: guardrail()
-    .at(write)
+    .at(commit)
     .on("src/**/*.ts")
     .ignore("**/*.test.ts")
     .check(symbolsInSibling({ sibling: "{dir}/{name}.test.ts" }))
@@ -100,7 +100,7 @@ export const core = definePack("core", {
     }),
 
   scriptsAreComments: guardrail()
-    .at(write, commit)
+    .at(commit)
     .on("package.json")
     .check(jsonInvariant({ assert: [{ path: "scripts", keysPrefixedWith: "//" }] }))
     .message("Commands live in the justfile — package.json scripts point at it and nothing else.")
@@ -119,7 +119,7 @@ export const core = definePack("core", {
     }),
 
   featureFoldersAreCanonical: guardrail()
-    .at(write)
+    .at(commit)
     .on("src/lib/**")
     .check(canonicalFiles({ root: "src/lib", allow: ["domain", "index"], thinking: "domain" }))
     .message("A feature folder holds domain.ts and index.ts — an invented name is somewhere to hide logic.")
@@ -199,7 +199,7 @@ export const core = definePack("core", {
     }),
 
   noBareDate: guardrail()
-    .at(write)
+    .at(commit)
     .on("src/**/*.ts")
     .check(astGrep({ rule: { pattern: "$X ?? new Date($$$)" }, language: "tsx" }))
     .message("A fallback to `new Date()` hides a missing timestamp — pass the time in.")

@@ -1,9 +1,8 @@
 
 import { followSteps, GIT_VALUE_OPTS, gitCommand, isOption, parseCommandLine, parseShellSteps, programName, resolveFrom, stepCommands, type BreadcrumbMoment, type LoadedEntry, type GuardrailMoment, type SessionFacts, type ShellCommand, type ShellStep, type TurnAction } from "../../language/domain.ts";
-import { fires, insideRepo, namedAgent, type AgentOf, type Cause, type Row } from "../../engine/domain.ts";
+import { fires, namedAgent, type AgentOf, type Cause, type Row } from "../../engine/domain.ts";
 import { posix } from "node:path";
-import { matchAny } from "../../glob.ts";
-import { ALLOW, CONFIG_FILE, PACKAGE_DIR, REFUSED_ONLY, listed, refused, relativise, repoFirst, staticPrefix, text, type AdapterEvent, type CallRecord, type Change, type Refused, type RevertScope, type Undone } from "../domain.ts";
+import { ALLOW, CONFIG_FILE, PACKAGE_DIR, refused, relativise, repoFirst, text, type AdapterEvent, type Refused } from "../domain.ts";
 import type { HookCost, HookResult, ToolAction, Registration, Spawn, SpawnMeta, Steer, TranscriptEvent, TranscriptHead, TranscriptRef } from "../harness.ts";
 
 
@@ -37,17 +36,10 @@ export interface HookPayload {
   /** SessionStart's reason: `startup` · `resume` · `clear` · `compact` — the compaction announcement. */
   readonly source?: string;
   /**
-   * The host's id for one tool call, the same on its PreToolUse and its PostToolUse. It is the key
-   * the snapshot taken before the call is filed under and looked up by after it.
-   */
-  readonly tool_use_id?: string;
-  /**
    * The permission mode the session runs under (`default` · `acceptEdits` · `plan` · `auto` · …),
    * as the host states it on every call. Recorded and reported; never a category key.
    */
   readonly permission_mode?: string;
-  /** What the tool answered, on the after-call rails. Read for the host's own changed-file list. */
-  readonly tool_response?: unknown;
   readonly [key: string]: unknown;
 }
 
@@ -56,7 +48,6 @@ export const HOOK_EVENTS = [
   "subagent-start",
   "pre-tool-use",
   "post-tool-use",
-  "post-tool-use-failure",
   "stop",
   "subagent-stop",
   "notification",
@@ -74,7 +65,6 @@ const HOST_EVENT: Record<HookEvent, string> = {
   "subagent-start": "SubagentStart",
   "pre-tool-use": "PreToolUse",
   "post-tool-use": "PostToolUse",
-  "post-tool-use-failure": "PostToolUseFailure",
   stop: "Stop",
   "subagent-stop": "SubagentStop",
   notification: "Notification",
@@ -103,7 +93,7 @@ const HOST_EVENT: Record<HookEvent, string> = {
  * the other — a single flat list could only lie about one of them.
  */
 export const DELIVERS = {
-  guard: ["write", "delete", "command", "commit", "turn-end"] as readonly GuardrailMoment[],
+  guard: ["command", "commit", "turn-end"] as readonly GuardrailMoment[],
   brief: ["session", "touch", "command", "turn-end"] as readonly BreadcrumbMoment[],
 };
 
@@ -147,105 +137,6 @@ export interface EventWorld {
   readonly heldForBrief?: boolean | undefined;
   /** The home directory, for a Bash read through `~`. Absent, such a path is simply not named. */
   readonly home?: string | undefined;
-  /**
-   * What the call changed in the tree, from the snapshot taken before it. Only the after-call
-   * rails carry it; absent, the call changed nothing flow could see.
-   */
-  readonly changes?: readonly Change[] | undefined;
-}
-
-/** One edit operation, as the Edit tool states it. */
-export interface EditOp {
-  readonly old_string?: string;
-  readonly new_string?: string;
-  readonly replace_all?: boolean;
-}
-
-/**
- * Fold one Edit into the text it would produce — the delicate half of the pre-emptive rail.
- *
- * The whole capability rests on reconstructing the would-be file EXACTLY as the Edit tool would
- * write it: get this wrong and the guard judges a file that never existed, which is worse than not
- * guarding at all. Null when the anchor is not in the base text — the caller must then stand aside
- * rather than judge a guess.
- *
- * Lifted from the old engine with its behaviour intact, including the empty-anchor case:
- * `old_string: ""` is a Write wearing an Edit's clothes, and the new text is the whole file.
- */
-export function applyEdit(
-  base: string,
-  { old_string = "", new_string = "", replace_all = false }: EditOp,
-): string | null {
-  if (old_string === "") return new_string;
-  if (replace_all) return base.split(old_string).join(new_string);
-  const at = base.indexOf(old_string);
-  if (at === -1) return null;
-  return base.slice(0, at) + new_string + base.slice(at + old_string.length);
-}
-
-/**
- * The file as it WOULD be on disk after this tool call, disk untouched — J2.2, and the whole reason
- * to guard at PreToolUse rather than after the write.
- *
- * Write carries the content outright; Edit is a diff against what is there; MultiEdit is a fold of
- * several, and one unlocatable anchor abandons the whole reconstruction rather than judging a
- * half-applied file. A tool that names no path is not a write at all.
- */
-export function wouldBeFile(
-  tool: string,
-  input: Record<string, unknown>,
-  world: EventWorld,
-): { path: string; content: string } | null {
-  const named = input["file_path"];
-  if (!named) return null;
-  const path = relativise(text(named), world.root);
-  if (tool === "Write") return { path, content: text(input["content"] ?? "") };
-  if (tool === "Edit") {
-    const next = applyEdit(world.read(path) ?? "", input);
-    return next === null ? null : { path, content: next };
-  }
-  if (tool === "MultiEdit") {
-    let content: string | null = world.read(path) ?? "";
-    for (const edit of (input["edits"] as readonly EditOp[] | undefined) ?? []) {
-      content = applyEdit(content, edit);
-      if (content === null) return null;
-    }
-    return { path, content };
-  }
-  return null;
-}
-
-/** The programs, and the git subcommands, that remove a file — and whether their LAST argument is a destination instead. */
-const REMOVERS: ReadonlyMap<string, { readonly renames: boolean }> = new Map([
-  ["rm", { renames: false }],
-  ["mv", { renames: true }],
-]);
-
-/**
- * The paths a Bash line would remove — `rm`, `git rm`, and the SOURCE side of `mv` / `git mv` —
- * read from those commands' arguments in the parse.
- *
- * Deletion has no tool of its own: it is a side effect of a shell command, so the delete moment is
- * assembled here or it does not exist at all. The parse decides what is a command, so a commit
- * message mentioning `rm`, a heredoc body that names a file, or an `echo 'rm a.ts'` is not a
- * removal, while an `rm` inside a `$( … )` or a `bash -c` string, which runs, is.
- *
- * A line that does not parse yields NOTHING, deliberately: the parse's `null` means "I cannot tell",
- * and a guard that guesses at a line it could not parse is worse than one that stands aside. The
- * command rail still sees the raw line either way.
- */
-export function deleteTargets(commands: readonly ShellCommand[] | null): string[] {
-  const out: string[] = [];
-  for (const command of commands ?? []) {
-    const git = gitCommand(command);
-    const remover = git === null ? REMOVERS.get(programName(command.program)) : git.subcommand === null ? undefined : REMOVERS.get(git.subcommand);
-    if (remover === undefined) continue;
-    const args = git === null ? command.args : git.args;
-    const dash = args.indexOf("--");
-    const named = [...(dash === -1 ? args : args.slice(0, dash)).filter((arg) => !arg.startsWith("-")), ...(dash === -1 ? [] : args.slice(dash + 1))];
-    out.push(...(remover.renames ? named.slice(0, -1) : named));
-  }
-  return out;
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -268,8 +159,7 @@ export function deleteTargets(commands: readonly ShellCommand[] | null): string[
 //
 // BEST-EFFORT AND FAILING OPEN, on purpose. A breadcrumb is guidance, not a refusal: a word that
 // cannot be settled from the line — a `$(…)`, an unknown variable — is left out rather than
-// guessed at, and a line that does not parse names nothing. What it misses the working-tree delta
-// catches later: a file changed before any read of it was seen gets its note at the change.
+// guessed at, and a line that does not parse names nothing.
 //
 // THE WALK IS THE PARSE'S (`followSteps` in language/), the same one that gives every command in
 // `ctx.commands` its `folder`, so where a `cd` leaves the shell is worked out in one place.
@@ -528,11 +418,10 @@ export function bashReads(steps: readonly ShellStep[] | null, where: BashWhere):
 /**
  * A payload → every event it carries. ZERO OR MORE, and the plural is not hedging.
  *
- * One Bash call is genuinely several moments — the command about to run, each file an `rm` in it
- * would remove, and each file it reads — and the old engine ran two evaluations off that one hook
- * for exactly this reason.
- * A signature returning one event would push the second rail back into the shell, where it could
- * not be tested as a decision.
+ * One Bash call is genuinely several moments — the command about to run, the command's own note,
+ * and each file it reads — and the old engine ran two evaluations off that one hook for exactly this
+ * reason. A signature returning one event would push the second rail back into the shell, where it
+ * could not be tested as a decision.
  *
  * An event flow was not asked for answers with an empty list, never with an invented moment.
  */
@@ -548,7 +437,9 @@ export function toEvent(hook: HookEvent, payload: HookPayload, world: EventWorld
     case "pre-tool-use": {
       // THE NOTES HELD FOR THE BRIEF ride the first call the subagent makes, first of its notes:
       // the brief is in its own transcript by now, so a note bound to a category it recognises can
-      // match. Every guard event still comes first, so a refused call leaves them held.
+      // match. Every guard event still comes first, so a refused call leaves them held. Only a shell
+      // command comes through here, so a subagent that has run none has them with the first call
+      // that names a file (`post-tool-use`).
       const events = callEvents(payload, world);
       if (world.heldForBrief !== true) return events;
       const at = events.findIndex((event) => event.rail === "brief");
@@ -556,46 +447,13 @@ export function toEvent(hook: HookEvent, payload: HookPayload, world: EventWorld
       return at === -1 ? [...events, held] : [...events.slice(0, at), held, ...events.slice(at)];
     }
 
-    case "post-tool-use":
-    case "post-tool-use-failure": {
-      // A FAILED CALL IS JUDGED LIKE ONE THAT SUCCEEDED: a command that errors half way through has
-      // still written whatever it wrote before it failed, and that write is as real as any other.
-      const changes = world.changes ?? [];
-      const judged = preJudged(payload, world.root);
-      const events: AdapterEvent[] = [];
-      // THE DELTA, as the write and delete rails. Every guard event comes before every brief event,
-      // as on a Bash call's (`callEvents`): a refusal carries no notes, and the shell stops judging notes once
-      // something has refused. A change the PreToolUse rail already judged is not judged twice — it
-      // passed there on the same content, or the call would never have run — but only AS WHAT it was
-      // judged: an Edit's file that now holds content was judged as that write, and an `rm` target
-      // that is now GONE was judged as that delete. An `rm` target the call wrote again
-      // (`rm x && cat > x`) was never judged as a write, so it is judged as one here.
-      //
-      // A write carries whether the file was there BEFORE the call. The tree it is judged against is
-      // the one from after, which holds every file the call created, so `ctx.fs` cannot say.
-      for (const change of changes) {
-        if (change.after !== null) {
-          if (!judged.writes.includes(change.path))
-            events.push({
-              rail: "guard",
-              moment: "write",
-              file: { path: change.path, content: change.after, existed: change.before !== null },
-              observed: true,
-            });
-        } else if (change.before !== null && !judged.deletes.includes(change.path))
-          events.push({ rail: "guard", moment: "delete", file: { path: change.path, content: change.before }, observed: true });
-      }
-      // TOUCH IS THE FLOOR. The path the tool named, then every path the call changed: a file whose
-      // read nothing detected still has its area note shown at the change — later than a read would
-      // have shown it, but not skipped. The engine's marks keep each note to once per session.
-      //
-      // A pathless call with no changes is SILENCE, not a pathless touch event: the engine narrows a
-      // breadcrumb by `on` only when the event names a path, so a touch carrying none would show
-      // every area note at once.
+    case "post-tool-use": {
+      // THE PATH THE TOOL NAMED, as a touch. A pathless call is SILENCE, not a pathless touch
+      // event: the engine narrows a breadcrumb by `on` only when the event names a path, so a touch
+      // carrying none would show every area note at once.
       const named = touchedPath(payload, world.root);
-      const touched = new Set([...(named === null ? [] : [named]), ...changes.map((change) => change.path)]);
-      for (const path of touched) events.push({ rail: "brief", moment: "touch", path });
-      return events;
+      const touch: AdapterEvent[] = named === null ? [] : [{ rail: "brief", moment: "touch", path: named }];
+      return world.heldForBrief === true ? [{ rail: "brief", moment: "session" }, ...touch] : touch;
     }
 
     case "stop":
@@ -625,10 +483,8 @@ export function toEvent(hook: HookEvent, payload: HookPayload, world: EventWorld
  * The events of one PreToolUse: the call about to run, as `toEvent` reads it.
  */
 function callEvents(payload: HookPayload, world: EventWorld): AdapterEvent[] {
-  const tool = text(payload.tool_name);
   const input = payload.tool_input ?? {};
-  if (!tool) return [];
-  if (tool === "Bash") {
+  if (text(payload.tool_name) === "Bash") {
     const command = text(input["command"]);
     if (!command) return [];
     // TWO RAILS OFF ONE BASH CALL, and they are different questions: the guard rail decides
@@ -640,22 +496,12 @@ function callEvents(payload: HookPayload, world: EventWorld): AdapterEvent[] {
     //
     // Every guard event comes before every brief event: a refusal carries no notes, and the
     // shell stops judging notes once something has refused, so they are not marked shown.
-    // The line is parsed once here: the command rules read it, and so do the files it removes
-    // and the files it reads. The host's `cwd` is where the shell stands, which is where each
+    // The line is parsed once here: the command rules read it, and so do the files it reads. The host's `cwd` is where the shell stands, which is where each
     // command's folder is followed from.
     const cwd = shellCwd(payload, world.root);
     const steps = parseShellSteps(command, { cwd, home: world.home });
     const commands = steps === null ? null : stepCommands(steps);
     const events: AdapterEvent[] = [{ rail: "guard", moment: "command", command, commands, start: { cwd, home: world.home } }];
-    for (const target of deleteTargets(commands)) {
-      // The file is still there at PreToolUse, so a content rule can ask what is about to be
-      // lost ("this matched X — did you move the code first?"). One that is already gone yields
-      // no event: there is nothing to judge, and an invented empty file would let a content
-      // check pass on a fiction.
-      const path = relativise(target, world.root);
-      const content = world.read(path);
-      if (content !== null) events.push({ rail: "guard", moment: "delete", file: { path, content } });
-    }
     events.push({ rail: "brief", moment: "command", command });
     // THE FILES IT READS, as touches on this same answer — so an area's note arrives with the
     // command briefing, before the output does, rather than never (a Bash payload names no
@@ -664,8 +510,7 @@ function callEvents(payload: HookPayload, world: EventWorld): AdapterEvent[] {
     for (const path of new Set([...reads, ...searched])) events.push({ rail: "brief", moment: "touch", path });
     return events;
   }
-  const file = wouldBeFile(tool, input, world);
-  return file === null ? [] : [{ rail: "guard", moment: "write", file }];
+  return [];
 }
 
 /**
@@ -829,7 +674,7 @@ function beyondRoot(path: string, root: string, marked: (dir: string) => boolean
 
 /**
  * Where an event works outside the repository, by the names the engine reads (`GuardEvent.outside`):
- * the `folder` of each command that runs outside, and the path of a file outside. A command with no
+ * the `folder` of each command that runs outside, and the path of a touched file outside. A command with no
  * folder is inside. `gitIn` answers whether a folder holds a `.git`, and `sameRepository` whether git
  * names this repository for a folder; it is asked only of a folder `gitIn` cannot clear.
  */
@@ -840,9 +685,8 @@ export function outsideOf(
   sameRepository: (folder: string) => boolean,
 ): string[] {
   const out = (folder: string): boolean => beyondRoot(folder, root, gitIn) && !sameRepository(folder);
-  if (event.rail === "guard" && event.moment === "command")
-    return knownFolders(event.commands ?? null).filter(out);
-  const path = event.rail === "guard" ? event.file?.path : event.path;
+  if (event.rail === "guard") return event.moment === "command" ? knownFolders(event.commands ?? null).filter(out) : [];
+  const path = event.path;
   if (path === undefined) return [];
   const absolute = posix.resolve(root, path);
   // The file itself may not exist yet, nor its folder: the folder is what is placed.
@@ -895,275 +739,6 @@ export function worktreeLine(root: string, worktree: string): string {
   );
 }
 
-/**
- * What the shell could see of one call — the changes, or why it could not see them.
- *
- * A FAULT IS NOT AN EMPTY DELTA, and the difference is the guard's whole doctrine: "I looked and
- * nothing changed" and "I could not look" must never be spelled the same way, or a snapshot that
- * failed would let every write through as clean.
- */
-export type Delta =
-  | {
-      readonly ok: true;
-      readonly changes: readonly Change[];
-      /** Paths that entered the snapshot during the call (`visibility`): in no change, judged by nothing. */
-      readonly entered: readonly string[];
-    }
-  | { readonly ok: false; readonly fault: string };
-
-/**
- * Is `path` one the before-snapshot could not see? `hidden` is git's list of what it ignored then,
- * from `git ls-files --others --ignored --directory`: a file by its path, a directory git ignores
- * whole by its path and a trailing `/`, so one `node_modules/` stands for every file under it.
- */
-function wasHidden(path: string, hidden: readonly string[]): boolean {
-  return hidden.some((entry) => entry === path || (entry.endsWith("/") && path.startsWith(entry)));
-}
-
-/**
- * WHAT CHANGED VIEW IS NOT WHAT CHANGED ON DISK: a call can change what the snapshot sees as well as
- * what is in it. One that edits `snapshotInclude` or `.gitignore` brings ignored files into the
- * tree after it, and can take files out of it. Read as content, the first is a creation and the
- * second a removal, and a refused creation is reverted by deleting the file — a file the call never
- * wrote, and that flow has no copy of to put back (#146).
- *
- * - **Entered.** A path the tree before did not hold and the tree after does, which the
- *   before-snapshot recorded as on disk and hidden. It leaves the changes: no rule judges it, it is
- *   in no revert, and the agent is told its name. A file that did not exist before is a creation
- *   and stays one, whatever the call did to what the snapshot sees.
- * - **Left.** A path the tree after does not hold that is still a file on disk (`onDisk` reads it,
- *   null for none). It left the snapshot rather than the disk, so it is no removal and no delete
- *   rule is called on it. Still as it was before the call, it leaves the changes. Different, it is
- *   a change to that content: the call wrote it, so the write rules judge it and a refusal puts the
- *   before back.
- *
- * `hidden` is what the snapshot BEFORE the call recorded, so the config the call may have just
- * edited decides nothing here.
- */
-export function visibility(
-  changes: readonly Change[],
-  hidden: readonly string[],
-  onDisk: (path: string) => string | null,
-): { readonly changes: readonly Change[]; readonly entered: readonly string[] } {
-  const entered = changes.filter((change) => change.before === null && wasHidden(change.path, hidden)).map((change) => change.path);
-  const out = new Set(entered);
-  const kept = changes.flatMap((change): Change[] => {
-    if (out.has(change.path)) return [];
-    if (change.after !== null) return [change];
-    const disk = onDisk(change.path);
-    if (disk === null) return [change];
-    return disk === change.before ? [] : [{ ...change, after: disk }];
-  });
-  return { changes: kept, entered };
-}
-
-/** How many entered paths the line names before it counts the rest. */
-const ENTERED_NAMED = 10;
-
-/**
- * The one line the agent is told about the files that entered the snapshot during its call: their
- * names, that this call did not judge them, and that every later change to them is judged.
- */
-export function enteredLine(paths: readonly string[]): string {
-  const named = paths.length > ENTERED_NAMED ? [...paths.slice(0, ENTERED_NAMED), `${paths.length - ENTERED_NAMED} more`] : paths;
-  const one = paths.length === 1;
-  return (
-    `flow had no earlier copy of ${listed(named)}: ${one ? "it" : "they"} entered the snapshot during this call, ` +
-    `so this call did not judge ${one ? "it" : "them"}. Later changes to ${one ? "it" : "them"} are judged.`
-  );
-}
-
-/**
- * Where git should look for the ignored paths `snapshotInclude` names: each glob's literal head,
- * so git walks `config/` for `config/*.local.json` and not the whole repo. A glob with no literal
- * head (`**` + `/.env`) has to be looked for everywhere.
- */
-export function snapshotPathspecs(include: readonly string[]): string[] {
-  const heads = include.map(staticPrefix);
-  return heads.includes("") ? ["."] : [...new Set(heads)];
-}
-
-/** Of the ignored paths git listed under those heads, the ones a `snapshotInclude` glob matches. */
-export function included(listed: readonly string[], include: readonly string[]): string[] {
-  return listed.filter((path) => path !== "" && matchAny(path, include));
-}
-
-/**
- * Of the paths a call changed, the ones the AGENT changed. The rest are git's — a checkout, a reset
- * or a fast-forward put them there, from a commit the repo already had, and the commit gate judged
- * that content when it was committed — so they leave the diff before anything reads them: no rule,
- * no write-back, no breadcrumb, no shell-write row. CONTENT, never the command line: git run by a
- * recipe is caught the same way, and the `sed` in `git switch x && sed -i … f` is still judged.
- *
- * - A file on disk after the call is git's when it is identical to its copy in HEAD after the call.
- * - A file the call removed is git's when HEAD held it BEFORE the call and does not hold it after:
- *   git removed it by moving HEAD. A file no commit holds — an untracked file, an included `.env` —
- *   is the agent's to answer for when it goes.
- *
- * `nameStatus` is the call's own diff, `git diff-tree -r -z --name-status --no-renames`, in git's
- * order. `differsAfter` and `differsBefore` are every path where HEAD's tree after the call, and
- * before it, disagree with the tree after the call. `differsAfter` is null when HEAD after the call
- * is no commit the repo had before it — none yet, or one the call made, whose content no gate is
- * known to have judged — and then nothing is git's. `differsBefore` is null where there was no HEAD
- * before; for a path gone from disk, being in it is exactly "HEAD held it before".
- */
-export function authored(nameStatus: string, differsAfter: readonly string[] | null, differsBefore: readonly string[] | null): string[] {
-  const after = differsAfter === null ? null : new Set(differsAfter);
-  const before = new Set(differsBefore ?? []);
-  const fields = nameStatus.split("\0");
-  const out: string[] = [];
-  for (let i = 0; i + 1 < fields.length; i += 2) {
-    const status = fields[i] ?? "";
-    const path = fields[i + 1] ?? "";
-    if (path === "") continue;
-    const matchesHead = after !== null && !after.has(path);
-    const gits = matchesHead && (!status.startsWith("D") || before.has(path));
-    if (!gits) out.push(path);
-  }
-  return out;
-}
-
-/** The key one call's snapshot is filed under — the host's `tool_use_id` — or null when it sent none. */
-export function callKey(payload: HookPayload): string | null {
-  const id = text(payload.tool_use_id);
-  return id === "" ? null : id;
-}
-
-/**
- * The paths the PreToolUse rail already judged for this call, repo-relative, BY RAIL.
- *
- * An Edit, a Write or a MultiEdit was judged as a write, on the file it would produce; an `rm` or
- * an `mv` source was judged as a delete, on the file it was about to remove. Both were allowed there
- * or the call would not have run, and judging them again after it would log every such decision
- * twice. The rail matters: a path judged only as a delete says nothing about content written to it
- * afterwards in the same call.
- */
-export function preJudged(payload: HookPayload, root: string): { readonly writes: string[]; readonly deletes: string[] } {
-  const tool = text(payload.tool_name);
-  const input = payload.tool_input ?? {};
-  if (tool === "Bash")
-    return { writes: [], deletes: deleteTargets(parseCommandLine(text(input["command"]))).map((target) => relativise(target, root)) };
-  if (tool === "Write" || tool === "Edit" || tool === "MultiEdit") {
-    const named = text(input["file_path"]);
-    return { writes: named === "" ? [] : [relativise(named, root)], deletes: [] };
-  }
-  return { writes: [], deletes: [] };
-}
-
-/** A call record read back off disk, or null when the file is not one. */
-export function callRecord(key: string, raw: unknown): CallRecord | null {
-  if (typeof raw !== "object" || raw === null) return null;
-  const held = raw as Record<string, unknown>;
-  if (typeof held["at"] !== "number") return null;
-  return {
-    key,
-    session: text(held["session"]),
-    agent: text(held["agent"]),
-    tool: text(held["tool"]),
-    at: held["at"],
-    ...(typeof held["done"] === "number" ? { done: held["done"] } : {}),
-  };
-}
-
-/** The same actor: one session × agent, whose writing calls the host never runs side by side. */
-function sameActor(a: CallRecord, b: CallRecord): boolean {
-  return a.session === b.session && a.agent === b.agent;
-}
-
-/**
- * A snapshot whose diff never came, and never will: the host refused the call after flow allowed
- * it (a permission prompt said no), so it never ran. Read as in flight, it would narrow every
- * refusal in the worktree for its first hour. Its actor has moved on — a later call of the same
- * session and agent has already finished — so it is not waited on. A long read that is genuinely
- * still running beside its own agent's later calls is misread by this, and costs nothing: it writes
- * nothing.
- */
-function abandoned(call: CallRecord, log: readonly CallRecord[]): boolean {
-  return call.done === undefined && log.some((other) => sameActor(other, call) && other.done !== undefined && other.at > call.at);
-}
-
-/**
- * How long a tool call can run. The host stops a shell call after ten minutes and a command started
- * in the background returns at once, so a call this long past its start with no finish is dead: its
- * session was killed before the after-call hook ran, and the hook never will.
- *
- * The hour runs from the snapshot, which is taken before the host's permission prompt, so it counts
- * the time the call waits there too. A call approved after an hour at the prompt runs as a dead one:
- * never named as overlapping. Its own snapshot is kept all the same (see `forgettable`), so its diff
- * is still taken when it finishes.
- */
-export const CALL_LIFETIME_MS = 60 * 60 * 1000;
-
-/**
- * Is the call still running at `time`: it stops at its finish, or, with none, at the end of its
- * hour, when it is dead. A SPAWN with no finish never stops: it lasts as long as its subagent works,
- * which can be hours, and its diff still comes.
- */
-function runningAt(call: CallRecord, time: number): boolean {
-  return (call.done ?? (spawns(call) ? Number.POSITIVE_INFINITY : call.at + CALL_LIFETIME_MS)) > time;
-}
-
-/**
- * The calls of OTHER actors that overlapped this one in time: started before this diff, and
- * finished after this snapshot or not finished at all. A call with no finish counts while it is
- * younger than {@link CALL_LIFETIME_MS} at this snapshot: dead by then, it ran none of this window.
- *
- * A call that finished inside this one's window counts as well as one still in flight: its write
- * landed between this snapshot and this diff just the same. Calls of the same session and agent
- * never count — the host does not run an agent's writing calls side by side.
- */
-export function overlapping(me: CallRecord, log: readonly CallRecord[]): CallRecord[] {
-  return log.filter(
-    (call) =>
-      call.key !== me.key &&
-      !sameActor(call, me) &&
-      !spawns(call) &&
-      !abandoned(call, log) &&
-      runningAt(call, me.at),
-  );
-}
-
-/**
- * The finished calls the log can forget: no call still running started before one finished, so no
- * diff still to come can overlap it. Keeping every record for a day would make every diff read a day
- * of records. A dead call pins nothing — no diff still to come counts it — but it is never forgotten
- * here: it may be waiting at a permission prompt, and its after-call hook still needs its snapshot.
- * The day's sweep of the snapshots folder takes it. A call still running is kept even when its agent
- * has moved past it: a read beside its agent's later calls still has its own after-call hook to come.
- */
-export function forgettable(log: readonly CallRecord[], now: number): string[] {
-  const live = log.filter((call) => call.done === undefined && !abandoned(call, log) && runningAt(call, now)).map((call) => call.at);
-  const oldest = live.length === 0 ? Number.POSITIVE_INFINITY : Math.min(...live);
-  return log.filter((call) => call.done !== undefined && call.done < oldest).map((call) => call.key);
-}
-
-/** Which of a call's changes are put back, and which stay as the call left them. */
-export interface Reversal {
-  readonly revert: readonly Change[];
-  readonly kept: readonly string[];
-}
-
-/**
- * THE REVERT SCOPE: the files a rule refused, or every file the call changed when the repo asked
- * for that, and never more than the refused files while another actor's call overlapped this one
- * — a diff taken then can hold that call's writes, and "all" would put back work that was not this
- * call's to lose.
- *
- * Most writing calls touch one file, and the other files a multi-file command wrote are not wrong
- * because one of them is — they are listed as kept, so the agent knows they stand. A refusal that
- * names no landed path (a fault on a pre-emptive rail) reverts nothing: a revert is only ever of a
- * change flow saw land, never a guess.
- */
-export function reversal(changes: readonly Change[], refusals: readonly Refused[], scope: RevertScope = REFUSED_ONLY): Reversal {
-  const refused = new Set(refusals.flatMap((refusal) => (refusal.observed === undefined ? [] : [refusal.observed])));
-  const whole = scope.revert === "all" && scope.overlap.length === 0 && refused.size > 0;
-  const back = (change: Change): boolean => whole || refused.has(change.path);
-  return {
-    revert: changes.filter(back),
-    kept: changes.filter((change) => !back(change)).map((change) => change.path),
-  };
-}
-
 /** A note with its prose resolved: a `file:` breadcrumb is read by the shell, never here. */
 export interface Shown {
   readonly entry: string | null;
@@ -1175,10 +750,6 @@ export interface Shown {
 export interface Answer {
   readonly refused: readonly Refused[];
   readonly shown: readonly Shown[];
-  /** What was put back, when a refusal was of changes that had already landed. */
-  readonly undone?: Undone | undefined;
-  /** Files that entered the snapshot during the call, unjudged, which the agent is told by name. */
-  readonly entered?: readonly string[] | undefined;
   /** The other worktrees the call worked in that the agent is told, now, flow does not guard. */
   readonly unguarded?: { readonly root: string; readonly worktrees: readonly string[] } | undefined;
 }
@@ -1189,7 +760,7 @@ export interface Answer {
  * The load error says what broke; this says what flow is doing about it. Without it, a call that
  * went through reads like a guard that judged it and passed.
  */
-export const FLOW_OFF = `flow is OFF until ${CONFIG_FILE} loads: every write, delete and command goes through unchecked, and every commit is refused.`;
+export const FLOW_OFF = `flow is OFF until ${CONFIG_FILE} loads: every command goes through unchecked, and every commit is refused.`;
 
 /**
  * WHAT EVERY RAIL ANSWERS WHILE THE CONFIG WILL NOT LOAD — one decision for both ways it can break.
@@ -1207,11 +778,11 @@ export const FLOW_OFF = `flow is OFF until ${CONFIG_FILE} loads: every write, de
  * later can check; the agent is told on every call that they are off.
  *
  * TOLD BEFORE THE CALL, ONCE. The load error rides the answer to a session start and to every
- * write, delete or command about to run — one notice per answer, however many events the payload
- * carried. A touch never carries it, on either rail: a Read is not told, and a Bash call is told by
- * its command, not by the files it reads. So the after-call rail, whose events are observed changes
- * and touches, stays silent: the agent was told when the call was asked for, and saying it again
- * with the result is the same sentence twice.
+ * command about to run — one notice per answer, however many events the payload carried. A touch
+ * never carries it, on either rail: a Read is not told, and a Bash call is told by its command, not
+ * by the files it reads. So the after-call rail, whose events are touches, stays silent: the agent
+ * was told when the call was asked for, and saying it again with the result is the same sentence
+ * twice.
  *
  * TURN-END IS TOLD, NOT REFUSED. Holding a turn open on a broken config prevents nothing — the
  * commit gate stays shut — while it does stop the agent handing back to the one person who can fix
@@ -1236,13 +807,11 @@ export interface Outage extends Answer {
 }
 
 /**
- * Does this event's answer carry the load error? A session start, and a write, delete or command
- * not yet run. Not a touch, not a change the after-call rail observed, and not turn-end, on either
- * rail, which is told on stderr instead.
+ * Does this event's answer carry the load error? A session start, and a command not yet run. Not a
+ * touch, and not turn-end, on either rail, which is told on stderr instead.
  */
 function carriesTheNotice(event: AdapterEvent): boolean {
-  if (event.rail === "brief") return event.moment !== "touch" && event.moment !== "turn-end";
-  return event.moment !== "turn-end" && event.observed !== true;
+  return event.moment !== "touch" && event.moment !== "turn-end";
 }
 
 export function whileBroken(events: readonly AdapterEvent[], message: string): Outage {
@@ -1282,50 +851,26 @@ export function briefBlock(shown: readonly Shown[]): string {
  * Injection stays the decision object, because there is no other channel for it — with one
  * exception. Notes beside a refusal go on stderr after it: the host reads that stderr as the
  * agent's next instruction, and its hooks reference says no JSON field on stdout can override an
- * exit 2, so stderr is the one place both are sure to arrive. Two refusals carry them. Before a
- * call, only a held turn's does: the shell judges no notes once something refused (`ridesRefusal`).
- * After a call, a refusal carries the line naming the files that entered the snapshot
- * (`enteredLine`), and the line for each other worktree the call worked in (`worktreeLine`).
+ * exit 2, so stderr is the one place both are sure to arrive. Only a held turn's refusal carries
+ * them: the shell judges no notes once something refused (`ridesRefusal`). The line for each other
+ * worktree a call worked in (`worktreeLine`) rides whichever channel the answer already uses.
  */
 export function toResult(hook: HookEvent, answer: Answer): HookResult {
-  const refusal = refused(answer.refused, answer.undone);
-  // The worktree lines come first, because they tell the agent to stop; the entered line rides
-  // after the notes. Both ride whichever channel the answer already uses.
+  const refusal = refused(answer.refused);
+  // The worktree lines come first, because they tell the agent to stop.
   const { unguarded: other } = answer;
   const unguarded = other === undefined ? [] : other.worktrees.map((worktree) => worktreeLine(other.root, worktree));
-  const entered = answer.entered === undefined || answer.entered.length === 0 ? "" : enteredLine(answer.entered);
-  const prose = [...unguarded, briefBlock(answer.shown), entered].filter((part) => part !== "").join("\n\n");
+  const prose = [...unguarded, briefBlock(answer.shown)].filter((part) => part !== "").join("\n\n");
   if (refusal !== null)
     return prose === "" ? refusal : { ...refusal, stderr: `${refusal.stderr}\n${prose}\n` };
   if (prose === "") return ALLOW;
   return { stdout: decision(hook, prose), stderr: "", exitCode: 0 };
 }
 
-/**
- * What the after-call rail says when it could not see what the call changed.
- *
- * FAIL LOUD, NEVER FAIL CLEAN. A snapshot that could not be taken, or a diff that could not be
- * read, is not an empty delta: the call is not waved through as having changed nothing, and nothing
- * is put back on a guess. Exit 2 on this rail cannot block — the call has run — so it is a report,
- * and it goes where the model reads the tool's result.
- */
-export function deltaFault(fault: string): HookResult {
-  return {
-    stdout: "",
-    stderr:
-      `\nflow — could not see what this call changed:\n\n${fault}\n\n` +
-      "The call ran, and nothing it changed was checked or put back. Check what the call changed before you go on.\n",
-    exitCode: 2,
-  };
-}
-
 /** Hand the agent some context and allow — the one shape every steering rail emits. */
 export function decision(hook: HookEvent, additionalContext: string): string {
   return JSON.stringify({ hookSpecificOutput: { hookEventName: HOST_EVENT[hook], additionalContext } });
 }
-
-/** The rails that run once a tool call has landed: their exit 2 reports, it cannot block. */
-export const AFTER_CALL: ReadonlySet<HookEvent> = new Set(["post-tool-use", "post-tool-use-failure"]);
 
 /**
  * The answer a rail gives when it could not read its payload — and which rails must be LOUD.
@@ -1336,24 +881,16 @@ export const AFTER_CALL: ReadonlySet<HookEvent> = new Set(["post-tool-use", "pos
  * holding an unreadable payload found no tool call, allowed, and told nobody. So every rail says one
  * fault line, and it keeps READ apart from PARSE: a payload that never arrived and one that arrived
  * and was not JSON are different faults. The line names the hook and the cause, never "the guard",
- * because on an after-call rail the call has already run and must not read as refused (#12).
+ * because after a call has run it must not read as refused (#12).
  *
- * The three rails that judge a tool call answer exit 2: PreToolUse, where it refuses the call it
- * could not see, and the two after-call rails, where every change the call made is judged — there
- * exit 2 blocks nothing (the call has run) and puts the line in front of the model beside the
- * result, so a call whose changes went unjudged is never passed as clean. The rest only add a
- * breadcrumb or end a turn, and say it on stderr with exit 0.
- *
- * PreToolUse and the annotating rails print the line bare; an after-call rail wraps it in
- * `deltaFault`, the one message for "flow could not see what this call changed", because the host
- * labels its exit 2 a "blocking error" and the bare line read as a refusal of a call that had
- * already landed (#12).
+ * One rail judges a tool call: PreToolUse, where an unreadable payload is a call it could not see,
+ * and it answers exit 2 and refuses the call. The rest only add a breadcrumb or end a turn, and say
+ * it on stderr with exit 0.
  */
 export function readFault(hook: HookEvent, why: "unreadable" | "unparseable", detail: string): HookResult {
   const what =
     why === "unreadable" ? `could not READ its payload from stdin (${detail})` : `could not PARSE its payload (${detail})`;
   const text = `[flow hook ${hook}] ${what}.`;
-  if (AFTER_CALL.has(hook)) return deltaFault(text);
   return hook === "pre-tool-use"
     ? { stdout: "", stderr: `\n${text}\n`, exitCode: 2 }
     : { stdout: "", stderr: `${text}\n`, exitCode: 0 };
@@ -1685,56 +1222,6 @@ export function shellReadRows(payload: HookPayload, root: string, home?: string)
   return bashReads(parseShellSteps(command, where), where).reads.map((path) => ({ kind: "read", tool: "Bash", path }));
 }
 
-/** How a path changed across one call. */
-function changeOf(change: Change): "created" | "modified" | "deleted" {
-  return change.before === null ? "created" : change.after === null ? "deleted" : "modified";
-}
-
-/**
- * The files one call changed that its own tool row does not already say, one `write` row each —
- * what a heredoc, a `sed -i`, a script or a recipe wrote, and what an Edit's call changed besides
- * the file it named.
- *
- * A SPAWN writes none of its own. The Agent call's diff holds everything its subagent wrote through
- * calls that are logged under their own rows, and counted again here every edit a builder made would
- * be in the record twice.
- */
-export function writeRows(payload: HookPayload, changes: readonly Change[], root: string): Row[] {
-  const tool = text(payload.tool_name);
-  if (isSpawn(tool)) return [];
-  const edited = editedFile(payload);
-  const named = edited === null ? null : relativise(edited, root);
-  return changes
-    .filter((change) => change.path !== named)
-    .map((change) => ({ kind: "write", tool, path: change.path, change: changeOf(change) }));
-}
-
-/**
- * Claude Code's own list of the files a command changed, where the host sent one, set against
- * flow's diff — a `mismatch` row when they disagree, and nothing when they agree or the host said
- * nothing.
- *
- * A CROSS-CHECK, NEVER AN INPUT. The host's list (`bashEditDiff`, a public beta, on by default only
- * in some permission modes) decides nothing here: it is recorded so a reader of `flow facts` can see
- * where the two views of one call differ. A host path outside the repo is not a file flow could
- * have seen, so it is left out rather than reported; and when the host says its list was cut short
- * (`moreFiles`), a file only flow saw is not a disagreement anybody can claim.
- */
-export function mismatchRow(payload: HookPayload, changes: readonly Change[], root: string): Row | null {
-  const response = payload.tool_response;
-  const diff = typeof response === "object" && response !== null ? (response as Record<string, unknown>)["bashEditDiff"] : undefined;
-  if (typeof diff !== "object" || diff === null) return null;
-  const listed = (diff as Record<string, unknown>)["changedFiles"];
-  if (!Array.isArray(listed)) return null;
-  const host = [...new Set(listed.map((path) => relativise(text(path), root)).filter(insideRepo))];
-  const seen = changes.map((change) => change.path);
-  const cut = Number((diff as Record<string, unknown>)["moreFiles"]) > 0;
-  const hostOnly = host.filter((path) => !seen.includes(path));
-  const flowOnly = cut ? [] : seen.filter((path) => !host.includes(path));
-  if (hostOnly.length === 0 && flowOnly.length === 0) return null;
-  return { kind: "mismatch", tool: text(payload.tool_name), hostOnly, flowOnly };
-}
-
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE STORE — where the harness keeps its transcripts, and what is in there
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -1870,6 +1357,9 @@ export function transcriptHead(jsonl: string): TranscriptHead {
   }
   return { cwd, branch, started };
 }
+
+/** The subagent-spawning tool, by the name this harness gives it. */
+const SPAWN_TOOL = "Agent";
 
 /**
  * Every spawn a parent transcript made, by tool_use id — the parent's half of the join.
@@ -2080,23 +1570,20 @@ interface FlowHook {
 /**
  * WHAT `flow init` WRITES, verbatim — and it follows DELIVERS, not HOOK_EVENTS.
  *
- * flow answers eight events and registers seven: `Notification` is the deliberate difference (ruled
- * at F4). flow has no notification moment, so a registration there would spawn a process on every
- * banner to answer nothing — cost with no function, and a line contradicting the honest moment list
- * this file publishes. The day a notification moment earns its way into the grammar, the
- * registration arrives with it.
+ * flow answers seven events and registers six: `Notification` is the deliberate difference. flow
+ * has no notification moment, so a registration there would spawn a process on every banner to
+ * answer nothing — cost with no function, and a line contradicting the honest moment list this file
+ * publishes. The day a notification moment earns its way into the grammar, the registration arrives
+ * with it.
  *
  * ONE PER EVENT. Two registrations on one event fire twice, and when they point at different
  * checkouts they can disagree — so a second concern extends the command it shares an event with
  * rather than standing beside it.
  *
- * The matchers are the host's, each the widest set its command can act on. PreToolUse takes `*`
- * because the flight recorder's whole claim is that the log holds every call, including the ones no
- * rule watches — they are the denominator of every coverage question — and because every call is
- * snapshotted before it runs. PostToolUse and PostToolUseFailure take `*` for the other half of
- * that: any tool can change the tree (an MCP tool, a recipe, a subagent's shell), and the after-call
- * diff is how that change reaches the write and delete rules. A failed call is registered too,
- * because a command that errors half way has still written what it wrote.
+ * The matchers are the host's. PreToolUse takes `Bash` alone: the one thing flow refuses before it
+ * happens is a shell command, so no other tool's call has anything to wait for. PostToolUse takes
+ * `*`, because any tool's call can name a file a breadcrumb is about. There is no hook before the
+ * Edit and Write tools, and none after a failed call: flow stops no write and no delete.
  *
  * DERIVED, not re-typed: the host's name for an event and the word this binary answers to are both
  * read off `HOST_EVENT`, the one place that mapping is stated. Written out by hand, this list would
@@ -2111,12 +1598,18 @@ interface FlowHook {
 const REGISTERED: readonly FlowHook[] = [
   { hook: "session-start", matcher: "startup|resume|clear|compact", unregistered: "no note is shown when a session starts" },
   { hook: "subagent-start", unregistered: "no note is shown when a subagent starts" },
-  { hook: "pre-tool-use", matcher: "*", unregistered: "no rule judges a tool call before it runs" },
-  { hook: "post-tool-use", matcher: "*", unregistered: "no rule judges what a tool call changed" },
-  { hook: "post-tool-use-failure", matcher: "*", unregistered: "no rule judges what a failed tool call changed" },
+  { hook: "pre-tool-use", matcher: "Bash", unregistered: "no rule judges a command before it runs" },
+  { hook: "post-tool-use", matcher: "*", unregistered: "no note is shown for the file a tool call names" },
   { hook: "stop", unregistered: "no turn-end rule runs when the main chat hands back" },
   { hook: "subagent-stop", unregistered: "no turn-end rule runs when a subagent hands back" },
 ];
+
+/**
+ * The hooks an older flow registered that this one does not: the host's name for each, and the word
+ * its command ends in. `flow init` removes flow's own entry on each, and `flow uninstall` too, so a
+ * registration this build no longer answers does not stay behind as a process that does nothing.
+ */
+const RETIRED: ReadonlyMap<string, string> = new Map([["PostToolUseFailure", "post-tool-use-failure"]]);
 
 /**
  * The command each registration runs: the repo's own `@jawache/flow` first, then the PATH's.
@@ -2184,7 +1677,7 @@ export function listsFlow(manifest: string | null): boolean {
  */
 export function ourHookCommand(command: string): boolean {
   const match = /(^|[\s"'/\\])(?:flow|flow\.mjs)["']?\s+hook\s+([a-z-]+)\s*$/.exec(command.trim());
-  return match?.[2] !== undefined && isHookEvent(match[2]);
+  return match?.[2] !== undefined && (isHookEvent(match[2]) || [...RETIRED.values()].includes(match[2]));
 }
 
 /** Every hook array in a settings file, by event. Loose: it is somebody's hand-edited JSON. */
@@ -2217,25 +1710,25 @@ function commandsOf(entry: unknown): string[] {
 /** The events this settings file already calls flow for. What makes init idempotent and status honest. */
 export function registeredEvents(settings: unknown): string[] {
   const out: string[] = [];
-  for (const [event, entries] of Object.entries(hookArrays(settings))) if (entries.some(isOurs)) out.push(event);
+  for (const [event, entries] of Object.entries(hookArrays(settings))) if (!RETIRED.has(event) && entries.some(isOurs)) out.push(event);
   return out;
 }
 
 /**
- * The events flow IS registered for, but with a matcher narrower than this build asks for.
- *
- * An older flow registered PostToolUse for six tools, because an after-call hook could only show a
- * breadcrumb then. Now it is where every change a tool makes is judged, so a registration on six
- * tools leaves a shell edit through any other tool unjudged — and it LOOKS registered. It is its own
- * red line for that reason, rather than disappearing inside "registered".
+ * The events an older flow registered in a way this build does not: a matcher other than the one
+ * this build asks for, such as PreToolUse on every tool where only `Bash` has anything to wait for,
+ * and a hook this build no longer registers at all (`RETIRED`). Each is its own red line, rather
+ * than disappearing inside "registered", and `flow init` rewrites or removes it.
  */
 export function staleRegistrations(settings: unknown): string[] {
   const arrays = hookArrays(settings);
-  return HOOK_REGISTRATIONS.filter((registration) =>
+  const matcherChanged = HOOK_REGISTRATIONS.filter((registration) =>
     (arrays[registration.event] ?? []).some(
       (entry) => isOurs(entry) && (entry as { matcher?: unknown }).matcher !== registration.matcher,
     ),
   ).map((registration) => registration.event);
+  const retired = [...RETIRED.keys()].filter((event) => (arrays[event] ?? []).some(isOurs));
+  return [...matcherChanged, ...retired];
 }
 
 /**
@@ -2256,18 +1749,39 @@ export function bareRegistrations(settings: unknown): string[] {
     .map(([event]) => event);
 }
 
+/** An event's entries without flow's own commands: an entry left with no hook goes. */
+function withoutOurs(entries: readonly unknown[]): unknown[] {
+  return entries.flatMap((entry) => {
+    if (!isOurs(entry)) return [entry];
+    const shared = entry as Record<string, unknown> & { hooks: unknown[] };
+    const kept = shared.hooks.filter((inner) => {
+      const command = commandOf(inner);
+      return command === null || !ourHookCommand(command);
+    });
+    return kept.length === 0 ? [] : [{ ...shared, hooks: kept }];
+  });
+}
+
 /**
  * The settings file's hooks, with flow's own entries on those events rewritten in place: a stale
- * matcher widened, and an old-shape command (`bareHook`) made today's. FLOW'S OWN ENTRIES ARE
- * FLOW'S TO REWRITE, and these are the only two rewrites flow makes. Adding a second entry beside
- * either instead would fire flow twice for every event the old one already answers.
+ * matcher made today's, an old-shape command (`bareHook`) made today's, and an event this build no
+ * longer registers (`RETIRED`) taken out. FLOW'S OWN ENTRIES ARE FLOW'S TO REWRITE, and these are
+ * the only three changes flow makes. Adding a second entry beside either instead would fire flow
+ * twice for every event the old one already answers.
  */
 function rewrittenOurs(settings: unknown, stale: ReadonlySet<string>, bare: ReadonlySet<string>): Record<string, unknown> {
   const held = (settings && typeof settings === "object" ? settings : {}) as Record<string, unknown>;
   const arrays = hookArrays(settings);
   const hooks: Record<string, unknown> = { ...(held["hooks"] as Record<string, unknown> | undefined) };
   const matcherOf = new Map(HOOK_REGISTRATIONS.map((r) => [r.event, r.matcher]));
-  for (const event of new Set([...stale, ...bare]))
+  const emptied = new Set<string>();
+  for (const event of new Set([...stale, ...bare])) {
+    if (RETIRED.has(event)) {
+      const left = withoutOurs(arrays[event] ?? []);
+      if (left.length === 0) emptied.add(event);
+      else hooks[event] = left;
+      continue;
+    }
     hooks[event] = (arrays[event] ?? []).map((entry) => {
       if (!isOurs(entry)) return entry;
       const ours = entry as Record<string, unknown> & { hooks: unknown[] };
@@ -2281,7 +1795,8 @@ function rewrittenOurs(settings: unknown, stale: ReadonlySet<string>, bare: Read
         }),
       };
     });
-  return hooks;
+  }
+  return Object.fromEntries(Object.entries(hooks).filter(([event]) => !emptied.has(event)));
 }
 
 /**
@@ -2353,15 +1868,16 @@ export function withRegistrations(settings: unknown): { settings: unknown; added
       },
     ];
   }
-  // THE REPORT, in registration order: each event added, widened or rewritten, once, with why.
+  // THE REPORT, in registration order: each event added, rewritten or removed, once, with why.
   const added: string[] = [];
-  for (const event of new Set([...HOOK_REGISTRATIONS.map((r) => r.event), ...bare])) {
+  for (const event of new Set([...HOOK_REGISTRATIONS.map((r) => r.event), ...bare, ...RETIRED.keys()])) {
     const why = [
-      ...(stale.has(event) ? ["widened to every tool"] : []),
+      ...(stale.has(event) && RETIRED.has(event) ? ["removed: flow no longer registers it"] : []),
+      ...(stale.has(event) && !RETIRED.has(event) ? ["matcher brought up to date"] : []),
       ...(bare.has(event) ? [`now runs the flow in ${PACKAGE_DIR} first`] : []),
     ];
     if (why.length > 0) added.push(`${event} (${why.join(", ")})`);
-    else if (!already.has(event)) added.push(event);
+    else if (!already.has(event) && !RETIRED.has(event)) added.push(event);
   }
   return { settings: { ...base, hooks }, added };
 }
@@ -2377,7 +1893,7 @@ export function withRegistrations(settings: unknown): { settings: unknown; added
  */
 export function withoutRegistrations(settings: unknown): { settings: unknown; removed: string[] } {
   const arrays = hookArrays(settings);
-  const removed = HOOK_REGISTRATIONS.map((r) => r.event).filter((event) => (arrays[event] ?? []).some(isOurs));
+  const removed = [...HOOK_REGISTRATIONS.map((r) => r.event), ...RETIRED.keys()].filter((event) => (arrays[event] ?? []).some(isOurs));
   if (removed.length === 0) return { settings, removed: [] };
 
   const held = settings as Record<string, unknown>;
@@ -2388,36 +1904,9 @@ export function withoutRegistrations(settings: unknown): { settings: unknown; re
       hooks[event] = value;
       continue;
     }
-    const left = (value as unknown[]).flatMap((entry) => {
-      if (!isOurs(entry)) return [entry];
-      const shared = entry as Record<string, unknown> & { hooks: unknown[] };
-      const kept = shared.hooks.filter((inner) => {
-        const command = commandOf(inner);
-        return command === null || !ourHookCommand(command);
-      });
-      return kept.length === 0 ? [] : [{ ...shared, hooks: kept }];
-    });
+    const left = withoutOurs(value as unknown[]);
     if (left.length > 0) hooks[event] = left;
   }
   const rest = Object.fromEntries(Object.entries(held).filter(([key]) => key !== "hooks"));
   return { settings: Object.keys(hooks).length === 0 ? rest : { ...held, hooks }, removed };
 }
-
-
-/**
- * Is this call's diff somebody else's work? A SPAWN — the Agent tool — writes nothing itself: the
- * subagent it started writes, through calls of its own that are in the log under their own agent.
- * Counted as a writer, one foreground builder would read as overlapping its own parent's spawn on
- * every call it made.
- */
-function spawns(call: CallRecord): boolean {
-  return isSpawn(call.tool);
-}
-
-/** The tools that start a subagent rather than doing work of their own. */
-function isSpawn(tool: string): boolean {
-  return tool === SPAWN_TOOL || tool === "Task";
-}
-
-/** The subagent-spawning tool, by the name this harness gives it. */
-const SPAWN_TOOL = "Agent";

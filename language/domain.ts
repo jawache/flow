@@ -67,8 +67,7 @@ import { matchAny } from "../glob.ts";
 // because the reasoning is still load-bearing:
 //
 //   These are the format's words, not the engine's phase names — `edit` and `turn` are internals
-//   and are as unknown here as any typo. `write` is the human word for the pre-emptive PreToolUse
-//   block, which the engine calls `edit`; `command` rides both the Bash rail and the commit gate
+//   and are as unknown here as any typo. `command` rides both the Bash rail and the commit gate
 //   the rule-tester drives it on.
 //
 //   `push` is not among them. It was accepted for a year and fired by nothing (no pre-push hook
@@ -84,10 +83,8 @@ import { matchAny } from "../glob.ts";
 // mapping, and because the load re-validates data that may have been built outside an editor.
 
 const PHASES = {
-  write: ["edit"],
   command: ["edit", "commit"],
   commit: ["commit"],
-  delete: ["delete"],
   "turn-end": ["turn"],
 } as const satisfies Record<string, readonly string[]>;
 
@@ -105,18 +102,12 @@ export const BREADCRUMB_MOMENTS = ["session", "touch", "command", "turn-end"] as
 
 // ── the words, as values ─────────────────────────────────────────────────────
 //
-// A config imports these rather than spelling them: `.at(write)` is a binding the editor
+// A config imports these rather than spelling them: `.at(command)` is a binding the editor
 // resolves, so the whole class of "moment typo loads green and fires never" is gone before the
 // grammar has to have an opinion about it.
-//
-// `deletion` is the one export whose name is not its word, and it cannot be otherwise: `delete`
-// is a reserved word and `const delete = …` is a syntax error. The MOMENT is still "delete" —
-// the value's contents, the table's key, and what a log line prints.
 
-export const write = "write" as const;
 export const command = "command" as const;
 export const commit = "commit" as const;
-export const deletion = "delete" as const;
 export const turnEnd = "turn-end" as const;
 export const session = "session" as const;
 export const touch = "touch" as const;
@@ -141,14 +132,14 @@ export function isBreadcrumbMoment(m: string): m is BreadcrumbMoment {
 /**
  * The moments whose events NAME A PATH — and therefore the only ones `.on()` / `.ignore()` narrow.
  *
- * A write and a delete carry the would-be file; the commit gate carries the staged set; a touch
- * carries the file the tool call was about. The other three carry no path at all: a command guard's
- * patterns ARE its scope, a turn-end is about what the actor did, and a session start is about the
- * session. The engine expresses the same fact at run time — `subjectsOf` consults `inScope` for
- * exactly these moments, and `brief` narrows a note only when the event names a path — and stating
- * it here is what lets a scope that would narrow NOTHING be refused rather than quietly ignored.
+ * The commit gate carries the staged set; a touch carries the file the tool call was about. The
+ * other three carry no path at all: a command guard's patterns ARE its scope, a turn-end is about
+ * what the actor did, and a session start is about the session. The engine expresses the same fact
+ * at run time — `subjectsOf` consults `inScope` for exactly these moments, and `brief` narrows a
+ * note only when the event names a path — and stating it here is what lets a scope that would
+ * narrow NOTHING be refused rather than quietly ignored.
  */
-export const PATH_MOMENTS = ["write", "delete", "commit", "touch"] as const;
+export const PATH_MOMENTS = ["commit", "touch"] as const;
 export type PathMoment = (typeof PATH_MOMENTS)[number];
 
 /** Does this moment carry a path for `on` / `ignore` to narrow? */
@@ -315,22 +306,20 @@ export type TurnAction =
 /**
  * Everything a check may know and everything it may do.
  *
- * The facts are already in memory when the check runs — a write rail sees the file as it WOULD be
- * written, disk untouched; a command rail sees the line about to run; the commit gate sees the
- * staged paths. That is what lets a repo's own check name the file at fault instead of
- * re-deriving the tree, and it makes the work scale with the change rather than with the repo.
+ * The facts are already in memory when the check runs — a command rail sees the line about to
+ * run; the commit gate sees the staged paths and the message. That is what lets a repo's own check
+ * name the file at fault instead of re-deriving the tree, and it makes the work scale with the
+ * change rather than with the repo.
  */
 export interface Ctx {
   // ── WHAT HAPPENED — the event's facts. Plain data, already in memory. ──
   readonly moment: Moment;
   /**
-   * write/touch: the would-be file.
+   * commit, for a rule with `.on(…)`: the file the call is about, as the commit holds it.
    *
-   * `existed` says whether a file was at `path` before this change, and it is set only where the
-   * tree can no longer say so. A shell command's change is judged AFTER it has landed, when
-   * `ctx.fs.exists(path)` answers yes to every file it created; at commit every staged file is on
-   * disk, and "before" is the last commit. Absent, ask `ctx.fs`: at write the tree is still the
-   * one from before the change.
+   * `existed` says whether the last commit had a file at `path`: every staged file is on disk, so
+   * `ctx.fs.exists(path)` answers yes to a file the commit adds, and "before" is the last commit.
+   * Absent, git could not say.
    *
    * `unchanged` is `true` on a file identical to the last commit's copy, which only `flow hook
    * commit --all` hands a check: it judges the whole tree, and most of it is as committed. A check
@@ -1676,7 +1665,7 @@ export function checkSettings(check: Check | undefined): unknown {
 // ── cases: a canned ctx, declared on the entry ───────────────────────────────
 //
 // The vocabulary is PER MOMENT, and it is the event fact that moment carries: a command string
-// for a command rail, a path-and-content pair for a write rail, a staged set for the commit gate,
+// for a command rail, a path-and-content pair for a commit of one file, a staged set for the commit gate,
 // a list of turn actions for turn-end. A case is a canned ctx and can be, because a check reads
 // the world only through one — which is what lets `flow test` drive a core check, a pack's check
 // and a repo's bespoke check through the same door the live hooks use.
@@ -1713,11 +1702,8 @@ interface CommitCase {
   readonly added?: readonly string[];
   /** The staged paths identical to the last commit, as under `--all`. Each sets `ctx.file.unchanged`. */
   readonly unchanged?: readonly string[];
-  /**
-   * The paths the commit deletes: it sets `ctx.deleted`. As a record, each path with its content as
-   * the last commit has it: an entry that fires at `delete` as well as `commit` is asked about each one, as a delete.
-   */
-  readonly deleted?: readonly string[] | Readonly<Record<string, string>>;
+  /** The paths the commit deletes: it sets `ctx.deleted`. */
+  readonly deleted?: readonly string[];
   /** The commit message, as git records it. A case with none has an empty one. */
   readonly message?: string;
   readonly world?: CaseWorld;
@@ -2310,20 +2296,16 @@ export interface Settings {
    * it two ways.
    */
   readonly grammars?: readonly Grammar[];
-  /**
-   * Globs for the IGNORED paths the snapshot records as well. The snapshot is git's view of the
-   * tree — tracked files, and untracked ones git does not ignore — so a shell write to an ignored
-   * file is never seen unless a glob here brings it back. `.env` is the usual one.
-   */
-  readonly snapshotInclude?: readonly string[];
-  /**
-   * What is put back when a rule refuses a write that has already landed: `"refused"` (the default)
-   * writes back only the files a rule refused, `"all"` every file that call changed. While another
-   * agent's call overlaps it, only the refused files are put back whatever this says — that call's
-   * writes can be in the same diff.
-   */
-  readonly revert?: "refused" | "all";
 }
+
+/** The keys `Settings` has: what the load accepts in the second argument of `defineConfig`. */
+export const SETTING_KEYS: readonly string[] = ["driftTokens", "grammars"];
+
+/**
+ * The settings 0.3 had and 0.4 refuses by name: both configured the snapshot, which is removed, so
+ * the refusal says what happened to them and where the migration guide says what to do.
+ */
+const REMOVED_SETTINGS: ReadonlySet<string> = new Set(["revert", "snapshotInclude"]);
 
 /**
  * One hand-built tree-sitter grammar, as `registerDynamicLanguage` wants it.
@@ -2598,6 +2580,7 @@ export const REFUSAL_CODES = [
   "unknown-entry",
   "unknown-key",
   "unknown-moment",
+  "unknown-setting",
   "missing-mandatory",
   "undeclared-category",
   "no-block-cases",
@@ -2673,6 +2656,21 @@ export function loadConfig(config: FlowConfig): LoadResult {
   const refusals: Refusal[] = [];
   const drafts: Draft[] = [];
   const seen = new Map<string, Draft>();
+
+  // ── the settings, which are a closed set like everything else ──
+  //
+  // A key the load does not know is refused, never ignored: a setting that reads as a decision and
+  // decides nothing is how a config goes on looking guarded after the thing it configured is gone.
+  for (const key of Object.keys(config.settings)) {
+    if (SETTING_KEYS.includes(key)) continue;
+    refusals.push({
+      code: "unknown-setting",
+      entry: "",
+      detail: REMOVED_SETTINGS.has(key)
+        ? `The settings in the second argument of \`defineConfig\` have \`${key}\`, which flow 0.4 does not have: it configured the snapshot, and flow keeps none. Delete the key. docs/user/migrations/0.4.0.md, section 2.10, says why.`
+        : `The settings in the second argument of \`defineConfig\` have \`${key}\`, which is not a setting. The settings are ${SETTING_KEYS.map((k) => `\`${k}\``).join(" and ")}.`,
+    });
+  }
 
   // ── the pack bindings, in the order they were spoken ──
   for (const binding of config.bindings) {

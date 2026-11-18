@@ -35,6 +35,7 @@ import {
   subagentStopPayload,
   subagentTranscripts,
   flow as runFlow,
+  git as runGit,
   hook as sendHook,
   type Ran,
 } from "./harness.ts";
@@ -64,7 +65,7 @@ interface Shipped {
 const bind = (entry: Shipped): string => `pack(${entry.pack}${entry.params === "" ? "" : `, ${entry.params}`})`;
 
 /** The one shipped pack, `rules/**` handed over as the folder this repo keeps its own packs in. */
-const FLOW: Shipped = { pack: "flow", params: '{ packs: ["rules/**"] }', cases: 34, guardrails: 2 };
+const FLOW: Shipped = { pack: "flow", params: '{ packs: ["rules/**"] }', cases: 36, guardrails: 2 };
 /** The stranger's own pack — the second binding, and the only turn-end rule in the config. */
 const HOUSE: Shipped = { pack: "house", params: "", cases: 2, guardrails: 1, from: "../rules/house.ts" };
 
@@ -344,16 +345,25 @@ describe("the machine test", () => {
   });
 
   it("refuses the delete — the guard surface named by a parameter", () => {
-    // One Bash call, two moments: the command itself, and the file the `rm` would take. `rules/`
-    // is the stranger's pack folder, handed to the flow pack as `packs`.
-    refusal("delete", hook("pre-tool-use", inThisSession("Bash", { command: "rm rules/house.ts" })), "flow.noDeleteGuardrails");
+    // A commit that deletes a file of `rules/`, the stranger's pack folder, handed to the flow pack
+    // as `packs`. The file has to be in the last commit to be deleted by this one, and one the
+    // config does not import, or the config itself would no longer load.
+    writeFileSync(join(repo, "rules", "spare.ts"), "export {};\n");
+    runGit(repo, ["add", "rules"]);
+    runGit(repo, ["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "chore: rules", "--no-verify", "--", "rules"]);
+    runGit(repo, ["rm", "-q", "rules/spare.ts"]);
+    try {
+      refusal("delete", flow(["hook", "commit"]), "flow.noDeleteGuardrails");
+    } finally {
+      runGit(repo, ["reset", "-q", "--hard", "HEAD"]);
+    }
   });
 
   // ── the two capabilities no shipped pack uses, driven live ─────────────────
   //
   // Both arrive through the SAME PreToolUse answer the command guardrails use, which is the whole
   // reason neither needed a new rail: a note rides the `additionalContext` channel, and a rule on a
-  // declared grammar is an ordinary write refusal whose parser came from a file the config named.
+  // declared grammar is an ordinary commit refusal whose parser came from a file the config named.
   it("shows a note attached to a COMMAND, on the same rail that refuses one", () => {
     const said = hook("pre-tool-use", inThisSession("Bash", { command: "npm install left-pad" }));
     expect(said.code, `the note blocked the command:\n${said.stderr}`).toBe(0);
@@ -371,12 +381,15 @@ describe("the machine test", () => {
     );
   });
 
-  it("refuses a write judged by a grammar THIS REPO declared, which nothing publishes", () => {
-    refusal(
-      "grammar",
-      hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "scripts/build.py"), content: "def run(src):\n    return eval(src)\n" })),
-      "stranger.noEvalInScripts",
-    );
+  it("refuses a commit judged by a grammar THIS REPO declared, which nothing publishes", () => {
+    mkdirSync(join(repo, "scripts"), { recursive: true });
+    writeFileSync(join(repo, "scripts", "build.py"), "def run(src):\n    return eval(src)\n");
+    runGit(repo, ["add", "scripts/build.py"]);
+    try {
+      refusal("grammar", flow(["hook", "commit"]), "stranger.noEvalInScripts");
+    } finally {
+      runGit(repo, ["rm", "-q", "--cached", "scripts/build.py"]);
+    }
   });
 
   // A FENCE THAT CANNOT MATCH MUST NOT LOAD, and this is the live half of that promise. The shape

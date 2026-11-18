@@ -204,10 +204,9 @@ export function identify(
 //   the SCOPE     `on` / `ignore`, which are about PATHS and are consulted exactly when the event
 //                 names one
 //
-// The last one deserves its own sentence. `.on()` scopes an entry to files: a write rail carries
-// one path, the commit gate carries the staged set, and a command rail carries none — a command
-// guard's patterns ARE its scope, which is why the fixture packs write `.at(command)` with no
-// `.on()` beside it. An `.on()` on a command-only entry would therefore be consulted by nothing,
+// The last one deserves its own sentence. `.on()` scopes an entry to files: the commit gate carries
+// the staged set, and a command rail carries none — a command guard's patterns ARE its scope, which
+// is why the fixture packs write `.at(command)` with no `.on()` beside it. An `.on()` on a command-only entry would therefore be consulted by nothing,
 // and matching stays silent about it — because that config never reaches here: the grammar refuses
 // it (`PATH_MOMENTS` and the `dead-scope` refusal, F6). A silent difference in matching was the old
 // engine's answer, and a fence that reads as armed and narrows nothing is the bug flow exists to
@@ -216,13 +215,11 @@ export function identify(
 /**
  * One event the guardrail rails carry. Facts only — who it happened to is `wearing`.
  *
- * commit: `added`, `unchanged`, `deleted`, `gone` and `message` are the commit's facts
+ * commit: `added`, `unchanged`, `deleted` and `message` are the commit's facts
  * (`CommitFileFacts`), the same a case lists.
  */
 export interface GuardEvent extends CommitFileFacts {
   readonly moment: GuardrailMoment;
-  /** write/delete: the would-be file, in memory, before disk. */
-  readonly file?: Ctx["file"];
   /** command: the line about to run. */
   readonly command?: string | undefined;
   /** command: the line's parse, when the caller already made it. Absent, the engine parses the line. */
@@ -234,8 +231,8 @@ export interface GuardEvent extends CommitFileFacts {
   /** Every category this session × agent wears. Empty means it wears none, not "all of them". */
   readonly wearing: readonly string[];
   /**
-   * Where this event works outside the repository (`outsideOf`), by the names it already uses: a
-   * command's `folder`, and the file's `path`. Absent, everything is inside, as in a case.
+   * Where this event works outside the repository (`outsideOf`), by the name it already uses: a
+   * command's `folder`. Absent, everything is inside, as in a case.
    */
   readonly outside?: readonly string[] | undefined;
 }
@@ -310,31 +307,11 @@ export function watching(entries: readonly Bound[]): Bound[] {
   return entries.filter((entry) => entry.disabled === null && (entry.on?.length ?? 0) > 0);
 }
 
-/**
- * Does this entry judge a staged deletion of this path at the commit gate? Only one that fires at
- * both `commit` and `delete` and names paths — see `subjectsOf` for why `commit` alone is not enough.
- */
-function judgesDeletion(entry: LoadedEntry, path: string): boolean {
-  const { spec } = entry;
-  return spec.kind === "guardrail" && !!spec.on && fires(spec, "commit") && fires(spec, "delete") && inScope(spec, path);
-}
-
-/**
- * The staged deletions some entry will judge — the ones whose content is worth reading from the
- * last commit. A commit that removes a vendored folder is thousands of deletions, and none of them
- * costs a read unless a rule is about it.
- */
-export function judgedDeletions(entries: readonly LoadedEntry[], deleted: readonly string[]): string[] {
-  return deleted.filter((path) => entries.some((entry) => judgesDeletion(entry, path)));
-}
-
 /** One thing an entry is run against: what the log row names, and the facts its ctx carries. */
 interface Subject {
   /** A path, a command, or null when the event is not about any one thing. */
   readonly name: string | null;
   readonly facts: Partial<Ctx>;
-  /** The moment the check is asked at, when it is not the event's: a staged deletion is a delete. */
-  readonly moment?: GuardrailMoment;
 }
 
 /**
@@ -349,14 +326,12 @@ interface Subject {
  * A staged path that is not there yields no subject: there is no would-be file to hand a content
  * check, and inventing an empty one would let it pass on a fiction.
  *
- * A staged DELETION is asked only of an entry that fires at `delete` as well as `commit`, and it is
- * asked as the delete it is — the same ctx the live delete rail builds, with the file as the last
- * commit has it. An entry bound at `commit` alone judges what the commit will contain, and a deleted
- * file is not in it: a content check would block the removal of the very text it bans.
+ * A staged DELETION is no subject: an entry bound at `commit` judges what the commit will contain,
+ * and a deleted file is not in it — a content check would block the removal of the very text it
+ * bans. A rule that judges deletions has no `.on(…)` and reads the list, `ctx.deleted`.
  *
- * WORK OUTSIDE THE REPOSITORY is no subject of a rule unless it is marked `.everywhere()`: a file
- * outside is not asked about, and a command line is asked about with only its commands inside, or
- * not at all when none is. A command with no folder (`null`), or a line that does not parse, counts
+ * WORK OUTSIDE THE REPOSITORY is no subject of a rule unless it is marked `.everywhere()`: a command
+ * line is asked about with only its commands inside, or not at all when none is. A command with no folder (`null`), or a line that does not parse, counts
  * as inside. `commands` is the line's one parse.
  */
 async function subjectsOf(entry: LoadedEntry, event: GuardEvent, world: World, commands: readonly ShellCommand[] | null): Promise<Subject[]> {
@@ -367,17 +342,7 @@ async function subjectsOf(entry: LoadedEntry, event: GuardEvent, world: World, c
     const every = commitFacts(staged, event);
     if (!spec.on) return [{ name: null, facts: every }];
     const files = await stagedFiles(spec, staged, world, event);
-    const out: Subject[] = files.map((file) => ({ name: file.path, facts: { ...every, file } }));
-    for (const gone of event.gone ?? []) {
-      if (!judgesDeletion(entry, gone.path)) continue;
-      out.push({ name: gone.path, facts: { ...every, file: { ...gone, existed: true } }, moment: "delete" });
-    }
-    return out;
-  }
-  if (event.moment === "write" || event.moment === "delete") {
-    const file = event.file;
-    if (!file || !inScope(spec, file.path) || outside.includes(file.path)) return [];
-    return [{ name: file.path, facts: { file } }];
+    return files.map((file) => ({ name: file.path, facts: { ...every, file } }));
   }
   if (event.moment === "command") {
     const command = event.command ?? "";
@@ -540,7 +505,7 @@ export async function guard({ load, event, world, faults = [], off = false }: Gu
     let hits = 0;
     for (const subject of await subjectsOf(entry, event, world, parsed)) {
       evaluated += 1;
-      const answer = await ask(check, makeCtx(subject.moment ?? event.moment, { ...subject.facts, actor: event.wearing }, world));
+      const answer = await ask(check, makeCtx(event.moment, { ...subject.facts, actor: event.wearing }, world));
       if (answer.ok) continue;
       hits += 1;
       effects.push({
@@ -741,13 +706,11 @@ export const LOG_VERSION = 1;
 /**
  * Every kind a log row may be. Closed — a reader that meets another word has met corruption.
  *
- * `read` and `write` are what went ROUND the tool rows: a file a shell command read by name, and a
- * file a call changed that the call did not name — a heredoc, a `sed -i`, a script. A `tool` row
- * says a call happened; these say what it did to the tree, so the coverage and lead numbers count
- * work done through the shell as well as through Edit. `mismatch` is the host's own list of the
- * files a command changed disagreeing with flow's diff: a fact to read, never an input to a rule.
+ * `read` is what went ROUND the tool rows: a file a shell command read by name. A `tool` row says a
+ * call happened; this says what it touched, so the coverage and lead numbers count work done
+ * through the shell as well as through Read.
  */
-export const ROW_KINDS = ["meta", "tool", "breadcrumb", "guardrail", "compaction", "run", "read", "write", "mismatch"] as const;
+export const ROW_KINDS = ["meta", "tool", "breadcrumb", "guardrail", "compaction", "run", "read"] as const;
 export type RowKind = (typeof ROW_KINDS)[number];
 
 export function flowDir(root: string): string {
@@ -1372,11 +1335,11 @@ export function metrics({ sessions, entries, nowMs, minSessions = 15, minDays = 
       const ts = field(row, "ts");
       if (ts !== null) stamps.push(ts);
 
-      // WHAT A CALL DID BEYOND WHAT IT NAMED. A file a shell command read is a touch, and a file a
-      // call changed without naming it is an edit, both placed at the call they rode on — they are
-      // not calls of their own, so the tool count and the lead's distance do not move for them.
+      // WHAT A CALL DID BEYOND WHAT IT NAMED. A file a shell command read is a touch, placed at the
+      // call it rode on — it is not a call of its own, so the tool count and the lead's distance do
+      // not move for it.
       const tool = row.kind === "tool";
-      if (tool || row.kind === "read" || row.kind === "write") {
+      if (tool || row.kind === "read") {
         if (tool) {
           toolIndex += 1;
           tools += 1;
@@ -1388,7 +1351,7 @@ export function metrics({ sessions, entries, nowMs, minSessions = 15, minDays = 
         // breadcrumb could have steered.
         if (path === null || !insideRepo(path)) continue;
         touches[path] = (touches[path] ?? 0) + 1;
-        if (tool ? !isEdit(row) : row.kind === "read") continue;
+        if (!tool || !isEdit(row)) continue;
         edited[path] = (edited[path] ?? 0) + 1;
         edits.push({ at: toolIndex, path });
         if (!scoped.some((e) => covers(e, path))) uncovered[path] = (uncovered[path] ?? 0) + 1;
@@ -1702,8 +1665,6 @@ function treeOrder(a: TerrainNode, b: TerrainNode): number {
 export const MOMENT_ORDER: readonly Moment[] = [
   "session",
   "touch",
-  "write",
-  "delete",
   "command",
   "commit",
   "turn-end",
@@ -1774,13 +1735,11 @@ export type RecordedStep =
   | {
       readonly rail: "guard";
       readonly moment: GuardrailMoment;
-      readonly file?: Ctx["file"];
       readonly command?: string | undefined;
       readonly staged?: readonly string[] | undefined;
       readonly added?: GuardEvent["added"];
       readonly unchanged?: GuardEvent["unchanged"];
       readonly deleted?: GuardEvent["deleted"];
-      readonly gone?: GuardEvent["gone"];
       readonly message?: GuardEvent["message"];
       readonly turn?: readonly TurnAction[] | undefined;
       readonly wearing: readonly string[];
@@ -1901,13 +1860,11 @@ export async function replay({ load, recording, settings, marks = {} }: ReplayAr
         load,
         event: {
           moment: step.moment,
-          file: step.file,
           command: step.command,
           staged: step.staged,
           added: step.added,
           unchanged: step.unchanged,
           deleted: step.deleted,
-          gone: step.gone,
           message: step.message,
           turn: step.turn,
           wearing: step.wearing,

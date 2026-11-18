@@ -11,7 +11,6 @@ import {
   defineCheck,
   defineCategory,
   execPasses,
-  write,
   commit,
   command,
   session,
@@ -46,7 +45,7 @@ export const house = definePack("house", {
     .description("Why marketing pages must render identically for everyone."),
 
   noTodo: guardrail()
-    .at(write, commit)
+    .at(commit)
     .on("src/**/*.ts")
     .ignore("**/*.test.ts")
     .check(noTodo)
@@ -62,7 +61,7 @@ export const house = definePack("house", {
 
   plan: {
     shapeIsParents: guardrail()
-      .at(write)
+      .at(commit)
       .on(".work/**/plan.yaml")
       .for(builder)
       .check(noTodo)

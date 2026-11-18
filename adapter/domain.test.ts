@@ -12,8 +12,6 @@ import { host } from "../__fixtures__/host.ts";
 import { ADD_THE_GATE_LINE, CONFIG_FILE, type Candidate, GATE_LOCAL_LINE, GATE_PATH, GATE_RUN_LINE, GIT_HOOK_ENV, HOOKS_DIR, HOOKS_UNKNOWN, type HooksFolder, type InitFacts, LOCAL_BIN, MACHINE_FLAG, NODE_FLOOR, NOT_INSTALLED, OLD_GATE_PATH, type OtherHooks, PACKAGE_BIN, PACKAGE_DIR, COMMIT_MSG, SET_HOOKS_PATH, type StatusFacts, UPDATE_THE_GATE_LINE, type UninstallFacts, armsFlow, armsOldFlow, classifyBash, cleanMessage, commentLeader, commitArgs, configImports, configLoadFault, flowLinesOf, gateWithoutFlow, guardPaths, health, hermeticEnv, readsCommitIndex, hooksDirOf, hostPath, initCode, initLines, isCorrection, joinSpawn, listed, loadsAsStrippedModule, mergeNarratives, narrative, notInstalledLines, otherHooks, pathLines, planInit, planUninstall, commitMsgOf, recipeTools, repoFirst, scaffold, selectSessions, snip, stagedChanges, status, statusCode, statusLines, strip, text, treeChanges, uncoveredAreas, uninstallCode, uninstallLines, uninstallRefusal, wantsColour, weakenedAfterBlock } from "./domain.ts";
 import { type ToolAction, type TranscriptEvent } from "./harness.ts";
 
-
-
 describe("the environment a check's command sees", () => {
   it("strips git's hook plumbing, and keeps everything else", () => {
     // The gate runs inside the commit-msg hook and inherits these; a nested `git` would then aim at
@@ -141,32 +139,24 @@ describe("the narrative reading — stats, loops, retries, and what was touched"
     expect(merged.stats.edits).toBe(2);
     expect(merged.touched).toEqual({ "a.ts": 2 });
     expect(merged.corrections).toEqual([{ line: 1, text: "no, undo it", session: "s1" }]);
-    expect(mergeNarratives([]).stats).toEqual({ edits: 0, writes: 0, shellWrites: 0, shellReads: 0, commits: 0, recipes: {}, bypasses: {} });
+    expect(mergeNarratives([]).stats).toEqual({ edits: 0, writes: 0, shellReads: 0, commits: 0, recipes: {}, bypasses: {} });
   });
 
-  it("counts shell writes from the conversation's own stream, and shell reads from its transcript", () => {
+  it("counts shell reads from the transcript, and no shell write — a transcript says what ran, never what it changed", () => {
     const cat: TranscriptEvent = { line: 1, kind: "use", ts: null, id: "t1", name: "Bash", action: "shell", input: { command: "cat src/a.ts" }, path: "", reads: ["src/a.ts"] };
     const heredoc = call("Bash", { command: "python3 - <<'EOF'\nopen('src/b.ts','w')\nEOF" }, 2);
-    const rows: Row[] = [
-      { kind: "tool", tool: "Bash", command: "python3 - <<'EOF'" },
-      { kind: "write", tool: "Bash", path: "src/b.ts", change: "modified" },
-      { kind: "write", tool: "Bash", path: "src/b.ts", change: "modified" },
-      { kind: "write", tool: "Bash", path: "/tmp/outside", change: "created" },
-      { kind: "read", tool: "Bash", path: "src/a.ts" },
-    ];
-    const read = narrative([cat, heredoc], [], rows);
-    expect(read.stats).toMatchObject({ edits: 0, writes: 0, shellWrites: 2, shellReads: 1 });
-    expect(read.shell).toEqual({ writes: { "src/b.ts": 2 }, reads: { "src/a.ts": 1 } });
-    expect(read.touched).toEqual({ "src/a.ts": 1, "src/b.ts": 2 });
-    // No stream is no shell writes — the transcript cannot say what a command changed.
-    expect(narrative([cat, heredoc]).stats.shellWrites).toBe(0);
+    const read = narrative([cat, heredoc]);
+    expect(read.stats).toMatchObject({ edits: 0, writes: 0, shellReads: 1 });
+    expect(read.stats).not.toHaveProperty("shellWrites");
+    expect(read.shell).toEqual({ reads: { "src/a.ts": 1 } });
+    expect(read.touched).toEqual({ "src/a.ts": 1 });
 
     const merged = mergeNarratives([
       { session: "s1", read },
       { session: "s2", read },
     ]);
-    expect(merged.stats).toMatchObject({ shellWrites: 4, shellReads: 2 });
-    expect(merged.shell).toEqual({ writes: { "src/b.ts": 4 }, reads: { "src/a.ts": 2 } });
+    expect(merged.stats).toMatchObject({ shellReads: 2 });
+    expect(merged.shell).toEqual({ reads: { "src/a.ts": 2 } });
   });
 });
 
@@ -671,8 +661,6 @@ const statusFacts = (over: Partial<StatusFacts> = {}): StatusFacts => ({
   machine: null,
   grammars: [],
   session: null,
-  ignored: [],
-  snapshotInclude: [],
   binary: { listed: false, copy: false, path: true },
   ...over,
 });
@@ -1308,8 +1296,8 @@ describe("the narrative — the pairing, and the pointers it produces", () => {
 
 describe("the reading — the join, the coverage answer, and the lines a person reads", () => {
   const bound: Bound[] = [
-    { kind: "guardrail", id: "core.noTodo", pack: "core", at: ["write"], on: ["src/**"], for: [], description: null, says: null, disabled: null },
-    { kind: "guardrail", id: "core.off", pack: "core", at: ["write"], on: ["docs/**"], for: [], description: null, says: null, disabled: "superseded" },
+    { kind: "guardrail", id: "core.noTodo", pack: "core", at: ["commit"], on: ["src/**"], for: [], description: null, says: null, disabled: null },
+    { kind: "guardrail", id: "core.off", pack: "core", at: ["commit"], on: ["docs/**"], for: [], description: null, says: null, disabled: "superseded" },
   ];
 
   it("joins a subagent's two host-written records, and keeps what only one of them knows", () => {

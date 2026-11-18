@@ -26,7 +26,6 @@ import {
   quoteArg,
   session,
   shellCommands,
-  write,
   type Check,
   type Ctx,
   type GitCommand,
@@ -955,7 +954,7 @@ export const git = definePack("git", (repo: Release) => {
 
   node: {
     versionIsSemver: guardrail()
-      .at(write, commit)
+      .at(commit)
       .on(versionFile)
       .description("The manifest's version is valid SemVer 2.0.0 — the number the computed release writes. See https://semver.org/")
       .check(

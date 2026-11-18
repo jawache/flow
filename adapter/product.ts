@@ -16,7 +16,7 @@
 // harness's `settingsFileFor` decides which. Where the machine-wide file is, and the override the
 // harness documents for it, are the harness's: `machineSettingsPath`.
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import {
   accessSync,
@@ -47,7 +47,6 @@ import {
   initCode,
   initLines,
   lastMode,
-  literalScopes,
   PACKAGE_BIN,
   PACKAGE_DIR,
   planUninstall,
@@ -56,7 +55,6 @@ import {
   uninstallRefusal,
   MACHINE_FLAG,
   hostPath,
-  pathLines,
   planInit,
   commitMsgOf,
   status,
@@ -190,18 +188,6 @@ function hooksFolder(root: string): HooksFolder | null {
   }
   const commitMsg = commitMsgOf(dir);
   return { dir, files, commitMsgText: readText(root, commitMsg), commitMsgExecutable: executable(resolve(root, commitMsg)) };
-}
-
-/**
- * Which of the paths the rules name outright git ignores — the edge of the snapshot, which is git's
- * view of the tree. `git check-ignore` answers by name, so a `.env` that has not been written yet is
- * caught, and a path inside an ignored directory is too. No names, not a git repo, or git unable to
- * answer, is an empty list — status has its own lines for those.
- */
-function ignoredPaths(root: string, literals: readonly string[]): string[] {
-  if (literals.length === 0) return [];
-  const named = spawnSync("git", ["-C", root, "check-ignore", "--stdin"], { encoding: "utf8", input: `${literals.join("\n")}\n` });
-  return pathLines(named.stdout);
 }
 
 /**
@@ -533,8 +519,6 @@ export async function runStatus(cwd: string, args: readonly string[], harness: H
           }))
         : [],
     session: liveSession(root, harness),
-    ignored: ignoredPaths(root, literalScopes(regime.kind === "loaded" ? regime.load : null)),
-    snapshotInclude: regime.kind === "loaded" ? (regime.config.settings.snapshotInclude ?? []) : [],
     binary: {
       listed: harness.registering.listsFlow(readText(root, "package.json")),
       copy: existsSync(join(root, PACKAGE_BIN)),

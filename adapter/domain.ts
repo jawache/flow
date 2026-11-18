@@ -108,7 +108,6 @@ export type AdapterEvent =
   | {
       readonly rail: "guard";
       readonly moment: GuardrailMoment;
-      readonly file?: Ctx["file"];
       readonly command?: string | undefined;
       /** command: the line's parse, made once here and handed to the engine with the line. */
       readonly commands?: Ctx["commands"];
@@ -116,12 +115,6 @@ export type AdapterEvent =
       readonly start?: ShellStart | undefined;
       readonly staged?: readonly string[] | undefined;
       readonly turn?: readonly TurnAction[] | undefined;
-      /**
-       * The change has already LANDED: the file came out of the delta after the call, not out of a
-       * tool's input before it. A refusal of an observed write is undone from the snapshot, and it
-       * is refused under its own banner.
-       */
-      readonly observed?: boolean | undefined;
     }
   | {
       readonly rail: "brief";
@@ -133,26 +126,6 @@ export type AdapterEvent =
 /** An absolute path inside the repo → the repo-relative spelling every glob is written against. */
 export function relativise(path: string, root: string): string {
   return root && path.startsWith(`${root}/`) ? path.slice(root.length + 1) : path;
-}
-
-// ════════════════════════════════════════════════════════════════════════════════════════════════
-// THE DELTA — what a call changed in the tree, judged the same way however it was changed
-// ════════════════════════════════════════════════════════════════════════════════════════════════
-//
-// Before every tool call the shell records the working tree; after it, the shell compares. What
-// comes back is a plain list of paths with their content either side, and everything that DECIDES
-// about it is here: which rails it becomes (toEvent), which files are put back (`reversal`), and
-// what the model is told (`toResult`). What the agent typed to make the change is never read, so a
-// heredoc, `sed -i`, a script, a recipe and an MCP tool all reach the rules by the one route.
-
-/**
- * One path a call changed. `before` is null for a file the call created, `after` for one it
- * removed; a path with both is a file it changed.
- */
-export interface Change {
-  readonly path: string;
-  readonly before: string | null;
-  readonly after: string | null;
 }
 
 /**
@@ -247,35 +220,6 @@ export function treeChanges(present: readonly string[], tree: ExecResult, differ
   };
 }
 
-// ── the call log: which calls overlapped this one ────────────────────────────────────────────────
-//
-// Within one agent the host runs one writing call at a time, so a diff there is that call's own. A
-// parent and its subagents are not ordered against each other, and a second agent's write that
-// lands between this call's snapshot and its diff shows up in this call's diff. flow cannot tell
-// whose a changed file is — git records content, not writers — so what it can do is KNOW that
-// calls overlapped, from its own log of snapshots, and narrow what a refusal undoes when they did.
-
-/**
- * One tool call as flow's own log holds it: who made it, when its snapshot was taken, and when its
- * diff was, once it has been. A record with no `done` is a call still in flight, until it is dead.
- */
-export interface CallRecord {
-  /** The host's `tool_use_id`. */
-  readonly key: string;
-  readonly session: string;
-  readonly agent: string;
-  readonly tool: string;
-  /** When the snapshot before the call was taken, in epoch milliseconds. */
-  readonly at: number;
-  /** When the diff after it was taken. Absent while the call is in flight. */
-  readonly done?: number | undefined;
-}
-
-/** How a call is named in a message: the tool, the host's id, and whose it was. */
-export function callName(call: CallRecord): string {
-  return `${call.tool || "a tool"} ${call.key} (${call.agent === "main" ? "main agent" : `agent ${call.agent}`} of session ${call.session.slice(0, 8)})`;
-}
-
 export const ALLOW: HookResult = { stdout: "", stderr: "", exitCode: 0 };
 
 /**
@@ -287,120 +231,20 @@ export const ALLOW: HookResult = { stdout: "", stderr: "", exitCode: 0 };
  * guessing at what would satisfy it.
  */
 const RAIL: Record<GuardrailMoment, { readonly head: string; readonly tail: string }> = {
-  write: { head: "flow — blocked before the write landed", tail: "Adjust the change so it passes, then retry." },
-  delete: { head: "flow — blocked before the delete", tail: "Keep the file, or change the rule that protects it." },
   command: { head: "flow — command blocked before it ran", tail: "Adjust the command, then retry." },
   commit: { head: "flow — commit blocked", tail: "Fix the above, then commit again." },
   "turn-end": { head: "flow — turn held open", tail: "Do the above, then end your turn." },
-};
-
-/**
- * The banner a refusal carries when the change had ALREADY LANDED and has been put back.
- *
- * The moment stays `write` or `delete` — a rule is written once and fires on both routes — so what
- * tells the two routes apart is whether the refusal was pre-emptive or observed, and a reader of the
- * log can see which happened from the first line alone.
- */
-const RAIL_OBSERVED: Readonly<Record<"write" | "delete", string>> = {
-  write: "flow — write reverted after it landed",
-  delete: "flow — delete reverted after it landed",
 };
 
 /** One refusal, with the rail that made it — the banner is the moment's, not the hook's. */
 export interface Refused {
   readonly moment: GuardrailMoment;
   readonly block: Block;
-  /** The path of a change that had already landed when this refused it — the one to put back. */
-  readonly observed?: string | undefined;
 }
-
-/**
- * What putting refused changes back came to — written by the shell, which did the writing.
- *
- * `failed` is the loud half: a file flow could not write back still holds what the call wrote, and
- * the message must say so rather than claim a revert that did not happen.
- */
-export interface Undone {
-  /** The changes written back to what they were before the call. */
-  readonly restored: readonly Change[];
-  /** Paths the call changed that no rule refused — left as the call wrote them. */
-  readonly kept: readonly string[];
-  readonly failed: readonly { readonly path: string; readonly why: string }[];
-  /** What the refusal was allowed to undo — what the message explains when it was not everything. */
-  readonly scope?: RevertScope | undefined;
-}
-
-/**
- * What a refusal is allowed to undo, beside the refusals themselves: the repo's `revert` setting,
- * and the other calls that overlapped this one.
- *
- * A command started in the background gets nothing here, by ruling: what it writes after its call
- * returns lands in some later call's diff and is judged and put back there like anything else.
- * The harness runs no hook when the process ends, so any mark saying "not this call's" would have
- * to outlive the process by a guess — and a guess that let `sleep 1` buy one unreverted write.
- */
-export interface RevertScope {
-  /** The config's `revert` setting: the refused files alone, or every file the call changed. */
-  readonly revert: "refused" | "all";
-  /** Other actors' calls that overlapped this one. Any of them, and `"all"` is not honoured. */
-  readonly overlap: readonly CallRecord[];
-}
-
-/** The default scope: the refused files, and no overlap. */
-export const REFUSED_ONLY: RevertScope = { revert: "refused", overlap: [] };
 
 /** `a`, `a and b`, `a, b and c` — a list of paths as a sentence reads them. */
 export function listed(paths: readonly string[]): string {
   return paths.length <= 1 ? (paths[0] ?? "") : `${paths.slice(0, -1).join(", ")} and ${paths.at(-1) ?? ""}`;
-}
-
-/**
- * What an observed refusal ends with: what was put back, what to do now, what stayed, and what a
- * revert cannot reach.
- *
- * The first line is the docs' own sentence pair (docs/user/explanation/what-the-guard-sees.md) for
- * the common case of one file changed and refused. Everything after it is conditional except the
- * last line: a revert writes file content back and nothing else, so a test run, a commit or a push
- * the same command made has already happened, and the agent is told so every time.
- */
-function observedTail(refusals: readonly Refused[], undone: Undone): string {
-  const failed = new Set(undone.failed.map((failure) => failure.path));
-  const back = undone.restored.filter((change) => !failed.has(change.path));
-  const changed = back.filter((change) => change.before !== null && change.after !== null).map((change) => change.path);
-  const created = back.filter((change) => change.before === null).map((change) => change.path);
-  const deleted = back.filter((change) => change.after === null).map((change) => change.path);
-  const said = [
-    changed.length === 0 ? "" : `${listed(changed)} ${changed.length === 1 ? "is back to its" : "are back to their"} previous content.`,
-    created.length === 0 ? "" : `${listed(created)} ${created.length === 1 ? "is" : "are"} gone again — the call created ${created.length === 1 ? "it" : "them"}.`,
-    deleted.length === 0 ? "" : `${listed(deleted)} ${deleted.length === 1 ? "is" : "are"} restored.`,
-    refusals.some((refusal) => refusal.moment === "write")
-      ? "Adjust the change so it passes and write it again — through Edit, which is judged before it lands."
-      : "Keep the file, or change the rule that protects it.",
-  ].filter((sentence) => sentence !== "");
-  const lines = [said.join(" ")];
-  for (const failure of undone.failed)
-    lines.push(`flow could not put ${failure.path} back (${failure.why}) — it still holds what the call wrote.`);
-  if (undone.kept.length > 0)
-    lines.push(`Kept as the call wrote ${undone.kept.length === 1 ? "it" : "them"}: ${undone.kept.join(", ")}.`);
-  const scope = undone.scope ?? REFUSED_ONLY;
-  if (scope.overlap.length > 0)
-    lines.push(
-      `Other tool calls overlapped this one: ${callsListed(scope.overlap)}. Their writes can show up in this call's diff, so only the refused files were put back` +
-        (scope.revert === "all" ? ` — revert: "all" is set, and is not applied while calls overlap.` : "."),
-    );
-  else if (scope.revert === "all")
-    lines.push(`revert: "all" is set, so every file this call changed was put back, not only the refused ones.`);
-  lines.push("Only file content was put back: anything else the call did has already happened.");
-  return lines.join("\n");
-}
-
-/** How many overlapping calls a message names before it counts the rest. */
-const CALLS_NAMED = 5;
-
-/** The overlapping calls, named — the first few, then how many more. */
-function callsListed(calls: readonly CallRecord[]): string {
-  const named = calls.slice(0, CALLS_NAMED).map(callName);
-  return calls.length > CALLS_NAMED ? `${named.join("; ")}; and ${calls.length - CALLS_NAMED} more` : named.join("; ");
 }
 
 /**
@@ -411,16 +255,11 @@ function callsListed(calls: readonly CallRecord[]): string {
  * naming an event that never happened. The banner comes off the MOMENT, which every rail has,
  * rather than off the event, which only the harness ones do.
  */
-export function refused(refusals: readonly Refused[], undone?: Undone): HookResult | null {
+export function refused(refusals: readonly Refused[]): HookResult | null {
   const first = refusals[0];
   if (first === undefined) return null;
   const body = refusals.map((refusal) => formatBlock(refusal.block)).join("\n\n");
-  // AN OBSERVED REFUSAL arrives on the after-call rail, where exit 2 cannot block — the change has
-  // landed — and the host shows stderr to the model beside the tool's result. So it carries its own
-  // banner and says what was put back rather than asking for a retry of something already done.
-  const landed = first.observed !== undefined && (first.moment === "write" || first.moment === "delete");
-  const head = landed ? RAIL_OBSERVED[first.moment] : RAIL[first.moment].head;
-  const tail = landed ? observedTail(refusals, undone ?? { restored: [], kept: [], failed: [] }) : RAIL[first.moment].tail;
+  const { head, tail } = RAIL[first.moment];
   return { stdout: "", stderr: `\n${head}:\n\n${body}\n\n${tail}\n`, exitCode: 2 };
 }
 
@@ -670,8 +509,6 @@ export interface Narrative {
   readonly stats: {
     readonly edits: number;
     readonly writes: number;
-    /** Files changed round the edit tools — a heredoc, a `sed -i`, a script — from flow's own diff. */
-    readonly shellWrites: number;
     /** Files a Bash command read by name. */
     readonly shellReads: number;
     readonly commits: number;
@@ -683,8 +520,8 @@ export interface Narrative {
   readonly bypassSites: readonly Bypass[];
   readonly loops: readonly EditLoop[];
   readonly retries: readonly Retry[];
-  /** The paths behind the two shell counts, with how often each. */
-  readonly shell: { readonly writes: Readonly<Record<string, number>>; readonly reads: Readonly<Record<string, number>> };
+  /** The files a shell command read by name, with how often each. */
+  readonly shell: { readonly reads: Readonly<Record<string, number>> };
   /** Every in-repo file the session touched, with how often. The facts layer scores coverage. */
   readonly touched: Readonly<Record<string, number>>;
 }
@@ -705,17 +542,15 @@ const RETRY = 3;
  * `tools` is INJECTED — the shell reads the justfile — so the same call is reproducible from a
  * fixture, which is the same discipline the guard itself is built on.
  *
- * `rows` is the conversation's own stream, when it has one, and it is where a SHELL WRITE comes
- * from: a transcript says what command ran, never what it changed, and only flow's diff knows that.
- * A conversation with no stream has no shell writes to count, which is why the count reads zero
- * there rather than a guess. Shell READS come from the transcript, like every Read does, so they are
- * counted in every conversation.
+ * Shell READS come from the transcript, like every Read does, so they are counted in every
+ * conversation. A transcript says what command ran, never what it changed, so a shell write is not
+ * counted.
  */
-export function narrative(events: readonly TranscriptEvent[], tools: readonly string[] = [], rows: readonly Row[] = []): Narrative {
+export function narrative(events: readonly TranscriptEvent[], tools: readonly string[] = []): Narrative {
   let edits = 0;
   let writes = 0;
   let shellReads = 0;
-  const shell = { writes: {} as Record<string, number>, reads: {} as Record<string, number> };
+  const shell = { reads: {} as Record<string, number> };
   let commits = 0;
   const recipes: Record<string, number> = {};
   const bypasses: Record<string, number> = {};
@@ -789,17 +624,8 @@ export function narrative(events: readonly TranscriptEvent[], tools: readonly st
   for (const [command, lines] of Object.entries(byCommand))
     if (lines.length >= RETRY) retries.push({ command, count: lines.length, lines });
 
-  let shellWrites = 0;
-  for (const row of rows) {
-    const path = typeof row["path"] === "string" ? row["path"] : "";
-    if (row.kind !== "write" || !insideRepo(path)) continue;
-    shellWrites += 1;
-    shell.writes[path] = (shell.writes[path] ?? 0) + 1;
-    touched[path] = (touched[path] ?? 0) + 1;
-  }
-
   return {
-    stats: { edits, writes, shellWrites, shellReads, commits, recipes, bypasses },
+    stats: { edits, writes, shellReads, commits, recipes, bypasses },
     prompts,
     corrections,
     bypassSites,
@@ -832,10 +658,9 @@ export function mergeNarratives(each: readonly { session: string; read: Narrativ
   };
   let edits = 0;
   let writes = 0;
-  let shellWrites = 0;
   let shellReads = 0;
   let commits = 0;
-  const shell = { writes: {} as Record<string, number>, reads: {} as Record<string, number> };
+  const shell = { reads: {} as Record<string, number> };
   const add = (into: Record<string, number>, from: Readonly<Record<string, number>>): void => {
     for (const [key, n] of Object.entries(from)) into[key] = (into[key] ?? 0) + n;
   };
@@ -848,16 +673,14 @@ export function mergeNarratives(each: readonly { session: string; read: Narrativ
     out.retries.push(...tag(read.retries, session));
     edits += read.stats.edits;
     writes += read.stats.writes;
-    shellWrites += read.stats.shellWrites;
     shellReads += read.stats.shellReads;
     commits += read.stats.commits;
     add(recipes, read.stats.recipes);
     add(bypasses, read.stats.bypasses);
     add(touched, read.touched);
-    add(shell.writes, read.shell.writes);
     add(shell.reads, read.shell.reads);
   }
-  return { stats: { edits, writes, shellWrites, shellReads, commits, recipes, bypasses }, ...out, shell, touched };
+  return { stats: { edits, writes, shellReads, commits, recipes, bypasses }, ...out, shell, touched };
 }
 
 /**
@@ -1166,32 +989,6 @@ export function modesOf(each: readonly { readonly rows: readonly Row[]; readonly
   return { calls, auto, steered, variants };
 }
 
-/** Where the harness's changed-file list and flow's diff disagreed, over the read conversations. */
-export interface Mismatches {
-  readonly calls: number;
-  /** Paths only the host listed, and how often. */
-  readonly hostOnly: Readonly<Record<string, number>>;
-  /** Paths only flow's diff held, and how often. */
-  readonly flowOnly: Readonly<Record<string, number>>;
-}
-
-/** The `mismatch` rows, added up. */
-export function mismatchesIn(rows: readonly Row[]): Mismatches {
-  const hostOnly: Record<string, number> = {};
-  const flowOnly: Record<string, number> = {};
-  let calls = 0;
-  const tally = (into: Record<string, number>, paths: unknown): void => {
-    if (Array.isArray(paths)) for (const path of paths) if (typeof path === "string") into[path] = (into[path] ?? 0) + 1;
-  };
-  for (const row of rows) {
-    if (row.kind !== "mismatch") continue;
-    calls += 1;
-    tally(hostOnly, row["hostOnly"]);
-    tally(flowOnly, row["flowOnly"]);
-  }
-  return { calls, hostOnly, flowOnly };
-}
-
 export interface Facts {
   /** What the harness is called in a sentence. */
   readonly host: string;
@@ -1220,8 +1017,6 @@ export interface Facts {
   readonly weakened: readonly Weakening[];
   /** The permission modes the read conversations ran under, and the auto-mode steer. */
   readonly modes: Modes;
-  /** Where the host's changed-file list disagreed with flow's diff. */
-  readonly mismatches: Mismatches;
   /** How many conversations were marked read, when asked for. Null when not asked. */
   readonly marked: number | null;
 }
@@ -1271,13 +1066,12 @@ export function formatFacts(facts: Facts): string[] {
 
   const { stats, corrections, loops, retries, bypassSites, shell } = facts.narrative;
   lines.push(
-    `  session   ${stats.edits} edits · ${stats.writes} writes · ${stats.shellWrites} shell writes · ` +
+    `  session   ${stats.edits} edits · ${stats.writes} writes · ` +
       `${stats.shellReads} shell reads · ${stats.commits} commits · ` +
       `${corrections.length} corrections · ${loops.length} edit loops · ${retries.length} retries · ` +
       `${bypassSites.length} bypasses`,
   );
-  // THE PATHS BEHIND THE SHELL COUNTS, so a number that went round the edit tools can be followed.
-  if (stats.shellWrites > 0) lines.push(`  shell     wrote ${pathList(shell.writes)}`);
+  // THE PATHS BEHIND THE SHELL COUNT, so a number that went round the read tools can be followed.
   if (stats.shellReads > 0) lines.push(`  shell     read ${pathList(shell.reads)}`);
   const modes = Object.entries(facts.modes.calls).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   if (modes.length > 0 || facts.modes.auto > 0) {
@@ -1290,13 +1084,6 @@ export function formatFacts(facts: Facts): string[] {
             (variants.length === 0 ? "" : ` (${variants.map(([variant, n]) => `${variant} ${n}`).join(" · ")})`)),
     );
   }
-  const { mismatches } = facts;
-  if (mismatches.calls > 0)
-    lines.push(
-      `  ⚠ ${facts.host}'s changed-file list disagreed with flow's diff on ${mismatches.calls} call${mismatches.calls === 1 ? "" : "s"}` +
-        (Object.keys(mismatches.hostOnly).length === 0 ? "" : ` — only ${facts.host} listed ${pathList(mismatches.hostOnly)}`) +
-        (Object.keys(mismatches.flowOnly).length === 0 ? "" : ` — only flow's diff held ${pathList(mismatches.flowOnly)}`),
-    );
   // The transcript's own coverage answer, which reaches conversations the record cannot.
   for (const area of facts.uncovered.slice(0, HEADLINE))
     lines.push(`  unwatched ${area.path} — touched ${area.touches}×, no entry reaches it`);
@@ -2398,13 +2185,6 @@ export interface StatusFacts {
     readonly steer?: Steer | null | undefined;
   } | null;
   /**
-   * Of the paths a write or delete rule names outright ({@link literalScopes}, which leaves out
-   * flow's own `.flow/`), the ones git ignores, whether or not the file exists yet (`.env`).
-   */
-  readonly ignored: readonly string[];
-  /** The config's `snapshotInclude` globs: the ignored paths the snapshot records anyway. */
-  readonly snapshotInclude: readonly string[];
-  /**
    * Where the flow the hooks and the gate run is, as three stats. `listed`: the repo's
    * `package.json` lists `@jawache/flow`. `copy`: its package's binary, `PACKAGE_BIN`, is there —
    * a dev dependency's, or the link `flow init` made to the flow that ran it. `path`: a `flow` on
@@ -2412,64 +2192,6 @@ export interface StatusFacts {
    * reading there is of the PATH git and the host hand their hooks. `binaryFitting` judges them.
    */
   readonly binary: { readonly listed: boolean; readonly copy: boolean; readonly path: boolean };
-}
-
-/**
- * The literal head of a glob, cut back to a whole segment: `src/gen/**` → `src/gen/`, `.env` →
- * `.env`, `**` + `/*.ts` → nothing. A glob with no wildcard is all head.
- */
-export function staticPrefix(glob: string): string {
-  const at = glob.search(/[*?{]/);
-  return at === -1 ? glob : glob.slice(0, glob.lastIndexOf("/", at) + 1);
-}
-
-/** The write and delete guardrails still live — the rules the snapshot's view decides the reach of. */
-function treeRules(entries: readonly Bound[]): Bound[] {
-  return entries.filter(
-    (entry) =>
-      entry.kind === "guardrail" && entry.disabled === null && entry.at.some((moment) => moment === "write" || moment === "delete"),
-  );
-}
-
-/** The paths one rule names OUTRIGHT: each of its globs with no wildcard, such as `.env.keys`. */
-function namedOutright(entry: Bound): string[] {
-  return (entry.on ?? []).filter((glob) => staticPrefix(glob) === glob);
-}
-
-/**
- * The paths those rules name OUTRIGHT, across every rule: the only paths status asks git about, by
- * name, so a `.env` that does not exist yet is asked about too. flow's own `.flow/` is left out: it
- * ignores itself, and the snapshot never holds it, so no `snapshotInclude` could bring it back.
- */
-export function literalScopes(load: LoadResult | null): string[] {
-  const named = treeRules(universe(load?.ok === true ? load.entries : [])).flatMap(namedOutright);
-  return [...new Set(named)].filter((path) => path !== FLOW_DIR && !path.startsWith(`${FLOW_DIR}/`));
-}
-
-/**
- * THE SNAPSHOT'S BLIND SPOTS, as red lines: a write or delete rule that names a path outright, which
- * git ignores, where `snapshotInclude` does not bring it back.
- *
- * The snapshot is git's view, so a shell write to an ignored file is never in the diff and never
- * judged, and a rule written for `.env.keys` would load green and watch nothing. So the gap is said
- * where a person looks, naming the rule and the setting.
- *
- * ONLY A PATH THE RULE NAMES EXACTLY. A glob such as `src/**` that also matches an ignored
- * `.DS_Store`, or reaches into an ignored `dist/`, gets no line: that is every broad glob in a
- * normal repo, not a rule that wants an ignored file and cannot see it.
- */
-export function snapshotGaps(entries: readonly Bound[], ignored: readonly string[], include: readonly string[]): Fitting[] {
-  return treeRules(entries).flatMap((entry) =>
-    [...new Set(namedOutright(entry))]
-      .filter((path) => ignored.includes(path) && !matchAny(path, entry.ignore ?? []) && !matchAny(path, include))
-      .map((path) => ({
-        id: "snapshot",
-        ok: false,
-        detail:
-          `${entry.id} guards ${path}, which git ignores, so a change a shell command makes there is never seen or judged. ` +
-          `List it in snapshotInclude in ${CONFIG_FILE}, or narrow the rule.`,
-      })),
-  );
 }
 
 /** The whole answer. */
@@ -2569,7 +2291,7 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
               unregistered.length === 0 ? "" : unregisteredText(facts, unregistered),
               stale.length === 0
                 ? ""
-                : `${facts.settingsPath} calls flow for ${stale.join(" · ")} on some tools only — an older flow registered ${stale.length === 1 ? "it" : "them"} that way, and a change another tool makes is not judged after it lands. Re-run \`flow init\` to widen ${stale.length === 1 ? "it" : "them"}.`,
+                : `${facts.settingsPath} calls flow for ${stale.join(" · ")} the way an older flow registered ${stale.length === 1 ? "it" : "them"}, which this flow no longer does. Re-run \`flow init\` to bring ${stale.length === 1 ? "it" : "them"} up to date.`,
               twice.bare.length === 0 || facts.machine === null
                 ? ""
                 : `${facts.machine.path} also calls flow for ${twice.bare.join(" · ")} the old way, as the bare \`flow hook <event>\`, so ${facts.harness.name} runs it beside ${facts.settingsPath}'s command and each of those hooks fires twice. Re-run \`flow init\`, which rewrites it to the same command.`,
@@ -2581,7 +2303,6 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
               .join("\n"),
     },
     binaryFitting(facts),
-    ...snapshotGaps(universe(facts.load?.ok === true ? facts.load.entries : []), facts.ignored, facts.snapshotInclude),
   ];
 }
 

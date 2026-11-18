@@ -21,7 +21,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { loadConfig, type ExecResult, type FlowConfig, type LoadResult, type Grammar, type Settings, type World } from "../language/domain.ts";
-import { fault, judgedDeletions, guard, recorder, runRows, UNNAMED_COMMIT, type AgentOf, type Block } from "../engine/domain.ts";
+import { fault, guard, recorder, runRows, UNNAMED_COMMIT, type AgentOf, type Block } from "../engine/domain.ts";
 import { quoteArg, useGrammars } from "../checks/domain.ts";
 import { appendRows, appendSteps, commitAttribution, isOff, isRecording, loadState } from "../engine/state.ts";
 import { ALLOW, CONFIG_FILE, branchFromHead, cleanMessage, commentLeader, commitArgs, configLoadFault, hermeticEnv, pathLines, readsCommitIndex, refused, stagedChanges, treeChanges, type CommitArgs, type CommitScope, type Refused, type StagedChanges } from "./domain.ts";
@@ -314,15 +314,9 @@ export async function runCommit(root: string, { scope, messageFile }: CommitArgs
   // cruise — so it is also where a recording is worth the most: replaying a refused commit is the
   // one thing you cannot do by re-running it, because the working tree has moved on since.
   const tape = isRecording(root) ? recorder(realWorld(root, process.env["GIT_INDEX_FILE"])) : null;
-  // A deleted file is no longer on disk, so what it held is read from the last commit — and only
-  // for a deletion some rule will judge.
-  const gone = judgedDeletions(load.ok ? load.entries : [], deleted).map((path) => ({
-    path,
-    content: askGit(`git show ${quoteArg(`HEAD:${path}`)}`, root).stdout,
-  }));
   const outcome = await guard({
     load,
-    event: { moment: "commit", staged: files, added, unchanged, deleted, gone, message, wearing },
+    event: { moment: "commit", staged: files, added, unchanged, deleted, message, wearing },
     world: tape?.world ?? realWorld(root, process.env["GIT_INDEX_FILE"]),
     off: false,
   });
@@ -335,13 +329,12 @@ export async function runCommit(root: string, { scope, messageFile }: CommitArgs
         ...(added === undefined ? {} : { added }),
         ...(unchanged.length === 0 ? {} : { unchanged }),
         ...(deleted.length === 0 ? {} : { deleted }),
-        ...(gone.length === 0 ? {} : { gone }),
         message,
         wearing,
         world: tape.taken(),
       },
     ]);
-  appendRows({ root, session, branch, who: who ?? UNNAMED_COMMIT }, runRows("commit", outcome, files.length + gone.length));
+  appendRows({ root, session, branch, who: who ?? UNNAMED_COMMIT }, runRows("commit", outcome, files.length));
 
   const blocks: Refused[] = outcome.effects
     .filter((effect): effect is Block => effect.do === "block")

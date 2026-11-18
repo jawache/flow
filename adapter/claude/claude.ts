@@ -18,384 +18,39 @@
 // the world a check reaches through.
 
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, readSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isatty } from "node:tty";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { type Category, refusalText, type LoadResult, type Settings, type TurnAction } from "../../language/domain.ts";
-import { afterCompaction, brief, FLOW_DIR, sanitise, categoriesIn, guard, recorder, runRows, type AgentOf, type Identity, type Marks, type Notice, type Outcome, type RecordedStep, type Row, type SessionState } from "../../engine/domain.ts";
-import { appendRows, appendSteps, ensureFlowDir, isOff, isRecording, loadState, saveState, stickyIdentity, writeMarker } from "../../engine/state.ts";
-import { ALLOW, hermeticEnv, nulPaths, type AdapterEvent, type CallRecord, type Change, type Refused, type RevertScope } from "../domain.ts";
-import { AFTER_CALL, agentOf, agentSettingOf, authored, awaitsBrief, callKey, callRecord, deltaFault, forgettable, holdsForBrief, included, isHookEvent, mismatchRow, nothingBound, outsideOf, overlapping, ownTranscriptPath, reachesAnotherWorktree, readFault, reversal, ridesRefusal, sessionFactsFrom, shellReadRows, snapshotPathspecs, toEvent, toResult, tokensFromTranscript, toolRow, turnActions, type Answer, type Delta, type EventWorld, type HookEvent, type HookPayload, type Shown, untoldWorktrees, visibility, whileBroken, workedPaths, worktreeFolders, writeRows } from "./domain.ts";
+import { afterCompaction, brief, categoriesIn, guard, recorder, runRows, type AgentOf, type Identity, type Marks, type Notice, type Outcome, type RecordedStep, type Row, type SessionState } from "../../engine/domain.ts";
+import { appendRows, appendSteps, isOff, isRecording, loadState, saveState, stickyIdentity, writeMarker } from "../../engine/state.ts";
+import { ALLOW, hermeticEnv, type AdapterEvent, type Refused } from "../domain.ts";
+import { agentOf, agentSettingOf, awaitsBrief, holdsForBrief, isHookEvent, nothingBound, outsideOf, ownTranscriptPath, reachesAnotherWorktree, readFault, ridesRefusal, sessionFactsFrom, shellReadRows, toEvent, toResult, tokensFromTranscript, toolRow, turnActions, type Answer, type EventWorld, type HookEvent, type HookPayload, type Shown, untoldWorktrees, whileBroken, workedPaths, worktreeFolders } from "./domain.ts";
 import type { Harness, HookResult } from "../harness.ts";
 import { DELIVERS, HOOK_COSTS, HOOK_EVENTS, HOOK_REGISTRATIONS, HOST_SURFACE, REPO_SETTINGS, bareRegistrations, listsFlow, machineDiffers, parseEvents, registeredEvents, settingsFileFor, spawnMeta, spawnsIn, staleRegistrations, steerOf, transcriptHead, withMachineCommandsUpToDate, withRegistrations, withoutRegistrations } from "./domain.ts";
 import { configRoot, readStore, readTranscript } from "./store.ts";
-import { currentBranch, inRepo, loadRegime, readText, realWorld } from "../shell.ts";
+import { currentBranch, loadRegime, readText, realWorld } from "../shell.ts";
 
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// THE SNAPSHOT — the tree before a call, the tree after it, and the way back
+// GIT — one command, run directly
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-//
-// Before every tool call the working tree is recorded as a git tree; after it, recorded again, and
-// the two compared. The judgement is next door (`toEvent` over the changes, `reversal`, `toResult`);
-// this is the git work and nothing else.
-//
-// NEVER THE USER'S INDEX. Each snapshot is built in a throwaway index file under `.flow/snapshots/`
-// (`GIT_INDEX_FILE`), seeded with a COPY of the real index so git's stat cache spares it re-hashing
-// every file, and the real index and staging area are never written. The objects go into the repo's
-// own object store — the same place `git stash` puts them, reachable from nothing, and swept by git's
-// own gc — rather than a second object directory flow would then have to prune. `.flow/` ignores
-// itself, so nothing kept here is ever in the diff.
-//
-// THE SNAPSHOT IS GIT'S VIEW: tracked files, and untracked ones git does not ignore (`git add -A`),
-// plus the ignored paths `snapshotInclude` names (`git add -f`). No exclude setting exists, because
-// gitignore already is one.
 
-/** How much content one diff may carry. Generous: a revert must not fail on a large file. */
-const MAX_DELTA = 256 * 1024 * 1024;
+/** How much output one git command may carry. */
+const MAX_OUTPUT = 256 * 1024 * 1024;
 
 /** One git command, run DIRECTLY — no shell, so no login profile on a path that runs every call. */
-function runGit(
-  root: string,
-  args: readonly string[],
-  opts: { readonly index?: string; readonly input?: string } = {},
-): { readonly ok: boolean; readonly stdout: Buffer; readonly stderr: string } {
+function runGit(root: string, args: readonly string[]): { readonly ok: boolean; readonly stdout: Buffer; readonly stderr: string } {
   const result = spawnSync("git", args, {
     cwd: root,
-    maxBuffer: MAX_DELTA,
-    ...(opts.input === undefined ? {} : { input: opts.input }),
-    // Git's hook variables are stripped first (see GIT_HOOK_ENV) and the throwaway index is set
-    // after, so a snapshot taken inside a commit hook still never aims at the commit's own index.
-    env: { ...hermeticEnv(process.env), ...(opts.index === undefined ? {} : { GIT_INDEX_FILE: opts.index }) },
+    maxBuffer: MAX_OUTPUT,
+    // Git's hook variables are stripped (see GIT_HOOK_ENV), so a call made inside a commit hook
+    // never aims at the commit's own index.
+    env: hermeticEnv(process.env),
   });
   if (result.error) return { ok: false, stdout: Buffer.alloc(0), stderr: result.error.message };
   return { ok: result.status === 0, stdout: result.stdout, stderr: result.stderr.toString("utf8").trim() };
-}
-
-/** This checkout's git directory — a linked worktree keeps a FILE at `.git` naming it. */
-function gitDir(root: string): string | null {
-  try {
-    const dotgit = join(root, ".git");
-    return statSync(dotgit).isDirectory()
-      ? dotgit
-      : resolve(root, /gitdir:\s*(.+)/.exec(readFileSync(dotgit, "utf8"))?.[1]?.trim() ?? "");
-  } catch {
-    return null;
-  }
-}
-
-/** HEAD's commit, or null when there is none to read — a repo with no commit yet. */
-function headCommit(root: string): string | null {
-  const head = runGit(root, ["rev-parse", "--verify", "--quiet", "HEAD"]);
-  return head.ok ? head.stdout.toString("utf8").trim() : null;
-}
-
-/**
- * The commits the refs point at — every ref and every worktree's HEAD for `--all`, the
- * remote-tracking branches for `--remotes`. None when git cannot say.
- */
-function tips(root: string, refs: "--all" | "--remotes"): string[] {
-  const listed = runGit(root, ["rev-list", refs, "--no-walk"]);
-  return listed.ok ? listed.stdout.toString("utf8").split("\n").filter((line) => line !== "") : [];
-}
-
-/**
- * HEAD after the call when it is a commit the repo already had: one that `known`, the tips recorded
- * before the call, reaches, or that a remote-tracking branch reaches after it. A switch, a checkout,
- * a reset, a fast-forward or a pull lands on such a commit. null when there is no HEAD, or when the
- * call made it — a commit, a rebase, a merge that is not a fast-forward — since a commit the call
- * made holds the call's own edits, and no gate it might have skipped (`--no-verify`, a removed
- * hook) can be taken on trust.
- */
-function existingHead(root: string, known: readonly string[]): string | null {
-  const head = headCommit(root);
-  if (head === null || known.includes(head)) return head;
-  const reach = [...known, ...tips(root, "--remotes")];
-  const beyond = runGit(root, ["rev-list", "-n1", "--stdin"], { input: `${[head, ...reach.map((tip) => `^${tip}`)].join("\n")}\n` });
-  return beyond.ok && beyond.stdout.toString("utf8").trim() === "" ? head : null;
-}
-
-/** Where one call's snapshot lives: what it recorded, and the throwaway index it was built in. */
-function snapshotFiles(root: string, key: string): { readonly meta: string; readonly index: string; readonly after: string } {
-  const base = join(root, FLOW_DIR, "snapshots", sanitise(key));
-  return { meta: `${base}.json`, index: `${base}.index`, after: `${base}.after.index` };
-}
-
-/**
- * A file in the snapshots folder this old is left over, whatever it is. The call log forgets only a
- * finished call (`forgettable`), so this is what takes a call that never finished: dead, with its
- * session killed, or a spawn whose session died. A dead call is kept this long, not an hour, because
- * it may still be waiting at a permission prompt, and its after-call hook then needs its snapshot.
- * It is the backstop too for what no readable record accounts for.
- */
-const STALE_SNAPSHOT_MS = 24 * 60 * 60 * 1000;
-
-/**
- * The tree as it stands, written into `index` and returned as a tree id — or why it could not be.
- *
- * `seed` is the index to start from: the real one before a call, the before-snapshot's own after it,
- * so only what changed in between is hashed.
- */
-function writeTree(root: string, index: string, seed: string | null, include: readonly string[]): { tree: string } | { fault: string } {
-  try {
-    if (seed !== null && existsSync(seed)) copyFileSync(seed, index);
-  } catch (error) {
-    return { fault: `could not copy git's index (${(error as Error).message})` };
-  }
-  const added = runGit(root, ["add", "-A"], { index });
-  if (!added.ok) return { fault: `git add -A failed: ${added.stderr}` };
-  if (include.length > 0) {
-    const listed = runGit(
-      root,
-      ["--literal-pathspecs", "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--", ...snapshotPathspecs(include)],
-      { index },
-    );
-    if (!listed.ok) return { fault: `git could not list the ignored paths snapshotInclude names: ${listed.stderr}` };
-    const wanted = included(listed.stdout.toString("utf8").split("\0"), include);
-    if (wanted.length > 0) {
-      const forced = runGit(root, ["--literal-pathspecs", "add", "-f", "--pathspec-from-file=-", "--pathspec-file-nul"], {
-        index,
-        input: `${wanted.join("\0")}\0`,
-      });
-      if (!forced.ok) return { fault: `git could not record the snapshotInclude paths: ${forced.stderr}` };
-    }
-  }
-  const tree = runGit(root, ["write-tree"], { index });
-  if (!tree.ok) return { fault: `git write-tree failed: ${tree.stderr}` };
-  return { tree: tree.stdout.toString("utf8").trim() };
-}
-
-/**
- * WHAT THE SNAPSHOT COULD NOT SEE: every path on disk that git ignored and `index` does not hold,
- * names only. It is what tells a file that entered the snapshot during a call from one the call
- * created (`visibility`), and it is taken before the call, so the config the call may edit decides
- * nothing. `--directory` names a directory git ignores whole once, `node_modules/`, so git never
- * walks it and the list stays short.
- */
-function hiddenPaths(root: string, index: string): { hidden: string[] } | { fault: string } {
-  const listed = runGit(root, ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"], { index });
-  if (!listed.ok) return { fault: `git could not list the ignored paths the snapshot leaves out: ${listed.stderr}` };
-  return { hidden: nulPaths(listed.stdout.toString("utf8")) };
-}
-
-/**
- * The tree and what it left out, or the first fault. The after-call rail needs both to tell a file
- * the call created from one that was already on disk and hidden (#146), so a tree with no list is a
- * snapshot that failed.
- */
-function treeAndHidden(
-  root: string,
-  index: string,
-  seed: string,
-  include: readonly string[],
-): { tree: string; hidden: string[] } | { fault: string } {
-  const written = writeTree(root, index, seed, include);
-  if ("fault" in written) return written;
-  const hidden = hiddenPaths(root, index);
-  if ("fault" in hidden) return hidden;
-  return { tree: written.tree, hidden: hidden.hidden };
-}
-
-/**
- * RECORD THE TREE BEFORE A CALL, filed under the host's `tool_use_id`.
- *
- * A snapshot that cannot be taken is RECORDED as a fault rather than skipped, so the after-call rail
- * reports it instead of finding nothing and calling the call clean. `who` is kept beside the tree so
- * a snapshot with no after is readable as a call still in flight, per session and agent.
- */
-export function takeSnapshot(
-  root: string,
-  key: string,
-  include: readonly string[],
-  who: { readonly session: string; readonly agent: string; readonly tool: string },
-): void {
-  const files = snapshotFiles(root, key);
-  try {
-    ensureFlowDir(root);
-    mkdirSync(dirname(files.meta), { recursive: true });
-    sweepSnapshots(dirname(files.meta));
-  } catch {
-    // The write below reports what went wrong, if anything did; a sweep that failed costs nothing.
-  }
-  const dir = gitDir(root);
-  const taken = dir === null ? { fault: `${root} is not a git checkout, so there is no tree to snapshot` } : treeAndHidden(root, files.index, join(dir, "index"), include);
-  // HEAD before the call, beside the tree: a file the call removed is git's only if HEAD held it.
-  // And every tip the repo has, so the after-call rail can tell a commit it lands on from one it made.
-  const head = "tree" in taken ? headCommit(root) : null;
-  const known = "tree" in taken ? tips(root, "--all") : [];
-  try {
-    writeFileSync(files.meta, JSON.stringify({ ...who, at: Date.now(), ...taken, ...(head === null ? {} : { head }), known }));
-  } catch {
-    // Nothing can be recorded, so the after-call rail finds no snapshot and says so — the loud way.
-  }
-}
-
-/** Files a day old the call log never forgot: a call that never finished, a half-written record. */
-function sweepSnapshots(dir: string): void {
-  const now = Date.now();
-  for (const name of readdirSync(dir)) {
-    const path = join(dir, name);
-    if (now - statSync(path).mtimeMs > STALE_SNAPSHOT_MS) rmSync(path, { force: true });
-  }
-}
-
-/** The content of each `<tree>:<path>` asked for, or null where the tree has no such blob. */
-function blobs(root: string, specs: readonly string[]): (string | null)[] | null {
-  if (specs.length === 0) return [];
-  const read = runGit(root, ["cat-file", "--batch"], { input: `${specs.join("\n")}\n` });
-  if (!read.ok) return null;
-  const out: (string | null)[] = [];
-  let at = 0;
-  for (let i = 0; i < specs.length; i++) {
-    const eol = read.stdout.indexOf(10, at);
-    if (eol === -1) return null;
-    const header = read.stdout.subarray(at, eol).toString("utf8");
-    at = eol + 1;
-    if (header.endsWith(" missing")) {
-      out.push(null);
-      continue;
-    }
-    const [, type, size] = header.split(" ");
-    const length = Number(size);
-    out.push(type === "blob" ? read.stdout.subarray(at, at + length).toString("utf8") : null);
-    at += length + 1;
-  }
-  return out;
-}
-
-/**
- * WHAT THE CALL CHANGED: the tree now against the tree its snapshot recorded, path by path, with
- * the content either side, less each path git put there (see `authored`), and less each path whose
- * VIEW changed rather than its content (see `visibility`): one that left the snapshot still on disk
- * as it was, and one that entered it, which comes back in `entered` instead. The before-snapshot is
- * kept — a revert reads from it — until `forget`.
- */
-export function observeDelta(root: string, key: string, include: readonly string[]): Delta & { readonly before?: string } {
-  const files = snapshotFiles(root, key);
-  let meta: { tree?: unknown; head?: unknown; known?: unknown; hidden?: unknown; fault?: unknown };
-  try {
-    meta = JSON.parse(readFileSync(files.meta, "utf8")) as { tree?: unknown; head?: unknown; known?: unknown; hidden?: unknown; fault?: unknown };
-  } catch {
-    return { ok: false, fault: `No snapshot was taken before this call (tool_use_id ${key}), so there is nothing to compare the tree against.` };
-  }
-  if (typeof meta.fault === "string") return { ok: false, fault: `The snapshot before this call could not be taken: ${meta.fault}.` };
-  // The tree, and what the snapshot could not see beside it. A record without both cannot tell a
-  // file the call created from one that entered the snapshot, so it is unreadable, like any other.
-  if (typeof meta.tree !== "string" || !Array.isArray(meta.hidden))
-    return { ok: false, fault: `The snapshot before this call (tool_use_id ${key}) is unreadable.` };
-  const before = meta.tree;
-  const hidden = meta.hidden.filter((path): path is string => typeof path === "string");
-  const now = writeTree(root, files.after, files.index, include);
-  if ("fault" in now) return { ok: false, fault: `The tree after this call could not be recorded: ${now.fault}.` };
-  if (now.tree === before) return { ok: true, changes: [], entered: [], before };
-  // One entry per path, NUL-separated, never a human status format. Submodules are another
-  // repository's business and are left out.
-  const diffTree = (from: string, format: "--name-status" | "--name-only"): string | { why: string } => {
-    const ran = runGit(root, ["diff-tree", "-r", "-z", format, "--no-renames", "--ignore-submodules=all", from, now.tree]);
-    return ran.ok ? ran.stdout.toString("utf8") : { why: ran.stderr };
-  };
-  const changed = diffTree(before, "--name-status");
-  if (typeof changed !== "string") return { ok: false, fault: `git could not compare the trees: ${changed.why}.` };
-  /** The delta, once `authored` has said which changed paths are the call's own. */
-  const delta = (paths: readonly string[]): Delta & { readonly before?: string } => {
-    if (paths.some((path) => path.includes("\n")))
-      return { ok: false, fault: "A changed path has a newline in its name, which flow cannot ask git about safely." };
-    const content = blobs(root, paths.flatMap((path) => [`${before}:${path}`, `${now.tree}:${path}`]));
-    if (content === null) return { ok: false, fault: "git could not read the changed files back out of the snapshot." };
-    // What changed VIEW rather than content leaves here: a file that entered the snapshot during
-    // the call, and one that left it still on disk as it was (`visibility`). One that left it
-    // rewritten stays, as the write it is.
-    const seen = visibility(
-      paths.map((path, i) => ({ path, before: content[2 * i] ?? null, after: content[2 * i + 1] ?? null })),
-      hidden,
-      (path) => readText(root, path),
-    );
-    return { ok: true, changes: seen.changes, entered: seen.entered, before };
-  };
-  // WHAT GIT PUT THERE leaves the diff here, before anything reads it: HEAD after the call and HEAD
-  // before it, each against the tree after it, are one more tree comparison each (`authored`
-  // decides). Only a HEAD the repo already had can be matched: none, or one the call made, leaves
-  // every change judged. HEAD before only ever answers for a file that matches HEAD after, and when
-  // HEAD did not move one comparison answers for both.
-  const known = Array.isArray(meta.known) ? meta.known.filter((tip): tip is string => typeof tip === "string") : [];
-  const headAfter = existingHead(root, known);
-  if (headAfter === null) return delta(authored(changed, null, null));
-  const fromAfter = diffTree(headAfter, "--name-only");
-  if (typeof fromAfter !== "string") return { ok: false, fault: `git could not compare the tree with HEAD: ${fromAfter.why}.` };
-  const differsAfter = nulPaths(fromAfter);
-  const headBefore = typeof meta.head === "string" ? meta.head : null;
-  if (headBefore === null) return delta(authored(changed, differsAfter, null));
-  if (headBefore === headAfter) return delta(authored(changed, differsAfter, differsAfter));
-  const fromBefore = diffTree(headBefore, "--name-only");
-  if (typeof fromBefore !== "string") return { ok: false, fault: `git could not compare the tree with HEAD before the call: ${fromBefore.why}.` };
-  return delta(authored(changed, differsAfter, nulPaths(fromBefore)));
-}
-
-/**
- * PUT CHANGES BACK from the before-snapshot — a changed or removed file to its old content, a file
- * the call created removed. Answers what could not be put back, never throws: a revert that failed
- * is said to the model, loudly, rather than claimed.
- */
-export function revertChanges(root: string, tree: string, changes: readonly Change[]): { path: string; why: string }[] {
-  const failed: { path: string; why: string }[] = [];
-  for (const change of changes.filter((c) => c.before === null)) {
-    try {
-      rmSync(inRepo(root, change.path), { force: true });
-    } catch (error) {
-      failed.push({ path: change.path, why: (error as Error).message });
-    }
-  }
-  const back = changes.filter((c) => c.before !== null).map((c) => c.path);
-  if (back.length > 0) {
-    // `restore --worktree` writes the files and nothing else — no index, the user's or ours.
-    const restored = runGit(root, ["--literal-pathspecs", "restore", `--source=${tree}`, "--worktree", "--", ...back]);
-    if (!restored.ok) for (const path of back) failed.push({ path, why: restored.stderr || "git restore failed" });
-  }
-  return failed;
-}
-
-/**
- * THE CALL LOG — every snapshot's record, read back: who made each call, when it started, and when
- * it finished if it has. A record that cannot be read is left out; it is somebody's write racing
- * this read, and the next diff reads it whole.
- */
-export function callLog(root: string): CallRecord[] {
-  const dir = join(root, FLOW_DIR, "snapshots");
-  let names: string[];
-  try {
-    names = readdirSync(dir).filter((name) => name.endsWith(".json"));
-  } catch {
-    return [];
-  }
-  return names.flatMap((name) => {
-    try {
-      const record = callRecord(name.slice(0, -".json".length), JSON.parse(readFileSync(join(dir, name), "utf8")));
-      return record === null ? [] : [record];
-    } catch {
-      return [];
-    }
-  });
-}
-
-/**
- * The call is over: its record says when it finished, so a diff still to come can tell it
- * overlapped, and its throwaway indexes go. Records no diff still to come can overlap are dropped.
- */
-export function finishSnapshot(root: string, key: string, now = Date.now()): void {
-  const files = snapshotFiles(root, key);
-  for (const path of [files.index, files.after]) rmSync(path, { force: true });
-  const log = callLog(root);
-  const me = log.find((call) => call.key === key);
-  try {
-    if (me === undefined) rmSync(files.meta, { force: true });
-    else writeFileSync(files.meta, JSON.stringify({ session: me.session, agent: me.agent, tool: me.tool, at: me.at, done: now }));
-  } catch {
-    // A record that cannot be marked finished reads as in flight for its first hour: it narrows
-    // refusals, which is the safe direction, and never widens one.
-  }
-  const finished = log.map((call) => (call.key === key ? { ...call, done: now } : call));
-  for (const gone of forgettable(finished, now)) rmSync(snapshotFiles(root, gone).meta, { force: true });
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -503,6 +158,11 @@ interface Session {
   readonly sessionAgent: () => string | null;
 }
 
+/** Is this a tool call's own hook: before it runs, or after it? */
+function isCall(hook: HookEvent): boolean {
+  return hook === "pre-tool-use" || hook === "post-tool-use";
+}
+
 /** Ask once, remember the answer. A hook is one short-lived process, so this lives and dies with it. */
 function once<T>(answer: () => T): () => T {
   let held: { value: T } | null = null;
@@ -585,14 +245,13 @@ function worktreesToTell(session: Session, payload: HookPayload): { root: string
 }
 
 /** The world a payload is read against — disk, and the turn, asked only if the moment needs them. */
-function eventWorld(root: string, session: Session, changes?: readonly Change[], heldForBrief?: boolean): EventWorld {
+function eventWorld(root: string, session: Session, heldForBrief?: boolean): EventWorld {
   return {
     root,
     read: (path: string) => readText(root, path),
     turn: session.turn,
     sessionAgent: session.sessionAgent,
     home: homedir(),
-    changes,
     heldForBrief,
   };
 }
@@ -627,51 +286,28 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
   // THE SESSION MARKER, written on every tool call: the commit gate is spawned by git, outside any
   // session, so this is the only way a later `git commit` can attribute its refusals to the chat
   // that caused them. Best-effort by construction — `writeMarker` answers a boolean.
-  if (hook === "pre-tool-use" && !off && session.id !== "unknown")
-    writeMarker(root, session.id, session.who, session.branch);
+  if (isCall(hook) && !off && session.id !== "unknown") writeMarker(root, session.id, session.who, session.branch);
 
-  const key = callKey(payload);
   const tool = typeof payload.tool_name === "string" ? payload.tool_name : "";
-  const afterCall = AFTER_CALL.has(hook) && !off && tool !== "";
-  // THE CALL IS OVER, however it went: its record says it finished, so a diff still to come can
-  // tell this call overlapped it.
-  const now = Date.now();
-  const finish = (): void => {
-    if (key !== null) finishSnapshot(root, key, now);
-  };
-
-  // THE TREE BEFORE THE CALL, taken only once the call is ALLOWED: a refused call never runs, so its
-  // snapshot would be read as a call still in flight. It is taken while the config will not load as
-  // well, on purpose: the call that repairs the config needs it, because that call's after-call rail
-  // loads a healthy config and diffs against this snapshot.
-  const include = regime.kind === "loaded" ? (regime.config.settings.snapshotInclude ?? []) : [];
-  const snapshotted = (result: HookResult): HookResult => {
-    if (hook === "pre-tool-use" && !off && key !== null && result.exitCode === 0)
-      takeSnapshot(root, key, include, { session: session.id, agent: session.who.agent, tool });
-    return result;
-  };
+  const afterCall = hook === "post-tool-use" && !off && tool !== "";
 
   // THE CONFIG WILL NOT LOAD. `kind: "broken"` is a module that would not import; a LoadResult
   // carrying refusals is a module that imported and whose grammar was refused. Both are the same
   // fact, "flow is off", and get the same answer: `whileBroken` refuses nothing and hands the agent
   // the load error. They are asked in sequence only because the second needs the LoadResult the
   // first does not have.
-  //
-  // NO DIFF IS TAKEN after the call: nothing then can be refused or told, so the diff would be work
-  // thrown away, and a diff that failed would print a fault about a call nothing judges. So NOTHING
-  // IS PUT BACK either: what the call wrote stands — `npm ci`'s `node_modules`, an edit to the
-  // config — and the commit gate, which stays shut until the config loads, is where it is checked.
-  // The call is over, so its record says so.
   const outage = (sentence: string): HookResult => {
     if (off) return ALLOW;
-    const answer = whileBroken(toEvent(hook, payload, eventWorld(root, session)), sentence);
-    if (afterCall) finish();
+    // A tool other than Bash is first seen after it ran, so that is where the agent is told.
+    const events = toEvent(hook, payload, eventWorld(root, session));
+    const seen: AdapterEvent[] = afterCall && tool !== "Bash" ? [{ rail: "brief", moment: "session" }, ...events] : events;
+    const answer = whileBroken(seen, sentence);
     const result = toResult(hook, answer);
     // TURN-END IS TOLD RATHER THAN HELD. `whileBroken` says why; this is the only place that can
     // write it, because a note on the hand-back rails would keep the agent working, and `toResult`
     // speaks only the two the host reads. Exit 0 — the turn ends, and the sentence goes where a
     // human and the log see it.
-    return snapshotted(answer.told === null ? result : { ...result, stderr: `${answer.told}\n` });
+    return answer.told === null ? result : { ...result, stderr: `${answer.told}\n` };
   };
   if (regime.kind === "broken") return outage(regime.message);
 
@@ -684,46 +320,6 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
   // NOTHING BOUND HERE, NOTHING READ: a hand-back with no turn-end entry to run is answered before
   // either transcript is opened, unless it is being recorded.
   if (nothingBound(hook, load.entries, taping)) return ALLOW;
-
-  // THE DELTA, on the after-call rails: what this call changed in the tree, from the snapshot the
-  // PreToolUse rail took. A call flow could not see is REPORTED and goes no further — nothing is
-  // judged as clean and nothing is put back on a guess.
-  const delta: (Delta & { readonly before?: string }) | null = afterCall
-    ? key === null
-      ? { ok: false, fault: "The host sent no tool_use_id with this call, so its snapshot cannot be found." }
-      : observeDelta(root, key, include)
-    : null;
-  if (delta !== null && !delta.ok) {
-    finish();
-    return deltaFault(delta.fault);
-  }
-  const changes = delta?.ok === true ? delta.changes : undefined;
-
-  // WHAT A REFUSAL MAY UNDO, asked only of a call that changed something: the repo's setting, and
-  // the other actors' calls that overlapped this one.
-  const revert = config.settings.revert === "all" ? "all" : "refused";
-  const scopeOf = (landed: readonly Change[]): RevertScope => {
-    if (landed.length === 0 || key === null) return { revert, overlap: [] };
-    const log = callLog(root);
-    const me = log.find((call) => call.key === key);
-    return { revert, overlap: me === undefined ? [] : overlapping(me, log) };
-  };
-
-  // THE WAY BACK, once the answer is known: the changes a rule refused are written back from the
-  // snapshot, and what that came to rides the answer so the refusal can say it, with the files that
-  // entered the snapshot during the call. Then the call is over and its snapshot goes.
-  const settle = (answer: Answer): Answer => {
-    if (delta === null || key === null) return answer;
-    const scope = scopeOf(delta.changes);
-    const plan = reversal(delta.changes, answer.refused, scope);
-    const failed = plan.revert.length === 0 ? [] : revertChanges(root, delta.before ?? "", plan.revert);
-    finish();
-    const landed = answer.refused.some((refusal) => refusal.observed !== undefined);
-    // A file that entered the snapshot was in no change, so nothing judged it and nothing put it
-    // back; the agent is told its name, refused or not.
-    const told = { ...answer, entered: delta.entered };
-    return landed ? { ...told, undone: { restored: plan.revert, kept: plan.kept, failed, scope } } : told;
-  };
 
   const entries = load.entries;
   // A SUBAGENT STARTING BEFORE ITS BRIEF IS WRITTEN: who it is is read without remembering it, and
@@ -738,22 +334,16 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
   // write the categories back out of existence on the next breadcrumb.
   const stored = loadState(root, session.id, session.who.agent);
 
-  const events = toEvent(hook, payload, eventWorld(root, session, changes, stored.heldForBrief === true));
+  const events = toEvent(hook, payload, eventWorld(root, session, stored.heldForBrief === true));
   const rows: Row[] = [];
 
   // The flight recorder goes FIRST, so the tool row precedes the guardrail rows about the same call
-  // and the stream reads in the order things happened.
-  if (hook === "pre-tool-use" && !off) {
+  // and the stream reads in the order things happened. A shell command is recorded before it runs,
+  // because one the guard refuses never reaches PostToolUse; every other call is recorded after.
+  if (isCall(hook) && !off && (hook === "pre-tool-use") === (tool === "Bash")) {
     const row = toolRow(payload, root);
     if (row) rows.push(row);
-    rows.push(...shellReadRows(payload, root, homedir()));
-  }
-  // What the call did to the tree, beside what it named — and where the host's own list of it
-  // disagrees with flow's diff.
-  if (changes !== undefined && !off) {
-    rows.push(...writeRows(payload, changes, root));
-    const mismatch = mismatchRow(payload, changes, root);
-    if (mismatch !== null) rows.push(mismatch);
+    if (hook === "pre-tool-use") rows.push(...shellReadRows(payload, root, homedir()));
   }
 
   const steps: RecordedStep[] = [];
@@ -761,8 +351,7 @@ export async function runHook(hook: HookEvent, payload: HookPayload, root: strin
   const answer = await judge({ events, session, stored, load, settings: config.settings, identity, briefPending, off, hook, payload, rows, steps: taping ? steps : null });
   if (!off) appendRows({ root, session: session.id, branch: session.branch, who: session.who }, rows);
   if (taping) appendSteps(root, session.id, steps);
-  const settled = settle(answer);
-  return snapshotted(toResult(hook, unguarded === null ? settled : { ...settled, unguarded }));
+  return toResult(hook, unguarded === null ? answer : { ...answer, unguarded });
 }
 
 /** The middle of the run: every event through the engine, and the rows that record what happened. */
@@ -813,7 +402,6 @@ async function judge(args: {
         load,
         event: {
           moment: event.moment,
-          file: event.file,
           command: event.command,
           commands: event.commands,
           staged: event.staged,
@@ -828,7 +416,6 @@ async function judge(args: {
       steps?.push({
         rail: "guard",
         moment: event.moment,
-        ...(event.file === undefined ? {} : { file: event.file }),
         ...(event.command === undefined ? {} : { command: event.command }),
         ...(event.staged === undefined ? {} : { staged: event.staged }),
         ...(event.turn === undefined ? {} : { turn: event.turn }),
@@ -839,11 +426,7 @@ async function judge(args: {
       });
       for (const effect of outcome.effects)
         if (effect.do === "block")
-          blocked.push({
-            moment: event.moment,
-            block: effect,
-            ...(event.observed === true && event.file !== undefined ? { observed: event.file.path } : {}),
-          });
+          blocked.push({ moment: event.moment, block: effect });
       if (!off) rows.push(...runRows(event.moment, outcome, subjectCount(event)));
       continue;
     }

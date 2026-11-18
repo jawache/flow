@@ -1,31 +1,15 @@
 // flow/adapter/claude/claude.test.ts — the Claude Code adapter's shell, against a real disk and a real git repo.
 //
 // The live half of the adapter: it opens files, runs commands and asks git, and what it decides is in
-// domain.ts. So it is proved over a temp repo, asserting what actually comes back: the snapshot before
-// and after a call and the way back, the log of calls in flight, and the notes a subagent is shown.
+// domain.ts. So it is proved over a temp repo, asserting what actually comes back: the notes a
+// subagent is shown, and the path a call is made real as.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import {
-  callLog,
-  finishSnapshot,
-  observeDelta,
-  projectRoot,
-  realPath,
-  revertChanges,
-  runHook,
-  takeSnapshot,
-} from "./claude.ts";
-import { readText } from "../shell.ts";
-import { CALL_LIFETIME_MS, overlapping } from "./domain.ts";
-
-// The snapshot's rails are judged with a write rule written inline: `protectedPath` reads a commit.
-// A change to a file already there is refused, and so is every deletion.
-const EXISTING_ONLY = `async (ctx) => (ctx.moment === "delete" || (ctx.file?.existed ?? (await ctx.fs.exists(ctx.file?.path ?? ""))) ? ctx.fail("existing") : ctx.ok())`;
-const ANY_CHANGE = `(ctx) => (ctx.file?.unchanged === true ? ctx.ok() : ctx.fail("protected"))`;
+import { projectRoot, realPath, runHook } from "./claude.ts";
 
 let repo: string;
 
@@ -75,460 +59,19 @@ describe("which repo", () => {
   });
 });
 
-describe("the snapshot — the tree before a call, the tree after it, and the way back", () => {
-  const who = { session: "s1", agent: "main", tool: "Bash" };
-  const read = (path: string): string | null => readText(repo, path);
-  const indexBytes = (): Buffer => readFileSync(join(repo, ".git", "index"));
-
-  beforeEach(() => {
-    writeFileSync(join(repo, ".gitignore"), ".env\nsecret.key\nbuild/\n");
-    writeFileSync(join(repo, "a.ts"), "export const a = 1;\n");
-    writeFileSync(join(repo, "gone.ts"), "export const gone = 1;\n");
-    writeFileSync(join(repo, "untracked.ts"), "not yet added\n");
-    writeFileSync(join(repo, ".env"), "TOKEN=old\n");
-    writeFileSync(join(repo, "secret.key"), "old key\n");
-    git("add", ".gitignore", "a.ts", "gone.ts");
-    git("commit", "-qm", "first");
-    writeFileSync(join(repo, "a.ts"), "export const a = 2; // staged\n");
-    git("add", "a.ts");
-  });
-
-  it("sees a changed, a created and a deleted file, with the content either side", () => {
-    takeSnapshot(repo, "toolu_1", [], who);
-    writeFileSync(join(repo, "a.ts"), "export const a = 3; // TODO\n");
-    writeFileSync(join(repo, "new.ts"), "fresh\n");
-    unlinkSync(join(repo, "gone.ts"));
-    const delta = observeDelta(repo, "toolu_1", []);
-    expect(delta.ok).toBe(true);
-    if (!delta.ok) return;
-    expect(delta.changes).toStrictEqual([
-      { path: "a.ts", before: "export const a = 2; // staged\n", after: "export const a = 3; // TODO\n" },
-      { path: "gone.ts", before: "export const gone = 1;\n", after: null },
-      { path: "new.ts", before: null, after: "fresh\n" },
-    ]);
-  });
-
-  it("puts every kind of change back byte for byte, and never writes the user's index", () => {
-    const staged = indexBytes();
-    takeSnapshot(repo, "toolu_2", [], who);
-    expect(indexBytes(), "the snapshot is built in a throwaway index").toStrictEqual(staged);
-    writeFileSync(join(repo, "a.ts"), "export const a = 3; // TODO\n");
-    writeFileSync(join(repo, "untracked.ts"), "changed while untracked\n");
-    writeFileSync(join(repo, "new.ts"), "fresh\n");
-    unlinkSync(join(repo, "gone.ts"));
-    const delta = observeDelta(repo, "toolu_2", []);
-    if (!delta.ok) throw new Error(delta.fault);
-    expect(revertChanges(repo, delta.before ?? "", delta.changes)).toStrictEqual([]);
-    expect(read("a.ts"), "back to the staged content the tree held, not HEAD's").toBe("export const a = 2; // staged\n");
-    expect(read("untracked.ts")).toBe("not yet added\n");
-    expect(read("gone.ts")).toBe("export const gone = 1;\n");
-    expect(existsSync(join(repo, "new.ts")), "a file the call created is removed").toBe(false);
-    expect(indexBytes(), "the staging area is exactly as the user left it").toStrictEqual(staged);
-    const after = observeDelta(repo, "toolu_2", []);
-    expect(after.ok && after.changes, "the tree is the snapshot again").toStrictEqual([]);
-  });
-
-  it("records an ignored file snapshotInclude lists, and leaves out one it does not", () => {
-    takeSnapshot(repo, "toolu_3", [".env"], who);
-    writeFileSync(join(repo, ".env"), "TOKEN=leaked\n");
-    writeFileSync(join(repo, "secret.key"), "new key\n");
-    mkdirSync(join(repo, "build"));
-    writeFileSync(join(repo, "build", "out.js"), "built\n");
-    const delta = observeDelta(repo, "toolu_3", [".env"]);
-    if (!delta.ok) throw new Error(delta.fault);
-    expect(delta.changes, "git ignores secret.key and build/, and nothing listed them").toStrictEqual([
-      { path: ".env", before: "TOKEN=old\n", after: "TOKEN=leaked\n" },
-    ]);
-    expect(revertChanges(repo, delta.before ?? "", delta.changes)).toStrictEqual([]);
-    expect(read(".env")).toBe("TOKEN=old\n");
-    expect(read("secret.key"), "outside the snapshot, so outside the revert").toBe("new key\n");
-  });
-
-  it("sees an included ignored file the call creates, and one it deletes", () => {
-    takeSnapshot(repo, "toolu_4", [".env", "config/*.local.json"], who);
-    unlinkSync(join(repo, ".env"));
-    mkdirSync(join(repo, "config"));
-    writeFileSync(join(repo, ".gitignore"), ".env\nsecret.key\nbuild/\nconfig/\n");
-    writeFileSync(join(repo, "config", "app.local.json"), "{}\n");
-    const delta = observeDelta(repo, "toolu_4", [".env", "config/*.local.json"]);
-    if (!delta.ok) throw new Error(delta.fault);
-    expect(delta.changes.map((c) => [c.path, c.before === null, c.after === null])).toStrictEqual([
-      [".env", false, true],
-      [".gitignore", false, false],
-      ["config/app.local.json", true, false],
-    ]);
-  });
-
-  it("leaves out each file that matches HEAD after the call, whichever way it got there, and sees every other change", () => {
-    // `old` holds a file main does not, and its own copy of a.ts.
-    git("stash", "-q");
-    git("switch", "-qc", "old");
-    writeFileSync(join(repo, "legacy.ts"), "// from before the rule\n");
-    writeFileSync(join(repo, "a.ts"), "export const a = 'old';\n");
-    git("add", "legacy.ts", "a.ts");
-    git("commit", "-qm", "old");
-    git("switch", "-q", "main");
-    takeSnapshot(repo, "toolu_8", [], who);
-    spawnSync("bash", ["-c", "git switch -q old && echo '// mine' >> a.ts && echo scratch > notes.md"], { cwd: repo });
-    const there = observeDelta(repo, "toolu_8", []);
-    if (!there.ok) throw new Error(there.fault);
-    expect(there.changes, "legacy.ts is old's own copy; a.ts and notes.md are the call's").toStrictEqual([
-      { path: "a.ts", before: "export const a = 1;\n", after: "export const a = 'old';\n// mine\n" },
-      { path: "notes.md", before: null, after: "scratch\n" },
-    ]);
-    takeSnapshot(repo, "toolu_9", [], who);
-    spawnSync("bash", ["-c", "git checkout -q -- a.ts && rm notes.md && git switch -q main"], { cwd: repo });
-    const back = observeDelta(repo, "toolu_9", []);
-    expect(back.ok && back.changes, "every file is main's again; notes.md was in no commit, so its removal is the call's").toStrictEqual([
-      { path: "notes.md", before: "scratch\n", after: null },
-    ]);
-  });
-
-  it("judges every change a call commits itself, and leaves out a reset or a fast-forward to a commit the repo had", () => {
-    git("stash", "-q");
-    const call = (key: string, command: string): ReturnType<typeof observeDelta> => {
-      takeSnapshot(repo, key, [], who);
-      expect(spawnSync("bash", ["-c", command], { cwd: repo }).status, command).toBe(0);
-      return observeDelta(repo, key, []);
-    };
-    // The files match the commit the call lands on — but the call made that commit, and skipped the gate doing it.
-    const made = call("toolu_11", "echo '// TODO' >> a.ts && rm gone.ts && git add a.ts gone.ts && git commit -qm mine --no-verify");
-    expect(made.ok && made.changes, "a commit the call made vouches for nothing").toStrictEqual([
-      { path: "a.ts", before: "export const a = 1;\n", after: "export const a = 1;\n// TODO\n" },
-      { path: "gone.ts", before: "export const gone = 1;\n", after: null },
-    ]);
-    git("branch", "mine");
-    expect(call("toolu_12", "git reset -q --hard HEAD~1"), "back to a commit main had").toMatchObject({ ok: true, changes: [] });
-    expect(call("toolu_13", "git merge -q --ff-only mine"), "forward to a commit a branch had").toMatchObject({ ok: true, changes: [] });
-  });
-
-  it("leaves out what a pull brings in: a remote branch reaches the commit it lands on", () => {
-    git("stash", "-q");
-    const upstream = mkdtempSync(join(tmpdir(), "flow-upstream-"));
-    try {
-      spawnSync("git", ["clone", "-q", repo, upstream]);
-      writeFileSync(join(upstream, "a.ts"), "export const a = 'theirs'; // TODO\n");
-      writeFileSync(join(upstream, "pulled.ts"), "// TODO: from upstream\n");
-      spawnSync("bash", ["-c", "git add a.ts pulled.ts && git -c user.name=u -c user.email=u@e commit -qm upstream && git rm -q gone.ts && git -c user.name=u -c user.email=u@e commit -qm gone"], {
-        cwd: upstream,
-      });
-      git("remote", "add", "origin", upstream);
-      takeSnapshot(repo, "toolu_14", [], who);
-      expect(spawnSync("git", ["pull", "-q", "--ff-only", "origin", "main"], { cwd: repo }).status).toBe(0);
-      expect(read("pulled.ts"), "the pull landed").toBe("// TODO: from upstream\n");
-      expect(observeDelta(repo, "toolu_14", [])).toMatchObject({ ok: true, changes: [] });
-    } finally {
-      rmSync(upstream, { recursive: true, force: true });
-    }
-  });
-
-  it("refuses and puts back the removal of an uncommitted .env snapshotInclude lists, made by a route other than rm", async () => {
-    // No commit holds .env, so its removal is the call's to answer for, whatever HEAD does.
-    const door = new URL("../../index.ts", import.meta.url).pathname;
-    writeFileSync(
-      join(repo, "flow.config.ts"),
-      `import { defineConfig, definePack, deletion, guardrail, pack, write } from ${JSON.stringify(door)};
-const demo = definePack("demo", {
-  keepEnv: guardrail()
-    .at(write, deletion)
-    .on(".env")
-    .check(${EXISTING_ONLY})
-    .message("The .env stays.")
-    .test({ pass: [{ path: ".env", content: "new" }], block: [{ path: ".env", content: "x", world: { fs: { ".env": "old" } } }] }),
-});
-export default defineConfig([pack(demo)], { snapshotInclude: [".env"] });
-`,
-    );
-    const command = "python3 -c \"import os; os.remove('.env')\"";
-    const payload = { session_id: "s1", tool_name: "Bash", tool_input: { command }, tool_use_id: "toolu_env", cwd: repo };
-    expect((await runHook("pre-tool-use", payload, repo)).exitCode).toBe(0);
-    expect(spawnSync("bash", ["-c", command], { cwd: repo }).status).toBe(0);
-    expect(existsSync(join(repo, ".env")), "the script removed it").toBe(false);
-    const answer = await runHook("post-tool-use", payload, repo);
-    expect(answer.exitCode).toBe(2);
-    expect(answer.stderr).toContain("✗ demo.keepEnv · .env");
-    expect(read(".env"), "written back, byte for byte").toBe("TOKEN=old\n");
-  });
-
-  // #146: a call that changes what the snapshot can see. Each rule here refuses any write to .env.
-  const keepEnvConfig = `import { defineConfig, definePack, deletion, guardrail, pack, write } from ${JSON.stringify(new URL("../../index.ts", import.meta.url).pathname)};
-const demo = definePack("demo", {
-  keepEnv: guardrail()
-    .at(write, deletion)
-    .on(".env")
-    .check(${ANY_CHANGE})
-    .message("The .env stays.")
-    .test({ pass: [{ path: "a.ts", content: "new" }], block: [{ path: ".env", content: "x" }] }),
-});
-export default defineConfig([pack(demo)]);
-`;
-
-  /** One Bash call through both rails: the snapshot before it, `act` as the call, the judgement after. */
-  const hookCall = async (key: string, act: () => void): Promise<Awaited<ReturnType<typeof runHook>>> => {
-    const payload = { session_id: "s1", tool_name: "Bash", tool_input: { command: "a shell edit" }, tool_use_id: key, cwd: repo };
-    expect((await runHook("pre-tool-use", payload, repo)).exitCode).toBe(0);
-    act();
-    return runHook("post-tool-use", payload, repo);
-  };
-  const unjudged = "flow had no earlier copy of .env: it entered the snapshot during this call, so this call did not judge it.";
-
-  // In-process the config module is cached, so a call that edits snapshotInclude is driven through
-  // the snapshot itself, with the include each side was taken with: the old before, the new after.
-  it("#146: a call that adds .env to snapshotInclude does not see the .env that was already there as created", () => {
-    takeSnapshot(repo, "toolu_146a", [], who);
-    const delta = observeDelta(repo, "toolu_146a", [".env"]);
-    if (!delta.ok) throw new Error(delta.fault);
-    expect(delta.changes, "the call never touched .env").toStrictEqual([]);
-    expect(delta.entered, "it entered the snapshot").toStrictEqual([".env"]);
-    expect(read(".env")).toBe("TOKEN=old\n");
-  });
-
-  it("#146: a call that takes .env out of snapshotInclude does not remove it", () => {
-    takeSnapshot(repo, "toolu_146c", [".env"], who);
-    const delta = observeDelta(repo, "toolu_146c", []);
-    if (!delta.ok) throw new Error(delta.fault);
-    expect(delta.changes, "no removal for a delete rule to judge").toStrictEqual([]);
-    expect(read(".env"), "still on disk").toBe("TOKEN=old\n");
-  });
-
-  it("#146: a call that adds .env to snapshotInclude and creates it still makes a creation", () => {
-    unlinkSync(join(repo, ".env"));
-    takeSnapshot(repo, "toolu_146d", [], who);
-    writeFileSync(join(repo, ".env"), "TOKEN=new\n");
-    const delta = observeDelta(repo, "toolu_146d", [".env"]);
-    if (!delta.ok) throw new Error(delta.fault);
-    expect(delta.changes, "it was not on disk before the call").toStrictEqual([{ path: ".env", before: null, after: "TOKEN=new\n" }]);
-    expect(delta.entered).toStrictEqual([]);
-  });
-
-  it("#146: a call that un-ignores .env in .gitignore leaves the .env that was already there, and says so", async () => {
-    writeFileSync(join(repo, "flow.config.ts"), keepEnvConfig);
-    const answer = await hookCall("toolu_146b", () => { writeFileSync(join(repo, ".gitignore"), "secret.key\nbuild/\n"); });
-    expect(read(".env"), `the call never touched .env; flow said:\n${answer.stderr}`).toBe("TOKEN=old\n");
-    expect(answer.exitCode, "nothing judged .env, so nothing refused it").toBe(0);
-    expect(answer.stdout, "the agent is told the file entered the snapshot unjudged").toContain(unjudged);
-  });
-
-  it("#146: the next call's edit to a file that entered the snapshot is judged", async () => {
-    writeFileSync(join(repo, "flow.config.ts"), keepEnvConfig);
-    expect((await hookCall("toolu_146e1", () => { writeFileSync(join(repo, ".gitignore"), "secret.key\nbuild/\n"); })).exitCode).toBe(0);
-    const answer = await hookCall("toolu_146e2", () => { writeFileSync(join(repo, ".env"), "TOKEN=leaked\n"); });
-    expect(answer.exitCode).toBe(2);
-    expect(answer.stderr).toContain("✗ demo.keepEnv · .env");
-    expect(answer.stderr).not.toContain("no earlier copy");
-    expect(read(".env"), "put back to the copy the first call recorded").toBe("TOKEN=old\n");
-  });
-
-  it("#146: a call that un-ignores a .env it also creates is judged, and the creation undone", async () => {
-    writeFileSync(join(repo, "flow.config.ts"), keepEnvConfig);
-    unlinkSync(join(repo, ".env"));
-    const answer = await hookCall("toolu_146f", () => {
-      writeFileSync(join(repo, ".gitignore"), "secret.key\nbuild/\n");
-      writeFileSync(join(repo, ".env"), "TOKEN=new\n");
-    });
-    expect(answer.exitCode).toBe(2);
-    expect(answer.stderr).toContain("✗ demo.keepEnv · .env");
-    expect(answer.stderr).toContain(".env is gone again — the call created it.");
-    expect(existsSync(join(repo, ".env"))).toBe(false);
-  });
-
-  // Decided: an existing ignored file that a call un-ignores and rewrites enters unjudged, as
-  // rewritten. flow has no earlier copy of it to put back, so a refusal could only delete it. The
-  // next change to it is judged.
-  it("#146: a call that un-ignores an existing .env and rewrites it lets it enter unjudged, as rewritten", async () => {
-    writeFileSync(join(repo, "flow.config.ts"), keepEnvConfig);
-    const answer = await hookCall("toolu_146i", () => {
-      writeFileSync(join(repo, ".gitignore"), "secret.key\nbuild/\n");
-      writeFileSync(join(repo, ".env"), "TOKEN=new\n");
-    });
-    expect(answer.exitCode, `nothing judged .env; flow said:\n${answer.stderr}`).toBe(0);
-    expect(answer.stdout, "the agent is told the file entered the snapshot unjudged").toContain(unjudged);
-    expect(read(".env"), "the call's content stays: flow had nothing to put back").toBe("TOKEN=new\n");
-  });
-
-  it("#146: a call that adds a visible .env to .gitignore leaves it on disk, and no delete rule is called on it", async () => {
-    writeFileSync(join(repo, ".gitignore"), "secret.key\nbuild/\n");
-    writeFileSync(join(repo, "flow.config.ts"), keepEnvConfig);
-    const answer = await hookCall("toolu_146g", () => { writeFileSync(join(repo, ".gitignore"), ".env\nsecret.key\nbuild/\n"); });
-    expect(answer.exitCode, `the deletion rule on .env was not called; flow said:\n${answer.stderr}`).toBe(0);
-    expect(read(".env")).toBe("TOKEN=old\n");
-  });
-
-  it("#146: a call that adds .env to .gitignore and rewrites it has the rewrite judged by the write rules", async () => {
-    writeFileSync(join(repo, ".gitignore"), "secret.key\nbuild/\n");
-    writeFileSync(join(repo, "flow.config.ts"), keepEnvConfig);
-    const answer = await hookCall("toolu_146h", () => {
-      writeFileSync(join(repo, ".gitignore"), ".env\nsecret.key\nbuild/\n");
-      writeFileSync(join(repo, ".env"), "TOKEN=leaked\n");
-    });
-    expect(answer.exitCode, "hiding the file does not hide the edit").toBe(2);
-    expect(answer.stderr).toContain("flow — write reverted after it landed");
-    expect(answer.stderr).toContain("✗ demo.keepEnv · .env");
-    expect(answer.stderr, "a write put back, not a removal restored").toContain(".env is back to its previous content.");
-    expect(read(".env")).toBe("TOKEN=old\n");
-  });
-
-  it("judges every change in a repo with no commit yet — there is no HEAD to match", () => {
-    const fresh = mkdtempSync(join(tmpdir(), "flow-unborn-"));
-    try {
-      spawnSync("git", ["init", "-q"], { cwd: fresh });
-      writeFileSync(join(fresh, "a.ts"), "one\n");
-      takeSnapshot(fresh, "toolu_10", [], who);
-      unlinkSync(join(fresh, "a.ts"));
-      writeFileSync(join(fresh, "b.ts"), "new\n");
-      const delta = observeDelta(fresh, "toolu_10", []);
-      if (!delta.ok) throw new Error(delta.fault);
-      expect(delta.changes).toStrictEqual([
-        { path: "a.ts", before: "one\n", after: null },
-        { path: "b.ts", before: null, after: "new\n" },
-      ]);
-    } finally {
-      rmSync(fresh, { recursive: true, force: true });
-    }
-  });
-
-  it("reports a snapshot that could not be taken, and one that was never taken — never an empty delta", () => {
-    const bare = mkdtempSync(join(tmpdir(), "flow-nogit-"));
-    try {
-      takeSnapshot(bare, "toolu_5", [], who);
-      const unseen = observeDelta(bare, "toolu_5", []);
-      expect(unseen.ok).toBe(false);
-      if (!unseen.ok) expect(unseen.fault).toContain("could not be taken");
-      expect(unseen.ok || unseen.fault).toContain("not a git checkout");
-    } finally {
-      rmSync(bare, { recursive: true, force: true });
-    }
-    const never = observeDelta(repo, "toolu_never", []);
-    expect(never.ok).toBe(false);
-    if (!never.ok) expect(never.fault).toContain("No snapshot was taken before this call");
-  });
-
-  it("reports a snapshot recorded with no hidden list as unreadable — it cannot tell a creation from a file that entered (#146)", () => {
-    takeSnapshot(repo, "toolu_nolist", [], who);
-    const record = join(repo, ".flow", "snapshots", "toolu_nolist.json");
-    const { hidden, ...meta } = JSON.parse(readFileSync(record, "utf8")) as Record<string, unknown>;
-    expect(Array.isArray(hidden), "the snapshot records the list beside the tree").toBe(true);
-    writeFileSync(record, JSON.stringify(meta));
-    writeFileSync(join(repo, "new.ts"), "x\n");
-    const delta = observeDelta(repo, "toolu_nolist", []);
-    expect(delta.ok).toBe(false);
-    if (!delta.ok) expect(delta.fault).toContain("is unreadable");
-  });
-
-  it("says which file it could not put back, rather than claiming it did", () => {
-    takeSnapshot(repo, "toolu_6", [], who);
-    writeFileSync(join(repo, "a.ts"), "changed\n");
-    const delta = observeDelta(repo, "toolu_6", []);
-    if (!delta.ok) throw new Error(delta.fault);
-    const failed = revertChanges(repo, "0000000000000000000000000000000000000000", delta.changes);
-    expect(failed.map((f) => f.path)).toStrictEqual(["a.ts"]);
-    expect(read("a.ts")).toBe("changed\n");
-  });
-
-  it("marks a call finished once it is over, and forgets it once nothing in flight can overlap it", () => {
-    takeSnapshot(repo, "toolu_7", [], who);
-    const meta = JSON.parse(readFileSync(join(repo, ".flow", "snapshots", "toolu_7.json"), "utf8")) as Record<string, unknown>;
-    expect(meta).toMatchObject({ session: "s1", agent: "main", tool: "Bash" });
-    expect(typeof meta["tree"]).toBe("string");
-    finishSnapshot(repo, "toolu_7");
-    expect(readdirSync(join(repo, ".flow", "snapshots")), "nothing in flight, so nothing to keep").toStrictEqual([]);
-  });
-
-  it("keeps the log a later diff reads: a call in flight, and one that finished while it ran", () => {
-    takeSnapshot(repo, "toolu_long", [], { session: "s1", agent: "main", tool: "Bash" });
-    takeSnapshot(repo, "toolu_short", [], { session: "s1", agent: "sub1", tool: "Bash" });
-    finishSnapshot(repo, "toolu_short");
-    const log = callLog(repo);
-    expect(log.map((call) => [call.key, call.agent, call.done !== undefined]).sort()).toStrictEqual([
-      ["toolu_long", "main", false],
-      ["toolu_short", "sub1", true],
-    ]);
-    const long = log.find((call) => call.key === "toolu_long");
-    expect(long && overlapping(long, log).map((call) => call.key), "it finished inside the long call's window").toStrictEqual(["toolu_short"]);
-    expect(readdirSync(join(repo, ".flow", "snapshots")).sort(), "the short call's indexes are gone").toStrictEqual([
-      "toolu_long.index",
-      "toolu_long.json",
-      "toolu_short.json",
-    ]);
-    finishSnapshot(repo, "toolu_long");
-    expect(callLog(repo), "nothing in flight any more, so the log empties").toStrictEqual([]);
-  });
-
-  it("keeps a call an hour gone with no finish for the day's sweep, which takes it, and it pins no other record", () => {
-    const dir = join(repo, ".flow", "snapshots");
-    takeSnapshot(repo, "toolu_dead", [], { session: "killed", agent: "sub9", tool: "Bash" });
-    const held = JSON.parse(readFileSync(join(dir, "toolu_dead.json"), "utf8")) as Record<string, unknown>;
-    writeFileSync(join(dir, "toolu_dead.json"), JSON.stringify({ ...held, at: Date.now() - CALL_LIFETIME_MS - 60_000 }));
-    takeSnapshot(repo, "toolu_next", [], who);
-    finishSnapshot(repo, "toolu_next");
-    expect(readdirSync(dir).sort(), "the dead call's snapshot stays; the call that finished after it goes").toStrictEqual([
-      "toolu_dead.index",
-      "toolu_dead.json",
-    ]);
-    const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000 - 60_000);
-    for (const name of ["toolu_dead.json", "toolu_dead.index"]) utimesSync(join(dir, name), dayAgo, dayAgo);
-    takeSnapshot(repo, "toolu_later", [], who);
-    expect(readdirSync(dir).sort(), "a day on, the next snapshot's sweep takes the dead call's files").toStrictEqual([
-      "toolu_later.index",
-      "toolu_later.json",
-    ]);
-  });
-
-  it("checks a call approved after an hour at the prompt, though another agent's call finished while it waited", async () => {
-    const door = new URL("../../index.ts", import.meta.url).pathname;
-    writeFileSync(
-      join(repo, "flow.config.ts"),
-      `import { defineConfig, definePack, guardrail, pack, write } from ${JSON.stringify(door)};
-const demo = definePack("demo", {
-  keepA: guardrail()
-    .at(write)
-    .on("a.ts")
-    .check(${EXISTING_ONLY})
-    .message("a.ts stays.")
-    .test({ pass: [{ path: "b.ts", content: "new" }], block: [{ path: "a.ts", content: "x", world: { fs: { "a.ts": "old" } } }] }),
-});
-export default defineConfig([pack(demo)]);
-`,
-    );
-    const dir = join(repo, ".flow", "snapshots");
-    const waited = { session_id: "s1", tool_name: "Bash", tool_input: { command: "echo late > a.ts" }, tool_use_id: "toolu_waited", cwd: repo };
-    expect((await runHook("pre-tool-use", waited, repo)).exitCode).toBe(0);
-    const held = JSON.parse(readFileSync(join(dir, "toolu_waited.json"), "utf8")) as Record<string, unknown>;
-    writeFileSync(join(dir, "toolu_waited.json"), JSON.stringify({ ...held, at: Date.now() - CALL_LIFETIME_MS - 60_000 }));
-    const other = { session_id: "s1", agent_id: "sub1", tool_name: "Bash", tool_input: { command: "true" }, tool_use_id: "toolu_other", cwd: repo };
-    expect((await runHook("pre-tool-use", other, repo)).exitCode).toBe(0);
-    expect((await runHook("post-tool-use", other, repo)).exitCode).toBe(0);
-    expect(existsSync(join(dir, "toolu_waited.json")), "the other call's finish leaves the waiting call's snapshot").toBe(true);
-    writeFileSync(join(repo, "a.ts"), "late\n");
-    const answer = await runHook("post-tool-use", waited, repo);
-    expect(answer.stderr).not.toContain("No snapshot was taken");
-    expect(answer.exitCode).toBe(2);
-    expect(answer.stderr).toContain("✗ demo.keepA · a.ts");
-    expect(read("a.ts"), "written back from its snapshot").toBe("export const a = 2; // staged\n");
-  });
-
-  it("leaves a record it cannot read out of the log rather than failing the diff", () => {
-    mkdirSync(join(repo, ".flow", "snapshots"), { recursive: true });
-    writeFileSync(join(repo, ".flow", "snapshots", "half.json"), "{ not json");
-    writeFileSync(join(repo, ".flow", "snapshots", "odd.json"), "[1]");
-    expect(callLog(repo)).toStrictEqual([]);
-    expect(callLog(join(repo, "nowhere"))).toStrictEqual([]);
-  });
-});
-
 describe("a subagent's session notes, when its brief cannot be read at its start", () => {
   // At SubagentStart the host has not written the subagent's own transcript yet, so a note bound to
   // a category its brief recognises waits for its first tool call, which can read the brief.
-  const notesConfig = `import { breadcrumb, defineCategory, defineConfig, definePack, guardrail, pack, session, spawnedAs, write } from ${JSON.stringify(new URL("../../index.ts", import.meta.url).pathname)};
+  const notesConfig = `import { breadcrumb, command, defineCategory, defineConfig, definePack, guardrail, pack, session, spawnedAs } from ${JSON.stringify(new URL("../../index.ts", import.meta.url).pathname)};
 const briefed = defineCategory("briefed", spawnedAs({ generic: ["general-purpose"], brief: ["BUILD-MARKER"] }));
 const demo = definePack("demo", {
   everyone: breadcrumb().at(session).text("For every agent."),
   briefedOnly: breadcrumb().at(session).for(briefed).text("For the briefed agent."),
   noTodo: guardrail()
-    .at(write)
-    .check((ctx) => (ctx.file?.content.includes("TODO") ? ctx.fail("TODO") : ctx.ok()))
+    .at(command)
+    .check((ctx) => (ctx.command?.includes("TODO") ? ctx.fail("TODO") : ctx.ok()))
     .message("No TODOs.")
-    .test({ pass: [{ path: "a.ts", content: "ok" }], block: [{ path: "a.ts", content: "TODO" }] }),
+    .test({ pass: ["echo ok"], block: ["echo TODO"] }),
 });
 export default defineConfig([pack(demo)]);
 `;
@@ -539,8 +82,9 @@ export default defineConfig([pack(demo)]);
   };
   const start = (agent: string): Promise<Awaited<ReturnType<typeof runHook>>> =>
     runHook("subagent-start", { session_id: "s1", transcript_path: parent(), cwd: repo, agent_id: agent, agent_type: "general-purpose", hook_event_name: "SubagentStart" }, repo);
-  const call = (agent: string, tool: string, input: Record<string, unknown>, key: string): Promise<Awaited<ReturnType<typeof runHook>>> =>
-    runHook("pre-tool-use", { session_id: "s1", transcript_path: parent(), cwd: repo, agent_id: agent, agent_type: "general-purpose", tool_name: tool, tool_input: input, tool_use_id: key }, repo);
+  // A shell command is judged before it runs, and any other tool's call is seen after it ran.
+  const call = (agent: string, tool: string, input: Record<string, unknown>): Promise<Awaited<ReturnType<typeof runHook>>> =>
+    runHook(tool === "Bash" ? "pre-tool-use" : "post-tool-use", { session_id: "s1", transcript_path: parent(), cwd: repo, agent_id: agent, agent_type: "general-purpose", tool_name: tool, tool_input: input }, repo);
 
   beforeEach(() => {
     writeFileSync(join(repo, "flow.config.ts"), notesConfig);
@@ -552,21 +96,21 @@ export default defineConfig([pack(demo)]);
     expect(started.stdout).toContain("demo.everyone");
     expect(started.stdout, "the brief is not there to recognise").not.toContain("demo.briefedOnly");
     briefOf("abrief", "Build the task. BUILD-MARKER");
-    const first = await call("abrief", "Read", { file_path: join(repo, "a.ts") }, "toolu_b1");
-    expect(first.stdout).toContain('"hookEventName":"PreToolUse"');
+    const first = await call("abrief", "Read", { file_path: join(repo, "a.ts") });
+    expect(first.stdout).toContain('"hookEventName":"PostToolUse"');
     expect(first.stdout).toContain("# breadcrumb: demo.briefedOnly (session)\\nFor the briefed agent.");
     expect(first.stdout, "shown at the start already").not.toContain("demo.everyone");
-    const second = await call("abrief", "Read", { file_path: join(repo, "a.ts") }, "toolu_b2");
+    const second = await call("abrief", "Read", { file_path: join(repo, "a.ts") });
     expect(second.stdout, "shown once").not.toContain("demo.briefedOnly");
   });
 
   it("keeps the note held past a first call that is refused, and shows it on the call that runs", async () => {
     await start("arefused");
     briefOf("arefused", "BUILD-MARKER");
-    const refused = await call("arefused", "Write", { file_path: join(repo, "a.ts"), content: "TODO" }, "toolu_r1");
+    const refused = await call("arefused", "Bash", { command: "echo TODO" });
     expect(refused.exitCode).toBe(2);
     expect(refused.stderr).not.toContain("demo.briefedOnly");
-    const runs = await call("arefused", "Read", { file_path: join(repo, "a.ts") }, "toolu_r2");
+    const runs = await call("arefused", "Bash", { command: "echo ok" });
     expect(runs.stdout).toContain("demo.briefedOnly");
   });
 
@@ -575,14 +119,14 @@ export default defineConfig([pack(demo)]);
     const started = await start("aresumed");
     expect(started.stdout).toContain("demo.everyone");
     expect(started.stdout).toContain("# breadcrumb: demo.briefedOnly (session)\\nFor the briefed agent.");
-    const first = await call("aresumed", "Read", { file_path: join(repo, "a.ts") }, "toolu_s1");
+    const first = await call("aresumed", "Read", { file_path: join(repo, "a.ts") });
     expect(first.stdout, "nothing was held").not.toContain("demo.briefedOnly");
   });
 
   it("does not show the note to a subagent whose brief does not recognise the category", async () => {
     await start("aother");
     briefOf("aother", "Look something up.");
-    const first = await call("aother", "Read", { file_path: join(repo, "a.ts") }, "toolu_o1");
+    const first = await call("aother", "Read", { file_path: join(repo, "a.ts") });
     expect(first.stdout).not.toContain("demo.briefedOnly");
   });
 });

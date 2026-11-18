@@ -20,8 +20,8 @@ import { breadcrumb, defineCategory, defineConfig, definePack, guardrail, loadCo
 import { metrics, momentsView, type Block, type Bound, type Row } from "../../engine/domain.ts";
 import { parseCommandLine, parseShellSteps } from "../../language/domain.ts";
 import { claudeCode } from "./claude.ts";
-import { ALLOW, type AdapterEvent, CONFIG_FILE, type CallRecord, type Change, type Facts, GATE_PATH, HOOKS_DIR, type InitFacts, LOCAL_BIN, MACHINE_FLAG, PACKAGE_BIN, COMMIT_MSG, REFUSED_ONLY, type SpawnRecord, type Status, type StatusFacts, type UninstallFacts, branchFromHead, callName, delivers, formatFacts, guardPaths, initLines, isGuardPath, lastMode, literalScopes, mergeNarratives, mismatchesIn, modesOf, nulPaths, planInit, planUninstall, relativise, staticPrefix, status, statusCode, statusLines, uninstallCode, uninstallLines, weakenedAfterBlock } from "../domain.ts";
-import { CALL_LIFETIME_MS, DELIVERS, EDIT_TOOLS, type EventWorld, FLOW_OFF, HOOK_COSTS, HOOK_EVENTS, HOOK_REGISTRATIONS, HOST_SURFACE, type HookPayload, REPO_SETTINGS, type Shown, agentOf, agentSettingOf, applyEdit, authored, awaitsBrief, bareHook, bareRegistrations, bashReads, briefBlock, briefHead, callKey, callRecord, classifyStore, commandFolders, contextTokens, decision, deleteTargets, deltaFault, foldersBetween, forgettable, holdsForBrief, hookCommand, included, isHookEvent, isInjected, listsFlow, mismatchRow, nothingBound, ourHookCommand, outsideOf, overlapping, ownTranscriptPath, parseEvents, preJudged, projectFolderName, reachesAnotherWorktree, readFault, registeredEvents, reversal, ridesRefusal, sessionFactsFrom, settingsFileFor, shellReadRows, snapshotPathspecs, spawnMeta, spawnsIn, staleRegistrations, steerOf, toEvent, toResult, tokensFromTranscript, toolRow, touchedPath, transcriptHead, transcriptLines, turnActions, untoldWorktrees, visibility, whileBroken, withMachineCommandsUpToDate, withRegistrations, withoutRegistrations, workedPaths, worktreeFolders, worktreeLine, wouldBeFile, writeRows } from "./domain.ts";
+import { ALLOW, type AdapterEvent, CONFIG_FILE, type Facts, GATE_PATH, HOOKS_DIR, type InitFacts, LOCAL_BIN, MACHINE_FLAG, PACKAGE_BIN, COMMIT_MSG, type SpawnRecord, type Status, type StatusFacts, type UninstallFacts, branchFromHead, delivers, formatFacts, guardPaths, initLines, isGuardPath, lastMode, mergeNarratives, modesOf, planInit, planUninstall, relativise, status, statusCode, statusLines, uninstallCode, uninstallLines, weakenedAfterBlock } from "../domain.ts";
+import { DELIVERS, EDIT_TOOLS, type EventWorld, FLOW_OFF, HOOK_COSTS, HOOK_EVENTS, HOOK_REGISTRATIONS, HOST_SURFACE, type HookPayload, REPO_SETTINGS, type Shown, agentOf, agentSettingOf, awaitsBrief, bareHook, bareRegistrations, bashReads, briefBlock, briefHead, classifyStore, commandFolders, contextTokens, decision, foldersBetween, holdsForBrief, hookCommand, isHookEvent, isInjected, listsFlow, nothingBound, ourHookCommand, outsideOf, ownTranscriptPath, parseEvents, projectFolderName, reachesAnotherWorktree, readFault, registeredEvents, ridesRefusal, sessionFactsFrom, settingsFileFor, shellReadRows, spawnMeta, spawnsIn, staleRegistrations, steerOf, toEvent, toResult, tokensFromTranscript, toolRow, touchedPath, transcriptHead, transcriptLines, turnActions, untoldWorktrees, whileBroken, withMachineCommandsUpToDate, withRegistrations, withoutRegistrations, workedPaths, worktreeFolders, worktreeLine } from "./domain.ts";
 import { type Steer, type TranscriptEvent } from "../harness.ts";
 
 
@@ -56,24 +56,17 @@ const pre = (tool: string, input: Record<string, unknown>): HookPayload => ({
   tool_input: input,
 });
 
-/** The one guard event a payload produced, when a test is about exactly one. */
-function only(events: readonly AdapterEvent[]): AdapterEvent {
-  expect(events).toHaveLength(1);
-  return events[0] as AdapterEvent;
-}
-
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // WHAT THIS ADAPTER ANSWERS TO
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-describe("the eight events, and the moments honestly delivered", () => {
-  it("answers to eight events, named by the event and never by the job", () => {
+describe("the seven events, and the moments honestly delivered", () => {
+  it("answers to seven events, named by the event and never by the job", () => {
     expect([...HOOK_EVENTS]).toStrictEqual([
       "session-start",
       "subagent-start",
       "pre-tool-use",
       "post-tool-use",
-      "post-tool-use-failure",
       "stop",
       "subagent-stop",
       "notification",
@@ -93,109 +86,13 @@ describe("the eight events, and the moments honestly delivered", () => {
     expect(delivers("breadcrumb", "session", DELIVERS)).toBe(true);
     expect(delivers("breadcrumb", "touch", DELIVERS)).toBe(true);
     expect(delivers("guardrail", "session", DELIVERS), "a guardrail has no session rail at all").toBe(false);
+    expect(DELIVERS.guard, "flow stops no write and no delete").toEqual(["command", "commit", "turn-end"]);
   });
 });
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // PAYLOAD → EVENT
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-
-describe("the would-be file, rebuilt in memory before disk", () => {
-  it("takes a Write's content outright", () => {
-    expect(wouldBeFile("Write", { file_path: "/repo/src/a.ts", content: "next" }, world())).toStrictEqual({
-      path: "src/a.ts",
-      content: "next",
-    });
-  });
-
-  it("folds an Edit into the file as it stands", () => {
-    const w = world({ "src/a.ts": "const a = 1;\nconst b = 2;\n" });
-    expect(wouldBeFile("Edit", { file_path: "/repo/src/a.ts", old_string: "1", new_string: "9" }, w)?.content).toBe(
-      "const a = 9;\nconst b = 2;\n",
-    );
-  });
-
-  it("folds every edit of a MultiEdit, in order", () => {
-    const w = world({ "a.ts": "one two" });
-    const edits = [
-      { old_string: "one", new_string: "1" },
-      { old_string: "two", new_string: "2" },
-    ];
-    expect(wouldBeFile("MultiEdit", { file_path: "a.ts", edits }, w)?.content).toBe("1 2");
-  });
-
-  it("stands aside when an anchor is not in the file — never judges a guess", () => {
-    // The whole capability rests on the reconstruction being EXACT. A file that never existed is
-    // worse than no guard at all, so an unlocatable anchor abandons the whole reconstruction.
-    const w = world({ "a.ts": "one" });
-    expect(applyEdit("one", { old_string: "nope", new_string: "x" })).toBeNull();
-    expect(wouldBeFile("Edit", { file_path: "a.ts", old_string: "nope", new_string: "x" }, w)).toBeNull();
-    expect(
-      wouldBeFile("MultiEdit", { file_path: "a.ts", edits: [{ old_string: "one", new_string: "1" }, { old_string: "zz", new_string: "" }] }, w),
-      "one bad anchor abandons the fold rather than judging a half-applied file",
-    ).toBeNull();
-  });
-
-  it("treats an empty anchor as a Write, and replace_all as every occurrence", () => {
-    expect(applyEdit("anything", { old_string: "", new_string: "whole" })).toBe("whole");
-    expect(applyEdit("a a a", { old_string: "a", new_string: "b", replace_all: true })).toBe("b b b");
-  });
-
-  it("is not a write at all when the tool names no path, or is not a writing tool", () => {
-    expect(wouldBeFile("Write", {}, world())).toBeNull();
-    expect(wouldBeFile("Read", { file_path: "a.ts" }, world())).toBeNull();
-  });
-
-  it("relativises against the root, because that is how every glob is written", () => {
-    expect(relativise("/repo/src/a.ts", ROOT)).toBe("src/a.ts");
-    expect(relativise("src/a.ts", ROOT), "already relative").toBe("src/a.ts");
-    expect(relativise("/elsewhere/a.ts", ROOT), "outside the repo stays absolute").toBe("/elsewhere/a.ts");
-  });
-});
-
-describe("a Bash line's delete targets", () => {
-  it("reads rm, git rm, and the SOURCE side of mv and git mv", () => {
-    expect(deleteTargets(parseCommandLine("rm -rf secret/a.ts b.ts"))).toStrictEqual(["secret/a.ts", "b.ts"]);
-    expect(deleteTargets(parseCommandLine("git rm secret/a.ts"))).toStrictEqual(["secret/a.ts"]);
-    expect(deleteTargets(parseCommandLine("mv secret/a.ts elsewhere/a.ts"))).toStrictEqual(["secret/a.ts"]);
-    expect(deleteTargets(parseCommandLine("git mv secret/a.ts elsewhere/a.ts")), "git mv was the old blind spot").toStrictEqual([
-      "secret/a.ts",
-    ]);
-  });
-
-  it("reads every sub-command of a chained line, and no others", () => {
-    expect(deleteTargets(parseCommandLine("just build && rm dist/a.js"))).toStrictEqual(["dist/a.js"]);
-    expect(deleteTargets(parseCommandLine("echo 'rm a.ts'")), "a quoted mention is not a command").toStrictEqual([]);
-    expect(deleteTargets(parseCommandLine("git commit -m 'rm the thing'"))).toStrictEqual([]);
-  });
-
-  it("stands aside on a line it cannot parse, rather than guessing", () => {
-    // null from the parse means "I cannot tell". A guard that guesses at a line it could not
-    // parse is worse than one that stands aside — and the command rail still sees the raw line.
-    expect(deleteTargets(parseCommandLine("rm 'unclosed"))).toStrictEqual([]);
-  });
-
-  it("does not read a rename with only a destination as a removal", () => {
-    expect(deleteTargets(parseCommandLine("mv onlyone"))).toStrictEqual([]);
-  });
-
-  it("reads the removers' own arguments in the parse, never a heredoc body or another command's quoted argument", () => {
-    // A file written from a heredoc that names an `rm`, and a script fed to python on stdin.
-    expect(deleteTargets(parseCommandLine("cat > notes.md <<'EOF'\nrm secret/a.ts\nEOF"))).toStrictEqual([]);
-    expect(deleteTargets(parseCommandLine("python3 - <<'PY'\nimport os; os.system('rm secret/a.ts')\nPY"))).toStrictEqual([]);
-    expect(deleteTargets(parseCommandLine('gh issue comment 1 --body "then rm secret/a.ts and git rm b.ts"'))).toStrictEqual([]);
-    // …while an rm that RUNS is read wherever it sits: a substitution, a string given to a shell,
-    // a heredoc a shell reads, and past a wrapper.
-    expect(deleteTargets(parseCommandLine('echo "$(rm a.ts)"; bash -c "rm b.ts"; sudo rm c.ts'))).toStrictEqual(["a.ts", "b.ts", "c.ts"]);
-    expect(deleteTargets(parseCommandLine("bash <<'EOF'\nrm a.ts\nEOF"))).toStrictEqual(["a.ts"]);
-  });
-
-  it("reads git's own options before its subcommand, and a file after `--` that looks like a flag", () => {
-    expect(deleteTargets(parseCommandLine("git -c core.x=y rm --cached a.ts"))).toStrictEqual(["a.ts"]);
-    expect(deleteTargets(parseCommandLine("rm -- -weird.ts"))).toStrictEqual(["-weird.ts"]);
-    expect(deleteTargets(null), "a line that does not parse").toStrictEqual([]);
-  });
-});
 
 // ── Bash reads — what a shell command reads, for the touch breadcrumb ───────────
 
@@ -416,6 +313,14 @@ describe("bashReads — the files a Bash command reads, before it runs", () => {
   });
 });
 
+describe("relativise", () => {
+  it("relativises against the root, because that is how every glob is written", () => {
+    expect(relativise("/repo/src/a.ts", ROOT)).toBe("src/a.ts");
+    expect(relativise("src/a.ts", ROOT), "already relative").toBe("src/a.ts");
+    expect(relativise("/elsewhere/a.ts", ROOT), "outside the repo stays absolute").toBe("/elsewhere/a.ts");
+  });
+});
+
 describe("toEvent — one payload, every moment it carries", () => {
   it("turns a session start into the session moment", () => {
     expect(toEvent("session-start", { source: "startup" }, world())).toStrictEqual([
@@ -457,27 +362,19 @@ describe("toEvent — one payload, every moment it carries", () => {
     expect(awaitsBrief("pre-tool-use", null)).toBe(false);
   });
 
-  it("turns an Edit into a write event carrying the would-be file", () => {
-    const w = world({ "src/a.ts": "old" });
-    const event = only(toEvent("pre-tool-use", pre("Edit", { file_path: "/repo/src/a.ts", old_string: "old", new_string: "new" }), w));
-    expect(event).toStrictEqual({ rail: "guard", moment: "write", file: { path: "src/a.ts", content: "new" } });
-    // The write rail is the one that fires on every keystroke, and a transcript is megabytes.
-    expect(asked, "the write rail must never pay for the turn").toStrictEqual([]);
-  });
-
-  it("turns a Bash call into the command moment on BOTH rails, plus a delete moment per file it would remove", () => {
-    // One call, three rails — which is why toEvent answers with a list. The guard rail decides
-    // whether the command may run and the brief rail says what the agent should know before it does;
-    // the delete rail sees the file as it still is, so a content rule can ask what is about to be
-    // lost.
-    const w = world({ "secret/a.ts": "the content" });
-    const events = toEvent("pre-tool-use", pre("Bash", { command: "rm secret/a.ts" }), w);
+  it("turns a Bash call into the command moment on BOTH rails, and a call to any other tool into nothing before it runs", () => {
+    // One call, two rails — which is why toEvent answers with a list. The guard rail decides
+    // whether the command may run and the brief rail says what the agent should know before it does.
+    const events = toEvent("pre-tool-use", pre("Bash", { command: "rm secret/a.ts" }), world({ "secret/a.ts": "the content" }));
     // Every guard event comes first: a refusal carries no notes, so none is judged after one.
     expect(events).toStrictEqual([
       { rail: "guard", moment: "command", command: "rm secret/a.ts", commands: parseCommandLine("rm secret/a.ts", { cwd: "/repo" }), start: { cwd: "/repo", home: undefined } },
-      { rail: "guard", moment: "delete", file: { path: "secret/a.ts", content: "the content" } },
       { rail: "brief", moment: "command", command: "rm secret/a.ts" },
     ]);
+    // flow stops no write: an Edit, a Write and a MultiEdit carry no moment before they run.
+    const edit = { file_path: "/repo/src/a.ts", old_string: "old", new_string: "new" };
+    for (const tool of ["Edit", "Write", "MultiEdit"])
+      expect(toEvent("pre-tool-use", pre(tool, edit), world({ "src/a.ts": "old" })), tool).toStrictEqual([]);
   });
 
   it("turns each file a Bash call reads or searches into a touch on the same answer, from where the shell stands", () => {
@@ -496,14 +393,6 @@ describe("toEvent — one payload, every moment it carries", () => {
     // searched is one touch, not two.
     expect(toEvent("pre-tool-use", pre("Bash", { command: "cat a.ts; ls a.ts" }), world()).slice(2)).toStrictEqual([
       { rail: "brief", moment: "touch", path: "a.ts" },
-    ]);
-  });
-
-  it("raises no delete moment for a file that is already gone", () => {
-    const events = toEvent("pre-tool-use", pre("Bash", { command: "rm nowhere.ts" }), world());
-    expect(events).toStrictEqual([
-      { rail: "guard", moment: "command", command: "rm nowhere.ts", commands: parseCommandLine("rm nowhere.ts", { cwd: "/repo" }), start: { cwd: "/repo", home: undefined } },
-      { rail: "brief", moment: "command", command: "rm nowhere.ts" },
     ]);
   });
 
@@ -559,23 +448,23 @@ describe("toResult — one refusal spelling, one injection spelling", () => {
   it("blocks with exit 2 and the whole refusal on stderr", () => {
     // ONE spelling at every rail. The old engine had three — a PreToolUse deny object, exit 2, and
     // a Stop decision object — three shapes for one answer, each with its own way of being wrong.
-    const result = toResult("pre-tool-use", { refused: [{ moment: "write", block: block() }], shown: [] });
+    const result = toResult("pre-tool-use", { refused: [{ moment: "command", block: block() }], shown: [] });
     expect(result.exitCode).toBe(2);
     expect(result.stdout).toBe("");
-    expect(result.stderr).toContain("flow — blocked before the write landed");
+    expect(result.stderr).toContain("flow — command blocked before it ran");
     expect(result.stderr).toContain("core.noTodo · src/a.ts");
     expect(result.stderr).toContain("No TODOs in shipped code.");
     expect(result.stderr).toContain("says TODO");
     expect(result.stderr, "a refusal without an instruction leaves a blocked agent guessing").toContain(
-      "Adjust the change so it passes, then retry.",
+      "Adjust the command, then retry.",
     );
   });
 
   it("banners by the RAIL that refused, not by the hook that carried it", () => {
-    const bash = (moment: "command" | "delete"): string =>
+    const at = (moment: "command" | "commit"): string =>
       toResult("pre-tool-use", { refused: [{ moment, block: block() }], shown: [] }).stderr;
-    expect(bash("command")).toContain("command blocked before it ran");
-    expect(bash("delete")).toContain("blocked before the delete");
+    expect(at("command")).toContain("command blocked before it ran");
+    expect(at("commit")).toContain("commit blocked");
     expect(toResult("stop", { refused: [{ moment: "turn-end", block: block() }], shown: [] }).stderr).toContain(
       "turn held open",
     );
@@ -584,32 +473,13 @@ describe("toResult — one refusal spelling, one injection spelling", () => {
   it("carries every refusal, not just the first", () => {
     const result = toResult("pre-tool-use", {
       refused: [
-        { moment: "write", block: block({ entry: "one" }) },
-        { moment: "write", block: block({ entry: "two" }) },
+        { moment: "command", block: block({ entry: "one" }) },
+        { moment: "command", block: block({ entry: "two" }) },
       ],
       shown: [],
     });
     expect(result.stderr).toContain("one");
     expect(result.stderr).toContain("two");
-  });
-
-  it("tells the agent, by name, each file that entered the snapshot during the call, on whichever channel the answer uses (#146)", () => {
-    const told = toResult("post-tool-use", { refused: [], shown: [], entered: [".env"] });
-    expect(told.exitCode).toBe(0);
-    expect(JSON.parse(told.stdout)).toEqual({
-      hookSpecificOutput: {
-        hookEventName: "PostToolUse",
-        additionalContext: "flow had no earlier copy of .env: it entered the snapshot during this call, so this call did not judge it. Later changes to it are judged.",
-      },
-    });
-    const refusal = toResult("post-tool-use", { refused: [{ moment: "write", block: block(), observed: "src/a.ts" }], shown: [], entered: [".env.keys", ".env"] });
-    expect(refusal.exitCode).toBe(2);
-    expect(refusal.stderr, "beside a refusal, after it").toMatch(/core\.noTodo[\s\S]*flow had no earlier copy of \.env\.keys and \.env: they entered the snapshot during this call, so this call did not judge them\./);
-    const many = Array.from({ length: 12 }, (_, i) => `node_modules/p${i}.js`);
-    expect(JSON.parse(toResult("post-tool-use", { refused: [], shown: [], entered: many }).stdout).hookSpecificOutput.additionalContext, "a long list is counted, not printed").toContain(
-      "node_modules/p8.js, node_modules/p9.js and 2 more: they entered",
-    );
-    expect(toResult("post-tool-use", { refused: [], shown: [], entered: [] }), "nothing entered, nothing said").toEqual(ALLOW);
   });
 
   it("injects notes as the decision object the host reads, echoing its own event name", () => {
@@ -627,7 +497,7 @@ describe("toResult — one refusal spelling, one injection spelling", () => {
 
   it("refuses before it injects — a rail that blocks has nothing to add", () => {
     const result = toResult("pre-tool-use", {
-      refused: [{ moment: "write", block: block() }],
+      refused: [{ moment: "command", block: block() }],
       shown: [{ entry: "a", cause: "first-touch", body: "hello" }],
     });
     expect(result.exitCode).toBe(2);
@@ -656,9 +526,9 @@ describe("toResult — one refusal spelling, one injection spelling", () => {
     });
   });
 
-  it("is LOUD on every rail that judges a tool call, and speaks without holding on the rest", () => {
-    // The after-call rails say it the way every unseen call is said — the call ran and nothing it
-    // changed was checked — never as a guard refusing a call that has already landed (#12).
+  it("is LOUD on the one rail that judges a tool call, and speaks without holding on the rest", () => {
+    // PreToolUse refuses the call it could not see. After a call there is nothing left to refuse, so
+    // the fault is said and the call goes on (#12).
     expect(readFault("pre-tool-use", "unparseable", "not JSON")).toStrictEqual({
       stdout: "",
       stderr: "\n[flow hook pre-tool-use] could not PARSE its payload (not JSON).\n",
@@ -666,19 +536,8 @@ describe("toResult — one refusal spelling, one injection spelling", () => {
     });
     expect(readFault("post-tool-use", "unparseable", "not JSON")).toStrictEqual({
       stdout: "",
-      stderr:
-        "\nflow — could not see what this call changed:\n\n" +
-        "[flow hook post-tool-use] could not PARSE its payload (not JSON).\n\n" +
-        "The call ran, and nothing it changed was checked or put back. Check what the call changed before you go on.\n",
-      exitCode: 2,
-    });
-    expect(readFault("post-tool-use-failure", "unreadable", "EBADF")).toStrictEqual({
-      stdout: "",
-      stderr:
-        "\nflow — could not see what this call changed:\n\n" +
-        "[flow hook post-tool-use-failure] could not READ its payload from stdin (EBADF).\n\n" +
-        "The call ran, and nothing it changed was checked or put back. Check what the call changed before you go on.\n",
-      exitCode: 2,
+      stderr: "[flow hook post-tool-use] could not PARSE its payload (not JSON).\n",
+      exitCode: 0,
     });
     expect(readFault("session-start", "unreadable", "EBADF")).toStrictEqual({
       stdout: "",
@@ -1068,46 +927,6 @@ describe("the flight recorder's row", () => {
     expect(shellReadRows(pre("Bash", {}), ROOT)).toEqual([]);
   });
 
-  it("the files a call changed are write rows, except the file an edit tool named and anything a spawn saw", () => {
-    const changes: Change[] = [
-      { path: "src/a.ts", before: "a", after: "b" },
-      { path: "src/new.ts", before: null, after: "n" },
-      { path: "src/old.ts", before: "o", after: null },
-    ];
-    expect(writeRows(pre("Bash", { command: "python3 - <<EOF" }), changes, ROOT)).toStrictEqual([
-      { kind: "write", tool: "Bash", path: "src/a.ts", change: "modified" },
-      { kind: "write", tool: "Bash", path: "src/new.ts", change: "created" },
-      { kind: "write", tool: "Bash", path: "src/old.ts", change: "deleted" },
-    ]);
-    expect(writeRows(pre("Edit", { file_path: "/repo/src/a.ts" }), changes, ROOT).map((r) => r["path"])).toEqual([
-      "src/new.ts",
-      "src/old.ts",
-    ]);
-    expect(writeRows(pre("NotebookEdit", { notebook_path: "/repo/src/new.ts" }), changes, ROOT)).toHaveLength(2);
-    expect(writeRows(pre("Agent", { prompt: "build" }), changes, ROOT), "the subagent's calls log their own").toEqual([]);
-    expect(writeRows(pre("Task", {}), changes, ROOT)).toEqual([]);
-  });
-
-  it("the host's own changed-file list is a mismatch row only where it disagrees with flow's diff", () => {
-    const changes: Change[] = [
-      { path: "src/a.ts", before: "a", after: "b" },
-      { path: "src/b.ts", before: "a", after: "b" },
-    ];
-    const after = (bashEditDiff: unknown): HookPayload => ({ ...pre("Bash", { command: "x" }), tool_response: { stdout: "", bashEditDiff } });
-    expect(mismatchRow(after({ changedFiles: ["/repo/src/a.ts", "/repo/src/b.ts"] }), changes, ROOT), "agreement is silence").toBeNull();
-    expect(mismatchRow(after({ changedFiles: ["/repo/src/a.ts", "/repo/.env", "/elsewhere/x"] }), changes, ROOT)).toStrictEqual({
-      kind: "mismatch",
-      tool: "Bash",
-      hostOnly: [".env"],
-      flowOnly: ["src/b.ts"],
-    });
-    // A list the host cut short cannot prove flow saw something extra.
-    expect(mismatchRow(after({ changedFiles: ["/repo/src/a.ts"], moreFiles: 3 }), changes, ROOT)).toBeNull();
-    expect(mismatchRow(pre("Bash", { command: "x" }), changes, ROOT), "no list, no opinion").toBeNull();
-    expect(mismatchRow({ ...pre("Bash", {}), tool_response: "text" }, changes, ROOT)).toBeNull();
-    expect(mismatchRow(after(null), changes, ROOT)).toBeNull();
-    expect(mismatchRow(after({ files: [] }), changes, ROOT)).toBeNull();
-  });
 });
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -1261,15 +1080,6 @@ describe("what the session ran under — the permission mode, and auto mode's st
     ).toEqual({ calls: { auto: 2, default: 1 }, auto: 3, steered: 2, variants: { strict: 1 } });
   });
 
-  it("adds up where the host's changed-file list disagreed with flow's diff", () => {
-    expect(
-      mismatchesIn([
-        { kind: "mismatch", tool: "Bash", hostOnly: [".env"], flowOnly: ["src/b.ts"] },
-        { kind: "mismatch", tool: "Bash", hostOnly: [".env", 3], flowOnly: "nonsense" },
-        { kind: "write", path: "x" },
-      ]),
-    ).toEqual({ calls: 2, hostOnly: { ".env": 2 }, flowOnly: { "src/b.ts": 1 } });
-  });
 });
 
 describe("weakened after a block — the one failure a guard cannot catch itself", () => {
@@ -1327,7 +1137,6 @@ describe("formatFacts — the whole of what a person sees", () => {
     actors: [],
     weakened: [],
     modes: modesOf([]),
-    mismatches: mismatchesIn([]),
     marked: null,
     ...over,
   });
@@ -1360,13 +1169,13 @@ describe("formatFacts — the whole of what a person sees", () => {
     expect(text).toContain("retire    core.fiction — bound, never once reached");
   });
 
-  it("counts the shell's writes and reads beside the edits, and lists their paths", () => {
-    const writes: Record<string, number> = { "src/a.ts": 3, "src/b.ts": 1, "c/1": 1, "c/2": 1, "c/3": 1, "c/4": 1 };
-    const narrativeWith = { ...mergeNarratives([]), stats: { ...mergeNarratives([]).stats, shellWrites: 8, shellReads: 1 }, shell: { writes, reads: { "src/c.ts": 1 } } };
+  it("counts the shell's reads beside the edits, lists their paths, and counts no shell write", () => {
+    const reads: Record<string, number> = { "src/a.ts": 3, "src/b.ts": 1, "c/1": 1, "c/2": 1, "c/3": 1, "c/4": 1 };
+    const narrativeWith = { ...mergeNarratives([]), stats: { ...mergeNarratives([]).stats, shellReads: 8 }, shell: { reads } };
     const text = formatFacts(empty({ narrative: narrativeWith })).join("\n");
-    expect(text).toContain("0 edits · 0 writes · 8 shell writes · 1 shell reads · 0 commits");
-    expect(text).toContain("  shell     wrote src/a.ts 3× · c/1 · c/2 · c/3 · c/4 · …and 1 more");
-    expect(text).toContain("  shell     read src/c.ts");
+    expect(text).toContain("0 edits · 0 writes · 8 shell reads · 0 commits");
+    expect(text).toContain("  shell     read src/a.ts 3× · c/1 · c/2 · c/3 · c/4 · …and 1 more");
+    expect(text, "a transcript says what ran, never what it changed").not.toContain("shell writes");
     expect(formatFacts(empty()).join("\n"), "nothing through the shell is no path line").not.toContain("  shell ");
   });
 
@@ -1380,21 +1189,14 @@ describe("formatFacts — the whole of what a person sees", () => {
     expect(formatFacts(empty()).join("\n")).not.toContain("  mode ");
   });
 
-  it("flags where Claude Code's own changed-file list disagreed with flow's diff", () => {
-    const text = formatFacts(empty({ mismatches: { calls: 2, hostOnly: { ".env": 2 }, flowOnly: { "src/b.ts": 1 } } })).join("\n");
-    expect(text).toContain("⚠ Claude Code's changed-file list disagreed with flow's diff on 2 calls — only Claude Code listed .env 2× — only flow's diff held src/b.ts");
-    expect(formatFacts(empty({ mismatches: { calls: 1, hostOnly: {}, flowOnly: { x: 1 } } })).join("\n")).toContain("on 1 call — only flow's diff held x");
-    expect(formatFacts(empty()).join("\n")).not.toContain("disagreed");
-  });
-
   it("names an entry that used to catch things and stopped", () => {
     const bound: Bound[] = [
-      { kind: "guardrail", id: "core.noTodo", pack: "core", at: ["write"], on: ["src/**"], for: [], description: null, says: null, disabled: null },
+      { kind: "guardrail", id: "core.noTodo", pack: "core", at: ["commit"], on: ["src/**"], for: [], description: null, says: null, disabled: null },
     ];
     const rows: Row[] = [
-      { kind: "run", ts: "2026-01-01T00:00:00.000Z", moment: "write", rules: [{ id: "core.noTodo", evaluated: 1, hits: 1, silenced: 0 }] },
-      { kind: "guardrail", ts: "2026-01-01T00:00:00.000Z", moment: "write", id: "core.noTodo", out: "deny", subject: "src/a.ts" },
-      { kind: "run", ts: "2026-02-05T00:00:00.000Z", moment: "write", rules: [] },
+      { kind: "run", ts: "2026-01-01T00:00:00.000Z", moment: "commit", rules: [{ id: "core.noTodo", evaluated: 1, hits: 1, silenced: 0 }] },
+      { kind: "guardrail", ts: "2026-01-01T00:00:00.000Z", moment: "commit", id: "core.noTodo", out: "deny", subject: "src/a.ts" },
+      { kind: "run", ts: "2026-02-05T00:00:00.000Z", moment: "commit", rules: [] },
     ];
     const text = formatFacts(
       empty({ metrics: metrics({ sessions: [{ session: "s1", rows }], entries: bound, nowMs: Date.parse("2026-03-01T00:00:00.000Z") }) }),
@@ -1462,7 +1264,7 @@ const BARE_SETTINGS = registrationsAs((command) => command.replace(/^.* flow /, 
 
 describe("the hook registrations flow writes", () => {
   it("names exactly the events it answers, and Notification is not one", () => {
-    expect(HOOK_REGISTRATIONS.map((r) => r.event)).toEqual(["SessionStart", "SubagentStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"]);
+    expect(HOOK_REGISTRATIONS.map((r) => r.event)).toEqual(["SessionStart", "SubagentStart", "PreToolUse", "PostToolUse", "Stop", "SubagentStop"]);
     expect(HOOK_REGISTRATIONS.map((r) => r.event)).not.toContain("Notification");
   });
 
@@ -1505,7 +1307,7 @@ describe("the hook registrations flow writes", () => {
     expect(after.permissions, "untouched, byte for byte").toEqual(before.permissions);
     expect(registeredEvents(settings)).toEqual(REGISTERED_EVENTS);
     expect(after.hooks["Stop"]).toEqual([{ hooks: [{ type: "command", command: hookCommand("stop") }] }]);
-    expect(after.hooks["PreToolUse"]?.[0]).toMatchObject({ matcher: "*" });
+    expect(after.hooks["PreToolUse"]?.[0]).toMatchObject({ matcher: "Bash" });
   });
 
   it("adds nothing on a second run — the whole of what makes init idempotent", () => {
@@ -1524,14 +1326,14 @@ describe("the hook registrations flow writes", () => {
     expect(JSON.stringify(stop)).toContain(JSON.stringify(hookCommand("stop")));
   });
 
-  it("asks for every tool after the call, succeeded or failed — any tool can change the tree", () => {
+  it("asks for Bash before a call and every tool after it, and for no hook before Edit and Write or after a failed call", () => {
     const matcher = (event: string): string | undefined => HOOK_REGISTRATIONS.find((r) => r.event === event)?.matcher;
+    expect(matcher("PreToolUse"), "the one thing flow refuses before it happens is a command").toBe("Bash");
     expect(matcher("PostToolUse")).toBe("*");
-    expect(matcher("PostToolUseFailure")).toBe("*");
-    expect(HOOK_REGISTRATIONS.find((r) => r.event === "PostToolUseFailure")?.command).toBe(hookCommand("post-tool-use-failure"));
+    expect(HOOK_REGISTRATIONS.map((r) => r.event)).not.toContain("PostToolUseFailure");
   });
 
-  it("widens its OWN narrow registration in place, and says so — a second entry would fire twice", () => {
+  it("brings its OWN registration up to date in place, and says so — a second entry would fire twice", () => {
     const older = {
       hooks: {
         ...(withRegistrations({}).settings as { hooks: Record<string, unknown> }).hooks,
@@ -1543,14 +1345,37 @@ describe("the hook registrations flow writes", () => {
     };
     expect(staleRegistrations(older)).toEqual(["PostToolUse"]);
     const { settings, added } = withRegistrations(older);
-    expect(added).toEqual(["PostToolUse (widened to every tool)"]);
+    expect(added).toEqual(["PostToolUse (matcher brought up to date)"]);
     const post = (settings as { hooks: Record<string, unknown[]> }).hooks["PostToolUse"];
     expect(post).toEqual([
       { matcher: "*", hooks: [{ type: "command", command: hookCommand("post-tool-use") }] },
       { matcher: "Bash", hooks: [{ type: "command", command: "their-tool --after" }] },
     ]);
-    expect(staleRegistrations(settings), "and a second run finds nothing to widen").toEqual([]);
+    expect(staleRegistrations(settings), "and a second run finds nothing to change").toEqual([]);
     expect(withRegistrations(settings).added).toEqual([]);
+  });
+
+  it("narrows an older PreToolUse registered for every tool to Bash, and removes the hook after a failed call", () => {
+    const older = {
+      hooks: {
+        ...(withRegistrations({}).settings as { hooks: Record<string, unknown> }).hooks,
+        PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: hookCommand("pre-tool-use") }] }],
+        PostToolUseFailure: [
+          { matcher: "*", hooks: [{ type: "command", command: "flow hook post-tool-use-failure" }] },
+          { matcher: "Bash", hooks: [{ type: "command", command: "their-tool --failed" }] },
+        ],
+      },
+    };
+    expect(staleRegistrations(older)).toEqual(["PreToolUse", "PostToolUseFailure"]);
+    expect(registeredEvents(older), "a hook flow no longer registers is not a registration").toEqual(REGISTERED_EVENTS);
+    const { settings, added } = withRegistrations(older);
+    expect(added).toEqual(["PreToolUse (matcher brought up to date)", "PostToolUseFailure (removed: flow no longer registers it)"]);
+    const hooks = (settings as { hooks: Record<string, unknown[]> }).hooks;
+    expect(hooks["PreToolUse"]).toEqual([{ matcher: "Bash", hooks: [{ type: "command", command: hookCommand("pre-tool-use") }] }]);
+    expect(hooks["PostToolUseFailure"], "theirs stays, flow's goes").toEqual([{ matcher: "Bash", hooks: [{ type: "command", command: "their-tool --failed" }] }]);
+    expect(withRegistrations(settings).added, "and a second run finds nothing to do").toEqual([]);
+    const alone = { hooks: { ...without("PostToolUse").hooks, PostToolUseFailure: [{ matcher: "*", hooks: [{ type: "command", command: "flow hook post-tool-use-failure" }] }] } };
+    expect(Object.keys((withRegistrations(alone).settings as { hooks: Record<string, unknown> }).hooks), "an event left with nothing of anyone's goes").not.toContain("PostToolUseFailure");
   });
 
   it("reads the old shape, the bare `flow hook <event>`, and nothing else as old", () => {
@@ -1585,13 +1410,13 @@ describe("the hook registrations flow writes", () => {
     const hooks = (settings as { model: string; hooks: Record<string, { matcher?: string; hooks: { command: string }[] }[]> }).hooks;
     const flows = Object.values(hooks).flatMap((entries) => entries.flatMap((entry) => entry.hooks.map((h) => h.command)).filter(ourHookCommand));
     expect(flows, "exactly flow's, each the new command").toEqual(HOOK_REGISTRATIONS.map((r) => r.command));
-    expect(hooks["PreToolUse"]?.[0]?.matcher, "the matcher stays").toBe("*");
+    expect(hooks["PreToolUse"]?.[0]?.matcher, "the matcher stays").toBe("Bash");
     expect(JSON.stringify(hooks["Stop"]), "theirs is untouched").toContain("their-tool --report");
     expect((settings as { model: string }).model).toBe("opus");
     expect(withRegistrations(settings).added, "and a second run finds nothing to do").toEqual([]);
   });
 
-  it("rewrites only flow's command inside an entry it shares, and widens an old narrow one in the same pass", () => {
+  it("rewrites only flow's command inside an entry it shares, and brings an old matcher up to date in the same pass", () => {
     const older = {
       hooks: {
         ...(withRegistrations({}).settings as { hooks: Record<string, unknown> }).hooks,
@@ -1607,7 +1432,7 @@ describe("the hook registrations flow writes", () => {
       },
     };
     const { settings, added } = withRegistrations(older);
-    expect(added).toEqual(["PostToolUse (widened to every tool, now runs the flow in node_modules/@jawache/flow first)"]);
+    expect(added).toEqual(["PostToolUse (matcher brought up to date, now runs the flow in node_modules/@jawache/flow first)"]);
     expect((settings as { hooks: Record<string, unknown[]> }).hooks["PostToolUse"]).toEqual([
       {
         matcher: "*",
@@ -1703,11 +1528,9 @@ describe("what every rail answers while the config will not load", () => {
   const TOLD = `${FAULT}\n\n${FLOW_OFF}`;
 
   describe("whileBroken — every call goes through, and the agent is told why", () => {
-    it("refuses no write, edit, delete or command, and hands each one the load error", () => {
+    it("refuses no command, and hands each one the load error", () => {
       const files = world({ "src/a.ts": "a", "flow.config.ts": "old" });
       for (const payload of [
-        pre("Write", { file_path: "/repo/src/b.ts", content: "fine" }),
-        pre("Edit", { file_path: "/repo/src/a.ts", old_string: "a", new_string: "b" }),
         pre("Bash", { command: "rm src/a.ts" }),
         pre("Bash", { command: "npm ci" }),
         pre("Bash", { command: "git reset --hard" }),
@@ -1723,8 +1546,8 @@ describe("what every rail answers while the config will not load", () => {
     });
 
     it("tells the agent once per answer, however many events the payload carried", () => {
-      // One Bash call is a command, each file an `rm` removes, and each file it reads — four
-      // events here, and the agent needs the sentence once.
+      // One Bash call is a command, its own note and each file it reads — four events here, and the
+      // agent needs the sentence once.
       const events = toEvent("pre-tool-use", pre("Bash", { command: "rm src/a.ts && cat src/b.ts" }), world({ "src/a.ts": "a", "src/b.ts": "b" }));
       expect(events.length).toBeGreaterThan(2);
       expect(whileBroken(events, FAULT).shown).toHaveLength(1);
@@ -1735,9 +1558,8 @@ describe("what every rail answers while the config will not load", () => {
     });
 
     it("says nothing after the call, because the agent was told when it asked", () => {
-      const changes = [{ path: "src/a.ts", before: "a", after: "b" }];
-      const events = toEvent("post-tool-use", pre("Bash", { command: "python3 fix.py" }), { ...world(), changes });
-      expect(events.some((event) => event.rail === "guard" && event.observed === true), "the change was seen").toBe(true);
+      const events = toEvent("post-tool-use", pre("Read", { file_path: "/repo/src/a.ts" }), world());
+      expect(events, "the file the call named was touched").toStrictEqual([{ rail: "brief", moment: "touch", path: "src/a.ts" }]);
       expect(whileBroken(events, FAULT)).toStrictEqual({ refused: [], shown: [], told: null });
     });
 
@@ -1960,9 +1782,8 @@ describe("the machine-wide file, beside a dev dependency's own", () => {
     const stopOnly = { hooks: { Stop: [{ hooks: [{ type: "command", command: hookCommand("stop") }] }] } };
     expect(beforeInit(stopOnly)?.detail).toBe(
       `.claude/settings.json does not call flow for ${LISTED} — re-run \`flow init\`. Until it does, ${machinePath} calls flow for Stop in the meantime; ` +
-        "no note is shown when a session starts; no note is shown when a subagent starts; no rule judges a tool call before it runs; " +
-        "no rule judges what a tool call changed; " +
-        "no rule judges what a failed tool call changed; no turn-end rule runs when a subagent hands back.",
+        "no note is shown when a session starts; no note is shown when a subagent starts; no rule judges a command before it runs; " +
+        "no note is shown for the file a tool call names; no turn-end rule runs when a subagent hands back.",
     );
     expect(beforeInit({ theme: "dark" })?.detail, "a machine-wide file with none of flow's covers nothing").toContain(
       "Until it does, no note is shown when a session starts;",
@@ -2012,8 +1833,6 @@ const statusFacts = (over: Partial<StatusFacts> = {}): StatusFacts => ({
   machine: null,
   grammars: [],
   session: null,
-  ignored: [],
-  snapshotInclude: [],
   binary: { listed: false, copy: false, path: true },
   ...over,
 });
@@ -2025,7 +1844,7 @@ describe("withoutRegistrations — flow's hooks taken out of a settings file", (
 
   it("removes flow's registrations, and the hooks key with them when nothing else is in it", () => {
     const { settings, removed } = withoutRegistrations(withRegistrations({ theme: "dark" }).settings);
-    expect(removed).toEqual(["SessionStart", "SubagentStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"]);
+    expect(removed).toEqual(["SessionStart", "SubagentStart", "PreToolUse", "PostToolUse", "Stop", "SubagentStop"]);
     expect(settings).toEqual({ theme: "dark" });
   });
 
@@ -2042,7 +1861,7 @@ describe("withoutRegistrations — flow's hooks taken out of a settings file", (
     };
     const before = structuredClone(mixed);
     const { settings, removed } = withoutRegistrations(mixed);
-    expect(removed).toEqual(["SessionStart", "SubagentStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"]);
+    expect(removed).toEqual(["SessionStart", "SubagentStart", "PreToolUse", "PostToolUse", "Stop", "SubagentStop"]);
     expect(settings).toEqual({
       permissions: { allow: ["Bash(ls:*)"] },
       hooks: { Stop: [{ hooks: [theirs] }, { hooks: [theirs] }], Notification: mixed.hooks.Notification },
@@ -2091,7 +1910,7 @@ describe("planUninstall — a dev dependency", () => {
     expect(plan.settings?.value).toEqual({ permissions: { allow: [] } });
     expect(plan.link, "an installed package is npm's to remove").toBe(false);
     const said = uninstallLines(plan, []).join("\n");
-    expect(said).toContain("  - .claude/settings.json — SessionStart · SubagentStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop · SubagentStop");
+    expect(said).toContain("  - .claude/settings.json — SessionStart · SubagentStart · PreToolUse · PostToolUse · Stop · SubagentStop");
     expect(said).toContain("next: `npm uninstall @jawache/flow`");
   });
 
@@ -2130,10 +1949,10 @@ describe("planUninstall — the machine-wide settings file", () => {
     expect(plan.machine).toEqual({
       path: MACHINE_SETTINGS,
       value: { theme: "dark", hooks: { Stop: [theirs] } },
-      removed: ["SessionStart", "SubagentStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"],
+      removed: ["SessionStart", "SubagentStart", "PreToolUse", "PostToolUse", "Stop", "SubagentStop"],
     });
     expect(uninstallLines(plan, []).join("\n")).toContain(
-      `  - ${MACHINE_SETTINGS} — SessionStart · SubagentStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop · SubagentStop`,
+      `  - ${MACHINE_SETTINGS} — SessionStart · SubagentStart · PreToolUse · PostToolUse · Stop · SubagentStop`,
     );
     expect(uninstallCode(plan, [])).toBe(0);
   });
@@ -2202,7 +2021,7 @@ describe("status — the whole answer", () => {
         load: {
           ok: true,
           entries: [
-            loaded("demo.noTodo", { kind: "guardrail", at: ["write", "commit"], on: ["src/**"], message: "no" }),
+            loaded("demo.noTodo", { kind: "guardrail", at: ["command", "commit"], on: ["src/**"], message: "no" }),
             loaded("demo.onlySubagents", { kind: "guardrail", at: ["commit"], message: "no" }, ["subagent"]),
           ],
         },
@@ -2213,7 +2032,7 @@ describe("status — the whole answer", () => {
     expect(said).toContain("src/**");
     expect(said).toContain("for subagent");
     expect(s.categories).toEqual(["subagent"]);
-    // An entry at two moments is listed under both — standing at the commit, a write rule is still
+    // An entry at two moments is listed under both — standing at the commit, a command rule is still
     // about to run.
     expect(said.match(/demo\.noTodo/g)?.length).toBe(2);
   });
@@ -2226,12 +2045,12 @@ describe("status — the whole answer", () => {
           entries: [
             loaded("demo.scoped", {
               kind: "guardrail",
-              at: ["write"],
+              at: ["commit"],
               on: ["src/**"],
               ignore: ["**/*.test.ts"],
               message: "no",
             }),
-            loaded("demo.quiet", { kind: "guardrail", at: ["write"], message: "no", disabled: {} }),
+            loaded("demo.quiet", { kind: "guardrail", at: ["commit"], message: "no", disabled: {} }),
           ],
         },
       }),
@@ -2318,57 +2137,9 @@ describe("status — the whole answer", () => {
   });
 });
 
-describe("status — the snapshot's edges and a registration an older flow wrote", () => {
+describe("status — a registration an older flow wrote", () => {
   const red = (over: Partial<StatusFacts>): string => statusLines(status(statusFacts(over))).join("\n");
-  const guardsAt = (on: readonly string[], at: readonly string[] = ["write"]) =>
-    loaded("house.env", { kind: "guardrail", at, on, message: "no" });
-
-  it("names a rule that names an ignored path exactly, and the setting", () => {
-    const facts = { load: { ok: true as const, entries: [guardsAt([".env"])] }, ignored: [".env"] };
-    const said = red(facts);
-    expect(said).toContain("✗ snapshot: house.env guards .env, which git ignores");
-    expect(said).toContain("snapshotInclude");
-    expect(status(statusFacts(facts)).green).toBe(false);
-    expect(status(statusFacts({ ...facts, snapshotInclude: [".env*"] })).green, "listed, so the snapshot holds it").toBe(true);
-  });
-
-  it("is said only for a path a rule names exactly, never for a broad glob over ignored files or directories", () => {
-    const gaps = (on: readonly string[], ignored: readonly string[], include: readonly string[] = []): string[] =>
-      status(statusFacts({ load: { ok: true, entries: [guardsAt(on)] }, ignored, snapshotInclude: include }))
-        .fittings.filter((f) => f.id === "snapshot")
-        .map((f) => f.detail.split(",")[0] ?? "");
-    expect(gaps([".env.keys"], [".env.keys"])).toEqual(["house.env guards .env.keys"]);
-    expect(gaps(["dist/app.js"], ["dist/app.js"]), "a named path inside an ignored directory").toEqual(["house.env guards dist/app.js"]);
-    expect(gaps(["src/**"], ["src/.DS_Store"]), "a broad glob over an ignored file").toEqual([]);
-    expect(gaps(["**/*.log"], ["debug.log"]), "a wildcard that matches an ignored file").toEqual([]);
-    expect(gaps(["src/**"], ["src/gen/"]), "a broad glob into an ignored directory").toEqual([]);
-    expect(gaps(["dist/**"], ["dist/"])).toEqual([]);
-    expect(gaps([".env.keys", "src/**"], [".env.keys", "src/.DS_Store"]), "one rule, both kinds of glob").toEqual([
-      "house.env guards .env.keys",
-    ]);
-    expect(gaps([".env.keys"], []), "a named path git does not ignore").toEqual([]);
-    expect(gaps([".env.keys"], [".env.keys"], [".env*"]), "brought back by snapshotInclude").toEqual([]);
-  });
-
-  it("asks only about live write and delete guardrails — a note, a command rule or a disabled one has no stake", () => {
-    const quiet = (spec: Record<string, unknown>): boolean =>
-      status(statusFacts({ load: { ok: true, entries: [loaded("house.x", spec)] }, ignored: [".env"] })).green;
-    expect(quiet({ kind: "breadcrumb", at: ["touch"], on: [".env"], text: "x" })).toBe(true);
-    expect(quiet({ kind: "guardrail", at: ["commit"], on: [".env"], message: "x" })).toBe(true);
-    expect(quiet({ kind: "guardrail", at: ["delete"], on: [".env"], message: "x" })).toBe(false);
-    expect(quiet({ kind: "guardrail", at: ["write"], on: [".env"], ignore: [".env"], message: "x" })).toBe(true);
-    expect(quiet({ kind: "guardrail", at: ["write"], on: [".env"], message: "x", disabled: "off for now" })).toBe(true);
-  });
-
-  it("lists the paths rules name outright, which status asks git about by name", () => {
-    const load = { ok: true as const, entries: [guardsAt([".env", "src/**", "config/app.json"]), guardsAt([".env"], ["delete"])] };
-    expect(literalScopes(load)).toEqual([".env", "config/app.json"]);
-    expect(literalScopes(null)).toEqual([]);
-    const own = { ok: true as const, entries: [guardsAt([".env", ".flow/state.json", ".flow"])] };
-    expect(literalScopes(own), "flow's own state ignores itself, and no rule is about it").toEqual([".env"]);
-  });
-
-  it("goes red on an older flow's narrow PostToolUse, and says re-running init widens it", () => {
+  it("goes red on an older flow's registrations, and says re-running init brings them up to date", () => {
     const settings = withRegistrations({}).settings as { hooks: Record<string, unknown> };
     const older = {
       hooks: {
@@ -2377,12 +2148,12 @@ describe("status — the snapshot's edges and a registration an older flow wrote
       },
     };
     const said = red({ settings: older });
-    expect(said).toContain("calls flow for PostToolUse on some tools only");
-    expect(said).toContain("Re-run `flow init` to widen it.");
-    const missing = { hooks: { ...older.hooks, PostToolUseFailure: undefined } };
-    const both = red({ settings: missing });
-    expect(both).toContain("does not call flow for PostToolUseFailure");
-    expect(both).toContain("on some tools only");
+    expect(said).toContain("calls flow for PostToolUse the way an older flow registered it");
+    expect(said).toContain("Re-run `flow init` to bring it up to date.");
+    const failed = { hooks: { ...older.hooks, PostToolUseFailure: [{ matcher: "*", hooks: [{ type: "command", command: "flow hook post-tool-use-failure" }] }] } };
+    expect(red({ settings: failed })).toContain("calls flow for PostToolUse · PostToolUseFailure the way an older flow registered them");
+    const missing = { hooks: { ...older.hooks, PostToolUse: undefined } };
+    expect(red({ settings: missing })).toContain("does not call flow for PostToolUse");
   });
 
   // A file without one subagent event still guards every tool call; status names that one and its cost.
@@ -2402,427 +2173,16 @@ describe("status — the snapshot's edges and a registration an older flow wrote
   });
 
   // Each event carries its own rails, so a missing one costs those and no others: a file without
-  // PreToolUse and SubagentStop still judges what a tool call changed and the main chat's hand-back.
+  // PreToolUse and SubagentStop still shows the note for a file a tool call names and judges the main chat's hand-back.
   it("names only the rails of the missing events as not firing", () => {
     const hooks = { ...without("SubagentStop").hooks, PreToolUse: undefined };
     expect(status(statusFacts({ settings: { hooks } })).fittings.find((f) => f.id === "hooks")?.detail).toBe(
       "/home/.claude/settings.json does not call flow for PreToolUse · SubagentStop — re-run `flow init`. " +
-        "Until it does, no rule judges a tool call before it runs; no turn-end rule runs when a subagent hands back.",
+        "Until it does, no rule judges a command before it runs; no turn-end rule runs when a subagent hands back.",
     );
     const none = status(statusFacts({ settings: {} })).fittings.find((f) => f.id === "hooks")?.detail ?? "";
     for (const registration of HOOK_REGISTRATIONS) expect(none, "a file with none names every cost").toContain(registration.event);
-    expect(none).toContain("no note is shown when a session starts; no note is shown when a subagent starts; no rule judges a tool call before it runs;");
-  });
-});
-
-describe("the delta becomes the write and delete rails, and touch is the floor", () => {
-  const changes = [
-    { path: "src/a.ts", before: "a\n", after: "a // TODO\n" },
-    { path: "src/new.ts", before: null, after: "new\n" },
-    { path: "src/old.ts", before: "old\n", after: null },
-  ];
-  const withChanges = (over: readonly { path: string; before: string | null; after: string | null }[]): EventWorld => ({
-    ...world(),
-    changes: over,
-  });
-
-  it("judges every changed file on what is now on disk, and every removed one on what it held", () => {
-    const events = toEvent("post-tool-use", pre("Bash", { command: "python3 fix.py" }), withChanges(changes));
-    expect(events).toStrictEqual([
-      { rail: "guard", moment: "write", file: { path: "src/a.ts", content: "a // TODO\n", existed: true }, observed: true },
-      { rail: "guard", moment: "write", file: { path: "src/new.ts", content: "new\n", existed: false }, observed: true },
-      { rail: "guard", moment: "delete", file: { path: "src/old.ts", content: "old\n" }, observed: true },
-      { rail: "brief", moment: "touch", path: "src/a.ts" },
-      { rail: "brief", moment: "touch", path: "src/new.ts" },
-      { rail: "brief", moment: "touch", path: "src/old.ts" },
-    ]);
-  });
-
-  it("judges a failed call's partial writes exactly as a finished call's", () => {
-    const payload = pre("Bash", { command: "python3 fix.py" });
-    expect(toEvent("post-tool-use-failure", payload, withChanges(changes))).toStrictEqual(
-      toEvent("post-tool-use", payload, withChanges(changes)),
-    );
-  });
-
-  it("does not judge twice what PreToolUse already judged — the Edit's file, the rm's target", () => {
-    const edit = toEvent("post-tool-use", pre("Edit", { file_path: "/repo/src/a.ts" }), withChanges(changes.slice(0, 1)));
-    expect(edit).toStrictEqual([{ rail: "brief", moment: "touch", path: "src/a.ts" }]);
-    const rm = toEvent("post-tool-use", pre("Bash", { command: "rm src/old.ts" }), withChanges(changes.slice(2)));
-    expect(rm).toStrictEqual([{ rail: "brief", moment: "touch", path: "src/old.ts" }]);
-    expect(preJudged(pre("Write", { file_path: "/repo/x.ts" }), ROOT)).toEqual({ writes: ["x.ts"], deletes: [] });
-    expect(preJudged(pre("Bash", { command: "rm /repo/x.ts" }), ROOT)).toEqual({ writes: [], deletes: ["x.ts"] });
-    expect(preJudged(pre("MultiEdit", {}), ROOT)).toEqual({ writes: [], deletes: [] });
-    expect(preJudged(pre("Read", { file_path: "/repo/x.ts" }), ROOT), "a read judged nothing").toEqual({ writes: [], deletes: [] });
-  });
-
-  it("judges as a WRITE an rm target the call wrote again — PreToolUse only judged it as a delete", () => {
-    const rewritten = [{ path: "src/a.ts", before: "a\n", after: "a // TODO\n" }];
-    const command = "rm src/a.ts && cat > src/a.ts <<EOF\na // TODO\nEOF";
-    expect(toEvent("post-tool-use", pre("Bash", { command }), withChanges(rewritten))).toStrictEqual([
-      { rail: "guard", moment: "write", file: { path: "src/a.ts", content: "a // TODO\n", existed: true }, observed: true },
-      { rail: "brief", moment: "touch", path: "src/a.ts" },
-    ]);
-    // An mv's source that something else then fills is the same hole, and closed the same way.
-    const moved = [
-      { path: "src/a.ts", before: "a\n", after: "TODO\n" },
-      { path: "src/b.ts", before: null, after: "a\n" },
-    ];
-    const events = toEvent("post-tool-use", pre("Bash", { command: "mv src/a.ts src/b.ts && echo TODO > src/a.ts" }), withChanges(moved));
-    expect(events.flatMap((e) => (e.rail === "guard" ? [[e.moment, e.file?.path]] : []))).toStrictEqual([
-      ["write", "src/a.ts"],
-      ["write", "src/b.ts"],
-    ]);
-  });
-
-  it("touches the path the tool named once, however many rails it is on", () => {
-    const events = toEvent("post-tool-use", pre("Read", { file_path: "/repo/src/a.ts" }), withChanges(changes.slice(0, 1)));
-    expect(events.filter((e) => e.rail === "brief")).toStrictEqual([{ rail: "brief", moment: "touch", path: "src/a.ts" }]);
-  });
-
-  it("reads the host's key for one call, and nothing when it sent none", () => {
-    expect(callKey({ tool_use_id: "toolu_1" })).toBe("toolu_1");
-    expect(callKey({})).toBeNull();
-    expect(callKey({ tool_use_id: {} as never })).toBeNull();
-  });
-});
-
-describe("reversal — exactly the refused files go back", () => {
-  const changes = [
-    { path: "src/a.ts", before: "a\n", after: "TODO\n" },
-    { path: "src/b.ts", before: "b\n", after: "b2\n" },
-  ];
-  const block = (subject: string): Block => ({ do: "block", entry: "house.noTodo", message: "No TODOs.", subject, detail: "" });
-
-  it("reverts the refused path, and lists the rest as kept", () => {
-    expect(reversal(changes, [{ moment: "write", block: block("src/a.ts"), observed: "src/a.ts" }])).toStrictEqual({
-      revert: [changes[0]],
-      kept: ["src/b.ts"],
-    });
-  });
-
-  it("reverts nothing on a refusal that names no landed change — a revert is never a guess", () => {
-    expect(reversal(changes, [{ moment: "command", block: block("x") }])).toStrictEqual({ revert: [], kept: ["src/a.ts", "src/b.ts"] });
-  });
-});
-
-describe("an observed refusal — its own banner, and what was put back", () => {
-  const noTodo: Block = { do: "block", entry: "house.noTodo", message: "No TODOs in src/ — do it now, or track it properly.", subject: "src/b.ts", detail: "line 3 says TODO" };
-  const b = { path: "src/b.ts", before: "b\n", after: "TODO\n" };
-
-  it("prints the example on docs/user/explanation/what-the-guard-sees.md: the reverted banner, the entry, and the two-sentence tail", () => {
-    const answer = toResult("post-tool-use", {
-      refused: [{ moment: "write", block: noTodo, observed: "src/b.ts" }],
-      shown: [],
-      undone: { restored: [b], kept: [], failed: [] },
-    });
-    expect(answer.exitCode).toBe(2);
-    expect(answer.stdout).toBe("");
-    expect(answer.stderr).toBe(
-      "\nflow — write reverted after it landed:\n\n" +
-        "✗ house.noTodo · src/b.ts\n  No TODOs in src/ — do it now, or track it properly.\n    line 3 says TODO\n\n" +
-        "src/b.ts is back to its previous content. Adjust the change so it passes and write it again — through Edit, which is judged before it lands.\n" +
-        "Only file content was put back: anything else the call did has already happened.\n",
-    );
-  });
-
-  it("says which files stayed, which were removed again, and which were restored", () => {
-    const stderr = toResult("post-tool-use", {
-      refused: [
-        { moment: "write", block: noTodo, observed: "src/b.ts" },
-        { moment: "write", block: noTodo, observed: "src/c.ts" },
-        { moment: "write", block: noTodo, observed: "src/n.ts" },
-      ],
-      shown: [],
-      undone: {
-        restored: [b, { path: "src/c.ts", before: "c", after: "x" }, { path: "src/n.ts", before: null, after: "x" }],
-        kept: ["README.md"],
-        failed: [],
-      },
-    }).stderr;
-    expect(stderr).toContain("src/b.ts and src/c.ts are back to their previous content.");
-    expect(stderr).toContain("src/n.ts is gone again — the call created it.");
-    expect(stderr).toContain("Kept as the call wrote it: README.md.");
-  });
-
-  it("restores a removed file under the delete banner, with the delete rail's instruction", () => {
-    const stderr = toResult("post-tool-use", {
-      refused: [{ moment: "delete", block: { ...noTodo, entry: "house.keep" }, observed: "a.ts" }, { moment: "delete", block: noTodo, observed: "b.ts" }],
-      shown: [],
-      undone: {
-        restored: [
-          { path: "a.ts", before: "a", after: null },
-          { path: "b.ts", before: "b", after: null },
-        ],
-        kept: ["x.ts", "y.ts"],
-        failed: [],
-      },
-    }).stderr;
-    expect(stderr.startsWith("\nflow — delete reverted after it landed:\n")).toBe(true);
-    expect(stderr).toContain("a.ts and b.ts are restored. Keep the file, or change the rule that protects it.");
-    expect(stderr).toContain("Kept as the call wrote them: x.ts, y.ts.");
-  });
-
-  it("never claims a revert that failed — it says the file still holds what the call wrote", () => {
-    const stderr = toResult("post-tool-use", {
-      refused: [{ moment: "write", block: noTodo, observed: "src/b.ts" }],
-      shown: [],
-      undone: { restored: [b], kept: [], failed: [{ path: "src/b.ts", why: "permission denied" }] },
-    }).stderr;
-    expect(stderr).not.toContain("is back to its previous content");
-    expect(stderr).toContain("flow could not put src/b.ts back (permission denied) — it still holds what the call wrote.");
-  });
-
-  it("keeps the pre-emptive banner for a refusal that did not land", () => {
-    expect(toResult("pre-tool-use", { refused: [{ moment: "write", block: noTodo }], shown: [] }).stderr).toContain(
-      "flow — blocked before the write landed",
-    );
-  });
-
-  it("reports a call it could not see — loud, exit 2, the call ran and nothing it changed was checked", () => {
-    const said = deltaFault("No snapshot was taken before this call.");
-    expect(said.exitCode).toBe(2);
-    expect(said.stderr).toBe(
-      "\nflow — could not see what this call changed:\n\nNo snapshot was taken before this call.\n\n" +
-        "The call ran, and nothing it changed was checked or put back. Check what the call changed before you go on.\n",
-    );
-  });
-});
-
-describe("the call log — which other calls overlapped this one", () => {
-  const call = (key: string, agent: string, at: number, done?: number, tool = "Bash"): CallRecord => ({
-    key,
-    session: "sess-1234abcd",
-    agent,
-    tool,
-    at,
-    ...(done === undefined ? {} : { done }),
-  });
-
-  it("reads a record back, and refuses what is not one", () => {
-    expect(callRecord("k", { session: "s", agent: "a", tool: "Bash", at: 5, tree: "abc" })).toStrictEqual({ key: "k", session: "s", agent: "a", tool: "Bash", at: 5 });
-    expect(callRecord("k", { session: "s", agent: "a", tool: "Bash", at: 5, done: 9 })?.done).toBe(9);
-    expect(callRecord("k", { session: "s" }), "no start time").toBeNull();
-    expect(callRecord("k", null)).toBeNull();
-    expect(callRecord("k", "text")).toBeNull();
-  });
-
-  it("names a call in flight, and one that finished inside this call's window", () => {
-    const me = call("me", "main", 100);
-    const log = [me, call("running", "sub1", 50), call("inside", "sub2", 120, 150), call("before", "sub3", 10, 90)];
-    expect(overlapping(me, log).map((c) => c.key), "one that finished before this began did not overlap it").toStrictEqual(["running", "inside"]);
-  });
-
-  it("never counts the same actor, whose writing calls the host runs one at a time", () => {
-    const me = call("me", "main", 100);
-    expect(overlapping(me, [me, call("sibling", "main", 90)])).toStrictEqual([]);
-    expect(overlapping(me, [me, { ...call("other", "main", 90), session: "another-session" }]).map((c) => c.key)).toStrictEqual(["other"]);
-  });
-
-  it("never counts a spawn: the subagent's writes are its own calls", () => {
-    const me = call("me", "sub1", 100);
-    expect(overlapping(me, [me, call("spawn", "main", 10, undefined, "Agent"), call("old", "main", 10, undefined, "Task")])).toStrictEqual([]);
-  });
-
-  it("does not wait on a snapshot whose call never ran — its agent has since finished a later call", () => {
-    const me = call("me", "main", 100);
-    const denied = call("denied", "sub1", 20);
-    expect(overlapping(me, [me, denied]).map((c) => c.key), "nothing says it was abandoned").toStrictEqual(["denied"]);
-    expect(overlapping(me, [me, denied, call("next", "sub1", 30, 40)])).toStrictEqual([]);
-  });
-
-  it("#145: does not name a call whose after-hook never came, from a session a day gone", () => {
-    // The issue's own record: a subagent's Bash call of session e42a31ba, killed mid-call at 00:01Z.
-    const dead: CallRecord = { key: "toolu_01E5vnKWbskveeNuhHo2HjZ1", session: "e42a31ba-dead", agent: "aa87bd88ff0b87b33", tool: "Bash", at: 1792108910019 };
-    const me: CallRecord = { key: "today", session: "today-session", agent: "main", tool: "Bash", at: dead.at + 20 * 60 * 60 * 1000 };
-    expect(overlapping(me, [me, dead]).map((c) => c.key), "a call dead for 20 hours is not in flight").toStrictEqual([]);
-    const finished = call("finished", "sub1", me.at - 1000, me.at - 500);
-    expect(forgettable([dead, finished], me.at), "nor does it pin every later record; it is left for the day's sweep").toStrictEqual(["finished"]);
-  });
-
-  it("counts a call with no finish only for its first hour", () => {
-    const me = call("me", "main", 10 * CALL_LIFETIME_MS);
-    const young = call("young", "sub1", me.at - CALL_LIFETIME_MS + 1);
-    const old = call("old", "sub2", me.at - CALL_LIFETIME_MS);
-    expect(overlapping(me, [me, young, old]).map((c) => c.key), "a call an hour old at this snapshot is dead").toStrictEqual(["young"]);
-    expect(overlapping(me, [me, { ...old, done: me.at + 5 }]).map((c) => c.key), "a long call that did finish counts as ever").toStrictEqual(["old"]);
-    const gone = call("gone", "sub2", me.at - 3 * CALL_LIFETIME_MS);
-    const kept = call("kept", "sub3", me.at - 10, me.at - 5);
-    expect(forgettable([young, gone, kept], me.at), "the young call still pins what finished after it began").toStrictEqual([]);
-    expect(forgettable([gone, kept], me.at), "the dead one pins nothing").toStrictEqual(["kept"]);
-  });
-
-  it("names a call dead by now to a call that began inside its hour", () => {
-    const x = call("x", "sub1", 0);
-    const me = call("me", "main", CALL_LIFETIME_MS - 60_000);
-    const now = CALL_LIFETIME_MS + 60_000;
-    expect(overlapping(me, [me, x]).map((c) => c.key), "x was 59 minutes old at me's snapshot").toStrictEqual(["x"]);
-    expect(forgettable([x, { ...me, done: now }], now), "x has no finish, so it is never forgotten here").toStrictEqual(["me"]);
-  });
-
-  it("does not name a call approved after an hour at the prompt while it runs, and names it once it has finished", () => {
-    // The hour runs from the snapshot, taken before the permission prompt. A call that waited there
-    // longer is dead by the rule while it runs: a refusal of another agent's write in that time can
-    // put back under revert: "all" what this call wrote. Accepted on #157; pinned here.
-    const waited = call("waited", "main", 0);
-    const me = call("me", "sub1", CALL_LIFETIME_MS + 60_000);
-    expect(overlapping(me, [waited, me]), "running, but past its hour").toStrictEqual([]);
-    const after = call("after", "sub1", me.at + 1000);
-    expect(overlapping(after, [{ ...waited, done: after.at + 500 }, after]).map((c) => c.key), "its finish is inside this window").toStrictEqual(["waited"]);
-  });
-
-  it("keeps a call under its hour that its own agent has moved past: it may be a read still running", () => {
-    const parallel = [call("slow", "main", 10), call("quick", "main", 20, 30)];
-    expect(forgettable(parallel, 40), "its after-call hook still needs its snapshot").toStrictEqual(["quick"]);
-  });
-
-  it("never treats a spawn as dead by age: its subagent can work for hours", () => {
-    const spawn = call("spawn", "main", 0, undefined, "Agent");
-    const now = 10 * CALL_LIFETIME_MS;
-    expect(forgettable([spawn, call("pinned", "sub3", 1, 2)], now), "it still pins what finished after it began").toStrictEqual([]);
-    expect(forgettable([spawn], now), "and is kept itself").toStrictEqual([]);
-  });
-
-  it("forgets a finished call once no call still in flight began before it finished", () => {
-    const log = [call("live", "main", 100), call("old", "sub1", 10, 50), call("recent", "sub1", 60, 150)];
-    expect(forgettable(log, 200), "recent finished after live began, so live's diff still needs it").toStrictEqual(["old"]);
-    expect(forgettable([...log, call("earliest", "sub2", 5)], 200), "a call in flight since before either pins both").toStrictEqual([]);
-    expect(forgettable([call("a", "main", 1, 2), call("b", "sub1", 3, 4)], 200), "nothing in flight").toStrictEqual(["a", "b"]);
-  });
-
-  it("names a call by its tool, its id and whose it was", () => {
-    expect(callName(call("toolu_9", "main", 1))).toBe("Bash toolu_9 (main agent of session sess-123)");
-    expect(callName({ ...call("toolu_9", "a77", 1), tool: "" })).toBe("a tool toolu_9 (agent a77 of session sess-123)");
-  });
-});
-
-describe("the revert scope — the setting, and overlap", () => {
-  const changes = [
-    { path: "src/a.ts", before: "a\n", after: "TODO\n" },
-    { path: "src/b.ts", before: "b\n", after: "b2\n" },
-    { path: "src/c.ts", before: null, after: "c\n" },
-  ];
-  const noTodo: Block = { do: "block", entry: "house.noTodo", message: "No TODOs.", subject: "src/a.ts", detail: "" };
-  const refusedA = [{ moment: "write" as const, block: noTodo, observed: "src/a.ts" }];
-  const other: CallRecord = { key: "toolu_other", session: "sess-9999aaaa", agent: "a1", tool: "Bash", at: 1 };
-
-  it("puts back every file the call changed when the repo sets revert: all", () => {
-    expect(reversal(changes, refusedA, { ...REFUSED_ONLY, revert: "all" })).toStrictEqual({ revert: changes, kept: [] });
-  });
-
-  it("puts back nothing under revert: all when nothing refused a landed change", () => {
-    expect(reversal(changes, [], { ...REFUSED_ONLY, revert: "all" }).revert).toStrictEqual([]);
-  });
-
-  it("ignores revert: all while another actor's call overlapped this one", () => {
-    expect(reversal(changes, refusedA, { revert: "all", overlap: [other] })).toStrictEqual({
-      revert: [changes[0]],
-      kept: ["src/b.ts", "src/c.ts"],
-    });
-  });
-
-  it("says the whole call went back under revert: all", () => {
-    const stderr = toResult("post-tool-use", {
-      refused: refusedA,
-      shown: [],
-      undone: { restored: changes, kept: [], failed: [], scope: { ...REFUSED_ONLY, revert: "all" } },
-    }).stderr;
-    expect(stderr).toContain("src/a.ts and src/b.ts are back to their previous content.");
-    expect(stderr).toContain('revert: "all" is set, so every file this call changed was put back, not only the refused ones.');
-  });
-
-  it("names the calls that overlapped, and says revert: all was not applied", () => {
-    const many = Array.from({ length: 7 }, (_, i) => ({ ...other, key: `toolu_${i}` }));
-    const stderr = toResult("post-tool-use", {
-      refused: refusedA,
-      shown: [],
-      undone: { restored: [changes[0]!], kept: ["src/b.ts"], failed: [], scope: { revert: "all", overlap: many } },
-    }).stderr;
-    expect(stderr.startsWith("\nflow — write reverted after it landed:\n")).toBe(true);
-    expect(stderr).toContain("Other tool calls overlapped this one: Bash toolu_0 (agent a1 of session sess-999);");
-    expect(stderr).toContain("toolu_4 (agent a1 of session sess-999); and 2 more.");
-    expect(stderr).toContain('only the refused files were put back — revert: "all" is set, and is not applied while calls overlap.');
-    const plain = toResult("post-tool-use", {
-      refused: refusedA,
-      shown: [],
-      undone: { restored: [changes[0]!], kept: [], failed: [], scope: { revert: "refused", overlap: [other] } },
-    }).stderr;
-    expect(plain).toContain("so only the refused files were put back.\n");
-  });
-});
-
-describe("snapshotInclude — where git looks, and what it keeps", () => {
-  it("cuts a glob to its literal head, whole segments only", () => {
-    expect(staticPrefix("src/gen/**")).toBe("src/gen/");
-    expect(staticPrefix("src/*.ts")).toBe("src/");
-    expect(staticPrefix(".env")).toBe(".env");
-    expect(staticPrefix("**/.env")).toBe("");
-    expect(staticPrefix("config/{a,b}.json")).toBe("config/");
-  });
-
-  it("walks only the heads, or everywhere once one glob has none", () => {
-    expect(snapshotPathspecs([".env", "config/*.local.json", "config/x/**"])).toEqual([".env", "config/", "config/x/"]);
-    expect(snapshotPathspecs([".env", "**/.env.local"])).toEqual(["."]);
-  });
-
-  it("keeps the listed paths a glob matches, through the one glob engine", () => {
-    expect(included(["config/a.local.json", "config/cache.bin", ""], ["config/*.local.json"])).toEqual(["config/a.local.json"]);
-  });
-
-  it("leaves out of the diff each changed path that matches HEAD after the call, and keeps every other", () => {
-    // git diff-tree --name-status -z, in git's order: two files on disk, one gone.
-    const diff = "A\0migrations/002.sql\0M\0src/a.ts\0A\0src/legacy.ts\0";
-    // src/a.ts still differs from HEAD after the call (the agent's edit); the other two now agree with it.
-    expect(authored(diff, ["src/a.ts", "notes.md"], ["src/a.ts"])).toEqual(["src/a.ts"]);
-    expect(authored(diff, [], []), "a call that leaves the tree equal to HEAD authored nothing").toEqual([]);
-    expect(authored(diff, null, null), "no HEAD the repo had before the call — none yet, or one the call made: every change is the agent's").toEqual([
-      "migrations/002.sql",
-      "src/a.ts",
-      "src/legacy.ts",
-    ]);
-  });
-
-  it("leaves out a removal only when HEAD held the file before the call and does not hold it after", () => {
-    const diff = "D\0migrations/002.sql\0D\0.env\0D\0notes.md\0";
-    // Before the call HEAD held 002.sql (so it differs from the tree it is gone from); after, nothing
-    // holds any of the three. .env and notes.md are in neither commit: the agent removed them.
-    expect(authored(diff, [], ["migrations/002.sql"])).toEqual([".env", "notes.md"]);
-    expect(authored(diff, [], null), "no HEAD before the call: nothing was git's to remove").toEqual(["migrations/002.sql", ".env", "notes.md"]);
-    // HEAD still holds 002.sql after the call, so the removal differs from it, whatever HEAD held before.
-    expect(authored(diff, ["migrations/002.sql"], ["migrations/002.sql"])).toEqual(["migrations/002.sql", ".env", "notes.md"]);
-  });
-
-  it("takes a new path the snapshot recorded as hidden out of the changes as entered, and judges a new one it did not (#146)", () => {
-    const changes = [
-      { path: ".env", before: null, after: "TOKEN=old\n" },
-      { path: "tools/scratch/notes.md", before: null, after: "x\n" },
-      { path: "new.ts", before: null, after: "export {};\n" },
-      { path: "a.ts", before: "1\n", after: "2\n" },
-    ];
-    const seen = visibility(changes, [".env", "tools/scratch/", "node_modules/"], () => null);
-    expect(seen.entered, "a file, and a file under a directory git ignored whole").toEqual([".env", "tools/scratch/notes.md"]);
-    expect(seen.changes.map((change) => change.path), "a file that did not exist before is still the call's creation").toEqual(["new.ts", "a.ts"]);
-    expect(visibility(changes, [".env.keys", "tools/scratch"], () => null).entered, "a prefix that is not a directory entry hides nothing").toEqual([]);
-  });
-
-  it("is no removal when the path left the snapshot but is still a file on disk: unchanged it leaves the diff, changed it is a write", () => {
-    const changes = [
-      { path: ".env", before: "TOKEN=old\n", after: null },
-      { path: ".env.local", before: "A=1\n", after: null },
-      { path: "gone.ts", before: "x\n", after: null },
-    ];
-    const disk: Record<string, string> = { ".env": "TOKEN=old\n", ".env.local": "A=2\n" };
-    const seen = visibility(changes, [], (path) => disk[path] ?? null);
-    expect(seen.changes, "gone.ts is gone from disk too: that removal is judged; .env.local was rewritten, so the write rules judge it").toEqual([
-      { path: ".env.local", before: "A=1\n", after: "A=2\n" },
-      { path: "gone.ts", before: "x\n", after: null },
-    ]);
-    expect(seen.entered).toEqual([]);
-  });
-
-  it("reads git's -z answer as paths, with no quoting and no empty tail", () => {
-    expect(nulPaths("src/a b.ts\0src/\"q\".ts\0")).toEqual(["src/a b.ts", 'src/"q".ts']);
-    expect(nulPaths("")).toEqual([]);
+    expect(none).toContain("no note is shown when a session starts; no note is shown when a subagent starts; no rule judges a command before it runs;");
   });
 });
 
@@ -2960,7 +2320,7 @@ describe("another worktree of the repository — told once, never refused", () =
   it("rides beside a refusal on stderr, before the notes", () => {
     const block: Block = { do: "block", entry: "demo.noTodo", message: "No TODOs.", subject: "src/a.ts", detail: "" };
     const answer = toResult("post-tool-use", {
-      refused: [{ moment: "write", block }],
+      refused: [{ moment: "commit", block }],
       shown: [{ entry: "a.b", cause: "first-touch", body: "a note" }],
       unguarded: { root, worktrees: ["/code/app.worktrees/feature"] },
     });
@@ -3020,9 +2380,8 @@ describe("outsideOf — where a call works outside the repository", () => {
     expect(outsideOf(ran('cd "$(mktemp -d)" && git commit -m init'), root, none, same)).toEqual([]);
   });
 
-  it("names a file outside by its own path, for a write and for a touch", () => {
-    const wrote = { rail: "guard" as const, moment: "write" as const, file: { path: "/tmp/r/a.ts", content: "" } };
-    expect(outsideOf(wrote, root, none, same)).toEqual(["/tmp/r/a.ts"]);
+  it("names a touched file outside by its own path, and no moment but a command's a guard's", () => {
+    expect(outsideOf({ rail: "guard", moment: "commit", staged: ["/tmp/r/a.ts"] }, root, none, same)).toEqual([]);
     expect(outsideOf({ rail: "brief", moment: "touch", path: "/tmp/r/a.ts" }, root, none, same)).toEqual(["/tmp/r/a.ts"]);
     expect(outsideOf({ rail: "brief", moment: "touch", path: "src/a.ts" }, root, none, same)).toEqual([]);
     expect(outsideOf({ rail: "brief", moment: "touch", path: ".scratch/tmp/r/a.ts" }, root, nestedRepo, same)).toEqual([".scratch/tmp/r/a.ts"]);

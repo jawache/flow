@@ -1,6 +1,6 @@
 // flow/packs/docs.ts — two documentation audiences, one folder, nothing replicated.
 
-import { breadcrumb, canonicalFiles, commit, definePack, guardrail, touch, write } from "@jawache/flow";
+import { breadcrumb, canonicalFiles, commit, definePack, guardrail, touch } from "@jawache/flow";
 
 /** The two facts about a repo's docs folder the pack cannot know: where it is, and what may sit loose in it. */
 export interface Doors {
@@ -86,7 +86,7 @@ export const docs = definePack("docs", (repo: Doors = {}) => {
      * drawer, and neither audience's rules can be applied to what is in it.
      */
     docsShape: guardrail()
-      .at(write, commit)
+      .at(commit)
       .on(`${root}/**`)
       .description("docs/ holds exactly user/ and agent/ — the folder allowlist.")
       // Nothing may sit loose at the top of docs/ — every file belongs to one of the two doors.

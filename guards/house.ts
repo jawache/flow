@@ -24,7 +24,6 @@ import {
   guardrail,
   session,
   touch,
-  write,
 } from "@jawache/flow";
 
 /**
@@ -550,7 +549,7 @@ export const house = definePack("house", (repo: Terrain) => ({
     }),
 
   proseNeverHandWrapped: guardrail()
-    .at(write, commit)
+    .at(commit)
     .on("packs/**", "guards/**")
     .description("A string in .text() or .message() is one line, however long — the wrap is invisible to the model.")
     // INLINE, because the rule is one function and the function is above. A configured check would

@@ -26,7 +26,6 @@ import {
   defineCheck,
   defineConfig,
   definePack,
-  deletion,
   type EntryGroup,
   type EntryRef,
   type ExecResult,
@@ -71,7 +70,6 @@ import {
   type Unanswered,
   verdict,
   type World,
-  write,
 } from "./domain.ts";
 
 const passes: Check = () => verdict.ok();
@@ -82,8 +80,8 @@ const cases = { pass: ["ok"], block: ["no"] };
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 describe("the moment vocabulary", () => {
-  it("is the five guardrail words the engine has rails for", () => {
-    expect(GUARDRAIL_MOMENTS).toEqual(["write", "command", "commit", "delete", "turn-end"]);
+  it("is the three guardrail words the engine has rails for", () => {
+    expect(GUARDRAIL_MOMENTS).toEqual(["command", "commit", "turn-end"]);
   });
 
   it("is the four breadcrumb words, which are not the same list", () => {
@@ -97,32 +95,20 @@ describe("the moment vocabulary", () => {
     expect(isScopable("breadcrumb", "command")).toBe(true);
     expect(isScopable("guardrail", "command")).toBe(false);
     expect(isScopable("breadcrumb", "session")).toBe(false);
-    expect(isScopable("guardrail", "write")).toBe(true);
+    expect(isScopable("guardrail", "commit")).toBe(true);
   });
 
   it("exports each word as a value, so a config imports it rather than spelling it", () => {
-    expect([write, command, commit, deletion, turnEnd]).toEqual([
-      "write",
-      "command",
-      "commit",
-      "delete",
-      "turn-end",
-    ]);
+    expect([command, commit, turnEnd]).toEqual(["command", "commit", "turn-end"]);
     expect([session, touch]).toEqual(["session", "touch"]);
   });
 
-  it("names the delete moment `deletion` in the export, because `delete` cannot be a binding", () => {
-    expect(deletion).toBe("delete");
-    expect(GUARDRAIL_MOMENTS).toContain(deletion);
-  });
 });
 
 describe("phasesOf — the table, lifted", () => {
   it("maps each moment to the engine phases it fires at", () => {
-    expect(phasesOf([write])).toEqual(["edit"]);
     expect(phasesOf([command])).toEqual(["edit", "commit"]);
     expect(phasesOf([commit])).toEqual(["commit"]);
-    expect(phasesOf([deletion])).toEqual(["delete"]);
     expect(phasesOf([turnEnd])).toEqual(["turn"]);
   });
 
@@ -138,10 +124,12 @@ describe("phasesOf — the table, lifted", () => {
 
 describe("the moment guards", () => {
   it("recognise their own vocabulary and refuse the other's", () => {
-    expect(isGuardrailMoment("write")).toBe(true);
+    expect(isGuardrailMoment("commit")).toBe(true);
+    expect(isGuardrailMoment("write"), "flow stops no write").toBe(false);
+    expect(isGuardrailMoment("delete"), "flow stops no delete").toBe(false);
     expect(isGuardrailMoment("session")).toBe(false);
     expect(isBreadcrumbMoment("session")).toBe(true);
-    expect(isBreadcrumbMoment("write")).toBe(false);
+    expect(isBreadcrumbMoment("commit")).toBe(false);
   });
 
   it("share exactly one word — turn-end", () => {
@@ -156,8 +144,8 @@ describe("the moment guards", () => {
 });
 
 describe("PATH_MOMENTS — the moments a path scope can narrow", () => {
-  it("is the four whose events name a file", () => {
-    expect(PATH_MOMENTS).toEqual(["write", "delete", "commit", "touch"]);
+  it("is the two whose events name a file", () => {
+    expect(PATH_MOMENTS).toEqual(["commit", "touch"]);
   });
 
   it("excludes every moment that carries no path — a command, a turn, a session start", () => {
@@ -276,8 +264,8 @@ describe("makeCtx — the ONE assembler", () => {
 
   it("carries the moment, the event's facts, and the three capabilities — and nothing else", async () => {
     const { world, asked } = spy();
-    const built = makeCtx("write", { file: { path: "a.ts", content: "x" } }, world);
-    expect(built.moment).toBe("write");
+    const built = makeCtx("commit", { file: { path: "a.ts", content: "x" } }, world);
+    expect(built.moment).toBe("commit");
     expect(built.file).toEqual({ path: "a.ts", content: "x" });
     expect((await built.exec("ls")).stdout).toBe("out");
     expect(await built.fs.read("a.ts")).toBe("body");
@@ -311,7 +299,7 @@ describe("makeCtx — the ONE assembler", () => {
     const built = makeCtx("command", { command: "git push origin main; ls -f" }, spy().world);
     expect(built.commands?.map((c) => c.text)).toEqual(["git push origin main", "ls -f"]);
     expect(makeCtx("command", { command: 'echo "oops' }, spy().world).commands).toBeNull();
-    expect(makeCtx("write", { file: { path: "a.ts", content: "x" } }, spy().world).commands).toBeUndefined();
+    expect(makeCtx("commit", { file: { path: "a.ts", content: "x" } }, spy().world).commands).toBeUndefined();
   });
 
   it("keeps a parse its caller already made, rather than parsing the line again", () => {
@@ -1290,7 +1278,7 @@ const pushCases = { pass: ["git push origin feature/x"], block: ["git push origi
 describe("guardrail()", () => {
   it("says every key it was given, and nothing it was not", () => {
     const spec = guardrail()
-      .at(write, commit)
+      .at(commit)
       .on("src/**/*.ts")
       .ignore("**/*.test.ts")
       .check(passes)
@@ -1299,7 +1287,7 @@ describe("guardrail()", () => {
 
     expect(spec).toEqual({
       kind: "guardrail",
-      at: ["write", "commit"],
+      at: ["commit"],
       on: ["src/**/*.ts"],
       ignore: ["**/*.test.ts"],
       check: passes,
@@ -1333,7 +1321,7 @@ describe("guardrail()", () => {
     const builder = defineCategory("builder", () => true);
     const verifier = defineCategory("verifier", () => false);
     const spec = guardrail()
-      .at(write)
+      .at(commit)
       .for(builder, verifier)
       .check(passes)
       .message("m")
@@ -1449,7 +1437,7 @@ const builderCategory = defineCategory("builder", () => true);
 
 const prose = definePack("prose", {
   noEmDash: guardrail()
-    .at(write, commit)
+    .at(commit)
     .on("src/**/*.md")
     .check(passes)
     .message("No em dashes in prose.")
@@ -1581,7 +1569,7 @@ describe("pack() and override() — the whole binding surface", () => {
 
 describe("overlay — a spoken key replaces the pack's WHOLE key, nothing merges", () => {
   const packSpec = guardrail()
-    .at(write, commit)
+    .at(commit)
     .on("src/**/*.md", "docs/**/*.md")
     .check(passes)
     .message("No em dashes in prose.")
@@ -1601,7 +1589,7 @@ describe("overlay — a spoken key replaces the pack's WHOLE key, nothing merges
 
   it("leaves every unspoken key coming from the pack", () => {
     const { spec, source } = overlay(packSpec, { on: ["src/content/**"] });
-    expect(spec.at).toEqual(["write", "commit"]);
+    expect(spec.at).toEqual(["commit"]);
     expect(spec.kind === "guardrail" && spec.message).toBe("No em dashes in prose.");
     expect(source["at"]).toBe("pack");
     expect(source["message"]).toBe("pack");
@@ -1673,7 +1661,7 @@ const builder = defineCategory("builder", (s) => s.agentType === "builder");
 
 const house = definePack("house", {
   noTodo: guardrail()
-    .at(write, commit)
+    .at(commit)
     .on("src/**/*.ts")
     .check(passes)
     .message("No TODOs.")
@@ -1745,7 +1733,7 @@ describe("a complete, valid config", () => {
   it("applies each override, replacing the pack's whole key and nothing else", () => {
     const entry = entries.find((e) => e.id === "house.noTodo");
     expect(entry?.spec.on).toEqual(["src/content/**"]);
-    expect(entry?.spec.at).toEqual(["write", "commit"]);
+    expect(entry?.spec.at).toEqual(["commit"]);
     expect(entry?.source["on"]).toBe("override");
     expect(entry?.source["at"]).toBe("pack");
   });
@@ -1756,14 +1744,14 @@ describe("a complete, valid config", () => {
   });
 
   it("resolves each entry's engine phases from its moments", () => {
-    expect(entries.find((e) => e.id === "house.noTodo")?.phases).toEqual(["edit", "commit"]);
+    expect(entries.find((e) => e.id === "house.noTodo")?.phases).toEqual(["commit"]);
     expect(entries.find((e) => e.id === "house.orientation")?.phases).toEqual([]);
   });
 
   it("names the categories an entry is scoped to, and leaves an unscoped entry unscoped", () => {
     const scoped = definePack("scoped", {
       planShape: guardrail()
-        .at(write)
+        .at(commit)
         .for(builder)
         .check(passes)
         .message("The plan's shape is the parent's.")
@@ -1883,7 +1871,7 @@ describe("the load refuses", () => {
     // caller — mark a check you just built, which is what `depcruise` does.
     const check = withFaults((ctx: Ctx) => ctx.ok(), ["binds a layer that is a regex, not a glob: `^src/pages/`"]);
     const sick = rawPack("sick", {
-      x: { spec: { kind: "guardrail", at: [write], on: ["src/**"], check, message: "m", test: cases } },
+      x: { spec: { kind: "guardrail", at: [commit], on: ["src/**"], check, message: "m", test: cases } },
     });
     const refusals = refusalsOf([sick]);
     expect(shape(refusals)).toEqual([["bad-check-options", "sick.x"]]);
@@ -1893,7 +1881,7 @@ describe("the load refuses", () => {
 
   it("says nothing about a check that declared none — the ordinary case", () => {
     const well = rawPack("well", {
-      x: { spec: { kind: "guardrail", at: [write], on: ["src/**"], check: passes, message: "m", test: cases } },
+      x: { spec: { kind: "guardrail", at: [commit], on: ["src/**"], check: passes, message: "m", test: cases } },
     });
     expect(refusalsOf([well])).toEqual([]);
   });
@@ -1943,7 +1931,7 @@ describe("the load refuses", () => {
       x: {
         spec: {
           kind: "guardrail",
-          at: [command, write],
+          at: [command, commit],
           on: ["src/**"],
           check: passes,
           message: "m",
@@ -1978,7 +1966,7 @@ describe("the load refuses", () => {
 
   it("an empty `.on()` from the pack as empty-scope, on a guardrail", () => {
     const rail = definePack("rail", {
-      x: guardrail().at(write).on(...none).check(passes).message("m").test(cases),
+      x: guardrail().at(commit).on(...none).check(passes).message("m").test(cases),
     });
     expect(refusalsOf([pack(rail)])).toEqual([
       {
@@ -2054,14 +2042,14 @@ describe("the load refuses", () => {
     // The check reads the entry after the override is laid over it: an override's `.on(…)`
     // replaces the pack's whole list, so the pack's empty one is gone by the time it is judged.
     const fixed = definePack("fixed", {
-      x: guardrail().at(write).on(...none).check(passes).message("m").test(cases),
+      x: guardrail().at(commit).on(...none).check(passes).message("m").test(cases),
     });
     expect(refusalsOf([pack(fixed), override(fixed.x).on("src/**")])).toEqual([]);
   });
 
   it("an empty scope on a disabled entry too — what was written is wrong, whatever the entry proves", () => {
     const off = definePack("off", {
-      x: guardrail().at(write).on(...none).check(passes).message("m").test(cases),
+      x: guardrail().at(commit).on(...none).check(passes).message("m").test(cases),
     });
     expect(shape(refusalsOf([pack(off), override(off.x).disabled("not yet")]))).toEqual([["empty-scope", "off.x"]]);
   });
@@ -2112,7 +2100,7 @@ describe("the load refuses", () => {
 
   it("an override that moves an entry to a moment its type has no rail for", () => {
     const asGuardrail = house.orientation as unknown as EntryRef<"guardrail">;
-    const refusals = refusalsOf([pack(house), override(asGuardrail).at(write)]);
+    const refusals = refusalsOf([pack(house), override(asGuardrail).at(commit)]);
     expect(shape(refusals)).toEqual([["unknown-moment", "house.orientation"]]);
   });
 
@@ -2144,6 +2132,7 @@ describe("REFUSAL_CODES", () => {
       "unknown-entry",
       "unknown-key",
       "unknown-moment",
+      "unknown-setting",
       "missing-mandatory",
       "undeclared-category",
       "no-block-cases",

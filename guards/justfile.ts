@@ -12,7 +12,6 @@ import {
   jsonInvariant,
   session,
   touch,
-  write,
   type Check,
 } from "@jawache/flow";
 
@@ -164,7 +163,7 @@ export const justfile = definePack("justfile", (repo: Catalogue) => {
      * of habit — and the two drift until the catalogue is no longer the truth about this repo.
      */
     noPackageScripts: guardrail()
-      .at(write, commit)
+      .at(commit)
       .on("package.json")
       .description("package.json scripts stays empty — the justfile is the single command source.")
       .check(jsonInvariant({ assert: [{ path: "scripts", keysPrefixedWith: "//" }] }))
@@ -183,7 +182,7 @@ export const justfile = definePack("justfile", (repo: Catalogue) => {
    * a tool nobody can choose from its description.
    */
   justfileDocs: guardrail()
-    .at(write, commit)
+    .at(commit)
     .on("justfile")
     .description("Every justfile recipe carries an explicit [doc] — `just --list` is the catalogue's help screen.")
     .check(justfileDocs({ exempt: repo.exempt }))

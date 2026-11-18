@@ -22,7 +22,6 @@ import {
   touch,
   spawnedAs,
   turnEnd,
-  write,
   type Ctx,
 } from "../index.ts";
 
@@ -49,10 +48,17 @@ export const parent = defineCategory("parent", spawnedAs({ parent: true }));
 
 const banTodo = (ctx: Ctx) => (ctx.file?.content.includes("TODO") ? ctx.fail("says TODO") : ctx.ok());
 
+/** The whole commit's version of `banTodo`: it names no path, so it reads every staged file itself. */
+const banTodoStaged = async (ctx: Ctx) => {
+  for (const path of ctx.staged ?? [])
+    if ((await ctx.fs.exists(path)) && (await ctx.fs.read(path)).includes("TODO")) return ctx.fail("says TODO");
+  return ctx.ok();
+};
+
 export const rails = definePack("rails", {
   /** Scoped: it fires for a builder and stays silent for everybody else. */
   buildersOnly: guardrail()
-    .at(write)
+    .at(commit)
     .on("plan/**")
     .for(builder)
     .check(banTodo)
@@ -61,18 +67,24 @@ export const rails = definePack("rails", {
 
   /** Scoped to two: `.for(a, b)` ORs, so either actor meets it. */
   eitherRung: guardrail()
-    .at(write)
+    .at(commit)
     .for(builder, verifier)
-    .check(banTodo)
-    .message("Neither rung writes a TODO.")
-    .test({ pass: [{ path: "a.ts", content: "ok" }], block: [{ path: "a.ts", content: "TODO" }] }),
+    .check(banTodoStaged)
+    .message("Neither rung commits a TODO.")
+    .test({
+      pass: [{ staged: ["a.ts"], world: { fs: { "a.ts": "ok" } } }],
+      block: [{ staged: ["a.ts"], world: { fs: { "a.ts": "TODO" } } }],
+    }),
 
   /** Unscoped: absence means every category, exactly as an absent `on` means every path. */
   everyone: guardrail()
-    .at(write)
-    .check(banTodo)
-    .message("Nobody writes a TODO.")
-    .test({ pass: [{ path: "a.ts", content: "ok" }], block: [{ path: "a.ts", content: "TODO" }] }),
+    .at(commit)
+    .check(banTodoStaged)
+    .message("Nobody commits a TODO.")
+    .test({
+      pass: [{ staged: ["a.ts"], world: { fs: { "a.ts": "ok" } } }],
+      block: [{ staged: ["a.ts"], world: { fs: { "a.ts": "TODO" } } }],
+    }),
 
   /** A commit entry that named `.on(…)`, so the gate asks it about each staged file in scope. */
   stagedFiles: guardrail()
@@ -122,15 +134,16 @@ export const rails = definePack("rails", {
 
   /** BROKEN ON PURPOSE: a check that throws. A crash is a failing check, never a skipped one. */
   explodes: guardrail()
-    .at(write)
-    .check((): never => {
-      throw new Error("cannot read properties of undefined");
+    .at(command)
+    .check((ctx) => {
+      if (ctx.command === "explode") throw new Error("cannot read properties of undefined");
+      return ctx.ok();
     })
     .message("This rail is broken.")
-    .test({ pass: [], block: [{ path: "a.ts", content: "x" }] }),
+    .test({ pass: ["ls"], block: ["explode"] }),
 
   /** Turned off, with its reason. It is inert at every moment and proves nothing. */
-  retired: guardrail().at(write).disabled("superseded by everyone"),
+  retired: guardrail().at(commit).disabled("superseded by everyone"),
 
   notes: {
     /** An area note: shown on first touch of its area, and again once the session has drifted. */

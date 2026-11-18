@@ -34,7 +34,6 @@ import {
   health,
   joinSpawn,
   mergeNarratives,
-  mismatchesIn,
   modesOf,
   narrative,
   recipeTools,
@@ -140,9 +139,7 @@ export function facts(root: string, load: LoadResult, harness: Harness, opts: Fa
     if (rows.length > 0) withRecord += 1;
     const jsonl = held.get(candidate.id) ?? "";
     const events = transcripts.events(jsonl, root, home);
-    // The conversation's own stream is where its shell writes come from: a transcript says what
-    // ran, and only flow's diff knows what that changed.
-    readings.push({ session: candidate.id, read: narrative(events, tools, rows) });
+    readings.push({ session: candidate.id, read: narrative(events, tools) });
     ran.push({ rows, steer: transcripts.steer(jsonl) });
     weakened.push(...weakenedAfterBlock(rows, events, guarded));
 
@@ -186,7 +183,6 @@ export function facts(root: string, load: LoadResult, harness: Harness, opts: Fa
     actors,
     weakened,
     modes: modesOf(ran),
-    mismatches: mismatchesIn(ran.flatMap((r) => r.rows)),
     marked: opts.mark === true ? markRead(root, selection.analyse.map((c) => c.id)) : null,
   };
 }

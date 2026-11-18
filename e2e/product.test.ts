@@ -36,10 +36,6 @@ import {
   type Ran,
 } from "./harness.ts";
 
-// The test below judges a write with a rule written inline: `protectedPath` reads a commit.
-const ANY_CHANGE = `(ctx) => (ctx.file?.unchanged === true ? ctx.ok() : ctx.fail("protected"))`;
-
-
 let home: string;
 /**
  * A directory holding one `flow` shim, which runs the build under test: the PATH's flow. A repo
@@ -60,7 +56,7 @@ const settings = (): Record<string, unknown> =>
   JSON.parse(readFileSync(join(home, "settings.json"), "utf8")) as Record<string, unknown>;
 
 /** The events flow init registers, in the order it writes and prints them. */
-const REGISTERED = ["SessionStart", "SubagentStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SubagentStop"];
+const REGISTERED = ["SessionStart", "SubagentStart", "PreToolUse", "PostToolUse", "Stop", "SubagentStop"];
 
 /** The same, as init and status print them. */
 const LISTED = REGISTERED.join(" · ");
@@ -125,7 +121,9 @@ describe("flow init — a repo that has never heard of flow", () => {
     const hooks = settings()["hooks"] as Record<string, unknown>;
     expect(first.stdout).toContain(LISTED);
     expect(Object.keys(hooks)).toEqual(REGISTERED);
-    expect(JSON.stringify(hooks["PostToolUse"]), "every tool can change the tree").toContain('"matcher":"*"');
+    expect(JSON.stringify(hooks["PreToolUse"]), "flow refuses a command before it runs, and nothing else").toContain('"matcher":"Bash"');
+    expect(JSON.stringify(hooks["PostToolUse"]), "any tool's call can name a file").toContain('"matcher":"*"');
+    expect(Object.keys(hooks), "no hook after a failed call").not.toContain("PostToolUseFailure");
     expect(JSON.stringify(hooks)).toContain("flow hook stop");
     expect(JSON.stringify(hooks["SubagentStop"]), "a subagent's hand-back is its own event").toContain("flow hook subagent-stop");
     expect(Object.keys(hooks)).not.toContain("Notification");
@@ -194,46 +192,6 @@ describe("flow status", () => {
     expect(read.green).toBe(true);
     expect(read.categories).toEqual(["subagent"]);
     expect(read.fittings.every((f) => f.ok)).toBe(true);
-  });
-
-  // THE SNAPSHOT'S EDGE, as git answers it. Two rules name an ignored path outright, and neither
-  // file exists: `.env.keys`, which `.gitignore` names, and `dist/app.js`, inside an ignored `dist/`.
-  // Git is asked about each by name, so both are red lines. A third rule reaches an ignored
-  // `src/.DS_Store` with a broad glob: no rule wants that file, so it is no line. `snapshotInclude`
-  // clears the two.
-  it("goes red on a rule that names an ignored path exactly, written or not, and says nothing of a broad glob over one", () => {
-    const edge = newRepo();
-    try {
-      expect(flow(edge, ["init", "--empty"]).code).toBe(0);
-      writeFileSync(join(edge, ".gitignore"), ".env.keys\n.DS_Store\ndist/\n");
-      mkdirSync(join(edge, "src"));
-      writeFileSync(join(edge, "src", ".DS_Store"), "x");
-      const config = (settings: string): string => `import { defineConfig, definePack, guardrail, pack, write } from "@jawache/flow";
-const edge = definePack("edge", {
-  keys: guardrail().at(write).on(".env.keys").check(${ANY_CHANGE}).message("no").test({ pass: [], block: [{ path: ".env.keys", content: "x" }] }),
-  app: guardrail().at(write).on("dist/app.js").check(${ANY_CHANGE}).message("no").test({ pass: [], block: [{ path: "dist/app.js", content: "x" }] }),
-  src: guardrail().at(write).on("src/**").check(${ANY_CHANGE}).message("no").test({ pass: [], block: [{ path: "src/a.ts", content: "x" }] }),
-});
-export default defineConfig([pack(edge)]${settings});
-`;
-      writeFileSync(join(edge, "flow.config.ts"), config(""));
-      expect(existsSync(join(edge, ".env.keys")) || existsSync(join(edge, "dist")), "neither named file is written").toBe(false);
-      const said = flow(edge, ["status"]);
-      const lines = said.stdout.split("\n").filter((line) => line.includes("snapshot:"));
-      expect(lines, said.stdout).toEqual([
-        expect.stringContaining("✗ snapshot: edge.keys guards .env.keys, which git ignores"),
-        expect.stringContaining("✗ snapshot: edge.app guards dist/app.js, which git ignores"),
-      ]);
-      expect(said.stdout).not.toContain(".DS_Store");
-      expect(said.code).toBe(1);
-
-      writeFileSync(join(edge, "flow.config.ts"), config(`, { snapshotInclude: [".env*", "dist/app.js"] }`));
-      const listed = flow(edge, ["status"]);
-      expect(listed.stdout, "listed, so the snapshot holds them").not.toContain("snapshot:");
-      expect(listed.code).toBe(0);
-    } finally {
-      rmSync(edge, { recursive: true, force: true });
-    }
   });
 
   it("goes red, with the fix, when the gate is not armed", () => {
@@ -378,37 +336,39 @@ describe("flow init, run again", () => {
     expect(JSON.stringify(settings()), "the host's file is untouched, byte for byte").toBe(before);
   });
 
-  it("goes red on the registration an older flow wrote, and widens it in place when init runs again", () => {
+  it("goes red on the registrations an older flow wrote, and brings them up to date in place when init runs again", () => {
     const older = settingsHome();
     try {
       const current = settings() as { hooks: Record<string, unknown> };
-      const { PostToolUseFailure: _dropped, ...rest } = current.hooks;
       writeFileSync(
         join(older, "settings.json"),
         JSON.stringify({
           hooks: {
-            ...rest,
+            ...current.hooks,
+            PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: "flow hook pre-tool-use" }] }],
             PostToolUse: [{ matcher: "Read|Glob|Grep|Edit|Write|Bash", hooks: [{ type: "command", command: "flow hook post-tool-use" }] }],
+            PostToolUseFailure: [{ matcher: "*", hooks: [{ type: "command", command: "flow hook post-tool-use-failure" }] }],
           },
         }),
       );
       const red = flow(repo, ["status"], older);
       expect(red.code).toBe(1);
-      expect(red.stdout).toContain("does not call flow for PostToolUseFailure");
-      expect(red.stdout).toContain("calls flow for PostToolUse on some tools only");
-      expect(red.stdout).toContain("Re-run `flow init` to widen it.");
+      expect(red.stdout).toContain("calls flow for PreToolUse · PostToolUse · PostToolUseFailure the way an older flow registered them");
+      expect(red.stdout).toContain("Re-run `flow init` to bring them up to date.");
 
       const again = flow(repo, ["init"], older);
       expect(again.code).toBe(0);
-      // The older flow wrote the bare command too, so the one entry is widened and rewritten at once.
-      expect(again.stdout).toContain(
-        "PostToolUse (widened to every tool, now runs the flow in node_modules/@jawache/flow first) · PostToolUseFailure",
-      );
+      // The older flow wrote the bare command too, so each entry is rewritten at once.
+      expect(again.stdout).toContain("PreToolUse (matcher brought up to date, now runs the flow in node_modules/@jawache/flow first)");
+      expect(again.stdout).toContain("PostToolUse (matcher brought up to date, now runs the flow in node_modules/@jawache/flow first)");
+      expect(again.stdout).toContain("PostToolUseFailure (removed: flow no longer registers it)");
       const hooks = (JSON.parse(readFileSync(join(older, "settings.json"), "utf8")) as { hooks: Record<string, unknown[]> }).hooks;
-      expect(hooks["PostToolUse"], "one entry, widened — never a second one beside it").toHaveLength(1);
+      expect(hooks["PostToolUse"], "one entry, brought up to date — never a second one beside it").toHaveLength(1);
+      expect(JSON.stringify(hooks["PreToolUse"])).toContain('"matcher":"Bash"');
       expect(JSON.stringify(hooks["PostToolUse"])).toContain(
         JSON.stringify('f="$CLAUDE_PROJECT_DIR/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook post-tool-use; exec flow hook post-tool-use'),
       );
+      expect(Object.keys(hooks), "the hook after a failed call is gone").toEqual(REGISTERED);
       expect(flow(repo, ["status"], older).code).toBe(0);
     } finally {
       rmSync(older, { recursive: true, force: true });
@@ -1016,7 +976,7 @@ describe("flow uninstall", () => {
 
       const said = flow(listed, ["uninstall"], machine);
       expect(said.code, said.stdout + said.stderr).toBe(0);
-      expect(said.stdout).toContain("  - .claude/settings.json — SessionStart · SubagentStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop · SubagentStop");
+      expect(said.stdout).toContain("  - .claude/settings.json — SessionStart · SubagentStart · PreToolUse · PostToolUse · Stop · SubagentStop");
       expect(said.stdout.trim().split("\n").at(-1)).toBe("  next: `npm uninstall @jawache/flow` — removes the package.");
       const after = JSON.parse(readFileSync(join(listed, ".claude", "settings.json"), "utf8")) as Record<string, unknown>;
       expect(after, "flow's registrations are gone, the empty events with them, and every other key and hook stays").toEqual({

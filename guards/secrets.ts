@@ -6,7 +6,7 @@
 // own spelling, so a repo that has wrapped them in recipes says so and a repo that has not is
 // still told something it can type. The recipes worth having are on this pack's page, to copy.
 
-import { breadcrumb, commit, definePack, guardrail, session, textBan, write } from "@jawache/flow";
+import { breadcrumb, commit, definePack, guardrail, session, textBan } from "@jawache/flow";
 
 /**
  * The local-only files every dotenvx repo has: the decryption key, and the per-environment
@@ -220,7 +220,7 @@ export const secrets = definePack("secrets", (repo: Seam = {}) => {
    * files are committed on the promise that everything in them is sealed.
    */
   envEncrypted: guardrail()
-    .at(write, commit)
+    .at(commit)
     .on(envFiles)
     .ignore(...localFiles)
     .description(`A committed env file carries no plaintext value — everything but ${publicPrefixes.join(" / ")} is sealed.`)

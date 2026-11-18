@@ -11,7 +11,11 @@
 
 import { describe, it, expect } from "vitest";
 import * as packs from "./index.ts";
-import { defineConfig, loadConfig, pack } from "../index.ts";
+import { defineConfig, loadConfig, pack, type Check, type Ctx } from "../index.ts";
+
+/** The little of a commit's ctx a rule about deletions reads: the staged and the deleted paths, and the two answers. */
+const commitOf = (staged: readonly string[], deleted: readonly string[]): Ctx =>
+  ({ staged, deleted, ok: () => ({ ok: true }), fail: (detail?: string) => ({ ok: false, detail }) }) as unknown as Ctx;
 
 /** The entries a config loaded, or an empty list and the refusals in the failure message. */
 function loaded(result: ReturnType<typeof loadConfig>): { id: string; spec: unknown }[] {
@@ -30,35 +34,39 @@ describe("the packs surface", () => {
   // folder name was written into both of its path-scoped entries, so every other repo bound a nudge
   // that never fires and a delete refusal that protects nothing — while `flow status` counted both
   // as armed. A message can be read; a scope has to be looked at, which is what this does.
-  it("scopes the flow pack on the folder the repo says its packs are in, and on no other", () => {
-    const bound = (homes: readonly string[]): Record<string, readonly string[]> => {
-      return Object.fromEntries(
-        loaded(loadConfig(defineConfig([pack(packs.flow, { packs: homes })]))).map((entry) => [
-          entry.id,
-          (entry.spec as { on?: readonly string[] }).on ?? [],
-        ]),
-      );
-    };
+  it("scopes the flow pack on the folder the repo says its packs are in, and on no other", async () => {
+    const entries = (homes: readonly string[]) => loaded(loadConfig(defineConfig([pack(packs.flow, { packs: homes })])));
+    const scope = (homes: readonly string[], id: string): readonly string[] =>
+      (entries(homes).find((entry) => entry.id === id)?.spec as { on?: readonly string[] }).on ?? [];
 
-    const theirs = bound(["rules/**", "policy/*.ts"]);
-    expect(theirs["flow.editingTheGuardrails"]).toContain("rules/**");
-    expect(theirs["flow.editingTheGuardrails"]).toContain("policy/*.ts");
-    expect(theirs["flow.noDeleteGuardrails"]).toStrictEqual(["flow.config.ts", "rules/**", "policy/*.ts", ".githooks/commit-msg"]);
-
-    // Empty is a real answer — the config IS the whole guard — and the two entries still cover it
-    // and the host's registrations, and nothing invented.
-    const inline = bound([]);
-    expect(inline["flow.noDeleteGuardrails"]).toStrictEqual(["flow.config.ts", ".githooks/commit-msg"]);
-    expect(inline["flow.editingTheGuardrails"]).toStrictEqual([
+    expect(scope(["rules/**", "policy/*.ts"], "flow.editingTheGuardrails")).toContain("rules/**");
+    expect(scope(["rules/**", "policy/*.ts"], "flow.editingTheGuardrails")).toContain("policy/*.ts");
+    // Empty is a real answer — the config IS the whole guard — and the nudge still covers it and
+    // the host's registrations, and nothing invented.
+    expect(scope([], "flow.editingTheGuardrails")).toStrictEqual([
       "flow.config.ts",
       ".claude/settings.json",
       ".claude/settings.local.json",
       ".claude/agents/**",
       ".claude/skills/**",
     ]);
-    // Whatever a repo passes, the package never puts a folder of its own into either scope.
-    for (const scope of Object.values(theirs).concat(Object.values(inline)))
-      for (const glob of scope) expect(glob.startsWith("guards/"), glob).toBe(false);
+
+    // The delete refusal is about a commit's deleted paths, which a rule with `.on(…)` is never
+    // asked about, so it names its paths in its check. Looked at the same way: the deletion of a
+    // file in a folder the repo named is refused, and of one in a folder it did not name is not.
+    const refuses = async (homes: readonly string[], deleted: string): Promise<boolean> => {
+      const check = (entries(homes).find((entry) => entry.id === "flow.noDeleteGuardrails")?.spec as { check: Check }).check;
+      return !(await check(commitOf([], [deleted]))).ok;
+    };
+    expect(await refuses(["rules/**", "policy/*.ts"], "rules/a.ts")).toBe(true);
+    expect(await refuses(["rules/**", "policy/*.ts"], "policy/b.ts")).toBe(true);
+    expect(await refuses(["rules/**"], "guards/a.ts"), "a folder the repo did not name").toBe(false);
+    expect(await refuses([], "flow.config.ts")).toBe(true);
+    expect(await refuses([], ".githooks/commit-msg")).toBe(true);
+    expect(await refuses([], "src/a.ts")).toBe(false);
+    // Changing the config is what a repo does all day: only a deletion is refused.
+    const change = (entries([]).find((entry) => entry.id === "flow.noDeleteGuardrails")?.spec as { check: Check }).check;
+    expect((await change(commitOf(["flow.config.ts"], []))).ok).toBe(true);
   });
 
 });
