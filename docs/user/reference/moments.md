@@ -4,7 +4,7 @@ summary: "the five moments a rule runs at, and exactly when each happens"
 
 # Moments
 
-A moment is when a rule runs. A guardrail runs at one or more moments, set with `.at(…)`. A breadcrumb does too.
+A [moment](./glossary.md#moment) is when a rule runs. A [guardrail](./glossary.md#guardrail) runs at one or more moments, set with `.at(…)`. A [breadcrumb](./glossary.md#breadcrumb) does too.
 
 ## The moments
 
@@ -14,10 +14,10 @@ Two facts about a moment decide what it takes. A guardrail needs a moment that i
 
 | Symbol | Moment | When | Before the thing? | Text to the agent? | Takes |
 | --- | --- | --- | --- | --- | --- |
-| `commit` | commit | Git is about to record a commit. See [the commit moment](#the-commit-moment) | yes | no: git calls flow, not the harness | a guardrail, which refuses the commit |
+| `commit` | commit | Git is about to record a commit. See [the commit moment](#the-commit-moment) | yes | no: git calls flow, not the [harness](./glossary.md#harness) | a guardrail, which refuses the commit |
 | `command` | command | Before a shell command runs | yes | yes | a guardrail, which refuses the command, and a breadcrumb, scoped by `.on(…)` to the commands it is about |
 | `turnEnd` | turn-end | An agent is about to hand back: the main session or a subagent. See [the turn-end moment](#the-turn-end-moment) | yes | yes | a guardrail, which holds the turn open, and a breadcrumb |
-| `session` | session | A session starts, resumes or is cleared, and a subagent starts or is resumed | nothing to refuse | yes | a breadcrumb. Bound with `.for(…)`, it is shown only to an agent of that category |
+| `session` | session | A session starts, resumes or is cleared, and a subagent starts or is resumed | nothing to refuse | yes | a breadcrumb. Bound with `.for(…)`, it is shown only to an agent of that [category](./glossary.md#category) |
 | `fileChange` | file-change | After a tool call that changed a file. A created file and a deleted file are changes. See [the file-change moment](#the-file-change-moment) | no: it has happened | yes | a breadcrumb, scoped by `.on(…)` to the files it is about |
 
 A guardrail at `session` or `file-change`, and a breadcrumb at `commit`, do not compile.
@@ -74,10 +74,10 @@ A turn-end rule runs each time an agent hands back: the main session or a subage
 
 A breadcrumb is shown to an agent once. It is shown to the same agent again in two cases:
 
-- **After a compaction.** A compaction removes the breadcrumb's text from the agent's context. Every breadcrumb except a `session` one is shown again the next time its moment happens.
+- **After a compaction.** A compaction removes every breadcrumb's text from the agent's context. A `session` breadcrumb is shown again at once, as the compacted session starts. Every other breadcrumb is shown again the next time its moment happens.
 - **After the context grows by `driftTokens`** since the breadcrumb was last shown, 200,000 tokens by default. This applies to every breadcrumb except a `session` one. `driftTokens` is a [setting](./config.md#settings).
 
-A `session` breadcrumb is shown once per session and agent. A compaction, or a resume that keeps the session, does not show it again.
+A resume that keeps the session does not show a `session` breadcrumb again.
 
 ## Scope at the command moment
 

@@ -4,15 +4,15 @@ summary: "every `flow` command, what `flow init` writes and `flow uninstall` rem
 
 # The flow command
 
-`flow` is one binary. You type `flow init`, `flow status`, `flow test` and `flow uninstall`, and the harness and git call `flow hook` for you.
+`flow` is one binary. You type `flow init`, `flow status`, `flow test` and `flow uninstall`, and the [harness](./glossary.md#harness) and git call `flow hook` for you.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `flow init [--empty] [--harness <names>]` | Prompts for the harnesses to register, then writes `flow.config.ts`, the git hook and `.flow/`, sets `core.hooksPath`, and registers flow's hooks for each harness you chose, inside the repo. See [what `flow init` prompts for](#what-flow-init-prompts-for). `--empty` writes a config that binds no pack. Run it again at any time: it writes only what is missing, and never writes over `flow.config.ts` or `.githooks/commit-msg` once they exist. It does change one thing you may have set yourself, the hook registrations, listed under [what `flow init` writes](#what-flow-init-writes). When git already runs other hooks, it leaves them alone and prints that flow is not installed, as described under [when git already runs other hooks](#when-git-already-runs-other-hooks) |
+| `flow init [--empty] [--harness <names>]` | Prompts for the harnesses to register, then writes `flow.config.ts`, the git hook and `.flow/`, sets `core.hooksPath`, and registers flow's hooks for each harness you chose, inside the repo. See [what `flow init` prompts for](#what-flow-init-prompts-for). `--empty` writes a config that binds no [pack](./glossary.md#pack). Run it again at any time: it writes only what is missing, and never writes over `flow.config.ts` or `.githooks/commit-msg` once they exist. It does change one thing you may have set yourself, the hook registrations, listed under [what `flow init` writes](#what-flow-init-writes). When git already runs other hooks, it leaves them alone and prints that flow is not installed, as described under [when git already runs other hooks](#when-git-already-runs-other-hooks) |
 | `flow uninstall [--machine]` | Removes what `flow init` wrote in this repo, except `flow.config.ts`. `--machine` also removes the hooks that flow 0.3 wrote to the machine-wide Claude Code settings file. Prints each thing it removed, then the `npm uninstall` command to run next. Each removal is listed under [what `flow uninstall` removes](#what-flow-uninstall-removes). The `flow` pack refuses it when an agent runs it |
-| `flow status [--json]` | Lists every bound rule by moment, and checks each fitting. A fitting that is not in place is a red line with its fix. See [what `flow status` reports](#what-flow-status-reports) |
+| `flow status [--json]` | Lists every bound rule by [moment](./glossary.md#moment), and checks each [fitting](./glossary.md#fitting). A fitting that is not in place is a red line with its fix. See [what `flow status` reports](#what-flow-status-reports) |
 | `flow test [config]` | Runs every bound rule's `.test()` cases. The default config is `flow.config.ts` |
 | `flow facts [options]` | Reports what the log in `.flow/` and the harness's transcripts record about this repo. The options are listed under [`flow facts`](#flow-facts) |
 | `flow replay <file> [config] [--against <log>]` | Runs a recorded session through the rules again, with no repo and no harness. `config` is the config to judge it with, `flow.config.ts` by default. `--against` compares the result with a log |
@@ -92,7 +92,7 @@ flow ships one pack, behind `@jawache/flow/packs`. It has three entries:
 
 | Entry | Kind | Moment | What it does |
 | --- | --- | --- | --- |
-| `flow.orientation` | breadcrumb | `session` | Tells the agent the repo is guarded, and that turning a guardrail off is a change to `flow.config.ts` |
+| `flow.orientation` | [breadcrumb](./glossary.md#breadcrumb) | `session` | Tells the agent the repo is guarded, and that turning a [guardrail](./glossary.md#guardrail) off is a change to `flow.config.ts` |
 | `flow.noUninstall` | guardrail | `command` | Refuses `flow uninstall`, in any folder |
 | `flow.noDeleteGuardrails` | guardrail | `commit` | Refuses a commit that deletes `flow.config.ts`, `.githooks/commit-msg`, `.claude/settings.json` or `.codex/hooks.json` |
 
@@ -148,7 +148,7 @@ Once the `commit-msg` hook git runs calls flow, and is executable when git runs 
 | `binary` | the `flow` the hooks run is found |
 | one line per registered harness | the harness's hooks are registered in the repo. The line also says when one of its hooks last ran here, from the session log |
 
-For Codex with no hook run, the line names the two trust gates as the likely reason:
+For Codex with no hook run, the line names the two [trust gates](./glossary.md#trust-gate) as the likely reason:
 
 ```
   ✓ codex: registered · no hook has run here

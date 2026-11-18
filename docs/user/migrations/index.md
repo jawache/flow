@@ -4,7 +4,7 @@ summary: "one page per release"
 
 # Upgrading flow — migration guides
 
-Each page lists what a repo that uses flow must change to upgrade to one version from the version before it. A repo that uses flow has a `flow.config.ts`, the git hooks written by `flow init`, and flow's hook registrations for its harness.
+Each page lists what a repo that uses flow must change to upgrade to one version from the version before it. A repo that uses flow has a `flow.config.ts`, the git hooks written by `flow init`, and flow's hook registrations for its [harness](../reference/glossary.md#harness).
 
 ## Upgrade across several versions
 
@@ -33,10 +33,10 @@ steps that index lists. Stop and report if a Verify step fails.
 
 | Version | Released | Upgrades from | Changes needed |
 | --- | --- | --- | --- |
-| [0.4.0](./0.4.0.md) | not yet released | 0.3.2 | Install from GitHub as a dev dependency. Re-run `flow init`. Replace the nine packs flow no longer ships. Move rules off `write`, `deletion` and `touch`. Move commit-message rules to `commit`. Remove `oneWriter`, `substitutionInProse`, `revert` and `snapshotInclude`. Remove the machine-wide install |
+| [0.4.0](./0.4.0.md) | not yet released | 0.3.2 | Install from GitHub as a dev dependency. Re-run `flow init`. Replace the nine [packs](../reference/glossary.md#pack) flow no longer ships. Move rules off `write`, `deletion` and `touch`. Move commit-message rules to `commit`. Remove `oneWriter`, `substitutionInProse`, `revert` and `snapshotInclude`. Remove the machine-wide install |
 | [0.3.2](./0.3.2.md) | 2026-11-06 | 0.3.1 | Only for a repo with its own command rule that must judge a command run outside the repository: mark it `.everywhere()` |
 | [0.3.1](./0.3.1.md) | tagged, not published | 0.3.0 | Re-run `flow init` to register `SubagentStart` |
-| [0.3.0](./0.3.0.md) | 2026-10-17 | 0.2.3 | Re-run `flow init`. Add the repo-first line to `.githooks/pre-commit`. Give every guardrail a block case. Rewrite each `banCommands` entry, `substitutionInProse` head and `justfile` `recipes` key in words. Replace `tokenizeCommand` and `gitInvocations` |
+| [0.3.0](./0.3.0.md) | 2026-10-17 | 0.2.3 | Re-run `flow init`. Add the repo-first line to `.githooks/pre-commit`. Give every [guardrail](../reference/glossary.md#guardrail) a block case. Rewrite each `banCommands` entry, `substitutionInProse` head and `justfile` `recipes` key in words. Replace `tokenizeCommand` and `gitInvocations` |
 | [0.2.3](./0.2.3.md) | 2026-10-07 | 0.2.2 | None. Bind the `git` pack if the repo does not, to refuse a commit that credits Claude |
 | [0.2.2](./0.2.2.md) | 2026-10-07 | 0.2.1 | Edit `.githooks/pre-commit`, and any other command that runs `flow commit` |
 | [0.2.1](./0.2.1.md) | 2026-10-02 | 0.2.0 | None |

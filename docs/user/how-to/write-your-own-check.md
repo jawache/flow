@@ -4,7 +4,7 @@ summary: "write a check no stock one expresses, share a pack with a second repo,
 
 # How to write your own check, and share rules as a pack
 
-This guide shows you three things: how to write a check of your own, how to share a pack of rules with a second repo, and how to change one entry of a pack you bind.
+This guide shows you three things: how to write a check of your own, how to share a [pack](../reference/glossary.md#pack) of rules with a second repo, and how to change one entry of a pack you bind.
 
 Most rules are a [stock check](../index.md#the-stock-checks--one-page-each) plus a sentence, and a structural code pattern is `astGrep`, with no code at all. Write your own check when it needs real logic: it reads a companion file, computes something, or holds an invariant no stock check expresses.
 
@@ -36,10 +36,10 @@ Most rules are a [stock check](../index.md#the-stock-checks--one-page-each) plus
    });
    ```
 
-   The check declares no moments, no schema and no `kind`. The entry's `.at(…)` says when it runs. The check reads whatever `ctx` holds at that moment, and [the `ctx` reference](../reference/ctx.md) lists what that is, moment by moment. The options are an ordinary typed argument, so a wrong value is a compile error.
+   The check declares no [moments](../reference/glossary.md#moment), no schema and no `kind`. The entry's `.at(…)` says when it runs. The check reads whatever `ctx` holds at that moment, and [the `ctx` reference](../reference/ctx.md) lists what that is, moment by moment. The options are an ordinary typed argument, so a wrong value is a compile error.
 
 4. **Write the detail as a sentence** naming what was seen and what to do. If two causes need different answers from the reader, give each its own detail line. A check that returns the same line for both teaches the reader to ignore it.
-5. **Run `flow test`.** A bespoke check is authored logic, so its entry needs cases like any other: a guardrail with no block case does not load, because a block case is what proves the check catches something. [How to test your rules](./test-your-rules.md) gives the steps.
+5. **Run `flow test`.** A bespoke check is authored logic, so its entry needs cases like any other: a [guardrail](../reference/glossary.md#guardrail) with no block case does not load, because a block case is what proves the check catches something. [How to test your rules](./test-your-rules.md) gives the steps.
 
 A check that throws while it runs never passes quietly. Live, the entry blocks, with the detail `the check threw: <the error's message>`. In `flow test`, the case fails with the same detail. A throw while `flow.config.ts` is being imported is different: the config does not load, so every guardrail is off and every commit is refused until it is fixed. See [fail loud](../explanation/fail-loud.md).
 
@@ -97,7 +97,7 @@ A pack is a TypeScript module, so sharing it is a move, not a rewrite. The entri
    ]);
    ```
 
-   An override accepts `.at(…)`, `.on(…)`, `.ignore(…)`, `.for(…)`, `.message(…)`, `.description(…)` and `.disabled("why")`, and on a breadcrumb `.text(…)` and `.file(…)`. It never accepts `.check(…)` or `.test(…)`.
+   An override accepts `.at(…)`, `.on(…)`, `.ignore(…)`, `.for(…)`, `.message(…)`, `.description(…)` and `.disabled("why")`, and on a [breadcrumb](../reference/glossary.md#breadcrumb) `.text(…)` and `.file(…)`. It never accepts `.check(…)` or `.test(…)`.
 
 4. **List the whole value.** An override replaces the key it names. A narrowed `.on(…)` is the whole list of globs, never a merge with the pack's list.
 5. **Run `flow status`.** An entry turned off with `.disabled("why")` is marked `○`, with `off: <reason>` under it.

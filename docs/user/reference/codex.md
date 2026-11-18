@@ -4,7 +4,7 @@ summary: "what flow reads from Codex and what it writes: the hooks, the payload 
 
 # flow under Codex
 
-Codex is a harness: it runs the agent and calls flow's hooks. The same `flow.config.ts` guards a repo under Codex and under Claude Code, with no rule rewritten. This page lists everything flow reads from Codex and writes to it.
+Codex is a [harness](./glossary.md#harness): it runs the agent and calls flow's hooks. The same `flow.config.ts` guards a repo under Codex and under Claude Code, with no rule rewritten. This page lists everything flow reads from Codex and writes to it.
 
 ## The hooks
 
@@ -12,7 +12,7 @@ When Codex is chosen, `flow init` registers six hooks in the repo's `.codex/hook
 
 | Hook | Matcher | Runs | Delivers |
 | --- | --- | --- | --- |
-| `SessionStart` | every source | `flow hook session-start` | the `session` moment. With the source `compact`, a [compaction](./moments.md#when-a-breadcrumb-is-shown-again) |
+| `SessionStart` | every source | `flow hook session-start` | the `session` [moment](./glossary.md#moment). With the source `compact`, a [compaction](./moments.md#when-a-breadcrumb-is-shown-again) |
 | `SubagentStart` | every agent | `flow hook subagent-start` | the `session` moment, for the subagent |
 | `PreToolUse` | `Bash` | `flow hook pre-tool-use` | the `command` moment |
 | `PostToolUse` | every tool | `flow hook post-tool-use` | the `file-change` moment |
@@ -51,8 +51,8 @@ Codex runs a project's hooks only when both of these are true. When either is no
 
 | Reply | How |
 | --- | --- |
-| Refuse a command | exit code 2, with the guardrail's message on standard error |
-| Show a breadcrumb | `additionalContext` in the hook's JSON output. Codex keeps about 2,500 tokens of it, and replaces a longer one with a preview |
+| Refuse a command | exit code 2, with the [guardrail](./glossary.md#guardrail)'s message on standard error |
+| Show a [breadcrumb](./glossary.md#breadcrumb) | `additionalContext` in the hook's JSON output. Codex keeps about 2,500 tokens of it, and replaces a longer one with a preview |
 | Hold a turn open | `decision: "block"` in the hook's JSON output, with the guardrail's message as the reason |
 
 ## How an agent's type is learned
@@ -72,7 +72,7 @@ flow writes nothing to a transcript.
 ## What differs from Claude Code
 
 - **Every write goes through the shell.** A Codex agent writes files with shell commands. flow judges content at `commit`, so this changes nothing a rule refuses.
-- **The two trust gates,** above.
+- **The two [trust gates](./glossary.md#trust-gate),** above.
 - **The conversation id is Codex's own.** The tool that starts a Codex session cannot choose it.
 
 ---

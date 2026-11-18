@@ -6,7 +6,7 @@ summary: "refuse a commit by what its files hold: a banned pattern, a pinned JSO
 
 This guide shows you how to refuse a commit because of what a staged file holds, or which file it is. Each rule below is one stock check at `commit`, scoped with `.on(…)`.
 
-1. Open the pack that holds your repo's rules. If you have none, create `guards/house.ts` and bind it with `pack(house)` in `flow.config.ts`:
+1. Open the [pack](../reference/glossary.md#pack) that holds your repo's rules. If you have none, create `guards/house.ts` and bind it with `pack(house)` in `flow.config.ts`:
 
    ```
    // guards/house.ts — the rules of this house

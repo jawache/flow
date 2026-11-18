@@ -20,7 +20,7 @@ Some commits are not judged: a merge, a cherry-pick, a revert, a rebase, and a c
 
 ## At a command: the parse
 
-Before a shell command runs, flow parses the line as bash. The parse is a list of commands. Each one is a program and its arguments, as the program receives them.
+Before a shell command runs, flow parses the line as bash, with [unbash](https://github.com/webpro-nl/unbash). The parse is a list of commands. Each one is a program and its arguments, as the program receives them.
 
 flow reads shell as code, never as text. A regex over a line cannot tell one command from the next. It cannot tell a command from the same words inside a quoted argument, or `task` from `task-list`.
 
@@ -34,13 +34,13 @@ The parse follows what is written on the line: nested commands, the folder each 
 - **A variable set anywhere but on the line.**
 - **What the command changes.** flow judges the command before it runs, by its words.
 
-This is why a command guardrail is for an exact command you can name, such as a force-push. A rule about what a line does to a file is a commit rule, because the commit has the file.
+This is why a command [guardrail](../reference/glossary.md#guardrail) is for an exact command you can name, such as a force-push. A rule about what a line does to a file is a commit rule, because the commit has the file.
 
 ## After a tool call: the changed paths
 
 After each tool call, flow reads git's list of changed paths and compares it with the list before the call. The paths that are new, or changed again, are the paths the call changed. flow stores no file content for this.
 
-The list has two uses. A breadcrumb bound at `file-change` is shown when a path under its globs is in the list. The same list is written to the session log.
+The list has two uses. A [breadcrumb](../reference/glossary.md#breadcrumb) bound at `file-change` is shown when a path under its globs is in the list. The same list is written to the session log.
 
 **What the list does not hold:**
 
@@ -56,7 +56,7 @@ A mistake in the working tree is recoverable, because git has the last commit. A
 
 ## Who is acting
 
-Each call from a harness names the agent that made it, and its type. flow reads both from the harness's payload, never from the agent's own words.
+Each call from a [harness](../reference/glossary.md#harness) names the agent that made it, and its type. flow reads both from the harness's payload, never from the agent's own words.
 
 A commit names no agent. Its rows in the log, and any commit rule bound to who, use the agent whose tool call last ran in that worktree.
 

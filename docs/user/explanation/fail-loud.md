@@ -4,11 +4,11 @@ summary: "about a config that will not load: why flow lets work through and repo
 
 # Fail loud
 
-If `flow.config.ts` will not load, flow turns every guardrail and breadcrumb off and reports the load error on every call. Every commit is refused until the config loads again.
+If `flow.config.ts` will not load, flow turns every [guardrail](../reference/glossary.md#guardrail) and [breadcrumb](../reference/glossary.md#breadcrumb) off and reports the load error on every call. Every commit is refused until the config loads again.
 
 ## What happens while the config will not load
 
-| Moment | What flow does |
+| [Moment](../reference/glossary.md#moment) | What flow does |
 | --- | --- |
 | **Session start** | Shows the load error in place of the breadcrumbs. |
 | **Command, file-change** | Lets the call through, and passes the load error to the agent with it. |
@@ -56,7 +56,7 @@ A commit turns work in the tree into history. The git hook refuses every commit 
 
 flow reports a fault only while it runs. Two failures stop it from running at all:
 
-- **The hooks are not registered** with the harness, or, under Codex, not trusted. Nothing calls flow. See [the two trust gates](../reference/codex.md#the-two-trust-gates).
+- **The hooks are not registered** with the [harness](../reference/glossary.md#harness), or, under Codex, not trusted. Nothing calls flow. See [the two trust gates](../reference/codex.md#the-two-trust-gates).
 - **The hooks cannot find `flow`.** The harness runs the call and shows the hook's error to you, not to the agent. git refuses the commit with `flow: not found`.
 
 Run `flow status` to check for both:

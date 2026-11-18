@@ -44,7 +44,7 @@ Add `node_modules/` to `.gitignore`.
    npx flow init
    ```
 
-   It prompts for the harnesses that run agents in the repo, with the ones it detects already selected. It warns you about what it finds, such as hooks git already runs. Then it writes `flow.config.ts`, the git hook, `.githooks/commit-msg`, and `.flow/`, and registers flow's hooks for each harness you chose: Claude Code in `.claude/settings.json`, Codex in `.codex/hooks.json`. Each prompt is listed in [the command reference](../reference/cli.md#what-flow-init-prompts-for).
+   It prompts for the harnesses that run agents in the repo, with the ones it detects already selected. It warns you about what it finds, such as hooks git already runs. Then it writes `flow.config.ts`, the git hook, `.githooks/commit-msg`, and `.flow/`, and registers flow's hooks for each [harness](../reference/glossary.md#harness) you chose: Claude Code in `.claude/settings.json`, Codex in `.codex/hooks.json`. Each prompt is listed in [the command reference](../reference/cli.md#what-flow-init-prompts-for).
 
 2. If you chose Codex, do the two steps `flow init` names: trust the folder in Codex, and approve the hooks with `/hooks`. Until both are done, Codex runs no hook. See [the two trust gates](../reference/codex.md#the-two-trust-gates).
 
@@ -57,7 +57,7 @@ Add `node_modules/` to `.gitignore`.
 
    A red line in `flow status` names its own fix. The command then exits non-zero, so a setup script can read the exit code.
 
-4. Commit `package.json`, the lockfile, `flow.config.ts`, the packs it imports, `.githooks/`, and the registration file of each harness you chose: `.claude/settings.json`, `.codex/hooks.json`.
+4. Commit `package.json`, the lockfile, `flow.config.ts`, the [packs](../reference/glossary.md#pack) it imports, `.githooks/`, and the registration file of each harness you chose: `.claude/settings.json`, `.codex/hooks.json`.
 
 ## Variants
 

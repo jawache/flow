@@ -4,11 +4,11 @@ summary: "about categories: why a rule can depend on the actor, and why the acto
 
 # Rules bound to who, not what
 
-A rule can give a different answer to the same act depending on who does it. flow decides who from evidence the harness wrote, never from the agent's own words.
+A rule can give a different answer to the same act depending on who does it. flow decides who from evidence the [harness](../reference/glossary.md#harness) wrote, never from the agent's own words.
 
 ## The same act, a different answer
 
-A **category** is a name for an actor, with the function that recognises it. `.for(category)` binds a rule to that actor, so the rule runs only for agents in that category. `.for(…)` may list several categories, and the rule then runs for an agent in any of them. It works on a guardrail and on a breadcrumb.
+A **[category](../reference/glossary.md#category)** is a name for an actor, with the function that recognises it. `.for(category)` binds a rule to that actor, so the rule runs only for agents in that category. `.for(…)` may list several categories, and the rule then runs for an agent in any of them. It works on a [guardrail](../reference/glossary.md#guardrail) and on a [breadcrumb](../reference/glossary.md#breadcrumb).
 
 ```
 const subagent = defineCategory("subagent", (facts) => facts.subagent);

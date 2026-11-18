@@ -6,7 +6,7 @@ summary: "give every rule its cases, and run them"
 
 This guide shows you how to prove that each rule passes what it should and blocks what it should.
 
-Every guardrail has its own cases, written on the entry with `.test({ pass, block })`. A case is a canned `ctx`: the input a check is called with, supplied as data. `pass` lists the inputs the rule must let through, and `block` lists the inputs it must refuse. A guardrail with no block case does not load.
+Every [guardrail](../reference/glossary.md#guardrail) has its own cases, written on the entry with `.test({ pass, block })`. A case is a canned `ctx`: the input a check is called with, supplied as data. `pass` lists the inputs the rule must let through, and `block` lists the inputs it must refuse. A guardrail with no block case does not load.
 
 ## Write the cases
 
@@ -30,7 +30,7 @@ Every guardrail has its own cases, written on the entry with `.test({ pass, bloc
    })
    ```
 
-   Use the shape for the rule's moment:
+   Use the shape for the rule's [moment](../reference/glossary.md#moment):
 
    - **`path` and `content`** for a commit rule about one file.
    - **`staged`** for a commit rule about the whole commit, with `deleted` for the files it deletes.

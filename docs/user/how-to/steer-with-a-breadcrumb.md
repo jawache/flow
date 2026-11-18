@@ -4,9 +4,9 @@ summary: "show the agent a breadcrumb at the start of a session, for a type of a
 
 # How to steer with a breadcrumb
 
-This guide shows you how to show the agent a breadcrumb: text added to its context, which refuses nothing. Use one for a preferred way of working, and for a mistake the agent can recover from.
+This guide shows you how to show the agent a [breadcrumb](../reference/glossary.md#breadcrumb): text added to its context, which refuses nothing. Use one for a preferred way of working, and for a mistake the agent can recover from.
 
-1. Open the pack that holds your repo's rules. If you have none, create `guards/house.ts` and bind it with `pack(house)` in `flow.config.ts`:
+1. Open the [pack](../reference/glossary.md#pack) that holds your repo's rules. If you have none, create `guards/house.ts` and bind it with `pack(house)` in `flow.config.ts`:
 
    ```
    // guards/house.ts — the rules of this house
@@ -21,7 +21,7 @@ This guide shows you how to show the agent a breadcrumb: text added to its conte
 
 2. Add the breadcrumb for your case, from the sections below.
 
-3. Run `flow status`. The breadcrumb is listed under its moment.
+3. Run `flow status`. The breadcrumb is listed under its [moment](../reference/glossary.md#moment).
 
 ## At the start of a session
 
@@ -35,7 +35,7 @@ Every agent is shown it once: the main session, and each subagent as it starts.
 
 ## For a type of agent
 
-Bind the breadcrumb to a category with `.for(…)`, and only that type of agent is shown it:
+Bind the breadcrumb to a [category](../reference/glossary.md#category) with `.for(…)`, and only that type of agent is shown it:
 
 ```
 const builder = defineCategory("builder", spawnedAs({ types: ["builder"] }));

@@ -4,9 +4,9 @@ summary: "run a guardrail, or show a breadcrumb, only for one type of agent, wit
 
 # How to bind a rule to a type of agent
 
-This guide shows you how to make a rule apply to one type of agent and not another. Two examples: a breadcrumb shown only to builders, and a guardrail that runs only for subagents.
+This guide shows you how to make a rule apply to one type of agent and not another. Two examples: a [breadcrumb](../reference/glossary.md#breadcrumb) shown only to builders, and a [guardrail](../reference/glossary.md#guardrail) that runs only for subagents.
 
-1. Declare a category in the pack that holds your repo's rules. Add `defineCategory` and `spawnedAs` to the import:
+1. Declare a [category](../reference/glossary.md#category) in the [pack](../reference/glossary.md#pack) that holds your repo's rules. Add `defineCategory` and `spawnedAs` to the import:
 
    ```
    const builder  = defineCategory("builder", spawnedAs({ types: ["builder"] }));
@@ -14,7 +14,7 @@ This guide shows you how to make a rule apply to one type of agent and not anoth
    ```
 
    - **`spawnedAs({ types: […] })`** matches the type an agent was started as. Under Claude Code that is the agent's name, and under Codex the agent's `name`, or `default`, `worker` or `explorer`.
-   - **A function of your own** reads the facts the harness wrote. `facts.subagent` is `true` for every subagent.
+   - **A function of your own** reads the facts the [harness](../reference/glossary.md#harness) wrote. `facts.subagent` is `true` for every subagent.
 
 2. Chain `.for(…)` on the entry, with one or more categories:
 

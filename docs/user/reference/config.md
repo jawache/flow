@@ -4,9 +4,9 @@ summary: "`flow.config.ts`, its settings, a pack, every verb of a guardrail and 
 
 # The config
 
-`flow.config.ts` is the whole guard: a TypeScript file at the repo root that binds packs and overrides their entries. A config stays short because its rules are in packs: the one flow ships, a package you install, and files of your own in `guards/`. Because the config is TypeScript, most of what this page calls a refusal is a compile error in your editor. The loader checks the same things again at run time, for a config edited outside an editor.
+`flow.config.ts` is the whole guard: a TypeScript file at the repo root that binds [packs](./glossary.md#pack) and overrides their entries. A config stays short because its rules are in packs: the one flow ships, a package you install, and files of your own in `guards/`. Because the config is TypeScript, most of what this page calls a refusal is a compile error in your editor. The loader checks the same things again at run time, for a config edited outside an editor.
 
-The moments a rule runs at are on [moments](./moments.md). What a check is called with is on [what a check is given](./ctx.md).
+The [moments](./glossary.md#moment) a rule runs at are on [moments](./moments.md). What a check is called with is on [what a check is given](./ctx.md).
 
 ## The file
 
@@ -40,7 +40,7 @@ The settings apply to the whole run rather than to one entry, so they are `defin
 
 | Key | Type | Meaning |
 | --- | --- | --- |
-| `driftTokens` | number | How far the agent's context size must grow, in tokens, before a breadcrumb that has already been shown is shown again. It applies to every breadcrumb except a `session` one. See [when a breadcrumb is shown again](./moments.md#when-a-breadcrumb-is-shown-again). The context size is read from the last message's input and cache tokens. The default is 200,000. It is one value for the whole repo, which is why it is not set on entries |
+| `driftTokens` | number | How far the agent's context size must grow, in tokens, before a [breadcrumb](./glossary.md#breadcrumb) that has already been shown is shown again. It applies to every breadcrumb except a `session` one. See [when a breadcrumb is shown again](./moments.md#when-a-breadcrumb-is-shown-again). The context size is read from the last message's input and cache tokens. The default is 200,000. It is one value for the whole repo, which is why it is not set on entries |
 | `grammars` | array | Grammars this repo built itself, for `astGrep` rules whose language nobody publishes. Each is `{ name, libraryPath, extensions, languageSymbol? }`. The path is relative to the repo root or absolute, and it is a build artefact. Until the file is built, `flow status` shows a red line naming it, and the rules on that language refuse rather than pass |
 
 ```
@@ -67,7 +67,7 @@ A pack that needs a repo fact passes a function of its parameters to `definePack
 
 ## A guardrail
 
-A guardrail is a rule that refuses a commit or a command, or holds a turn open. Every verb is a method, and saying one twice is a compile error. `.at(…)`, `.check(…)`, `.message(…)` and `.test(…)` are mandatory: a guardrail missing one is a compile error. A guardrail with `.disabled(…)` is exempt from all four.
+A [guardrail](./glossary.md#guardrail) is a rule that refuses a commit or a command, or holds a turn open. Every verb is a method, and saying one twice is a compile error. `.at(…)`, `.check(…)`, `.message(…)` and `.test(…)` are mandatory: a guardrail missing one is a compile error. A guardrail with `.disabled(…)` is exempt from all four.
 
 | Verb | Value | Meaning |
 | --- | --- | --- |
@@ -108,7 +108,7 @@ A case is a canned `ctx`. Its shape picks which moment's dialect it speaks, and 
 | `{ message }` | commit: it sets `ctx.message`. Add `staged`, as above. A case with no `message` has an empty one |
 | `{ actions }` | turn-end |
 
-Any case may add `actor: [...]`, the category names of the canned session.
+Any case may add `actor: [...]`, the [category](./glossary.md#category) names of the canned session.
 
 In a case, every command and every file counts as inside the repository.
 
@@ -143,7 +143,7 @@ Any case may include a `world`, for a rule that reaches past its facts. A reach 
 
 ## Categories
 
-`defineCategory(name, classify)` is a name with its recognizer, bound to a rule with `.for(…)`. The classifier reads evidence the harness wrote, never a claim the agent made about itself.
+`defineCategory(name, classify)` is a name with its recognizer, bound to a rule with `.for(…)`. The classifier reads evidence the [harness](./glossary.md#harness) wrote, never a claim the agent made about itself.
 
 `spawnedAs(recipe)` builds a classifier from the agent type a spawn was registered as. The recipe is an object:
 
@@ -195,4 +195,4 @@ Each refusal is a closed code that includes the entry it names. The loader check
 
 ---
 
-[Index](../index.md) · when each rule runs: [moments](./moments.md) · what a check is called with: [what a check is given](./ctx.md) · each stock check's options: [the stock checks](../index.md#the-stock-checks--one-page-each) · the terms: [vocabulary](./vocabulary.md)
+[Index](../index.md) · when each rule runs: [moments](./moments.md) · what a check is called with: [what a check is given](./ctx.md) · each stock check's options: [the stock checks](../index.md#the-stock-checks--one-page-each) · the terms: [glossary](./glossary.md)

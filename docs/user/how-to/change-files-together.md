@@ -6,7 +6,7 @@ summary: "refuse a commit that stages one file without its partner, with `change
 
 This guide shows you how to refuse a commit that changes one file without the file that must change with it, such as a schema without its migration.
 
-1. Open the pack that holds your repo's rules. If you have none, create `guards/house.ts` and bind it with `pack(house)` in `flow.config.ts`:
+1. Open the [pack](../reference/glossary.md#pack) that holds your repo's rules. If you have none, create `guards/house.ts` and bind it with `pack(house)` in `flow.config.ts`:
 
    ```
    // guards/house.ts — the rules of this house

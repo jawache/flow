@@ -4,7 +4,7 @@ summary: "the session log flow writes under .flow/log/, and every field of each 
 
 # The session log
 
-flow writes one log per session of a harness, at `.flow/log/<session id>.jsonl`. Each line is one JSON object, called a row. A row records one thing flow saw or did: a tool call, the files a call changed, a rule that ran, a breadcrumb it showed, a commit or a command it refused.
+flow writes one log per session of a [harness](./glossary.md#harness), at `.flow/log/<session id>.jsonl`. Each line is one JSON object, called a row. A row records one thing flow saw or did: a tool call, the files a call changed, a rule that ran, a [breadcrumb](./glossary.md#breadcrumb) it showed, a commit or a command it refused.
 
 A session's subagents write to the same file as the session that started them. The `agent` field on each row says which agent the row came from.
 
@@ -32,7 +32,7 @@ Two subagents of the same type have the same `agentType` and different `agent` v
 
 ### Commit rows
 
-The commit moment runs in git's commit-message hook. No agent calls it. Its rows name the agent whose tool call last ran in the worktree, when that call was in the last 4 hours. They go into that agent's session log. When no call was that recent, the rows go into `.flow/log/commit.jsonl` with `agent` set to `commit`.
+The commit [moment](./glossary.md#moment) runs in git's commit-message hook. No agent calls it. Its rows name the agent whose tool call last ran in the worktree, when that call was in the last 4 hours. They go into that agent's session log. When no call was that recent, the rows go into `.flow/log/commit.jsonl` with `agent` set to `commit`.
 
 ## The kinds of row
 
@@ -43,7 +43,7 @@ The commit moment runs in git's commit-message hook. No agent calls it. Its rows
 | [`tool`](#tool) | For each tool call: before a shell command, and after any other call |
 | [`read`](#read) | Before a shell command, for each file it reads by name |
 | [`change`](#change) | After a tool call that changed files |
-| [`guardrail`](#guardrail) | For each commit, command or hand-back a guardrail refused |
+| [`guardrail`](#guardrail) | For each commit, command or hand-back a [guardrail](./glossary.md#guardrail) refused |
 | [`breadcrumb`](#breadcrumb) | For each breadcrumb flow showed |
 | [`compaction`](#compaction) | When the harness compacts the session's context |
 
@@ -116,7 +116,7 @@ The first line of the file. It has no `ts`, `seq`, `agent` or `agentType`.
 
 ### `compaction`
 
-It has no fields beyond the ones on every row. After it, each breadcrumb except a `session` one shows again the next time its moment happens.
+It has no fields beyond the ones on every row. After it, each `session` breadcrumb is shown again at once, and every other breadcrumb the next time its moment happens.
 
 ---
 

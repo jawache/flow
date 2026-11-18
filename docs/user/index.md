@@ -12,7 +12,7 @@ Each page is one of four kinds: a lesson, a guide to one task, a description to 
 
 For you if you are new to flow: one lesson, from an unguarded repo to a refused commit.
 
-- [Getting started](./tutorials/getting-started.md): guard a repo, watch a commit and a command refused and a breadcrumb shown, and run every rule's own cases, in about ten minutes.
+- [Getting started](./tutorials/getting-started.md): guard a repo, watch a commit and a command refused and a [breadcrumb](./reference/glossary.md#breadcrumb) shown, and run every rule's own cases, in about ten minutes.
 
 ## Get something done
 
@@ -37,17 +37,17 @@ For you if flow already runs and you have one task to finish: each guide gives t
 
 ## Look something up
 
-For you when you need an exact command, verb, moment or field: each page describes one part of flow.
+For you when you need an exact command, verb, [moment](./reference/glossary.md#moment) or field: each page describes one part of flow.
 
-- [The flow command](./reference/cli.md): every `flow` command, what `flow init` writes and `flow uninstall` removes, what `flow status` reports, the one pack flow ships, the two switch files and the exit codes.
-- [The config](./reference/config.md): `flow.config.ts`, its settings, every verb of a guardrail and a breadcrumb, cases, categories, and what the loader refuses.
+- [The flow command](./reference/cli.md): every `flow` command, what `flow init` writes and `flow uninstall` removes, what `flow status` reports, the one [pack](./reference/glossary.md#pack) flow ships, the two switch files and the exit codes.
+- [The config](./reference/config.md): `flow.config.ts`, its settings, every verb of a [guardrail](./reference/glossary.md#guardrail) and a breadcrumb, cases, categories, and what the loader refuses.
 - [Moments](./reference/moments.md): the five moments a rule runs at, exactly when each one happens, and which take a guardrail or a breadcrumb.
 - [What a check is given](./reference/ctx.md): the contract a check is written to, and every field of `ctx` at each moment.
 - [The command parse](./reference/parse.md): how a shell line becomes a list of commands, what each holds, and everything the parse follows.
 - [flow under Claude Code](./reference/claude-code.md): the hooks, the payload fields, how an agent's type is learned, and the transcript.
-- [flow under Codex](./reference/codex.md): the same for Codex, with its two trust gates.
+- [flow under Codex](./reference/codex.md): the same for Codex, with its two [trust gates](./reference/glossary.md#trust-gate).
 - [The session log](./reference/log.md): the log flow writes for each session, and every field of each kind of row.
-- [Vocabulary](./reference/vocabulary.md): every term these pages use.
+- [Glossary](./reference/glossary.md): every term these pages use.
 
 ### The stock checks — one page each
 
@@ -77,7 +77,7 @@ For you when you want to know why flow is built the way it is.
 
 - [How flow works](./explanation/how-flow-works.md): the two kinds of guidance, the five moments, why content is judged at the commit, where a rule goes, and why one file is the whole guard.
 - [What flow reads](./explanation/what-flow-reads.md): what flow reads at a commit, at a command and after a tool call, and what it cannot read.
-- [Rules bound to who, not what](./explanation/rules-bound-to-who.md): categories, and why they read evidence the harness wrote.
+- [Rules bound to who, not what](./explanation/rules-bound-to-who.md): categories, and why they read evidence the [harness](./reference/glossary.md#harness) wrote.
 - [Fail loud](./explanation/fail-loud.md): why a config that will not load turns flow off and reports it on every call, and why every commit is refused until it loads.
 
 ## Not here

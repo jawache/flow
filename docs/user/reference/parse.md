@@ -4,7 +4,7 @@ summary: "how a shell line becomes a list of commands, what each command holds, 
 
 # The command parse
 
-At the command moment, flow parses the shell line as bash, once, with [unbash](https://github.com/webpro-nl/unbash). The parse is a list of simple commands. Every command guardrail reads that list, and a check of your own reads it as `ctx.commands`.
+At the command [moment](./glossary.md#moment), flow parses the shell line as bash, once, with [unbash](https://github.com/webpro-nl/unbash). The parse is a list of simple commands. Every command [guardrail](./glossary.md#guardrail) reads that list, and a check of your own reads it as `ctx.commands`.
 
 This page is the boundary of the parse. It states everything that is followed. Nothing else is.
 

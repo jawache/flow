@@ -4,7 +4,7 @@ summary: "what flow reads from Claude Code and what it writes: the hooks, the pa
 
 # flow under Claude Code
 
-Claude Code is a harness: it runs the agent and calls flow's hooks. This page lists everything flow reads from it and writes to it.
+Claude Code is a [harness](./glossary.md#harness): it runs the agent and calls flow's hooks. This page lists everything flow reads from it and writes to it.
 
 ## The hooks
 
@@ -12,7 +12,7 @@ When Claude Code is chosen, `flow init` registers six hooks in the repo's `.clau
 
 | Hook | Matcher | Runs | Delivers |
 | --- | --- | --- | --- |
-| `SessionStart` | `startup\|resume\|clear\|compact` | `flow hook session-start` | the `session` moment. With the source `compact`, a [compaction](./moments.md#when-a-breadcrumb-is-shown-again) |
+| `SessionStart` | `startup\|resume\|clear\|compact` | `flow hook session-start` | the `session` [moment](./glossary.md#moment). With the source `compact`, a [compaction](./moments.md#when-a-breadcrumb-is-shown-again) |
 | `SubagentStart` | every agent | `flow hook subagent-start` | the `session` moment, for the subagent |
 | `PreToolUse` | `Bash` | `flow hook pre-tool-use` | the `command` moment |
 | `PostToolUse` | every tool | `flow hook post-tool-use` | the `file-change` moment |
@@ -44,15 +44,15 @@ flow registers no hook before the Edit and Write tools, and none after a failed 
 
 | Reply | How |
 | --- | --- |
-| Refuse a command | exit code 2, with the guardrail's message on standard error |
-| Show a breadcrumb | `additionalContext` in the hook's JSON output |
+| Refuse a command | exit code 2, with the [guardrail](./glossary.md#guardrail)'s message on standard error |
+| Show a [breadcrumb](./glossary.md#breadcrumb) | `additionalContext` in the hook's JSON output |
 | Hold a turn open | `decision: "block"` in the hook's JSON output, with the guardrail's message as the reason |
 
 ## How an agent's type is learned
 
 - **A subagent** has `agent_id` and `agent_type` in every payload of its calls. `agent_type` is the name it was started as: `builder`, or `plugin:name` for a plugin's agent.
 - **The main session** has neither field. Started with `claude --agent <name>`, it has that name as `agent_type`.
-- **A generic type,** such as `general-purpose`, says nothing about the job. A category may read the brief the subagent was started with, from the subagent's own transcript. [Categories](./config.md#categories) lists the keys.
+- **A generic type,** such as `general-purpose`, says nothing about the job. A [category](./glossary.md#category) may read the brief the subagent was started with, from the subagent's own transcript. [Categories](./config.md#categories) lists the keys.
 - **Claude Code's internal agents** send `SubagentStop` with an empty `agent_type`. flow runs no rule for them.
 
 ## The transcript

@@ -6,7 +6,7 @@ summary: "refuse a commit when your typecheck, lint, tests or coverage bar fails
 
 This guide shows you how to run a tool at each commit, and refuse the commit when the tool fails. The tool is the typecheck, the lint, the tests or the coverage bar.
 
-1. Open the pack that holds your repo's rules. If you have none, create `guards/house.ts` and bind it with `pack(house)` in `flow.config.ts`:
+1. Open the [pack](../reference/glossary.md#pack) that holds your repo's rules. If you have none, create `guards/house.ts` and bind it with `pack(house)` in `flow.config.ts`:
 
    ```
    // guards/house.ts — the rules of this house

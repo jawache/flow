@@ -4,7 +4,7 @@ summary: "the check contract, every field of `ctx`, and what each moment fills i
 
 # What a check is given
 
-A check is a function of `ctx`, and `ctx` is its only access to the world. What is filled in depends on the moment.
+A check is a function of `ctx`, and `ctx` is its only access to the world. What is filled in depends on the [moment](./glossary.md#moment).
 
 ## The check contract
 
@@ -37,7 +37,7 @@ A check declares no moments, no schema and no `kind`. The entry's `.at(…)` set
 | `ctx.commands` | The command line parsed as bash, at the command moment: one entry per simple command, or `null` when the line does not parse. Every field of an entry is on [the command parse](./parse.md#what-a-command-holds) |
 | `ctx.added` | The staged paths the last commit does not have, at the commit moment, in every call that moment makes |
 | `ctx.turn` | The turn's actions, at turn-end: each file a call changed, and each shell command run. For a subagent, they are that subagent's own actions |
-| `ctx.actor` | The category names that match the agent making this change. Each name comes from evidence the harness wrote about that agent, never from a claim the agent made about itself |
+| `ctx.actor` | The [category](./glossary.md#category) names that match the agent making this change. Each name comes from evidence the [harness](./glossary.md#harness) wrote about that agent, never from a claim the agent made about itself |
 | `ctx.moment` | Which moment this is, to branch on |
 | `ctx.fs` · `ctx.exec` · `ctx.git` | The effects: read a file, run a command, query git. They are the only way a check reaches beyond its facts |
 | `ctx.ok()` · `ctx.fail(detail)` | The verdict: a pass, or a block that includes the detail line |

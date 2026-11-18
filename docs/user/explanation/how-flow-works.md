@@ -4,12 +4,12 @@ summary: "about flow: the two kinds of guidance, the five moments, why content i
 
 # How flow works
 
-flow gives a coding agent two kinds of guidance, at five moments of its work.
+flow gives a coding agent two kinds of guidance, at five [moments](../reference/glossary.md#moment) of its work.
 
 ## Two kinds of guidance
 
-- **A guardrail** refuses. It is a check that refuses a commit or a command, or holds a turn open, and says why.
-- **A breadcrumb** tells. It is text shown to the agent, such as "this code runs in a Worker, no Node natives".
+- **A [guardrail](../reference/glossary.md#guardrail)** refuses. It is a check that refuses a commit or a command, or holds a turn open, and says why.
+- **A [breadcrumb](../reference/glossary.md#breadcrumb)** tells. It is text shown to the agent, such as "this code runs in a Worker, no Node natives".
 
 flow has no warnings. A rule either refuses or it is a breadcrumb. An agent learns to read past a warning.
 
@@ -30,7 +30,7 @@ A moment is when a rule runs. What a moment takes follows from two facts about i
 
 ![The harness's hooks and git's hook, each delivering one of flow's five moments](../assets/moments.svg)
 
-The harness is the program that runs the agent: Claude Code or Codex. It calls flow at four of the moments. Git calls flow at the commit. The same `flow.config.ts` guards a repo under both harnesses. [Moments](../reference/moments.md) has each one exactly.
+The [harness](../reference/glossary.md#harness) is the program that runs the agent: Claude Code or Codex. It calls flow at four of the moments. Git calls flow at the commit. The same `flow.config.ts` guards a repo under both harnesses. [Moments](../reference/moments.md) has each one exactly.
 
 ## Why content is judged at the commit
 
@@ -60,7 +60,7 @@ The file is code for a reason. A misspelled verb is a red squiggle in your edito
 
 ## Packs and overrides
 
-The file has two verbs: it binds **packs**, and it states **overrides**. The rules are in the packs, so the config stays short: it is the list of them.
+The file has two verbs: it binds **[packs](../reference/glossary.md#pack)**, and it states **overrides**. The rules are in the packs, so the config stays short: it is the list of them.
 
 ```
 import { defineConfig, override, pack } from "@jawache/flow";
@@ -111,7 +111,7 @@ Each verb is one part of the rule:
 
 - **A verb written twice is a compile error.**
 - **A check is a function of `ctx`,** and `ctx` is its only access to files, commands and git. So the same check runs live, runs in a test case, and replays from a recording with no repo.
-- **A category reads evidence the harness wrote.** [Rules bound to who](./rules-bound-to-who.md) explains why.
+- **A [category](../reference/glossary.md#category) reads evidence the harness wrote.** [Rules bound to who](./rules-bound-to-who.md) explains why.
 - **Every rule has its own cases.** A guardrail with no block case does not load. A block case is what proves the rule refuses something.
 
 ---

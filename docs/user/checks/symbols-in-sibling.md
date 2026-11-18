@@ -26,7 +26,7 @@ When the sibling test does not exist, the check refuses the file with `sibling t
 
 A refusal names the sibling test once and lists every export it never mentions. The line prints under the entry's `.message(…)`.
 
-The output below is from the [example](#example) entry, bound in a pack named `house`. `src/domain/rooms.ts` exports `ROOM_JOIN_TILES`, `roomJoinSoFar` and `roomName`, and its test names only `roomName`. The commit prints:
+The output below is from the [example](#example) entry, bound in a [pack](../reference/glossary.md#pack) named `house`. `src/domain/rooms.ts` exports `ROOM_JOIN_TILES`, `roomJoinSoFar` and `roomName`, and its test names only `roomName`. The commit prints:
 
 ```
 flow — commit blocked:

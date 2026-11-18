@@ -6,7 +6,7 @@ summary: "refuse a shell command before it runs, or point the agent at the comma
 
 This guide shows you how to refuse a shell command before it runs. Use these rules for two kinds of command: an exact command that cannot be undone, such as a force-push, and a command your repo has a sanctioned way to run.
 
-1. Open the pack that holds your repo's rules. If you have none, create `guards/house.ts` and bind it with `pack(house)` in `flow.config.ts`:
+1. Open the [pack](../reference/glossary.md#pack) that holds your repo's rules. If you have none, create `guards/house.ts` and bind it with `pack(house)` in `flow.config.ts`:
 
    ```
    // guards/house.ts — the rules of this house

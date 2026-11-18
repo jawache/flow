@@ -6,7 +6,7 @@ summary: "hold the commit message to a header format, ban text in it, or require
 
 This guide shows you how to refuse a commit because of its message. flow reads the message from git, in git's commit-message hook, so a message is judged however it was given: with `-m`, from a file, or in an editor.
 
-1. Open the pack that holds your repo's rules. If you have none, create `guards/house.ts` and bind it with `pack(house)` in `flow.config.ts`:
+1. Open the [pack](../reference/glossary.md#pack) that holds your repo's rules. If you have none, create `guards/house.ts` and bind it with `pack(house)` in `flow.config.ts`:
 
    ```
    // guards/house.ts — the rules of this house

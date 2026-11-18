@@ -6,7 +6,7 @@ summary: "refuse a commit whose code cites a docs page or section that does not 
 
 This guide shows you how to keep the docs pages your code cites from going stale. A comment that says where a behaviour is documented, such as `docs/user/reference/record.md#ids`, is refused at commit when the page or the heading is gone.
 
-1. Open the pack that holds your repo's rules. If you have none, create `guards/house.ts` and bind it with `pack(house)` in `flow.config.ts`:
+1. Open the [pack](../reference/glossary.md#pack) that holds your repo's rules. If you have none, create `guards/house.ts` and bind it with `pack(house)` in `flow.config.ts`:
 
    ```
    // guards/house.ts — the rules of this house

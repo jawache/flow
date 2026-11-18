@@ -4,7 +4,7 @@ summary: "from an unguarded repo to a refused commit, a refused command and a br
 
 # Getting started
 
-In this tutorial, we guard a git repo with flow. We see a commit refused, a command refused before it runs, and a breadcrumb shown to an agent. Then we run every rule's own test cases. It takes about ten minutes, and every command below is real, so run each one as you read.
+In this tutorial, we guard a git repo with flow. We see a commit refused, a command refused before it runs, and a [breadcrumb](../reference/glossary.md#breadcrumb) shown to an agent. Then we run every rule's own test cases. It takes about ten minutes, and every command below is real, so run each one as you read.
 
 You need **Node 24 or later**, git, and a git repo to guard. A throwaway repo is fine. For steps 6 and 7 you need Claude Code or Codex.
 
@@ -54,7 +54,7 @@ Notice the first line it created: `flow.config.ts`. That file is the whole guard
 
 ## 3 · Write three rules
 
-Open `flow.config.ts`. It binds one pack, `flow`, which protects the guard itself. Let's add a pack of our own, written out in full. Replace the file with this:
+Open `flow.config.ts`. It binds one [pack](../reference/glossary.md#pack), `flow`, which protects the guard itself. Let's add a pack of our own, written out in full. Replace the file with this:
 
 ```
 import { banCommands, breadcrumb, command, commit, commitMessage, defineConfig, definePack, fileChange, guardrail, pack, textBan } from "@jawache/flow";
@@ -137,7 +137,7 @@ flow is ON — 5 guardrails · 2 breadcrumbs, every one resolved and able to fir
 green — every rule loads, every fitting is in place.
 ```
 
-Notice the last line: green. Every rule loads, and every fitting it needs is in place. A fitting is something flow depends on outside the rules, such as the git hook or a harness's hook registrations. If something were not in place, `flow status` would print a red line with its fix, and exit with a non-zero code.
+Notice the last line: green. Every rule loads, and every [fitting](../reference/glossary.md#fitting) it needs is in place. A fitting is something flow depends on outside the rules, such as the git hook or a [harness](../reference/glossary.md#harness)'s hook registrations. If something were not in place, `flow status` would print a red line with its fix, and exit with a non-zero code.
 
 ## 5 · See a commit refused
 
@@ -210,7 +210,7 @@ Ask the agent what it was just told about `src/`. It repeats the breadcrumb's te
 
 ## 8 · Run every rule's own cases
 
-Every guardrail carries the inputs it must let through and the inputs it must refuse. Let's run them all:
+Every [guardrail](../reference/glossary.md#guardrail) carries the inputs it must let through and the inputs it must refuse. Let's run them all:
 
 ```
 npx flow test
