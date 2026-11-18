@@ -468,7 +468,7 @@ describe("the machine test", () => {
 
     // …and a subagent's hand-back reaches the same rule, through the event init registered for it.
     // Its turn is read from its own transcript, so that is the one holding the four edits.
-    const registered = (JSON.parse(readFileSync(join(home, "settings.json"), "utf8")) as { hooks: Record<string, unknown> }).hooks;
+    const registered = (JSON.parse(readFileSync(join(repo, ".claude", "settings.json"), "utf8")) as { hooks: Record<string, unknown> }).hooks;
     expect(JSON.stringify(registered["SubagentStop"]), "the host's SubagentStop runs this verb").toContain("hook subagent-stop");
     const at = subagentTranscripts(join(repo, ".t"), "machine-3", "amachine", {
       parent: [JSON.stringify({ type: "user", message: { content: "tidy the core, with a helper" } })],

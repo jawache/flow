@@ -20,7 +20,7 @@ import { metrics, momentsView, type Block, type Bound, type Row } from "../../en
 import { parseCommandLine, parseShellSteps } from "../../language/domain.ts";
 import { claudeCode } from "./claude.ts";
 import { ALLOW, type AdapterEvent, CONFIG_FILE, type Facts, GATE_PATH, HOOKS_DIR, type InitFacts, LOCAL_BIN, MACHINE_FLAG, PACKAGE_BIN, COMMIT_MSG, type SpawnRecord, type Status, type StatusFacts, type UninstallFacts, branchFromHead, delivers, formatFacts, guardPaths, initLines, isGuardPath, lastMode, mergeNarratives, modesOf, planInit, planUninstall, relativise, status, statusCode, statusLines, uninstallCode, uninstallLines, weakenedAfterBlock } from "../domain.ts";
-import { DELIVERS, EDIT_TOOLS, type EventWorld, FLOW_OFF, HOOK_COSTS, HOOK_EVENTS, HOOK_REGISTRATIONS, HOST_SURFACE, type HookPayload, REPO_SETTINGS, type Shown, agentOf, agentSettingOf, opensCall, awaitsBrief, bareHook, bareRegistrations, bashReads, briefBlock, briefHead, classifyStore, commandFolders, contextTokens, decision, foldersBetween, holdsForBrief, hookCommand, isHookEvent, isInjected, listsFlow, nothingBound, ourHookCommand, outsideOf, ownTranscriptPath, parseEvents, projectFolderName, reachesAnotherWorktree, readFault, registeredEvents, ridesRefusal, sessionFactsFrom, settingsFileFor, shellReadRows, spawnMeta, spawnsIn, staleRegistrations, steerOf, toEvent, toResult, tokensFromTranscript, toolRow, touchedPath, transcriptHead, transcriptLines, turnActions, untoldWorktrees, whileBroken, withMachineCommandsUpToDate, withRegistrations, withoutRegistrations, workedPaths, worktreeFolders, worktreeLine } from "./domain.ts";
+import { DELIVERS, EDIT_TOOLS, type EventWorld, FLOW_OFF, HOOK_COSTS, HOOK_EVENTS, HOOK_REGISTRATIONS, HOST_SURFACE, type HookPayload, REPO_SETTINGS, type Shown, agentOf, agentSettingOf, opensCall, awaitsBrief, bareHook, bareRegistrations, bashReads, briefBlock, briefHead, classifyStore, commandFolders, contextTokens, decision, foldersBetween, holdsForBrief, hookCommand, isHookEvent, isInjected, listsFlow, nothingBound, ourHookCommand, outsideOf, ownTranscriptPath, parseEvents, projectFolderName, reachesAnotherWorktree, readFault, registeredEvents, ridesRefusal, sessionFactsFrom, shellReadRows, spawnMeta, spawnsIn, staleRegistrations, steerOf, toEvent, toResult, tokensFromTranscript, toolRow, touchedPath, transcriptHead, transcriptLines, turnActions, untoldWorktrees, whileBroken, withRegistrations, withoutRegistrations, workedPaths, worktreeFolders, worktreeLine } from "./domain.ts";
 import { type Steer, type TranscriptEvent } from "../harness.ts";
 
 
@@ -1244,9 +1244,6 @@ describe("formatFacts — the whole of what a person sees", () => {
 /** The events flow registers, in its order. Pinned once, by the test that names exactly what is registered. */
 const REGISTERED_EVENTS = HOOK_REGISTRATIONS.map((r) => r.event);
 
-/** The same, as init and status print a list of them. */
-const LISTED = REGISTERED_EVENTS.join(" · ");
-
 /** A settings file holding every registration today's init writes, but `event`'s. */
 const without = (event: string): { hooks: Record<string, unknown> } => ({
   hooks: Object.fromEntries(
@@ -1408,7 +1405,7 @@ describe("the hook registrations flow writes", () => {
     };
     expect(registeredEvents(older), "both shapes are flow's").toEqual(REGISTERED_EVENTS);
     expect(bareRegistrations(older)).toEqual(REGISTERED_EVENTS);
-    expect(status(statusFacts({ settings: older })).fittings.find((f) => f.id === "hooks")?.ok).toBe(true);
+    expect(status(statusFacts({ settings: older })).fittings.find((f) => f.id === "hooks" || f.id === "claude-code")?.ok).toBe(true);
 
     const { settings, changed } = withRegistrations(older);
     expect(changed).toEqual(REGISTERED_EVENTS.map((event) => `${event} (now runs the flow in node_modules/@jawache/flow first)`));
@@ -1509,8 +1506,13 @@ describe("the hook registrations flow writes", () => {
 
 // ── init ─────────────────────────────────────────────────────────────────────
 
+/** The one harness a `bare` repo is set up for, with the file its hooks go in. */
+const claudeFile = (settings: unknown = {}, settingsUnreadable = false, machine: unknown = null): InitFacts["harnesses"] => [
+  { harness: claudeCode, settings, settingsUnreadable, machine: { path: "/home/.claude/settings.json", settings: machine } },
+];
+
 const bare: InitFacts = {
-  harness: claudeCode,
+  harnesses: claudeFile(),
   root: "/repo",
   empty: false,
   isGit: true,
@@ -1520,11 +1522,8 @@ const bare: InitFacts = {
   hasFlowDir: false,
   hooksPath: null,
   hooksFolder: { dir: ".git/hooks", files: ["pre-commit.sample", "pre-push.sample"], commitMsgText: null, commitMsgExecutable: false },
-  settingsPath: "/home/.claude/settings.json",
-  settings: {},
-  settingsUnreadable: false,
-  machine: null,
   resolves: false,
+  listed: true,
   packageRoot: "/checkout/flow",
 };
 
@@ -1605,35 +1604,26 @@ describe("what every rail answers while the config will not load", () => {
   });
 });
 
-describe("settingsFileFor — which settings file holds flow's hooks", () => {
-  const machine = "/home/someone/.claude/settings.json";
+describe("listsFlow — does the repo's package.json list flow", () => {
   const manifest = (body: unknown): string => JSON.stringify(body);
 
-  it("is the repo's own when package.json lists flow as a dev dependency", () => {
-    expect(settingsFileFor(manifest({ devDependencies: { "@jawache/flow": "^0.3.0" } }), machine)).toBe(".claude/settings.json");
+  it("is true when flow is a dev dependency or a dependency", () => {
+    expect(listsFlow(manifest({ devDependencies: { "@jawache/flow": "^0.3.0" } }))).toBe(true);
+    expect(listsFlow(manifest({ dependencies: { "@jawache/flow": "0.3.0" } }))).toBe(true);
   });
 
-  it("is the repo's own when package.json lists flow as a dependency", () => {
-    expect(settingsFileFor(manifest({ dependencies: { "@jawache/flow": "0.3.0" } }), machine)).toBe(".claude/settings.json");
-    expect(listsFlow(manifest({ dependencies: { "@jawache/flow": "0.3.0" } })), "the rule status judges the repo's own copy by").toBe(true);
-    expect(listsFlow(manifest({ name: "@jawache/flow" }))).toBe(false);
+  it("is false when package.json lists other packages only — this repo, which IS flow, among them", () => {
+    expect(listsFlow(manifest({ name: "@jawache/flow", devDependencies: { vitest: "^3.0.0" } }))).toBe(false);
+    expect(listsFlow(manifest({ peerDependencies: { "@jawache/flow": "*" } }))).toBe(false);
   });
 
-  it("is the machine-wide one when package.json lists other packages only — this repo, which IS flow, among them", () => {
-    expect(settingsFileFor(manifest({ name: "@jawache/flow", devDependencies: { vitest: "^3.0.0" } }), machine)).toBe(machine);
-    expect(settingsFileFor(manifest({ peerDependencies: { "@jawache/flow": "*" } }), machine)).toBe(machine);
-  });
-
-  it("is the machine-wide one when there is no package.json", () => {
-    expect(settingsFileFor(null, machine)).toBe(machine);
-  });
-
-  it("is the machine-wide one when package.json will not parse, or is not an object", () => {
-    expect(settingsFileFor('{ "devDependencies": { "@jawache/flow": "^0.3.0" }, }', machine)).toBe(machine);
-    expect(settingsFileFor("", machine)).toBe(machine);
-    expect(settingsFileFor("null", machine)).toBe(machine);
-    expect(settingsFileFor('["@jawache/flow"]', machine)).toBe(machine);
-    expect(settingsFileFor(manifest({ devDependencies: ["@jawache/flow"] }), machine)).toBe(machine);
+  it("is false when there is no package.json, or it will not parse or is not an object", () => {
+    expect(listsFlow(null)).toBe(false);
+    expect(listsFlow('{ "devDependencies": { "@jawache/flow": "^0.3.0" }, }')).toBe(false);
+    expect(listsFlow("")).toBe(false);
+    expect(listsFlow("null")).toBe(false);
+    expect(listsFlow('["@jawache/flow"]')).toBe(false);
+    expect(listsFlow(manifest({ devDependencies: ["@jawache/flow"] }))).toBe(false);
   });
 });
 
@@ -1671,158 +1661,38 @@ describe("planInit — the flags and the edges", () => {
   // JSONC comments parsed to null, which reads identically to "there is no settings file" — and
   // the next line builds a NEW object holding flow's registrations and nothing else.
   it("registers NOTHING into a settings file it could not parse, and never writes over it", () => {
-    const plan = planInit({ ...bare, settings: null, settingsUnreadable: true });
-    expect(plan.settings, "no write is planned against bytes nobody parsed").toBeNull();
-    expect(plan.registered).toStrictEqual([]);
+    const plan = planInit({ ...bare, harnesses: claudeFile(null, true) });
+    expect(plan.settings, "no write is planned against bytes nobody parsed").toEqual([]);
     const said = initLines(plan, []).join("\n");
-    expect(said).toContain("/home/.claude/settings.json");
+    expect(said).toContain(".claude/settings.json");
     expect(said).toContain("not valid JSON");
     expect(said, "and it says the consequence rather than only the cause").toContain("no rail fires");
   });
 
   it("still creates a settings file that is simply ABSENT — the other silence", () => {
-    const plan = planInit({ ...bare, settings: null, settingsUnreadable: false });
-    expect(plan.settings?.path).toBe("/home/.claude/settings.json");
-    expect(plan.registered, "every event flow registers").toEqual(REGISTERED_EVENTS);
+    const plan = planInit({ ...bare, harnesses: claudeFile(null) });
+    expect(plan.settings[0]?.path, "inside the repo, whatever the repo's package.json lists").toBe(".claude/settings.json");
+    expect(plan.settings[0]?.registered, "every event flow registers").toEqual(REGISTERED_EVENTS);
   });
 });
 
-// A DEV DEPENDENCY'S HOOKS are in the repo's own file, and the host merges only IDENTICAL commands
-// across its files: an older flow's bare command left in the machine-wide file runs flow twice.
-describe("the machine-wide file, beside a dev dependency's own", () => {
+// flow 0.3 wrote its hooks to the machine-wide file. 0.4 writes nothing there: it says so, and
+// `flow uninstall --machine` removes them.
+describe("the machine-wide file", () => {
   const machinePath = "/home/.claude/settings.json";
-  const theirs = { type: "command", command: "lint-on-stop" };
-  const older = {
-    theme: "dark",
-    hooks: {
-      ...BARE_SETTINGS.hooks,
-      PostToolUse: [{ matcher: "Read|Glob|Grep|Edit|Write|Bash", hooks: [{ type: "command", command: "flow hook post-tool-use" }] }],
-      Stop: [...(BARE_SETTINGS.hooks["Stop"] ?? []), { hooks: [theirs] }],
-      Notification: [{ hooks: [{ type: "command", command: "say done" }] }],
-    },
-  };
 
-  it("rewrites flow's old commands there to today's, and touches nothing else", () => {
-    const { settings, rewritten } = withMachineCommandsUpToDate(older);
-    expect(rewritten).toEqual(REGISTERED_EVENTS);
-    const after = settings as typeof older;
-    expect(after.theme).toBe("dark");
-    expect(after.hooks.PostToolUse, "the command is rewritten, the matcher is left as it was").toEqual([
-      { matcher: "Read|Glob|Grep|Edit|Write|Bash", hooks: [{ type: "command", command: hookCommand("post-tool-use") }] },
+  it("is never written by init, whatever it holds: the plan has no write to it", () => {
+    const plan = planInit({ ...bare, harnesses: claudeFile(null, false, withRegistrations({ theme: "dark" }).settings) });
+    expect(plan.settings.map((file) => file.path)).toEqual([".claude/settings.json"]);
+  });
+
+  it("is warned of when it holds flow's hooks, with the command that removes them", () => {
+    const plan = planInit({ ...bare, harnesses: claudeFile({}, false, withRegistrations({}).settings) });
+    expect(plan.warnings).toEqual([
+      `${machinePath} also holds flow's hooks, which flow 0.3 wrote, so each hook would run twice. Remove them with \`flow uninstall --machine\`, then run \`flow init\` again.`,
     ]);
-    expect(after.hooks.Stop).toEqual([{ hooks: [{ type: "command", command: hookCommand("stop") }] }, { hooks: [theirs] }]);
-    expect(after.hooks.Notification).toEqual(older.hooks.Notification);
-    expect(older.hooks.Stop[0], "a new object; the one handed in is not changed").toEqual(BARE_SETTINGS.hooks["Stop"]?.[0]);
-  });
-
-  it("adds no registration there, and has nothing to do a second time", () => {
-    const none = withMachineCommandsUpToDate({ theme: "dark" });
-    expect(none).toEqual({ settings: { theme: "dark" }, rewritten: [] });
-    expect(withMachineCommandsUpToDate(null).rewritten).toEqual([]);
-    const once = withMachineCommandsUpToDate(older);
-    expect(withMachineCommandsUpToDate(once.settings).rewritten).toEqual([]);
-  });
-
-  it("is planned and reported by init, and skipped when the file would not parse", () => {
-    const facts = { ...bare, settingsPath: ".claude/settings.json", settings: null };
-    const plan = planInit({ ...facts, machine: { path: machinePath, settings: older, unreadable: false } });
-    expect(plan.machine?.path).toBe(machinePath);
-    expect(plan.machine?.rewritten).toEqual(REGISTERED_EVENTS);
-    expect(initLines(plan, []).join("\n")).toContain(
-      `+ ${machinePath} — ${LISTED} (an older flow's command, now the same as .claude/settings.json's, so each hook runs once)`,
-    );
-    expect(planInit({ ...facts, machine: { path: machinePath, settings: null, unreadable: true } }).machine).toBeNull();
-    expect(planInit({ ...facts, machine: { path: machinePath, settings: { theme: "dark" }, unreadable: false } }).machine).toBeNull();
-    expect(planInit(bare).machine, "no machine-wide file to bring in line when it IS the hooks' file").toBeNull();
-  });
-
-  const hooks = (machine: unknown) => {
-    const facts = statusFacts({ settingsPath: ".claude/settings.json", machine: { path: machinePath, settings: machine } });
-    const s = status(facts);
-    return { fitting: s.fittings.find((f) => f.id === "hooks"), green: s.green };
-  };
-
-  it("turns the hooks line red when the machine-wide file calls flow with another command", () => {
-    const { fitting, green } = hooks(older);
-    expect(fitting?.ok).toBe(false);
-    expect(fitting?.detail).toBe(
-      `${machinePath} also calls flow for ${LISTED} the old way, as the bare \`flow hook <event>\`, ` +
-        "so Claude Code runs it beside .claude/settings.json's command and each of those hooks fires twice. Re-run `flow init`, which rewrites it to the same command.",
-    );
-    expect(green).toBe(false);
-  });
-
-  // A COMMAND OF SOMEBODY'S OWN runs twice too, and init leaves it: its fix is a hand edit, never
-  // "re-run flow init", which would leave the line red for good.
-  it("names a command of somebody's own apart, with the fix init cannot make", () => {
-    const debug = {
-      hooks: {
-        Stop: [{ hooks: [{ type: "command", command: "FLOW_DEBUG=1 flow hook stop" }] }],
-        PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: "flow hook pre-tool-use" }] }],
-      },
-    };
-    expect(withMachineCommandsUpToDate({ hooks: { Stop: debug.hooks.Stop } }).rewritten, "init has nothing to rewrite there").toEqual([]);
-    const { fitting } = hooks(debug);
-    expect(fitting?.ok).toBe(false);
-    expect(fitting?.detail).toBe(
-      [
-        `${machinePath} also calls flow for PreToolUse the old way, as the bare \`flow hook <event>\`, ` +
-          "so Claude Code runs it beside .claude/settings.json's command and each of those hooks fires twice. Re-run `flow init`, which rewrites it to the same command.",
-        `${machinePath} also calls flow for Stop with a command of its own, ` +
-          "so Claude Code runs it beside .claude/settings.json's command and each of those hooks fires twice. Make it the same command as .claude/settings.json's, or remove it from that file.",
-      ].join("\n"),
-    );
-  });
-
-  // BEFORE `flow init`: the repo's own file calls flow for nothing, and the machine-wide file runs it
-  // for every event. The line is red, because a fresh clone has no registration, but it neither
-  // predicts a double fire nor claims that no rule runs.
-  const beforeInit = (machine: unknown, settings: unknown = null) =>
-    status(statusFacts({ settingsPath: ".claude/settings.json", settings, machine: { path: machinePath, settings: machine } })).fittings.find(
-      (f) => f.id === "hooks",
-    );
-
-  it("says the machine-wide file runs flow meanwhile, and stays red, before init (#144)", () => {
-    for (const machine of [withRegistrations({}).settings, older]) {
-      const fitting = beforeInit(machine);
-      expect(fitting?.ok, "red until the repo's own file calls flow").toBe(false);
-      expect(fitting?.detail).toBe(
-        `.claude/settings.json does not call flow for ${LISTED} — re-run \`flow init\`. Until it does, ${machinePath} calls flow for them in the meantime.`,
-      );
-    }
-  });
-
-  it("names the events the machine-wide file covers, and the cost of the rest", () => {
-    const stopOnly = { hooks: { Stop: [{ hooks: [{ type: "command", command: hookCommand("stop") }] }] } };
-    expect(beforeInit(stopOnly)?.detail).toBe(
-      `.claude/settings.json does not call flow for ${LISTED} — re-run \`flow init\`. Until it does, ${machinePath} calls flow for Stop in the meantime; ` +
-        "no note is shown when a session starts; no note is shown when a subagent starts; no rule judges a command before it runs; " +
-        "no note is shown for the file a tool call names; no turn-end rule runs when a subagent hands back.",
-    );
-    expect(beforeInit({ theme: "dark" })?.detail, "a machine-wide file with none of flow's covers nothing").toContain(
-      "Until it does, no note is shown when a session starts;",
-    );
-  });
-
-  it("calls the one missing event \"it\" when the machine-wide file covers it", () => {
-    const subagentStopOnly = { hooks: { SubagentStop: [{ hooks: [{ type: "command", command: hookCommand("subagent-stop") }] }] } };
-    expect(beforeInit(subagentStopOnly, without("SubagentStop"))?.detail).toBe(
-      `.claude/settings.json does not call flow for SubagentStop — re-run \`flow init\`. Until it does, ${machinePath} calls flow for it in the meantime.`,
-    );
-  });
-
-  it("still names a double fire on an event both files call flow for", () => {
-    const repoStop = { hooks: { Stop: [{ hooks: [{ type: "command", command: hookCommand("stop") }] }] } };
-    const detail = beforeInit(older, repoStop)?.detail ?? "";
-    expect(detail).toContain(
-      `${machinePath} also calls flow for Stop the old way, as the bare \`flow hook <event>\`, so Claude Code runs it beside .claude/settings.json's command and each of those hooks fires twice.`,
-    );
-    expect(detail, "only Stop: the repo's file calls flow for no other event").not.toContain("also calls flow for SessionStart");
-  });
-
-  it("is green when the machine-wide file has the same commands, none of flow's, or nothing", () => {
-    for (const machine of [withMachineCommandsUpToDate(older).settings, withRegistrations({}).settings, { theme: "dark" }, null])
-      expect(hooks(machine).fitting?.ok, JSON.stringify(machine)).toBe(true);
+    expect(planInit({ ...bare, harnesses: claudeFile({}, false, { theme: "dark" }) }).warnings, "none of flow's in it").toEqual([]);
+    expect(planInit({ ...bare, harnesses: claudeFile({}, false, null) }).warnings, "no such file").toEqual([]);
   });
 });
 
@@ -1830,8 +1700,12 @@ describe("the machine-wide file, beside a dev dependency's own", () => {
 
 const noteAtTurnEnd = { kind: "breadcrumb", at: ["turn-end"], text: "late" } as const;
 
-const statusFacts = (over: Partial<StatusFacts> = {}): StatusFacts => ({
-  harness: claudeCode,
+/** What a status test varies, beside the facts: the harness's settings file, and when one of its hooks last ran. */
+type StatusOver = Partial<StatusFacts> & { readonly settings?: unknown; readonly lastRan?: string | null };
+
+const statusFacts = ({ settings, lastRan = null, ...over }: StatusOver = {}): StatusFacts => ({
+  harnesses: [{ harness: claudeCode, settings: settings === undefined ? withRegistrations({}).settings : settings, lastRan }],
+  now: Date.parse("2026-11-18T12:00:00.000Z"),
   root: "/repo",
   version: "1.2.3",
   off: false,
@@ -1842,9 +1716,6 @@ const statusFacts = (over: Partial<StatusFacts> = {}): StatusFacts => ({
   oldGateText: null,
   hooksPath: HOOKS_DIR,
   hooksFolder: { dir: HOOKS_DIR, files: ["pre-commit"], commitMsgText: COMMIT_MSG, commitMsgExecutable: true },
-  settingsPath: "/home/.claude/settings.json",
-  settings: withRegistrations({}).settings,
-  machine: null,
   grammars: [],
   session: null,
   binary: { listed: false, copy: false, path: true },
@@ -1893,12 +1764,23 @@ describe("withoutRegistrations — flow's hooks taken out of a settings file", (
 /** The machine-wide settings file, absolute, as the shell hands it over. */
 const MACHINE_SETTINGS = "/home/me/.claude/settings.json";
 
+/** The one harness a repo is uninstalled from, with its repo file and its machine-wide file. */
+const claudeOf = (over: Partial<UninstallFacts["harnesses"][number]> = {}): UninstallFacts["harnesses"] => [
+  {
+    harness: claudeCode,
+    settings: null,
+    settingsUnreadable: false,
+    machineFile: { path: MACHINE_SETTINGS, settings: withRegistrations({ theme: "dark" }).settings, unreadable: false },
+    ...over,
+  },
+];
+
 /**
- * A repo `flow init` set up with a global flow: the gate, the hooks path, the state directory and the
- * link, and flow's hooks in the machine-wide file beside a key of the person's own.
+ * A repo `flow init` set up: the gate, the hooks path, the state directory and the link, and
+ * flow 0.3's hooks in the machine-wide file beside a key of the person's own.
  */
 const wired: UninstallFacts = {
-  harness: claudeCode,
+  harnesses: claudeOf(),
   hasConfig: true,
   gateText: COMMIT_MSG,
   oldGateText: null,
@@ -1908,37 +1790,29 @@ const wired: UninstallFacts = {
   hooksFolder: { dir: HOOKS_DIR, files: ["pre-commit"], commitMsgText: COMMIT_MSG, commitMsgExecutable: true },
   hasFlowDir: true,
   linked: true,
-  listed: false,
-  settings: null,
-  settingsUnreadable: false,
   machineFlag: false,
-  machineFile: { path: MACHINE_SETTINGS, settings: withRegistrations({ theme: "dark" }).settings, unreadable: false },
 };
 
-describe("planUninstall — a dev dependency", () => {
-  const listed = { ...wired, linked: false, listed: true, settings: withRegistrations({ permissions: { allow: [] } }).settings };
+describe("planUninstall — the repo's own settings file", () => {
+  const listed = { ...wired, linked: false, harnesses: claudeOf({ settings: withRegistrations({ permissions: { allow: [] } }).settings }) };
 
-  it("takes flow's hooks out of the repo's own settings file, and ends with the repo's npm uninstall", () => {
+  it("takes flow's hooks out of the repo's own settings file, whatever the repo's package.json lists, and ends with the repo's npm uninstall", () => {
     const plan = planUninstall(listed);
-    expect(plan.settings?.path).toBe(REPO_SETTINGS);
-    expect(plan.settings?.value).toEqual({ permissions: { allow: [] } });
+    expect(plan.settings[0]?.path).toBe(REPO_SETTINGS);
+    expect(plan.settings[0]?.value).toEqual({ permissions: { allow: [] } });
     expect(plan.link, "an installed package is npm's to remove").toBe(false);
     const said = uninstallLines(plan, []).join("\n");
     expect(said).toContain("  - .claude/settings.json — SessionStart · SubagentStart · PreToolUse · PostToolUse · Stop · SubagentStop");
-    expect(said).toContain("next: `npm uninstall @jawache/flow`");
+    expect(said).toContain("`npm uninstall @jawache/flow`");
   });
 
   it("writes nothing to a settings file that would not parse, says so, and answers 1", () => {
-    const plan = planUninstall({ ...listed, settings: null, settingsUnreadable: true });
-    expect(plan.settings).toBeNull();
+    const plan = planUninstall({ ...listed, harnesses: claudeOf({ settings: null, settingsUnreadable: true }) });
+    expect(plan.settings).toEqual([]);
     expect(plan.unreadable).toEqual([REPO_SETTINGS]);
     expect(uninstallLines(plan, []).join("\n")).toContain(".claude/settings.json is not valid JSON");
     expect(uninstallLines(plan, []).join("\n")).toContain("run `flow uninstall` again.");
     expect(uninstallCode(plan, [])).toBe(1);
-  });
-
-  it("leaves a repo settings file alone when the repo does not list flow", () => {
-    expect(planUninstall({ ...wired, settings: withRegistrations({}).settings }).settings).toBeNull();
   });
 });
 
@@ -1947,44 +1821,44 @@ describe("planUninstall — the machine-wide settings file", () => {
   const machineWith = (settings: unknown, unreadable = false): UninstallFacts => ({
     ...wired,
     machineFlag: true,
-    machineFile: { path: MACHINE_SETTINGS, settings, unreadable },
+    harnesses: claudeOf({ machineFile: { path: MACHINE_SETTINGS, settings, unreadable } }),
   });
 
-  it("is left as it was without --machine, for a global install and a dev dependency alike", () => {
-    expect(planUninstall(wired).machine).toBeNull();
-    const listed = { ...wired, listed: true, settings: withRegistrations({}).settings };
-    expect(planUninstall(listed).machine).toBeNull();
+  it("is left as it was without --machine", () => {
+    expect(planUninstall(wired).machine).toEqual([]);
     expect(uninstallLines(planUninstall(wired), []).join("\n")).not.toContain(`  - ${MACHINE_SETTINGS}`);
   });
 
   it("with --machine, loses flow's registrations and keeps every other key and hook", () => {
     const registered = withRegistrations({ theme: "dark", hooks: { Stop: [theirs] } }).settings;
     const plan = planUninstall(machineWith(registered));
-    expect(plan.machine).toEqual({
-      path: MACHINE_SETTINGS,
-      value: { theme: "dark", hooks: { Stop: [theirs] } },
-      removed: ["SessionStart", "SubagentStart", "PreToolUse", "PostToolUse", "Stop", "SubagentStop"],
-    });
+    expect(plan.machine).toEqual([
+      {
+        path: MACHINE_SETTINGS,
+        value: { theme: "dark", hooks: { Stop: [theirs] } },
+        removed: ["SessionStart", "SubagentStart", "PreToolUse", "PostToolUse", "Stop", "SubagentStop"],
+      },
+    ]);
     expect(uninstallLines(plan, []).join("\n")).toContain(
       `  - ${MACHINE_SETTINGS} — SessionStart · SubagentStart · PreToolUse · PostToolUse · Stop · SubagentStop`,
     );
     expect(uninstallCode(plan, [])).toBe(0);
   });
 
-  it("with --machine, cleans both files for a dev dependency", () => {
-    const plan = planUninstall({ ...machineWith(withRegistrations({}).settings), listed: true, settings: withRegistrations({}).settings });
-    expect(plan.settings?.path).toBe(REPO_SETTINGS);
-    expect(plan.machine?.path).toBe(MACHINE_SETTINGS);
+  it("with --machine, cleans both files", () => {
+    const plan = planUninstall({ ...machineWith(withRegistrations({}).settings), harnesses: claudeOf({ settings: withRegistrations({}).settings }) });
+    expect(plan.settings[0]?.path).toBe(REPO_SETTINGS);
+    expect(plan.machine[0]?.path).toBe(MACHINE_SETTINGS);
   });
 
   it("with --machine, has nothing to do in a machine-wide file with none of flow's, or none at all", () => {
-    expect(planUninstall(machineWith({ theme: "dark" })).machine).toBeNull();
-    expect(planUninstall(machineWith(null)).machine).toBeNull();
+    expect(planUninstall(machineWith({ theme: "dark" })).machine).toEqual([]);
+    expect(planUninstall(machineWith(null)).machine).toEqual([]);
   });
 
   it("with --machine, writes nothing to a machine-wide file that would not parse, says so with the command to run again, and answers 1", () => {
     const plan = planUninstall(machineWith(null, true));
-    expect(plan.machine).toBeNull();
+    expect(plan.machine).toEqual([]);
     expect(plan.unreadable).toEqual([MACHINE_SETTINGS]);
     const said = uninstallLines(plan, []).join("\n");
     expect(said).toContain(`  ✗ ${MACHINE_SETTINGS} is not valid JSON`);
@@ -1993,9 +1867,13 @@ describe("planUninstall — the machine-wide settings file", () => {
   });
 
   it("with --machine, lists both files when neither will parse, and each line says to run --machine again", () => {
-    const plan = planUninstall({ ...machineWith(null, true), listed: true, settings: null, settingsUnreadable: true });
-    expect(plan.settings).toBeNull();
-    expect(plan.machine).toBeNull();
+    const plan = planUninstall({
+      ...wired,
+      machineFlag: true,
+      harnesses: claudeOf({ settings: null, settingsUnreadable: true, machineFile: { path: MACHINE_SETTINGS, settings: null, unreadable: true } }),
+    });
+    expect(plan.settings).toEqual([]);
+    expect(plan.machine).toEqual([]);
     expect(plan.unreadable).toEqual([REPO_SETTINGS, MACHINE_SETTINGS]);
     const failed = uninstallLines(plan, []).filter((line) => line.startsWith("  ✗ "));
     expect(failed.map((line) => line.split(" is not valid JSON")[0])).toEqual([`  ✗ ${REPO_SETTINGS}`, `  ✗ ${MACHINE_SETTINGS}`]);
@@ -2004,7 +1882,7 @@ describe("planUninstall — the machine-wide settings file", () => {
   });
 
   it("without --machine, an unreadable machine-wide file is none of its business", () => {
-    const plan = planUninstall({ ...wired, machineFile: { path: MACHINE_SETTINGS, settings: null, unreadable: true } });
+    const plan = planUninstall({ ...wired, harnesses: claudeOf({ machineFile: { path: MACHINE_SETTINGS, settings: null, unreadable: true } }) });
     expect(plan.unreadable).toEqual([]);
     expect(uninstallCode(plan, [])).toBe(0);
   });
@@ -2152,7 +2030,7 @@ describe("status — the whole answer", () => {
 });
 
 describe("status — a registration an older flow wrote", () => {
-  const red = (over: Partial<StatusFacts>): string => statusLines(status(statusFacts(over))).join("\n");
+  const red = (over: StatusOver): string => statusLines(status(statusFacts(over))).join("\n");
   it("goes red on an older flow's registrations, and says re-running init brings them up to date", () => {
     const settings = withRegistrations({}).settings as { hooks: Record<string, unknown> };
     const older = {
@@ -2176,13 +2054,13 @@ describe("status — a registration an older flow wrote", () => {
     ["SubagentStop", "no turn-end rule runs when a subagent hands back"],
   ])("goes red on a file without %s, and names what goes unjudged", (event, unregistered) => {
     const s = status(statusFacts({ settings: without(event) }));
-    expect(s.fittings.find((f) => f.id === "hooks")?.ok).toBe(false);
+    expect(s.fittings.find((f) => f.id === "hooks" || f.id === "claude-code")?.ok).toBe(false);
     expect(s.green).toBe(false);
-    expect(s.fittings.find((f) => f.id === "hooks")?.detail).toBe(
-      `/home/.claude/settings.json does not call flow for ${event} — re-run \`flow init\`. Until it does, ${unregistered}.`,
+    expect(s.fittings.find((f) => f.id === "hooks" || f.id === "claude-code")?.detail).toBe(
+      `.claude/settings.json does not call flow for ${event} — re-run \`flow init\`. Until it does, ${unregistered}.`,
     );
-    expect(status(statusFacts()).fittings.find((f) => f.id === "hooks")?.detail, "every one, and it is green").toBe(
-      `/home/.claude/settings.json — ${LISTED}`,
+    expect(status(statusFacts()).fittings.find((f) => f.id === "hooks" || f.id === "claude-code")?.detail, "every one, and it is green").toBe(
+      "registered · no hook has run here",
     );
   });
 
@@ -2190,11 +2068,11 @@ describe("status — a registration an older flow wrote", () => {
   // PreToolUse and SubagentStop still shows the note for a file a tool call names and judges the main chat's hand-back.
   it("names only the rails of the missing events as not firing", () => {
     const hooks = { ...without("SubagentStop").hooks, PreToolUse: undefined };
-    expect(status(statusFacts({ settings: { hooks } })).fittings.find((f) => f.id === "hooks")?.detail).toBe(
-      "/home/.claude/settings.json does not call flow for PreToolUse · SubagentStop — re-run `flow init`. " +
+    expect(status(statusFacts({ settings: { hooks } })).fittings.find((f) => f.id === "hooks" || f.id === "claude-code")?.detail).toBe(
+      ".claude/settings.json does not call flow for PreToolUse · SubagentStop — re-run `flow init`. " +
         "Until it does, no rule judges a command before it runs; no turn-end rule runs when a subagent hands back.",
     );
-    const none = status(statusFacts({ settings: {} })).fittings.find((f) => f.id === "hooks")?.detail ?? "";
+    const none = status(statusFacts({ settings: {} })).fittings.find((f) => f.id === "hooks" || f.id === "claude-code")?.detail ?? "";
     for (const registration of HOOK_REGISTRATIONS) expect(none, "a file with none names every cost").toContain(registration.event);
     expect(none).toContain("no note is shown when a session starts; no note is shown when a subagent starts; no rule judges a command before it runs;");
   });

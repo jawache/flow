@@ -1527,6 +1527,72 @@ function firstFix(other: UnwiredHooks): [string, string[]] {
   }
 }
 
+// ── choosing the harnesses ───────────────────────────────────────────────────
+
+/** One harness, and what the shell found of it in this repo: its folder, and its program on the `PATH`. */
+export interface Found {
+  readonly harness: HarnessFacts;
+  /** Its folder is in the repo. */
+  readonly folder: boolean;
+  /** Its program is in a folder on the `PATH`. */
+  readonly program: boolean;
+}
+
+/** How a harness was detected, as the prompt says it, or null when it was not: its folder first, then its program. */
+export function detection({ harness, folder, program }: Found): string | null {
+  if (folder) return `${harness.detect.folder}/`;
+  return program ? `${harness.detect.program} on the PATH` : null;
+}
+
+/** The harnesses to register when nobody chose: each one detected, or every one when none is. */
+export function defaultHarnesses(found: readonly Found[]): string[] {
+  const seen = found.filter((one) => detection(one) !== null);
+  return (seen.length === 0 ? found : seen).map(({ harness }) => harness.id);
+}
+
+/** The value of `--harness`, as typed, or null when it is not given. `--harness` with no value is the empty string. */
+export function harnessArg(args: readonly string[]): string | null {
+  const at = args.indexOf("--harness");
+  if (at === -1) return null;
+  const next = args[at + 1];
+  return next === undefined || next.startsWith("--") ? "" : next;
+}
+
+/** Harness names typed by a person — `claude-code,codex` or `claude-code codex` — read: the ids, or the first name no harness has. */
+export function parseHarnesses(typed: string, found: readonly Found[]): { readonly ok: true; readonly ids: string[] } | { readonly ok: false; readonly unknown: string } {
+  const ids = typed.split(/[\s,]+/).filter((name) => name !== "");
+  const unknown = ids.find((id) => !found.some(({ harness }) => harness.id === id));
+  return unknown === undefined ? { ok: true, ids: [...new Set(ids)] } : { ok: false, unknown };
+}
+
+/** The prompt for the harnesses: each one, ticked when selected, with how it was detected. */
+export function harnessPrompt(found: readonly Found[], selected: readonly string[]): string[] {
+  const width = Math.max(...found.map(({ harness }) => harness.name.length));
+  return [
+    "Which harnesses run agents in this repo?",
+    ...found.map((one) => {
+      const mark = selected.includes(one.harness.id) ? "x" : " ";
+      const how = detection(one);
+      return `  [${mark}] ${one.harness.name.padEnd(width)}   ${how === null ? "not found" : `detected: ${how}`}`;
+    }),
+  ];
+}
+
+/** The question under that prompt: the names a person may type, and what an empty answer keeps. */
+export function harnessQuestion(found: readonly Found[]): string {
+  return `Harnesses to register, by name (${found.map(({ harness }) => harness.id).join(", ")}), or enter to keep the ones marked: `;
+}
+
+/** The list of what `flow init` is about to write, which the last prompt asks a yes for. */
+export function aboutToWrite(plan: InitPlan): string[] {
+  return ["flow init will write:", ...writtenLines(plan).map((what) => `  + ${what}`)];
+}
+
+/** A yes: an empty answer, `y` or `yes`, in any case. */
+export function isYes(answer: string): boolean {
+  return ["", "y", "yes"].includes(answer.trim().toLowerCase());
+}
+
 // ── the scaffold ─────────────────────────────────────────────────────────────
 
 /** The config `flow init --empty` leaves: the wiring, with no opinions. */
@@ -1634,10 +1700,32 @@ export function scaffold(empty: boolean): string {
 
 // ── init ─────────────────────────────────────────────────────────────────────
 
+/** One harness flow is setting up, and what its settings file held. */
+export interface InitHarness {
+  readonly harness: HarnessFacts;
+  /** The repo's own settings file for it, parsed: null when there is none. */
+  readonly settings: unknown;
+  /**
+   * The settings file is THERE and would not parse.
+   *
+   * Distinct from `settings: null`, which means there is none — and the distinction is the whole
+   * reason this field exists. Both read as "no registrations found", so an init that acted on the
+   * absence would answer an unreadable file by writing a NEW one over it, taking the reader's
+   * permissions, model and every other key with it. Measured at the crossing, against a real
+   * settings.json holding JSONC comments: the write was one branch away.
+   */
+  readonly settingsUnreadable: boolean;
+  /**
+   * The harness's machine-wide settings file, parsed, where flow 0.3 wrote its hooks: its path, and
+   * its JSON, null when there is none or it would not parse. Read for a warning, never written.
+   */
+  readonly machine: { readonly path: string; readonly settings: unknown };
+}
+
 /** What the shell found before anything was written. Every one is a stat, not a judgement. */
 export interface InitFacts {
-  /** The harness flow is being set up for. */
-  readonly harness: HarnessFacts;
+  /** The harnesses chosen to register, each with the file its hooks go in. */
+  readonly harnesses: readonly InitHarness[];
   readonly root: string;
   /** `--empty`: the wiring, with no demo. */
   readonly empty: boolean;
@@ -1652,27 +1740,10 @@ export interface InitFacts {
   readonly hooksPath: string | null;
   /** The folder git runs hooks from, or null outside git or when git could not say. */
   readonly hooksFolder: HooksFolder | null;
-  /** The settings file flow's hooks go in: the repo's own, repo-relative, or the machine-wide one. */
-  readonly settingsPath: string;
-  /** That file, parsed. */
-  readonly settings: unknown;
-  /**
-   * The settings file is THERE and would not parse.
-   *
-   * Distinct from `settings: null`, which means there is none — and the distinction is the whole
-   * reason this field exists. Both read as "no registrations found", so an init that acted on the
-   * absence would answer an unreadable file by writing a NEW one over it, taking the reader's
-   * permissions, model and every other key with it. Measured at the crossing, against a real
-   * settings.json holding JSONC comments: the write was one branch away.
-   */
-  readonly settingsUnreadable: boolean;
-  /**
-   * The machine-wide settings file, read, when flow's hooks go in the repo's own file — a dev
-   * dependency's — and null when they go in the machine-wide file itself.
-   */
-  readonly machine: { readonly path: string; readonly settings: unknown; readonly unreadable: boolean } | null;
   /** Does `@jawache/flow` already resolve from this repo? */
   readonly resolves: boolean;
+  /** Does the repo's `package.json` list `@jawache/flow` as a dependency? */
+  readonly listed: boolean;
   /**
    * Where the running binary's own package lives — what a link would point at, and NULL when the
    * walk up never found it. Null rather than an empty string on purpose: an empty string is a path
@@ -1717,27 +1788,17 @@ export interface InitPlan {
    * alone too: that folder may hold another tool's hooks, and setting it would turn them off.
    */
   readonly hooksUnknown: boolean;
-  /** The rewritten settings, or null when they already call flow — or could not be read. */
-  readonly settings: { readonly path: string; readonly value: unknown } | null;
-  readonly registered: readonly string[];
-  /**
-   * The machine-wide file with flow's old commands brought up to date, for a dev dependency whose
-   * hooks are in the repo's own file — or null when it has none, or could not be read.
-   */
-  readonly machine: { readonly path: string; readonly value: unknown; readonly rewritten: readonly string[]; readonly repoFile: string } | null;
-  /** The settings file was there and would not parse, so nothing was registered. Said out loud. */
-  readonly settingsUnreadable: string | null;
-}
-
-/**
- * The machine-wide file's write, with its path: null when there is no such file to bring in line,
- * nothing in it to rewrite, or it would not parse — the same rule as the hooks' own file: bytes
- * nobody parsed are not written.
- */
-function machineRewrite(file: InitFacts["machine"], registering: Registering): InitPlan["machine"] {
-  if (file === null || file.unreadable) return null;
-  const { settings, rewritten } = registering.withMachineCommandsUpToDate(file.settings);
-  return rewritten.length === 0 ? null : { path: file.path, value: settings, rewritten, repoFile: registering.repoFile };
+  /** Each harness's rewritten settings file: only those that change. A file that already calls flow, or could not be read, is not here. */
+  readonly settings: readonly {
+    readonly path: string;
+    readonly value: unknown;
+    /** The events added, rewritten or removed, for the report. */
+    readonly registered: readonly string[];
+  }[];
+  /** The settings files that were there and would not parse, so nothing was registered in them. Said out loud. */
+  readonly settingsUnreadable: readonly string[];
+  /** What to know before anything is written, each a sentence. The four warnings of `flow init`. */
+  readonly warnings: readonly string[];
 }
 
 /** The pre-0.4 gate with flow's lines taken out, as a write: null when the repo has none or none of it is flow's. */
@@ -1753,7 +1814,17 @@ export function planInit(facts: InitFacts): InitPlan {
   // settings file holding flow's registrations and NOTHING ELSE — permissions, model, theme,
   // every other tool's hooks, gone. There is no safe merge into bytes nobody parsed, so init
   // registers nothing and says which file to fix.
-  const registration = facts.settingsUnreadable ? { settings: facts.settings, changed: [] } : facts.harness.registering.withRegistrations(facts.settings);
+  const settings: InitPlan["settings"][number][] = [];
+  const settingsUnreadable: string[] = [];
+  for (const { harness, settings: held, settingsUnreadable: unreadable } of facts.harnesses) {
+    const { repoFile } = harness.registering;
+    if (unreadable) {
+      settingsUnreadable.push(repoFile);
+      continue;
+    }
+    const registration = harness.registering.withRegistrations(held);
+    if (registration.changed.length > 0) settings.push({ path: repoFile, value: registration.settings, registered: registration.changed });
+  }
   // Outside git there are no hooks to keep. A folder git could not name has none to read, and may
   // still hold some, so it is left alone as other hooks are.
   const other = facts.isGit && facts.hooksFolder !== null ? otherHooks(facts.hooksPath, facts.hooksFolder) : null;
@@ -1775,11 +1846,56 @@ export function planInit(facts: InitFacts): InitPlan {
     hooksPath: facts.isGit && facts.hooksPath !== HOOKS_DIR && other === null && !hooksUnknown,
     otherHooks: other,
     hooksUnknown,
-    settings: registration.changed.length === 0 ? null : { path: facts.settingsPath, value: registration.settings },
-    registered: registration.changed,
-    machine: machineRewrite(facts.machine, facts.harness.registering),
-    settingsUnreadable: facts.settingsUnreadable ? facts.settingsPath : null,
+    settings,
+    settingsUnreadable,
+    warnings: initWarnings(facts, other),
   };
+}
+
+/**
+ * The warnings `flow init` prints before it writes, each only when it applies: git already runs other
+ * hooks, flow is not a dev dependency of the repo, flow 0.3's hooks are still in a machine-wide
+ * settings file, and a chosen harness needs a person to trust the folder before it runs a hook.
+ */
+function initWarnings(facts: InitFacts, other: OtherHooks | null): string[] {
+  const warnings: string[] = [];
+  if (unwired(other))
+    warnings.push(`git already runs other hooks, from ${other.dir}, so flow leaves core.hooksPath alone and its commit gate is not installed until you add it to ${other.commitMsg} — the block at the end says how.`);
+  if (!facts.listed)
+    warnings.push(`flow is not a dev dependency of this repo, so the hooks run whatever flow is on the PATH. ${INSTALL_PIN}`);
+  for (const { harness, machine } of facts.harnesses)
+    if (harness.registering.registeredEvents(machine.settings).length > 0)
+      warnings.push(`${machine.path} also holds flow's hooks, which flow 0.3 wrote, so each hook would run twice. Remove them with \`${MACHINE_RUN}\`, then run \`flow init\` again.`);
+  for (const { harness } of facts.harnesses)
+    if (harness.trustNote !== null) warnings.push(`${harness.name}: ${harness.trustNote}`);
+  return warnings;
+}
+
+/** The sentence that says how a repo gets its own copy of flow. */
+const INSTALL_PIN = "Install it for this repo as a dev dependency, pinned: docs/user/how-to/install-flow.md.";
+
+/** What `flow init` is about to write, one line each: the list it asks a yes for, and the list it reports back. */
+export function writtenLines(plan: InitPlan): string[] {
+  const wrote: string[] = [];
+  if (plan.config) wrote.push(plan.config.path);
+  if (plan.gate) wrote.push(plan.gate.path);
+  if (plan.oldGate)
+    wrote.push(
+      plan.oldGate.body === null
+        ? `${plan.oldGate.path} deleted — an older flow wrote it, and ${GATE_PATH} runs the gate now`
+        : `flow's lines taken out of ${plan.oldGate.path} — an older flow wrote them, and ${GATE_PATH} runs the gate now`,
+    );
+  if (plan.flowDir) wrote.push(`${FLOW_DIR}/ — flow's own state, self-ignoring, never committed`);
+  // WHY it linked, not what linking is for: the reason for a file in their repo.
+  if (plan.link) wrote.push(`node_modules/@jawache/flow → ${plan.link} (a link to the flow that is running — nothing here resolved @jawache/flow)`);
+  for (const settings of plan.settings) wrote.push(`${settings.path} — ${settings.registered.join(" · ")}`);
+  if (plan.hooksPath) wrote.push(SET_HOOKS_PATH);
+  return wrote;
+}
+
+/** The warnings, as lines. Empty when none applies. */
+export function warningLines(plan: InitPlan): string[] {
+  return plan.warnings.map((warning) => `  ! ${warning}`);
 }
 
 /**
@@ -1791,27 +1907,7 @@ export function planInit(facts: InitFacts): InitPlan {
  * the output this is written to.
  */
 export function initLines(plan: InitPlan, failures: readonly string[], colour = false): string[] {
-  const wrote: string[] = [];
-  if (plan.config) wrote.push(plan.config.path);
-  if (plan.gate) wrote.push(plan.gate.path);
-  if (plan.oldGate)
-    wrote.push(
-      plan.oldGate.body === null
-        ? `${plan.oldGate.path} deleted — an older flow wrote it, and ${GATE_PATH} runs the gate now`
-        : `flow's lines taken out of ${plan.oldGate.path} — an older flow wrote them, and ${GATE_PATH} runs the gate now`,
-    );
-  if (plan.flowDir) wrote.push(`${FLOW_DIR}/ — flow's own state, self-ignoring, never committed`);
-  // WHY it linked, not what linking is for. The parenthetical used to read "npm link is flow's
-  // distribution until it is published", which stopped being true at 0.1.0 and left the reader
-  // with a line about the project's release state where the reason for a file in their repo
-  // belongs. `npm i -D @jawache/flow` and this line is simply absent.
-  if (plan.link) wrote.push(`node_modules/@jawache/flow → ${plan.link} (a link to the flow that is running — nothing here resolved @jawache/flow)`);
-  if (plan.settings) wrote.push(`${plan.settings.path} — ${plan.registered.join(" · ")}`);
-  if (plan.machine)
-    wrote.push(
-      `${plan.machine.path} — ${plan.machine.rewritten.join(" · ")} (an older flow's command, now the same as ${plan.machine.repoFile}'s, so each hook runs once)`,
-    );
-  if (plan.hooksPath) wrote.push(SET_HOOKS_PATH);
+  const wrote = writtenLines(plan);
 
   const lines: string[] =
     wrote.length > 0
@@ -1825,9 +1921,9 @@ export function initLines(plan: InitPlan, failures: readonly string[], colour = 
     lines.push(
       `  · kept the ${GATE_PATH} already here — flow never overwrites one, so ${plan.gateOld ? UPDATE_THE_GATE_LINE : ADD_THE_GATE_LINE} yourself.`,
     );
-  if (plan.settingsUnreadable !== null)
+  for (const path of plan.settingsUnreadable)
     lines.push(
-      `  ✗ ${plan.settingsUnreadable} is not valid JSON, so nothing was registered and NOTHING was written to it — ` +
+      `  ✗ ${path} is not valid JSON, so nothing was registered and NOTHING was written to it — ` +
         `every other key in that file is somebody's, and there is no safe merge into bytes nobody could parse. ` +
         `Fix the JSON (a trailing comma, or a // comment) and run \`flow init\` again. Until then no rail fires.`,
     );
@@ -1879,8 +1975,8 @@ export function initCode(plan: InitPlan, failures: readonly string[]): 0 | 1 {
 
 /** What the shell found before anything was removed. Every one is a stat, not a judgement. */
 export interface UninstallFacts {
-  /** The harness flow is being taken out of. */
-  readonly harness: HarnessFacts;
+  /** The harnesses flow is taken out of, each with its repo settings file and its machine-wide one. */
+  readonly harnesses: readonly UninstallHarness[];
   readonly hasConfig: boolean;
   /** The gate as it stands, or null when there is none. */
   readonly gateText: string | null;
@@ -1900,14 +1996,17 @@ export interface UninstallFacts {
   readonly hasFlowDir: boolean;
   /** `node_modules/@jawache/flow` is a symlink: the link `flow init` makes. A real folder is an install. */
   readonly linked: boolean;
-  /** Does the repo's `package.json` list `@jawache/flow`? Then flow's hooks are in the repo's own settings file. */
-  readonly listed: boolean;
-  /** The repo's own settings file for the harness, parsed; null when there is none. */
+  /** `--machine` was given: the machine-wide settings files are flow's to clean too. */
+  readonly machineFlag: boolean;
+}
+
+/** One harness flow is taken out of: what its settings files held. */
+export interface UninstallHarness {
+  readonly harness: HarnessFacts;
+  /** The repo's own settings file for it, parsed; null when there is none. */
   readonly settings: unknown;
   /** …it is there and would not parse. */
   readonly settingsUnreadable: boolean;
-  /** `--machine` was given: the machine-wide settings file is flow's to clean too. */
-  readonly machineFlag: boolean;
   /** The machine-wide settings file: its absolute path, its JSON (null when there is none), and whether it would not parse. */
   readonly machineFile: { readonly path: string; readonly settings: unknown; readonly unreadable: boolean };
 }
@@ -1946,28 +2045,27 @@ export interface UninstallPlan {
   readonly hooksDir: boolean;
   readonly flowDir: boolean;
   readonly link: boolean;
-  /** The repo's settings file without flow's registrations, or null when it holds none. */
-  readonly settings: SettingsWithout | null;
-  /** With `--machine`: the machine-wide settings file without flow's registrations, or null when it holds none. */
-  readonly machine: SettingsWithout | null;
+  /** The repo's settings file of each harness without flow's registrations: only those that held some. */
+  readonly settings: readonly SettingsWithout[];
+  /** With `--machine`: each machine-wide settings file without flow's registrations: only those that held some. */
+  readonly machine: readonly SettingsWithout[];
   /** The settings files flow's to clean that would not parse: nothing written to them, each said out loud. */
   readonly unreadable: readonly string[];
   /** How this run was typed, so a failure's report says what to run again. */
   readonly command: string;
   readonly keptConfig: boolean;
   /**
-   * The machine-wide file this repo's hooks are in still holds them, because `--machine` was not
-   * given: its path, said beside the report and in its last line, or null. Without it, a plain run
-   * reports success while every session of the harness on the machine still calls `flow`.
+   * The machine-wide files that still hold flow's hooks, because `--machine` was not given: said
+   * beside the report and in its last line. Without it, a plain run reports success while every
+   * session of the harness on the machine still calls `flow`.
    */
-  readonly machineHolds: string | null;
+  readonly machineHolds: readonly string[];
   /** The command that removes the package, the report's last line. */
   readonly next: string;
 }
 
 /** What uninstall will remove from this repo. Pure: every branch reads a fact the shell already gathered. */
 export function planUninstall(facts: UninstallFacts): UninstallPlan {
-  const { registering } = facts.harness;
   const gate = gateWithoutFlow(facts.gateText);
   const gateGone = gate?.delete === true;
   const leftText = gate === null ? facts.gateText : gate.delete ? null : gate.body;
@@ -1982,16 +2080,23 @@ export function planUninstall(facts: UninstallFacts): UninstallPlan {
   const flowsHooksPath = facts.hooksPath === HOOKS_DIR;
   const ownsHooksPath = flowsHooksPath && facts.subfolderOf === null;
   // Bytes nobody parsed are not written, as in `planInit`: the step is reported as failed instead.
-  const cleaned = (path: string, settings: unknown): SettingsWithout | null => {
+  const cleaned = (registering: Registering, path: string, settings: unknown): SettingsWithout | null => {
     const { settings: value, removed } = registering.withoutRegistrations(settings);
     return removed.length === 0 ? null : { path, value, removed };
   };
-  const { machineFile } = facts;
-  const repoUnreadable = facts.listed && facts.settingsUnreadable;
-  const machineUnreadable = facts.machineFlag && machineFile.unreadable;
-  // The one reading of "the machine-wide file holds flow's hooks": what --machine writes, and what a
+  const present = <T>(found: readonly (T | null)[]): T[] => found.filter((one): one is T => one !== null);
+  const repoCleaned = facts.harnesses.map(({ harness, settings, settingsUnreadable }) =>
+    settingsUnreadable ? null : cleaned(harness.registering, harness.registering.repoFile, settings),
+  );
+  // The one reading of "a machine-wide file holds flow's hooks": what --machine writes, and what a
   // plain run names.
-  const machineCleaned = machineFile.unreadable ? null : cleaned(machineFile.path, machineFile.settings);
+  const machineCleaned = facts.harnesses.map(({ harness, machineFile }) =>
+    machineFile.unreadable ? null : cleaned(harness.registering, machineFile.path, machineFile.settings),
+  );
+  const unreadable = [
+    ...facts.harnesses.filter((h) => h.settingsUnreadable).map((h) => h.harness.registering.repoFile),
+    ...(facts.machineFlag ? facts.harnesses.filter((h) => h.machineFile.unreadable).map((h) => h.machineFile.path) : []),
+  ];
   // The one reading of "git runs other hooks" that init and status use. The folder is read at the
   // top folder, so a run in a subfolder names that hook by its full path.
   // That folder's hook first: when git runs it, it is the one a commit fails in.
@@ -2015,13 +2120,13 @@ export function planUninstall(facts: UninstallFacts): UninstallPlan {
     hooksDir: facts.hooksDir !== null && hooksLeft.length === 0,
     flowDir: facts.hasFlowDir,
     link: facts.linked,
-    settings: facts.listed && !repoUnreadable ? cleaned(registering.repoFile, facts.settings) : null,
-    machine: facts.machineFlag ? machineCleaned : null,
-    unreadable: [...(repoUnreadable ? [registering.repoFile] : []), ...(machineUnreadable ? [machineFile.path] : [])],
+    settings: present(repoCleaned),
+    machine: facts.machineFlag ? present(machineCleaned) : [],
+    unreadable,
     command: facts.machineFlag ? MACHINE_RUN : "flow uninstall",
     keptConfig: facts.hasConfig,
-    machineHolds: !facts.machineFlag && !facts.listed && machineCleaned !== null ? machineFile.path : null,
-    next: facts.listed ? "npm uninstall @jawache/flow" : "npm uninstall -g @jawache/flow",
+    machineHolds: facts.machineFlag ? [] : present(machineCleaned).map((held) => held.path),
+    next: "npm uninstall @jawache/flow",
   };
 }
 
@@ -2058,8 +2163,7 @@ export function uninstallLines(plan: UninstallPlan, failures: readonly string[])
   if (plan.hooksDir) removed.push(`${HOOKS_DIR}/`);
   if (plan.flowDir) removed.push(`${FLOW_DIR}/ — flow's state and logs`);
   if (plan.link) removed.push(`${PACKAGE_DIR} — the link \`flow init\` made`);
-  for (const settings of [plan.settings, plan.machine])
-    if (settings) removed.push(`${settings.path} — ${settings.removed.join(" · ")}`);
+  for (const settings of [...plan.settings, ...plan.machine]) removed.push(`${settings.path} — ${settings.removed.join(" · ")}`);
 
   const lines: string[] =
     removed.length > 0
@@ -2082,8 +2186,8 @@ export function uninstallLines(plan: UninstallPlan, failures: readonly string[])
       ...kept.lines.map((line) => `      ${line}`),
     );
   if (plan.keptConfig) lines.push(`  · kept ${CONFIG_FILE} and the packs it imports — \`flow init\` wires this repo again.`);
-  if (plan.machineHolds !== null)
-    lines.push(`  · ${plan.machineHolds} still holds flow's hooks, and every repo on this machine runs them — \`${MACHINE_RUN}\` removes them.`);
+  for (const held of plan.machineHolds)
+    lines.push(`  · ${held} still holds flow's hooks, and every repo on this machine runs them — \`${MACHINE_RUN}\` removes them.`);
   for (const path of plan.unreadable)
     lines.push(
       `  ✗ ${path} is not valid JSON, so flow's hooks were NOT removed from it and nothing was written to it. ` +
@@ -2095,7 +2199,7 @@ export function uninstallLines(plan: UninstallPlan, failures: readonly string[])
   lines.push(
     plan.hooksPathFrom !== null
       ? `  next: \`flow uninstall\` in ${plan.hooksPathFrom} — removes the gate and core.hooksPath.`
-      : plan.machineHolds === null
+      : plan.machineHolds.length === 0
         ? `  next: ${first}\`${plan.next}\` — removes the package.`
         : `  next: ${first}\`${MACHINE_RUN}\` once no repo on this machine needs flow, then \`${plan.next}\` — removes the hooks, then the package.`,
   );
@@ -2118,12 +2222,25 @@ export interface Fitting {
   readonly id: string;
   readonly ok: boolean;
   readonly detail: string;
+  /** On a harness's line: when one of its hooks last ran here, as the log wrote it, or null when none has. */
+  readonly lastRan?: string | null;
+}
+
+/** One harness status reports on. */
+export interface StatusHarness {
+  readonly harness: HarnessFacts;
+  /** The repo's own settings file for it, parsed; null when there is none. */
+  readonly settings: unknown;
+  /** The time of the last hook of this harness that ran here, as the log wrote it, or null when none has. */
+  readonly lastRan: string | null;
 }
 
 /** Everything status was able to read. Gathering it is the shell's job; judging it is not. */
 export interface StatusFacts {
-  /** The harness flow is reporting on. */
-  readonly harness: HarnessFacts;
+  /** The harnesses flow is reporting on, each with its repo settings file and when one of its hooks last ran. */
+  readonly harnesses: readonly StatusHarness[];
+  /** The time of the report, in milliseconds: what "ago" is counted from. Injected, because a clock inside a decision is a decision nobody can test. */
+  readonly now: number;
   readonly root: string;
   readonly version: string;
   readonly off: boolean;
@@ -2137,13 +2254,6 @@ export interface StatusFacts {
   readonly hooksPath: string | null;
   /** The folder git runs hooks from, read as init reads it, or null outside git or when git could not say. */
   readonly hooksFolder: HooksFolder | null;
-  readonly settingsPath: string;
-  readonly settings: unknown;
-  /**
-   * The machine-wide settings file, parsed, when flow's hooks are in the repo's own file — a dev
-   * dependency's — and null when `settingsPath` is the machine-wide file itself.
-   */
-  readonly machine: { readonly path: string; readonly settings: unknown } | null;
   /**
    * The grammars the config declared, each with its library path made absolute and a straight
    * answer about whether that file is there.
@@ -2194,33 +2304,70 @@ export interface Status {
   readonly green: boolean;
 }
 
-/**
- * The line for the events the repo's own settings file does not call flow for, and what that costs
- * until `flow init` writes them. MEANWHILE IS NOT NOTHING: an event the machine-wide file calls flow
- * for still runs flow, from there, so its cost is not stated as if no rule ran. The line stays red
- * either way, because the repo's file is what a fresh clone gets.
- */
-function unregisteredText(facts: StatusFacts, unregistered: readonly HookCost[]): string {
-  const names = (rs: readonly HookCost[]): string => rs.map((r) => r.event).join(" · ");
-  const machine = facts.machine;
-  const elsewhere = new Set(machine === null ? [] : facts.harness.registering.registeredEvents(machine.settings));
-  const covered: HookCost[] = [];
-  const uncovered: HookCost[] = [];
-  for (const r of unregistered) (elsewhere.has(r.event) ? covered : uncovered).push(r);
-  // Every missing event covered reads back as "it" or "them"; only some, and they are named.
-  const which = uncovered.length > 0 ? names(covered) : covered.length === 1 ? "it" : "them";
-  const meanwhile = machine === null || covered.length === 0 ? [] : [`${machine.path} calls flow for ${which} in the meantime`];
-  const until = [...meanwhile, ...uncovered.map((r) => r.unregistered)].join("; ");
-  return `${facts.settingsPath} does not call flow for ${names(unregistered)} — re-run \`flow init\`. Until it does, ${until}.`;
+/** The line for the events a harness's settings file does not call flow for, and what that costs until `flow init` writes them. */
+function unregisteredText(path: string, unregistered: readonly HookCost[]): string {
+  const names = unregistered.map((r) => r.event).join(" · ");
+  return `${path} does not call flow for ${names} — re-run \`flow init\`. Until it does, ${unregistered.map((r) => r.unregistered).join("; ")}.`;
 }
 
-function fittingsOf(facts: StatusFacts): Fitting[] {
-  const { registering } = facts.harness;
-  const registered = registering.registeredEvents(facts.settings);
+/**
+ * One harness's line: green when every hook flow registers is in the repo's file in today's shape,
+ * and the time one of them last ran here. Its fix, in words, when not.
+ */
+function harnessFitting({ harness, settings, lastRan }: StatusHarness, now: number): Fitting {
+  const { registering } = harness;
+  const path = registering.repoFile;
+  const registered = registering.registeredEvents(settings);
   const unregistered = registering.hooks.filter(({ event }) => !registered.includes(event));
-  const stale = registering.staleRegistrations(facts.settings);
-  const twice = facts.machine === null ? { bare: [], theirs: [] } : registering.machineDiffers(facts.settings, facts.machine.settings);
-  const once = twice.bare.length === 0 && twice.theirs.length === 0;
+  const stale = registering.staleRegistrations(settings);
+  const ok = unregistered.length === 0 && stale.length === 0;
+  const ran = lastRan === null ? "no hook has run here" : `last hook ran ${ago(lastRan, now)}`;
+  const detail = ok
+    ? `registered · ${ran}`
+    : [
+        unregistered.length === 0 ? "" : unregisteredText(path, unregistered),
+        stale.length === 0
+          ? ""
+          : `${path} calls flow for ${stale.join(" · ")} the way an older flow registered ${stale.length === 1 ? "it" : "them"}, which this flow no longer does. Re-run \`flow init\` to bring ${stale.length === 1 ? "it" : "them"} up to date.`,
+      ]
+        .filter((line) => line !== "")
+        .join("\n");
+  return { id: harness.id, ok, detail, lastRan };
+}
+
+/** How long ago a time was, in a sentence: `just now`, `3 minutes ago`, `an hour ago`, `2 days ago`. */
+export function ago(then: string, now: number): string {
+  const seconds = Math.max(0, Math.floor((now - Date.parse(then)) / 1000));
+  const unit = (n: number, word: string): string => (n === 1 ? `${word === "hour" ? "an" : "a"} ${word} ago` : `${n} ${word}s ago`);
+  if (seconds < 60) return "just now";
+  if (seconds < 3600) return unit(Math.floor(seconds / 60), "minute");
+  if (seconds < 86_400) return unit(Math.floor(seconds / 3600), "hour");
+  return unit(Math.floor(seconds / 86_400), "day");
+}
+
+/**
+ * The time of the last hook of a harness that ran in this repo, from the session logs: the latest `ts`
+ * of any row of a session of that harness, and null when there is none.
+ *
+ * A session's harness is its `meta` row's `harness`. A log written before that field existed names
+ * none, and only one harness wrote those. The `commit` stream is git's, not a harness's.
+ */
+export function lastHookRan(history: readonly { readonly session: string; readonly rows: readonly Row[] }[], harness: string): string | null {
+  let last: string | null = null;
+  for (const { session, rows } of history) {
+    if (session === "commit") continue;
+    const meta = rows.find((row) => row.kind === "meta");
+    const named = typeof meta?.["harness"] === "string" ? meta["harness"] : LOG_BEFORE_HARNESS;
+    if (named !== harness) continue;
+    for (const row of rows) if (typeof row["ts"] === "string" && (last === null || row["ts"] > last)) last = row["ts"];
+  }
+  return last;
+}
+
+/** The harness every session log written before the log named its harness belongs to: the only one flow had. */
+const LOG_BEFORE_HARNESS = "claude-code";
+
+function fittingsOf(facts: StatusFacts): Fitting[] {
   const armed = armsFlow(facts.gateText);
   const old = !armed && armsOldFlow(facts.gateText);
   const olderGate = armsFlow(facts.oldGateText) || armsOldFlow(facts.oldGateText);
@@ -2262,28 +2409,25 @@ function fittingsOf(facts: StatusFacts): Fitting[] {
                   .join("\n"),
           },
         ]),
+    ...harnessFittings(facts),
+    binaryFitting(facts),
+  ];
+}
+
+/**
+ * ONE LINE FOR EACH REGISTERED HARNESS. A harness whose file has no flow registration in it has no
+ * line, and when none has, the one red `hooks` line says what no harness's hooks judge until
+ * `flow init` registers them.
+ */
+function harnessFittings(facts: StatusFacts): Fitting[] {
+  const registered = facts.harnesses.filter(({ harness, settings }) => harness.registering.registeredEvents(settings).length > 0);
+  if (registered.length > 0) return registered.map((one) => harnessFitting(one, facts.now));
+  return [
     {
       id: "hooks",
-      ok: unregistered.length === 0 && stale.length === 0 && once,
-      detail:
-        unregistered.length === 0 && stale.length === 0 && once
-          ? `${facts.settingsPath} — ${registered.join(" · ")}`
-          : [
-              unregistered.length === 0 ? "" : unregisteredText(facts, unregistered),
-              stale.length === 0
-                ? ""
-                : `${facts.settingsPath} calls flow for ${stale.join(" · ")} the way an older flow registered ${stale.length === 1 ? "it" : "them"}, which this flow no longer does. Re-run \`flow init\` to bring ${stale.length === 1 ? "it" : "them"} up to date.`,
-              twice.bare.length === 0 || facts.machine === null
-                ? ""
-                : `${facts.machine.path} also calls flow for ${twice.bare.join(" · ")} the old way, as the bare \`flow hook <event>\`, so ${facts.harness.name} runs it beside ${facts.settingsPath}'s command and each of those hooks fires twice. Re-run \`flow init\`, which rewrites it to the same command.`,
-              twice.theirs.length === 0 || facts.machine === null
-                ? ""
-                : `${facts.machine.path} also calls flow for ${twice.theirs.join(" · ")} with a command of its own, so ${facts.harness.name} runs it beside ${facts.settingsPath}'s command and each of those hooks fires twice. Make it the same command as ${facts.settingsPath}'s, or remove it from that file.`,
-            ]
-              .filter((line) => line !== "")
-              .join("\n"),
+      ok: false,
+      detail: facts.harnesses.map(({ harness }) => unregisteredText(harness.registering.repoFile, harness.registering.hooks)).join("\n"),
     },
-    binaryFitting(facts),
   ];
 }
 
@@ -2311,8 +2455,8 @@ function gateReach(text: string | null): Reach {
  * every hook it answers. The SAME rule `flow init` rewrites by, so the fix this names is one init
  * can carry out. Any other command is somebody's own, and none at all is judged as init writes them.
  */
-function hooksReach(settings: unknown, registering: Registering): Reach {
-  return registering.bareRegistrations(settings).length > 0 ? "path" : "local";
+function hooksReach(harnesses: StatusFacts["harnesses"]): Reach {
+  return harnesses.some(({ harness, settings }) => harness.registering.bareRegistrations(settings).length > 0) ? "path" : "local";
 }
 
 /**
@@ -2377,13 +2521,13 @@ function hooksPathFitting(facts: Pick<StatusFacts, "hooksPath" | "hooksFolder">)
  * registration in the old shape, finds only the PATH — and the repo's own copy is one it never
  * runs, a red line naming which of them is stranded and how to bring it up to date.
  */
-function binaryFitting(facts: Pick<StatusFacts, "binary" | "gateText" | "harness" | "settings">): Fitting {
+function binaryFitting(facts: Pick<StatusFacts, "binary" | "gateText" | "harnesses">): Fitting {
   const { listed, copy, path } = facts.binary;
   // THE REPO'S OWN COPY is one its package.json lists. In a repo that does not list flow, the copy
   // is the link `flow init` made to the flow that ran it — the PATH's, in the ordinary global
   // install — so it is judged by the PATH, and the tutorial's line names the PATH.
   const modules = listed && copy;
-  const hooks = hooksReach(facts.settings, facts.harness.registering);
+  const hooks = hooksReach(facts.harnesses);
   const gate = gateReach(facts.gateText);
   const runs = (reach: Reach): string | null => (reach === "local" && modules ? `in ${PACKAGE_DIR}` : path ? "on the PATH" : null);
   const [byHooks, byGate] = [runs(hooks), runs(gate)];
@@ -2467,8 +2611,13 @@ export function status(facts: StatusFacts): Status {
   // the whole document, so every rail is off until it is fixed, and printing "3 guardrails at the
   // commit" under a headline saying nothing is armed would be the old status's exact lie.
   const bound = refusals.length > 0 ? [] : universe(entries);
+  // What the harnesses of this repo deliver between them: an entry is dark only when none carries its moment.
+  const carried: Delivered = {
+    guard: [...new Set(facts.harnesses.flatMap(({ harness }) => harness.delivers.guard))],
+    brief: [...new Set(facts.harnesses.flatMap(({ harness }) => harness.delivers.brief))],
+  };
   const dark = bound
-    .filter((entry) => entry.disabled === null && entry.at.length > 0 && !entry.at.some((m) => delivers(entry.kind, m, facts.harness.delivers)))
+    .filter((entry) => entry.disabled === null && entry.at.length > 0 && !entry.at.some((m) => delivers(entry.kind, m, carried)))
     .map((entry) => entry.id);
   const fittings = fittingsOf(facts);
 
@@ -2485,7 +2634,7 @@ export function status(facts: StatusFacts): Status {
     categories: [...new Set(entries.flatMap((entry) => entry.categories))].sort(),
     session: facts.session,
     dark,
-    delivers: facts.harness.delivers,
+    delivers: carried,
     fittings,
     refusals,
     green: redLines({ refusals, dark, fittings }).length === 0,

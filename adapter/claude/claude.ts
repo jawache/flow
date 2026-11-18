@@ -28,7 +28,7 @@ import { appendRows, appendSteps, isOff, isRecording, loadState, saveState, stic
 import { ALLOW, hermeticEnv, type AdapterEvent, type Refused } from "../domain.ts";
 import { agentOf, agentSettingOf, awaitsBrief, holdsForBrief, isHookEvent, nothingBound, outsideOf, opensCall, ownTranscriptPath, reachesAnotherWorktree, readFault, ridesRefusal, sessionFactsFrom, shellReadRows, toEvent, toResult, tokensFromTranscript, toolRow, turnActions, type Answer, type EventWorld, type HookEvent, type HookPayload, type Shown, untoldWorktrees, whileBroken, workedPaths, worktreeFolders } from "./domain.ts";
 import type { Harness, HookResult } from "../harness.ts";
-import { DELIVERS, HOOK_COSTS, HOOK_EVENTS, HOOK_REGISTRATIONS, HOST_SURFACE, REPO_SETTINGS, bareRegistrations, listsFlow, machineDiffers, parseEvents, registeredEvents, settingsFileFor, spawnMeta, spawnsIn, staleRegistrations, steerOf, transcriptHead, withMachineCommandsUpToDate, withRegistrations, withoutRegistrations } from "./domain.ts";
+import { DELIVERS, HOOK_COSTS, HOOK_EVENTS, HOOK_REGISTRATIONS, HOST_SURFACE, REPO_SETTINGS, bareRegistrations, listsFlow, parseEvents, registeredEvents, spawnMeta, spawnsIn, staleRegistrations, steerOf, transcriptHead, withRegistrations, withoutRegistrations } from "./domain.ts";
 import { configRoot, readStore, readTranscript } from "./store.ts";
 import { currentBranch, loadRegime, readText, realWorld } from "../shell.ts";
 
@@ -614,7 +614,10 @@ function machineSettingsPath(): string {
 
 /** Claude Code. The one value flow.ts chooses, and what the rest of flow is handed in its place. */
 export const claudeCode: Harness = {
+  id: "claude-code",
   name: "Claude Code",
+  detect: { folder: ".claude", program: "claude" },
+  trustNote: null,
   events: HOOK_EVENTS,
   delivers: DELIVERS,
   run: hookEntry,
@@ -624,15 +627,15 @@ export const claudeCode: Harness = {
     hostSurface: HOST_SURFACE,
     hooks: HOOK_COSTS,
     registrations: HOOK_REGISTRATIONS,
-    settingsFileFor,
+   
     listsFlow,
     registeredEvents,
     staleRegistrations,
     bareRegistrations,
-    machineDiffers,
+   
     withRegistrations,
     withoutRegistrations,
-    withMachineCommandsUpToDate,
+   
   },
   transcripts: {
     readStore,

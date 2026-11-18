@@ -18,7 +18,7 @@
 //     flow facts           what the record and the conversations say about this repo
 //
 //   THE SETUP, typed once:
-//     flow init [--empty]  scaffold a config, arm the gate, register the hooks
+//     flow init [--empty] [--harness <names>]  scaffold a config, arm the gate, register the hooks of each harness
 //     flow uninstall       remove what init wrote, but the config, before the package goes;
 //                          --machine takes the hooks out of the machine-wide settings file too
 //
@@ -28,6 +28,7 @@
 // do is the adapter's, and this file only owns argv, the three IO edges and the exit code.
 
 import { existsSync, readFileSync } from "node:fs";
+import { createInterface } from "node:readline/promises";
 import { registerHooks, stripTypeScriptTypes } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, resolve } from "node:path";
@@ -46,12 +47,13 @@ import {
   snip,
 } from "./adapter/domain.ts";
 import type { HookResult } from "./adapter/harness.ts";
-import { runInit, runStatus, runUninstall, type VerbResult } from "./adapter/product.ts";
+import { runInit, runStatus, runUninstall, type Terminal, type VerbResult } from "./adapter/product.ts";
 import { diffRows, replay, type Row } from "./engine/domain.ts";
 import { loadRecording, readRowsFile } from "./engine/state.ts";
 
-// THE HARNESS this binary runs for. The one place flow chooses one; everything below takes it as a
-// `Harness` and names none.
+// THE HARNESSES this binary runs for. The one place flow chooses them; everything below takes a
+// `Harness` and names none. The first is the one a hook of its own words is run for.
+const harnesses = [claudeCode] as const;
 const harness = claudeCode;
 
 const argv = process.argv.slice(2);
@@ -288,6 +290,24 @@ async function readFacts(args: readonly string[]): Promise<number> {
   return read.health.blocked === null ? 0 : 1;
 }
 
+/**
+ * The person at the keyboard, when there is one: `flow init` asks questions only when its standard
+ * input and output are both a terminal. An agent or a script runs it with neither, and it prompts for nothing.
+ */
+function terminal(): (Terminal & { readonly close: () => void }) | null {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return null;
+  const lines = createInterface({ input: process.stdin, output: process.stdout });
+  return {
+    ask: (question) => lines.question(question),
+    say: (text) => {
+      process.stdout.write(text);
+    },
+    close: () => {
+      lines.close();
+    },
+  };
+}
+
 const [verb, ...rest] = argv;
 
 if (argv.includes("--version") || argv.includes("-v")) {
@@ -315,9 +335,15 @@ if (argv.includes("--version") || argv.includes("-v")) {
   // The product surface. Each answers with the same three edges every other verb does, which is why
   // none of them writes to a stream or picks an exit code of its own.
   let answer: VerbResult;
-  if (verb === "init") answer = runInit(process.cwd(), rest, harness);
-  else if (verb === "uninstall") answer = runUninstall(process.cwd(), rest, harness);
-  else answer = await runStatus(process.cwd(), rest, harness);
+  if (verb === "init") {
+    const person = terminal();
+    try {
+      answer = await runInit(process.cwd(), rest, harnesses, person);
+    } finally {
+      person?.close();
+    }
+  } else if (verb === "uninstall") answer = runUninstall(process.cwd(), rest, harnesses);
+  else answer = await runStatus(process.cwd(), rest, harnesses);
   if (answer.stdout) process.stdout.write(answer.stdout);
   if (answer.stderr) process.stderr.write(answer.stderr);
   process.exitCode = answer.exitCode;
@@ -334,7 +360,7 @@ if (argv.includes("--version") || argv.includes("-v")) {
     [
       `flow ${VERSION}`,
       "",
-      "  flow init [--empty]    scaffold flow.config.ts, arm the git gate, register the hooks",
+      "  flow init [--empty] [--harness <names>]  scaffold flow.config.ts, arm the git gate, register each harness's hooks",
       "  flow uninstall         remove what flow init wrote here, but flow.config.ts — before npm uninstall",
       "                         --machine also removes flow's hooks from the machine-wide settings file",
       "  flow status [--json]   what is bound here, at which moments — and what is not wired yet",

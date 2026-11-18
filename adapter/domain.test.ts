@@ -9,7 +9,7 @@ import { type Bound, type Row } from "../engine/domain.ts";
 import { missingGrammarText } from "../checks/domain.ts";
 import { matchAny } from "../glob.ts";
 import { host } from "../__fixtures__/host.ts";
-import { ADD_THE_GATE_LINE, CONFIG_FILE, type Candidate, GATE_LOCAL_LINE, GATE_PATH, GATE_RUN_LINE, GIT_HOOK_ENV, HOOKS_DIR, HOOKS_UNKNOWN, type HooksFolder, type InitFacts, LOCAL_BIN, MACHINE_FLAG, NODE_FLOOR, NOT_INSTALLED, OLD_GATE_PATH, type OtherHooks, PACKAGE_BIN, PACKAGE_DIR, COMMIT_MSG, SET_HOOKS_PATH, type StatusFacts, UPDATE_THE_GATE_LINE, type UninstallFacts, armsFlow, armsOldFlow, classifyBash, cleanMessage, commentLeader, commitArgs, configImports, configLoadFault, flowLinesOf, gateWithoutFlow, guardPaths, health, hermeticEnv, readsCommitIndex, hooksDirOf, hostPath, initCode, initLines, isCorrection, joinSpawn, listed, loadsAsStrippedModule, mergeNarratives, narrative, notInstalledLines, otherHooks, pathLines, planInit, planUninstall, commitMsgOf, recipeTools, repoFirst, scaffold, selectSessions, snip, stagedChanges, status, statusCode, statusLines, strip, text, treeChanges, uncoveredAreas, uninstallCode, uninstallLines, uninstallRefusal, wantsColour, weakenedAfterBlock } from "./domain.ts";
+import { ADD_THE_GATE_LINE, type Found, aboutToWrite, ago, defaultHarnesses, detection, harnessArg, harnessPrompt, harnessQuestion, isYes, lastHookRan, parseHarnesses, warningLines, writtenLines, CONFIG_FILE, type Candidate, GATE_LOCAL_LINE, GATE_PATH, GATE_RUN_LINE, GIT_HOOK_ENV, HOOKS_DIR, HOOKS_UNKNOWN, type HooksFolder, type InitFacts, LOCAL_BIN, MACHINE_FLAG, NODE_FLOOR, NOT_INSTALLED, OLD_GATE_PATH, type OtherHooks, PACKAGE_BIN, PACKAGE_DIR, COMMIT_MSG, SET_HOOKS_PATH, type StatusFacts, UPDATE_THE_GATE_LINE, type UninstallFacts, armsFlow, armsOldFlow, classifyBash, cleanMessage, commentLeader, commitArgs, configImports, configLoadFault, flowLinesOf, gateWithoutFlow, guardPaths, health, hermeticEnv, readsCommitIndex, hooksDirOf, hostPath, initCode, initLines, isCorrection, joinSpawn, listed, loadsAsStrippedModule, mergeNarratives, narrative, notInstalledLines, otherHooks, pathLines, planInit, planUninstall, commitMsgOf, recipeTools, repoFirst, scaffold, selectSessions, snip, stagedChanges, status, statusCode, statusLines, strip, text, treeChanges, uncoveredAreas, uninstallCode, uninstallLines, uninstallRefusal, wantsColour, weakenedAfterBlock } from "./domain.ts";
 import { type ToolAction, type TranscriptEvent } from "./harness.ts";
 
 describe("the environment a check's command sees", () => {
@@ -416,8 +416,13 @@ describe("the scaffolded config", () => {
 
 // ── init ─────────────────────────────────────────────────────────────────────
 
+/** The one harness a `bare` repo is set up for, with the file its hooks go in. */
+const hostFile = (settings: unknown = {}): InitFacts["harnesses"] => [
+  { harness: host, settings, settingsUnreadable: false, machine: { path: "/home/host/settings.json", settings: null } },
+];
+
 const bare: InitFacts = {
-  harness: host,
+  harnesses: hostFile(),
   root: "/repo",
   empty: false,
   isGit: true,
@@ -427,11 +432,8 @@ const bare: InitFacts = {
   hasFlowDir: false,
   hooksPath: null,
   hooksFolder: { dir: ".git/hooks", files: ["pre-commit.sample", "pre-push.sample"], commitMsgText: null, commitMsgExecutable: false },
-  settingsPath: "/home/host/settings.json",
-  settings: {},
-  settingsUnreadable: false,
-  machine: null,
   resolves: false,
+  listed: true,
   packageRoot: "/checkout/flow",
 };
 
@@ -559,7 +561,7 @@ describe("planInit — a repo that has never heard of flow", () => {
     expect(plan.flowDir).toBe(true);
     expect(plan.link).toBe("/checkout/flow");
     expect(plan.hooksPath).toBe(true);
-    expect(plan.registered).toEqual(REGISTERED_EVENTS);
+    expect(plan.settings.flatMap((file) => file.registered)).toEqual(REGISTERED_EVENTS);
   });
 
   it("reports every write, and nothing it did not do", () => {
@@ -644,8 +646,14 @@ describe("planInit — a repo that already has a commit-msg hook", () => {
 
 const noteAtTurnEnd = { kind: "breadcrumb", at: ["turn-end"], text: "late" } as const;
 
-const statusFacts = (over: Partial<StatusFacts> = {}): StatusFacts => ({
-  harness: host,
+/** What a status test varies, beside the facts: the one harness's settings file, and when one of its hooks last ran. */
+type StatusOver = Partial<StatusFacts> & { readonly settings?: unknown; readonly lastRan?: string | null };
+
+const NOW = Date.parse("2026-11-18T12:00:00.000Z");
+
+const statusFacts = ({ settings, lastRan = null, ...over }: StatusOver = {}): StatusFacts => ({
+  harnesses: [{ harness: host, settings: settings === undefined ? host.registering.withRegistrations({}).settings : settings, lastRan }],
+  now: NOW,
   root: "/repo",
   version: "1.2.3",
   off: false,
@@ -656,9 +664,6 @@ const statusFacts = (over: Partial<StatusFacts> = {}): StatusFacts => ({
   oldGateText: null,
   hooksPath: HOOKS_DIR,
   hooksFolder: { dir: HOOKS_DIR, files: ["commit-msg"], commitMsgText: COMMIT_MSG, commitMsgExecutable: true },
-  settingsPath: "/home/host/settings.json",
-  settings: host.registering.withRegistrations({}).settings,
-  machine: null,
   grammars: [],
   session: null,
   binary: { listed: false, copy: false, path: true },
@@ -699,12 +704,27 @@ describe("gateWithoutFlow — the commit gate with flow's lines taken out", () =
 /** The machine-wide settings file, absolute, as the shell hands it over. */
 const MACHINE_SETTINGS = "/home/me/host/settings.json";
 
+/** The one harness a repo is uninstalled from: its repo file, and the machine-wide one, which holds what flow 0.3 wrote. */
+const hostOf = (over: Partial<UninstallFacts["harnesses"][number]> = {}): UninstallFacts["harnesses"] => [
+  {
+    harness: host,
+    settings: null,
+    settingsUnreadable: false,
+    machineFile: { path: MACHINE_SETTINGS, settings: host.registering.withRegistrations({ theme: "dark" }).settings, unreadable: false },
+    ...over,
+  },
+];
+
+/** The machine-wide file of `wired`, with another file's worth of settings in it. */
+const machineWith = (settings: unknown, unreadable = false): UninstallFacts["harnesses"] =>
+  hostOf({ machineFile: { path: MACHINE_SETTINGS, settings, unreadable } });
+
 /**
- * A repo `flow init` set up with a global flow: the gate, the hooks path, the state directory and the
- * link, and flow's hooks in the machine-wide file beside a key of the person's own.
+ * A repo `flow init` set up: the gate, the hooks path, the state directory and the link, and flow
+ * 0.3's hooks in the machine-wide file beside a key of the person's own.
  */
 const wired: UninstallFacts = {
-  harness: host,
+  harnesses: hostOf(),
   hasConfig: true,
   gateText: COMMIT_MSG,
   oldGateText: null,
@@ -714,11 +734,7 @@ const wired: UninstallFacts = {
   hooksFolder: { dir: HOOKS_DIR, files: ["commit-msg"], commitMsgText: COMMIT_MSG, commitMsgExecutable: true },
   hasFlowDir: true,
   linked: true,
-  listed: false,
-  settings: null,
-  settingsUnreadable: false,
   machineFlag: false,
-  machineFile: { path: MACHINE_SETTINGS, settings: host.registering.withRegistrations({ theme: "dark" }).settings, unreadable: false },
 };
 
 describe("planUninstall — a repo flow init set up", () => {
@@ -730,12 +746,13 @@ describe("planUninstall — a repo flow init set up", () => {
     expect(plan.hooksDir).toBe(true);
     expect(plan.flowDir).toBe(true);
     expect(plan.link).toBe(true);
-    expect(plan.settings, "a global install's hooks are in the machine-wide file, which plain uninstall leaves").toBeNull();
+    expect(plan.settings, "no hook of flow's is in the repo's own file").toEqual([]);
+    expect(plan.machine, "the machine-wide file is left to `--machine`").toEqual([]);
     expect(plan.keptConfig).toBe(true);
   });
 
-  it("reports each removal, the config it kept, and ends with the global package's npm uninstall", () => {
-    const bare = planUninstall({ ...wired, machineFile: { ...wired.machineFile, settings: null } });
+  it("reports each removal, the config it kept, and ends with the npm uninstall", () => {
+    const bare = planUninstall({ ...wired, harnesses: machineWith(null) });
     expect(uninstallLines(bare, [])).toEqual([
       "flow uninstall — removed:",
       `  - ${GATE_PATH}`,
@@ -744,26 +761,25 @@ describe("planUninstall — a repo flow init set up", () => {
       "  - .flow/ — flow's state and logs",
       "  - node_modules/@jawache/flow — the link `flow init` made",
       "  · kept flow.config.ts and the packs it imports — `flow init` wires this repo again.",
-      "  next: `npm uninstall -g @jawache/flow` — removes the package.",
+      "  next: `npm uninstall @jawache/flow` — removes the package.",
     ]);
     expect(uninstallCode(bare, [])).toBe(0);
   });
 
   it("says the machine-wide file still holds flow's hooks, and names --machine beside the report and in its last line", () => {
-    expect(plan.machineHolds).toBe(MACHINE_SETTINGS);
+    expect(plan.machineHolds).toEqual([MACHINE_SETTINGS]);
     expect(uninstallLines(plan, []).slice(-2)).toEqual([
       `  · ${MACHINE_SETTINGS} still holds flow's hooks, and every repo on this machine runs them — \`flow uninstall --machine\` removes them.`,
-      "  next: `flow uninstall --machine` once no repo on this machine needs flow, then `npm uninstall -g @jawache/flow` — removes the hooks, then the package.",
+      "  next: `flow uninstall --machine` once no repo on this machine needs flow, then `npm uninstall @jawache/flow` — removes the hooks, then the package.",
     ]);
     expect(uninstallCode(plan, []), "a hint, not a failure").toBe(0);
   });
 
-  it("says nothing of the machine-wide file when --machine cleans it, when it holds none of flow's, when it will not parse, or when the hooks are the repo's own", () => {
-    expect(planUninstall({ ...wired, machineFlag: true }).machineHolds).toBeNull();
-    expect(planUninstall({ ...wired, machineFile: { ...wired.machineFile, settings: { theme: "dark" } } }).machineHolds).toBeNull();
-    expect(planUninstall({ ...wired, machineFile: { ...wired.machineFile, settings: null, unreadable: true } }).machineHolds).toBeNull();
-    expect(planUninstall({ ...wired, listed: true }).machineHolds, "a dev dependency's hooks are in the repo's own file").toBeNull();
-    expect(uninstallLines(planUninstall({ ...wired, machineFlag: true }), []).at(-1)).toBe("  next: `npm uninstall -g @jawache/flow` — removes the package.");
+  it("says nothing of the machine-wide file when --machine cleans it, when it holds none of flow's, or when it will not parse", () => {
+    expect(planUninstall({ ...wired, machineFlag: true }).machineHolds).toEqual([]);
+    expect(planUninstall({ ...wired, harnesses: machineWith({ theme: "dark" }) }).machineHolds).toEqual([]);
+    expect(planUninstall({ ...wired, harnesses: machineWith(null, true) }).machineHolds).toEqual([]);
+    expect(uninstallLines(planUninstall({ ...wired, machineFlag: true }), []).at(-1)).toBe("  next: `npm uninstall @jawache/flow` — removes the package.");
   });
 
   it("says there is nothing to remove in a repo flow never touched", () => {
@@ -817,7 +833,7 @@ describe("planUninstall — hooks of somebody's own", () => {
   });
 
   it("names a gate line flow did not write that still calls flow, and puts deleting it first in the next line", () => {
-    const plan = planUninstall({ ...wired, gateText: "#!/bin/sh\nnpm test\nnpx flow hook commit\n", machineFile: { ...wired.machineFile, settings: null } });
+    const plan = planUninstall({ ...wired, gateText: "#!/bin/sh\nnpm test\nnpx flow hook commit\n", harnesses: machineWith(null) });
     expect(plan.gate).toBeNull();
     expect(plan.hookCallsFlow).toEqual({ path: GATE_PATH, lines: ["npx flow hook commit"] });
     const said = uninstallLines(plan, []);
@@ -825,7 +841,7 @@ describe("planUninstall — hooks of somebody's own", () => {
       `  · ${GATE_PATH} still calls flow, and flow takes out only the lines it wrote there itself. Delete this line from it yourself, or every commit fails with \`flow: not found\` once flow is gone:`,
     );
     expect(said).toContain("      npx flow hook commit");
-    expect(said.at(-1)).toBe(`  next: delete flow's lines from ${GATE_PATH}, then \`npm uninstall -g @jawache/flow\` — removes the package.`);
+    expect(said.at(-1)).toBe(`  next: delete flow's lines from ${GATE_PATH}, then \`npm uninstall @jawache/flow\` — removes the package.`);
   });
 
   it("keeps core.hooksPath when the run is in a subfolder, says so, and names the top folder to run it in", () => {
@@ -891,7 +907,7 @@ describe("flowLinesOf — a hook's lines that call flow", () => {
 
 describe("planUninstall — another folder's commit-msg hook that calls flow", () => {
   it("leaves the hook as it is, names it and flow's two lines, and says to delete them before npm uninstall", () => {
-    const plan = planUninstall({ ...huskyRepo(`npm test\n${FLOWS_TWO}`), machineFile: { ...wired.machineFile, settings: null } });
+    const plan = planUninstall({ ...huskyRepo(`npm test\n${FLOWS_TWO}`), harnesses: machineWith(null) });
     expect(plan.hookCallsFlow).toEqual({ path: ".husky/commit-msg", lines: [GATE_LOCAL_LINE, GATE_RUN_LINE] });
     expect(plan.gate, "the .githooks gate init wrote beside it still goes").toEqual({ path: GATE_PATH, body: null });
     const said = uninstallLines(plan, []);
@@ -902,13 +918,13 @@ describe("planUninstall — another folder's commit-msg hook that calls flow", (
       `      ${GATE_LOCAL_LINE}`,
       `      ${GATE_RUN_LINE}`,
     ]);
-    expect(said.at(-1)).toBe("  next: delete flow's lines from .husky/commit-msg, then `npm uninstall -g @jawache/flow` — removes the package.");
+    expect(said.at(-1)).toBe("  next: delete flow's lines from .husky/commit-msg, then `npm uninstall @jawache/flow` — removes the package.");
     expect(uninstallCode(plan, []), "a step for the person, not a failure").toBe(0);
   });
 
   it("puts the hook's lines first in a next line that also names --machine", () => {
     expect(uninstallLines(planUninstall(huskyRepo(FLOWS_TWO)), []).at(-1)).toBe(
-      "  next: delete flow's lines from .husky/commit-msg, then `flow uninstall --machine` once no repo on this machine needs flow, then `npm uninstall -g @jawache/flow` — removes the hooks, then the package.",
+      "  next: delete flow's lines from .husky/commit-msg, then `flow uninstall --machine` once no repo on this machine needs flow, then `npm uninstall @jawache/flow` — removes the hooks, then the package.",
     );
   });
 
@@ -927,11 +943,11 @@ describe("planUninstall — another folder's commit-msg hook that calls flow", (
   });
 
   it("says nothing of a hook that does not call flow, and the next line is the npm uninstall alone", () => {
-    const plan = planUninstall({ ...huskyRepo("npm test\n"), machineFile: { ...wired.machineFile, settings: null } });
+    const plan = planUninstall({ ...huskyRepo("npm test\n"), harnesses: machineWith(null) });
     expect(plan.hookCallsFlow).toBeNull();
     const said = uninstallLines(plan, []);
     expect(said.join("\n")).not.toContain(".husky/commit-msg");
-    expect(said.at(-1)).toBe("  next: `npm uninstall -g @jawache/flow` — removes the package.");
+    expect(said.at(-1)).toBe("  next: `npm uninstall @jawache/flow` — removes the package.");
   });
 
   it("says nothing of flow's own .githooks gate, nor of a folder git could not name", () => {
@@ -1037,7 +1053,7 @@ const loaded = (id: string, spec: Record<string, unknown>, categories: readonly 
 });
 
 describe("status — the red lines, each carrying its fix", () => {
-  const red = (over: Partial<StatusFacts>): string => statusLines(status(statusFacts(over))).join("\n");
+  const red = (over: StatusOver): string => statusLines(status(statusFacts(over))).join("\n");
 
   it("a repo with no config at all", () => {
     const s = status(statusFacts({ hasConfig: false, load: null }));
@@ -1099,7 +1115,7 @@ describe("status — the red lines, each carrying its fix", () => {
   it("closes on the same answer the exit code is taken from — never a green page that exits 1", () => {
     // One decision, read twice. Every shape below is a different route to not-green, and the close
     // has to follow `green` rather than re-deriving it from the parts.
-    const shapes: Partial<StatusFacts>[] = [
+    const shapes: StatusOver[] = [
       {},
       { gateText: null },
       { hasConfig: false, load: null },
@@ -1343,7 +1359,7 @@ describe("planInit — when git already runs other hooks", () => {
       expect(plan.config?.path).toBe("flow.config.ts");
       expect(plan.gate?.path, "the second fix moves hooks in beside this gate").toBe(GATE_PATH);
       expect(plan.flowDir).toBe(true);
-      expect(plan.registered).toEqual(REGISTERED_EVENTS);
+      expect(plan.settings.flatMap((file) => file.registered)).toEqual(REGISTERED_EVENTS);
       expect(initLines(plan, []).join("\n")).not.toContain(`+ ${SET_HOOKS_PATH}`);
     });
 
@@ -1408,7 +1424,7 @@ describe("planInit — when git already runs other hooks", () => {
       gateText: COMMIT_MSG,
       hasFlowDir: true,
       resolves: true,
-      settings: host.registering.withRegistrations({}).settings,
+      harnesses: hostFile(host.registering.withRegistrations({}).settings),
     });
     const said = initLines(again, []).join("\n");
     expect(said).not.toContain("already set up");
@@ -1425,7 +1441,7 @@ describe("planInit — when git already runs other hooks", () => {
       gateText: COMMIT_MSG,
       hasFlowDir: true,
       resolves: true,
-      settings: host.registering.withRegistrations({}).settings,
+      harnesses: hostFile(host.registering.withRegistrations({}).settings),
     });
     const said = initLines(again, []).join("\n");
     expect(said).not.toContain("already set up");
@@ -1568,7 +1584,7 @@ describe("planInit — the second run", () => {
     hooksPath: HOOKS_DIR,
     hooksFolder: { dir: HOOKS_DIR, files: ["commit-msg"], commitMsgText: COMMIT_MSG, commitMsgExecutable: true },
     resolves: true,
-    settings: host.registering.withRegistrations({}).settings,
+    harnesses: hostFile(host.registering.withRegistrations({}).settings),
   });
 
   it("adds nothing at all", () => {
@@ -1577,8 +1593,7 @@ describe("planInit — the second run", () => {
     expect(already.flowDir).toBe(false);
     expect(already.link).toBeNull();
     expect(already.hooksPath).toBe(false);
-    expect(already.settings).toBeNull();
-    expect(already.registered).toEqual([]);
+    expect(already.settings).toEqual([]);
   });
 
   it("says so in one line rather than printing an empty list", () => {
@@ -1646,7 +1661,7 @@ describe("the guard's own files — the repo's half read out of the config's tex
 });
 
 describe("the binary fitting — can the hooks and the gate find flow", () => {
-  const binary = (modules: boolean, path: boolean, over: Partial<StatusFacts> = {}) => {
+  const binary = (modules: boolean, path: boolean, over: StatusOver = {}) => {
     const s = status(statusFacts({ binary: { listed: modules, copy: modules, path }, ...over }));
     return { fitting: s.fittings.find((f) => f.id === "binary"), green: s.green, lines: statusLines(s) };
   };
@@ -1782,7 +1797,7 @@ describe("the binary fitting — can the hooks and the gate find flow", () => {
 });
 
 describe("status — does git run the commit gate", () => {
-  const judged = (over: Partial<StatusFacts>) => {
+  const judged = (over: StatusOver) => {
     const s = status(statusFacts(over));
     // As printed: a detail of several lines is several lines on the page.
     const line = statusLines(s).join("\n").split("\n").find((said) => said.includes(" hooks-path: "));
@@ -1916,5 +1931,174 @@ describe("weakened after a block — whichever tool changed the guard", () => {
   it("counts a whole-file write, and not a read", () => {
     expect(weakenedAfterBlock(rows, [guarded("Write", "write")], ["flow.config.ts"])).toHaveLength(1);
     expect(weakenedAfterBlock(rows, [guarded("Read", "read")], ["flow.config.ts"])).toHaveLength(0);
+  });
+});
+
+// ── choosing the harnesses ───────────────────────────────────────────────────
+
+/** The one harness the package has, found or not: by its folder in the repo, by its program on the PATH. */
+const found = (folder: boolean, program: boolean): Found => ({ harness: host, folder, program });
+
+/** A second harness, as the prompt shows two: only what detection and the prompt read of it. */
+const other: Found["harness"] = { ...host, id: "other", name: "Other", detect: { folder: ".other", program: "other" }, trustNote: "trust the folder, then approve its hooks" };
+const foundOther = (folder: boolean, program: boolean): Found => ({ harness: other, folder, program });
+
+describe("detecting a harness — by its folder in the repo, or its program on the PATH", () => {
+  it("names the folder first, then the program, and nothing when neither is there", () => {
+    expect(detection(found(true, false))).toBe(".claude/");
+    expect(detection(found(false, true))).toBe("claude on the PATH");
+    expect(detection(found(true, true)), "the folder is the stronger evidence").toBe(".claude/");
+    expect(detection(found(false, false))).toBeNull();
+  });
+
+  it("registers each harness it detected, and every one when it detected none", () => {
+    expect(defaultHarnesses([found(true, false), foundOther(false, false)])).toEqual(["claude-code"]);
+    expect(defaultHarnesses([found(false, false), foundOther(false, true)])).toEqual(["other"]);
+    expect(defaultHarnesses([found(true, false), foundOther(false, true)])).toEqual(["claude-code", "other"]);
+    expect(defaultHarnesses([found(false, false), foundOther(false, false)])).toEqual(["claude-code", "other"]);
+  });
+});
+
+describe("the prompt for the harnesses", () => {
+  it("lists each harness with a mark for the selected ones and how it was detected", () => {
+    expect(harnessPrompt([found(true, false), foundOther(false, false)], ["claude-code"])).toEqual([
+      "Which harnesses run agents in this repo?",
+      "  [x] Claude Code   detected: .claude/",
+      "  [ ] Other         not found",
+    ]);
+    expect(harnessPrompt([found(false, true)], [])[1]).toBe("  [ ] Claude Code   detected: claude on the PATH");
+  });
+
+  it("asks for names, and says what an empty answer keeps", () => {
+    expect(harnessQuestion([found(true, false), foundOther(false, false)])).toBe(
+      "Harnesses to register, by name (claude-code, other), or enter to keep the ones marked: ",
+    );
+  });
+
+  it("reads `--harness` and a typed answer as one list of names, and names the first one no harness has", () => {
+    const both = [found(true, false), foundOther(false, false)];
+    expect(harnessArg(["--empty", "--harness", "claude-code,other"])).toBe("claude-code,other");
+    expect(harnessArg(["--harness"]), "no value is the empty string").toBe("");
+    expect(harnessArg(["--harness", "--empty"])).toBe("");
+    expect(harnessArg(["--empty"])).toBeNull();
+    expect(parseHarnesses("claude-code,other", both)).toEqual({ ok: true, ids: ["claude-code", "other"] });
+    expect(parseHarnesses("other  claude-code other", both), "spaces too, and each once").toEqual({ ok: true, ids: ["other", "claude-code"] });
+    expect(parseHarnesses("claude-code,nope", both)).toEqual({ ok: false, unknown: "nope" });
+    expect(parseHarnesses("", both), "none at all is a choice").toEqual({ ok: true, ids: [] });
+  });
+
+  it("takes an empty answer, y or yes, in any case, as a yes", () => {
+    for (const yes of ["", "y", "Y", "yes", " Yes "]) expect(isYes(yes), yes).toBe(true);
+    for (const no of ["n", "no", "nope", "x"]) expect(isYes(no), no).toBe(false);
+  });
+});
+
+describe("the warnings of flow init, and the list of files it is about to write", () => {
+  const warned = (facts: Partial<InitFacts>): readonly string[] => planInit({ ...bare, ...facts }).warnings;
+  const holding = (machine: unknown, harness: Found["harness"] = host): InitFacts["harnesses"] => [
+    { harness, settings: {}, settingsUnreadable: false, machine: { path: "/home/host/settings.json", settings: machine } },
+  ];
+
+  it("warns of nothing in a repo with its own flow, no other hooks and nothing machine-wide", () => {
+    expect(warned({})).toEqual([]);
+  });
+
+  it("warns that git runs other hooks, only when flow is not wired into them", () => {
+    expect(warned({ ...husky("#!/bin/sh\nnpm test\n") })).toEqual([
+      "git already runs other hooks, from .husky/_, so flow leaves core.hooksPath alone and its commit gate is not installed until you add it to .husky/commit-msg — the block at the end says how.",
+    ]);
+    expect(warned({ ...husky(WIRED) }), "flow is already in the hook git runs").toEqual([]);
+  });
+
+  it("warns that flow is not a dev dependency, and where to read how to install it", () => {
+    expect(warned({ listed: false })).toEqual([
+      "flow is not a dev dependency of this repo, so the hooks run whatever flow is on the PATH. Install it for this repo as a dev dependency, pinned: docs/user/how-to/install-flow.md.",
+    ]);
+  });
+
+  it("warns that flow 0.3's hooks are in the machine-wide settings file, with the command that removes them", () => {
+    expect(warned({ harnesses: holding(host.registering.withRegistrations({}).settings) })).toEqual([
+      "/home/host/settings.json also holds flow's hooks, which flow 0.3 wrote, so each hook would run twice. Remove them with `flow uninstall --machine`, then run `flow init` again.",
+    ]);
+    expect(warned({ harnesses: holding({ theme: "dark" }) })).toEqual([]);
+  });
+
+  it("warns of what a chosen harness needs before it runs a hook, by its name", () => {
+    expect(warned({ harnesses: holding(null, other) })).toEqual(["Other: trust the folder, then approve its hooks"]);
+  });
+
+  it("prints each warning as a line, and lists what it will write", () => {
+    const plan = planInit({ ...bare, listed: false });
+    expect(warningLines(plan)).toEqual([`  ! ${plan.warnings[0]}`]);
+    expect(aboutToWrite(plan)[0]).toBe("flow init will write:");
+    expect(aboutToWrite(plan)).toContain(`  + ${GATE_PATH}`);
+    expect(aboutToWrite(plan)).toContain("  + .claude/settings.json — SessionStart · SubagentStart · PreToolUse · PostToolUse · Stop · SubagentStop");
+    expect(writtenLines(plan).map((line) => `  + ${line}`), "the report afterwards lists the same files").toEqual(aboutToWrite(plan).slice(1));
+    expect(initLines(plan, []).join("\n"), "the warnings are printed beside the prompt, not in the report").not.toContain("not a dev dependency");
+  });
+});
+
+describe("the line for a registered harness in flow status", () => {
+  const line = (over: StatusOver) => status(statusFacts(over)).fittings.find((f) => f.id === "claude-code");
+
+  it("is green and says no hook has run here when none has", () => {
+    expect(line({})).toEqual({ id: "claude-code", ok: true, detail: "registered · no hook has run here", lastRan: null });
+  });
+
+  it("is green and says when a hook last ran, from the log", () => {
+    const ran = "2026-11-18T11:57:00.000Z";
+    expect(line({ lastRan: ran })).toEqual({ id: "claude-code", ok: true, detail: "registered · last hook ran 3 minutes ago", lastRan: ran });
+  });
+
+  it("has no line when the harness's file calls flow for nothing: the one red `hooks` line says so instead", () => {
+    const answer = status(statusFacts({ settings: {} }));
+    expect(answer.fittings.find((f) => f.id === "claude-code")).toBeUndefined();
+    expect(answer.fittings.find((f) => f.id === "hooks")?.ok).toBe(false);
+    expect(answer.green).toBe(false);
+  });
+
+  it("has a line for each registered harness, from the same report", () => {
+    const facts = statusFacts({});
+    const both = { ...facts, harnesses: [...facts.harnesses, { harness: other, settings: other.registering.withRegistrations({}).settings, lastRan: null }] };
+    expect(status(both).fittings.filter((f) => f.id === "claude-code" || f.id === "other").map((f) => f.id)).toEqual(["claude-code", "other"]);
+  });
+
+  it("says how long ago, in the unit that fits", () => {
+    const at = (ms: number): string => ago(new Date(NOW - ms).toISOString(), NOW);
+    expect(at(0)).toBe("just now");
+    expect(at(59_000)).toBe("just now");
+    expect(at(60_000)).toBe("a minute ago");
+    expect(at(5 * 60_000)).toBe("5 minutes ago");
+    expect(at(3_600_000)).toBe("an hour ago");
+    expect(at(7 * 3_600_000)).toBe("7 hours ago");
+    expect(at(86_400_000)).toBe("a day ago");
+    expect(at(3 * 86_400_000)).toBe("3 days ago");
+    expect(at(-5000), "a clock that ran ahead").toBe("just now");
+  });
+});
+
+describe("lastHookRan — when a harness's hook last ran, from the session logs", () => {
+  const meta = (harness?: string): Row => ({ kind: "meta", v: 2, ...(harness === undefined ? {} : { harness }) });
+  const at = (ts: string): Row => ({ kind: "tool", ts, seq: 1 });
+
+  it("is the latest row of a session of that harness, and null when there is none", () => {
+    const history = [
+      { session: "a", rows: [meta("claude-code"), at("2026-11-18T10:00:00.000Z"), at("2026-11-18T11:00:00.000Z")] },
+      { session: "b", rows: [meta("claude-code"), at("2026-11-18T09:00:00.000Z")] },
+      { session: "c", rows: [meta("codex"), at("2026-11-18T11:59:00.000Z")] },
+    ];
+    expect(lastHookRan(history, "claude-code")).toBe("2026-11-18T11:00:00.000Z");
+    expect(lastHookRan(history, "codex")).toBe("2026-11-18T11:59:00.000Z");
+    expect(lastHookRan(history, "nobody")).toBeNull();
+    expect(lastHookRan([], "claude-code")).toBeNull();
+  });
+
+  it("counts a log that names no harness for the one harness that wrote those, and never git's own stream", () => {
+    const history = [
+      { session: "old", rows: [meta(), at("2026-11-17T10:00:00.000Z")] },
+      { session: "commit", rows: [meta("claude-code"), at("2026-11-18T11:59:00.000Z")] },
+    ];
+    expect(lastHookRan(history, "claude-code")).toBe("2026-11-17T10:00:00.000Z");
+    expect(lastHookRan(history, "codex")).toBeNull();
   });
 });

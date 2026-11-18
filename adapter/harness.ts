@@ -178,8 +178,6 @@ export interface Registering {
   readonly hooks: readonly HookCost[];
   /** What flow writes, one per event. */
   readonly registrations: readonly Registration[];
-  /** Which settings file holds flow's hooks, given the repo's `package.json` text and the machine-wide file. */
-  readonly settingsFileFor: (manifest: string | null, machine: string) => string;
   /** Does this `package.json` list flow as a dependency? */
   readonly listsFlow: (manifest: string | null) => boolean;
   /** The events this settings file calls flow for. */
@@ -188,14 +186,10 @@ export interface Registering {
   readonly staleRegistrations: (settings: unknown) => string[];
   /** The events it calls flow for in the old, bare shape. */
   readonly bareRegistrations: (settings: unknown) => string[];
-  /** The machine-wide file against the repo's own: the events the two call flow for, differently. */
-  readonly machineDiffers: (repo: unknown, machine: unknown) => { bare: string[]; theirs: string[] };
   /** A settings file with flow's registrations added. A new object, never a mutation. */
   readonly withRegistrations: (settings: unknown) => { settings: unknown; changed: string[] };
   /** A settings file with flow's registrations taken out. */
   readonly withoutRegistrations: (settings: unknown) => { settings: unknown; removed: string[] };
-  /** The machine-wide file with flow's old commands brought up to date, and nothing else touched. */
-  readonly withMachineCommandsUpToDate: (settings: unknown) => { settings: unknown; rewritten: string[] };
 }
 
 /** The harness's transcripts, read after the fact. Each takes text a shell already read. */
@@ -217,7 +211,7 @@ export interface Transcripts {
 }
 
 /** What flow's own verbs decide with: the harness's name, the moments it delivers and what it registers. */
-export type HarnessFacts = Pick<Harness, "name" | "delivers" | "registering">;
+export type HarnessFacts = Pick<Harness, "id" | "name" | "delivers" | "registering" | "detect" | "trustNote">;
 
 /**
  * A harness, as the rest of flow sees it.
@@ -226,6 +220,8 @@ export type HarnessFacts = Pick<Harness, "name" | "delivers" | "registering">;
  * `registering`, `flow status` reports what the harness delivers, `flow facts` reads `transcripts`.
  */
 export interface Harness {
+  /** The name `flow init --harness` takes, and the name the session log's first row holds. */
+  readonly id: string;
   /** What messages call it, as a sentence names a program. */
   readonly name: string;
   /** The words after `flow hook` that this harness calls, in the order it registers them. */
@@ -234,7 +230,11 @@ export interface Harness {
   readonly delivers: Delivered;
   /** One hook, end to end: read what the harness sent, judge it, answer in its dialect. */
   readonly run: (event: string, cwd: string) => Promise<HookResult>;
-  /** The harness's machine-wide settings file: where `flow init` once wrote for every repo. */
+  /** How `flow init` finds the harness in a repo: its folder there, and its program on the `PATH`. */
+  readonly detect: { readonly folder: string; readonly program: string };
+  /** What a person must do in the harness before it runs flow's hooks, or null when nothing. `flow init` warns of it. */
+  readonly trustNote: string | null;
+  /** The harness's machine-wide settings file, where flow 0.3 wrote. Read for a warning, and cleaned by `flow uninstall --machine`: never written by `flow init`. */
   readonly machineSettingsPath: () => string;
   readonly registering: Registering;
   readonly transcripts: Transcripts;

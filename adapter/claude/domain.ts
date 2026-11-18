@@ -1502,8 +1502,8 @@ function resultText(content: unknown): string {
 // ── weaken-after-block ─────────────────────────────────────────────────────
 
 /**
- * The repo's own Claude Code settings file, relative to the repo root: guarded here, and where
- * `settingsFileFor` registers a dev dependency's hooks, and `flow uninstall` takes them out.
+ * The repo's own Claude Code settings file, relative to the repo root: guarded here, where `flow init`
+ * registers flow's hooks, and where `flow uninstall` takes them out.
  */
 export const REPO_SETTINGS = ".claude/settings.json";
 
@@ -1607,8 +1607,7 @@ interface FlowHook {
  * register a command nothing answers.
  *
  * `unregistered` is what goes unjudged while that one registration is missing — what `flow status`
- * says beside the fix, unless the machine-wide file calls flow for that event in the meantime (see
- * `unregisteredText`). Each event costs its own rails and no others, so a file missing one names
+ * says beside the fix (see `unregisteredText`). Each event costs its own rails and no others, so a file missing one names
  * that one's cost, not the whole guard's.
  */
 const REGISTERED: readonly FlowHook[] = [
@@ -1652,19 +1651,6 @@ export const HOOK_REGISTRATIONS: readonly Registration[] = REGISTERED.map(({ hoo
  * not register.
  */
 export const HOOK_COSTS: readonly HookCost[] = REGISTERED.map(({ hook, unregistered }) => ({ event: HOST_EVENT[hook], unregistered }));
-
-/**
- * WHICH SETTINGS FILE holds flow's hooks: the repo's own `.claude/settings.json` when the repo's
- * `package.json` lists `@jawache/flow` as a dependency or a dev dependency, and the machine-wide
- * file otherwise.
- *
- * A dev dependency guards that one repo: the repo's file is committed, so a fresh clone is guarded
- * after `npm install`, and a machine with no global flow is not handed a hook that fails in every
- * other repo it opens. A `package.json` that is missing, or will not parse, lists nothing.
- */
-export function settingsFileFor(manifest: string | null, machine: string): string {
-  return listsFlow(manifest) ? REPO_SETTINGS : machine;
-}
 
 /** Does this `package.json` list `@jawache/flow` as a dependency or a dev dependency? */
 export function listsFlow(manifest: string | null): boolean {
@@ -1813,47 +1799,6 @@ function rewrittenOurs(settings: unknown, stale: ReadonlySet<string>, bare: Read
     });
   }
   return Object.fromEntries(Object.entries(hooks).filter(([event]) => !emptied.has(event)));
-}
-
-/**
- * THE MACHINE-WIDE FILE, when a dev dependency's hooks are in the repo's own: flow's old-shape
- * commands there (`bareHook`) rewritten to today's, and nothing else touched — no registration
- * added, no matcher widened, no other key or hook changed. A NEW object; `rewritten` names the
- * events, empty when there was nothing to do.
- *
- * The host merges only IDENTICAL commands across its settings files. An old `flow hook stop` in the
- * machine-wide file beside today's command in the repo's would run flow twice for every event, so
- * every rule would fire twice and every refusal print twice. Made the same command, it runs once.
- */
-export function withMachineCommandsUpToDate(settings: unknown): { settings: unknown; rewritten: string[] } {
-  const bare = new Set(bareRegistrations(settings));
-  if (bare.size === 0) return { settings, rewritten: [] };
-  const held = settings as Record<string, unknown>;
-  return { settings: { ...held, hooks: rewrittenOurs(settings, new Set(), bare) }, rewritten: [...bare] };
-}
-
-/**
- * The events the machine-wide file calls flow for with a command the repo's own file does not use
- * for that event. The host runs both, so each of those hooks fires twice. Split by the fix: `bare`
- * holds only old-shape commands, which `flow init` rewrites; `theirs` holds a command of somebody's
- * own (`FLOW_DEBUG=1 flow hook stop`), which init leaves as it is.
- *
- * ONLY AN EVENT BOTH FILES CALL FLOW FOR. Where the repo's own file does not call flow yet, the
- * machine-wide command is the only one that runs, so nothing fires twice: that event is the
- * "does not call flow" line's, and `flow init` writes the repo's command for it.
- */
-export function machineDiffers(repo: unknown, machine: unknown): { bare: string[]; theirs: string[] } {
-  const repoArrays = hookArrays(repo);
-  const repoCalls = new Set(registeredEvents(repo));
-  const out = { bare: [] as string[], theirs: [] as string[] };
-  for (const [event, entries] of Object.entries(hookArrays(machine))) {
-    if (!repoCalls.has(event)) continue;
-    const repoCommands = new Set((repoArrays[event] ?? []).flatMap(commandsOf));
-    const differ = entries.flatMap(commandsOf).filter((command) => ourHookCommand(command) && !repoCommands.has(command));
-    if (differ.length === 0) continue;
-    (differ.every((command) => bareHook(command) !== null) ? out.bare : out.theirs).push(event);
-  }
-  return out;
 }
 
 /**

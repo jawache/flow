@@ -52,8 +52,9 @@ const git = (repo: string, args: readonly string[]): Ran => runGit(repo, args, {
 
 const newRepo = (): string => freshRepo("flow-init-");
 
-const settings = (): Record<string, unknown> =>
-  JSON.parse(readFileSync(join(home, "settings.json"), "utf8")) as Record<string, unknown>;
+/** The hooks file flow init wrote inside a repo, parsed. */
+const settings = (at: string = repo): Record<string, unknown> =>
+  JSON.parse(readFileSync(join(at, ".claude", "settings.json"), "utf8")) as Record<string, unknown>;
 
 /** The events flow init registers, in the order it writes and prints them. */
 const REGISTERED = ["SessionStart", "SubagentStart", "PreToolUse", "PostToolUse", "Stop", "SubagentStop"];
@@ -129,6 +130,40 @@ describe("flow init — a repo that has never heard of flow", () => {
     expect(Object.keys(hooks)).not.toContain("Notification");
   });
 
+  // THE JOURNEY: with no terminal, in a repo with no package.json, init prompts for nothing and
+  // writes every registration inside the repo — and nothing in the harness's own home folder.
+  it("with no terminal, writes .claude/settings.json in the repo and nothing in the harness's home folder", () => {
+    const scratch = newRepo();
+    const emptyHome = settingsHome();
+    try {
+      expect(existsSync(join(scratch, "package.json")), "no package.json to say flow is a dependency").toBe(false);
+      const ran = flow(scratch, ["init"], emptyHome);
+      expect(ran.code, ran.stdout + ran.stderr).toBe(0);
+      expect(Object.keys(settings(scratch)["hooks"] as object)).toEqual(REGISTERED);
+      expect(readdirSync(emptyHome), "the harness's home folder is still empty").toEqual([]);
+      expect(ran.stdout, "the warnings come before anything is written, and are not a prompt").toContain("  ! flow is not a dev dependency of this repo");
+    } finally {
+      for (const dir of [scratch, emptyHome]) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("`--harness` names the harnesses, and one it has never heard of writes nothing and answers 1", () => {
+    const named = newRepo();
+    const unknown = newRepo();
+    try {
+      const ran = flow(named, ["init", "--harness", "claude-code"]);
+      expect(ran.code, ran.stdout + ran.stderr).toBe(0);
+      expect(existsSync(join(named, ".claude", "settings.json"))).toBe(true);
+
+      const refused = flow(unknown, ["init", "--harness", "nope"]);
+      expect(refused.code).toBe(1);
+      expect(refused.stderr).toContain("no harness is called `nope`");
+      expect(existsSync(join(unknown, "flow.config.ts")), "nothing was written").toBe(false);
+    } finally {
+      for (const dir of [named, unknown]) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("keeps .flow/ out of git by itself, with no edit to a file it does not own", () => {
     expect(git(repo, ["status", "--porcelain"]).stdout).not.toContain(".flow");
     expect(existsSync(join(repo, ".gitignore")), "no .gitignore was written — .flow/ ignores itself").toBe(false);
@@ -192,6 +227,25 @@ describe("flow status", () => {
     expect(read.green).toBe(true);
     expect(read.categories).toEqual(["subagent"]);
     expect(read.fittings.every((f) => f.ok)).toBe(true);
+  });
+
+  it("has one line for each registered harness, and says when one of its hooks last ran, in the text and as data", () => {
+    const mine = newRepo();
+    try {
+      expect(flow(mine, ["init"]).code).toBe(0);
+      expect(flow(mine, ["status"]).stdout).toContain("✓ claude-code: registered · no hook has run here");
+
+      const ran = hook(mine, "pre-tool-use", pre("Bash", { command: "ls" }, "status-1"), { home, bin });
+      expect(ran.code, ran.stderr).toBe(0);
+      const said = flow(mine, ["status"]);
+      expect(said.stdout).toContain("✓ claude-code: registered · last hook ran just now");
+      const read = JSON.parse(flow(mine, ["status", "--json"]).stdout) as { fittings: { id: string; ok: boolean; lastRan?: string | null }[] };
+      const line = read.fittings.find((f) => f.id === "claude-code");
+      expect(line?.ok).toBe(true);
+      expect(Date.now() - Date.parse(line?.lastRan ?? ""), "the time the log wrote, which is within the minute").toBeLessThan(60_000);
+    } finally {
+      rmSync(mine, { recursive: true, force: true });
+    }
   });
 
   it("goes red, with the fix, when the gate is not armed", () => {
@@ -299,7 +353,7 @@ describe("flow status", () => {
       expect(refused.code, "git refuses when the gate exits non-zero").not.toBe(0);
       expect(refused.stderr, "the PATH's flow refused it").toContain("demo.noMarkedFiles");
 
-      const registered = (settings()["hooks"] as Record<string, { hooks: { command: string }[] }[]>)["PreToolUse"]?.[0]?.hooks[0]?.command;
+      const registered = (settings(below)["hooks"] as Record<string, { hooks: { command: string }[] }[]>)["PreToolUse"]?.[0]?.hooks[0]?.command;
       expect(registered).toContain("; exec flow hook pre-tool-use");
       const answered = sh(below, registered ?? "", { home, bin }, JSON.stringify(pre("Bash", { command: "git push --force origin main" }, "fallback-1")));
       expect(answered.code, answered.stderr).toBe(2);
@@ -337,11 +391,12 @@ describe("flow init, run again", () => {
   });
 
   it("goes red on the registrations an older flow wrote, and brings them up to date in place when init runs again", () => {
-    const older = settingsHome();
+    const older = newRepo();
     try {
-      const current = settings() as { hooks: Record<string, unknown> };
+      expect(flow(older, ["init"]).code).toBe(0);
+      const current = settings(older) as { hooks: Record<string, unknown> };
       writeFileSync(
-        join(older, "settings.json"),
+        join(older, ".claude", "settings.json"),
         JSON.stringify({
           hooks: {
             ...current.hooks,
@@ -351,25 +406,25 @@ describe("flow init, run again", () => {
           },
         }),
       );
-      const red = flow(repo, ["status"], older);
+      const red = flow(older, ["status"]);
       expect(red.code).toBe(1);
       expect(red.stdout).toContain("calls flow for PreToolUse · PostToolUse · PostToolUseFailure the way an older flow registered them");
       expect(red.stdout).toContain("Re-run `flow init` to bring them up to date.");
 
-      const again = flow(repo, ["init"], older);
+      const again = flow(older, ["init"]);
       expect(again.code).toBe(0);
       // The older flow wrote the bare command too, so each entry is rewritten at once.
       expect(again.stdout).toContain("PreToolUse (matcher brought up to date, now runs the flow in node_modules/@jawache/flow first)");
       expect(again.stdout).toContain("PostToolUse (matcher brought up to date, now runs the flow in node_modules/@jawache/flow first)");
       expect(again.stdout).toContain("PostToolUseFailure (removed: flow no longer registers it)");
-      const hooks = (JSON.parse(readFileSync(join(older, "settings.json"), "utf8")) as { hooks: Record<string, unknown[]> }).hooks;
+      const hooks = (settings(older) as { hooks: Record<string, unknown[]> }).hooks;
       expect(hooks["PostToolUse"], "one entry, brought up to date — never a second one beside it").toHaveLength(1);
       expect(JSON.stringify(hooks["PreToolUse"])).toContain('"matcher":"Bash"');
       expect(JSON.stringify(hooks["PostToolUse"])).toContain(
         JSON.stringify('f="$CLAUDE_PROJECT_DIR/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook post-tool-use; exec flow hook post-tool-use'),
       );
       expect(Object.keys(hooks), "the hook after a failed call is gone").toEqual(REGISTERED);
-      expect(flow(repo, ["status"], older).code).toBe(0);
+      expect(flow(older, ["status"]).code).toBe(0);
     } finally {
       rmSync(older, { recursive: true, force: true });
     }
@@ -378,20 +433,21 @@ describe("flow init, run again", () => {
   // THE FILE AN INIT BEFORE 0.3.0 WROTE: every registration but SubagentStop. Status names the one
   // missing, and init adds it.
   it("goes red on a file without SubagentStop, and adds it when init runs again", () => {
-    const older = settingsHome();
+    const older = newRepo();
     try {
-      const current = settings() as { hooks: Record<string, unknown> };
+      expect(flow(older, ["init"]).code).toBe(0);
+      const current = settings(older) as { hooks: Record<string, unknown> };
       const { SubagentStop: _dropped, ...rest } = current.hooks;
-      writeFileSync(join(older, "settings.json"), JSON.stringify({ hooks: rest }));
+      writeFileSync(join(older, ".claude", "settings.json"), JSON.stringify({ hooks: rest }));
 
-      const red = flow(repo, ["status"], older);
+      const red = flow(older, ["status"]);
       expect(red.code).toBe(1);
-      expect(red.stdout).toContain(`✗ hooks: ${join(older, "settings.json")} does not call flow for SubagentStop — re-run \`flow init\`.`);
+      expect(red.stdout).toContain("✗ claude-code: .claude/settings.json does not call flow for SubagentStop — re-run `flow init`.");
 
-      const again = flow(repo, ["init"], older);
+      const again = flow(older, ["init"]);
       expect(again.code, again.stdout + again.stderr).toBe(0);
-      expect(again.stdout).toContain(`+ ${join(older, "settings.json")} — SubagentStop\n`);
-      expect(flow(repo, ["status"], older).code).toBe(0);
+      expect(again.stdout).toContain("+ .claude/settings.json — SubagentStop\n");
+      expect(flow(older, ["status"]).code).toBe(0);
     } finally {
       rmSync(older, { recursive: true, force: true });
     }
@@ -845,15 +901,15 @@ describe("a repo whose package.json lists flow", () => {
       expect(readFileSync(join(machine, "settings.json"), "utf8"), "the machine-wide file, byte for byte").toBe(machineBefore);
 
       const said = flow(listed, ["status"], machine);
-      expect(said.stdout).toContain(`✓ hooks: .claude/settings.json — ${LISTED}`);
+      expect(said.stdout).toContain("✓ claude-code: registered · no hook has run here");
       expect(said.code, said.stdout).toBe(0);
     } finally {
       for (const dir of [listed, machine]) rmSync(dir, { recursive: true, force: true });
     }
   });
-  // ONE RUN PER HOOK: the host merges only identical commands across its two settings files, so an
-  // older flow's bare command left in the machine-wide file would run flow a second time.
-  it("brings an older flow's commands in the machine-wide file up to the repo's, keeping the rest, and status names a command it left", () => {
+  // flow 0.3 wrote to the machine-wide file. 0.4 never writes there: init says its hooks are in it,
+  // leaves it byte for byte, and names the command that removes them.
+  it("warns that flow 0.3's hooks are in the machine-wide file, with the command that removes them, and leaves that file byte for byte", () => {
     const listed = newRepo();
     const machine = settingsHome();
     try {
@@ -866,46 +922,32 @@ describe("a repo whose package.json lists flow", () => {
           Stop: [{ hooks: [{ type: "command", command: "flow hook stop" }] }, { hooks: [{ type: "command", command: "say done" }] }],
         },
       };
-      writeFileSync(join(machine, "settings.json"), `${JSON.stringify(older, null, 2)}\n`);
-
-      // Before init the repo's own file calls flow for nothing, so the machine-wide command is the
-      // only one that runs: the line is red, credits that file, and predicts no double fire (#144).
-      const before = flow(listed, ["status"], machine);
-      expect(before.stdout).toContain(`${join(machine, "settings.json")} calls flow for PreToolUse · Stop in the meantime`);
-      expect(before.stdout).not.toContain("fires twice");
-      expect(before.code).toBe(1);
+      const machineBefore = `${JSON.stringify(older, null, 2)}\n`;
+      writeFileSync(join(machine, "settings.json"), machineBefore);
 
       const init = flow(listed, ["init"], machine);
       expect(init.code, init.stdout + init.stderr).toBe(0);
       expect(init.stdout).toContain(
-        `+ ${join(machine, "settings.json")} — PreToolUse · Stop (an older flow's command, now the same as .claude/settings.json's, so each hook runs once)`,
+        `  ! ${join(machine, "settings.json")} also holds flow's hooks, which flow 0.3 wrote, so each hook would run twice. Remove them with \`flow uninstall --machine\`, then run \`flow init\` again.`,
       );
-
-      type Hooks = Record<string, { matcher?: string; hooks: { type: string; command: string }[] }[]>;
-      const read = (file: string) => JSON.parse(readFileSync(file, "utf8")) as { theme?: string; hooks: Hooks };
-      const repo = read(join(listed, ".claude", "settings.json")).hooks;
-      const after = read(join(machine, "settings.json"));
-      expect(after.theme, "every other key is kept").toBe("dark");
-      expect(Object.keys(after.hooks), "no registration is added there").toEqual(["PreToolUse", "Stop"]);
-      expect(after.hooks["PreToolUse"]?.[0]?.hooks[0]?.command).toBe(repo["PreToolUse"]?.[0]?.hooks[0]?.command);
-      expect(after.hooks["Stop"]?.[0]?.hooks[0]?.command).toBe(repo["Stop"]?.[0]?.hooks[0]?.command);
-      expect(after.hooks["Stop"]?.[1], "another tool's hook is kept as it was").toEqual({ hooks: [{ type: "command", command: "say done" }] });
-
-      const green = flow(listed, ["status"], machine);
-      expect(green.stdout).toContain("✓ hooks: .claude/settings.json — ");
-      expect(green.code, green.stdout).toBe(0);
-      expect(flow(listed, ["init"], machine).stdout, "a second run has nothing to bring up to date").not.toContain(join(machine, "settings.json"));
-
-      // A command with more in it is somebody's own: init leaves it, and status says it runs twice.
-      after.hooks["Stop"] = [{ hooks: [{ type: "command", command: "FLOW_DEBUG=1 flow hook stop" }] }];
-      writeFileSync(join(machine, "settings.json"), `${JSON.stringify(after, null, 2)}\n`);
-      const red = flow(listed, ["status"], machine);
-      expect(red.stdout).toContain(
-        `✗ hooks: ${join(machine, "settings.json")} also calls flow for Stop with a command of its own, so Claude Code runs it beside .claude/settings.json's command and each of those hooks fires twice. Make it the same command as .claude/settings.json's, or remove it from that file.`,
-      );
-      expect(red.code).toBe(1);
+      expect(init.stdout.indexOf("also holds flow's hooks"), "said before the list of what was created").toBeLessThan(init.stdout.indexOf("flow init — created:"));
+      expect(init.stdout).not.toContain("is not a dev dependency");
+      expect(readFileSync(join(machine, "settings.json"), "utf8"), "the machine-wide file, byte for byte").toBe(machineBefore);
+      expect(Object.keys(settings(listed)["hooks"] as object), "the repo's own file holds every registration").toEqual(REGISTERED);
     } finally {
       for (const dir of [listed, machine]) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("warns that flow is not a dev dependency of a repo whose package.json does not list it, and still registers in the repo", () => {
+    const bare = newRepo();
+    try {
+      const init = flow(bare, ["init"]);
+      expect(init.code, init.stdout + init.stderr).toBe(0);
+      expect(init.stdout).toContain("  ! flow is not a dev dependency of this repo, so the hooks run whatever flow is on the PATH.");
+      expect(Object.keys(settings(bare)["hooks"] as object)).toEqual(REGISTERED);
+    } finally {
+      rmSync(bare, { recursive: true, force: true });
     }
   });
 });
@@ -944,9 +986,9 @@ describe("flow uninstall", () => {
         "  - .githooks/",
         "  - .flow/ — flow's state and logs",
         "  - node_modules/@jawache/flow — the link `flow init` made",
+        `  - .claude/settings.json — ${LISTED}`,
         "  · kept flow.config.ts and the packs it imports — `flow init` wires this repo again.",
-        `  · ${join(home, "settings.json")} still holds flow's hooks, and every repo on this machine runs them — \`flow uninstall --machine\` removes them.`,
-        "  next: `flow uninstall --machine` once no repo on this machine needs flow, then `npm uninstall -g @jawache/flow` — removes the hooks, then the package.",
+        "  next: `npm uninstall @jawache/flow` — removes the package.",
       ]);
       expect(git(fresh, ["config", "--get", "core.hooksPath"]).stdout, "core.hooksPath is unset").toBe("");
       for (const gone of [".githooks", ".flow", "node_modules"]) expect(existsSync(join(fresh, gone)), `${gone} is gone`).toBe(false);
@@ -1104,7 +1146,7 @@ describe("flow uninstall", () => {
       const named = linesToDelete(said.stdout, ".husky/commit-msg");
       expect(named, "the two lines init told them to add").toEqual(linesToAdd(first.stdout, ".husky/commit-msg"));
       expect(said.stdout.trim().split("\n").at(-1)).toBe(
-        "  next: delete flow's lines from .husky/commit-msg, then `flow uninstall --machine` once no repo on this machine needs flow, then `npm uninstall -g @jawache/flow` — removes the hooks, then the package.",
+        "  next: delete flow's lines from .husky/commit-msg, then `npm uninstall @jawache/flow` — removes the package.",
       );
 
       // Skipped, the report is right: husky's hook still calls the flow that is gone.
@@ -1131,7 +1173,7 @@ describe("flow uninstall", () => {
       expect(said.code, said.stdout + said.stderr).toBe(0);
       expect(said.stdout).not.toContain(".husky/commit-msg");
       expect(said.stdout.trim().split("\n").at(-1)).toBe(
-        "  next: `flow uninstall --machine` once no repo on this machine needs flow, then `npm uninstall -g @jawache/flow` — removes the hooks, then the package.",
+        "  next: `npm uninstall @jawache/flow` — removes the package.",
       );
       expect(readFileSync(join(husky, ".husky", "commit-msg"), "utf8")).toBe("echo husky ran\n");
       expect(noFlow(husky).code, "a commit then needs no flow").toBe(0);
@@ -1201,22 +1243,26 @@ describe("flow uninstall", () => {
   describe("--machine", () => {
     const theirs = { hooks: [{ type: "command", command: "say done" }] };
     const own = { permissions: { allow: ["Bash(ls:*)"] }, hooks: { Stop: [theirs] } };
-    /** A throwaway machine-wide folder whose settings file holds the user's own hook, and then flow's. */
+    /**
+     * A throwaway machine-wide folder whose settings file holds the user's own hook, and then flow
+     * 0.3's registrations: what 0.3 wrote there, and what 0.4 never writes.
+     */
     const machineWithFlow = (): { machine: string; file: string } => {
       const machine = settingsHome();
       const file = join(machine, "settings.json");
-      writeFileSync(file, `${JSON.stringify(own, null, 2)}\n`);
-      const global = newRepo();
+      const donor = newRepo();
       try {
-        expect(flow(global, ["init"], machine).code).toBe(0);
+        expect(flow(donor, ["init"]).code).toBe(0);
+        const registered = (settings(donor)["hooks"] ?? {}) as Record<string, unknown[]>;
+        writeFileSync(file, `${JSON.stringify({ ...own, hooks: { ...registered, Stop: [theirs, ...(registered["Stop"] ?? [])] } }, null, 2)}\n`);
       } finally {
-        rmSync(global, { recursive: true, force: true });
+        rmSync(donor, { recursive: true, force: true });
       }
       expect(Object.keys((JSON.parse(readFileSync(file, "utf8")) as { hooks: object }).hooks).sort(), "flow's registrations are in it").toEqual([...REGISTERED].sort());
       return { machine, file };
     };
 
-    it("a global install: a plain run leaves the machine-wide file byte for byte and names --machine; --machine then takes flow's registrations out and keeps the user's hook", () => {
+    it("a plain run leaves the machine-wide file byte for byte and names --machine; --machine then takes flow's registrations out and keeps the user's hook", () => {
       const global = newRepo();
       const { machine, file } = machineWithFlow();
       try {
@@ -1228,13 +1274,13 @@ describe("flow uninstall", () => {
         expect(readFileSync(file, "utf8"), "without --machine, the machine-wide file is unchanged").toBe(before);
         expect(plain.stdout).toContain(`  · ${file} still holds flow's hooks, and every repo on this machine runs them — \`flow uninstall --machine\` removes them.`);
         expect(plain.stdout.trim().split("\n").at(-1)).toBe(
-          "  next: `flow uninstall --machine` once no repo on this machine needs flow, then `npm uninstall -g @jawache/flow` — removes the hooks, then the package.",
+          "  next: `flow uninstall --machine` once no repo on this machine needs flow, then `npm uninstall @jawache/flow` — removes the hooks, then the package.",
         );
 
         const said = flow(global, ["uninstall", "--machine"], machine);
         expect(said.code, said.stdout + said.stderr).toBe(0);
         expect(said.stdout).toContain(`  - ${file} — ${LISTED}`);
-        expect(said.stdout.trim().split("\n").at(-1)).toBe("  next: `npm uninstall -g @jawache/flow` — removes the package.");
+        expect(said.stdout.trim().split("\n").at(-1)).toBe("  next: `npm uninstall @jawache/flow` — removes the package.");
         expect(JSON.parse(readFileSync(file, "utf8")), "flow's registrations are gone, and the user's hook and keys stay").toEqual(own);
         expect(flow(global, ["uninstall", "--machine"], machine).stdout, "a second run").toContain("nothing of flow's here to remove");
       } finally {
@@ -1242,20 +1288,12 @@ describe("flow uninstall", () => {
       }
     });
 
-    it("a dev dependency: a plain run leaves the machine-wide file byte for byte and says nothing of it; --machine cleans it beside the repo's own", () => {
+    it("cleans the repo's own file beside the machine-wide one, whatever the repo's package.json lists", () => {
       const listed = newRepo();
       const { machine, file } = machineWithFlow();
       try {
         const pkg = { name: "consumer", version: "1.0.0", devDependencies: { "@jawache/flow": "*" } };
         writeFileSync(join(listed, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
-        expect(flow(listed, ["init"], machine).code).toBe(0);
-        const before = readFileSync(file, "utf8");
-
-        const plain = flow(listed, ["uninstall"], machine);
-        expect(plain.code, plain.stdout + plain.stderr).toBe(0);
-        expect(readFileSync(file, "utf8"), "without --machine, the machine-wide file is unchanged").toBe(before);
-        expect(plain.stdout).not.toContain(file);
-
         expect(flow(listed, ["init"], machine).code).toBe(0);
         const said = flow(listed, ["uninstall", "--machine"], machine);
         expect(said.code, said.stdout + said.stderr).toBe(0);
@@ -1269,8 +1307,7 @@ describe("flow uninstall", () => {
 
     it("writes nothing to a machine-wide file that would not parse, says so, and answers 1", () => {
       const global = newRepo();
-      const machine = settingsHome();
-      const file = join(machine, "settings.json");
+      const { machine, file } = machineWithFlow();
       try {
         expect(flow(global, ["init"], machine).code).toBe(0);
         const unparseable = `${readFileSync(file, "utf8")}// a comment\n`;

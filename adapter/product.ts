@@ -11,10 +11,10 @@
 // loaded, are `planInit`, `planUninstall` and `status` next door in domain.ts, where every branch
 // has a test.
 //
-// WHERE THE SETTINGS LIVE. A repo whose package.json lists `@jawache/flow` keeps flow's hooks in the
-// harness's own settings file in the repo; every other repo uses the machine-wide file — the
-// harness's `settingsFileFor` decides which. Where the machine-wide file is, and the override the
-// harness documents for it, are the harness's: `machineSettingsPath`.
+// WHERE THE SETTINGS LIVE. In the repo, whatever the repo is: each harness keeps flow's hooks in its own
+// file there (`registering.repoFile`), and nothing in this file writes a machine-wide one. The
+// machine-wide file is read, to warn that flow 0.3's hooks are in it, and `flow uninstall --machine`
+// removes what 0.3 wrote there.
 
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
@@ -36,7 +36,7 @@ import {
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { VERSION } from "../version.ts";
-import { ensureFlowDir, isOff, readRows } from "../engine/state.ts";
+import { ensureFlowDir, isOff, readHistory, readRows } from "../engine/state.ts";
 import { FLOW_DIR } from "../engine/domain.ts";
 import {
   CONFIG_FILE,
@@ -57,15 +57,28 @@ import {
   hostPath,
   planInit,
   commitMsgOf,
+  aboutToWrite,
+  defaultHarnesses,
+  harnessArg,
+  harnessPrompt,
+  harnessQuestion,
+  isYes,
+  lastHookRan,
+  parseHarnesses,
+  warningLines,
   status,
   statusCode,
   statusLines,
   wantsColour,
+  type Found,
   type HooksFolder,
   type InitFacts,
+  type InitHarness,
   type InitPlan,
   type StatusFacts,
+  type StatusHarness,
   type UninstallFacts,
+  type UninstallHarness,
   type UninstallPlan,
 } from "./domain.ts";
 import type { Harness } from "./harness.ts";
@@ -78,27 +91,11 @@ export interface VerbResult {
   readonly exitCode: number;
 }
 
-/**
- * The settings file flow's hooks live in for this repo — the repo's own when its package.json lists
- * flow, else the host's machine-wide file. The harness's `settingsFileFor` decides; this only reads.
- */
-function settingsFile(root: string, harness: Harness): string {
-  return harness.registering.settingsFileFor(readText(root, "package.json"), harness.machineSettingsPath());
-}
-
-/** The machine-wide settings file, read: its path, its JSON (null when there is none), and whether it would not parse. */
+/** The machine-wide settings file of a harness, read: its path, its JSON (null when there is none), and whether it would not parse. */
 function readMachineFile(root: string, harness: Harness): { path: string; settings: unknown; unreadable: boolean } {
   const path = harness.machineSettingsPath();
   const read = parsedFile(root, path);
   return { path, settings: read.value, unreadable: read.unreadable };
-}
-
-/**
- * The machine-wide file, parsed, when flow's hooks are in the repo's own — the one place a hook
- * there could run flow a second time — and null when `settingsPath` is the machine-wide file.
- */
-function machineFile(root: string, settingsPath: string, harness: Harness): { path: string; settings: unknown; unreadable: boolean } | null {
-  return settingsPath === harness.machineSettingsPath() ? null : readMachineFile(root, harness);
 }
 
 /**
@@ -198,8 +195,8 @@ function hooksFolder(root: string): HooksFolder | null {
  * file holding a stray comma or a `//` comment gets replaced by flow's registrations and nothing
  * else — every other key in it belonging to somebody, and no safe merge into bytes nobody parsed.
  *
- * `root` is what a repo-relative path is read against: a dev dependency's settings file in the
- * repo is one. The machine-wide settings file is absolute and passes straight through, which is the
+ * `root` is what a repo-relative path is read against: a harness's settings file in the repo is
+ * one. The machine-wide settings file is absolute and passes straight through, which is the
  * same rule every other read in the package follows.
  */
 function parsedFile(root: string, path: string): { readonly value: unknown; readonly unreadable: boolean } {
@@ -237,12 +234,19 @@ function transcriptOf(root: string, session: string, agent: string, harness: Har
 
 // ── init ─────────────────────────────────────────────────────────────────────
 
-/** Everything init found, before it wrote anything. */
-function initFacts(root: string, empty: boolean, harness: Harness): InitFacts {
-  const settingsPath = settingsFile(root, harness);
-  const read = parsedFile(root, settingsPath);
+/** Everything init found, before it wrote anything, for the harnesses chosen. */
+function initFacts(root: string, empty: boolean, chosen: readonly Harness[]): InitFacts {
   return {
-    harness,
+    harnesses: chosen.map((harness): InitHarness => {
+      const read = parsedFile(root, harness.registering.repoFile);
+      const machine = readMachineFile(root, harness);
+      return {
+        harness,
+        settings: read.value,
+        settingsUnreadable: read.unreadable,
+        machine: { path: machine.path, settings: machine.settings },
+      };
+    }),
     root,
     empty,
     isGit: existsSync(join(root, ".git")),
@@ -252,13 +256,20 @@ function initFacts(root: string, empty: boolean, harness: Harness): InitFacts {
     hasFlowDir: existsSync(join(root, FLOW_DIR)),
     hooksPath: hooksPath(root),
     hooksFolder: hooksFolder(root),
-    settingsPath,
-    settings: read.value,
-    settingsUnreadable: read.unreadable,
-    machine: machineFile(root, settingsPath, harness),
     resolves: resolves(root),
+    listed: chosen.some((harness) => harness.registering.listsFlow(readText(root, "package.json"))),
     packageRoot: packageRoot(),
   };
+}
+
+/** Each harness, with whether its folder is in the repo and its program is on the `PATH`. */
+function findHarnesses(root: string, harnesses: readonly Harness[]): Found[] {
+  const dirs = hostPath((process.env["PATH"] ?? "").split(delimiter), root);
+  return harnesses.map((harness) => ({
+    harness,
+    folder: existsSync(join(root, harness.detect.folder)),
+    program: dirs.some((dir) => executable(join(dir, harness.detect.program))),
+  }));
 }
 
 /**
@@ -321,10 +332,8 @@ function perform(root: string, plan: InitPlan): string[] {
       symlinkSync(plan.link as string, at, "dir");
     });
 
-  // Repo-relative for a dev dependency's own file, absolute for the machine-wide one.
-  for (const settings of [plan.settings, plan.machine]) {
-    if (settings === null) continue;
-    const { path, value } = settings;
+  // Each harness's own file in the repo, and no file outside it.
+  for (const { path, value } of plan.settings) {
     attempt(`could not write ${path}`, () => {
       const file = resolve(root, path);
       mkdirSync(dirname(file), { recursive: true });
@@ -342,15 +351,53 @@ function perform(root: string, plan: InitPlan): string[] {
   return failures;
 }
 
-/** `flow init [--empty]` — make this repo drivable, and say exactly what was created. */
-export function runInit(cwd: string, args: readonly string[], harness: Harness): VerbResult {
+/** A person at a terminal: what is asked of them, and where what is said to them goes. */
+export interface Terminal {
+  readonly ask: (question: string) => Promise<string>;
+  readonly say: (text: string) => void;
+}
+
+/**
+ * `flow init [--empty] [--harness <names>]` — make this repo drivable, and say exactly what was created.
+ *
+ * With a `terminal` it is interactive: it prompts for the harnesses, prints each warning, lists what
+ * it is about to write and asks for a yes. Without one, as when an agent or a script runs it, it
+ * prompts for nothing: `--harness` names the harnesses, else the detected ones, else every one.
+ */
+export async function runInit(cwd: string, args: readonly string[], harnesses: readonly Harness[], terminal: Terminal | null): Promise<VerbResult> {
   const root = resolve(cwd);
-  const plan = planInit(initFacts(root, args.includes("--empty"), harness));
+  const found = findHarnesses(root, harnesses);
+  const named = harnessArg(args);
+  let ids = defaultHarnesses(found);
+  if (named !== null) {
+    const parsed = parseHarnesses(named, found);
+    if (!parsed.ok)
+      return { stdout: "", stderr: `flow init — no harness is called \`${parsed.unknown}\`, so nothing was written. The harnesses are ${found.map((one) => one.harness.id).join(", ")}.\n`, exitCode: 1 };
+    ids = parsed.ids;
+  } else if (terminal !== null) {
+    terminal.say(`${harnessPrompt(found, ids).join("\n")}\n`);
+    const answer = (await terminal.ask(harnessQuestion(found))).trim();
+    if (answer !== "") {
+      const parsed = parseHarnesses(answer, found);
+      if (!parsed.ok)
+        return { stdout: "", stderr: `flow init — no harness is called \`${parsed.unknown}\`, so nothing was written.\n`, exitCode: 1 };
+      ids = parsed.ids;
+    }
+  }
+  const plan = planInit(initFacts(root, args.includes("--empty"), harnesses.filter((harness) => ids.includes(harness.id))));
+  const warned = warningLines(plan);
+  const colour = wantsColour(process.stdout.isTTY, process.env["NO_COLOR"]);
+  if (terminal !== null) {
+    if (warned.length > 0) terminal.say(`${warned.join("\n")}\n`);
+    terminal.say(`${aboutToWrite(plan).join("\n")}\n`);
+    if (!isYes(await terminal.ask("Write these? [Y/n] "))) return { stdout: "flow init — nothing was written.\n", stderr: "", exitCode: 1 };
+  }
   const failures = perform(root, plan);
   return {
     // `flow.ts` writes this to the process's own stdout, so that is the terminal asked about.
     // `isTTY` is undefined, not false, on a stream that is not a terminal, whatever its type says.
-    stdout: `${initLines(plan, failures, wantsColour(process.stdout.isTTY, process.env["NO_COLOR"])).join("\n")}\n`,
+    // In a terminal the warnings were said above, before the yes.
+    stdout: `${[...(terminal === null ? warned : []), ...initLines(plan, failures, colour)].join("\n")}\n`,
     stderr: "",
     exitCode: initCode(plan, failures),
   };
@@ -372,9 +419,7 @@ function subfolderOf(root: string): string | null {
 }
 
 /** Everything uninstall found, before it removed anything. */
-function uninstallFacts(root: string, machineFlag: boolean, harness: Harness): UninstallFacts {
-  const manifest = readText(root, "package.json");
-  const settings = parsedFile(root, harness.registering.repoFile);
+function uninstallFacts(root: string, machineFlag: boolean, harnesses: readonly Harness[]): UninstallFacts {
   const top = subfolderOf(root);
   let hooksDir: string[] | null;
   try {
@@ -383,7 +428,10 @@ function uninstallFacts(root: string, machineFlag: boolean, harness: Harness): U
     hooksDir = null;
   }
   return {
-    harness,
+    harnesses: harnesses.map((harness): UninstallHarness => {
+      const settings = parsedFile(root, harness.registering.repoFile);
+      return { harness, settings: settings.value, settingsUnreadable: settings.unreadable, machineFile: readMachineFile(root, harness) };
+    }),
     hasConfig: existsSync(join(root, CONFIG_FILE)),
     gateText: readText(root, GATE_PATH),
     oldGateText: readText(root, OLD_GATE_PATH),
@@ -394,11 +442,7 @@ function uninstallFacts(root: string, machineFlag: boolean, harness: Harness): U
     hooksFolder: hooksFolder(top ?? root),
     hasFlowDir: existsSync(join(root, FLOW_DIR)),
     linked: lstatSync(join(root, PACKAGE_DIR), { throwIfNoEntry: false })?.isSymbolicLink() ?? false,
-    listed: harness.registering.listsFlow(manifest),
-    settings: settings.value,
-    settingsUnreadable: settings.unreadable,
     machineFlag,
-    machineFile: readMachineFile(root, harness),
   };
 }
 
@@ -451,9 +495,8 @@ function performUninstall(root: string, plan: UninstallPlan): string[] {
       removeIfEmpty(join(root, "node_modules"));
     });
 
-  // Repo-relative for a dev dependency's own file, absolute for the machine-wide one.
-  for (const settings of [plan.settings, plan.machine]) {
-    if (settings === null) continue;
+  // Repo-relative for a harness's own file, absolute for a machine-wide one.
+  for (const settings of [...plan.settings, ...plan.machine]) {
     attempt(`could not write ${settings.path}`, () => {
       writeFileSync(resolve(root, settings.path), `${JSON.stringify(settings.value, null, 2)}\n`);
     });
@@ -464,13 +507,13 @@ function performUninstall(root: string, plan: UninstallPlan): string[] {
 
 /**
  * `flow uninstall [--machine]` — remove what `flow init` wrote in this repo, but the config, and say
- * exactly what went. `--machine` takes flow's hooks out of the machine-wide settings file too.
+ * exactly what went. `--machine` takes flow's hooks out of the machine-wide settings files too.
  */
-export function runUninstall(cwd: string, args: readonly string[], harness: Harness): VerbResult {
+export function runUninstall(cwd: string, args: readonly string[], harnesses: readonly Harness[]): VerbResult {
   const refusal = uninstallRefusal(args);
   if (refusal !== null) return { stdout: "", stderr: `${refusal}\n`, exitCode: 2 };
   const root = resolve(cwd);
-  const plan = planUninstall(uninstallFacts(root, args.includes(MACHINE_FLAG), harness));
+  const plan = planUninstall(uninstallFacts(root, args.includes(MACHINE_FLAG), harnesses));
   const failures = performUninstall(root, plan);
   return { stdout: `${uninstallLines(plan, failures).join("\n")}\n`, stderr: "", exitCode: uninstallCode(plan, failures) };
 }
@@ -478,7 +521,7 @@ export function runUninstall(cwd: string, args: readonly string[], harness: Harn
 // ── status ───────────────────────────────────────────────────────────────────
 
 /** `flow status` — is flow working here, and what will meet me. Green means guarded. */
-export async function runStatus(cwd: string, args: readonly string[], harness: Harness): Promise<VerbResult> {
+export async function runStatus(cwd: string, args: readonly string[], harnesses: readonly Harness[]): Promise<VerbResult> {
   const root = resolve(cwd);
   const configPath = join(root, CONFIG_FILE);
   const regime = await loadRegime(root);
@@ -494,9 +537,14 @@ export async function runStatus(cwd: string, args: readonly string[], harness: H
   // could not be loaded — Cannot find module …" — which reads as two faults, not one.
   if (regime.kind === "broken") return { stdout: "", stderr: `${regime.message}\n`, exitCode: 2 };
 
-  const settingsPath = settingsFile(root, harness);
+  const history = readHistory(root);
   const facts: StatusFacts = {
-    harness,
+    harnesses: harnesses.map((harness): StatusHarness => ({
+      harness,
+      settings: parsedFile(root, harness.registering.repoFile).value,
+      lastRan: lastHookRan(history, harness.id),
+    })),
+    now: Date.now(),
     root,
     version: VERSION,
     off: isOff(root),
@@ -507,9 +555,6 @@ export async function runStatus(cwd: string, args: readonly string[], harness: H
     oldGateText: readText(root, OLD_GATE_PATH),
     hooksPath: hooksPath(root),
     hooksFolder: hooksFolder(root),
-    settingsPath,
-    settings: parsedFile(root, settingsPath).value,
-    machine: machineFile(root, settingsPath, harness),
     grammars:
       regime.kind === "loaded"
         ? grammarsAt(regime.config.settings, root).map((grammar) => ({
@@ -518,9 +563,9 @@ export async function runStatus(cwd: string, args: readonly string[], harness: H
             present: existsSync(grammar.libraryPath),
           }))
         : [],
-    session: liveSession(root, harness),
+    session: liveSession(root, harnesses[0] as Harness),
     binary: {
-      listed: harness.registering.listsFlow(readText(root, "package.json")),
+      listed: harnesses.some((harness) => harness.registering.listsFlow(readText(root, "package.json"))),
       copy: existsSync(join(root, PACKAGE_BIN)),
       path: hostPath((process.env["PATH"] ?? "").split(delimiter), root).some((dir) => executable(join(dir, "flow"))),
     },
