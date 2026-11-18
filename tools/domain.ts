@@ -1166,7 +1166,9 @@ export function packedFiles(report: string): string[] {
   } catch {
     return [];
   }
-  const first: unknown = Array.isArray(parsed) ? parsed[0] : undefined;
+  // npm up to 11 prints a list of packages; npm 12 prints an object keyed by each package's name.
+  const packages: unknown[] = Array.isArray(parsed) ? parsed : typeof parsed === "object" && parsed !== null ? Object.values(parsed) : [];
+  const first: unknown = packages[0];
   const files: unknown = typeof first === "object" && first !== null && "files" in first ? first.files : undefined;
   if (!Array.isArray(files)) return [];
   return files.flatMap((file: unknown) => (typeof file === "object" && file !== null && "path" in file && typeof file.path === "string" ? [file.path] : []));

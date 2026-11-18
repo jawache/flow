@@ -845,6 +845,11 @@ describe("the package's own links — every page npm uploads, followed from insi
     expect(packedFiles(report)).toStrictEqual(["README.md", "docs/user/index.md"]);
   });
 
+  it("reads the same paths off npm 12's report, an object keyed by the package's name", () => {
+    const report = JSON.stringify({ "@jawache/flow": { name: "@jawache/flow", files: [{ path: "README.md", size: 1, mode: 420 }, { path: "docs/user/index.md", size: 1, mode: 420 }] } });
+    expect(packedFiles(report)).toStrictEqual(["README.md", "docs/user/index.md"]);
+  });
+
   it("reads no path from a report it cannot read, and drops an entry with no path", () => {
     expect(packedFiles("[{}]")).toStrictEqual([]);
     expect(packedFiles("{}")).toStrictEqual([]);
