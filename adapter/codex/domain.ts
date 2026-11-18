@@ -76,9 +76,11 @@ export function hookCommand(hook: HookEvent): string {
   return `${repoFirst("$(git rev-parse --show-toplevel)", `hook ${hook}`)}; exec flow hook ${hook}`;
 }
 
-const hooksFile = hooksFileOf({ registered: REGISTERED, retired: new Map(), command: hookCommand });
+/** What `flow init`, `flow status` and `flow uninstall` ask of Codex's hooks file. */
+export const hooksFile = hooksFileOf({ registered: REGISTERED, retired: new Map(), command: hookCommand });
 
-export const { registrations: HOOK_REGISTRATIONS, hooks: HOOK_COSTS, registeredEvents, staleRegistrations, bareRegistrations, withRegistrations, withoutRegistrations } = hooksFile;
+/** The words after `flow hook` that Codex calls, in the order flow registers them. */
+export const HOOK_WORDS: readonly HookEvent[] = REGISTERED.map(({ hook }) => hook);
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE TRANSCRIPT — a Codex rollout
@@ -208,11 +210,12 @@ export function parseEvents(jsonl: string, root = "", home?: string): Transcript
   return out;
 }
 
-/** A rollout's first facts: when it started and in which folder, from its `session_meta` record. Codex records no branch. */
+/** A rollout's first facts: when it started, in which folder and on which branch, from its `session_meta` record. */
 export function transcriptHead(jsonl: string): TranscriptHead {
   for (const record of rollout(jsonl)) {
     if (record.type !== "session_meta") continue;
-    return { cwd: text(record.payload["cwd"]) || null, branch: null, started: text(record.payload["timestamp"]) || record.ts };
+    const git = record.payload["git"] as { branch?: unknown } | undefined;
+    return { cwd: text(record.payload["cwd"]) || null, branch: text(git?.branch) || null, started: text(record.payload["timestamp"]) || record.ts };
   }
   return { cwd: null, branch: null, started: null };
 }
@@ -222,18 +225,25 @@ export function transcriptHead(jsonl: string): TranscriptHead {
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 /**
- * The files of Codex's `sessions/` folder, as paths relative to it, sorted into the rollouts and the rest.
- * Codex keeps one folder per day for every project on the machine, so which rollout is this repo's is
- * answered from inside it, by `transcriptHead`'s `cwd`.
+ * The files of Codex's `sessions/` folder, each with the first record it holds, sorted into the rollouts
+ * and the rest. A top-level rollout is a session of its own. A subagent's is told by its `session_meta`,
+ * which names the subagent's own id in `id` and its parent's session in `session_id`: it joins that
+ * session as the agent of that id. Codex keeps one folder per day for every project on the machine, so
+ * which rollout is this repo's is answered from inside it, by `transcriptHead`'s `cwd`.
  */
-export function classifyStore(paths: readonly string[]): { transcripts: TranscriptRef[]; ignored: string[] } {
+export function classifyStore(files: readonly { readonly path: string; readonly first: string }[]): { transcripts: TranscriptRef[]; ignored: string[] } {
   const transcripts: TranscriptRef[] = [];
   const ignored: string[] = [];
-  for (const path of paths) {
+  for (const { path, first } of files) {
     const name = path.slice(path.lastIndexOf("/") + 1);
     const id = /^rollout-.*?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/.exec(name)?.[1];
-    if (id === undefined) ignored.push(path);
-    else transcripts.push({ path, meta: null, session: id, agent: null });
+    if (id === undefined) {
+      ignored.push(path);
+      continue;
+    }
+    const meta = rollout(first)[0];
+    const parent = meta?.type === "session_meta" && meta.payload["thread_source"] === "subagent" ? text(meta.payload["session_id"]) : "";
+    transcripts.push(parent === "" ? { path, meta: null, session: id, agent: null } : { path, meta: null, session: parent, agent: id });
   }
   return { transcripts, ignored };
 }

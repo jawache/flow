@@ -54,8 +54,7 @@ import { diffRows, replay, type Row } from "./engine/domain.ts";
 import { loadRecording, readRowsFile } from "./engine/state.ts";
 
 // THE HARNESSES this binary runs for. The one place flow chooses them; everything below takes a
-// `Harness` and names none. The first is the one a hook payload that no harness claims is run as, and
-// the one `flow facts` reads the transcripts of.
+// `Harness` and names none. The first is the one a hook payload that no harness claims is run as.
 const harnesses = [claudeCode, codex] as const;
 const harness = claudeCode;
 
@@ -274,7 +273,7 @@ async function readFacts(args: readonly string[]): Promise<number> {
   const load = existsSync(join(root, CONFIG_FILE)) ? loadConfig(await loadFile(CONFIG_FILE)) : ({ ok: true, entries: [] } as const);
   const limit = flag(args, "limit");
   const since = flag(args, "since");
-  const read = facts(root, load, harness, {
+  const read = facts(root, load, harnesses, {
     session: flag(args, "session"),
     branch: flag(args, "branch"),
     limit: limit === null || limit === "" ? null : Number(limit),

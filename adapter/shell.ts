@@ -25,7 +25,7 @@ import { fault, guard, recorder, runRows, UNNAMED_COMMIT, type AgentOf, type Blo
 import { quoteArg, useGrammars } from "../checks/domain.ts";
 import { appendRows, appendSteps, commitAttribution, isOff, isRecording, loadState } from "../engine/state.ts";
 import { ALLOW, CONFIG_FILE, branchFromHead, cleanMessage, commentLeader, commitArgs, configLoadFault, hermeticEnv, pathLines, readsCommitIndex, refused, stagedChanges, treeChanges, type CommitArgs, type CommitScope, type Refused, type StagedChanges } from "./domain.ts";
-import type { HookResult } from "./harness.ts";
+import type { HookResult, StoredTranscript, TranscriptRef } from "./harness.ts";
 
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -358,4 +358,24 @@ export async function commitEntry(args: readonly string[], cwd: string, legacy =
       exitCode: 2,
     };
   return runCommit(resolve(cwd), read);
+}
+
+/**
+ * A harness's transcript files as the store lists them: each ref with its file under `dir`, its size and
+ * its modified time. A file that vanished between the listing and the stat is still named, with zeros.
+ */
+export function storedTranscripts(dir: string, refs: readonly TranscriptRef[]): StoredTranscript[] {
+  return refs.map((ref) => {
+    const file = join(dir, ref.path);
+    let bytes = 0;
+    let mtimeMs = 0;
+    try {
+      const stat = statSync(file);
+      bytes = stat.size;
+      mtimeMs = stat.mtimeMs;
+    } catch {
+      /* named all the same */
+    }
+    return { ref, file, bytes, mtimeMs };
+  });
 }

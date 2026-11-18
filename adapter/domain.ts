@@ -746,6 +746,17 @@ export function weakenedAfterBlock(
 // capped run cannot declare skipped history done and quietly lose it.
 
 /** One transcript, as the selector needs it: enough to order by, and nothing it has to open. */
+/**
+ * Does a transcript recorded in `cwd` belong to the repo at `root`? Yes when it started in `root` or
+ * inside it, and not inside another worktree nested under `root`, such as `.claude/worktrees/x`: that
+ * worktree's sessions are its own. A transcript that names no folder is kept, as it always was.
+ * `nested` is every other worktree of the repository that lies under `root`.
+ */
+export function belongsToRepo(cwd: string | null, root: string, nested: readonly string[]): boolean {
+  if (cwd === null) return true;
+  return within(cwd, root) && !nested.some((folder) => folder !== root && within(cwd, folder));
+}
+
 export interface Candidate {
   readonly id: string;
   readonly bytes: number;

@@ -624,6 +624,5 @@ export function hookCommand(hook: HookEvent): string {
   return `${repoFirst("$CLAUDE_PROJECT_DIR", `hook ${hook}`)}; exec flow hook ${hook}`;
 }
 
-const hooksFile = hooksFileOf({ registered: REGISTERED, retired: RETIRED, command: hookCommand });
-
-export const { registrations: HOOK_REGISTRATIONS, hooks: HOOK_COSTS, ourHookCommand, bareHook, registeredEvents, staleRegistrations, bareRegistrations, withRegistrations, withoutRegistrations } = hooksFile;
+/** What `flow init`, `flow status` and `flow uninstall` ask of Claude Code's settings file, and the two readers of a command that `flow init` also uses. */
+export const { ourHookCommand, bareHook, ...hooksFile } = hooksFileOf({ registered: REGISTERED, retired: RETIRED, command: hookCommand });

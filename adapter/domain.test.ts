@@ -9,7 +9,7 @@ import { type Bound, type Row } from "../engine/domain.ts";
 import { missingGrammarText } from "../checks/domain.ts";
 import { matchAny } from "../glob.ts";
 import { host } from "../__fixtures__/host.ts";
-import { aboutToWrite, ADD_THE_GATE_LINE, ago, armsFlow, armsOldFlow, type Candidate, chooseHarnesses, classifyBash, cleanMessage, commentLeader, COMMIT_MSG, commitArgs, commitMsgOf, CONFIG_FILE, configImports, configLoadFault, defaultHarnesses, DELIVERS, delivers, detection, FLOW_OFF, flowLinesOf, type Found, GATE_LOCAL_LINE, GATE_PATH, GATE_RUN_LINE, gateWithoutFlow, GIT_HOOK_ENV, guardPaths, harnessArg, harnessPrompt, harnessQuestion, health, hermeticEnv, HOOK_EVENTS, HOOKS_DIR, HOOKS_UNKNOWN, hooksDirOf, type HooksFolder, hostPath, initCode, type InitFacts, initLines, isCorrection, isHookEvent, isYes, joinSpawn, lastHookRan, listed, listsFlow, loadsAsStrippedModule, LOCAL_BIN, MACHINE_FLAG, mergeNarratives, narrative, NODE_FLOOR, NOT_INSTALLED, notInstalledLines, OLD_GATE_PATH, type OtherHooks, otherHooks, PACKAGE_BIN, PACKAGE_DIR, pathLines, planInit, planUninstall, readsCommitIndex, recipeTools, repoFirst, scaffold, selectSessions, SET_HOOKS_PATH, snip, stagedChanges, status, statusCode, type StatusFacts, statusLines, strip, text, treeChanges, uncoveredAreas, uninstallCode, type UninstallFacts, uninstallLines, uninstallRefusal, UPDATE_THE_GATE_LINE, wantsColour, warningLines, weakenedAfterBlock, whileBroken, writtenLines } from "./domain.ts";
+import { belongsToRepo, aboutToWrite, ADD_THE_GATE_LINE, ago, armsFlow, armsOldFlow, type Candidate, chooseHarnesses, classifyBash, cleanMessage, commentLeader, COMMIT_MSG, commitArgs, commitMsgOf, CONFIG_FILE, configImports, configLoadFault, defaultHarnesses, DELIVERS, delivers, detection, FLOW_OFF, flowLinesOf, type Found, GATE_LOCAL_LINE, GATE_PATH, GATE_RUN_LINE, gateWithoutFlow, GIT_HOOK_ENV, guardPaths, harnessArg, harnessPrompt, harnessQuestion, health, hermeticEnv, HOOK_EVENTS, HOOKS_DIR, HOOKS_UNKNOWN, hooksDirOf, type HooksFolder, hostPath, initCode, type InitFacts, initLines, isCorrection, isHookEvent, isYes, joinSpawn, lastHookRan, listed, listsFlow, loadsAsStrippedModule, LOCAL_BIN, MACHINE_FLAG, mergeNarratives, narrative, NODE_FLOOR, NOT_INSTALLED, notInstalledLines, OLD_GATE_PATH, type OtherHooks, otherHooks, PACKAGE_BIN, PACKAGE_DIR, pathLines, planInit, planUninstall, readsCommitIndex, recipeTools, repoFirst, scaffold, selectSessions, SET_HOOKS_PATH, snip, stagedChanges, status, statusCode, type StatusFacts, statusLines, strip, text, treeChanges, uncoveredAreas, uninstallCode, type UninstallFacts, uninstallLines, uninstallRefusal, UPDATE_THE_GATE_LINE, wantsColour, warningLines, weakenedAfterBlock, whileBroken, writtenLines } from "./domain.ts";
 import { type ToolAction, type TranscriptEvent } from "./harness.ts";
 
 describe("the environment a check's command sees", () => {
@@ -2194,5 +2194,22 @@ describe("what an agent is told while the config will not load", () => {
     expect(answer.refused).toStrictEqual([]);
     expect(answer.shown.map((note) => note.body)).toStrictEqual([`the config will not load\n\n${FLOW_OFF}`]);
     expect(FLOW_OFF).toContain("every commit is refused");
+  });
+});
+
+describe("whose a transcript is — recorded in the repo, or inside it", () => {
+  it("is the repo's when it started in the repo or a folder of it, as F8.P1's run did from src/deep", () => {
+    expect(belongsToRepo("/repo", "/repo", [])).toBe(true);
+    expect(belongsToRepo("/repo/src/deep", "/repo", [])).toBe(true);
+    expect(belongsToRepo(null, "/repo", [])).toBe(true);
+  });
+
+  it("is another worktree's when it started inside a worktree nested under the repo, or outside it", () => {
+    const nested = ["/repo/.claude/worktrees/x"];
+    expect(belongsToRepo("/repo/.claude/worktrees/x", "/repo", nested)).toBe(false);
+    expect(belongsToRepo("/repo/.claude/worktrees/x/src", "/repo", nested)).toBe(false);
+    expect(belongsToRepo("/repo/.claude/worktrees/y", "/repo", nested), "a folder that only shares a name prefix").toBe(true);
+    expect(belongsToRepo("/other", "/repo", nested)).toBe(false);
+    expect(belongsToRepo("/repository", "/repo", [])).toBe(false);
   });
 });

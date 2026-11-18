@@ -11,7 +11,7 @@
 import { join } from "node:path";
 import { DELIVERS, HOOK_EVENTS } from "../domain.ts";
 import type { Harness, HookPayload } from "../harness.ts";
-import { HOOK_COSTS, HOOK_REGISTRATIONS, HOST_SURFACE, REPO_SETTINGS, agentSettingOf, bareRegistrations, briefHead, ownTranscriptPath, parseEvents, registeredEvents, spawnMeta, spawnsIn, staleRegistrations, steerOf, tokensFromTranscript, transcriptHead, turnActions, withRegistrations, withoutRegistrations } from "./domain.ts";
+import { HOST_SURFACE, REPO_SETTINGS, agentSettingOf, briefHead, hooksFile, ownTranscriptPath, parseEvents, spawnMeta, spawnsIn, steerOf, tokensFromTranscript, transcriptHead, turnActions } from "./domain.ts";
 import { configRoot, readStore, readTranscript } from "./store.ts";
 
 /**
@@ -24,9 +24,9 @@ export function projectRoot(cwd: string): string {
   return process.env["CLAUDE_PROJECT_DIR"] || cwd;
 }
 
-/** Is this payload Claude Code's? Its transcript sits in a `.claude` folder; a payload that says nothing is taken as Claude Code's, the first harness, by the caller. */
-function claims(payload: HookPayload): boolean {
-  return typeof payload.transcript_path === "string" && /[\\/]\.claude[\\/]/.test(payload.transcript_path);
+/** Claude Code claims no payload: it is the first harness, which the run falls back to for a payload no other harness claims. */
+function claims(_payload: HookPayload): boolean {
+  return false;
 }
 
 /**
@@ -50,17 +50,7 @@ export const claudeCode: Harness = {
   claims,
   projectRoot,
   machineSettingsPath,
-  registering: {
-    repoFile: REPO_SETTINGS,
-    hostSurface: HOST_SURFACE,
-    hooks: HOOK_COSTS,
-    registrations: HOOK_REGISTRATIONS,
-    registeredEvents,
-    staleRegistrations,
-    bareRegistrations,
-    withRegistrations,
-    withoutRegistrations,
-  },
+  registering: { repoFile: REPO_SETTINGS, hostSurface: HOST_SURFACE, ...hooksFile },
   transcripts: {
     own: ownTranscriptPath,
     tokens: tokensFromTranscript,

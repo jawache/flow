@@ -9,9 +9,9 @@
 
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { DELIVERS, HOOK_EVENTS, hermeticEnv } from "../domain.ts";
+import { DELIVERS, hermeticEnv } from "../domain.ts";
 import type { Harness } from "../harness.ts";
-import { HOOK_COSTS, HOOK_REGISTRATIONS, HOST_SURFACE, REPO_HOOKS, bareRegistrations, briefHead, claimsPayload, ownTranscriptPath, parseEvents, registeredEvents, spawnMeta, staleRegistrations, tokensFromTranscript, transcriptHead, turnActions, withRegistrations, withoutRegistrations } from "./domain.ts";
+import { HOOK_WORDS, HOST_SURFACE, REPO_HOOKS, briefHead, claimsPayload, hooksFile, ownTranscriptPath, parseEvents, spawnMeta, tokensFromTranscript, transcriptHead, turnActions } from "./domain.ts";
 import { codexHome, readStore, readTranscript } from "./store.ts";
 
 /**
@@ -37,22 +37,12 @@ export const codex: Harness = {
   detect: { folder: ".codex", program: "codex" },
   trustNote: "runs a project's hooks only in a folder it trusts, and only once each hook is approved. Trust this folder in Codex, then approve flow's hooks with /hooks. A hook that `flow init` rewrites must be approved again (docs/user/reference/codex.md#the-two-trust-gates).",
   noHookNote: "Codex runs a project's hooks only in a trusted folder, and each hook only once approved in /hooks",
-  events: HOOK_EVENTS.filter((event) => event !== "notification"),
+  events: HOOK_WORDS,
   delivers: DELIVERS,
   claims: claimsPayload,
   projectRoot,
   machineSettingsPath,
-  registering: {
-    repoFile: REPO_HOOKS,
-    hostSurface: HOST_SURFACE,
-    hooks: HOOK_COSTS,
-    registrations: HOOK_REGISTRATIONS,
-    registeredEvents,
-    staleRegistrations,
-    bareRegistrations,
-    withRegistrations,
-    withoutRegistrations,
-  },
+  registering: { repoFile: REPO_HOOKS, hostSurface: HOST_SURFACE, ...hooksFile },
   transcripts: {
     own: ownTranscriptPath,
     tokens: tokensFromTranscript,

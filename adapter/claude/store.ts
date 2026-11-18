@@ -6,10 +6,10 @@
 // What the folder's layout means (`classifyStore`) and what a transcript says are decided in
 // domain.ts; this opens files.
 
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { readText } from "../shell.ts";
+import { readText, storedTranscripts } from "../shell.ts";
 import type { SpawnMeta, Store, StoredTranscript } from "../harness.ts";
 import { classifyStore, projectFolderName, spawnMeta } from "./domain.ts";
 
@@ -68,19 +68,7 @@ export function readStore(cwd: string, home?: string): Store {
   return {
     dir,
     exists: true,
-    transcripts: transcripts.map((ref) => {
-      const file = join(dir, ref.path);
-      let bytes = 0;
-      let mtimeMs = 0;
-      try {
-        const stat = statSync(file);
-        bytes = stat.size;
-        mtimeMs = stat.mtimeMs;
-      } catch {
-        /* a file that vanished between the listing and the stat is still worth naming */
-      }
-      return { ref, file, bytes, mtimeMs };
-    }),
+    transcripts: storedTranscripts(dir, transcripts),
     ignored,
   };
 }

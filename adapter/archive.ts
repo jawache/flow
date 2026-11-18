@@ -30,6 +30,7 @@ import { alreadyRead, markRead, readHistory } from "../engine/state.ts";
 import { readText, runCommand } from "./shell.ts";
 import type { Harness, Steer, StoredTranscript } from "./harness.ts";
 import {
+  belongsToRepo,
   CONFIG_FILE,
   health,
   joinSpawn,
@@ -41,6 +42,7 @@ import {
   uncoveredAreas,
   guardPaths,
   weakenedAfterBlock,
+  worktreeFolders,
   type Candidate,
   type Facts,
   type Narrative,
@@ -69,6 +71,12 @@ function trackedPaths(root: string): string[] {
   return answer.code === 0 ? answer.stdout.split("\n").filter((line) => line.trim() !== "") : [];
 }
 
+/** The other worktrees of this repository that lie under `root`, as git lists them. None when git cannot say. */
+function nestedWorktrees(root: string): string[] {
+  const listed = runCommand("git worktree list --porcelain", root);
+  return listed.code === 0 ? worktreeFolders(listed.stdout).filter((folder) => folder !== root && folder.startsWith(`${root}/`)) : [];
+}
+
 /**
  * Everything the record and the conversations say about a repo, assembled.
  *
@@ -77,19 +85,24 @@ function trackedPaths(root: string): string[] {
  * and the universe comes back empty — which is honest, and reads as "nothing is bound" rather
  * than as a crash.
  */
-export function facts(root: string, load: LoadResult, harness: Harness, opts: FactsOpts = {}): Facts {
+export function facts(root: string, load: LoadResult, harnesses: readonly Harness[], opts: FactsOpts = {}): Facts {
   const home = opts.home ?? homedir();
   const nowMs = opts.nowMs ?? Date.now();
-  const { transcripts } = harness;
-  const store = transcripts.readStore(root, opts.home);
+  const stores = harnesses.map((harness) => ({ harness, store: harness.transcripts.readStore(root, opts.home) }));
+  // The report names the first store that exists, or the first harness's when none does.
+  const store = (stores.find((one) => one.store.exists) ?? stores[0])?.store ?? { dir: "", exists: false, transcripts: [], ignored: [] };
+  const nested = nestedWorktrees(root);
 
   // ONE PASS PER FILE, and one read per file. A transcript is a couple of megabytes, there is one
   // per conversation this repo has ever had, and the three opening facts below used to cost three
   // parses each.
   const candidates: Candidate[] = [];
   const held = new Map<string, string>();
+  // Each conversation is read through the harness whose store holds it.
+  const via = new Map<string, Harness>();
   const children = new Map<string, StoredTranscript[]>();
-  for (const stored of store.transcripts) {
+  const listed = stores.flatMap(({ harness, store: one }) => one.transcripts.map((stored) => ({ harness, stored })));
+  for (const { harness, stored } of listed) {
     if (stored.ref.agent !== null) {
       const beside = children.get(stored.ref.session) ?? [];
       beside.push(stored);
@@ -97,12 +110,13 @@ export function facts(root: string, load: LoadResult, harness: Harness, opts: Fa
       continue;
     }
     const jsonl = readText(root, stored.file) ?? "";
-    const head = transcripts.head(jsonl);
+    const head = harness.transcripts.head(jsonl);
     // WHICH WORKTREE, answered from inside the records. The store folder's name collapses dots and
-    // slashes to dashes, so two checkouts of one repo can share it; a conversation whose own `cwd`
-    // is somebody else's checkout is somebody else's conversation.
-    if (head.cwd !== null && head.cwd !== root) continue;
+    // slashes to dashes, so two checkouts of one repo can share it, and Codex keeps every project in
+    // one folder; a conversation recorded in somebody else's checkout is somebody else's.
+    if (!belongsToRepo(head.cwd, root, nested)) continue;
     held.set(stored.ref.session, jsonl);
+    via.set(stored.ref.session, harness);
     candidates.push({
       id: stored.ref.session,
       bytes: stored.bytes,
@@ -127,7 +141,7 @@ export function facts(root: string, load: LoadResult, harness: Harness, opts: Fa
   const tools = recipeTools(readText(root, "justfile") ?? "");
   // What counts as "somebody edited the guard" here: the config, the packs it imports, and the
   // host's registration files. Read from the config's text once, not per session.
-  const guarded = guardPaths(readText(root, CONFIG_FILE), harness.registering.hostSurface);
+  const guarded = guardPaths(readText(root, CONFIG_FILE), harnesses.flatMap((harness) => harness.registering.hostSurface));
 
   const readings: { session: string; read: Narrative }[] = [];
   const weakened: Weakening[] = [];
@@ -138,6 +152,10 @@ export function facts(root: string, load: LoadResult, harness: Harness, opts: Fa
     const rows = bySession.get(candidate.id) ?? [];
     if (rows.length > 0) withRecord += 1;
     const jsonl = held.get(candidate.id) ?? "";
+    const harness = via.get(candidate.id) ?? harnesses[0];
+    if (harness === undefined) continue;
+    const { transcripts } = harness;
+    const dir = stores.find((one) => one.harness === harness)?.store.dir ?? store.dir;
     const events = transcripts.events(jsonl, root, home);
     readings.push({ session: candidate.id, read: narrative(events, tools) });
     ran.push({ rows, steer: transcripts.steer(jsonl) });
@@ -151,7 +169,7 @@ export function facts(root: string, load: LoadResult, harness: Harness, opts: Fa
         ...joinSpawn({
           session: candidate.id,
           agent: child.ref.agent ?? "",
-          meta: child.ref.meta === null ? null : transcripts.spawnMeta(readText(root, join(store.dir, child.ref.meta))),
+          meta: child.ref.meta === null ? null : transcripts.spawnMeta(readText(root, join(dir, child.ref.meta))),
           spawns,
         }),
       });
@@ -160,7 +178,7 @@ export function facts(root: string, load: LoadResult, harness: Harness, opts: Fa
   const recorded = metrics({ sessions: history, entries: bound, nowMs });
   const read = mergeNarratives(readings);
   return {
-    host: harness.name,
+    host: harnesses.map((harness) => harness.name).join(" · "),
     root,
     store: { dir: store.dir, exists: store.exists, ignored: store.ignored },
     selection,

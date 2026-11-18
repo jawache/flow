@@ -7,7 +7,9 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { codex } from "./codex.ts";
-import { HOOK_COSTS, HOOK_REGISTRATIONS, HOST_SURFACE, REPO_HOOKS, bareRegistrations, briefHead, claimsPayload, classifyStore, hookCommand, ownTranscriptPath, parseEvents, registeredEvents, spawnMeta, staleRegistrations, tokensFromTranscript, transcriptHead, turnActions, withRegistrations, withoutRegistrations } from "./domain.ts";
+import { HOST_SURFACE, REPO_HOOKS, briefHead, claimsPayload, classifyStore, hookCommand, hooksFile, ownTranscriptPath, parseEvents, spawnMeta, tokensFromTranscript, transcriptHead, turnActions } from "./domain.ts";
+
+const { registrations: HOOK_REGISTRATIONS, hooks: HOOK_COSTS } = hooksFile;
 
 const ROLLOUT = readFileSync(new URL("../../__fixtures__/codex-rollout.jsonl", import.meta.url), "utf8");
 const CODEX_PATH = "/home/me/.codex/sessions/2026/11/18/rollout-2026-11-18T16-21-44-01a1ef3f-e4f7-7a90-9581-681b208b533f.jsonl";
@@ -52,34 +54,6 @@ describe("the hooks flow registers in .codex/hooks.json", () => {
     for (const cost of HOOK_COSTS) expect(cost.unregistered, cost.event).not.toBe("");
     expect(HOST_SURFACE).toEqual([".codex/hooks.json", ".codex/config.toml", ".codex/agents/**"]);
   });
-
-  it("writes them into a file, keeps every other key, and a second run has nothing to say", () => {
-    const first = withRegistrations({ other: { kept: true }, hooks: { PreToolUse: [{ matcher: "Write", hooks: [{ type: "command", command: "mine" }] }] } });
-    expect(first.changed).toEqual(events);
-    const written = first.settings as { other: unknown; hooks: Record<string, { matcher?: string; hooks: { command: string }[] }[]> };
-    expect(written.other).toEqual({ kept: true });
-    expect(written.hooks["PreToolUse"]?.map((entry) => entry.matcher), "somebody else's registration keeps its place").toEqual(["Write", "Bash"]);
-    expect(written.hooks["SessionStart"]).toEqual([{ hooks: [{ type: "command", command: hookCommand("session-start") }] }]);
-    expect(registeredEvents(first.settings).sort()).toEqual([...events].sort());
-    expect(withRegistrations(first.settings).changed).toEqual([]);
-    expect(staleRegistrations(first.settings)).toEqual([]);
-    expect(bareRegistrations(first.settings)).toEqual([]);
-  });
-
-  it("takes them out again and leaves the rest", () => {
-    const written = withRegistrations({ other: 1, hooks: { PreToolUse: [{ matcher: "Write", hooks: [{ type: "command", command: "mine" }] }] } }).settings;
-    const out = withoutRegistrations(written);
-    expect(out.removed).toEqual(events);
-    expect(out.settings).toEqual({ other: 1, hooks: { PreToolUse: [{ matcher: "Write", hooks: [{ type: "command", command: "mine" }] }] } });
-    expect(withoutRegistrations({}).removed).toEqual([]);
-  });
-
-  it("rewrites a PreToolUse that an older flow registered on every tool", () => {
-    const old = { hooks: { PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: hookCommand("pre-tool-use") }] }] } };
-    expect(staleRegistrations(old)).toEqual(["PreToolUse"]);
-    const fixed = withRegistrations(old).settings as typeof old;
-    expect(fixed.hooks.PreToolUse[0]).toMatchObject({ matcher: "Bash" });
-  });
 });
 
 describe("a Codex rollout", () => {
@@ -110,24 +84,45 @@ describe("a Codex rollout", () => {
     expect(events[2]).toMatchObject({ kind: "result", id: "exec-69835531-9a4a-4b72-a8c8-4fbd98d5c358", content: "/repo/src/deep\n", failed: false });
   });
 
-  it("names where it started and when, and no branch", () => {
+  it("names where it started, when, and on which branch", () => {
     expect(transcriptHead(ROLLOUT)).toEqual({ cwd: "/repo/src/deep", branch: null, started: "2026-11-18T15:21:44.452Z" });
+    const withGit = JSON.stringify({ type: "session_meta", payload: { cwd: "/repo", timestamp: "t", git: { commit_hash: "abc", branch: "main" } } });
+    expect(transcriptHead(withGit)).toEqual({ cwd: "/repo", branch: "main", started: "t" });
     expect(transcriptHead("")).toEqual({ cwd: null, branch: null, started: null });
   });
 
-  it("sorts a sessions folder into rollouts and the rest, by the session id in the name", () => {
-    const listed = classifyStore(["2026/11/18/rollout-2026-11-18T16-21-44-01a1ef3f-e4f7-7a90-9581-681b208b533f.jsonl", "2026/11/18/notes.txt"]);
-    expect(listed.transcripts).toEqual([{ path: "2026/11/18/rollout-2026-11-18T16-21-44-01a1ef3f-e4f7-7a90-9581-681b208b533f.jsonl", meta: null, session: "01a1ef3f-e4f7-7a90-9581-681b208b533f", agent: null }]);
+  // The first records of a leader's and a subagent's rollout, as Codex 0.169.0 wrote them, cut to the fields that name them.
+  const LEADER = "01a1ef4c-43e9-7973-9f4a-a2e877a30827";
+  const SUB = "01a1ef4c-5618-7aa2-a5cb-1e59527b085e";
+  const leaderFirst = JSON.stringify({ type: "session_meta", payload: { session_id: LEADER, id: LEADER, thread_source: "user", cwd: "/repo" } });
+  const subFirst = JSON.stringify({ type: "session_meta", payload: { session_id: LEADER, id: SUB, parent_thread_id: LEADER, thread_source: "subagent", cwd: "/repo" } });
+
+  it("sorts a sessions folder into rollouts and the rest, and a subagent's rollout joins its parent's session", () => {
+    const listed = classifyStore([
+      { path: `2026/11/18/rollout-2026-11-18T16-35-15-${LEADER}.jsonl`, first: leaderFirst },
+      { path: `2026/11/18/rollout-2026-11-18T16-35-19-${SUB}.jsonl`, first: subFirst },
+      { path: "2026/11/18/notes.txt", first: "" },
+    ]);
+    expect(listed.transcripts).toEqual([
+      { path: `2026/11/18/rollout-2026-11-18T16-35-15-${LEADER}.jsonl`, meta: null, session: LEADER, agent: null },
+      { path: `2026/11/18/rollout-2026-11-18T16-35-19-${SUB}.jsonl`, meta: null, session: LEADER, agent: SUB },
+    ]);
     expect(listed.ignored).toEqual(["2026/11/18/notes.txt"]);
     expect(spawnMeta()).toBeNull();
+  });
+
+  it("takes a rollout whose first record cannot be read for a session of its own", () => {
+    expect(classifyStore([{ path: `a/rollout-x-${LEADER}.jsonl`, first: "" }]).transcripts[0]).toMatchObject({ session: LEADER, agent: null });
   });
 });
 
 describe("codex — the harness flow is handed", () => {
-  it("is named by its id, delivers what Claude Code does, and tells a person the two trust gates", () => {
+  it("is named by its id, calls the six hooks, delivers a command guardrail and a session breadcrumb, and tells a person the two trust gates", () => {
     expect(codex.id).toBe("codex");
     expect(codex.detect).toEqual({ folder: ".codex", program: "codex" });
     expect(codex.events).toEqual(["session-start", "subagent-start", "pre-tool-use", "post-tool-use", "stop", "subagent-stop"]);
+    expect(codex.delivers.guard).toContain("command");
+    expect(codex.delivers.brief).toContain("session");
     expect(codex.trustNote).toContain("/hooks");
     expect(codex.noHookNote).toBe("Codex runs a project's hooks only in a trusted folder, and each hook only once approved in /hooks");
   });

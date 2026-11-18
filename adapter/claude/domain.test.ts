@@ -20,7 +20,9 @@ import { metrics, momentsView, type Block, type Bound, type Row } from "../../en
 import { parseCommandLine, parseShellSteps } from "../../language/domain.ts";
 import { claudeCode } from "./claude.ts";
 import { type AdapterEvent, agentOf, ALLOW, awaitsBrief, bashReads, branchFromHead, briefBlock, commandFolders, COMMIT_MSG, CONFIG_FILE, decision, EDIT_TOOLS, type EventWorld, type Facts, FLOW_OFF, foldersBetween, formatFacts, GATE_PATH, guardPaths, holdsForBrief, HOOKS_DIR, type InitFacts, initLines, isGuardPath, isHookEvent, lastMode, LOCAL_BIN, MACHINE_FLAG, mergeNarratives, modesOf, nothingBound, opensCall, outsideOf, PACKAGE_BIN, planInit, planUninstall, reachesAnotherWorktree, readFault, relativise, ridesRefusal, sessionFactsFrom, shellReadRows, type Shown, type SpawnRecord, type Status, status, statusCode, type StatusFacts, statusLines, toEvent, toolRow, toResult, touchedPath, uninstallCode, type UninstallFacts, uninstallLines, untoldWorktrees, weakenedAfterBlock, whileBroken, workedPaths, worktreeFolders, worktreeLine } from "../domain.ts";
-import { HOOK_COSTS, HOOK_REGISTRATIONS, HOST_SURFACE, REPO_SETTINGS, agentSettingOf, bareHook, bareRegistrations, briefHead, classifyStore, contextTokens, hookCommand, isInjected, ourHookCommand, ownTranscriptPath, parseEvents, projectFolderName, registeredEvents, spawnMeta, spawnsIn, staleRegistrations, steerOf, tokensFromTranscript, transcriptHead, transcriptLines, turnActions, withRegistrations, withoutRegistrations } from "./domain.ts";
+import { HOST_SURFACE, REPO_SETTINGS, agentSettingOf, bareHook, briefHead, classifyStore, contextTokens, hookCommand, hooksFile, isInjected, ourHookCommand, ownTranscriptPath, parseEvents, projectFolderName, spawnMeta, spawnsIn, steerOf, tokensFromTranscript, transcriptHead, transcriptLines, turnActions } from "./domain.ts";
+
+const { registrations: HOOK_REGISTRATIONS, hooks: HOOK_COSTS, registeredEvents, staleRegistrations, bareRegistrations, withRegistrations, withoutRegistrations } = hooksFile;
 import { type HookPayload, type Steer, type TranscriptEvent } from "../harness.ts";
 
 
