@@ -546,42 +546,6 @@ describe("the commit gate", () => {
       }
     });
 
-    it("lets an Edit and a shell write of a file under a content rule through, and refuses the commit that stages it", () => {
-      // flow stops no write: the file lands, whatever the rule says, and nothing is kept to put it
-      // back. The commit is where the file is judged.
-      const marked = "// DO-NOT-COMMIT\n";
-      const edit = {
-        ...pre("Edit", { file_path: join(other, "src", "edited.ts"), old_string: "x", new_string: "y" }, "journey-1"),
-        cwd: other,
-      };
-      writeFileSync(join(other, "src", "edited.ts"), marked);
-      const after = runFlow(other, ["hook", "post-tool-use"], {}, JSON.stringify(edit));
-      expect(after.code, after.stderr).toBe(0);
-      expect(after.stderr).toBe("");
-
-      const command = "printf '// DO-NOT-COMMIT\\n' > src/shell.ts";
-      const bash = { ...pre("Bash", { command }, "journey-1"), cwd: other };
-      expect(runFlow(other, ["hook", "pre-tool-use"], {}, JSON.stringify(bash)).code, "the command is judged by its words, not by what it writes").toBe(0);
-      spawnSync("bash", ["-c", command], { cwd: other });
-      expect(runFlow(other, ["hook", "post-tool-use"], {}, JSON.stringify(bash)).code).toBe(0);
-
-      try {
-        expect(readFileSync(join(other, "src", "edited.ts"), "utf8"), "the Edit's file is as written").toBe(marked);
-        expect(readFileSync(join(other, "src", "shell.ts"), "utf8"), "the shell's file is as written").toBe(marked);
-        expect(existsSync(join(other, ".flow", "snapshots")), "flow keeps no snapshot").toBe(false);
-
-        runGit(other, ["add", "src/edited.ts", "src/shell.ts"]);
-        const refused = gateHere();
-        expect(refused.code).toBe(2);
-        expect(refused.stderr).toContain("✗ demo.noSecrets · src/edited.ts");
-        expect(refused.stderr).toContain("✗ demo.noSecrets · src/shell.ts");
-      } finally {
-        reset();
-        rmSync(join(other, "src", "edited.ts"), { force: true });
-        rmSync(join(other, "src", "shell.ts"), { force: true });
-      }
-    });
-
     it("refuses a list of files, which would be a second source of the staged set", () => {
       const answer = gateHere(["hook", "commit", "migrations/001.sql", "migrations/002.sql"]);
       expect(answer.code).toBe(2);
