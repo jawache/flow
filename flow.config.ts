@@ -147,7 +147,6 @@ export default defineConfig([
 
   // ── this repo's own terrain ──
   pack(house, { pure: PURE }),
-  override(house.noDeleteGuards).disabled("for the one commit that deletes the eight packs now in @jawache/flow-packs; the next commit turns it back on"),
 ], {
   driftTokens: 400_000,
 });
