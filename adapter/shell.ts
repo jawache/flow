@@ -33,8 +33,8 @@ import type { HookResult, StoredTranscript, TranscriptRef } from "./harness.ts";
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 /**
- * The repo a hook stands in: git's top folder for the folder Codex ran the hook in, which may be inside the
- * repo. The folder itself when git cannot say, which keeps a hook run outside any repository answering from
+ * The repo a hook stands in: git's top folder for the folder Codex ran the hook in, or `flow test` the config in, which may be inside
+ * the repo. The folder itself when git cannot say, which keeps a hook run outside any repository answering from
  * where it stands.
  */
 export function projectRoot(cwd: string): string {
