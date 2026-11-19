@@ -11,21 +11,30 @@
 // REPLACES the key it names — a narrowed `.on(…)` is the whole list, never a merge — because two
 // merge semantics is two bugs, and the one that bites is the silent one.
 //
-// FLOW GUARDING FLOW, and the import lines are the whole of what that means. The ten packs come
-// from `@jawache/flow/packs` and the grammar from `@jawache/flow` — bare specifiers, resolved
-// through `node_modules/@jawache/flow`, which `flow init` linked back to this very checkout. This
-// repo is therefore a CONSUMER of its own package, on exactly the path a stranger takes: nothing
-// below reaches a source folder, and a door that stopped exporting a symbol breaks this file
-// before it breaks anybody else's. One pack is written here, `guards/house.ts` — the project map,
-// the internal layout, the one-way import fences, and the ratchet on this binary's verb surface.
+// FLOW GUARDING FLOW, and the import lines are the whole of what that means. The one pack flow
+// ships, `flow`, comes from `@jawache/flow/packs` and the grammar from `@jawache/flow` — bare
+// specifiers, resolved through `node_modules/@jawache/flow`, which `flow init` linked back to this
+// very checkout. This repo is therefore a CONSUMER of its own package, on exactly the path a
+// stranger takes: a door that stopped exporting a symbol breaks this file before it breaks anybody
+// else's. Every other pack is this repo's own, in `guards/` and shipped to nobody: eight that
+// started as fleet discipline, `driven`, and `house` — the project map, the internal layout, the
+// one-way import fences, and the ratchet on this binary's verb surface.
 //
-// An unbound pack costs nothing, so binding is opt-in per pack and every one of the ten is named
-// below on purpose.
+// An unbound pack costs nothing, so binding is opt-in per pack and every one is named below on
+// purpose.
 
 import { defineConfig, override, pack } from "@jawache/flow";
-import { docs, fcis, flow, git, justfile, node, secrets, tdd, typescript, work } from "@jawache/flow/packs";
+import { flow } from "@jawache/flow/packs";
+import { docs } from "./guards/docs.ts";
 import { driven } from "./guards/driven.ts";
+import { fcis } from "./guards/fcis.ts";
+import { git } from "./guards/git.ts";
 import { house } from "./guards/house.ts";
+import { justfile } from "./guards/justfile.ts";
+import { node } from "./guards/node.ts";
+import { secrets } from "./guards/secrets.ts";
+import { tdd } from "./guards/tdd.ts";
+import { typescript } from "./guards/typescript.ts";
 
 // THIS REPO'S PURE HOME, stated once and used by every fcis rail and by the import fence.
 //
@@ -49,18 +58,17 @@ const PURE = ["**/domain.ts", "glob.ts"];
 export default defineConfig([
   // ── the guard's own orientation and self-protection ──
   //
-  // ONE PARAMETER: where this repo keeps the packs it writes itself, which is `guards/` and one
-  // file, house.ts. Both of the pack's path-scoped entries take it — the nudge when you edit the
-  // guard, and the refusal to delete it — so the folder is named here, once, and the pack never
-  // knew the word. This is flow's own self-protection, bound in flow's own repo, which is the
-  // shortest description of what this whole file is for.
-  pack(flow, { packs: ["guards/**"] }),
+  // flow's own self-protection takes no parameter: the note saying what is steering you, no
+  // `flow uninstall` from an agent, and no commit that deletes the config, the gate or a hook
+  // registration. The packs this repo writes itself are guarded by `house.noDeleteGuards`.
+  pack(flow),
 
   // ── git: commit headers, computed versions, nothing destroys uncommitted work ──
   //
   // ONE parameter, and `just release` is real here: it runs commit-and-tag-version, computes the
   // version from the conventional commits since the last tag, writes CHANGELOG.md, stamps
-  // package.json and the lockfile, commits and tags. Nothing is pushed and nothing is published.
+  // package.json and the lockfile, and commits; a second commit holds `dist/` and takes the tag.
+  // Nothing is pushed and nothing is published.
   pack(git, { release: "just release" }),
 
   // ── the justfile as tool catalogue ──
@@ -69,8 +77,8 @@ export default defineConfig([
   //
   // `toolsHome` is LIVE again, and the override that used to sit here is gone with the fact that
   // earned it. There genuinely was no tools/ folder — the package was the product and esbuild.mjs
-  // was its one operational script — until the pack pages needed a generator: real code, typed and
-  // tested, behind two thin recipes. That is the shape this pack's orientation asks for, so the
+  // was its one operational script — until the score of a Bash path extractor needed one: real code, typed and
+  // tested, behind a thin recipe. That is the shape this pack's orientation asks for, so the
   // folder exists and the breadcrumb that fires on touching it is worth having.
   pack(justfile, { exempt: [] }),
 
@@ -129,13 +137,6 @@ export default defineConfig([
 
   // ── docs: two audiences, two doors ──
   pack(docs),
-
-  // ── work: the lifecycle's rungs ──
-  //
-  // This repo is built through the same supervised runs as the rest of the fleet, so the pack that
-  // mechanises the ladder is bound whole. It is a plain consumer of the grammar's public door and
-  // imports nothing from the work CLI it is about — which is what lets this package ship it at all.
-  pack(work),
 
   // ── driven by the work daemon ──
   //

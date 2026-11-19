@@ -26,7 +26,6 @@ import {
   defineCheck,
   defineConfig,
   definePack,
-  deletion,
   type EntryGroup,
   type EntryRef,
   type ExecResult,
@@ -66,12 +65,11 @@ import {
   REFUSAL_CODES,
   session,
   type SessionFacts,
-  touch,
+  fileChange,
   turnEnd,
   type Unanswered,
   verdict,
   type World,
-  write,
 } from "./domain.ts";
 
 const passes: Check = () => verdict.ok();
@@ -82,12 +80,12 @@ const cases = { pass: ["ok"], block: ["no"] };
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 describe("the moment vocabulary", () => {
-  it("is the five guardrail words the engine has rails for", () => {
-    expect(GUARDRAIL_MOMENTS).toEqual(["write", "command", "commit", "delete", "turn-end"]);
+  it("is the three guardrail words the engine has rails for", () => {
+    expect(GUARDRAIL_MOMENTS).toEqual(["command", "commit", "turn-end"]);
   });
 
   it("is the four breadcrumb words, which are not the same list", () => {
-    expect(BREADCRUMB_MOMENTS).toEqual(["session", "touch", "command", "turn-end"]);
+    expect(BREADCRUMB_MOMENTS).toEqual(["session", "file-change", "command", "turn-end"]);
   });
 
   it("says which of them a NOTE's scope can narrow — the paths, plus the command line", () => {
@@ -97,32 +95,20 @@ describe("the moment vocabulary", () => {
     expect(isScopable("breadcrumb", "command")).toBe(true);
     expect(isScopable("guardrail", "command")).toBe(false);
     expect(isScopable("breadcrumb", "session")).toBe(false);
-    expect(isScopable("guardrail", "write")).toBe(true);
+    expect(isScopable("guardrail", "commit")).toBe(true);
   });
 
   it("exports each word as a value, so a config imports it rather than spelling it", () => {
-    expect([write, command, commit, deletion, turnEnd]).toEqual([
-      "write",
-      "command",
-      "commit",
-      "delete",
-      "turn-end",
-    ]);
-    expect([session, touch]).toEqual(["session", "touch"]);
+    expect([command, commit, turnEnd]).toEqual(["command", "commit", "turn-end"]);
+    expect([session, fileChange]).toEqual(["session", "file-change"]);
   });
 
-  it("names the delete moment `deletion` in the export, because `delete` cannot be a binding", () => {
-    expect(deletion).toBe("delete");
-    expect(GUARDRAIL_MOMENTS).toContain(deletion);
-  });
 });
 
 describe("phasesOf — the table, lifted", () => {
   it("maps each moment to the engine phases it fires at", () => {
-    expect(phasesOf([write])).toEqual(["edit"]);
     expect(phasesOf([command])).toEqual(["edit", "commit"]);
     expect(phasesOf([commit])).toEqual(["commit"]);
-    expect(phasesOf([deletion])).toEqual(["delete"]);
     expect(phasesOf([turnEnd])).toEqual(["turn"]);
   });
 
@@ -138,10 +124,12 @@ describe("phasesOf — the table, lifted", () => {
 
 describe("the moment guards", () => {
   it("recognise their own vocabulary and refuse the other's", () => {
-    expect(isGuardrailMoment("write")).toBe(true);
+    expect(isGuardrailMoment("commit")).toBe(true);
+    expect(isGuardrailMoment("write"), "flow stops no write").toBe(false);
+    expect(isGuardrailMoment("delete"), "flow stops no delete").toBe(false);
     expect(isGuardrailMoment("session")).toBe(false);
     expect(isBreadcrumbMoment("session")).toBe(true);
-    expect(isBreadcrumbMoment("write")).toBe(false);
+    expect(isBreadcrumbMoment("commit")).toBe(false);
   });
 
   it("share exactly one word — turn-end", () => {
@@ -156,8 +144,8 @@ describe("the moment guards", () => {
 });
 
 describe("PATH_MOMENTS — the moments a path scope can narrow", () => {
-  it("is the four whose events name a file", () => {
-    expect(PATH_MOMENTS).toEqual(["write", "delete", "commit", "touch"]);
+  it("is the two whose events name a file", () => {
+    expect(PATH_MOMENTS).toEqual(["commit", "file-change"]);
   });
 
   it("excludes every moment that carries no path — a command, a turn, a session start", () => {
@@ -276,8 +264,8 @@ describe("makeCtx — the ONE assembler", () => {
 
   it("carries the moment, the event's facts, and the three capabilities — and nothing else", async () => {
     const { world, asked } = spy();
-    const built = makeCtx("write", { file: { path: "a.ts", content: "x" } }, world);
-    expect(built.moment).toBe("write");
+    const built = makeCtx("commit", { file: { path: "a.ts", content: "x" } }, world);
+    expect(built.moment).toBe("commit");
     expect(built.file).toEqual({ path: "a.ts", content: "x" });
     expect((await built.exec("ls")).stdout).toBe("out");
     expect(await built.fs.read("a.ts")).toBe("body");
@@ -311,7 +299,7 @@ describe("makeCtx — the ONE assembler", () => {
     const built = makeCtx("command", { command: "git push origin main; ls -f" }, spy().world);
     expect(built.commands?.map((c) => c.text)).toEqual(["git push origin main", "ls -f"]);
     expect(makeCtx("command", { command: 'echo "oops' }, spy().world).commands).toBeNull();
-    expect(makeCtx("write", { file: { path: "a.ts", content: "x" } }, spy().world).commands).toBeUndefined();
+    expect(makeCtx("commit", { file: { path: "a.ts", content: "x" } }, spy().world).commands).toBeUndefined();
   });
 
   it("keeps a parse its caller already made, rather than parsing the line again", () => {
@@ -334,7 +322,7 @@ describe("programName — a program without its path", () => {
 });
 
 describe("parseCommandLine — the 45 hand-labelled commands from triage's bake-off", () => {
-  // Lifted from LABELLED in the bake-off that chose unbash (.work/tmp/bakeoff/bakeoff.mjs, #17).
+  // Lifted from LABELLED in the bake-off that chose unbash (its script, #17).
   // Each label is what a shell does with the line: the programs that run, in the order they appear,
   // nested ones included; each heredoc's owner and whether its delimiter is quoted; and the
   // programs a substitution runs. One label differs from the bake-off's on purpose: `bash -c`
@@ -576,6 +564,10 @@ describe("parseCommandLine — the six fields", () => {
     expect(placed('echo "$(date) today"')).toEqual([[null, null]]);
     expect(placed('echo "$HOME $(date)"')).toEqual([[null, null]]);
     expect(placed('echo "$(date)$(whoami)"')).toEqual([[null, null], [null, null]]);
+    // A glob is plain text before it, a bracket with a variable inside is not.
+    expect(placed("cat a*$(echo x)")).toEqual([[0, "a*"]]);
+    expect(placed("cat --f=[x]$(echo x)")).toEqual([[0, "--f=[x]"]]);
+    expect(placed("cat [$R]$(echo x)")).toEqual([[null, null]]);
     expect(placed("$(which ls) -la")).toEqual([[null, null]]);
     expect(placed("cat <<EOF\n$(date)\nEOF")).toEqual([[null, null]]);
   });
@@ -631,6 +623,13 @@ describe("parseCommandLine — nested commands", () => {
       ["rm", true],
       ["diff", false],
       ["sort", true],
+    ]);
+  });
+
+  it("reads a command inside square brackets as a nested command", () => {
+    expect(nested("pnpm test --filter=[$(git rev-parse HEAD~1)]")).toEqual([
+      ["pnpm", false],
+      ["git", true],
     ]);
   });
 
@@ -1040,10 +1039,55 @@ describe("parseCommandLine — the folder each command runs in", () => {
   });
 });
 
+describe("parseCommandLine — the worked examples of the command parse page", () => {
+  const start = { cwd: "/work/repo" };
+  const read = (line: string): [string, string[], string | null, boolean][] =>
+    (parseCommandLine(line, start) ?? []).map((c) => [c.program, [...c.args], c.folder, c.nested]);
+
+  it("git push --force origin main is one command", () => {
+    expect(read("git push --force origin main")).toEqual([["git", ["push", "--force", "origin", "main"], "/work/repo", false]]);
+  });
+
+  it("the words of a quoted argument are text passed to echo", () => {
+    expect(read('echo "never git push --force"')).toEqual([["echo", ["never git push --force"], "/work/repo", false]]);
+  });
+
+  it("bash -c reads its string, a cd moving the folder of what follows", () => {
+    expect(read('bash -c "cd api && git push --force"')).toEqual([
+      ["bash", ["-c", "cd api && git push --force"], "/work/repo", false],
+      ["cd", ["api"], "/work/repo", true],
+      ["git", ["push", "--force"], "/work/repo/api", true],
+    ]);
+  });
+
+  it("a variable the line sets is filled in, and git -C moves the folder", () => {
+    expect(read("R=/tmp/scratch; git -C $R push --force")).toEqual([["git", ["-C", "/tmp/scratch", "push", "--force"], "/tmp/scratch", false]]);
+  });
+
+  it("a loop with a substitution is one set of commands per value", () => {
+    const line = 'for d in api web; do (cd $d && npm test > "$(git rev-parse --short HEAD).log"); done';
+    const rows = (parseCommandLine(line, start) ?? []).map((c) => [c.program, c.folder, c.nested, c.redirects.map((r) => [r.operator, r.target])]);
+    const log = [[">", "$(git rev-parse --short HEAD).log"]];
+    expect(rows).toEqual([
+      ["cd", "/work/repo", false, []],
+      ["npm", "/work/repo/api", false, log],
+      ["git", "/work/repo/api", true, []],
+      ["cd", "/work/repo", false, []],
+      ["npm", "/work/repo/web", false, log],
+      ["git", "/work/repo/web", true, []],
+    ]);
+  });
+});
+
 describe("parseCommandLine — a variable the line sets, as its value", () => {
   /** Each command's program and arguments. */
   const argv = (line: string): (readonly [string, readonly string[]])[] | undefined =>
     parseCommandLine(line)?.map((c) => [c.program, c.args] as const);
+
+  it("fills in a variable inside a bracket glob", () => {
+    expect(argv("R=x; cat [$R]")?.[0]).toEqual(["cat", ["[x]"]]);
+    expect(argv("R=/tmp; rm [$R]/x")?.[0]).toEqual(["rm", ["[/tmp]/x"]]);
+  });
 
   it("fills in an argument, and the text with it", () => {
     expect(argv("P=/tmp/s; sed -i s/a/b/ $P/x.ts")?.[0]).toEqual(["sed", ["-i", "s/a/b/", "/tmp/s/x.ts"]]);
@@ -1234,7 +1278,7 @@ const pushCases = { pass: ["git push origin feature/x"], block: ["git push origi
 describe("guardrail()", () => {
   it("says every key it was given, and nothing it was not", () => {
     const spec = guardrail()
-      .at(write, commit)
+      .at(commit)
       .on("src/**/*.ts")
       .ignore("**/*.test.ts")
       .check(passes)
@@ -1243,7 +1287,7 @@ describe("guardrail()", () => {
 
     expect(spec).toEqual({
       kind: "guardrail",
-      at: ["write", "commit"],
+      at: ["commit"],
       on: ["src/**/*.ts"],
       ignore: ["**/*.test.ts"],
       check: passes,
@@ -1277,7 +1321,7 @@ describe("guardrail()", () => {
     const builder = defineCategory("builder", () => true);
     const verifier = defineCategory("verifier", () => false);
     const spec = guardrail()
-      .at(write)
+      .at(commit)
       .for(builder, verifier)
       .check(passes)
       .message("m")
@@ -1315,7 +1359,7 @@ describe("breadcrumb()", () => {
   });
 
   it("can point at a file instead, for prose too long to sit in the sentence", () => {
-    const spec = breadcrumb().at(touch).on("src/pages/**").file("guards/notes/ssr.md").spec;
+    const spec = breadcrumb().at(fileChange).on("src/pages/**").file("guards/notes/ssr.md").spec;
     expect(spec.file).toBe("guards/notes/ssr.md");
     expect("text" in spec).toBe(false);
   });
@@ -1393,7 +1437,7 @@ const builderCategory = defineCategory("builder", () => true);
 
 const prose = definePack("prose", {
   noEmDash: guardrail()
-    .at(write, commit)
+    .at(commit)
     .on("src/**/*.md")
     .check(passes)
     .message("No em dashes in prose.")
@@ -1525,7 +1569,7 @@ describe("pack() and override() — the whole binding surface", () => {
 
 describe("overlay — a spoken key replaces the pack's WHOLE key, nothing merges", () => {
   const packSpec = guardrail()
-    .at(write, commit)
+    .at(commit)
     .on("src/**/*.md", "docs/**/*.md")
     .check(passes)
     .message("No em dashes in prose.")
@@ -1545,7 +1589,7 @@ describe("overlay — a spoken key replaces the pack's WHOLE key, nothing merges
 
   it("leaves every unspoken key coming from the pack", () => {
     const { spec, source } = overlay(packSpec, { on: ["src/content/**"] });
-    expect(spec.at).toEqual(["write", "commit"]);
+    expect(spec.at).toEqual(["commit"]);
     expect(spec.kind === "guardrail" && spec.message).toBe("No em dashes in prose.");
     expect(source["at"]).toBe("pack");
     expect(source["message"]).toBe("pack");
@@ -1572,7 +1616,7 @@ describe("overlay — a spoken key replaces the pack's WHOLE key, nothing merges
   });
 
   it("leaves a breadcrumb's prose alone when the override says none", () => {
-    const note = breadcrumb().at(touch).file("docs/long-note.md").spec;
+    const note = breadcrumb().at(fileChange).file("docs/long-note.md").spec;
     const { spec, source } = overlay(note, { on: ["docs/**"] });
     expect(spec.kind === "breadcrumb" && spec.file).toBe("docs/long-note.md");
     expect(source["file"]).toBe("pack");
@@ -1580,8 +1624,8 @@ describe("overlay — a spoken key replaces the pack's WHOLE key, nothing merges
 });
 
 describe("overlay — a breadcrumb's prose is one key in two forms, and an override replaces it", () => {
-  const fileNote = breadcrumb().at(touch).on("docs/**").file("docs/long-note.md").spec;
-  const textNote = breadcrumb().at(touch).on("docs/**").text("One inline sentence.").spec;
+  const fileNote = breadcrumb().at(fileChange).on("docs/**").file("docs/long-note.md").spec;
+  const textNote = breadcrumb().at(fileChange).on("docs/**").text("One inline sentence.").spec;
 
   it("an override's `.text(…)` replaces a pack's `.file(…)`, and the prose is the override's", () => {
     const { spec, source } = overlay(fileNote, { text: "Shorter, inline." });
@@ -1617,7 +1661,7 @@ const builder = defineCategory("builder", (s) => s.agentType === "builder");
 
 const house = definePack("house", {
   noTodo: guardrail()
-    .at(write, commit)
+    .at(commit)
     .on("src/**/*.ts")
     .check(passes)
     .message("No TODOs.")
@@ -1689,7 +1733,7 @@ describe("a complete, valid config", () => {
   it("applies each override, replacing the pack's whole key and nothing else", () => {
     const entry = entries.find((e) => e.id === "house.noTodo");
     expect(entry?.spec.on).toEqual(["src/content/**"]);
-    expect(entry?.spec.at).toEqual(["write", "commit"]);
+    expect(entry?.spec.at).toEqual(["commit"]);
     expect(entry?.source["on"]).toBe("override");
     expect(entry?.source["at"]).toBe("pack");
   });
@@ -1700,14 +1744,14 @@ describe("a complete, valid config", () => {
   });
 
   it("resolves each entry's engine phases from its moments", () => {
-    expect(entries.find((e) => e.id === "house.noTodo")?.phases).toEqual(["edit", "commit"]);
+    expect(entries.find((e) => e.id === "house.noTodo")?.phases).toEqual(["commit"]);
     expect(entries.find((e) => e.id === "house.orientation")?.phases).toEqual([]);
   });
 
   it("names the categories an entry is scoped to, and leaves an unscoped entry unscoped", () => {
     const scoped = definePack("scoped", {
       planShape: guardrail()
-        .at(write)
+        .at(commit)
         .for(builder)
         .check(passes)
         .message("The plan's shape is the parent's.")
@@ -1827,7 +1871,7 @@ describe("the load refuses", () => {
     // caller — mark a check you just built, which is what `depcruise` does.
     const check = withFaults((ctx: Ctx) => ctx.ok(), ["binds a layer that is a regex, not a glob: `^src/pages/`"]);
     const sick = rawPack("sick", {
-      x: { spec: { kind: "guardrail", at: [write], on: ["src/**"], check, message: "m", test: cases } },
+      x: { spec: { kind: "guardrail", at: [commit], on: ["src/**"], check, message: "m", test: cases } },
     });
     const refusals = refusalsOf([sick]);
     expect(shape(refusals)).toEqual([["bad-check-options", "sick.x"]]);
@@ -1837,7 +1881,7 @@ describe("the load refuses", () => {
 
   it("says nothing about a check that declared none — the ordinary case", () => {
     const well = rawPack("well", {
-      x: { spec: { kind: "guardrail", at: [write], on: ["src/**"], check: passes, message: "m", test: cases } },
+      x: { spec: { kind: "guardrail", at: [commit], on: ["src/**"], check: passes, message: "m", test: cases } },
     });
     expect(refusalsOf([well])).toEqual([]);
   });
@@ -1887,7 +1931,7 @@ describe("the load refuses", () => {
       x: {
         spec: {
           kind: "guardrail",
-          at: [command, write],
+          at: [command, commit],
           on: ["src/**"],
           check: passes,
           message: "m",
@@ -1922,7 +1966,7 @@ describe("the load refuses", () => {
 
   it("an empty `.on()` from the pack as empty-scope, on a guardrail", () => {
     const rail = definePack("rail", {
-      x: guardrail().at(write).on(...none).check(passes).message("m").test(cases),
+      x: guardrail().at(commit).on(...none).check(passes).message("m").test(cases),
     });
     expect(refusalsOf([pack(rail)])).toEqual([
       {
@@ -1936,7 +1980,7 @@ describe("the load refuses", () => {
 
   it("an empty `.ignore()` from the pack as empty-scope, on a breadcrumb", () => {
     const note = definePack("note", {
-      x: breadcrumb().at(touch).on("docs/**").ignore(...none).text("hi"),
+      x: breadcrumb().at(fileChange).on("docs/**").ignore(...none).text("hi"),
     });
     expect(refusalsOf([pack(note)])).toEqual([
       {
@@ -1949,7 +1993,7 @@ describe("the load refuses", () => {
   });
 
   it("both verbs empty in the pack, refused once naming both", () => {
-    const bare = definePack("bare", { x: breadcrumb().at(touch).on(...none).ignore(...none).text("hi") });
+    const bare = definePack("bare", { x: breadcrumb().at(fileChange).on(...none).ignore(...none).text("hi") });
     expect(refusalsOf([pack(bare)])).toEqual([
       {
         code: "empty-scope",
@@ -1983,7 +2027,7 @@ describe("the load refuses", () => {
   });
 
   it("an empty scope split between the pack and an override, saying who said each and where to fix it", () => {
-    const mixed = definePack("mixed", { x: breadcrumb().at(touch).on(...none).text("hi") });
+    const mixed = definePack("mixed", { x: breadcrumb().at(fileChange).on(...none).text("hi") });
     expect(refusalsOf([pack(mixed), override(mixed.x).ignore(...none)])).toEqual([
       {
         code: "empty-scope",
@@ -1998,14 +2042,14 @@ describe("the load refuses", () => {
     // The check reads the entry after the override is laid over it: an override's `.on(…)`
     // replaces the pack's whole list, so the pack's empty one is gone by the time it is judged.
     const fixed = definePack("fixed", {
-      x: guardrail().at(write).on(...none).check(passes).message("m").test(cases),
+      x: guardrail().at(commit).on(...none).check(passes).message("m").test(cases),
     });
     expect(refusalsOf([pack(fixed), override(fixed.x).on("src/**")])).toEqual([]);
   });
 
   it("an empty scope on a disabled entry too — what was written is wrong, whatever the entry proves", () => {
     const off = definePack("off", {
-      x: guardrail().at(write).on(...none).check(passes).message("m").test(cases),
+      x: guardrail().at(commit).on(...none).check(passes).message("m").test(cases),
     });
     expect(shape(refusalsOf([pack(off), override(off.x).disabled("not yet")]))).toEqual([["empty-scope", "off.x"]]);
   });
@@ -2036,7 +2080,7 @@ describe("the load refuses", () => {
   });
 
   it("but not an override's prose over a pack's other form — it replaces it, and loads", () => {
-    const files = definePack("files", { note: breadcrumb().at(touch).on("docs/**").file("docs/long-note.md") });
+    const files = definePack("files", { note: breadcrumb().at(fileChange).on("docs/**").file("docs/long-note.md") });
     const [entry] = loadOrThrow([pack(files), override(files.note).text("One inline sentence.")]);
     expect(entry?.spec.kind === "breadcrumb" && entry.spec.text).toBe("One inline sentence.");
   });
@@ -2056,7 +2100,7 @@ describe("the load refuses", () => {
 
   it("an override that moves an entry to a moment its type has no rail for", () => {
     const asGuardrail = house.orientation as unknown as EntryRef<"guardrail">;
-    const refusals = refusalsOf([pack(house), override(asGuardrail).at(write)]);
+    const refusals = refusalsOf([pack(house), override(asGuardrail).at(commit)]);
     expect(shape(refusals)).toEqual([["unknown-moment", "house.orientation"]]);
   });
 
@@ -2080,6 +2124,31 @@ describe("the load refuses", () => {
   });
 });
 
+describe("the settings are a closed set", () => {
+  it("refuses `revert` and `snapshotInclude` as unknown-setting, naming the key and the 0.4 migration guide", () => {
+    for (const key of ["revert", "snapshotInclude"]) {
+      const result = loadConfig({ bindings: [], settings: { [key]: key === "revert" ? "all" : [".env"] } });
+      expect(result.ok).toBe(false);
+      const refusals = result.ok ? [] : result.refusals;
+      expect(shape(refusals)).toEqual([["unknown-setting", ""]]);
+      expect(refusals[0]?.detail).toContain(`\`${key}\``);
+      expect(refusals[0]?.detail).toContain("docs/user/migrations/0.4.0.md");
+    }
+  });
+
+  it("refuses any other key as well, and lists the two it has", () => {
+    const result = loadConfig({ bindings: [], settings: { driftTokens: 1, drift: 2 } as never });
+    const refusals = result.ok ? [] : result.refusals;
+    expect(shape(refusals)).toEqual([["unknown-setting", ""]]);
+    expect(refusals[0]?.detail).toContain("`drift`");
+    expect(refusals[0]?.detail).toContain("`driftTokens` and `grammars`");
+  });
+
+  it("accepts driftTokens and grammars", () => {
+    expect(loadConfig({ bindings: [], settings: { driftTokens: 1, grammars: [] } }).ok).toBe(true);
+  });
+});
+
 describe("REFUSAL_CODES", () => {
   it("is the closed vocabulary every refusal draws from", () => {
     expect(REFUSAL_CODES).toEqual([
@@ -2088,6 +2157,7 @@ describe("REFUSAL_CODES", () => {
       "unknown-entry",
       "unknown-key",
       "unknown-moment",
+      "unknown-setting",
       "missing-mandatory",
       "undeclared-category",
       "no-block-cases",

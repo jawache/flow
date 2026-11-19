@@ -1,9 +1,8 @@
 node_modules
 
-# Build output. `just build` makes it; `npm pack` publishes dist/flow.mjs (the binary),
-# dist/index.mjs (the grammar), dist/packs.mjs (the ten packs) and dist/types/ from the
-# working tree. Committing bundles plus their sourcemaps would put generated artefacts in
-# every diff for no reader's benefit.
+# Build output. `just build` makes it. The branch never tracks it: `just release` commits dist/flow.mjs
+# (the binary), dist/index.mjs (the grammar), dist/packs.mjs (the one pack) and dist/types/ in one commit
+# that only the release tag points at. Bundles and their sourcemaps in every diff help no reader.
 dist/
 
 # Working-docs journal — a symlink into ~/.work/journals/flow. No trailing slash, so a folder
@@ -22,7 +21,7 @@ dist/
 # this file never has to know it exists.
 #
 # What a guarded repo DOES commit is `flow.config.ts`, any pack it writes itself under `guards/`,
-# and `.githooks/pre-commit`. That is the whole guard: the packs this package ships arrive with
+# and `.githooks/commit-msg`. That is the whole guard: the packs this package ships arrive with
 # the install, there is no rule library anywhere on the machine, and nothing resolves at run time.
 
 # Provisioned by the secrets pack — the three files that must never be committed.

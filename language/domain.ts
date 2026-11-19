@@ -67,8 +67,7 @@ import { matchAny } from "../glob.ts";
 // because the reasoning is still load-bearing:
 //
 //   These are the format's words, not the engine's phase names — `edit` and `turn` are internals
-//   and are as unknown here as any typo. `write` is the human word for the pre-emptive PreToolUse
-//   block, which the engine calls `edit`; `command` rides both the Bash rail and the commit gate
+//   and are as unknown here as any typo. `command` rides both the Bash rail and the commit gate
 //   the rule-tester drives it on.
 //
 //   `push` is not among them. It was accepted for a year and fired by nothing (no pre-push hook
@@ -84,10 +83,8 @@ import { matchAny } from "../glob.ts";
 // mapping, and because the load re-validates data that may have been built outside an editor.
 
 const PHASES = {
-  write: ["edit"],
   command: ["edit", "commit"],
   commit: ["commit"],
-  delete: ["delete"],
   "turn-end": ["turn"],
 } as const satisfies Record<string, readonly string[]>;
 
@@ -101,25 +98,20 @@ export type BreadcrumbMoment = (typeof BREADCRUMB_MOMENTS)[number];
 export type Moment = GuardrailMoment | BreadcrumbMoment;
 
 export const GUARDRAIL_MOMENTS: readonly GuardrailMoment[] = Object.keys(PHASES) as GuardrailMoment[];
-export const BREADCRUMB_MOMENTS = ["session", "touch", "command", "turn-end"] as const;
+export const BREADCRUMB_MOMENTS = ["session", "file-change", "command", "turn-end"] as const;
 
 // ── the words, as values ─────────────────────────────────────────────────────
 //
-// A config imports these rather than spelling them: `.at(write)` is a binding the editor
+// A config imports these rather than spelling them: `.at(command)` is a binding the editor
 // resolves, so the whole class of "moment typo loads green and fires never" is gone before the
 // grammar has to have an opinion about it.
-//
-// `deletion` is the one export whose name is not its word, and it cannot be otherwise: `delete`
-// is a reserved word and `const delete = …` is a syntax error. The MOMENT is still "delete" —
-// the value's contents, the table's key, and what a log line prints.
 
-export const write = "write" as const;
 export const command = "command" as const;
 export const commit = "commit" as const;
-export const deletion = "delete" as const;
 export const turnEnd = "turn-end" as const;
 export const session = "session" as const;
-export const touch = "touch" as const;
+/** `fileChange` and `turnEnd` are spelled so because a symbol has no hyphen: the moments are called "file-change" and "turn-end". */
+export const fileChange = "file-change" as const;
 
 /** The engine phases a moment list fires at — deduped, in declaration order. */
 export function phasesOf(at: readonly GuardrailMoment[]): string[] {
@@ -141,14 +133,14 @@ export function isBreadcrumbMoment(m: string): m is BreadcrumbMoment {
 /**
  * The moments whose events NAME A PATH — and therefore the only ones `.on()` / `.ignore()` narrow.
  *
- * A write and a delete carry the would-be file; the commit gate carries the staged set; a touch
- * carries the file the tool call was about. The other three carry no path at all: a command guard's
- * patterns ARE its scope, a turn-end is about what the actor did, and a session start is about the
- * session. The engine expresses the same fact at run time — `subjectsOf` consults `inScope` for
- * exactly these moments, and `brief` narrows a note only when the event names a path — and stating
- * it here is what lets a scope that would narrow NOTHING be refused rather than quietly ignored.
+ * The commit gate carries the staged set; a file change carries each file the tool call changed. The
+ * other three carry no path at all: a command guard's patterns ARE its scope, a turn-end is about
+ * what the actor did, and a session start is about the session. The engine expresses the same fact
+ * at run time — `subjectsOf` consults `inScope` for exactly these moments, and `brief` narrows a
+ * note only when the event names a path — and stating it here is what lets a scope that would
+ * narrow NOTHING be refused rather than quietly ignored.
  */
-export const PATH_MOMENTS = ["write", "delete", "commit", "touch"] as const;
+export const PATH_MOMENTS = ["commit", "file-change"] as const;
 export type PathMoment = (typeof PATH_MOMENTS)[number];
 
 /** Does this moment carry a path for `on` / `ignore` to narrow? */
@@ -315,34 +307,26 @@ export type TurnAction =
 /**
  * Everything a check may know and everything it may do.
  *
- * The facts are already in memory when the check runs — a write rail sees the file as it WOULD be
- * written, disk untouched; a command rail sees the line about to run; the commit gate sees the
- * staged paths. That is what lets a repo's own check name the file at fault instead of
- * re-deriving the tree, and it makes the work scale with the change rather than with the repo.
+ * The facts are already in memory when the check runs — a command rail sees the line about to
+ * run; the commit gate sees the staged paths and the message. That is what lets a repo's own check
+ * name the file at fault instead of re-deriving the tree, and it makes the work scale with the
+ * change rather than with the repo.
  */
 export interface Ctx {
   // ── WHAT HAPPENED — the event's facts. Plain data, already in memory. ──
   readonly moment: Moment;
   /**
-   * write/touch: the would-be file.
+   * commit, for a rule with `.on(…)`: the file the call is about, as the commit holds it.
    *
-   * `existed` says whether a file was at `path` before this change, and it is set only where the
-   * tree can no longer say so. A shell command's change is judged AFTER it has landed, when
-   * `ctx.fs.exists(path)` answers yes to every file it created; at commit every staged file is on
-   * disk, and "before" is the last commit. Absent, ask `ctx.fs`: at write the tree is still the
-   * one from before the change.
-   *
-   * `unchanged` is `true` on a file identical to the last commit's copy, which only `flow hook
-   * commit --all` hands a check: it judges the whole tree, and most of it is as committed. A check
-   * about content reads it all the same; a check about edits has nothing to judge. Absent everywhere
-   * else, because every other event is a change.
+   * `existed` says whether the last commit had a file at `path`: every staged file is on disk, so
+   * `ctx.fs.exists(path)` answers yes to a file the commit adds, and "before" is the last commit.
+   * Absent, git could not say.
    */
   readonly file?:
     | {
         readonly path: string;
         readonly content: string;
         readonly existed?: boolean | undefined;
-        readonly unchanged?: boolean | undefined;
       }
     | undefined;
   /** command: the line about to run. */
@@ -352,8 +336,18 @@ export interface Ctx {
    * the order they appear. `null` when the line does not parse: read it as "cannot tell".
    */
   readonly commands?: readonly ShellCommand[] | null | undefined;
-  /** commit: the staged paths. Under `flow hook commit --all`, every file in the tree. */
+  /** commit: the staged paths. Empty under `flow hook commit --all`, which makes no commit. */
   readonly staged?: readonly string[] | undefined;
+  /** commit: the staged paths the last commit does not have. Empty when git could not say, and under `--all`. */
+  readonly added?: readonly string[] | undefined;
+  /** commit: the paths the commit deletes. A rename is a deletion of the old path plus an add of the new one. */
+  readonly deleted?: readonly string[] | undefined;
+  /**
+   * commit: the message as git records it, comment lines and the scissors section removed. `null`
+   * under `flow hook commit --all`, which has no commit, and for a hook an older flow wrote, which
+   * runs before git has the message.
+   */
+  readonly message?: string | null | undefined;
   /** turn-end: what the actor did this turn, in order. */
   readonly turn?: readonly TurnAction[] | undefined;
   /**
@@ -412,7 +406,7 @@ export type World = Pick<Ctx, "exec" | "fs" | "git">;
 // words inside a quoted argument, so nothing in flow decides what a command does by matching the
 // line. `unbash` reads it as bash; this section reduces its tree to the one shape a check needs:
 // the simple commands, each with the program that actually runs. docs/user/reference/ctx.md
-// states the fields, and docs/user/explanation/what-the-guard-sees.md § The parse is the why.
+// states the fields, and docs/user/explanation/what-flow-reads.md § At a command: the parse is the why.
 //
 // What cost time to find in unbash: a word's `parts` is a lazy getter, so the walk below reads it
 // by name and never by `Object.keys`; a parse error inside a nested script sits on THAT script's
@@ -707,6 +701,10 @@ function wordPieces(part: WordPart, quoted = false): ShellWordPiece[] {
     case "SimpleExpansion":
     case "ParameterExpansion":
       return [expansionPiece(part, quoted)];
+    case "Glob":
+      return part.kind === "bracket"
+        ? [{ kind: "text", text: "[" }, ...part.parts.flatMap((child) => wordPieces(child, quoted)), { kind: "text", text: "]" }]
+        : [{ kind: "text", text: part.value }];
     case "ExtendedGlob":
     case "BraceExpansion":
       return [{ kind: "text", text: part.text }];
@@ -736,6 +734,9 @@ function substitution(text: string, body: readonly ShellStep[]): ShellSubstituti
   return { text: (backtick ? text.slice(1, -1) : text.slice(2, -1)).trim(), backtick, commands: stepCommands(body), argument: null, prefix: null };
 }
 
+const isPlain = (part: WordPart): part is WordPart & { readonly value: string } =>
+  part.type === "Literal" || part.type === "SingleQuoted" || part.type === "AnsiCQuoted";
+
 /**
  * The plain text in front of the substitution a word ends with — `""` when the word is the
  * substitution alone, bare or in double quotes — or null when the word ends with something else, or
@@ -747,7 +748,8 @@ function textBefore(w: Word): string | null {
   if (last?.type !== "CommandExpansion") return null;
   let text = "";
   for (const piece of pieces) {
-    if (piece.type !== "Literal" && piece.type !== "SingleQuoted" && piece.type !== "AnsiCQuoted") return null;
+    if (piece.type === "Glob" && piece.kind === "bracket" && !piece.parts.every(isPlain)) return null;
+    if (piece.type !== "Glob" && !isPlain(piece)) return null;
     text += piece.value;
   }
   return text;
@@ -1250,6 +1252,7 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
         return;
       case "ExtendedGlob":
       case "BraceExpansion":
+      case "Glob":
         for (const child of part.parts ?? []) wordPart(child, subs, out);
         return;
       case "ParameterExpansion":
@@ -1321,8 +1324,7 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
         word(e.right, null, out);
         return;
       case "TestLogical":
-        test(e.left, out);
-        test(e.right, out);
+        for (const operand of e.operands) test(operand, out);
         return;
       case "TestNot":
         test(e.operand, out);
@@ -1365,10 +1367,6 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
       case "Pipeline":
         pipeline(n.commands, nested, out);
         return;
-      case "Time":
-      case "Negation":
-        if (n.command !== undefined) node(n.command, nested, out);
-        return;
       case "Command":
         simple(n, nested, out);
         return;
@@ -1401,6 +1399,10 @@ function walkLine(line: string): { readonly steps: ShellStep[]; readonly bodies:
       case "If":
         node(n.clause, nested, out);
         node(n.then, nested, out);
+        for (const elif of n.elif) {
+          node(elif.clause, nested, out);
+          node(elif.then, nested, out);
+        }
         if (n.else !== undefined) node(n.else, nested, out);
         return;
       case "For": {
@@ -1627,9 +1629,7 @@ export function faultsOf(check: Check | undefined): readonly string[] {
  * IT DOES ONE THING BESIDES, and it was a plain identity function until it did: the options a
  * check was configured with are kept ON the returned check, under a symbol nothing enumerates. A
  * check is a closure, so once it is built the settings inside it are unreachable — and a reader
- * that cannot see them cannot say what a rule really watches. The generated pack pages printed the
- * `.check(…)` SOURCE instead, which is how `noGitDiscard({})`, a bare `TESTS` constant and a
- * helper call reached a page as the whole description of a rule. Read back through `settings` on
+ * that cannot see them cannot say what a rule really watches. Read back through `settings` on
  * the loaded entry they are RESOLVED values: the globs a parameter supplied, the recipe a repo
  * named. Nothing in the run reads them — the engine calls the check and asks it nothing else — so
  * this cannot change what any rule decides.
@@ -1656,7 +1656,7 @@ export function checkSettings(check: Check | undefined): unknown {
 // ── cases: a canned ctx, declared on the entry ───────────────────────────────
 //
 // The vocabulary is PER MOMENT, and it is the event fact that moment carries: a command string
-// for a command rail, a path-and-content pair for a write rail, a staged set for the commit gate,
+// for a command rail, a path-and-content pair for a commit of one file, a staged set for the commit gate,
 // a list of turn actions for turn-end. A case is a canned ctx and can be, because a check reads
 // the world only through one — which is what lets `flow test` drive a core check, a pack's check
 // and a repo's bespoke check through the same door the live hooks use.
@@ -1687,6 +1687,18 @@ export interface CaseWorld {
   readonly staged?: readonly string[];
 }
 
+/** What a commit case may say beside the files it stages and the message it carries. */
+interface CommitCase {
+  /** The staged paths the last commit does not have: it sets `ctx.added` and each file's `ctx.file.existed`. */
+  readonly added?: readonly string[];
+  /** The paths the commit deletes: it sets `ctx.deleted`. */
+  readonly deleted?: readonly string[];
+  /** The commit message, as git records it. A case with none has an empty one. */
+  readonly message?: string;
+  readonly world?: CaseWorld;
+  readonly actor?: readonly string[];
+}
+
 /** One canned event, in the dialect its moment speaks. */
 export type Case =
   /** A command rail, shorthand — by far the commonest case, and it should read as one line. */
@@ -1700,20 +1712,8 @@ export type Case =
       readonly world?: CaseWorld;
       readonly actor?: readonly string[];
     }
-  | {
-      readonly staged: readonly string[];
-      /** The staged paths the last commit does not have. Each file's `ctx.file.existed` says so. */
-      readonly added?: readonly string[];
-      /** The staged paths identical to the last commit, as under `--all`. Each sets `ctx.file.unchanged`. */
-      readonly unchanged?: readonly string[];
-      /**
-       * Staged deletions, by path, each with its content as the last commit has it. An entry that
-       * fires at `delete` as well as `commit` is asked about each one, as a delete.
-       */
-      readonly deleted?: Readonly<Record<string, string>>;
-      readonly world?: CaseWorld;
-      readonly actor?: readonly string[];
-    }
+  | ({ readonly staged: readonly string[] } & CommitCase)
+  | ({ readonly staged?: readonly string[] | undefined; readonly message: string } & CommitCase)
   | { readonly actions: readonly TurnAction[]; readonly world?: CaseWorld; readonly actor?: readonly string[] };
 
 /** The cases an entry carries: what must pass it, and what must be blocked by it. */
@@ -2285,20 +2285,16 @@ export interface Settings {
    * it two ways.
    */
   readonly grammars?: readonly Grammar[];
-  /**
-   * Globs for the IGNORED paths the snapshot records as well. The snapshot is git's view of the
-   * tree — tracked files, and untracked ones git does not ignore — so a shell write to an ignored
-   * file is never seen unless a glob here brings it back. `.env` is the usual one.
-   */
-  readonly snapshotInclude?: readonly string[];
-  /**
-   * What is put back when a rule refuses a write that has already landed: `"refused"` (the default)
-   * writes back only the files a rule refused, `"all"` every file that call changed. While another
-   * agent's call overlaps it, only the refused files are put back whatever this says — that call's
-   * writes can be in the same diff.
-   */
-  readonly revert?: "refused" | "all";
 }
+
+/** The keys `Settings` has: what the load accepts in the second argument of `defineConfig`. */
+const SETTING_KEYS = ["driftTokens", "grammars"] as const satisfies readonly (keyof Settings)[];
+
+/**
+ * The settings 0.3 had and 0.4 refuses by name: both configured the snapshot, which is removed, so
+ * the refusal says what happened to them and where the migration guide says what to do.
+ */
+const REMOVED_SETTINGS: ReadonlySet<string> = new Set(["revert", "snapshotInclude"]);
 
 /**
  * One hand-built tree-sitter grammar, as `registerDynamicLanguage` wants it.
@@ -2573,6 +2569,7 @@ export const REFUSAL_CODES = [
   "unknown-entry",
   "unknown-key",
   "unknown-moment",
+  "unknown-setting",
   "missing-mandatory",
   "undeclared-category",
   "no-block-cases",
@@ -2648,6 +2645,21 @@ export function loadConfig(config: FlowConfig): LoadResult {
   const refusals: Refusal[] = [];
   const drafts: Draft[] = [];
   const seen = new Map<string, Draft>();
+
+  // ── the settings, which are a closed set like everything else ──
+  //
+  // A key the load does not know is refused, never ignored: a setting that reads as a decision and
+  // decides nothing is how a config goes on looking guarded after the thing it configured is gone.
+  for (const key of Object.keys(config.settings)) {
+    if ((SETTING_KEYS as readonly string[]).includes(key)) continue;
+    refusals.push({
+      code: "unknown-setting",
+      entry: "",
+      detail: REMOVED_SETTINGS.has(key)
+        ? `The settings in the second argument of \`defineConfig\` have \`${key}\`, which flow 0.4 does not have: it configured the snapshot, and flow keeps none. Delete the key. docs/user/migrations/0.4.0.md, section 2.10, says why.`
+        : `The settings in the second argument of \`defineConfig\` have \`${key}\`, which is not a setting. The settings are ${SETTING_KEYS.map((k) => `\`${k}\``).join(" and ")}.`,
+    });
+  }
 
   // ── the pack bindings, in the order they were spoken ──
   for (const binding of config.bindings) {

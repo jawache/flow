@@ -20,11 +20,11 @@
 // refuses them at the commit, but the rails are not the reason: a check that reads the world
 // directly cannot be driven by a case and cannot be replayed.
 //
-//   PATTERNS      the one regex sweep — textBan · a command in words — banCommands · substitutionInProse
-//   PATHS         protectedPath · oneWriter · siblingExists · canonicalFiles
-//   CONTENT       jsonInvariant · symbolsInSibling
+//   PATTERNS      the one regex sweep — textBan · a command in words — banCommands
+//   PATHS         protectedPath · siblingExists · canonicalFiles
+//   CONTENT       jsonInvariant · symbolsInSibling · docLinks
 //   THE COMMIT    changeTogether
-//   COMMANDS      the parse read as git · commitReason
+//   COMMANDS      the parse read as git · commitMessage · commitReason
 //   THE TURN      ranSinceEdit
 //   TOOLS         execPasses · depcruise · astGrep, each orchestrating, never reimplementing
 //   CASES         the canned ctx a `.test()` case becomes, and the runner that walks them
@@ -56,7 +56,6 @@ import type {
   Moment,
   Scope,
   ShellCommand,
-  ShellSubstitution,
   TurnAction,
   Unanswered,
   Verdict,
@@ -100,8 +99,7 @@ function touched(ctx: Ctx): { readonly path: string; readonly content: string } 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 //
 // A regex is for TEXT: a file's contents, a line matched whole. Which command runs is not text —
-// it is a program and its arguments in the parse — so `banCommands` and the heads of
-// `substitutionInProse` name a command in words and compare it with each command there, and a
+// it is a program and its arguments in the parse — so `banCommands` names a command in words and compares it with each command there, and a
 // regex stays only for `wholeLine`, a pattern across two commands on purpose.
 
 /** One pattern that matched, and the 1-based line it matched on. */
@@ -114,7 +112,7 @@ export interface PatternHit {
  * Every pattern that matches, per line, in order.
  *
  * A pattern is applied per LINE rather than to the whole text, because a hit has to be able to
- * name one: "matches /TODO/" sends a reader to a file, "line 42: matches /TODO/" sends them to the
+ * name one: "matches TODO" sends a reader to a file, "line 42 matches TODO" sends them to the
  * place. A single-line subject — a command — simply has one line.
  */
 export function patternHits(text: string, patterns: readonly string[]): PatternHit[] {
@@ -139,7 +137,7 @@ export const textBan = defineCheck(
   (opts: { ban: readonly string[] }): Check =>
     (ctx) => {
       const hits = patternHits(touched(ctx).content, opts.ban);
-      return answer(ctx, hits.map((h) => `line ${h.line}: matches /${h.pattern}/`));
+      return answer(ctx, hits.map((h) => `line ${h.line} matches ${h.pattern}`));
     },
 );
 
@@ -176,7 +174,7 @@ export const textBan = defineCheck(
 export const banCommands = defineCheck(
   (opts: { ban: readonly string[]; wholeLine?: boolean }): Check => {
     if (opts.wholeLine === true) {
-      const { patterns, faults } = compiledPatterns(opts.ban);
+      const { patterns, faults } = compiledPatterns(opts.ban, (pattern) => `bans /${pattern}/ under \`wholeLine: true\``);
       return withFaults((ctx) => {
         const line = ctx.command ?? "";
         const subject = elideHeredocBodies(line) ?? line;
@@ -199,10 +197,10 @@ export const banCommands = defineCheck(
 );
 
 /**
- * Each `wholeLine` entry compiled once, when the rule loads, and a load fault for each that is not
+ * Each pattern compiled once, when the rule loads, and a load fault for each that is not
  * a regex: a pattern that does not compile would otherwise throw on every command that runs.
  */
-function compiledPatterns(entries: readonly string[]): {
+function compiledPatterns(entries: readonly string[], opening: (pattern: string) => string): {
   patterns: readonly { readonly pattern: string; readonly re: RegExp }[];
   faults: readonly string[];
 } {
@@ -212,14 +210,14 @@ function compiledPatterns(entries: readonly string[]): {
     try {
       patterns.push({ pattern, re: new RegExp(pattern) });
     } catch (error) {
-      faults.push(`bans /${pattern}/ under \`wholeLine: true\`, which is not a regex: ${(error as Error).message}.`);
+      faults.push(`${opening(pattern)}, which is not a regex: ${(error as Error).message}.`);
     }
   }
   return { patterns, faults };
 }
 
 /**
- * A command named in words — a `banCommands` entry, a `substitutionInProse` head — as the parse
+ * A command named in words — a `banCommands` entry — as the parse
  * reads it: its program without its path, and its arguments as compared.
  */
 interface CommandInWords {
@@ -293,142 +291,43 @@ function wordsInLine(banned: CommandInWords, line: string): boolean {
   return words.every((re) => re.test(line));
 }
 
-/**
- * Refuse a command that records permanent prose when the shell would run a BACKTICK substitution
- * while building it — a commit message, a PR or issue body, a journal entry.
- *
- * `heads` are the commands that record prose, each in words, `"gh pr"`, matched as `banCommands`
- * matches an entry: the same program, less its path, and every argument of the head among the
- * command's, compared whole. A head's words are found anywhere among the arguments, so a bare word
- * passed as an option's value counts too: `"gh pr"` refuses `gh run list --branch pr`. A head that
- * is not one command in words refuses to load, as an entry does. `gitSubcommands` names git's own,
- * `commit`, and is read through `gitCommand`: git's options sit between `git` and its subcommand,
- * so `-C '/a b' commit` is `commit` there, where the containment of `"git commit"` would also take
- * `git log --grep commit`.
- *
- * The verdict reads the parse, never the line: a backtick the shell runs is one the parse lists as
- * the command's substitution — in a double-quoted or bare argument, or in an unquoted heredoc the
- * command is fed. A single-quoted argument, an escaped backtick and a QUOTED heredoc run nothing,
- * so none is refused, and neither is a backtick in another command on the same line. A `$( … )`
- * substitution is the sanctioned way to feed a heredoc into an argument, so it is not refused
- * itself; what it runs is, when that holds a backtick — the unquoted `"$(cat <<EOF … EOF)"`
- * message. A line that does not parse is not judged.
- *
- * A CORE CHECK because TWO PACKS SHARE IT: `git` polices `git commit` and the `gh` verbs, which
- * every repo binds, and `work` the lifecycle verbs, which only a repo running the work lifecycle
- * binds. Anything two packs share is a core check; a copy in each is how the two would drift
- * while both still read as armed.
- */
-export const substitutionInProse = defineCheck(
-  (opts: { heads: readonly string[]; gitSubcommands?: readonly string[] }): Check => {
-    const { commands: heads, faults } = commandsInWords(
-      opts.heads,
-      (head) =>
-        `names the head \`${head}\`, which is not one command in words. Name a program and the arguments that make it record prose, such as "gh pr".`,
-    );
-    return withFaults((ctx) => {
-      const hits = (shellCommands(ctx) ?? []).flatMap((c) => {
-        const sub = gitCommand(c)?.subcommand;
-        const head = sub != null && opts.gitSubcommands?.includes(sub) === true ? `git ${sub}` : heads.find((h) => commandIs(h, c))?.entry;
-        if (head === undefined) return [];
-        return backticksRun(c.substitutions).map((run) => `\`${head}\` would run \`${run}\` and record its output in place of the backticks`);
-      });
-      return answer(ctx, hits);
-    }, faults);
-  },
-);
-
-/**
- * The backtick substitutions a command's own substitutions run, through any `$( … )` among them:
- * a `$( … )` lists the commands it runs at any depth, and each of those its own substitutions.
- */
-function backticksRun(substitutions: readonly ShellSubstitution[]): string[] {
-  return substitutions.flatMap((s) =>
-    s.backtick ? [s.text] : s.commands.flatMap((c) => c.substitutions.filter((t) => t.backtick).map((t) => t.text)),
-  );
-}
-
-/**
- * What a blocked prose-writing command is told, and it is the same sentence whichever pack caught
- * it: the mechanism, the absence of an undo, and the fix.
- *
- * ONE constant rather than a message per pack. The sentence never named the verb that was blocked
- * — it names the shape — so two copies would be two places for the same advice to drift, and the
- * copy that drifted would still read as correct.
- */
-export const SUBSTITUTION_MESSAGE = [
-  "You are recording prose through a shell command, and a backtick in a double-quoted argument or an unquoted heredoc is not Markdown — the shell RUNS it and splices its output into your text before the command ever sees it.",
-  "On an append-only record there is no undo: no amend, no redact. And once the binary has argv the splice has already happened, so this is the only moment it can be caught.",
-  "Fix: SINGLE-quote the argument (backticks are literal there), escape each backtick as \\` inside the double quotes, or feed the prose on stdin with a QUOTED heredoc — `git commit -F -` plus `<<'EOF'`, which this rule treats as safe.",
-].join("\n");
-
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // PATHS — claims about where a file is, never about what is in it
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 /**
- * Refuse a hand-edit of a protected path.
+ * Refuse a commit that changes or deletes a file under `paths`.
  *
- * The entry's `.on()` IS the protected set and the engine has already filtered on it, so any file
- * that reaches this check is protected by definition: matching it is the violation. There is no
- * second list of paths inside the check: a rule that could be scoped one way and protect another
- * is a rule whose two halves can disagree in silence.
+ * CALLED ONCE PER COMMIT, with no `.on(…)`: the protected set is the option, so the check reads the
+ * commit's own facts — the staged paths, the paths the last commit does not have and the paths it
+ * deletes — and a deletion is a path like any other. A rule scoped with `.on(…)` is asked about
+ * files, one at a time, and never about a deleted one. A rename is a deletion of the old path plus
+ * an add of the new one, so it is refused by its old path.
  *
  * `existingOnly` is what an APPEND-ONLY tree needs: a migrations folder, where yesterday's file is
- * history and may never move while today's is the whole point of the folder. Absent means no
- * narrowing — every write to a protected path is refused — which is the empty value rather than a
- * default a reader has to know about.
+ * history and may never move while today's is the whole point of the folder. A file is new when
+ * the last commit does not have it (`ctx.added`). Absent means no narrowing, which is the empty
+ * value rather than a default a reader has to know about.
  *
- * Either way, a file identical to the last commit's copy is not an edit, and passes. Only `flow
- * hook commit --all` hands one over: it judges the whole tree, and a real commit never stages a
- * file it leaves as it was.
+ * It has no `.on(…)`, so `flow hook commit --all`, which makes no commit, does not call it.
  */
 export const protectedPath = defineCheck(
-  (opts: { existingOnly?: boolean }): Check =>
-    async (ctx) => {
-      const { path } = touched(ctx);
-      if (ctx.file?.unchanged === true) return ctx.ok();
-      if (opts.existingOnly === true) {
-        // "Already there" means before THIS change. Before an Edit the tree still answers that.
-        // After a shell command, and at commit, the tree holds the file either way, so the event
-        // says instead: from the snapshot taken before the command, or from the last commit. A
-        // delete has no would-be file to ask about, and the entry's scope is what protects it.
-        if (ctx.moment !== "delete" && !(ctx.file?.existed ?? (await ctx.fs.exists(path)))) return ctx.ok();
-        return ctx.fail(
-          `'${path}' is append-only — an existing file here is history and may not be edited or deleted (adding a new one is fine)`,
-        );
-      }
-      return ctx.fail(`'${path}' is a protected path (do not edit directly)`);
-    },
-);
-
-// ── ACTORS — who made the change, never what it says ─────────────────────────────────────────────
-
-/**
- * Only the listed categories may change a file: a write or a delete by any other actor is refused.
- *
- * It reads `ctx.actor` — the categories the acting session wears, recognised from what the host
- * wrote about it, never from a claim it made — and nothing about the file. A session wearing none
- * of `writers` is refused whatever it wrote, and one wearing none at all is refused too: "no
- * category" is not "every category".
- *
- * `.for(…)` on an entry says which actors a RULE applies to; this says which actors may WRITE. Both
- * read the same categories, and they answer different questions — a rule for a checker says what a
- * checker may not do, this says that everybody but a builder may not write.
- *
- * An empty `writers` is refused at load: it would refuse every change by everyone, which is a
- * frozen worktree, not a rule about who writes it.
- */
-export const oneWriter = defineCheck(
-  (opts: { writers: readonly string[] }): Check =>
+  (opts: { paths: readonly string[]; existingOnly?: boolean }): Check =>
     withFaults(
       (ctx) => {
-        if (ctx.actor.some((category) => opts.writers.includes(category))) return ctx.ok();
-        const who = ctx.actor.length === 0 ? "an actor with no category" : `an actor wearing ${ctx.actor.join(", ")}`;
-        const what = ctx.moment === "delete" ? "deleted" : "written";
-        return ctx.fail(`${ctx.file?.path ?? "a file"} was ${what} by ${who} — only ${opts.writers.join(" or ")} may change files here`);
+        const fresh = new Set(opts.existingOnly === true ? (ctx.added ?? []) : []);
+        const changed = (ctx.staged ?? []).filter((path) => !fresh.has(path) && matchAny(path, opts.paths));
+        const deleted = (ctx.deleted ?? []).filter((path) => matchAny(path, opts.paths));
+        const why =
+          opts.existingOnly === true
+            ? "is append-only — an existing file here is history and may not be changed or deleted (adding a new one is fine)"
+            : "is a protected path (do not change or delete it)";
+        return answer(ctx, [
+          ...changed.map((path) => `'${path}' ${why}: this commit changes it`),
+          ...deleted.map((path) => `'${path}' ${why}: this commit deletes it`),
+        ]);
       },
-      opts.writers.length === 0 ? ["lists no `writers`, so it would refuse every change by every actor. Name the categories allowed to write."] : [],
+      opts.paths.length === 0 ? ["lists no `paths`, so it protects nothing. Name the files a commit must not change or delete."] : [],
     ),
 );
 
@@ -628,10 +527,9 @@ function checkOne(obj: unknown, a: JsonAssert): string[] {
 /**
  * Every assertion that fails over one JSON document.
  *
- * Text that will not parse yields NO violations, and that is deliberate rather than lax: this runs
- * on a would-be file at write time, which is frequently mid-keystroke, and a rule that shouted
- * "invalid JSON" at every second character would be turned off within a day. A file that really is
- * broken JSON is a problem the tool that reads it will name, loudly, on its own.
+ * Text that will not parse yields NO violations, and that is deliberate rather than lax: a rule
+ * about a JSON file's contents has nothing to say about a file that is not JSON yet. A file that
+ * really is broken JSON is a problem the tool that reads it will name, loudly, on its own.
  */
 export function jsonViolations(jsonText: string, assert: readonly JsonAssert[]): string[] {
   let obj: unknown;
@@ -739,6 +637,87 @@ export const symbolsInSibling = defineCheck(
     },
 );
 
+/**
+ * The anchor each heading of a Markdown page makes, as GitHub makes it: the text in lower case,
+ * punctuation removed, each space a hyphen, and a repeat of one anchor numbered `-1`, `-2`.
+ * A heading inside a fenced block is no heading. Link and image syntax in a heading gives its text.
+ */
+export function headingAnchors(markdown: string): Set<string> {
+  const anchors = new Set<string>();
+  const seen = new Map<string, number>();
+  let fence: string | null = null;
+  for (const line of markdown.split("\n")) {
+    const mark = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+    if (mark !== undefined) {
+      if (fence === null) fence = mark;
+      else if (mark[0] === fence[0] && mark.length >= fence.length) fence = null;
+      continue;
+    }
+    if (fence !== null) continue;
+    const heading = /^ {0,3}#{1,6}[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/.exec(line)?.[1];
+    if (heading === undefined) continue;
+    const base = heading
+      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\p{M} _-]/gu, "")
+      .replace(/ /g, "-");
+    const n = seen.get(base) ?? 0;
+    seen.set(base, n + 1);
+    anchors.add(n === 0 ? base : `${base}-${n}`);
+  }
+  return anchors;
+}
+
+/** A path of path characters, then optionally `#` and an anchor. Trailing dots belong to the sentence. */
+const CITATION = /[A-Za-z0-9_@+\-./]+(?:#[\p{L}\p{N}_-]+)?/gu;
+
+/** One citation in a file: its line, the page it names and the anchor it names, if any. */
+interface Citation {
+  readonly line: number;
+  readonly page: string;
+  readonly anchor: string | null;
+}
+
+/** Every token of the text that is a path matching `pages`, with its line. */
+function citations(text: string, pages: readonly string[]): Citation[] {
+  const out: Citation[] = [];
+  text.split("\n").forEach((line, index) => {
+    for (const [token] of line.matchAll(CITATION)) {
+      const [raw = "", anchor] = token.split("#");
+      const page = raw.replace(/\.+$/, "");
+      if (page !== "" && matchAny(page, pages)) out.push({ line: index + 1, page, anchor: anchor ?? null });
+    }
+  });
+  return out;
+}
+
+/**
+ * Every docs page, and section of one, the staged file cites must exist.
+ *
+ * A citation is a path matching `pages`, and `#anchor` after it names a heading by the anchor
+ * GitHub makes for it. A page is read once for all the anchors the file cites in it. The check
+ * judges the file the call is about, so a page renamed in a commit judges the files that cite it
+ * only when they are staged too.
+ */
+export const docLinks = defineCheck(
+  (opts: { pages: readonly string[] }): Check =>
+    withFaults(
+      async (ctx) => {
+        const { content } = touched(ctx);
+        const anchorsOf = new Map<string, Set<string> | null>();
+        const hits: string[] = [];
+        for (const { line, page, anchor } of citations(content, opts.pages)) {
+          if (!anchorsOf.has(page)) anchorsOf.set(page, (await ctx.fs.exists(page)) ? headingAnchors(await ctx.fs.read(page)) : null);
+          const anchors = anchorsOf.get(page);
+          if (anchors === null) hits.push(`line ${line}: ${page} — there is no such page`);
+          else if (anchor !== null && !anchors?.has(anchor)) hits.push(`line ${line}: ${page}#${anchor} — the page has no heading with that anchor`);
+        }
+        return answer(ctx, hits, "\n");
+      },
+      opts.pages.length === 0 ? ["lists no `pages`, so no path is a citation. Name the globs of the pages that may be cited."] : [],
+    ),
+);
+
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // THE COMMIT — claims about the set of files moving together
 // ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -809,92 +788,6 @@ export function gitCommands(facts: CommandFacts): GitCommand[] {
   return (shellCommands(facts) ?? []).flatMap((c) => gitCommand(c) ?? []);
 }
 
-/**
- * The message in the commit's argument at `i`, after its `option` (`""` for a value given apart,
- * `-m` or `--message=` for one attached), as git receives it. A message that is one substitution
- * running only `cat` on a heredoc — `"$(cat <<'EOF' … EOF)"`, the form an agent is taught — is
- * that heredoc's body, less the trailing newlines a substitution drops. Any other is passed as written.
- */
-function passedAs(commit: GitCommand, i: number, option: string): string {
-  const value = (commit.args[i] as string).slice(option.length);
-  const at = commit.argsAt + i;
-  const commands = commit.command.substitutions.find((s) => s.argument === at && s.prefix === option)?.commands;
-  const [cat] = commands ?? [];
-  if (commands?.length !== 1 || cat?.program !== "cat" || cat.args.length > 0) return value;
-  const body = cat.heredocs[cat.heredocs.length - 1]?.body;
-  return body === undefined ? value : body.replace(/\n+$/, "");
-}
-
-/**
- * The message a `git commit` in this command line carries, or null when there is no judgeable
- * commit in it at all. Null is the "not our business" answer and every caller passes on it.
- *
- * EVERY `-m` IS READ, AND THEY JOIN AS PARAGRAPHS. This returned the FIRST one and stopped, which
- * made `git commit -m "<subject>" -m "<body>"` — git's own two-paragraph form, and the one an agent
- * reaches for when the reason will not fit in a subject — a commit whose body was never read. The
- * consequence was not a missed block but the worse direction: a commit that HAD recorded its reason
- * in the second `-m` was refused, on the one rail whose whole job is to be obeyed.
- *
- * The separator is a BLANK line because that is what git writes. Verified rather than assumed:
- * `git commit -m a -m b -m c` then `git log --format=%B | od -c` shows `a\n\nb\n\nc\n\n`.
- *
- * The forms it sees, settled from the two scripts this absorbed rather than invented:
- *
- *   git commit -m MSG · -mMSG · --message MSG · --message=MSG      judged
- *   git commit -m SUBJECT -m BODY   (repeated, any mix of forms)   judged, joined as git joins them
- *   git commit -m "$(cat <<'EOF' … EOF)"                            judged, via that heredoc's body,
- *                                                                  which is what the shell passes
- *   git commit -F - <<'EOF' … EOF   (the commit reads stdin)        judged, via ITS heredoc's body
- *   python3 - <<'PY' … PY; git commit -F - <<'EOF' … EOF            judged, via the commit's own
- *                                                                  heredoc — the first one is the
- *                                                                  python's script
- *   python3 - <<'PY' … PY; git commit -F msg.txt                    NOT judged — the heredoc is
- *                                                                  another command's script, and
- *                                                                  the message is on disk
- *   git commit -F path/to/file                                     NOT judged — the message is on
- *                                                                  disk, and reading it is a read
- *                                                                  of the world this layer does not
- *                                                                  do
- *   git commit            (an editor commit, no message anywhere)  NOT judged — there is nothing to
- *                                                                  read before the editor opens
- *
- * The boundary is on the record: this rail polices AGENT-typed commits, which are its audience. A
- * human committing from an editor is not its subject and never was.
- */
-export function commitMessage(facts: CommandFacts): string | null {
-  // A line that does not parse has no git commands, so it is not judged: cannot tell.
-  const commit = gitCommands(facts).find((g) => g.subcommand === "commit");
-  if (!commit) return null;
-  const parts: string[] = [];
-  for (let i = 0; i < commit.args.length; i++) {
-    const a = commit.args[i] as string;
-    if (a === "-m" || a === "--message") {
-      if (i + 1 >= commit.args.length) break; // a trailing `-m` with nothing after it — git would refuse too
-      parts.push(passedAs(commit, i + 1, ""));
-      i++; // STEP OVER the value: without this a message that looks like a flag is read twice
-      continue;
-    }
-    if (a.startsWith("-m") && a !== "-m") parts.push(passedAs(commit, i, "-m")); // -mMESSAGE
-    else if (a.startsWith("--message=")) parts.push(passedAs(commit, i, "--message="));
-  }
-  if (parts.length) return parts.join("\n\n");
-  // No inline message: it may still be on stdin, and ONLY when the commit itself says so. `-F -`
-  // (or `--file=-`) is the one form that reads stdin. A heredoc that belongs to ANOTHER command on
-  // the line — a python edit ahead of the commit — is a script, not a message, and reading it as
-  // one refused nine legitimate commits in one run: no conventional header in a script, no
-  // `new-dep:` line, and once the attribution rule's own fixture text. An EDITOR commit (neither
-  // `-m` nor `-F -`) returns null and passes, which is the narrow scope this rail has always kept.
-  const readsStdin = commit.args.some(
-    (a, i) => ((a === "-F" || a === "--file") && commit.args[i + 1] === "-") || a === "-F-" || a === "--file=-",
-  );
-  if (!readsStdin) return null;
-  // The message is then the body of the heredoc the commit ITSELF is fed — a QUOTED heredoc is the
-  // safe way to write one containing backticks. Fed several, its stdin is the last: each `<<`
-  // replaces the one before. Trimmed; empty is no message.
-  const { heredocs } = commit.command;
-  return heredocs[heredocs.length - 1]?.body.trim() || null;
-}
-
 /** One shell argument, single-quoted so nothing in it can be expanded or re-parsed. */
 export function quoteArg(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
@@ -942,11 +835,11 @@ export function givesReason(message: string, token: string): boolean {
   return new RegExp(`^[ \\t]*${escapeRe(token)}[ \\t]*:`, "im").test(message);
 }
 
-/** What the working tree is about to carry, split by whether each path is new to the repo. */
+/** What the commit carries, split by whether each path is new to the repo. */
 export interface WorkingState {
-  /** Everything that moved — tracked edits, staged adds, and untracked files. */
+  /** Everything the commit adds or changes: `ctx.staged`. */
   readonly changed: readonly string[];
-  /** The subset that is NEW here: a staged add, or untracked. */
+  /** The subset that is NEW here, which the last commit does not have: `ctx.added`. */
   readonly added: readonly string[];
 }
 
@@ -1022,16 +915,9 @@ export function addedNames(diff: string, patterns: readonly string[], known: rea
 }
 
 export interface ReasonInput {
-  /** The commit message, as the command line carries it. */
+  /** The commit message, as git records it. */
   readonly message: string;
-  /**
-   * What the working tree has to say — index and worktree, tracked and untracked.
-   *
-   * Deliberately the generous reading: a commit is usually typed straight after the staging,
-   * `git commit -a` sweeps tracked worktree edits in, and the cost of asking for a sentence that
-   * was not strictly owed is a sentence, while the cost of missing one is the record this rule
-   * exists to keep.
-   */
+  /** What the commit carries, as git answered for the whole commit. */
   readonly state: WorkingState;
   /** Paths that owe a reason when they change at all. */
   readonly whenChanged?: readonly string[] | undefined;
@@ -1080,13 +966,38 @@ export function reasonHits(o: ReasonInput): string[] {
   ];
 }
 
-/** Lines of output as a path list — the shape all three commands below answer in. */
-function pathLines(out: string): string[] {
-  return out
-    .split("\n")
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
+/**
+ * Hold the commit message to a format, and ban text in it.
+ *
+ * `header` is a regex the FIRST line of the message must match; `ban` is a list of regexes, and any
+ * line of the message matching any of them blocks. Both read `ctx.message`, the message as git
+ * records it, so a message typed in an editor, passed with `-m` or read from a file is judged the
+ * same way. Under `flow hook commit --all` there is no commit, so no message, and nothing to judge.
+ *
+ * At least one of the two is required, and a pattern that is not a regex refuses to load: a check
+ * that could never fail would load, count and arm nothing.
+ */
+export const commitMessage = defineCheck(
+  (opts: { header?: string; ban?: readonly string[] }): Check => {
+    const header = compiledPatterns(opts.header === undefined ? [] : [opts.header], (pattern) => `holds /${pattern}/`);
+    const ban = compiledPatterns(opts.ban ?? [], (pattern) => `holds /${pattern}/`);
+    const faults = [...header.faults, ...ban.faults];
+    if (opts.header === undefined && (opts.ban ?? []).length === 0)
+      faults.push("sets neither `header` nor `ban`, so it judges nothing. Set a header format, a list of banned patterns, or both.");
+    return withFaults((ctx) => {
+      const message = ctx.message;
+      if (message == null) return ctx.ok();
+      const lines = message.split("\n");
+      const first = lines[0] ?? "";
+      const hits: string[] = [];
+      for (const { pattern, re } of header.patterns)
+        if (!re.test(first)) hits.push(`the first line of the message, "${first}", does not match /${pattern}/`);
+      for (const hit of patternHits(message, ban.patterns.map(({ pattern }) => pattern)))
+        hits.push(`line ${hit.line} of the message matches ${hit.pattern}: "${lines[hit.line - 1] ?? ""}"`);
+      return answer(ctx, hits);
+    }, faults);
+  },
+);
 
 /**
  * This commit needs a reason recorded, and here is whether it gave one.
@@ -1102,25 +1013,16 @@ function pathLines(out: string): string[] {
  * repos did — which on inspection was this check with one condition missing and everything else
  * written a second time.
  *
- * AT WHICH RAIL, and the boundary that comes with it: the COMMAND moment — the Bash rail, before
- * the command runs, which is where an agent's commit can still be stopped and rewritten. git's own
- * commit-msg hook (which would also catch a human committing from an editor) was considered and
- * shelved on the record: the agent is the audience.
+ * AT `commit`, in git's commit-message hook, where the message exists as git records it. The
+ * message is `ctx.message`, so a commit a person types in an editor owes its reason as an agent's
+ * does, and the files it changes are the staged ones: `ctx.staged` and `ctx.added`, which git
+ * answered once for the whole commit. Under `flow hook commit --all` there is no commit, so no
+ * message, and no reason is owed.
  *
- * THREE COMMANDS, AND NOT `git status`. The old script read `git status --porcelain=v1` and carried
- * a fixed-width parser for the answer. That parser reads the world's own format and went with the
- * adapter; what is left here asks three questions whose answers need no format knowledge at all —
- * each one is a list of paths, one per line. It is also strictly better: the porcelain parser had a
- * war story about eating the first character of a path, and there is now no column to slice.
- *
- * …AND IT ASKS THEM ONLY WHEN A PATH CONDITION IS BOUND. A binding that names `diffAdds` alone —
- * the verb ratchets in both house packs do — reads one diff and nothing else. This is not a
- * micro-optimisation: every one of these commands is a question a `.test()` case has to answer, so
- * asking three that cannot change the verdict makes every case for a diff-adds entry carry three
- * lines of git output that mean nothing, and a case full of noise is a case nobody re-reads.
- *
- * Fails safe on every read: not a git repo, or git unavailable, and the check stands aside rather
- * than trapping a commit it cannot judge.
+ * `diffAdds` is the one condition that asks git again: one `git diff --cached` of the named file,
+ * and only when a binding names it, because every question a check asks is one a `.test()` case
+ * has to answer. A diff git cannot give leaves the check standing aside rather than trapping a
+ * commit it cannot judge.
  */
 export const commitReason = defineCheck(
   (opts: {
@@ -1131,33 +1033,14 @@ export const commitReason = defineCheck(
     token: string;
   }): Check =>
     async (ctx) => {
-      // The message first, and no git call unless there is one: a command that is not a judgeable
-      // commit is the overwhelming majority of everything typed at this rail.
-      const message = commitMessage(ctx);
+      const message = ctx.message;
       if (message == null) return ctx.ok();
 
-      const git = `git ${gitDirPrefix(ctx)}`.trimEnd();
-
-      let state: WorkingState = { changed: [], added: [] };
-      if (opts.whenChanged || opts.whenAdded) {
-        const [tracked, adds, untracked] = await Promise.all([
-          ctx.exec(`${git} diff HEAD --name-only`),
-          ctx.exec(`${git} diff HEAD --name-only --diff-filter=A`),
-          ctx.exec(`${git} ls-files --others --exclude-standard`),
-        ]);
-        if (tracked.code !== 0 || adds.code !== 0 || untracked.code !== 0) return ctx.ok();
-        const untrackedPaths = pathLines(untracked.stdout);
-        state = {
-          changed: [...new Set([...pathLines(tracked.stdout), ...untrackedPaths])],
-          added: [...pathLines(adds.stdout), ...untrackedPaths],
-        };
-      }
+      const state: WorkingState = { changed: [...(ctx.staged ?? [])], added: [...(ctx.added ?? [])] };
 
       const namesAdded: { name: string; file: string }[] = [];
       for (const surface of opts.diffAdds ?? []) {
-        // `git diff HEAD`, so a staged add and an unstaged edit both count — `git commit -a`
-        // sweeps the second in, and the generous reading is the same one the path conditions take.
-        const diff = await ctx.exec(`${git} diff HEAD -- ${quoteArg(surface.file)}`);
+        const diff = await ctx.exec(`git diff --cached -- ${quoteArg(surface.file)}`);
         if (diff.code !== 0) return ctx.ok();
         for (const name of addedNames(diff.stdout, surface.patterns, surface.known ?? []))
           namesAdded.push({ name, file: surface.file });
@@ -1869,27 +1752,25 @@ export const astGrep = defineCheck(
 // checked nothing for four days. A rule whose block case PASSES cannot ship — which is what makes
 // cases a proof rather than a formality.
 
-/** The four dialects a case can be written in — one per kind of event fact. */
-export type CaseDialect = "command" | "write" | "commit" | "turn-end";
+/** The three dialects a case can be written in — one per kind of event fact. */
+export type CaseDialect = "command" | "commit" | "turn-end";
 
 /**
  * WHICH GUARDRAIL MOMENTS SPEAK EACH DIALECT — the one table, and everything else reads it.
  *
- * `write` covers `delete` too, because both carry a path and the delete rail hands over the file
- * that is going away. Nothing else overlaps: a command case can only ever reach a command rail.
+ * A `{ path, content }` case is a commit of that one file (`asCommit`), so it speaks the commit
+ * dialect. Nothing overlaps: a command case can only ever reach a command rail.
  */
 const SPEAKS: Readonly<Record<CaseDialect, readonly GuardrailMoment[]>> = {
   command: ["command"],
-  write: ["write", "delete"],
   commit: ["commit"],
   "turn-end": ["turn-end"],
 };
 
 /**
- * What a commit says about its staged files beyond their paths — what a case lists, and what the
- * live gate's event carries (`GuardEvent` takes `added` and `unchanged` from here; its `deleted`
- * holds the same facts as a list). Written out rather than derived from `readCase`, so a field
- * added to a case's reading does not silently become an option of the fan-out.
+ * What a commit says beyond the paths it stages — what a case lists, and what the live gate's event
+ * carries (`GuardEvent` takes every field from here). Written out rather than derived from
+ * `readCase`, so a field added to a case's reading does not silently become an option of the fan-out.
  */
 export interface CommitFileFacts {
   /**
@@ -1897,13 +1778,32 @@ export interface CommitFileFacts {
    * when the shell could not ask git, or the case does not say, and then `existed` is left unset.
    */
   readonly added?: readonly string[] | undefined;
-  /**
-   * The staged paths identical to the last commit, which only `--all` has. Each one's
-   * `ctx.file.unchanged` is `true`.
-   */
-  readonly unchanged?: readonly string[] | undefined;
-  /** The staged deletions, by path, with their content as the last commit has it. */
-  readonly deleted?: Readonly<Record<string, string>> | undefined;
+  /** Every path the commit deletes: `ctx.deleted`. */
+  readonly deleted?: readonly string[] | undefined;
+  /** The message as git records it. `null` under `--all`; absent, an empty one, as in a case with none. */
+  readonly message?: string | null | undefined;
+}
+
+/**
+ * The facts a commit puts on EVERY ctx it makes, whichever file the call is about: the staged
+ * paths, the paths added and deleted, and the message. The live gate and a case build them here.
+ */
+function commitFacts(staged: readonly string[], commit: CommitFileFacts): Partial<Ctx> {
+  return { staged, added: commit.added ?? [], deleted: commit.deleted ?? [], message: commit.message === undefined ? "" : commit.message };
+}
+
+/**
+ * A `{ path, content }` case read as a commit of that one file: the file staged, on disk with that
+ * content, and — when the case says whether the last commit had it — added or not.
+ */
+function asCommit(c: Extract<Case, { path: string }>): Extract<Case, { staged: readonly string[] }> {
+  const world = c.world ?? {};
+  return {
+    staged: [c.path],
+    ...(c.existed === false ? { added: [c.path] } : c.existed === true ? { added: [] } : {}),
+    world: { ...world, fs: { ...world.fs, [c.path]: c.content } },
+    ...(c.actor === undefined ? {} : { actor: c.actor }),
+  };
 }
 
 /**
@@ -1925,41 +1825,22 @@ export function readCase(c: Case): {
   // the categories of the session acting, so a case that names none is a session wearing none.
   const actor = { actor: c.actor ?? [] };
   if ("command" in c) return { dialect: "command", facts: { command: c.command, ...actor }, world };
-  if ("path" in c) {
-    const existed = c.existed === undefined ? {} : { existed: c.existed };
-    return { dialect: "write", facts: { file: { path: c.path, content: c.content, ...existed }, ...actor }, world };
-  }
-  if ("staged" in c)
-    return { dialect: "commit", facts: { staged: c.staged, ...actor }, world, added: c.added, unchanged: c.unchanged, deleted: c.deleted };
+  if ("path" in c) return readCase(asCommit(c));
+  if ("staged" in c || "message" in c)
+    return {
+      dialect: "commit",
+      facts: { staged: c.staged ?? [], ...actor },
+      world,
+      added: c.added,
+      deleted: c.deleted,
+      message: c.message,
+    };
   return { dialect: "turn-end", facts: { turn: c.actions, ...actor }, world };
 }
 
 /** Which moment's dialect a case speaks. */
 export function caseMoment(c: Case): Moment {
   return readCase(c).dialect;
-}
-
-/**
- * Build the ctx one case becomes, at one moment.
- *
- * BOTH halves are the language layer's, and deliberately the same two calls the live engine makes:
- * `cannedWorld` turns what the case wrote down into the three capabilities, and `makeCtx` assembles
- * the ctx from those and the event's facts. A case is a recorded WORLD handed to one assembler, not
- * a second kind of ctx — the moment either of those is written twice, a green case stops being
- * evidence about the live rail, which is the whole value of cases existing.
- */
-export function cannedCtx(moment: Moment, c: Case, unanswered: Unanswered[]): Ctx {
-  const { world, facts } = cannedParts(c, unanswered);
-  return makeCtx(moment, facts, world);
-}
-
-/** A case read once: the world it recorded, assembled, and the event facts it carries. */
-function cannedParts(
-  c: Case,
-  unanswered: Unanswered[],
-): { readonly facts: Partial<Ctx>; readonly world: World } & CommitFileFacts {
-  const { world, facts, added, unchanged, deleted } = readCase(c);
-  return { world: cannedWorld(world, facts.staged, unanswered), facts, added, unchanged, deleted };
 }
 
 /**
@@ -1970,9 +1851,11 @@ function cannedParts(
  * four answers the live gate would.
  */
 export async function caseCtxs(entry: LoadedEntry, moment: Moment, c: Case, unanswered: Unanswered[]): Promise<Ctx[]> {
-  const { world, facts, ...commit } = cannedParts(c, unanswered);
-  const subjects = moment === "commit" ? await commitSubjects(entry, facts, world, commit) : [facts];
-  return subjects.map((subject) => makeCtx(subject.moment ?? moment, subject, world));
+  const { world, facts, added, deleted, message } = readCase(c);
+  const canned = cannedWorld(world, facts.staged, unanswered);
+  const commit = { added, deleted, message };
+  const subjects = moment === "commit" ? await commitSubjects(entry, facts, canned, commit) : [facts];
+  return subjects.map((subject) => makeCtx(subject.moment ?? moment, subject, canned));
 }
 
 /**
@@ -1980,24 +1863,22 @@ export async function caseCtxs(entry: LoadedEntry, moment: Moment, c: Case, unan
  * for a commit's file subjects, which the live gate (`subjectsOf`) and a case both build through.
  *
  * A file out of the entry's scope, or not on disk, yields none. `existed` is set when `added` is
- * given, and `unchanged` on each file `unchanged` names — which only `--all` has.
+ * given.
  */
-export async function stagedFiles(
+async function stagedFiles(
   scope: Scope,
   staged: readonly string[],
   world: World,
-  { added, unchanged }: Pick<CommitFileFacts, "added" | "unchanged">,
+  { added }: Pick<CommitFileFacts, "added">,
 ): Promise<NonNullable<Ctx["file"]>[]> {
-  // Sets, not lists: under `--all` nearly every file in the tree is unchanged, and before the
-  // first commit every one is added.
+  // A set, not a list: before the first commit every file in the tree is added.
   const fresh = added === undefined ? undefined : new Set(added);
-  const same = new Set(unchanged ?? []);
   const out: NonNullable<Ctx["file"]>[] = [];
   for (const path of staged) {
     if (!inScope(scope, path)) continue;
     if (!(await world.fs.exists(path))) continue;
     const existed = fresh === undefined ? {} : { existed: !fresh.has(path) };
-    out.push({ path, content: await world.fs.read(path), ...existed, ...(same.has(path) ? { unchanged: true } : {}) });
+    out.push({ path, content: await world.fs.read(path), ...existed });
   }
   return out;
 }
@@ -2017,29 +1898,26 @@ export async function stagedFiles(
  * content is a failure naming what to add rather than a silent pass.
  *
  * A case that lists `added` says which files the last commit does not have, as the live gate does,
- * and each file's `existed` follows from it. A case that lists none leaves `existed` unset. A case
- * that lists `unchanged` says which are identical to the last commit, as `--all` does, and each of
- * those has `unchanged` set.
+ * and each file's `existed` follows from it. A case that lists none leaves `existed` unset.
  *
- * A case's `deleted` files are asked of an entry that fires at `delete` as well as `commit`, each as
- * a delete — the same rule the live gate follows, for the same reason.
+ * A case's `deleted` paths are no subject: a rule with `.on(…)` is asked about files the commit
+ * holds, and one without reads them from `ctx.deleted`.
  */
-async function commitSubjects(
+export async function commitSubjects(
   entry: LoadedEntry,
   facts: Partial<Ctx>,
   world: World,
   commit: CommitFileFacts,
+  whole = false,
 ): Promise<Partial<Ctx>[]> {
   const staged = facts.staged ?? [];
   const { spec } = entry;
-  if (!spec.on) return [facts];
-  const out: Partial<Ctx>[] = (await stagedFiles(spec, staged, world, commit)).map((file) => ({ file, staged }));
-  const atDelete = ((spec.at ?? []) as readonly string[]).includes("delete");
-  for (const [path, content] of Object.entries(commit.deleted ?? {})) {
-    if (!atDelete || !inScope(spec, path)) continue;
-    out.push({ moment: "delete", file: { path, content, existed: true }, staged });
-  }
-  return out;
+  // The whole repo, with no commit (`--all`): only a rule with `.on(…)` is asked, once per file, and no
+  // file counts as staged, added or deleted, with no message.
+  if (whole && !spec.on) return [];
+  const every = whole ? { ...facts, staged: [], added: [], deleted: [], message: null } : { ...facts, ...commitFacts(staged, commit) };
+  if (!spec.on) return [every];
+  return (await stagedFiles(spec, staged, world, commit)).map((file) => ({ ...every, file }));
 }
 
 /** How one case came out. */

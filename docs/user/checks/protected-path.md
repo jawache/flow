@@ -1,28 +1,33 @@
 ---
-summary: "reads: file path · fires at: write · delete · commit"
+summary: "reads: staged set · deleted paths · fires at: commit"
 ---
 
 # `protectedPath`
 
-Refuses a hand-edit of a protected path. The `.on(…)` set *is* the protected set — any file that reaches the check is protected by definition, so matching it is the violation. When the rule is bound at `deletion`, a glob such as `src/generated/**` also covers an `rm -rf` of the folder: each file the command removed is judged after it runs, and written back when refused. Without `existingOnly`, every file in scope is refused, so the rule has only block cases. With `existingOnly: true`, a new file passes, so a pass case can name one.
+Refuses a commit that changes or deletes a file under the paths you name. It is called once per commit, with no `.on(…)`, and reads the commit's staged paths and its deleted paths. An agent can still change a protected file in the working tree. The commit is where it is refused.
 
-A file identical to the one in the last commit passes, with or without `existingOnly`. Only `flow hook commit --all` passes such a file to the check, because it checks every file in the repo and most of them are as committed.
+It has no `.on(…)`, so `flow hook commit --all`, which makes no commit, does not run it.
 
 ## Options
 
 | Key | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `existingOnly` | boolean | no | append-only: a NEW file here is fine, but an existing one may not be edited or deleted. At write, a new file is one that was not on disk before the change. At commit, a new file is one the last commit does not have, and a file the commit deletes is refused when the rule is bound at both `deletion` and `commit`. A rename is refused by its old path |
+| `paths` | list of globs | yes | the protected files |
+| `existingOnly` | boolean | no | append-only: a NEW file under `paths` is fine, but an existing one may not be changed or deleted. A new file is one the last commit does not have. A rename is refused by its old path |
+
+A refusal lists each protected file the commit changes, and each it deletes.
 
 ## Example
 
 ```
 keepGenerated: guardrail()
-  .at(write, deletion, commit)
-  .on("src/generated/**")
-  .check(protectedPath({}))
+  .at(commit)
+  .check(protectedPath({ paths: ["src/generated/**"] }))
   .message("Machine-written — edit the source the header names, then re-run the build.")
-  .test({ block: [{ path: "src/generated/api.ts", content: "" }] }),
+  .test({
+    pass:  [{ staged: ["src/app.ts"] }],
+    block: [{ staged: ["src/generated/api.ts"] }, { staged: [], deleted: ["src/generated/api.ts"] }],
+  }),
 ```
 
 ---

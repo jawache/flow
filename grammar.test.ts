@@ -147,7 +147,7 @@ describe("the complete valid config", () => {
     expect(noTodo && "everywhere" in noTodo.spec).toBe(false);
 
     const tests = entries.find((e) => e.id === "tdd.commitRunsTests");
-    expect(tests?.spec.at).toEqual(["write", "commit"]);
-    expect(tests?.phases).toEqual(["edit", "commit"]);
+    expect(tests?.spec.at).toEqual(["commit"]);
+    expect(tests?.phases).toEqual(["commit"]);
   });
 });

@@ -7,7 +7,7 @@
 // This file is a FIXTURE with two jobs, and both are the phase's proof: it must compile with zero
 // diagnostics, and it must load with zero refusals. See flow/grammar.test.ts.
 
-import { defineConfig, pack, override, write, commit } from "../index.ts";
+import { defineConfig, pack, override, commit } from "../index.ts";
 import { house, tdd } from "./demo-pack.ts";
 
 export default defineConfig([
@@ -24,5 +24,5 @@ export default defineConfig([
 
   // A pack that needs a repo fact declares it, and the type makes the demand unskippable.
   pack(tdd, { run: "just test-commit" }),
-  override(tdd.commitRunsTests).at(write, commit),
+  override(tdd.commitRunsTests).at(commit),
 ]);

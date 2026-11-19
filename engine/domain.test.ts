@@ -19,25 +19,30 @@ import {
   breadcrumb,
   command,
   commit,
-  deletion,
   defineCategory,
   defineConfig,
   definePack,
   guardrail,
   loadConfig,
-  oneWriter,
   pack,
   override,
-  protectedPath,
-  touch,
+  fileChange,
+  session,
   turnEnd,
-  write,
+  type Check,
   type Ctx,
   type LoadResult,
   type Refusal,
   type SessionFacts,
   type World,
 } from "../index.ts";
+/** A per-file rule, as the commit fan-out hands a file: an existing file, one the last commit has, is refused. */
+const existingFile: Check = async (ctx) => {
+  const f = ctx.file;
+  if (f === undefined) return ctx.ok();
+  return (f.existed ?? (await ctx.fs.exists(f.path))) ? ctx.fail("existing") : ctx.ok();
+};
+
 // Straight from the language layer, not through the public door: `cannedWorld` is how flow drives a
 // recorded world, not something a config or a pack imports, so it has no business on that surface.
 import {
@@ -57,7 +62,6 @@ import {
   LEAD_BUCKETS,
   LOG_VERSION,
   MARKER_MAX_AGE_MS,
-  MOMENT_ORDER,
   RECORDING_VERSION,
   ROW_KINDS,
   readDir,
@@ -66,7 +70,6 @@ import {
   recordPath,
   recordingFile,
   recordingHeader,
-  afterCompaction,
   covers,
   diffRows,
   insideRepo,
@@ -88,7 +91,6 @@ import {
   formatBlock,
   formatBlocks,
   guard,
-  judgedDeletions,
   identify,
   inScope,
   logFile,
@@ -97,6 +99,10 @@ import {
   nextSeq,
   offPath,
   readState,
+  DELETED,
+  LOCK_STALE_MS,
+  lockIsStale,
+  lockPath,
   runRows,
   attribution,
   UNNAMED_COMMIT,
@@ -148,22 +154,28 @@ const regime: LoadResult = loadConfig(defineConfig([pack(rails)]));
  * one builder, and the `afterEach` below makes every unrecorded reach in this suite a failure.
  */
 function world(recorded: CaseWorld = {}, staged?: readonly string[]): World {
-  return cannedWorld(recorded, staged, missed);
+  // The files `wrote` made a commit of, and the suite the fixture's gate runs: a commit reaches every
+  // commit rule, and a test about one is not about the answer another one asks for.
+  return cannedWorld({ ...recorded, fs: { ...held, ...recorded.fs }, exec: { "just test-commit": { code: 0 }, ...recorded.exec } }, staged, missed);
 }
 
 let missed: Unanswered[] = [];
+/** What the commits `wrote` made hold, by path: the world a test builds answers for them. */
+let held: Record<string, string> = {};
 
 beforeEach(() => {
   missed = [];
+  held = {};
 });
 
 afterEach(() => {
   expect(missed, "a check reached for something this test never recorded").toEqual([]);
 });
 
-/** A write event, with whoever it happened to. */
+/** A commit of one file, with whoever it happened to: the file is recorded for the world the test builds. */
 function wrote(path: string, content: string, wearing: readonly string[] = []): GuardEvent {
-  return { moment: "write", file: { path, content }, wearing };
+  held = { ...held, [path]: content };
+  return { moment: "commit", staged: [path], wearing };
 }
 
 const blocks = (outcome: Outcome): Block[] => outcome.effects.filter((e): e is Block => e.do === "block");
@@ -279,12 +291,12 @@ describe("the three filters", () => {
   const entry = (id: string) => entries.find((e) => e.id === id)!;
 
   it("fires only at the moments the entry named", () => {
-    expect(fires(entry("rails.everyone").spec, "write")).toBe(true);
-    expect(fires(entry("rails.everyone").spec, "commit")).toBe(false);
+    expect(fires(entry("rails.everyone").spec, "commit")).toBe(true);
+    expect(fires(entry("rails.everyone").spec, "command")).toBe(false);
   });
 
   it("never fires a disabled entry, at any moment it named", () => {
-    expect(fires(entry("rails.retired").spec, "write")).toBe(false);
+    expect(fires(entry("rails.retired").spec, "commit")).toBe(false);
   });
 
   it("binds to everyone when the entry named no category", () => {
@@ -326,7 +338,6 @@ describe("the three filters", () => {
         load,
         event: {
           moment,
-          file: { path: "src/a.ts", content: "ok" },
           command: "ok",
           staged: ["src/a.ts"],
           turn: [],
@@ -391,7 +402,7 @@ describe("a rule bound to a category", () => {
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 describe("what an entry is run against", () => {
-  it("hands a write rail the would-be file, and scopes it by path", async () => {
+  it("hands a commit rule each staged file it holds, and scopes it by path", async () => {
     const inside = await guard({ load: regime, event: wrote("plan/x.yml", "TODO", ["builder"]), world: world() });
     expect(blockedIds(inside)).toContain("rails.buildersOnly");
     const outside = await guard({ load: regime, event: wrote("docs/x.md", "TODO", ["builder"]), world: world() });
@@ -408,23 +419,25 @@ describe("what an entry is run against", () => {
     const seen: (readonly string[])[] = [];
     const spy = definePack("spy", {
       actor: guardrail()
-        .at(write)
+        .at(commit)
+        .on("**")
         .check((ctx) => {
           seen.push(ctx.actor);
           return ctx.file?.content === "TODO" ? ctx.fail("TODO") : ctx.ok();
         })
         .message("x")
         .test({ pass: [{ path: "a", content: "" }], block: [{ path: "a", content: "TODO" }] }),
-      builderWrites: guardrail()
-        .at(write)
-        .check(oneWriter({ writers: ["builder"] }))
+      builderOnly: guardrail()
+        .at(commit)
+        .on("**")
+        .check((ctx) => (ctx.actor.includes("builder") ? ctx.ok() : ctx.fail(`an actor wearing ${ctx.actor.join(", ")}`)))
         .message("Only the builder writes.")
         .test({ block: [{ path: "a", content: "", actor: ["checker"] }] }),
     });
     const load = loadConfig(defineConfig([pack(spy)]));
     expect(blockedIds(await guard({ load, event: wrote("a.ts", "x", ["builder"]), world: world() }))).toEqual([]);
     const refused = await guard({ load, event: wrote("a.ts", "x", ["checker"]), world: world() });
-    expect(blockedIds(refused)).toEqual(["spy.builderWrites"]);
+    expect(blockedIds(refused)).toEqual(["spy.builderOnly"]);
     expect(blocks(refused)[0]?.detail).toContain("an actor wearing checker");
     expect(seen).toEqual([["builder"], ["checker"]]);
   });
@@ -503,7 +516,7 @@ describe("what an entry is run against", () => {
             appendOnly: guardrail()
               .at(commit)
               .on("m/**")
-              .check(protectedPath({ existingOnly: true }))
+              .check(existingFile)
               .message("history")
               .test({ block: [{ staged: ["m/1.sql"], added: [], world: { fs: { "m/1.sql": "" } } }] }),
           }),
@@ -522,43 +535,50 @@ describe("what an entry is run against", () => {
     expect(blocks(untold).map((b) => b.subject), "refused rather than allowed on a guess").toEqual(["m/2.sql"]);
   });
 
-  it("marks each file the last commit holds as it is unchanged, and no other", async () => {
-    const says = loadConfig(
+  it("runs only the rules with .on under --all, once for each file, with no commit's facts", async () => {
+    const seen: unknown[] = [];
+    const spy = loadConfig(
       defineConfig([
         pack(
           definePack("log", {
-            says: guardrail()
+            once: guardrail()
               .at(commit)
-              .on("**")
-              .check((ctx) => ctx.fail(String(ctx.file?.unchanged)))
-              .message("says")
-              .test({ block: [{ staged: ["a.ts"], world: { fs: { "a.ts": "" } } }] }),
+              .check((ctx) => {
+                seen.push(["once"]);
+                return ctx.ok();
+              })
+              .message("m")
+              .test({ block: [{ staged: [] }] }),
+            perFile: guardrail()
+              .at(commit)
+              .on("src/**")
+              .check((ctx) => {
+                seen.push([ctx.file?.path, ctx.file?.existed, ctx.staged, ctx.added, ctx.deleted, ctx.message]);
+                return ctx.ok();
+              })
+              .message("m")
+              .test({ block: [{ staged: [] }] }),
           }),
         ),
       ]),
     );
     const outcome = await guard({
-      load: says,
-      event: { moment: "commit", staged: ["a.ts", "b.ts"], added: [], unchanged: ["a.ts"], wearing: [] },
-      world: world({ fs: { "a.ts": "same", "b.ts": "edited" } }),
+      load: spy,
+      event: { moment: "commit", whole: true, staged: ["src/a.ts", "src/b.ts", "docs/c.md"], added: ["src/b.ts"], message: null, wearing: [] },
+      world: world({ fs: { "src/a.ts": "a", "src/b.ts": "b", "docs/c.md": "c" } }),
     });
-    expect(blocks(outcome).map((b) => [b.subject, b.detail])).toEqual([
-      ["a.ts", "true"],
-      ["b.ts", "undefined"],
+    expect(seen).toEqual([
+      ["src/a.ts", true, [], [], [], null],
+      ["src/b.ts", false, [], [], [], null],
     ]);
+    expect(tallyFor(outcome, "log.once")).toEqual({ id: "log.once", evaluated: 0, hits: 0, silenced: 0 });
   });
 
-  it("asks a staged deletion only of an entry bound at delete as well as commit — and asks it AS a delete", async () => {
+  it("asks a staged deletion of no entry: a rule with .on is asked about files the commit holds, and one without reads the list", async () => {
     const both = loadConfig(
       defineConfig([
         pack(
           definePack("log", {
-            appendOnly: guardrail()
-              .at(write, deletion, commit)
-              .on("m/**")
-              .check((ctx) => ctx.fail(`${ctx.moment} of ${ctx.file?.path ?? ""}, which held: ${ctx.file?.content ?? ""}`))
-              .message("history")
-              .test({ block: [{ path: "m/1.sql", content: "" }] }),
             // A content rule: about what the commit will HOLD. A deleted file is not in it, so its
             // old TODO must not block the commit that removes it.
             noTodo: guardrail()
@@ -567,20 +587,62 @@ describe("what an entry is run against", () => {
               .check((ctx) => (ctx.file?.content.includes("TODO") === true ? ctx.fail("TODO") : ctx.ok()))
               .message("no TODO")
               .test({ block: [{ staged: ["a.ts"], world: { fs: { "a.ts": "TODO" } } }] }),
+            // A rule about the deletion itself has no `.on`, and reads the list.
+            keep: guardrail()
+              .at(commit)
+              .check((ctx) => ((ctx.deleted ?? []).includes("m/1.sql") ? ctx.fail("history") : ctx.ok()))
+              .message("keep")
+              .test({ block: [{ staged: [], deleted: ["m/1.sql"] }] }),
           }),
         ),
       ]),
     );
     const outcome = await guard({
       load: both,
-      event: { moment: "commit", staged: [], deleted: [{ path: "m/1.sql", content: "-- TODO: old" }], wearing: [] },
+      event: { moment: "commit", staged: [], deleted: ["m/1.sql"], wearing: [] },
       world: world(),
     });
-    expect(blocks(outcome).map((b) => [b.entry, b.subject, b.detail])).toEqual([
-      ["log.appendOnly", "m/1.sql", "delete of m/1.sql, which held: -- TODO: old"],
+    expect(blocks(outcome).map((b) => [b.entry, b.subject, b.detail])).toEqual([["log.keep", null, "history"]]);
+    expect(tallyFor(outcome, "log.noTodo")).toEqual({ id: "log.noTodo", evaluated: 0, hits: 0, silenced: 0 });
+  });
+
+  it("hands every call of a commit the message, the added paths and every deleted path, a judged one or not", async () => {
+    const seen: unknown[] = [];
+    const spy = loadConfig(
+      defineConfig([
+        pack(
+          definePack("log", {
+            once: guardrail()
+              .at(commit)
+              .check((ctx) => {
+                seen.push(["once", ctx.message, ctx.added, ctx.deleted, ctx.file?.path]);
+                return ctx.ok();
+              })
+              .message("m")
+              .test({ block: [{ staged: [] }] }),
+            perFile: guardrail()
+              .at(commit)
+              .on("**")
+              .check((ctx) => {
+                seen.push(["perFile", ctx.message, ctx.added, ctx.deleted, ctx.file?.path]);
+                return ctx.ok();
+              })
+              .message("m")
+              .test({ block: [{ staged: [] }] }),
+          }),
+        ),
+      ]),
+    );
+    const event = { moment: "commit" as const, staged: ["a.ts"], added: ["a.ts"], deleted: ["old.ts"], message: "fix: x", wearing: [] };
+    await guard({ load: spy, event, world: world({ fs: { "a.ts": "x" } }) });
+    expect(seen).toEqual([
+      ["once", "fix: x", ["a.ts"], ["old.ts"], undefined],
+      ["perFile", "fix: x", ["a.ts"], ["old.ts"], "a.ts"],
     ]);
-    // Only what such an entry covers is worth reading out of the last commit.
-    expect(judgedDeletions(both.ok ? both.entries : [], ["m/1.sql", "src/a.ts"])).toEqual(["m/1.sql"]);
+    // `flow hook commit --all` has no commit: the message is null, never an empty one.
+    seen.length = 0;
+    await guard({ load: spy, event: { ...event, message: null }, world: world({ fs: { "a.ts": "x" } }) });
+    expect(seen.map((call) => (call as unknown[])[1])).toEqual([null, null]);
   });
 
   it("skips a staged path that is not there — a deletion has no would-be file to judge", async () => {
@@ -636,7 +698,6 @@ describe("a broken config blocks until it is fixed", () => {
       wrote("a.ts", "x"),
       { moment: "command", command: "ls", wearing: [] },
       { moment: "commit", staged: ["a.ts"], wearing: [] },
-      { moment: "delete", file: { path: "a.ts", content: "" }, wearing: [] },
       { moment: "turn-end", turn: [], wearing: [] },
     ] as GuardEvent[]) {
       const outcome = await guard({ load: broken, event, world: world() });
@@ -650,7 +711,7 @@ describe("a broken config blocks until it is fixed", () => {
 
 describe("everything else that can be wrong is also a block", () => {
   it("turns a crashing check into a failing one, naming the entry and the error", async () => {
-    const outcome = await guard({ load: regime, event: wrote("a.ts", "fine"), world: world() });
+    const outcome = await guard({ load: regime, event: { moment: "command", command: "explode", wearing: [] }, world: world() });
     const crash = blocks(outcome).find((b) => b.entry === "rails.explodes");
     expect(crash?.detail).toBe("the check threw: cannot read properties of undefined");
   });
@@ -677,7 +738,7 @@ describe("everything else that can be wrong is also a block", () => {
           id: "hand.written",
           pack: "hand",
           key: "written",
-          spec: { kind: "guardrail", at: ["write"], message: "…" },
+          spec: { kind: "guardrail", at: ["commit"], on: ["**"], message: "…" },
           source: {},
           categories: [],
           phases: ["edit"],
@@ -729,9 +790,9 @@ describe("work outside the repository", () => {
   const seen: Record<string, (readonly string[])[]> = { here: [], everywhere: [] };
   const spying = (id: string) =>
     guardrail()
-      .at(command, write)
+      .at(command)
       .check((ctx) => {
-        seen[id]?.push(ctx.commands?.map((c) => c.text) ?? [ctx.file?.path ?? ""]);
+        seen[id]?.push(ctx.commands?.map((c) => c.text) ?? []);
         return ctx.command === "boom" ? ctx.fail("boom") : ctx.ok();
       })
       .message("x")
@@ -769,12 +830,6 @@ describe("work outside the repository", () => {
     expect(seen["everywhere"]).toEqual([["git -C /tmp/r commit -m init", "git commit -m bad"]]);
   });
 
-  it("does not pass an unmarked rule a file outside, and passes a marked one it", async () => {
-    await guard({ load, event: { ...wrote("/tmp/r/a.ts", "x"), outside: ["/tmp/r/a.ts"] }, world: world() });
-    expect(seen["here"]).toEqual([]);
-    expect(seen["everywhere"]).toEqual([["/tmp/r/a.ts"]]);
-  });
-
   it("judges everything as inside when the event names nothing outside, as in a case", async () => {
     await ran("cd /tmp/r && git commit -m init", []);
     expect(seen["here"]).toEqual([["cd /tmp/r", "git commit -m init"]]);
@@ -801,7 +856,7 @@ describe("work outside the repository", () => {
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 function touched(path: string, tokens: number, wearing: readonly string[] = []): BriefEvent {
-  return { moment: "touch", path, tokens, wearing };
+  return { moment: "file-change", path, tokens, wearing };
 }
 
 /** Brief over the fixture regime. `settings` is required by the type, which is fix 1's whole point. */
@@ -811,10 +866,11 @@ const briefing = (over: Omit<BriefArgs, "load" | "settings"> & Partial<BriefArgs
 const noticeIds = (b: Briefing): (string | null)[] => b.notices.map((n) => n.entry);
 
 describe("a breadcrumb across one session", () => {
-  it("shows on first touch of its area, and records where it showed", () => {
+  it("shows after the first change in its area, and records where it showed", () => {
     const first = briefing({ event: touched("src/a.ts", 40_000), marks: {} });
     expect(noticeIds(first)).toEqual(["rails.notes.area"]);
-    expect(first.notices[0]?.cause).toBe("first-touch");
+    expect(first.notices[0]?.cause).toBe("first");
+    expect(first.notices[0]?.moment, "the moment that showed it, for the header").toBe("file-change");
     expect(first.notices[0]?.subject).toBe("src/a.ts");
     expect(first.marks).toEqual({ "rails.notes.area": 40_000 });
   });
@@ -829,7 +885,7 @@ describe("a breadcrumb across one session", () => {
     const drifted = briefing({ event: touched("src/b.ts", 250_000), marks: { "rails.notes.area": 40_000 } });
     expect(noticeIds(drifted)).toEqual(["rails.notes.area"]);
     expect(drifted.notices[0]?.cause).toBe("drift");
-    expect(drifted.notices[0]?.subject, "the touch that re-showed it, not the one that first did").toBe("src/b.ts");
+    expect(drifted.notices[0]?.subject, "the change that re-showed it, not the one that first did").toBe("src/b.ts");
     expect(drifted.marks).toEqual({ "rails.notes.area": 250_000 });
   });
 
@@ -866,28 +922,22 @@ describe("a breadcrumb across one session", () => {
     expect(again.notices).toEqual([]);
   });
 
-  it("shows no note bound to paths for a file outside the repository, and still one bound to none", () => {
+  it("shows a note bound to paths only for a changed file in them, and one bound to none for any", () => {
     const load = loadConfig(
       defineConfig([
         pack(
           definePack("notes", {
-            /** Bound to paths, which an absolute path outside matches too. */
-            typescript: breadcrumb().at(touch).on("**/*.ts").text("ts"),
-            /** Bound to none. */
-            everyTouch: breadcrumb().at(touch).text("any"),
+            typescript: breadcrumb().at(fileChange).on("**/*.ts").text("ts"),
+            everyChange: breadcrumb().at(fileChange).text("any"),
           }),
         ),
       ]),
     );
-    const path = "/tmp/r/src/a.ts";
-    expect(noticeIds(brief({ load, settings: {}, event: { ...touched(path, 10), outside: [path] }, marks: {} }))).toEqual(["notes.everyTouch"]);
-    expect(noticeIds(brief({ load, settings: {}, event: touched(path, 10), marks: {} })), "the same path, inside").toEqual([
-      "notes.typescript",
-      "notes.everyTouch",
-    ]);
+    expect(noticeIds(brief({ load, settings: {}, event: touched("src/a.ts", 10), marks: {} }))).toEqual(["notes.typescript", "notes.everyChange"]);
+    expect(noticeIds(brief({ load, settings: {}, event: touched("docs/a.md", 10), marks: {} })), "a file outside the globs").toEqual(["notes.everyChange"]);
   });
 
-  it("never shows a note for an area this touch is not in", () => {
+  it("never shows a note for an area this change is not in", () => {
     expect(briefing({ event: touched("docs/a.md", 10), marks: {} }).notices).toEqual([]);
   });
 
@@ -901,20 +951,20 @@ describe("a breadcrumb across one session", () => {
     expect(scoped?.text).toBeUndefined();
   });
 
-  it("greets at the session moment, and the greeting does not repeat at the first touch", () => {
+  it("greets at the session moment, and the greeting does not repeat on a resume that keeps the session", () => {
     const opened = briefing({ event: { moment: "session", tokens: 0, wearing: [] }, marks: {} });
     expect(noticeIds(opened)).toEqual(["rails.notes.orientation"]);
     expect(opened.notices[0]?.cause).toBe("session");
-    expect(opened.notices[0]?.subject, "a greeting fires on no touch").toBeUndefined();
+    expect(opened.notices[0]?.subject, "a greeting fires on no file or command").toBeUndefined();
     const again = briefing({ event: { moment: "session", tokens: 100, wearing: [] }, marks: opened.marks });
     expect(again.notices).toEqual([]);
   });
 
-  it("shows a turn-end note first-touch, with no path to narrow it", () => {
+  it("shows a turn-end note the first time, with no path to narrow it", () => {
     const handBack = loadConfig(defineConfig([pack(definePack("t", { recap: breadcrumb().at(turnEnd).text("Write the recap.") }))]));
     const first = brief({ load: handBack, event: { moment: "turn-end", tokens: 1_000, wearing: [] }, marks: {}, settings: {} });
     expect(noticeIds(first), "a hand-back names no path, and nothing narrows the note away").toEqual(["t.recap"]);
-    expect(first.notices[0]?.cause).toBe("first-touch");
+    expect(first.notices[0]?.cause).toBe("first");
     expect(first.marks).toEqual({ "t.recap": 1_000 });
   });
 
@@ -925,11 +975,11 @@ describe("a breadcrumb across one session", () => {
     expect(ended.notices[0]?.subject).toBeUndefined();
   });
 
-  it("gives a touch with no file a note with no subject, rather than an empty one", () => {
-    const anywhere = loadConfig(defineConfig([pack(definePack("touches", { anyFile: breadcrumb().at(touch).text("Mind the layout.") }))]));
-    const shown = brief({ load: anywhere, event: { moment: "touch", tokens: 0, wearing: [] }, marks: {}, settings: {} });
-    expect(noticeIds(shown)).toEqual(["touches.anyFile"]);
-    expect(shown.notices[0]?.cause).toBe("first-touch");
+  it("gives a file-change with no file a note with no subject, rather than an empty one", () => {
+    const anywhere = loadConfig(defineConfig([pack(definePack("changes", { anyFile: breadcrumb().at(fileChange).text("Mind the layout.") }))]));
+    const shown = brief({ load: anywhere, event: { moment: "file-change", tokens: 0, wearing: [] }, marks: {}, settings: {} });
+    expect(noticeIds(shown)).toEqual(["changes.anyFile"]);
+    expect(shown.notices[0]?.cause).toBe("first");
     expect(shown.notices[0]?.subject).toBeUndefined();
   });
 
@@ -947,21 +997,47 @@ describe("a breadcrumb across one session", () => {
 });
 
 describe("a compaction", () => {
-  const entries = regime.ok ? regime.entries : [];
+  it("shows a session breadcrumb again at once, as the compacted session starts, and any other at its next moment", () => {
+    const marks: Marks = { "rails.notes.orientation": 0, "rails.notes.area": 40_000 };
+    const quiet = briefing({ event: { moment: "session", tokens: 500, wearing: [] }, marks });
+    expect(quiet.notices, "a resume that keeps the session shows it no more").toEqual([]);
 
-  it("clears the area marks so they re-brief, and keeps the session's", () => {
-    const before: Marks = { "rails.notes.area": 120_000, "rails.notes.orientation": 0, "rails.notes.forBuilders": 90 };
-    expect(afterCompaction(before, entries)).toEqual({ "rails.notes.orientation": 0 });
+    const after: Marks = {};
+    const started = briefing({ event: { moment: "session", tokens: 500, wearing: [] }, marks: after });
+    expect(noticeIds(started)).toEqual(["rails.notes.orientation"]);
+    expect(started.notices[0]?.cause).toBe("session");
+
+    const changed = briefing({ event: touched("src/a.ts", 600), marks: started.marks });
+    expect(noticeIds(changed), "the area note waits for its own moment").toEqual(["rails.notes.area"]);
+    expect(changed.notices[0]?.cause).toBe("first");
+  });
+});
+
+describe("a session breadcrumb bound with .for(…)", () => {
+  const welcome = loadConfig(
+    defineConfig([
+      pack(
+        definePack("notes", {
+          everyone: breadcrumb().at(session).text("For everyone."),
+          builders: breadcrumb().at(session).for(builder).text("For a builder."),
+        }),
+      ),
+    ]),
+  );
+  const startedAs = (type: string | undefined): (string | null)[] => {
+    const seen = identify(undefined, facts({ agentType: type }), [builder, parent]);
+    return noticeIds(brief({ load: welcome, settings: {}, event: { moment: "session", tokens: 0, wearing: seen.wearing }, marks: {} }));
+  };
+
+  it("is shown only to an agent of that category", () => {
+    expect(startedAs("builder")).toEqual(["notes.everyone", "notes.builders"]);
+    expect(startedAs("verifier"), "a subagent of another type").toEqual(["notes.everyone"]);
   });
 
-  it("re-shows the area note at the next touch, as the first touch it now is", () => {
-    const after = afterCompaction({ "rails.notes.area": 120_000 }, entries);
-    const shown = briefing({ event: touched("src/a.ts", 130_000), marks: after });
-    expect(shown.notices[0]?.cause).toBe("first-touch");
-  });
-
-  it("leaves a mark for an entry the regime no longer has — nothing to keep is nothing kept", () => {
-    expect(afterCompaction({ "gone.note": 1 }, entries)).toEqual({});
+  it("is shown at a subagent's start when the type it was started as says so, and not to the session that started it", () => {
+    const main = identify(undefined, facts({ subagent: false }), [builder, parent]);
+    expect(main.wearing).toEqual(["parent"]);
+    expect(noticeIds(brief({ load: welcome, settings: {}, event: { moment: "session", tokens: 0, wearing: main.wearing }, marks: {} }))).toEqual(["notes.everyone"]);
   });
 });
 
@@ -978,7 +1054,7 @@ describe("the drift threshold", () => {
 
   it("names its causes in one closed vocabulary", () => {
     const cause: Cause = "drift";
-    expect([...CAUSES]).toEqual(["session", "first-touch", "drift", "fault"]);
+    expect([...CAUSES]).toEqual(["session", "first", "drift", "fault"]);
     expect(CAUSES).toContain(cause);
   });
 });
@@ -1021,7 +1097,7 @@ describe("formatting a refusal", () => {
   it("gathers every block into one message, and ignores the notices beside them", () => {
     const effects: Effect[] = [
       { do: "block", entry: "a.b", message: "m", subject: null, detail: "" },
-      { do: "notice", entry: "a.note", text: "hi", file: undefined, cause: "first-touch", subject: "src/a.ts" },
+      { do: "notice", entry: "a.note", text: "hi", file: undefined, cause: "first", subject: "src/a.ts" },
       { do: "block", entry: "c.d", message: "n", subject: null, detail: "" },
     ];
     expect(formatBlocks(effects)).toBe("✗ a.b\n  m\n✗ c.d\n  n");
@@ -1078,10 +1154,24 @@ describe("a session × agent's own state", () => {
     expect(readState('{"categories":[],"marks":{}}').categories).toEqual([]);
   });
 
-  it("keeps the worktrees the agent was told flow does not guard, beside the marks", () => {
-    expect(readState('{"marks":{},"worktrees":["/r/wt"]}')).toEqual({ marks: {}, worktrees: ["/r/wt"] });
-    expect(readState('{"marks":{},"worktrees":["/r/wt",7]}')).toEqual({ marks: {} });
-    expect(readState('{"marks":{},"worktrees":[]}')).toEqual({ marks: {} });
+  it("keeps what git last listed in each working folder, beside the marks, and ignores the worktrees list a 0.3 state file holds", () => {
+    const trees = { "/r": { head: "abc", files: { "a.ts": "h" } } };
+    expect(readState(JSON.stringify({ marks: {}, trees }))).toEqual({ marks: {}, trees });
+    expect(readState('{"marks":{},"trees":{}}')).toEqual({ marks: {} });
+    expect(readState('{"marks":{},"trees":{"/r":{"head":"abc","files":{"a.ts":3}}}}')).toEqual({ marks: {}, trees: { "/r": { head: "abc", files: {} } } });
+    expect(readState('{"marks":{},"worktrees":["/r/wt"]}')).toEqual({ marks: {} });
+  });
+
+  it("tells a hook that died holding the lock from one that is still working, and keeps the lock beside the state file", () => {
+    expect(lockIsStale(0)).toBe(false);
+    expect(lockIsStale(LOCK_STALE_MS)).toBe(false);
+    expect(lockIsStale(LOCK_STALE_MS + 1)).toBe(true);
+    expect(lockPath("/r", "s", "a")).toBe(`${statePath("/r", "s", "a")}.lock`);
+  });
+
+  it("holds a deleted file's hash as one word, which no content hash is", () => {
+    expect(DELETED).toBe("-");
+    expect(readState(JSON.stringify({ marks: {}, trees: { "/r": { head: null, files: { "gone.ts": DELETED } } } })).trees).toEqual({ "/r": { head: null, files: { "gone.ts": "-" } } });
   });
 
   it("keeps a subagent's notes held for its brief, beside the marks", () => {
@@ -1146,10 +1236,11 @@ describe("the commit gate's session marker", () => {
 
 describe("the log's layout", () => {
   it("stamps the first row with who the stream is and which build wrote it", () => {
-    const row: Row = metaRow("a/b", "main", "/repo", "2026-09-04T12:00:00.000Z");
+    const row: Row = metaRow("a/b", "main", "/repo", "2026-09-04T12:00:00.000Z", "claude-code");
     expect(row).toEqual({
       kind: "meta",
       v: LOG_VERSION,
+      harness: "claude-code",
       session: "a-b",
       started: "2026-09-04T12:00:00.000Z",
       branch: "main",
@@ -1159,7 +1250,7 @@ describe("the log's layout", () => {
 
   it("names its row kinds in one closed vocabulary", () => {
     const kind: RowKind = "run";
-    expect([...ROW_KINDS]).toEqual(["meta", "tool", "breadcrumb", "guardrail", "compaction", "run", "read", "write", "mismatch"]);
+    expect([...ROW_KINDS]).toEqual(["meta", "tool", "breadcrumb", "guardrail", "compaction", "run", "read", "change"]);
     expect(ROW_KINDS).toContain(kind);
   });
 
@@ -1171,18 +1262,18 @@ describe("the log's layout", () => {
       ],
       tallies: [{ id: "a.b", evaluated: 1, hits: 1, silenced: 0 }],
     };
-    expect(runRows("write", outcome, 1)).toEqual([
-      { kind: "run", moment: "write", subjects: 1, rules: outcome.tallies },
+    expect(runRows("commit", outcome, 1)).toEqual([
+      { kind: "run", moment: "commit", subjects: 1, rules: outcome.tallies },
       {
         kind: "guardrail",
-        moment: "write",
+        moment: "commit",
         id: "a.b",
         subject: "x.ts",
         out: "deny",
         message: "m",
         detail: "d",
       },
-      { kind: "breadcrumb", moment: "write", id: "a.note", cause: "drift", subject: "x.ts" },
+      { kind: "breadcrumb", moment: "commit", id: "a.note", cause: "drift", subject: "x.ts" },
     ]);
   });
 
@@ -1234,7 +1325,7 @@ describe("the universe — what an id means today", () => {
     expect(scoped).toMatchObject({
       kind: "guardrail",
       pack: "rails",
-      at: ["write"],
+      at: ["commit"],
       on: ["plan/**"],
       for: ["builder"],
       disabled: null,
@@ -1299,16 +1390,16 @@ describe("the record — blocks, lead, gaps", () => {
 
   it("counts blocks, and reads the lead from the calls between a show and the edit it steered", () => {
     const rows: Row[] = [
-      row("breadcrumb", { moment: "touch", id: "rails.notes.area", cause: "first-touch" }),
+      row("breadcrumb", { moment: "file-change", id: "rails.notes.area", cause: "first" }),
       toolRowFor("src/a.ts"),
       toolRowFor("src/a.ts", true),
-      row("guardrail", { moment: "write", id: "rails.everyone", out: "deny", subject: "src/a.ts" }),
+      row("guardrail", { moment: "commit", id: "rails.everyone", out: "deny", subject: "src/a.ts" }),
     ];
     const read = metrics({ sessions: [{ session: "s1", rows }], entries: bound, nowMs });
     expect(read.headline.blocks).toBe(1);
     const area = read.breadcrumbs.find((b) => b.id === "rails.notes.area");
     expect(area?.shown).toBe(1);
-    expect(area?.byCause["first-touch"]).toBe(1);
+    expect(area?.byCause["first"]).toBe(1);
     // The show rode on tool call 0; the first in-scope edit is call 2. A lead of 2.
     expect(area?.lead.median).toBe(2);
     expect(area?.lead.buckets["1-5"]).toBe(1);
@@ -1316,7 +1407,7 @@ describe("the record — blocks, lead, gaps", () => {
   });
 
   it("a show with no in-scope edit after it is counted, never scored as a lead of zero", () => {
-    const rows: Row[] = [row("breadcrumb", { moment: "touch", id: "rails.notes.area", cause: "drift" }), toolRowFor("docs/a.md", true)];
+    const rows: Row[] = [row("breadcrumb", { moment: "file-change", id: "rails.notes.area", cause: "drift" }), toolRowFor("docs/a.md", true)];
     const read = metrics({ sessions: [{ session: "s1", rows }], entries: bound, nowMs });
     const area = read.breadcrumbs.find((b) => b.id === "rails.notes.area");
     expect(area?.lead).toEqual({ median: null, buckets: { "0": 0, "1-5": 0, "6-19": 0, "20+": 0 }, noEdit: 1 });
@@ -1324,26 +1415,59 @@ describe("the record — blocks, lead, gaps", () => {
     expect(LEAD_BUCKETS).toEqual(["0", "1-5", "6-19", "20+"]);
   });
 
-  it("a shell write is an edit at the call it rode on, and a shell read a touch — neither is a call", () => {
-    // A heredoc on call 2 wrote src/a.ts: the note shown on call 1 has a lead of 1, and the tree,
-    // the gap list and the tool count read the write as the Edit it stands in for.
+  it("counts a file as changed from the `change` rows, whichever tool changed it, and does not count an edit tool's file twice", () => {
+    const rows: Row[] = [
+      row("tool", { tool: "Bash", command: "sed -i s/a/b/ docs/a.md" }),
+      row("change", { tool: "Bash", paths: ["docs/a.md", "docs/b.md", "/tmp/x"] }),
+      toolRowFor("src/a.ts", true),
+      row("change", { tool: "Edit", paths: ["src/a.ts"] }),
+    ];
+    const read = metrics({ sessions: [{ session: "s1", rows }], entries: bound, nowMs });
+    expect(read.heat.edits, "a path outside the repo is no node of the tree").toEqual({ "docs/a.md": 1, "docs/b.md": 1, "src/a.ts": 1 });
+    expect(read.gaps, "docs is watched by nothing, and was changed by a shell command").toEqual([{ area: "docs", edits: 2 }]);
+  });
+
+  it("reads a chat logged before `change` rows from its edit tools' rows", () => {
+    const read = metrics({ sessions: [{ session: "old", rows: [toolRowFor("docs/a.md", true)] }], entries: bound, nowMs });
+    expect(read.heat.edits).toEqual({ "docs/a.md": 1 });
+  });
+
+  it("measures a file-change show's lead to the next change after the call that showed it, and a session show's to the first change of any file", () => {
+    const rows: Row[] = [
+      row("breadcrumb", { moment: "session", id: "rails.notes.orientation", cause: "session" }),
+      toolRowFor("docs/x.md"),
+      toolRowFor("src/a.ts", true),
+      row("change", { tool: "Edit", paths: ["src/a.ts"] }),
+      row("breadcrumb", { moment: "file-change", id: "rails.notes.area", cause: "first", subject: "src/a.ts" }),
+      toolRowFor("docs/y.md"),
+      toolRowFor("docs/z.md"),
+      toolRowFor("src/b.ts", true),
+      row("change", { tool: "Edit", paths: ["src/b.ts"] }),
+    ];
+    const read = metrics({ sessions: [{ session: "s1", rows }], entries: bound, nowMs });
+    const lead = (id: string) => read.breadcrumbs.find((b) => b.id === id)?.lead;
+    expect(lead("rails.notes.area"), "shown on call 2, the next in-scope change is on call 5 — not the one that showed it").toMatchObject({ median: 3, noEdit: 0 });
+    expect(lead("rails.notes.orientation"), "shown before any call, the first change is on call 2").toMatchObject({ median: 2, noEdit: 0 });
+  });
+
+  it("a shell read is a touch at the call it rode on, and no call of its own", () => {
+    // A `cat` on call 2 read src/b.ts: the file is touched, and neither the tool count nor the
+    // distance a lead is measured over moves for it.
     const rows: Row[] = [
       toolRowFor("docs/x.md"),
-      row("breadcrumb", { moment: "touch", id: "rails.notes.area", cause: "first-touch" }),
+      row("breadcrumb", { moment: "file-change", id: "rails.notes.area", cause: "first" }),
       row("tool", { tool: "Bash", command: "cat src/b.ts" }),
       row("read", { tool: "Bash", path: "src/b.ts" }),
-      row("write", { tool: "Bash", path: "src/a.ts", change: "modified" }),
-      row("write", { tool: "Bash", path: "docs/y.md", change: "created" }),
-      row("write", { tool: "Bash", path: "/tmp/elsewhere", change: "created" }),
+      row("read", { tool: "Bash", path: "/tmp/elsewhere" }),
       row("read", { tool: "Bash" }),
     ];
     const read = metrics({ sessions: [{ session: "s1", rows }], entries: bound, nowMs });
     const area = read.breadcrumbs.find((b) => b.id === "rails.notes.area");
-    expect(area?.lead).toMatchObject({ median: 1, noEdit: 0 });
+    expect(area?.lead).toMatchObject({ median: null, noEdit: 1 });
     expect(read.span.tools).toBe(2);
-    expect(read.heat.touches).toEqual({ "docs/x.md": 1, "src/b.ts": 1, "src/a.ts": 1, "docs/y.md": 1 });
-    expect(read.heat.edits).toEqual({ "src/a.ts": 1, "docs/y.md": 1 });
-    expect(read.gaps).toEqual([{ area: "docs", edits: 1 }]);
+    expect(read.heat.touches).toEqual({ "docs/x.md": 1, "src/b.ts": 1 });
+    expect(read.heat.edits).toEqual({});
+    expect(read.gaps).toEqual([]);
   });
 
   it("an edit no entry's globs reach is a GAP, ranked by its folder's edit count", () => {
@@ -1353,7 +1477,7 @@ describe("the record — blocks, lead, gaps", () => {
   });
 
   it("the same rule blocking the same subject twice in one chat is a REPEAT — unless a compaction sat between", () => {
-    const deny = row("guardrail", { moment: "write", id: "rails.everyone", out: "deny", subject: "a.ts" });
+    const deny = row("guardrail", { moment: "commit", id: "rails.everyone", out: "deny", subject: "a.ts" });
     const once = metrics({ sessions: [{ session: "s1", rows: [deny, deny] }], entries: bound, nowMs });
     expect(once.guardrails.find((g) => g.id === "rails.everyone")?.repeats).toBe(1);
 
@@ -1391,9 +1515,9 @@ describe("the record — the DEAD reading, which retires a rule if it is wrong",
   const nowMs = Date.parse("2026-03-01T00:00:00.000Z");
   /** Enough opportunity that silence is a verdict. One session, thirty-one days of it. */
   const ampleRows = (extra: readonly Row[]): Row[] => [
-    row("run", { moment: "write", subjects: 1, rules: [] }, "2026-01-01T00:00:00.000Z"),
+    row("run", { moment: "commit", subjects: 1, rules: [] }, "2026-01-01T00:00:00.000Z"),
     ...extra,
-    row("run", { moment: "write", subjects: 1, rules: [] }, "2026-02-05T00:00:00.000Z"),
+    row("run", { moment: "commit", subjects: 1, rules: [] }, "2026-02-05T00:00:00.000Z"),
   ];
 
   it("a scoped guardrail that stood on the rail and never once ran is DEAD", () => {
@@ -1450,8 +1574,8 @@ describe("the record — the DEAD reading, which retires a rule if it is wrong",
 
   it("an entry that used to catch things and stopped goes QUIET, with the days since", () => {
     const rows = ampleRows([
-      row("run", { moment: "write", subjects: 1, rules: [{ id: "rails.everyone", evaluated: 1, hits: 1, silenced: 0 }] }, "2026-01-02T00:00:00.000Z"),
-      row("guardrail", { moment: "write", id: "rails.everyone", out: "deny", subject: "a.ts" }, "2026-01-02T00:00:00.000Z"),
+      row("run", { moment: "commit", subjects: 1, rules: [{ id: "rails.everyone", evaluated: 1, hits: 1, silenced: 0 }] }, "2026-01-02T00:00:00.000Z"),
+      row("guardrail", { moment: "commit", id: "rails.everyone", out: "deny", subject: "a.ts" }, "2026-01-02T00:00:00.000Z"),
     ]);
     const read = metrics({ sessions: [{ session: "s1", rows }], entries: bound, nowMs });
     expect(read.headline.quiet).toEqual([{ id: "rails.everyone", lastHit: "2026-01-02T00:00:00.000Z", daysSince: 58 }]);
@@ -1472,10 +1596,10 @@ describe("the record — the DEAD reading, which retires a rule if it is wrong",
 
   it("ignores rows it cannot read rather than counting them as something", () => {
     const rows: Row[] = [
-      row("breadcrumb", { moment: "touch", cause: "first-touch" }), // no id
-      row("guardrail", { moment: "write", out: "deny" }), // no id
-      row("breadcrumb", { moment: "touch", id: "rails.notes.area", cause: "not-a-cause" }),
-      row("run", { moment: "write", rules: [{ evaluated: 3 }, null] }),
+      row("breadcrumb", { moment: "file-change", cause: "first" }), // no id
+      row("guardrail", { moment: "commit", out: "deny" }), // no id
+      row("breadcrumb", { moment: "file-change", id: "rails.notes.area", cause: "not-a-cause" }),
+      row("run", { moment: "commit", rules: [{ evaluated: 3 }, null] }),
     ];
     const read = metrics({ sessions: [{ session: "s1", rows }], entries: bound, nowMs });
     expect(read.headline.blocks).toBe(0);
@@ -1485,7 +1609,7 @@ describe("the record — the DEAD reading, which retires a rule if it is wrong",
   });
 
   it("an even number of leads averages the two middles — 1.5 is a real answer", () => {
-    const shown = (): Row[] => [row("breadcrumb", { moment: "touch", id: "rails.notes.area", cause: "first-touch" })];
+    const shown = (): Row[] => [row("breadcrumb", { moment: "file-change", id: "rails.notes.area", cause: "first" })];
     const read = metrics({
       sessions: [
         { session: "a", rows: [...shown(), toolRowFor("src/a.ts", true)] },
@@ -1544,19 +1668,19 @@ describe("the terrain — the real tree, with coverage laid over it", () => {
 describe("the moments lens", () => {
   it("arranges the universe by moment, in the order a session meets them", () => {
     const view = momentsView(bound, null);
-    expect(view.moments.map((m) => m.moment)).toEqual(MOMENT_ORDER.filter((m) => m !== "delete"));
+    expect(view.moments.map((m) => m.moment)).toEqual(["commit", "command", "session", "file-change", "turn-end"]);
     expect(view.totals).toEqual({ breadcrumbs: 4, guardrails: 10, disabled: 1 });
   });
 
   it("an entry stands in EVERY moment it fires at, carrying whatever the record says about it", () => {
     const read = metrics({
-      sessions: [{ session: "s1", rows: [row("guardrail", { moment: "write", id: "rails.everyone", out: "deny", subject: "a.ts" })] }],
+      sessions: [{ session: "s1", rows: [row("guardrail", { moment: "commit", id: "rails.everyone", out: "deny", subject: "a.ts" })] }],
       entries: bound,
       nowMs: Date.parse("2026-03-01T00:00:00.000Z"),
     });
     const view = momentsView(bound, read);
-    const writes = view.moments.find((m) => m.moment === "write");
-    const everyone = writes?.entries.find((e) => e.id === "rails.everyone") as MomentEntry;
+    const commits = view.moments.find((m) => m.moment === "commit");
+    const everyone = commits?.entries.find((e) => e.id === "rails.everyone") as MomentEntry;
     expect((everyone.record as GuardrailRecord).hits).toBe(1);
     // An entry the record has never seen still carries a record, zeroed — the reading is "bound,
     // never fired", which is a fact. `null` is reserved for a view drawn with no record at all.
@@ -1580,12 +1704,12 @@ describe("replay — a recorded session, run again with no repo and no harness",
       load: regime,
       settings: {},
       recording: recording([
-        { rail: "guard", moment: "write", file: { path: "a.ts", content: "TODO" }, wearing: [] },
+        { rail: "guard", moment: "commit", staged: ["a.ts"], wearing: [], world: { fs: { "a.ts": "TODO" }, exec: { "just test-commit": { code: 0 } } } },
         { rail: "guard", moment: "command", command: "git push --force", wearing: [] },
       ]),
     });
     const denied = result.rows.filter((r) => r.kind === "guardrail");
-    expect(denied.map((r) => r["id"])).toEqual(["rails.everyone", "rails.explodes", "rails.noForce"]);
+    expect(denied.map((r) => r["id"])).toEqual(["rails.everyone", "rails.noForce"]);
     expect(result.unanswered).toEqual([]);
   });
 
@@ -1639,28 +1763,24 @@ describe("replay — a recorded session, run again with no repo and no harness",
     expect(failing.rows.filter((r) => r.kind === "guardrail").map((r) => r["id"])).toEqual(["rails.suitePasses"]);
   });
 
-  it("keeps which files a recorded --all commit held as committed, so an append-only rule passes them again", async () => {
-    const check = protectedPath({ existingOnly: true });
-    const appendOnly = guardrail()
+  it("replays a recorded --all step as the whole repo: only the rules with .on, and no commit's facts", async () => {
+    const seen: unknown[] = [];
+    const perFile = guardrail()
       .at(commit)
       .on("m/**")
-      .check(check)
+      .check((ctx) => {
+        seen.push([ctx.file?.path, ctx.staged, ctx.message]);
+        return ctx.ok();
+      })
       .message("history")
-      .test({ block: [{ staged: ["m/1.sql"], added: [], world: { fs: { "m/1.sql": "" } } }] });
-    const load = loadConfig(defineConfig([pack(definePack("log", { appendOnly }))]));
-    const step = (unchanged?: readonly string[]): RecordedStep => ({
-      rail: "guard",
-      moment: "commit",
-      staged: ["m/1.sql"],
-      added: [],
-      ...(unchanged === undefined ? {} : { unchanged }),
-      wearing: [],
-      world: { fs: { "m/1.sql": "old" } },
+      .test({ block: [{ staged: [] }] });
+    const load = loadConfig(defineConfig([pack(definePack("log", { perFile }))]));
+    await replay({
+      load,
+      settings: {},
+      recording: recording([{ rail: "guard", moment: "commit", whole: true, staged: ["m/1.sql"], added: [], wearing: [], world: { fs: { "m/1.sql": "old" } } }]),
     });
-    const denied = async (s: RecordedStep): Promise<unknown[]> =>
-      (await replay({ load, settings: {}, recording: recording([s]) })).rows.filter((r) => r.kind === "guardrail").map((r) => r["subject"]);
-    expect(await denied(step(["m/1.sql"])), "as committed").toEqual([]);
-    expect(await denied(step()), "the same step, edited").toEqual(["m/1.sql"]);
+    expect(seen).toEqual([["m/1.sql", [], null]]);
   });
 
   it("a reach the recording never answered is REPORTED — a replay carrying one is not evidence", async () => {
@@ -1675,9 +1795,10 @@ describe("replay — a recorded session, run again with no repo and no harness",
   it("replays who the session WAS — a scoped rule fires for the actor that wore it", async () => {
     const step = (wearing: readonly string[]): RecordedStep => ({
       rail: "guard",
-      moment: "write",
-      file: { path: "plan/a.yml", content: "TODO" },
+      moment: "commit",
+      staged: ["plan/a.yml"],
       wearing,
+      world: { fs: { "plan/a.yml": "TODO" }, exec: { "just test-commit": { code: 0 } } },
     });
     const asBuilder = await replay({ load: regime, settings: {}, recording: recording([step(["builder"])]) });
     expect(asBuilder.rows.filter((r) => r.kind === "guardrail").map((r) => r["id"])).toContain("rails.buildersOnly");
@@ -1686,30 +1807,30 @@ describe("replay — a recorded session, run again with no repo and no harness",
     expect(asNobody.rows.filter((r) => r.kind === "guardrail").map((r) => r["id"])).not.toContain("rails.buildersOnly");
   });
 
-  it("threads the marks, so first touch · drift · compaction all replay — not just the blocks", async () => {
-    const touch = (tokens: number): RecordedStep => ({ rail: "brief", moment: "touch", path: "src/a.ts", wearing: [], tokens });
+  it("threads the marks, so first change · drift · compaction all replay — not just the blocks", async () => {
+    const touch = (tokens: number): RecordedStep => ({ rail: "brief", moment: "file-change", path: "src/a.ts", wearing: [], tokens });
     const result = await replay({
       load: regime,
       settings: { driftTokens: 100 },
       recording: recording([
         { rail: "brief", moment: "session", wearing: [], tokens: 0 },
-        touch(10), // first touch of the area
+        touch(10), // the first change in the area
         touch(20), // quiet — the context has barely moved
         touch(500), // drifted past the threshold
-        { rail: "compaction" }, // the area mark is cleared; the session mark holds
-        touch(600), // first touch again, because the agent no longer knows
+        { rail: "compaction" }, // every mark is cleared
+        { rail: "brief", moment: "session", wearing: [], tokens: 600 }, // the compacted session starts: the greeting again, at once
+        touch(610), // the area note again, because the agent no longer knows
       ]),
     });
     const shows = result.rows.filter((r) => r.kind === "breadcrumb").map((r) => `${r["id"] as string} ${r["cause"] as string}`);
     expect(shows).toEqual([
       "rails.notes.orientation session",
-      "rails.notes.area first-touch",
+      "rails.notes.area first",
       "rails.notes.area drift",
-      "rails.notes.area first-touch",
+      "rails.notes.orientation session",
+      "rails.notes.area first",
     ]);
-    // The session note is NOT re-shown after the compaction: the host re-delivers orientation at
-    // exactly that moment, and clearing its mark would print the greeting twice.
-    expect(result.marks["rails.notes.orientation"]).toBe(0);
+    expect(result.marks["rails.notes.orientation"], "marked again where it was shown again").toBe(600);
     expect(result.steps.filter((s) => s.step.rail === "compaction")[0]?.rows).toEqual([{ kind: "compaction" }]);
   });
 
@@ -1719,7 +1840,7 @@ describe("replay — a recorded session, run again with no repo and no harness",
       load: broken,
       settings: {},
       recording: recording([
-        { rail: "guard", moment: "write", file: { path: "a.ts", content: "ok" }, wearing: [] },
+        { rail: "guard", moment: "commit", staged: ["a.ts"], wearing: [], world: { fs: { "a.ts": "ok" } } },
         { rail: "compaction" },
         { rail: "brief", moment: "session", wearing: [], tokens: 0 },
       ]),
@@ -1759,28 +1880,28 @@ describe("diffRows — the proof is an EMPTY diff", () => {
   });
 
   it("names both sides when they disagree, so a lost block reads differently from an invented one", () => {
-    const invented = [...live, row("guardrail", { moment: "write", id: "rails.everyone", out: "deny", subject: "a.ts" })];
+    const invented = [...live, row("guardrail", { moment: "commit", id: "rails.everyone", out: "deny", subject: "a.ts" })];
     expect(diffRows(invented, live)).toEqual([
-      { side: "replay", at: 1, row: "guardrail write rails.everyone deny a.ts" },
+      { side: "replay", at: 1, row: "guardrail commit rails.everyone deny a.ts" },
     ]);
-    expect(diffRows(live, invented)).toEqual([{ side: "live", at: 1, row: "guardrail write rails.everyone deny a.ts" }]);
-    expect(diffRows([row("breadcrumb", { moment: "touch", id: "x", cause: "drift" })], [])).toEqual([
-      { side: "replay", at: 0, row: "breadcrumb touch x drift" },
+    expect(diffRows(live, invented)).toEqual([{ side: "live", at: 1, row: "guardrail commit rails.everyone deny a.ts" }]);
+    expect(diffRows([row("breadcrumb", { moment: "file-change", id: "x", cause: "drift" })], [])).toEqual([
+      { side: "replay", at: 0, row: "breadcrumb file-change x drift" },
     ]);
   });
 
   it("catches a note shown for the wrong file, when both rows name one", () => {
-    const shown = (subject: string): Row => row("breadcrumb", { moment: "touch", id: "x", cause: "first-touch", subject });
+    const shown = (subject: string): Row => row("breadcrumb", { moment: "file-change", id: "x", cause: "first", subject });
     expect(diffRows([shown("src/a.ts")], [shown("src/b.ts")])).toEqual([
-      { side: "replay", at: 0, row: "breadcrumb touch x first-touch src/a.ts" },
-      { side: "live", at: 0, row: "breadcrumb touch x first-touch src/b.ts" },
+      { side: "replay", at: 0, row: "breadcrumb file-change x first src/a.ts" },
+      { side: "live", at: 0, row: "breadcrumb file-change x first src/b.ts" },
     ]);
     expect(diffRows([shown("src/a.ts")], [shown("src/a.ts")])).toEqual([]);
   });
 
   it("still agrees with a live log written before breadcrumb rows named their subject", () => {
-    const replayed = row("breadcrumb", { moment: "touch", id: "x", cause: "first-touch", subject: "src/a.ts" });
-    const old = row("breadcrumb", { moment: "touch", id: "x", cause: "first-touch" });
+    const replayed = row("breadcrumb", { moment: "file-change", id: "x", cause: "first", subject: "src/a.ts" });
+    const old = row("breadcrumb", { moment: "file-change", id: "x", cause: "first" });
     expect(diffRows([replayed], [old])).toEqual([]);
     expect(diffRows([old], [replayed])).toEqual([]);
   });
@@ -1855,10 +1976,10 @@ describe("the recording file — appended live, read back whole", () => {
   it("reads a header, then every step, and drops a line it cannot read rather than failing", () => {
     const text = [
       JSON.stringify(recordingHeader("s1")),
-      JSON.stringify({ rail: "guard", moment: "write", file: { path: "a.ts", content: "x" }, wearing: [] }),
+      JSON.stringify({ rail: "guard", moment: "commit", staged: ["a.ts"], wearing: [] }),
       "{ this is not json",
       JSON.stringify({ rail: "compaction" }),
-      JSON.stringify({ rail: "brief", moment: "touch", path: "a.ts", wearing: [], tokens: 5 }),
+      JSON.stringify({ rail: "brief", moment: "file-change", path: "a.ts", wearing: [], tokens: 5 }),
       JSON.stringify({ kind: "not-a-step" }),
       "[1,2]",
       "",

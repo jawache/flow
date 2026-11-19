@@ -1,61 +1,107 @@
 ---
-summary: "from an unguarded repo to a refused command and a refused commit"
+summary: "from an unguarded repo to a refused commit, a refused command and a breadcrumb shown"
 ---
 
 # Getting started
 
-In this tutorial, we will guard a git repo with flow, see a banned command refused before it runs, see the commit gate refuse a commit, and run every rule's own test cases. It takes about five minutes, and every command below is real, so run each one as you read.
+In this tutorial, we guard a git repo with flow. We see a commit refused, a command refused before it runs, and a [breadcrumb](../reference/glossary.md#breadcrumb) shown to an agent. Then we run every rule's own test cases. It takes about ten minutes, and every command below is real, so run each one as you read.
 
-You need **Node 24 or later**, and a git repo to guard. A throwaway repo is fine.
+You need **Node 24 or later**, git, and a git repo to guard. A throwaway repo is fine. For steps 6 and 7 you need Claude Code or Codex.
 
 ## 1 · Install flow
 
-First, install flow once for the whole machine:
-
-```
-npm i -g @jawache/flow
-```
-
-Let's check it worked: `flow --version` prints the version you installed.
-
-> [!NOTE]
-> This tutorial uses a global install so the steps are the same in every repo. To guard one repo with a dev dependency instead, see [How to install flow](../how-to/install-flow.md).
-
-## 2 · Guard a repo
-
-Now go into the repo and run `flow init`:
+First, go into the repo and install flow from GitHub, at a release tag:
 
 ```
 cd my-repo              # any git repo
-flow init
+npm init -y             # only if the repo has no package.json
+npm i -D --allow-git=root github:jawache/flow#v0.4.0
 ```
 
-The output should look like this:
+Let's check it worked: `npx flow --version` prints `0.4.0`.
+
+## 2 · Guard the repo
+
+Now run `flow init`:
 
 ```
+npx flow init
+```
+
+It prompts for the harnesses that run agents in this repo. Select both, so the rest of this tutorial works under either:
+
+```
+Which harnesses run agents in this repo?
+  [x] Claude Code   detected: claude on the PATH
+  [x] Codex         detected: codex on the PATH
+```
+
+Then it lists what it is about to write. Go ahead. The output should look like this:
+
+```
+! Codex: runs a project's hooks only in a folder it trusts, and only once each hook is approved. Trust this folder in Codex, then approve flow's hooks with /hooks. A hook that `flow init` rewrites must be approved again (docs/user/reference/codex.md#the-two-trust-gates).
 flow init — created:
   + flow.config.ts
-  + .githooks/pre-commit
+  + .githooks/commit-msg
   + .flow/ — flow's own state, self-ignoring, never committed
-  + node_modules/@jawache/flow → …/flow (a link to the flow that is running — nothing here resolved @jawache/flow)
-  + ~/.claude/settings.json — SessionStart · SubagentStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop · SubagentStop
+  + .claude/settings.json — SessionStart · SubagentStart · PreToolUse · PostToolUse · Stop · SubagentStop
+  + .codex/hooks.json — SessionStart · SubagentStart · PreToolUse · PostToolUse · Stop · SubagentStop
   + git config core.hooksPath .githooks
   next: `flow status` — what is bound, and what is not wired yet.
 ```
 
-Notice the first line it created: `flow.config.ts`. That file is the whole guard, and it is the only file that turns anything on. `flow init` writes a demo config you can read in one screen. It binds two packs:
+Notice the first line it created: `flow.config.ts`. That file is the whole guard, and it is the only file that turns anything on. Everything flow wrote is inside the repo.
 
-- **`flow`**: flow's own self-protection.
-- **`demo`**: three guardrails, so we have something to see refused before we write our own.
+## 3 · Write three rules
 
-You can run `flow init` again whenever you like. It adds only what is missing, and says so.
+Open `flow.config.ts`. It binds one [pack](../reference/glossary.md#pack), `flow`, which protects the guard itself. Let's add a pack of our own, written out in full. Replace the file with this:
 
-## 3 · See what is bound
+```
+import { banCommands, breadcrumb, command, commit, commitMessage, defineConfig, definePack, fileChange, guardrail, pack, textBan } from "@jawache/flow";
+import { flow } from "@jawache/flow/packs";
+
+export const house = definePack("house", {
+  // A guardrail at commit: judged on the staged files, whatever tool wrote them.
+  noTodo: guardrail()
+    .at(commit)
+    .on("src/**")
+    .check(textBan({ ban: ["\\bTODO\\b"] }))
+    .message("No TODOs — do it now, or track it properly.")
+    .test({ pass: [{ path: "src/x.ts", content: "const x = 1;" }], block: [{ path: "src/x.ts", content: "// TODO: later" }] }),
+
+  // A guardrail at commit, on the message.
+  header: guardrail()
+    .at(commit)
+    .check(commitMessage({ header: "^(feat|fix|docs|chore): .+" }))
+    .message("The first line is `type: description`, such as `fix: read a quoted heredoc`.")
+    .test({ pass: [{ message: "fix: read a quoted heredoc" }], block: [{ message: "wip" }] }),
+
+  // A guardrail at command: an exact command, named in words, that cannot be undone.
+  noForcePush: guardrail()
+    .at(command)
+    .check(banCommands({ ban: ["git push --force", "git push -f"] }))
+    .message("Force-pushing rewrites history everyone else has. Push a correcting commit, or ask first.")
+    .test({ pass: ["git push origin main"], block: ["git push --force origin main"] }),
+
+  // A breadcrumb: text shown to the agent after its first change under src/.
+  sourceLayout: breadcrumb()
+    .at(fileChange)
+    .on("src/**")
+    .text("Code under src/ is pure: no file or network access. Put those in shell/."),
+});
+
+export default defineConfig([
+  pack(flow),
+  pack(house),
+]);
+```
+
+## 4 · See what is bound
 
 Now let's check that the guard is working:
 
 ```
-flow status
+npx flow status
 ```
 
 The output should look like this:
@@ -64,47 +110,44 @@ The output should look like this:
 flow is ON — 5 guardrails · 2 breadcrumbs, every one resolved and able to fire
   config     …/my-repo/flow.config.ts
   state      …/my-repo/.flow
-  session    no live session has marked this worktree yet
-  categories subagent — what the entries below bind to
-  session
-    🍞 flow.orientation
-        This repo is guarded by flow. Guardrails are rules that refuse a change, and every change to the fi…
-  touch
-    🍞 flow.editingTheGuardrails  —  on flow.config.ts .claude/settings.json .claude/settings.local.json .claude/agents/** .claude/skills/**
-        You are editing the guardrails themselves. If this edit weakens, disables or removes a guardrail or…
-  delete
-    ✗ flow.noDeleteGuardrails  —  on flow.config.ts .githooks/pre-commit
-        That command would delete this repo's guard surface (flow.config.ts binds every rule; the packs it …
+  commit
+    ✗ flow.noDeleteGuardrails
+        This commit deletes part of this repo's guard. Turn a rule off in flow.config.ts instead.
+    ✗ house.noTodo  —  on src/**
+        No TODOs — do it now, or track it properly.
+    ✗ house.header
+        The first line is `type: description`, such as `fix: read a quoted heredoc`.
   command
     ✗ flow.noUninstall
-        `flow uninstall` removes this repo's guard: the commit gate, `core.hooksPath` and flow's hook regis…
-    ✗ demo.noForcePush
+        `flow uninstall` removes this repo's guard. Run it yourself, in your own terminal.
+    ✗ house.noForcePush
         Force-pushing rewrites history everyone else has. Push a correcting commit, or ask first.
-  commit
-    ✗ demo.noMarkedFiles
-        A file carrying the do-not-commit marker is staged. Take the marker out, or unstage the file.
-    ✗ demo.chatCommits  —  for subagent
-        A subagent does not commit — hand the change back to the chat that spawned it.
+  session
+    🍞 flow.orientation
+        This repo is guarded by flow. A guardrail refuses a commit or a command, and a breadcrumb is text…
+  file-change
+    🍞 house.sourceLayout  —  on src/**
+        Code under src/ is pure: no file or network access. Put those in shell/.
   ✓ config: …/my-repo/flow.config.ts
-  ✓ commit-gate: .githooks/pre-commit runs `flow hook commit` over the staged changes
-  ✓ hooks-path: core.hooksPath = .githooks
-  ✓ hooks: ~/.claude/settings.json — SessionStart · SubagentStart · PreToolUse · PostToolUse · PostToolUseFailure · Stop · SubagentStop
-  ✓ binary: the hooks and the gate run the flow on the PATH
+  ✓ git hook: .githooks/commit-msg runs flow, and core.hooksPath = .githooks
+  ✓ binary: the hooks run this repo's own flow
+  ✓ claude-code: registered · no hook has run here
+  ✓ codex: registered · no hook has run here
+        Codex runs a project's hooks only in a trusted folder, and each hook only once approved in /hooks
 green — every rule loads, every fitting is in place.
 ```
 
-Notice the last line: green. Every rule loads, and every fitting it needs is in place. A fitting is a piece of wiring flow depends on, such as the commit gate or the hook registrations. If something were not in place, `flow status` would print a red line with its fix, and exit with a non-zero code.
+Notice the last line: green. Every rule loads, and every [fitting](../reference/glossary.md#fitting) it needs is in place. A fitting is something flow depends on outside the rules, such as the git hook or a [harness](../reference/glossary.md#harness)'s hook registrations. If something were not in place, `flow status` would print a red line with its fix, and exit with a non-zero code.
 
-## 4 · See the commit gate refuse a commit
+## 5 · See a commit refused
 
-The demo config refuses any commit that stages a file containing the literal marker `DO`-`NOT`-`COMMIT` (written as one word). Let's make such a file, stage it, and run the gate.
-
-`flow hook commit` is the command git's pre-commit hook runs. It checks whatever is staged:
+Let's stage a file that breaks `house.noTodo`, and commit it:
 
 ```
-printf 'DO-NOT-COMMIT here\n' > bad.txt
-git add bad.txt
-flow hook commit
+mkdir -p src
+printf '// TODO: later\n' > src/a.ts
+git add src/a.ts
+git commit -m "feat: add a"
 ```
 
 The output should look like this:
@@ -112,73 +155,95 @@ The output should look like this:
 ```
 flow — commit blocked:
 
-✗ demo.noMarkedFiles
-  A file carrying the do-not-commit marker is staged. Take the marker out, or unstage the file.
-    bad.txt carries the marker
+✗ house.noTodo · src/a.ts
+  No TODOs — do it now, or track it properly.
+    line 1 matches \bTODO\b
 
 Fix the above, then commit again.
 ```
 
-Notice that the refusal names the rule, `demo.noMarkedFiles`, and the file that broke it. A real `git commit` is refused at the hook in the same way, whether you or an agent makes it.
+Notice that flow let us write the file. It refused the commit, and named the rule and the file.
 
-Now clean up:
+Now fix the file, and commit with a message that breaks `house.header`:
 
 ```
-git reset bad.txt && rm bad.txt
+printf 'export const a = 1;\n' > src/a.ts
+git add src/a.ts
+git commit -m "wip"
 ```
 
-## 5 · See a banned command refused
+```
+flow — commit blocked:
 
-Open a Claude Code session in this repo, and ask the agent to force-push the branch. flow refuses the command before it runs, and shows the agent the rule's own message:
+✗ house.header
+  The first line is `type: description`, such as `fix: read a quoted heredoc`.
+    the first line of the message, "wip", does not match /^(feat|fix|docs|chore): .+/
+
+Fix the above, then commit again.
+```
+
+Commit again with `git commit -m "feat: add a"`. This time git records the commit.
+
+## 6 · See a command refused
+
+Open a Claude Code or Codex session in this repo. Under Codex, first trust the folder and approve the hooks with `/hooks`. Ask the agent to force-push the branch. flow refuses the command before it runs, and shows the agent the rule's own message:
 
 ```
 flow — command blocked before it ran:
 
-✗ demo.noForcePush · git push --force origin main
+✗ house.noForcePush · git push --force origin main
   Force-pushing rewrites history everyone else has. Push a correcting commit, or ask first.
     matches banned `git push --force`
 
 Adjust the command, then retry.
 ```
 
-Notice that the refusal quotes the command, and the banned command it matched.
+## 7 · See a breadcrumb shown
 
-## 6 · Run every rule's own cases
-
-Every guardrail carries the inputs it must let through and the inputs it must refuse. Let's run them all:
+In the same session, ask the agent to add a function to `src/a.ts`. After its first change under `src/`, the agent is shown the breadcrumb:
 
 ```
-flow test
-# flow test — 40 cases over 5 guardrails, all green
+# breadcrumb: house.sourceLayout (file-change)
+Code under src/ is pure: no file or network access. Put those in shell/.
 ```
 
-Notice the count: 40 cases over 5 guardrails, all green.
+Ask the agent what it was just told about `src/`. It repeats the breadcrumb's text. The agent is shown the breadcrumb once: a second change to `src/a.ts` shows nothing.
 
-## 7 · Commit the guard
+## 8 · Run every rule's own cases
+
+Every [guardrail](../reference/glossary.md#guardrail) carries the inputs it must let through and the inputs it must refuse. Let's run them all:
+
+```
+npx flow test
+# flow test — 46 cases over 5 guardrails, all green
+```
+
+## 9 · Commit the guard
 
 Finally, commit the guard like any other code:
 
 ```
-git add flow.config.ts .githooks
+git add package.json package-lock.json flow.config.ts .githooks .claude/settings.json .codex/hooks.json
 git commit -m "chore: guard this repo with flow"
 ```
 
-Let's check what we committed: `flow.config.ts` and `.githooks/pre-commit`. The `.flow/` folder holds flow's own state. It ignores itself, so git never commits it.
+The `.flow/` folder holds flow's own state. It ignores itself, so git never commits it.
 
 ## What we built
 
 We now have a repo that guards itself:
 
-- **A banned command** is refused before it runs.
-- **A commit** is checked over its staged files, and refused when a rule says no.
+- **A commit** is judged on its staged files and its message, and refused when a rule says no.
+- **A named command** is refused before it runs.
+- **A breadcrumb** is shown to an agent when it first changes a file in an area.
 - **Every rule** proves itself with its own cases, through `flow test`.
 
-Anyone who clones the repo and runs `flow init` gets the same guard.
+Anyone who clones the repo and runs `npm install` and `npx flow init` gets the same guard.
 
 ## Where to go next
 
-- **Why flow works this way:** [How flow works](../explanation/how-flow-works.md) reads the demo config line by line.
-- **Write your own rules:** start with [How to ban a pattern in files](../how-to/ban-a-pattern-in-files.md), [How to block a command](../how-to/block-a-command.md) or [How to protect files](../how-to/protect-files.md).
+- **Why flow works this way:** [How flow works](../explanation/how-flow-works.md).
+- **Write your own rules:** start with [How to check file content at commit](../how-to/check-file-content-at-commit.md), [How to block or redirect a command](../how-to/block-a-command.md) or [How to steer with a breadcrumb](../how-to/steer-with-a-breadcrumb.md).
 - **Look up an exact shape:** [the config reference](../reference/config.md), and one page per [stock check](../index.md#the-stock-checks--one-page-each).
 
 ---

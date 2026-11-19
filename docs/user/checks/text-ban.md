@@ -1,5 +1,5 @@
 ---
-summary: "reads: file body · fires at: write · commit"
+summary: "reads: file body · fires at: commit"
 ---
 
 # `textBan`
@@ -16,7 +16,7 @@ Bans a word or pattern in text — prose, config, comments, anything. Each regex
 
 ```
 noTodo: guardrail()
-  .at(write, commit)
+  .at(commit)
   .on("src/**/*.ts")
   .check(textBan({ ban: ["\\bTODO\\b"] }))
   .message("No TODOs — do it now, or track it properly.")

@@ -3,7 +3,7 @@
 // The behaviour assertions came across from the fourteen per-check tests the old engine carried
 // and are the same claims, re-homed: what each check says yes to, what it says no to, and the
 // specific bug each odd-looking line exists to prevent. What is NEW is that every check is driven
-// through `cannedCtx` — the same door `flow test` drives them through and the same door the live
+// through `caseCtxs` — the same door `flow test` drives them through and the same door the live
 // hooks will — so the harness is proved by every test in the file rather than by one test of its
 // own. A check that could only be tested by reaching around ctx would fail here first.
 
@@ -13,6 +13,7 @@ import {
   verdict,
   type Case,
   type CaseWorld,
+  type Ctx,
   type Check,
   type LoadedEntry,
   type Unanswered,
@@ -25,7 +26,7 @@ import {
   astGrep,
   astGrepHits,
   banCommands,
-  cannedCtx,
+  caseCtxs,
   canonicalFault,
   canonicalFiles,
   caseMoment,
@@ -34,6 +35,8 @@ import {
   changedSet,
   commitMessage,
   commitReason,
+  docLinks,
+  headingAnchors,
   compileDialect,
   layerGlobs,
   depcruise,
@@ -54,7 +57,6 @@ import {
   lonelyChanges,
   NATIVE_LANGUAGES,
   patternHits,
-  oneWriter,
   protectedPath,
   quoteArg,
   ranSinceEdit,
@@ -67,8 +69,6 @@ import {
   shellCommands,
   siblingExists,
   skipForChanged,
-  substitutionInProse,
-  SUBSTITUTION_MESSAGE,
   symbolsInSibling,
   textBan,
   unansweredText,
@@ -90,20 +90,27 @@ import {
   type CaseResult,
 } from "./domain.ts";
 
+/** The one ctx a case becomes: a `{ path, content }` case is the commit of that file, asked of a rule with `.on("**")`. */
+const ctxOf = async (moment: Parameters<typeof caseCtxs>[1], c: Case, unanswered: Unanswered[]): Promise<Ctx> => {
+  const named = typeof c !== "string" && "path" in c;
+  const [ctx] = await caseCtxs(entry({ at: [moment], ...(named ? { on: ["**"] } : {}) }), moment, c, unanswered);
+  return ctx as Ctx;
+};
+
 /** Drive a check exactly as `flow test` does: one canned ctx, one verdict. */
-const run = async (check: Check, moment: Parameters<typeof cannedCtx>[0], c: Case): Promise<string | null> => {
-  const v = await check(cannedCtx(moment, c, []));
+const run = async (check: Check, moment: Parameters<typeof caseCtxs>[1], c: Case): Promise<string | null> => {
+  const v = await check(await ctxOf(moment, c, []));
   return v.ok ? null : (v.detail ?? "");
 };
 
 /** …and the same, keeping whatever the check reached for and the case never answered. */
 const runWithReaches = async (
   check: Check,
-  moment: Parameters<typeof cannedCtx>[0],
+  moment: Parameters<typeof caseCtxs>[1],
   c: Case,
 ): Promise<{ detail: string | null; missing: Unanswered[] }> => {
   const missing: Unanswered[] = [];
-  const v = await check(cannedCtx(moment, c, missing));
+  const v = await check(await ctxOf(moment, c, missing));
   return { detail: v.ok ? null : (v.detail ?? ""), missing };
 };
 
@@ -131,8 +138,8 @@ describe("patternHits — the one regex sweep", () => {
 describe("textBan", () => {
   it("passes clean prose and blocks a banned word, naming the line", async () => {
     const check = textBan({ ban: ["\\bTODO\\b"] });
-    expect(await run(check, "write", file("a.md", "all good here"))).toBeNull();
-    expect(await run(check, "write", file("a.md", "x\nleft a TODO here"))).toContain("line 2");
+    expect(await run(check, "commit", file("a.md", "all good here"))).toBeNull();
+    expect(await run(check, "commit", file("a.md", "x\nleft a TODO here"))).toBe("line 2 matches \\bTODO\\b");
   });
 });
 
@@ -341,171 +348,162 @@ describe("banCommands", () => {
   });
 });
 
-// Both real bindings (`git`'s commit and gh verbs, `work`'s lifecycle verbs) carry their own
-// `.test({ pass, block })` cases, among them the issue's #10 and #11; these are the check itself,
-// on a head of its own, one shell rule per case.
-describe("substitutionInProse", () => {
-  const check = substitutionInProse({ heads: ["say"] });
-  const caught = async (command: string): Promise<string | null> => run(check, "command", command);
-
-  it("refuses a backtick the shell runs in the command's argument, and names the head and what it runs", async () => {
-    expect(await caught('say "run `just test` first"')).toBe("`say` would run `just test` and record its output in place of the backticks");
-    expect(await caught("say run`date`")).toContain("`date`");
-  });
-
-  it("leaves a single-quoted argument and an escaped backtick alone — both are literal", async () => {
-    expect(await caught("say 'run `just test` first'")).toBeNull();
-    expect(await caught(String.raw`say "run \`just test\` first"`)).toBeNull();
-  });
-
-  it("judges each command alone, so a backtick in another command on the line is not this one's", async () => {
-    expect(await caught("say hi; echo `date`")).toBeNull();
-    expect(await caught("echo `date` && say hi")).toBeNull();
-    expect(await caught('echo "say `date`"')).toBeNull();
-  });
-
-  it("treats a QUOTED heredoc as the sanctioned way to carry backticks, and an unquoted one as live", async () => {
-    expect(await caught("say -F - <<'EOF'\nrun `just test`\nEOF")).toBeNull();
-    expect(await caught("say -F - <<EOF\nrun `just test`\nEOF")).toContain("`just test`");
-  });
-
-  it("reads through a $( … ), whose heredoc is live when unquoted and safe when quoted", async () => {
-    expect(await caught('say "$(cat <<EOF\nrun `just test` first\nEOF\n)"')).toContain("`just test`");
-    expect(await caught("say \"$(cat <<'EOF'\nrun `just test` first\nEOF\n)\"")).toBeNull();
-    expect(await caught('say "$(echo "$(echo `date`)")"'), "at any depth").toContain("`date`");
-    expect(await caught('say "$(date)"'), "a $( … ) alone is not a backtick").toBeNull();
-  });
-
-  it("passes a line it cannot parse: cannot tell", async () => {
-    expect(await caught('say "run `just test`')).toBeNull();
-  });
-
-  it("finds a git subcommand through the parse, past git's own options and their values", async () => {
-    const commit = substitutionInProse({ heads: [], gitSubcommands: ["commit"] });
-    expect(await run(commit, "command", "git -C '/a b' commit -m \"fix: `date`\"")).toBe(
-      "`git commit` would run `date` and record its output in place of the backticks",
-    );
-    expect(await run(commit, "command", "git --git-dir /x commit -m \"fix: `date`\"")).not.toBeNull();
-    expect(await run(commit, "command", "git log --grep \"`date`\""), "another subcommand is not named").toBeNull();
-  });
-
-  it("takes several heads, so two packs share one check without either copying it", async () => {
-    const both = substitutionInProse({ heads: ["git commit", "work plan"] });
-    expect(await run(both, "command", 'git commit -m "a `date`"')).not.toBeNull();
-    expect(await run(both, "command", 'work plan decision "a `date`"')).not.toBeNull();
-    expect(await run(both, "command", 'gh pr create --body "a `date`"')).toBeNull();
-  });
-
-  // ── heads in words, matched as banCommands matches an entry ──
-
-  const gh = substitutionInProse({ heads: ["gh pr", "gh issue", "work gh issue"] });
-
-  it("matches a head by its program without its path, and names the head in words", async () => {
-    expect(await run(gh, "command", '/usr/local/bin/gh pr create --body "see `just gate`"')).toBe(
-      "`gh pr` would run `just gate` and record its output in place of the backticks",
-    );
-    expect(await run(gh, "command", './bin/gh issue comment 1 --body "`date`"')).toContain("`gh issue`");
-    expect(await run(gh, "command", 'work gh issue comment 1 --body "`date`"')).toContain("`work gh issue`");
-    expect(await run(gh, "command", 'ghx pr create --body "`date`"'), "another program is not the head's").toBeNull();
-  });
-
-  it("finds every argument of the head among the command's, in any order and past an option", async () => {
-    expect(await run(gh, "command", 'gh --repo a/b pr create --body "`date`"')).toContain("`gh pr`");
-    expect(await run(gh, "command", 'work --verbose gh issue comment 1 --body "`date`"')).toContain("`work gh issue`");
-    // Anywhere means anywhere: a stray `pr`, the value of an option, counts as the head's word.
-    expect(await run(gh, "command", 'gh run list --branch pr "`date`"')).toContain("`gh pr`");
-  });
-
-  it("finds a head's words as whole arguments only: a longer word, or a quoted one, is not the word", async () => {
-    expect(await run(gh, "command", 'gh prs list --search "`date`"')).toBeNull();
-    expect(await run(gh, "command", 'gh api repos --jq "pr `date`"')).toBeNull();
-    expect(await run(gh, "command", 'gh issue-list "`date`"')).toBeNull();
-    expect(await run(gh, "command", 'work gh-issue "`date`"')).toBeNull();
-  });
-
-  it("refuses to load a head that is not one command in words, and names it", () => {
-    const fault = (head: string): string =>
-      `names the head \`${head}\`, which is not one command in words. Name a program and the arguments that make it record prose, such as "gh pr".`;
-    for (const head of ["gh\\s+(?:pr|issue)\\b", "work\\s+plan", "gh pr; ls", "sudo gh pr", "FOO=1 gh pr", "cat > x", ""]) {
-      expect(faultsOf(substitutionInProse({ heads: ["gh pr", head] })), head).toStrictEqual([fault(head)]);
-    }
-    expect(faultsOf(substitutionInProse({ heads: ["gh pr", "work gh issue"], gitSubcommands: ["commit"] }))).toStrictEqual([]);
-  });
-
-  it("says the mechanism, the absence of an undo and the fix — the sentence both packs print", () => {
-    expect(SUBSTITUTION_MESSAGE).toContain("the shell RUNS it");
-    expect(SUBSTITUTION_MESSAGE).toContain("no undo");
-    expect(SUBSTITUTION_MESSAGE).toContain("SINGLE-quote");
-    // And it never names a verb: one sentence, whichever pack caught the command.
-    expect(SUBSTITUTION_MESSAGE).not.toContain("gh pr");
-  });
-});
-
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // PATHS
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-describe("oneWriter", () => {
-  const check = oneWriter({ writers: ["builder", "parent"] });
+describe("protectedPath", () => {
+  const generated = protectedPath({ paths: ["src/generated/**"] });
+  const migrations = protectedPath({ paths: ["migrations/**"], existingOnly: true });
 
-  it("lets a listed category write, and refuses every other actor — naming who wrote", async () => {
-    expect(await run(check, "write", { path: "src/x.ts", content: "", actor: ["builder"] })).toBeNull();
-    expect(await run(check, "write", { path: "src/x.ts", content: "", actor: ["checker", "parent"] }), "wearing any listed one is enough").toBeNull();
-    expect(await run(check, "write", { path: "src/x.ts", content: "", actor: ["checker"] })).toBe(
-      "src/x.ts was written by an actor wearing checker — only builder or parent may change files here",
-    );
+  it("passes a commit that touches nothing under its paths, and refuses one that changes a file there, naming it", async () => {
+    expect(await run(generated, "commit", { staged: ["src/app.ts"] })).toBeNull();
+    const detail = await run(generated, "commit", { staged: ["src/app.ts", "src/generated/api.ts"] });
+    expect(detail).toContain("'src/generated/api.ts'");
+    expect(detail).toContain("protected path");
+    expect(detail).toContain("changes it");
+    expect(detail).not.toContain("src/app.ts");
   });
 
-  it("refuses an actor with no category at all, and says so", async () => {
-    expect(await run(check, "delete", file("src/x.ts", "old"))).toBe(
-      "src/x.ts was deleted by an actor with no category — only builder or parent may change files here",
-    );
-    expect(await run(check, "write", { command: "x", actor: [] })).toContain("a file was written");
+  it("refuses a commit that deletes a file under its paths, with no file staged", async () => {
+    const detail = await run(generated, "commit", { staged: [], deleted: ["src/generated/api.ts"] });
+    expect(detail).toContain("'src/generated/api.ts'");
+    expect(detail).toContain("deletes it");
   });
 
-  it("refuses to load with no writers — that is a frozen worktree, not a rule", () => {
-    expect(faultsOf(oneWriter({ writers: [] }))).toStrictEqual([
-      "lists no `writers`, so it would refuse every change by every actor. Name the categories allowed to write.",
+  it("lists every file it refuses, the changed and the deleted", async () => {
+    const detail = await run(generated, "commit", { staged: ["src/generated/a.ts"], deleted: ["src/generated/b.ts"] });
+    expect(detail).toContain("'src/generated/a.ts'");
+    expect(detail).toContain("'src/generated/b.ts'");
+  });
+
+  it("refuses a rename out of its paths by the old path", async () => {
+    const detail = await run(generated, "commit", { staged: ["src/moved.ts"], added: ["src/moved.ts"], deleted: ["src/generated/api.ts"] });
+    expect(detail).toContain("'src/generated/api.ts'");
+  });
+
+  it("existingOnly is append-only: a NEW file passes, a change or a deletion of one already there does not", async () => {
+    expect(await run(migrations, "commit", { staged: ["migrations/003.sql"], added: ["migrations/003.sql"] })).toBeNull();
+    const edit = await run(migrations, "commit", { staged: ["migrations/001.sql"], added: [] });
+    expect(edit).toContain("append-only");
+    expect(edit).toContain("adding a new one is fine");
+    expect(await run(migrations, "commit", { staged: [], deleted: ["migrations/001.sql"] })).toContain("append-only");
+  });
+
+  it("refuses to load with no paths — it would protect nothing", () => {
+    expect(faultsOf(protectedPath({ paths: [] }))).toStrictEqual([
+      "lists no `paths`, so it protects nothing. Name the files a commit must not change or delete.",
     ]);
-    expect(faultsOf(check)).toStrictEqual([]);
+    expect(faultsOf(generated)).toStrictEqual([]);
   });
 });
 
-describe("protectedPath", () => {
-  it("treats the entry's scope AS the prohibition — anything it is handed is a violation", async () => {
-    const detail = await run(protectedPath({}), "write", file("src/generated/api.ts", "x"));
-    expect(detail).toContain("src/generated/api.ts");
-    expect(detail).toContain("protected path");
+describe("commitMessage", () => {
+  const header = commitMessage({ header: "^(feat|fix|docs|refactor|test|chore)(\\([a-z0-9-]+\\))?!?: .+" });
+  const ban = commitMessage({ ban: ["^Co-Authored-By:", "Generated with"] });
+
+  it("passes a message whose first line matches the header, and blocks one that does not, naming the line and the header", async () => {
+    expect(await run(header, "commit", { message: "fix(parse): read a quoted heredoc" })).toBeNull();
+    const detail = await run(header, "commit", { message: "wip" });
+    expect(detail).toContain('"wip"');
+    expect(detail).toContain("^(feat|fix");
   });
 
-  it("existingOnly is append-only: a NEW file passes, an edit of one already there does not", async () => {
-    const check = protectedPath({ existingOnly: true });
-    expect(await run(check, "write", { path: "m/003.sql", content: "new" })).toBeNull();
-    const edit = await run(check, "write", { path: "m/001.sql", content: "x", world: { fs: { "m/001.sql": "old" } } });
-    expect(edit).toContain("append-only");
-    expect(edit).toContain("adding a new one is fine");
+  it("matches the header against the first line only, and judges the body by nothing", async () => {
+    expect(await run(header, "commit", { message: "fix: x\n\nwip" })).toBeNull();
+    expect(await run(header, "commit", { message: "\nfix: x" })).not.toBeNull();
   });
 
-  it("existingOnly believes the event over the tree when a shell command's write has already landed", async () => {
-    const check = protectedPath({ existingOnly: true });
-    // The tree holds the file either way — the command already wrote it. Only the event knows.
-    const created = { path: "m/003.sql", content: "new", existed: false, world: { fs: { "m/003.sql": "new" } } };
-    expect(await run(check, "write", created)).toBeNull();
-    const edited = { path: "m/001.sql", content: "x", existed: true, world: { fs: { "m/001.sql": "x" } } };
-    expect(await run(check, "write", edited)).toContain("append-only");
+  it("blocks a message with any line matching a ban, naming the line, and passes one with none", async () => {
+    expect(await run(ban, "commit", { message: "fix: x" })).toBeNull();
+    const detail = await run(ban, "commit", { message: "fix: x\n\nCo-Authored-By: A Tool <tool@example.com>" });
+    expect(detail).toContain("line 3");
+    expect(detail).toContain("Co-Authored-By: A Tool");
+    expect(await run(ban, "commit", { message: "fix: x\n\nGenerated with a tool" })).toContain("line 3");
   });
 
-  it("a delete of a protected path is refused even though there is no would-be file to ask about", async () => {
-    const check = protectedPath({ existingOnly: true });
-    expect(await run(check, "delete", { path: "m/001.sql", content: "" })).toContain("append-only");
+  it("is case-sensitive in a ban", async () => {
+    expect(await run(ban, "commit", { message: "fix: x\n\nco-authored-by: a" })).toBeNull();
+  });
+
+  it("holds both options at once, and reports both", async () => {
+    const both = commitMessage({ header: "^fix: ", ban: ["wip"] });
+    const detail = await run(both, "commit", { message: "wip" });
+    expect(detail).toContain("does not match");
+    expect(detail).toContain("of the message matches wip");
+  });
+
+  it("judges nothing when there is no message, as under --all", async () => {
+    const ctx = await ctxOf("commit", { staged: ["a.ts"], message: "x" }, []);
+    expect((await header({ ...ctx, message: null })).ok).toBe(true);
+  });
+
+  it("refuses to load with neither option, and with a pattern that is not a regex", () => {
+    expect(faultsOf(commitMessage({}))).toStrictEqual([
+      "sets neither `header` nor `ban`, so it judges nothing. Set a header format, a list of banned patterns, or both.",
+    ]);
+    expect(faultsOf(commitMessage({ ban: [] }))).toHaveLength(1);
+    expect(faultsOf(commitMessage({ header: "(" }))[0]).toContain("is not a regex");
+    expect(faultsOf(header)).toStrictEqual([]);
+  });
+});
+
+describe("docLinks", () => {
+  const check = docLinks({ pages: ["docs/user/**/*.md"] });
+  const page = "# The record\n\n## Ids\n";
+  const world = { fs: { "docs/user/reference/record.md": page } };
+  /** The check's verdict on one staged file holding `text`, as the commit moment hands it over: through the fan-out. */
+  const cite = async (text: string): Promise<string | null> => {
+    const scoped = entry({ at: ["commit"], on: ["**"], check });
+    const [ctx] = await caseCtxs(scoped, "commit", { path: "internal/id.go", content: text, world }, []);
+    const v = await check(ctx as NonNullable<typeof ctx>);
+    return v.ok ? null : (v.detail ?? "");
+  };
+
+  it("passes a page that exists and a section whose heading is there", async () => {
+    expect(await cite("// docs/user/reference/record.md")).toBeNull();
+    expect(await cite("// The next id comes from the counter (docs/user/reference/record.md#ids).")).toBeNull();
+  });
+
+  it("blocks a missing anchor, naming the line and that the heading is missing", async () => {
+    const detail = await cite("package id\n// docs/user/reference/record.md#idz");
+    expect(detail).toBe("line 2: docs/user/reference/record.md#idz — the page has no heading with that anchor");
+  });
+
+  it("blocks a missing page, naming it", async () => {
+    expect(await cite("// docs/user/reference/gone.md#ids")).toBe("line 1: docs/user/reference/gone.md — there is no such page");
+  });
+
+  it("lists every citation that does not resolve, one a line", async () => {
+    const detail = await cite("// docs/user/a.md\n// docs/user/reference/record.md#x");
+    expect(detail?.split("\n")).toHaveLength(2);
+  });
+
+  it("leaves a path that matches no glob alone", async () => {
+    expect(await cite("// see src/missing.md#nope and https://example.com/x.md")).toBeNull();
+  });
+
+  it("makes anchors as GitHub does: lower case, punctuation gone, spaces as hyphens, repeats numbered", () => {
+    const md = "# `commitMessage`\n## Where the record is\n## Ids\n## Ids\n### Why? (a [link](x.md))\n";
+    expect([...headingAnchors(md)]).toEqual(["commitmessage", "where-the-record-is", "ids", "ids-1", "why-a-link"]);
+  });
+
+  it("reads a heading at any level, and none inside a fenced block", () => {
+    const md = "#### Deep\n```\n# not a heading\n```\nText\n";
+    expect([...headingAnchors(md)]).toEqual(["deep"]);
+  });
+
+  it("refuses to load with no pages", () => {
+    expect(faultsOf(docLinks({ pages: [] }))).toHaveLength(1);
+    expect(faultsOf(check)).toStrictEqual([]);
   });
 });
 
 describe("siblingExists", () => {
   it("passes when the companion is there and names it when it is not", async () => {
     const check = siblingExists({ sibling: "{path}.test.ts" });
-    expect(await run(check, "write", { path: "a/x.ts", content: "", world: { fs: { "a/x.test.ts": "" } } })).toBeNull();
-    expect(await run(check, "write", file("a/y.ts", ""))).toBe("required sibling missing: a/y.test.ts");
+    expect(await run(check, "commit", { path: "a/x.ts", content: "", world: { fs: { "a/x.test.ts": "" } } })).toBeNull();
+    expect(await run(check, "commit", file("a/y.ts", ""))).toBe("required sibling missing: a/y.test.ts");
   });
 });
 
@@ -565,8 +563,8 @@ describe("canonicalFiles", () => {
   });
 
   it("blocks through the check with the fault as its detail", async () => {
-    expect(await run(canonicalFiles(canon), "write", file("src/lib/cart/helpers.ts", ""))).toContain("non-canonical");
-    expect(await run(canonicalFiles(canon), "write", file("src/lib/cart/domain.ts", ""))).toBeNull();
+    expect(await run(canonicalFiles(canon), "commit", file("src/lib/cart/helpers.ts", ""))).toContain("non-canonical");
+    expect(await run(canonicalFiles(canon), "commit", file("src/lib/cart/domain.ts", ""))).toBeNull();
   });
 });
 
@@ -614,8 +612,8 @@ describe("jsonViolations", () => {
 
   it("blocks through the check", async () => {
     const check = jsonInvariant({ assert: [{ path: "scripts", keysPrefixedWith: "//" }] });
-    expect(await run(check, "write", file("package.json", '{"scripts":{"//":"x"}}'))).toBeNull();
-    expect(await run(check, "write", file("package.json", '{"scripts":{"dev":"run"}}'))).toContain("must be prefixed");
+    expect(await run(check, "commit", file("package.json", '{"scripts":{"//":"x"}}'))).toBeNull();
+    expect(await run(check, "commit", file("package.json", '{"scripts":{"dev":"run"}}'))).toContain("must be prefixed");
   });
 });
 
@@ -692,7 +690,7 @@ describe("symbolsInSibling", () => {
   const source = "export function foo(){}\nexport const bar = () => 1;";
 
   it("names an export the sibling never references", async () => {
-    const detail = await run(check, "write", {
+    const detail = await run(check, "commit", {
       path: "a/x.ts",
       content: source,
       world: { fs: { "a/x.test.ts": "test(foo)" } },
@@ -701,7 +699,7 @@ describe("symbolsInSibling", () => {
   });
 
   it("names the test once and lists every unreferenced export on one line", async () => {
-    const detail = await run(check, "write", {
+    const detail = await run(check, "commit", {
       path: "a/x.ts",
       content: source,
       world: { fs: { "a/x.test.ts": "nothing here" } },
@@ -710,7 +708,7 @@ describe("symbolsInSibling", () => {
   });
 
   it("passes when every export is referenced", async () => {
-    const detail = await run(check, "write", {
+    const detail = await run(check, "commit", {
       path: "a/x.ts",
       content: source,
       world: { fs: { "a/x.test.ts": "test(foo); test(bar)" } },
@@ -719,7 +717,7 @@ describe("symbolsInSibling", () => {
   });
 
   it("refuses the second declarator of an export const when the test names only the first", async () => {
-    const detail = await run(check, "write", {
+    const detail = await run(check, "commit", {
       path: "a/x.ts",
       content: "export const a = 1, b = 2;",
       world: { fs: { "a/x.test.ts": "test(a)" } },
@@ -728,7 +726,7 @@ describe("symbolsInSibling", () => {
   });
 
   it("passes a destructured export when the test names every name it binds", async () => {
-    const detail = await run(check, "write", {
+    const detail = await run(check, "commit", {
       path: "a/x.ts",
       content: "export const { a, b: c, ...d } = obj;",
       world: { fs: { "a/x.test.ts": "test(a); test(c); test(d)" } },
@@ -737,7 +735,7 @@ describe("symbolsInSibling", () => {
   });
 
   it("refuses a destructured export for the one bound name the test never names", async () => {
-    const detail = await run(check, "write", {
+    const detail = await run(check, "commit", {
       path: "a/x.ts",
       content: "export const { a, b: c, ...d } = obj;",
       world: { fs: { "a/x.test.ts": "test(a); test(b); test(d)" } },
@@ -747,12 +745,12 @@ describe("symbolsInSibling", () => {
 
   it("reads an array-destructured export as each name it binds", async () => {
     const content = "export const [x, y] = arr;";
-    expect(await run(check, "write", { path: "a/x.ts", content, world: { fs: { "a/x.test.ts": "test(x)" } } })).toBe("not referenced in a/x.test.ts: y");
-    expect(await run(check, "write", { path: "a/x.ts", content, world: { fs: { "a/x.test.ts": "test(x, y)" } } })).toBeNull();
+    expect(await run(check, "commit", { path: "a/x.ts", content, world: { fs: { "a/x.test.ts": "test(x)" } } })).toBe("not referenced in a/x.test.ts: y");
+    expect(await run(check, "commit", { path: "a/x.ts", content, world: { fs: { "a/x.test.ts": "test(x, y)" } } })).toBeNull();
   });
 
   it("a missing sibling is its own honest hit, not a crash", async () => {
-    expect(await run(check, "write", file("a/x.ts", "export const q = 1;"))).toBe("sibling test not found: a/x.test.ts");
+    expect(await run(check, "commit", file("a/x.ts", "export const q = 1;"))).toBe("sibling test not found: a/x.test.ts");
   });
 });
 
@@ -762,12 +760,12 @@ describe("symbolsInSibling", () => {
 
 describe("changedSet", () => {
   it("prefers the event's own fact over asking git", async () => {
-    const ctx = cannedCtx("commit", { staged: ["a.ts"] }, []);
+    const ctx = await ctxOf("commit", { staged: ["a.ts"] }, []);
     expect(await changedSet(ctx)).toEqual(["a.ts"]);
   });
 
   it("falls back to the capability when the moment carried no staged set", async () => {
-    const ctx = cannedCtx("command", { command: "x", world: { staged: ["b.ts"] } }, []);
+    const ctx = await ctxOf("command", { command: "x", world: { staged: ["b.ts"] } }, []);
     expect(await changedSet(ctx)).toEqual(["b.ts"]);
   });
 });
@@ -795,9 +793,8 @@ describe("lonelyChanges", () => {
 // COMMANDS
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-/** The two command readers, handed a line the way a ctx built by hand hands one: no parse yet. */
+/** The prefix reader, handed a line the way a ctx built by hand hands one: no parse yet. */
 const prefixOf = (command: string): string => gitDirPrefix({ command });
-const messageOf = (command: string): string | null => commitMessage({ command });
 
 describe("gitDirPrefix and quoteArg", () => {
   // The prefix is the first git command's `folder`, which the parse settles. These lines are parsed
@@ -844,98 +841,6 @@ describe("gitDirPrefix and quoteArg", () => {
     // A quote inside single quotes cannot be escaped — POSIX shells have no escape there — so the
     // only correct spelling closes the quoting, emits an escaped quote, and reopens it.
     expect(quoteArg("it's")).toBe(`'it'\\''s'`);
-  });
-});
-
-describe("commitMessage", () => {
-  it("reads every -m form", () => {
-    expect(messageOf('git commit -m "feat: x"')).toBe("feat: x");
-    expect(messageOf("git commit -mfeat")).toBe("feat");
-    expect(messageOf('git commit --message "feat: x"')).toBe("feat: x");
-    expect(messageOf('git commit --message="feat: x"')).toBe("feat: x");
-  });
-
-  it("joins repeated -m as git joins them, with a blank line between", () => {
-    expect(messageOf("git commit -m subject -m body")).toBe("subject\n\nbody");
-  });
-
-  it("steps over the value, so a message that looks like a flag is not read twice", () => {
-    expect(messageOf("git commit -m -m")).toBe("-m");
-  });
-
-  it("a trailing -m with nothing after it stops rather than inventing a message", () => {
-    expect(messageOf("git commit -m")).toBeNull();
-  });
-
-  it("falls back to a heredoc body, which is how a message with backticks is written", () => {
-    const command = "git commit -F - <<'EOF'\nfeat: x\n\nnew-dep: zod — checked ajv\nEOF";
-    expect(messageOf(command)).toBe("feat: x\n\nnew-dep: zod — checked ajv");
-  });
-
-  it("reads a heredoc only when the commit itself says -F -, so another command's script is never the message", () => {
-    const script = "cd /x && python3 - <<'PY'\np='a.ts'\nopen(p,'w').write('x')\nPY\ngit add -A && git commit -F /tmp/msg.txt";
-    expect(messageOf(script)).toBeNull();
-    expect(messageOf("git commit --file=- <<'EOF'\nfeat: x\nEOF")).toBe("feat: x");
-  });
-
-  it("is not our business when there is no judgeable commit", () => {
-    expect(messageOf("git status")).toBeNull();
-    expect(messageOf("git commit")).toBeNull();
-    expect(messageOf("git commit -F message.txt")).toBeNull();
-    expect(messageOf(`git commit -m "unclosed`)).toBeNull();
-  });
-});
-
-describe("commitMessage on stdin — the body of the commit's own heredoc", () => {
-  it("reads the heredoc, quoted or bare", () => {
-    expect(messageOf("git commit -F - <<EOF\nbody\nEOF")).toBe("body");
-    expect(messageOf(`git commit -F - <<'EOF'\nbody\nEOF`)).toBe("body");
-    expect(messageOf('git commit -F - <<-"EOF"\nbody\nEOF')).toBe("body");
-  });
-
-  // #9: the first heredoc on the line is the python's script, and the message is the commit's.
-  it("reads the heredoc attached to `git commit -F -`, not the first one on the line", () => {
-    expect(messageOf("python3 - <<'EOF'\nprint(1)\nEOF\ngit commit -F - <<'EOF'\nfix: a thing\nEOF")).toBe("fix: a thing");
-  });
-
-  it("reads the last heredoc a commit is fed, since each `<<` replaces its stdin", () => {
-    expect(messageOf("git commit -F - <<A <<'B'\nfirst\nA\nsecond\nB")).toBe("second");
-  });
-
-  // bash warns about a heredoc the line ends inside, and runs the command with the body it has.
-  it("reads an unterminated heredoc as bash does, to the end of the line", () => {
-    expect(messageOf("git commit -F - <<EOF\nbody")).toBe("body");
-  });
-
-  it("null when there is none, and when the body is empty", () => {
-    expect(messageOf("git commit -F -")).toBeNull();
-    expect(messageOf("git commit -F - <<EOF\nEOF")).toBeNull();
-  });
-
-  it("reads the parse a ctx carries, and never the line again", () => {
-    const commands = parseCommandLine("git commit -m 'feat: x'");
-    expect(commitMessage({ command: "git commit -m 'something else'", commands })).toBe("feat: x");
-    expect(commitMessage({ command: "git commit -m 'feat: x'", commands: null }), "a line that does not parse is not judged").toBeNull();
-  });
-});
-
-describe("commitMessage from a heredoc in a $( … )", () => {
-  it("reads `-m \"$(cat <<'EOF' … EOF)\"` as the heredoc's body, quoted or bare, as the shell passes it", () => {
-    expect(messageOf("git commit -m \"$(cat <<'EOF'\nfix: a thing\n\nwhy: x\nEOF\n)\"")).toBe("fix: a thing\n\nwhy: x");
-    expect(messageOf('git commit -m "$(cat <<EOF\nfix: a thing\nEOF\n)"')).toBe("fix: a thing");
-    expect(messageOf("git commit -m \"$(cat <<'EOF'\nfix: a\nEOF\n)\" -m body")).toBe("fix: a\n\nbody");
-    // git's own options before `commit`, and a wrapper before git: the argument is found all the same.
-    expect(messageOf("sudo git -C '/a b' commit -m \"$(cat <<'EOF'\nfix: a\nEOF\n)\"")).toBe("fix: a");
-    // The value attached to its option, in either spelling.
-    expect(messageOf("git commit -m\"$(cat <<'EOF'\nfix: a\nEOF\n)\"")).toBe("fix: a");
-    expect(messageOf("git commit --message=\"$(cat <<'EOF'\nfix: a\nEOF\n)\"")).toBe("fix: a");
-    expect(messageOf("git commit --message=see\"$(cat <<'EOF'\nfix: a\nEOF\n)\"")).toBe("see$(cat <<'EOF'\nfix: a\nEOF\n)");
-  });
-
-  it("passes any other substitution as written, since what it prints is not on the line", () => {
-    expect(messageOf('git commit -m "$(cat msg.txt)"')).toBe("$(cat msg.txt)");
-    expect(messageOf("git commit -m \"$(sed 1d <<'EOF'\nfix: a\nEOF\n)\"")).toBe("$(sed 1d <<'EOF'\nfix: a\nEOF\n)");
-    expect(messageOf("git commit -m \"see $(cat <<'EOF'\nfix: a\nEOF\n)\"")).toBe("see $(cat <<'EOF'\nfix: a\nEOF\n)");
   });
 });
 
@@ -1081,53 +986,31 @@ describe("addedNames", () => {
 });
 
 describe("commitReason", () => {
-  const opts = { whenChanged: ["package.json"], whenAdded: ["pure/**"], token: "new-dep" };
+  const opts = { whenChanged: ["package.json"], whenAdded: ["pure/**"], except: ["pure/**/*.test.ts"], token: "new-dep" };
 
-  /** The three path-list reads the check makes, as a case would record them. */
-  const gitWorld = (tracked: string[], adds: string[], untracked: string[]): CaseWorld => ({
-    exec: {
-      "git diff HEAD --name-only --diff-filter=A": { stdout: adds.join("\n") },
-      "git diff HEAD --name-only": { stdout: tracked.join("\n") },
-      "git ls-files --others --exclude-standard": { stdout: untracked.join("\n") },
-    },
+  it("blocks a commit that changes a watched file with no reason, and clears once the reason is there", async () => {
+    const bare = { message: "feat: x", staged: ["package.json"] };
+    expect(await run(commitReason(opts), "commit", bare)).toContain("`package.json` (changed)");
+    expect(await run(commitReason(opts), "commit", { ...bare, message: "feat: x\n\nnew-dep: zod — checked ajv" })).toBeNull();
   });
 
-  it("never asks git about a command that is not a judgeable commit", async () => {
-    const { detail, missing } = await runWithReaches(commitReason(opts), "command", "git status");
+  it("passes a commit that moves no watched file, and a commit with no message at all", async () => {
+    expect(await run(commitReason(opts), "commit", { message: "feat: x", staged: ["src/a.ts"] })).toBeNull();
+    const none = await ctxOf("commit", { staged: ["package.json"] }, []);
+    expect(await commitReason(opts)({ ...none, message: null }), "`flow hook commit --all` has no commit, so no message").toEqual({ ok: true });
+  });
+
+  it("reads a NEW file as new from ctx.added, and an edit of the same path as changed", async () => {
+    const added = { message: "x", staged: ["pure/a.ts"], added: ["pure/a.ts"] };
+    expect(await run(commitReason(opts), "commit", added)).toContain("(new)");
+    expect(await run(commitReason(opts), "commit", { ...added, added: [] }), "an edit of a pure file is not growth").toBeNull();
+  });
+
+  it("exempts a path `except` names, and asks git nothing for a path condition", async () => {
+    const test = { message: "x", staged: ["pure/a.test.ts"], added: ["pure/a.test.ts"] };
+    const { detail, missing } = await runWithReaches(commitReason(opts), "commit", test);
     expect(detail).toBeNull();
-    expect(missing).toEqual([]);
-  });
-
-  it("blocks a bare commit that moved a watched file, and clears once the reason is there", async () => {
-    const world = gitWorld(["package.json"], [], []);
-    const blocked = await run(commitReason(opts), "command", { command: 'git commit -m "feat: x"', world });
-    expect(blocked).toContain("`package.json` (changed)");
-    const withReason = await run(commitReason(opts), "command", {
-      command: "git commit -m 'feat: x\n\nnew-dep: zod — checked ajv'",
-      world,
-    });
-    expect(withReason).toBeNull();
-  });
-
-  it("reads a NEW file as new whether it is staged or untracked", async () => {
-    const staged = gitWorld(["pure/a.ts"], ["pure/a.ts"], []);
-    expect(await run(commitReason(opts), "command", { command: "git commit -m x", world: staged })).toContain("(new)");
-    const untracked = gitWorld([], [], ["pure/b.ts"]);
-    expect(await run(commitReason(opts), "command", { command: "git commit -m x", world: untracked })).toContain(
-      "(new)",
-    );
-  });
-
-  it("stands aside when git cannot answer, rather than trapping a commit it cannot judge", async () => {
-    const world: CaseWorld = { exec: { "git ": { code: 128, stderr: "not a git repository" } } };
-    expect(await run(commitReason(opts), "command", { command: "git commit -m x", world })).toBeNull();
-  });
-
-  it("carries a -C through to the git it runs, so another repo's commit is judged there", async () => {
-    const missing: Unanswered[] = [];
-    const ctx = cannedCtx("command", { command: "git -C ../other commit -m x" }, missing);
-    await commitReason(opts)(ctx);
-    expect(missing.every((m) => m.asked.includes("-C '../other'"))).toBe(true);
+    expect(missing, "the staged set is on the ctx").toEqual([]);
   });
 
   // ── the third condition, driven through the same door ──
@@ -1136,14 +1019,15 @@ describe("commitReason", () => {
       token: "caller",
       diffAdds: [{ file: "cli/work.ts", patterns: ['case\\s+"([a-z][a-z-]*)"\\s*:'], known: ["plan"] }],
     };
-    const surface = (diff: string): CaseWorld => ({ exec: { "diff HEAD -- 'cli/work.ts'": { stdout: diff } } });
+    const surface = (diff: string): CaseWorld => ({ exec: { "diff --cached -- 'cli/work.ts'": { stdout: diff } } });
 
     it("blocks a bare commit that added a name, and clears once the reason is there", async () => {
       const world = surface('+    case "audit":');
-      const blocked = await run(commitReason(ratchet), "command", { command: 'git commit -m "feat: audit"', world });
+      const blocked = await run(commitReason(ratchet), "commit", { message: "feat: audit", staged: ["cli/work.ts"], world });
       expect(blocked).toContain("`audit` (added in cli/work.ts)");
-      const withReason = await run(commitReason(ratchet), "command", {
-        command: "git commit -m 'feat: audit\n\ncaller: skill — no verb answers it'",
+      const withReason = await run(commitReason(ratchet), "commit", {
+        message: "feat: audit\n\ncaller: skill — no verb answers it",
+        staged: ["cli/work.ts"],
         world,
       });
       expect(withReason).toBeNull();
@@ -1151,19 +1035,20 @@ describe("commitReason", () => {
 
     it("says nothing about a name the binding already knows — a refactor that moves one is silent", async () => {
       const world = surface('+    case "plan":');
-      expect(await run(commitReason(ratchet), "command", { command: "git commit -m x", world })).toBeNull();
+      expect(await run(commitReason(ratchet), "commit", { message: "x", staged: ["cli/work.ts"], world })).toBeNull();
     });
 
-    // A path condition costs three git reads; this one costs a diff. A binding that names only
-    // `diffAdds` must not pay for the other three — every one is a question a case has to answer.
-    it("asks git for the diff and NOTHING else when no path condition is bound", async () => {
-      const { missing } = await runWithReaches(commitReason(ratchet), "command", { command: "git commit -m x" });
-      expect(missing.map((m) => m.asked)).toEqual(["git diff HEAD -- 'cli/work.ts'"]);
+    // A path condition reads the staged set on the ctx; this one costs a diff. A binding that
+    // names only `diffAdds` asks git for that diff and for nothing else — every question is one a
+    // case has to answer.
+    it("asks git for the STAGED diff of the named file and NOTHING else", async () => {
+      const { missing } = await runWithReaches(commitReason(ratchet), "commit", { message: "x", staged: ["cli/work.ts"] });
+      expect(missing.map((m) => m.asked)).toEqual(["git diff --cached -- 'cli/work.ts'"]);
     });
 
     it("stands aside when the diff cannot be read, rather than trapping the commit", async () => {
-      const world: CaseWorld = { exec: { "diff HEAD -- 'cli/work.ts'": { code: 128, stderr: "not a git repository" } } };
-      expect(await run(commitReason(ratchet), "command", { command: "git commit -m x", world })).toBeNull();
+      const world: CaseWorld = { exec: { "diff --cached -- 'cli/work.ts'": { code: 128, stderr: "not a git repository" } } };
+      expect(await run(commitReason(ratchet), "commit", { message: "x", staged: ["cli/work.ts"], world })).toBeNull();
     });
 
     it("reads several surfaces, and each hit names the file it came from", async () => {
@@ -1176,11 +1061,11 @@ describe("commitReason", () => {
       };
       const world: CaseWorld = {
         exec: {
-          "diff HEAD -- 'a.ts'": { stdout: '+ case "one"' },
-          "diff HEAD -- 'b.ts'": { stdout: '+ case "two"' },
+          "diff --cached -- 'a.ts'": { stdout: '+ case "one"' },
+          "diff --cached -- 'b.ts'": { stdout: '+ case "two"' },
         },
       };
-      const detail = await run(commitReason(two), "command", { command: "git commit -m x", world });
+      const detail = await run(commitReason(two), "commit", { message: "x", staged: ["a.ts", "b.ts"], world });
       expect(detail).toContain("`one` (added in a.ts)");
       expect(detail).toContain("`two` (added in b.ts)");
     });
@@ -1304,7 +1189,7 @@ describe("execPasses", () => {
 
   it("{files} hands the tool the changed set — the old empty-argv blindness", async () => {
     const missing: Unanswered[] = [];
-    const ctx = cannedCtx("commit", { staged: ["a b.ts", "c.ts"] }, missing);
+    const ctx = await ctxOf("commit", { staged: ["a b.ts", "c.ts"] }, missing);
     await execPasses({ run: "npx eslint {files}" })(ctx);
     expect(missing[0]?.asked).toBe("npx eslint 'a b.ts' 'c.ts'");
   });
@@ -1703,11 +1588,11 @@ describe("astGrep", () => {
   });
 
   it("blocks through the check, and an unknown grammar BLOCKS rather than passing quietly", async () => {
-    expect(await run(astGrep({ rule, language: "tsx" }), "write", file("a.ts", "const p = a ?? new Date();"))).toContain(
+    expect(await run(astGrep({ rule, language: "tsx" }), "commit", file("a.ts", "const p = a ?? new Date();"))).toContain(
       "1:",
     );
-    expect(await run(astGrep({ rule, language: "tsx" }), "write", file("a.ts", "const p = 1;"))).toBeNull();
-    expect(await run(astGrep({ rule, language: "klingon" }), "write", file("a.ts", "x"))).toContain("klingon");
+    expect(await run(astGrep({ rule, language: "tsx" }), "commit", file("a.ts", "const p = 1;"))).toBeNull();
+    expect(await run(astGrep({ rule, language: "klingon" }), "commit", file("a.ts", "x"))).toContain("klingon");
   });
 });
 
@@ -1719,7 +1604,7 @@ describe("readCase — the one ladder over the case union", () => {
   it("reads the dialect a case is written in", () => {
     expect(caseMoment("git push")).toBe("command");
     expect(caseMoment({ command: "git push" })).toBe("command");
-    expect(caseMoment({ path: "a.ts", content: "" })).toBe("write");
+    expect(caseMoment({ path: "a.ts", content: "" }), "a commit of that one file").toBe("commit");
     expect(caseMoment({ staged: [] })).toBe("commit");
     expect(caseMoment({ actions: [] })).toBe("turn-end");
   });
@@ -1727,13 +1612,15 @@ describe("readCase — the one ladder over the case union", () => {
   it("reads the dialect, the facts and the world in ONE pass, so they cannot disagree", () => {
     expect(readCase("git push")).toEqual({ dialect: "command", facts: { command: "git push" }, world: {} });
     const world: CaseWorld = { fs: { "a.ts": "x" } };
-    expect(readCase({ path: "a.ts", content: "x", world })).toEqual({
-      dialect: "write",
-      facts: { file: { path: "a.ts", content: "x" }, actor: [] },
-      world,
+    expect(readCase({ path: "a.ts", content: "x", world })).toMatchObject({
+      dialect: "commit",
+      facts: { staged: ["a.ts"], actor: [] },
+      world: { fs: { "a.ts": "x" } },
     });
     expect(readCase({ command: "ls" }).world).toEqual({});
     expect(readCase({ staged: ["a.ts"] }).facts).toEqual({ staged: ["a.ts"], actor: [] });
+    expect(readCase({ message: "wip" })).toMatchObject({ dialect: "commit", facts: { staged: [], actor: [] }, message: "wip" });
+    expect(readCase({ staged: [], deleted: ["a.ts", "b.ts"] }), "a list of paths").toMatchObject({ deleted: ["a.ts", "b.ts"] });
     expect(readCase({ actions: [{ did: "edit", path: "a.ts" }] }).facts).toEqual({
       turn: [{ did: "edit", path: "a.ts" }],
       actor: [],
@@ -1743,9 +1630,9 @@ describe("readCase — the one ladder over the case union", () => {
   });
 
   it("every dialect is one a guardrail moment can actually be handed", async () => {
-    const dialects: CaseDialect[] = ["command", "write", "commit", "turn-end"];
+    const dialects: CaseDialect[] = ["command", "commit", "commit", "turn-end"];
     const cases: Case[] = ["ls", { path: "a.ts", content: "" }, { staged: [] }, { actions: [] }];
-    const moments = ["command", "write", "commit", "turn-end"];
+    const moments = ["command", "commit", "commit", "turn-end"];
     for (const [i, c] of cases.entries()) {
       expect(readCase(c).dialect).toBe(dialects[i]);
       const result = await runCase(entry({ at: [moments[i] as string] }), (ctx) => ctx.ok(), c, "pass", 0);
@@ -1754,16 +1641,16 @@ describe("readCase — the one ladder over the case union", () => {
   });
 });
 
-describe("cannedCtx", () => {
+describe("a case as a ctx", () => {
   it("matches a recorded exec answer exactly, and by containment for a command nobody would retype", async () => {
-    const ctx = cannedCtx("command", { command: "x", world: { exec: { "just test": { stdout: "exact", code: 0 } } } }, []);
+    const ctx = await ctxOf("command", { command: "x", world: { exec: { "just test": { stdout: "exact", code: 0 } } } }, []);
     expect((await ctx.exec("just test")).stdout).toBe("exact");
     expect((await ctx.exec("bash -lc 'just test --watch=false'")).stdout).toBe("exact");
   });
 
   it("records a reach the case never answered, rather than guessing or throwing", async () => {
     const missing: Unanswered[] = [];
-    const ctx = cannedCtx("command", "x", missing);
+    const ctx = await ctxOf("command", "x", missing);
     await ctx.exec("just nope");
     await ctx.fs.read("nope.ts");
     expect(missing).toEqual([
@@ -1776,16 +1663,16 @@ describe("cannedCtx", () => {
 
   it("a path the case never mentions simply is not there — absence is an ordinary answer", async () => {
     const missing: Unanswered[] = [];
-    const ctx = cannedCtx("write", file("a.ts", ""), missing);
+    const ctx = await ctxOf("commit", file("a.ts", ""), missing);
     expect(await ctx.fs.exists("b.ts")).toBe(false);
     expect(missing).toEqual([]);
   });
 
   it("answers git from the case, and defaults its diff to empty", async () => {
-    const ctx = cannedCtx("commit", { staged: ["a.ts"], world: { gitDiff: "diff --git" } }, []);
+    const ctx = await ctxOf("commit", { staged: ["a.ts"], world: { gitDiff: "diff --git" } }, []);
     expect(await ctx.git.stagedFiles()).toEqual(["a.ts"]);
     expect(await ctx.git.diff()).toBe("diff --git");
-    expect(await cannedCtx("command", "x", []).git.diff()).toBe("");
+    expect(await (await ctxOf("command", "x", [])).git.diff()).toBe("");
   });
 });
 
@@ -1803,7 +1690,7 @@ const entry = (over: {
   key: "rule",
   spec: {
     kind: "guardrail",
-    at: (over.at ?? ["write"]) as never,
+    at: (over.at ?? ["commit"]) as never,
     check: over.check ?? ((ctx) => ctx.ok()),
     message: "No.",
     ...(over.on ? { on: over.on } : {}),
@@ -1842,7 +1729,7 @@ describe("runCase", () => {
   });
 
   it("a case in a dialect the entry has no rail for is its own failure, and a loud one", async () => {
-    const result = await runCase(entry({ at: ["write"] }), passes, "git push origin main", "block", 0);
+    const result = await runCase(entry({ at: ["commit"] }), passes, "git push origin main", "block", 0);
     expect(result.ok).toBe(false);
     expect(result.detail).toContain("command dialect");
     const nowhere = await runCase(entry({ at: [] }), passes, file("a.ts", ""), "pass", 0);
@@ -1869,7 +1756,6 @@ describe("runCase", () => {
   it("matches a commit case to a commit moment and a turn case to turn-end", async () => {
     expect((await runCase(entry({ at: ["commit"] }), passes, { staged: [] }, "pass", 0)).ok).toBe(true);
     expect((await runCase(entry({ at: ["turn-end"] }), passes, { actions: [] }, "pass", 0)).ok).toBe(true);
-    expect((await runCase(entry({ at: ["delete"] }), passes, file("a.ts", ""), "pass", 0)).ok).toBe(true);
   });
 
   // The commit fan-out, from a recorded world — the same split `subjectsOf` makes at the live gate.
@@ -1878,6 +1764,12 @@ describe("runCase", () => {
   describe("a commit entry that named paths", () => {
     const banned: Check = (ctx) => (ctx.file?.content.includes("SECRET") === true ? ctx.fail(ctx.file.path) : ctx.ok());
     const scoped = entry({ at: ["commit"], on: ["**"], ignore: ["**/*.test.ts"], check: banned });
+    // A per-file edit rule, as the fan-out hands a file: `existed` rides on `ctx.file`.
+    const existingEdit: Check = async (ctx) => {
+      const f = ctx.file;
+      if (f === undefined) return ctx.ok();
+      return (f.existed ?? (await ctx.fs.exists(f.path))) ? ctx.fail("existing") : ctx.ok();
+    };
 
     it("is asked once per staged file in scope, holding that file", async () => {
       const result = await runCase(scoped, banned, { staged: ["a.ts"], world: { fs: { "a.ts": "SECRET" } } }, "block", 0);
@@ -1885,38 +1777,12 @@ describe("runCase", () => {
     });
 
     it("tells each file whether the last commit had it when the case lists `added`, and leaves it unset when not", async () => {
-      const check = protectedPath({ existingOnly: true });
+      const check = existingEdit;
       const appendOnly = entry({ at: ["commit"], on: ["m/**"], check });
       const world = { fs: { "m/1.sql": "old", "m/2.sql": "new" } };
       expect((await runCase(appendOnly, check, { staged: ["m/2.sql"], added: ["m/2.sql"], world }, "pass", 0)).ok).toBe(true);
       expect((await runCase(appendOnly, check, { staged: ["m/1.sql"], added: ["m/2.sql"], world }, "block", 0)).ok).toBe(true);
       expect((await runCase(appendOnly, check, { staged: ["m/2.sql"], world }, "block", 0)).ok, "the disk decides").toBe(true);
-    });
-
-    it("passes a protected file identical to the last commit, with and without existingOnly, and refuses an edited one", async () => {
-      const world = { fs: { "m/1.sql": "old", "m/2.sql": "edited" } };
-      for (const check of [protectedPath({}), protectedPath({ existingOnly: true })]) {
-        const guarded = entry({ at: ["commit"], on: ["m/**"], check });
-        const asCommitted = { staged: ["m/1.sql"], added: [], unchanged: ["m/1.sql"], world };
-        expect((await runCase(guarded, check, asCommitted, "pass", 0)).ok, "as committed is not an edit").toBe(true);
-        const edited = { staged: ["m/1.sql", "m/2.sql"], added: [], unchanged: ["m/1.sql"], world };
-        const outcome = await runCase(guarded, check, edited, "block", 0);
-        expect(outcome.ok, "the edited file is still refused").toBe(true);
-      }
-    });
-
-    it("still refuses an unchanged file for what it holds: only an edit rule passes one", async () => {
-      const asCommitted = { staged: ["a.ts"], added: [], unchanged: ["a.ts"], world: { fs: { "a.ts": "SECRET" } } };
-      expect((await runCase(scoped, banned, asCommitted, "block", 0)).ok).toBe(true);
-    });
-
-    it("asks a case's `deleted` files of an entry bound at delete as well as commit, as deletes", async () => {
-      const check = protectedPath({ existingOnly: true });
-      const gone = { staged: [], deleted: { "m/1.sql": "-- old" } };
-      const both = entry({ at: ["write", "delete", "commit"], on: ["m/**"], check });
-      expect((await runCase(both, check, gone, "block", 0)).ok).toBe(true);
-      const commitOnly = entry({ at: ["commit"], on: ["m/**"], check });
-      expect((await runCase(commitOnly, check, gone, "pass", 0)).ok, "commit alone judges what the commit holds").toBe(true);
     });
 
     it("honours the entry's own ignore list, so an out-of-scope file is never a subject", async () => {
@@ -1933,6 +1799,48 @@ describe("runCase", () => {
       expect(missing.ok).toBe(true);
     });
 
+    it("hands every call the message, the added paths and the deleted paths, whichever file it is about", async () => {
+      const seen: unknown[] = [];
+      const spy: Check = (ctx) => {
+        seen.push({ message: ctx.message, added: ctx.added, deleted: ctx.deleted, file: ctx.file?.path });
+        return ctx.ok();
+      };
+      const world = { fs: { "a.ts": "x" } };
+      await runCase(scoped, spy, { staged: ["a.ts"], added: ["a.ts"], deleted: ["gone.ts"], message: "fix: x", world }, "pass", 0);
+      await runCase(entry({ at: ["commit"], check: spy }), spy, { staged: ["a.ts"], message: "fix: y" }, "pass", 1);
+      expect(seen).toEqual([
+        { message: "fix: x", added: ["a.ts"], deleted: ["gone.ts"], file: "a.ts" },
+        { message: "fix: y", added: [], deleted: [], file: undefined },
+      ]);
+    });
+
+    it("gives a case with no message an empty one, and a case of only a message no staged files", async () => {
+      const header: Check = (ctx) => (/^(fix|feat): /.test(ctx.message ?? "") ? ctx.ok() : ctx.fail("not a conventional header"));
+      const judged = entry({ at: ["commit"], check: header });
+      expect((await runCase(judged, header, { message: "fix: x" }, "pass", 0)).ok).toBe(true);
+      expect((await runCase(judged, header, { message: "wip" }, "block", 0)).ok).toBe(true);
+      expect((await runCase(judged, header, { staged: ["a.ts"] }, "block", 0)).ok, "no message is an empty one").toBe(true);
+    });
+
+    it("reads `{ path, content }` as a commit of that one file when the entry fires at commit alone", async () => {
+      const result = await runCase(scoped, banned, { path: "a.ts", content: "SECRET" }, "block", 0);
+      expect(result.ok).toBe(true);
+      expect((await runCase(scoped, banned, { path: "a.ts", content: "fine" }, "pass", 0)).ok).toBe(true);
+      const existing = existingEdit;
+      const appendOnly = entry({ at: ["commit"], on: ["m/**"], check: existing });
+      expect((await runCase(appendOnly, existing, { path: "m/1.sql", content: "x", existed: true }, "block", 0)).ok).toBe(true);
+      expect((await runCase(appendOnly, existing, { path: "m/2.sql", content: "x", existed: false }, "pass", 0)).ok).toBe(true);
+    });
+
+    it("asks no deleted path of a rule with `.on(…)`: it is about files the commit holds, and the list is for a rule without one", async () => {
+      const check = existingEdit;
+      const scopedRule = entry({ at: ["commit"], on: ["m/**"], check });
+      expect((await runCase(scopedRule, check, { staged: [], deleted: ["m/1.sql"] }, "pass", 0)).ok, "a deletion is no subject").toBe(true);
+      const reads: Check = (ctx) => ((ctx.deleted ?? []).includes("m/1.sql") ? ctx.fail("deleted") : ctx.ok());
+      const wholeCommit = entry({ at: ["commit"], check: reads });
+      expect((await runCase(wholeCommit, reads, { staged: [], deleted: ["m/1.sql"] }, "block", 0)).ok).toBe(true);
+    });
+
     it("still hands an UNSCOPED commit entry the staged set, once", async () => {
       const counts: Check = (ctx) => ((ctx.staged ?? []).length === 2 ? ctx.fail("two") : ctx.ok());
       const result = await runCase(entry({ at: ["commit"], check: counts }), counts, { staged: ["a.ts", "b.ts"] }, "block", 0);
@@ -1944,7 +1852,7 @@ describe("runCase", () => {
 describe("runCases", () => {
   it("walks every bound entry's pass and block lists", async () => {
     const results: CaseResult[] = await runCases([
-      entry({ check: (ctx) => (ctx.file?.content === "bad" ? ctx.fail() : ctx.ok()), test: { pass: [file("a.ts", "ok")], block: [file("a.ts", "bad")] } }),
+      entry({ on: ["**"], check: (ctx) => (ctx.file?.content === "bad" ? ctx.fail() : ctx.ok()), test: { pass: [file("a.ts", "ok")], block: [file("a.ts", "bad")] } }),
     ]);
     expect(results).toHaveLength(2);
     expect(results.every((r) => r.ok)).toBe(true);
@@ -1996,8 +1904,9 @@ describe("every stock check, bound in a real config", () => {
     const results = await runCases(entries);
     expect(results.filter((r) => !r.ok)).toEqual([]);
     // One pass case and one block case for each of the fifteen, plus the extra pass case that
-    // proves commitReason never asks git about a command that is not a commit.
-    expect(results).toHaveLength(30);
+    // proves commitReason never asks git about a command that is not a commit, and the extra block
+    // case that proves protectedPath refuses a deletion with nothing staged.
+    expect(results).toHaveLength(34);
   });
 
   it("an entry with a pass case and no block case does not load at all, and the refusal names it", async () => {

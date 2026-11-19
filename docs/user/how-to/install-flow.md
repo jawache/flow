@@ -1,150 +1,98 @@
 ---
-summary: "install flow as a dev dependency or globally, wire it into a repo with `flow init`, and remove it with `flow uninstall`"
+summary: "install flow from GitHub at a tag, set it up in a repo with `flow init`, and remove it with `flow uninstall`"
 ---
 
-# How to install flow
+# How to install and pin flow in a project
 
-This guide shows you how to install flow, wire it into a repo, and remove it. flow needs **Node 24 or later**.
+This guide shows you how to install flow in one project at a fixed version, set it up, and remove it. flow needs **Node 24 or later**, npm and git.
 
-> [!IMPORTANT]
-> Git and Claude Code run flow for you: the commit gate runs `flow hook commit`, and each Claude Code hook runs `flow hook <event>`. Each one runs the repo's own `@jawache/flow` package first, then the `flow` on the `PATH` that git and Claude Code use. If neither has it, every commit is refused with `flow: not found`, the session hooks check nothing, and `flow status` prints a red line.
+Each project has its own copy of flow, its own config and its own hooks. Nothing is installed for the whole machine.
 
 ## Install flow
 
-Install flow in one of two ways:
-
-- **As a dev dependency**, to guard one repo. The version is recorded in the repo's lockfile, and every clone runs that version after `npm install`:
-
-  ```
-  cd my-repo
-  npm i -D @jawache/flow
-  ```
-
-- **Globally**, once per machine, to guard every repo you run `flow init` in:
-
-  ```
-  npm i -g @jawache/flow
-  ```
-
-If a repo has flow as a dev dependency and the machine also has it globally, git and Claude Code run the repo's copy.
-
-Check the install. It prints the version you installed:
-
-```
-npx flow --version   # a dev dependency
-flow --version       # a global install
-```
-
-With a dev dependency, type each `flow` command in this guide as `npx flow`.
-
-## Wire it into the repo
-
-1. Go to the repo and run `flow init`:
+1. Install flow as a dev dependency, from GitHub, at a release tag:
 
    ```
    cd my-repo
-   flow init            # writes flow.config.ts, .githooks/pre-commit, .flow/, and the hook registrations
+   npm i -D --allow-git=root github:jawache/flow#v0.4.0
    ```
 
-   `flow init` writes a demo `flow.config.ts`, arms the commit gate, and registers flow's seven hooks with Claude Code. Each file it writes is listed in [the command reference](../reference/cli.md).
+   The tag holds flow's built files, so nothing is built on your machine. The lockfile records the exact commit, and every clone runs that commit after `npm install`. npm 12 installs a git dependency only when told to, and `--allow-git=root` allows it only for a package the project's own `package.json` names.
 
-   Where the hooks are registered depends on the install:
-
-   - **A dev dependency:** the repo's `.claude/settings.json`. The hooks run only in this repo.
-   - **A global install:** `~/.claude/settings.json`. The hooks run in every repo on the machine.
-   - **A dev dependency, on a machine an older flow set up:** `flow init` also rewrites flow's old commands in `~/.claude/settings.json` to the command in the repo's file. Claude Code then runs each hook once, not twice.
-
-2. Check the guard:
+2. Check the install. It prints the version of the tag:
 
    ```
-   flow status          # is the guard working here? what is bound, and what is not wired yet
-   flow test            # do the rules do what they claim? every rule's own cases, driven
+   npx flow --version
    ```
 
-   `flow status` lists every rule by moment, then checks every fitting: the config loads, the gate is armed, the hooks are registered, and the `flow` they run is found. A red line names its own fix, and the command exits non-zero, so a setup script can call it and read the exit code.
+Type each `flow` command in this guide as `npx flow`.
 
-3. Commit `flow.config.ts`, the packs it imports and `.githooks/pre-commit`. With a dev dependency, also commit `.claude/settings.json`, `package.json` and the lockfile.
+**If the project is not a Node project,** give it a `package.json` that exists only for flow, then install as above:
+
+```
+npm init -y
+npm pkg set private=true
+```
+
+Add `node_modules/` to `.gitignore`.
+
+## Set it up in the repo
+
+1. Run `flow init`:
+
+   ```
+   npx flow init
+   ```
+
+   It prompts for the harnesses that run agents in the repo, with the ones it detects already selected. It warns you about what it finds, such as hooks git already runs. Then it writes `flow.config.ts`, the git hook, `.githooks/commit-msg`, and `.flow/`, and registers flow's hooks for each [harness](../reference/glossary.md#harness) you chose: Claude Code in `.claude/settings.json`, Codex in `.codex/hooks.json`. Each prompt is listed in [the command reference](../reference/cli.md#what-flow-init-prompts-for).
+
+2. If you chose Codex, do the two steps `flow init` names: trust the folder in Codex, and approve the hooks with `/hooks`. Until both are done, Codex runs no hook. See [the two trust gates](../reference/codex.md#the-two-trust-gates).
+
+3. Check the guard:
+
+   ```
+   npx flow status      # is the guard working here? what is bound, and what is not wired yet
+   npx flow test        # do the rules do what they claim? every rule's own cases, run
+   ```
+
+   A red line in `flow status` names its own fix. The command then exits non-zero, so a setup script can read the exit code.
+
+4. Commit `package.json`, the lockfile, `flow.config.ts`, the [packs](../reference/glossary.md#pack) it imports, `.githooks/`, and the registration file of each harness you chose: `.claude/settings.json`, `.codex/hooks.json`.
 
 ## Variants
 
-- **If you want an empty config**, run `flow init --empty`. It writes the same wiring with a config that binds no packs.
-- **If you already have a config or a commit hook**, run `flow init` anyway. It never writes over `flow.config.ts` or `.githooks/pre-commit`, and adds only what is missing.
-
-  If your commit hook does not run flow, add these two lines to the end of it. The first runs the repo's own `@jawache/flow` when it has one, and the second runs the `flow` on the `PATH` otherwise:
-
-  ```
-  f="$PWD/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook commit
-  exec flow hook commit
-  ```
-
-- **If git already runs other hooks**, such as husky's, `flow init` leaves them alone and prints `FLOW IS NOT INSTALLED`. Finish the install in one of two ways, then run `flow init` again:
-  - **With husky**, add the two lines from the previous variant to the end of `.husky/pre-commit`.
-  - **Otherwise**, move those hooks into `.githooks/`, then run `git config core.hooksPath .githooks`.
-
-  [When git already runs other hooks](../reference/cli.md#when-git-already-runs-other-hooks) lists what `flow init` counts as other hooks.
-- **If you cloned a repo that already uses flow**, run `flow init` in the clone. `core.hooksPath` is a setting of one clone, so each clone needs it. If the repo has flow as a dev dependency, run `npm install` first.
-- **If you want to work on flow itself**, clone it and run `just install`, then `just link`. That puts your checkout on your `PATH` in place of the global install.
+- **If a script or an agent runs `flow init`**, it prompts for nothing and registers the harnesses it detects. Name them with `--harness claude-code,codex` to be exact.
+- **If you want an empty config**, run `npx flow init --empty`. It writes the same files with a config that binds no pack.
+- **If you already have a config or a git hook**, run `flow init` anyway. It never writes over `flow.config.ts` or a hook in `.githooks/`, and adds only what is missing.
+- **If git already runs other hooks**, such as husky's, `flow init` leaves them alone and prints `FLOW IS NOT INSTALLED`, with the lines to add to your own hooks. [When git already runs other hooks](../reference/cli.md#when-git-already-runs-other-hooks) has the steps.
+- **If you cloned a repo that already uses flow**, run `npm install`, then `npx flow init`. `core.hooksPath` is a setting of one clone, so each clone needs it.
+- **If you add a git worktree**, run `npm ci` in it. The hooks run the worktree's own copy of flow.
+- **If a machine was set up by flow 0.3**, follow [the 0.4 migration guide](../migrations/0.4.0.md) to remove the machine-wide install.
 - **If you want flow off in one repo for a while**, create `.flow/off`. Every rule in that repo is off until you delete it.
 
 ## Uninstall
 
-Run `flow uninstall` before you remove the package. Uninstalling the package alone leaves the hooks in place, and they then fail with `flow: not found`. npm cannot clean up for you: npm 7 and later run no script when a package is uninstalled.
+Run `flow uninstall` before you remove the package. Removing the package alone leaves the hooks in place, and they then fail with `flow: not found`.
 
 > [!IMPORTANT]
-> Run `flow uninstall` in your own terminal. The flow pack refuses it when an agent runs it, because it removes the guard.
+> Run `flow uninstall` in your own terminal. The `flow` pack refuses it when an agent runs it, because it removes the guard.
 
-1. In each repo that uses flow, remove its wiring:
-
-   ```
-   flow uninstall
-   ```
-
-   It removes the commit gate, `core.hooksPath` and `.flow/`, and, for a dev dependency, flow's hooks in the repo's `.claude/settings.json`. It leaves `flow.config.ts` and the packs it imports, so `flow init` can put the guard back. It prints each thing it removed. Each one is listed in [the command reference](../reference/cli.md#what-flow-uninstall-removes).
-
-   **If git runs another folder's hooks**, such as husky's, `flow uninstall` leaves that folder's `pre-commit` hook as it is. When the hook still calls flow, the output names the file, such as `.husky/pre-commit`, and flow's lines in it. Delete those lines yourself before you remove the package. Otherwise every commit fails with `flow: not found`.
-
-2. If you installed flow globally, and no repo on the machine needs it any more, remove its hooks from the machine-wide settings file:
+1. Remove what `flow init` wrote:
 
    ```
-   flow uninstall --machine
+   npx flow uninstall
    ```
 
-   The machine-wide file is `~/.claude/settings.json`, or `$CLAUDE_CONFIG_DIR/settings.json` when that variable is set. Every repo on the machine reads it, so every repo stops running flow's hooks.
+   It removes the git hook, `core.hooksPath`, `.flow/` and flow's hooks in `.claude/settings.json` and `.codex/hooks.json`. It leaves `flow.config.ts` and the packs it imports. Each removal is listed in [the command reference](../reference/cli.md#what-flow-uninstall-removes).
 
-3. Remove the package. `flow uninstall` prints this command as its last line:
-
-   - **A dev dependency:** `npm uninstall @jawache/flow`, in the repo.
-   - **A global install:** `npm uninstall -g @jawache/flow`.
-
-4. If you no longer want them, delete `flow.config.ts` and the packs it imports, and commit.
-
-### If flow is already gone
-
-If you uninstalled the package first, `flow uninstall` is not there to run. Remove the wiring by hand:
-
-1. In each repo that used flow, stop git calling the gate:
+2. Remove the package, with the command `flow uninstall` prints as its last line:
 
    ```
-   git config --unset core.hooksPath
-   rm .githooks/pre-commit
+   npm uninstall @jawache/flow
    ```
 
-   If the repo kept other hooks in `.githooks/`, delete only `pre-commit`, and set `core.hooksPath` back to the folder those hooks need.
-
-   **If git runs another folder's hooks**, such as husky's, leave `core.hooksPath` as it is and delete only `.githooks/pre-commit`. Then delete flow's lines from that folder's `pre-commit` hook, such as `.husky/pre-commit`. These are the two lines `flow init` told you to add:
-
-   ```
-   f="$PWD/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook commit
-   exec flow hook commit
-   ```
-
-2. Open the Claude Code settings file that holds flow's hooks:
-
-   - **A dev dependency:** the repo's `.claude/settings.json`.
-   - **A global install:** `~/.claude/settings.json`, or `$CLAUDE_CONFIG_DIR/settings.json` when that variable is set.
-
-   Under `hooks`, remove each entry whose command ends with `flow hook session-start`, `flow hook subagent-start`, `flow hook pre-tool-use`, `flow hook post-tool-use`, `flow hook post-tool-use-failure`, `flow hook stop` or `flow hook subagent-stop`.
+3. If you no longer want them, delete `flow.config.ts` and the packs it imports, and commit.
 
 ---
 
-[Index](../index.md) · a first run, step by step: [Getting started](../tutorials/getting-started.md) · every command and what `flow init` writes: [the command reference](../reference/cli.md)
+[Index](../index.md) · a first run, step by step: [Getting started](../tutorials/getting-started.md) · a newer version: [how to upgrade flow](./upgrade-flow.md) · every command: [the command reference](../reference/cli.md)

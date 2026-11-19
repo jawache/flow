@@ -155,6 +155,19 @@ export function git(repo: string, args: readonly string[], rig: Rig = {}): Ran {
   return { stdout: result.stdout, stderr: result.stderr, code: result.status ?? -1 };
 }
 
+/**
+ * Stages the deletion of `flow.config.ts` from the index, the one commit the scaffolded config
+ * refuses. The file stays in the working tree, so the config still loads, and it is committed
+ * first, past the gate, when the repo has not got it yet — there is nothing to delete before that.
+ */
+export function stageGuardDeletion(repo: string, rig: Rig = {}): void {
+  if (git(repo, ["ls-files", "--error-unmatch", "flow.config.ts"], rig).code !== 0) {
+    git(repo, ["add", "flow.config.ts"], rig);
+    git(repo, ["commit", "-qm", "chore: the guard", "--no-verify", "--", "flow.config.ts"], rig);
+  }
+  git(repo, ["rm", "-q", "--cached", "flow.config.ts"], rig);
+}
+
 /** One payload, on the rail the host would send it on. */
 export const hook = (repo: string, event: string, payload: unknown, rig: Rig = {}): Ran =>
   flow(repo, ["hook", event], rig, JSON.stringify(payload));

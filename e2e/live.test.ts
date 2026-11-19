@@ -20,77 +20,52 @@ import { closeSync, mkdtempSync, mkdirSync, openSync, readdirSync, readFileSync,
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
-import {
-  PACKAGE,
-  buildBundles,
-  cleanBundles,
-  fixturePack,
-  hookInPieces,
-  newRepo,
-  pre,
-  shimBin,
-  subagentStopPayload,
-  subagentTranscripts,
-  tapeRecords,
-  tapeSteps,
-  BREAKS,
-  flow as runFlow,
-  git as runGit,
-  type Ran,
-} from "./harness.ts";
-import { FLOW_OFF, PRE_COMMIT, SET_HOOKS_PATH } from "../adapter/domain.ts";
+import { PACKAGE, buildBundles, cleanBundles, fixturePack, hookInPieces, newRepo, pre, shimBin, subagentStopPayload, subagentTranscripts, tapeRecords, tapeSteps, BREAKS, flow as runFlow, git as runGit, type Ran } from "./harness.ts";
+import { COMMIT_MSG, FLOW_OFF, SET_HOOKS_PATH } from "../adapter/domain.ts";
 
 let repo: string;
 
 /**
  * The one pack this repo writes itself, in the folder it chose to write it in.
  *
- * A category and one turn-end rule, shared with `packs/machine.test.ts` as a fixture file rather
+ * A category and one turn-end rule, shared with `e2e/machine.test.ts` as a fixture file rather
  * than kept twice as a string — see flow/__fixtures__/repo-pack.ts. It matters here beyond the
  * rule: a `.for(…)` entry needs a rung to bind to at the commit gate, and a real config binds the
  * repo's own pack beside the package's. The folder name is this fixture's choice and nothing
  * else's — `guards/` is where this repo happens to keep them, and the engine knows no such word.
  */
+
 const HOUSE = (packageRoot: string): string => fixturePack("repo-pack", join(packageRoot, "index.ts"));
 
 /** What the temp repo's own guard says. A few entries, at least one per rail this suite drives. */
 const CONFIG = (packageRoot: string): string => `
-import { breadcrumb, command, commit, definePack, defineConfig, deletion, guardrail, pack, protectedPath, session, touch, turnEnd, write } from ${JSON.stringify(
+import { breadcrumb, command, commit, definePack, defineConfig, guardrail, pack, protectedPath, session, fileChange, turnEnd } from ${JSON.stringify(
   join(packageRoot, "index.ts"),
 )};
 import { builder, house } from "./guards/house.ts";
 
 const demo = definePack("demo", {
   noTodo: guardrail()
-    .at(write)
+    .at(commit)
     .on("src/**")
     .check((ctx) => (ctx.file?.content.includes("TODO") ? ctx.fail("line says TODO") : ctx.ok()))
     .message("No TODOs in src/ — write the code or write the issue.")
     .test({ pass: [{ path: "src/a.ts", content: "ok" }], block: [{ path: "src/a.ts", content: "TODO" }] }),
 
   appendOnly: guardrail()
-    .at(write, deletion, commit)
-    .on("migrations/**")
-    .check(protectedPath({ existingOnly: true }))
+    .at(commit)
+    .check(protectedPath({ paths: ["migrations/**"], existingOnly: true }))
     .message("A migration already written is history — add a new one instead.")
     .test({
-      pass: [
-        { path: "migrations/002.sql", content: "new" },
-        { staged: ["migrations/002.sql"], added: ["migrations/002.sql"], world: { fs: { "migrations/002.sql": "new" } } },
-      ],
-      block: [
-        { path: "migrations/001.sql", content: "edited", world: { fs: { "migrations/001.sql": "old" } } },
-        { staged: ["migrations/001.sql"], added: [], world: { fs: { "migrations/001.sql": "edited" } } },
-        { staged: [], deleted: { "migrations/001.sql": "old" } },
-      ],
+      pass: [{ staged: ["migrations/002.sql"], added: ["migrations/002.sql"] }],
+      block: [{ staged: ["migrations/001.sql"], added: [] }, { staged: [], deleted: ["migrations/001.sql"] }],
     }),
 
   keepGenerated: guardrail()
-    .at(write, deletion, commit)
-    .on("gen/**")
-    .check(protectedPath({}))
+    .at(commit)
+    .check(protectedPath({ paths: ["gen/**"] }))
     .message("Machine-written: edit its source, then re-run the build.")
-    .test({ block: [{ path: "gen/a.ts", content: "" }] }),
+    .test({ block: [{ staged: ["gen/a.ts"] }] }),
 
   noForce: guardrail()
     .at(command)
@@ -137,12 +112,29 @@ const demo = definePack("demo", {
 
   orientation: breadcrumb().at(session).text("This repo is guarded by flow."),
 
-  area: breadcrumb().at(touch).on("src/**").text("src/ is the product — its tests sit beside it."),
+  area: breadcrumb().at(fileChange).on("src/**").text("src/ is the product — its tests sit beside it."),
 });
 
 // The repo's own pack is bound beside the demo one, which is how a real config reads: the package's
 // rules and the repo's, in one list.
 export default defineConfig([pack(demo), pack(house)]);
+`;
+
+/**
+ * A header rule, in a pack of its own that only the repo of the commit journey binds: the repo of
+ * every other test here has no rule reading a message. The rule is a check written in the config,
+ * as a repo's own would be, and reads `ctx.message` as git records it.
+ */
+const HEADER_PACK = (packageRoot: string): string => `
+import { commit, definePack, guardrail } from ${JSON.stringify(join(packageRoot, "index.ts"))};
+
+export const header = definePack("header", {
+  header: guardrail()
+    .at(commit)
+    .check((ctx) => (ctx.message == null || /^(fix|feat|chore): \\S/.test(ctx.message) ? ctx.ok() : ctx.fail(\`header is "\${ctx.message.split("\\n")[0] ?? ""}"\`)))
+    .message("The header is \`type: description\`.")
+    .test({ pass: [{ message: "fix: a thing" }], block: [{ message: "wip" }] }),
+});
 `;
 
 /** Run the built binary in the temp repo, with a payload on stdin exactly as the host sends it. */
@@ -197,59 +189,19 @@ function copyGuard(into: string): void {
 /** This suite's session, on the harness's payload — every row below is keyed by that id. */
 const inThisSession = (tool: string, input: Record<string, unknown>): Record<string, unknown> => pre(tool, input, "live-1");
 
-let calls = 0;
-
 /**
- * One tool call as the host brackets it: PreToolUse, the tool, then PostToolUse — both carrying the
- * same `tool_use_id`, which is how the after-call rail finds the snapshot the first one took. The
- * after-call answer is what comes back. Both hooks run in `cwd`, the suite's repo unless a test
- * has one of its own.
+ * One tool call as the host brackets it: PreToolUse for a shell command only, the tool, then
+ * PostToolUse. The after-call answer is what comes back. Both hooks run in `cwd`, the suite's repo
+ * unless a test has one of its own.
  */
 function called(payload: Record<string, unknown>, tool: () => void = () => undefined, event = "post-tool-use", cwd = repo): Ran {
-  const keyed = { ...payload, tool_use_id: `toolu_live_${++calls}` };
-  const before = hook("pre-tool-use", keyed, cwd);
-  expect(before.code, `the call was refused before it ran: ${before.stderr}`).toBe(0);
+  if (payload["tool_name"] === "Bash") {
+    const before = hook("pre-tool-use", payload, cwd);
+    expect(before.code, `the call was refused before it ran: ${before.stderr}`).toBe(0);
+  }
   tool();
-  return hook(event, keyed, cwd);
+  return hook(event, payload, cwd);
 }
-
-/** Run a command in a repo, the suite's unless given, the way the Bash tool would — the tool, between the two hooks. */
-function shell(command: string, cwd = repo): number {
-  return spawnSync("bash", ["-c", command], { cwd }).status ?? -1;
-}
-
-describe("the write rail", () => {
-  it("blocks the write before it lands, with the message on stderr and exit 2", () => {
-    const answer = hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "src/b.ts"), content: "// TODO: later\n" }));
-    expect(answer.code).toBe(2);
-    expect(answer.stdout).toBe("");
-    expect(answer.stderr).toContain("flow — blocked before the write landed");
-    expect(answer.stderr).toContain("demo.noTodo · src/b.ts");
-    expect(answer.stderr).toContain("No TODOs in src/");
-    expect(answer.stderr, "the check's own detail, under the sentence's message").toContain("line says TODO");
-    expect(existsSync(join(repo, "src/b.ts")), "the whole point: disk is untouched").toBe(false);
-  });
-
-  it("judges the file as the EDIT would leave it, not as it is", () => {
-    // The would-be file, rebuilt in memory. The base is clean; the edit is what introduces the TODO.
-    const edit = inThisSession("Edit", { file_path: join(repo, "src/a.ts"), old_string: "1", new_string: "1 // TODO" });
-    expect(hook("pre-tool-use", edit).code).toBe(2);
-    const innocent = inThisSession("Edit", { file_path: join(repo, "src/a.ts"), old_string: "1", new_string: "2" });
-    expect(hook("pre-tool-use", innocent).code).toBe(0);
-  });
-
-  it("leaves the session marker the commit gate reads, and records the call", () => {
-    // The handshake: the PreToolUse rail writes which session is live, and the gate — spawned by
-    // git, outside any session — reads it back. Both ends are flow's or commits misattribute.
-    const marked = JSON.parse(readFileSync(join(repo, ".flow", ".session-main"), "utf8")) as Record<string, unknown>;
-    expect(marked["session"]).toBe("live-1");
-    // The AGENT too: identity is stored per session x agent, so without this field the gate has no
-    // state file to look up and an actor-scoped commit rule is silenced while reading as armed.
-    expect(marked["agent"]).toBe("main");
-    expect(rows(repo, "live-1").some((row) => row["kind"] === "tool" && row["path"] === "src/b.ts")).toBe(true);
-    expect(rows(repo, "live-1").some((row) => row["kind"] === "guardrail" && row["out"] === "deny")).toBe(true);
-  });
-});
 
 describe("the command rail", () => {
   it("blocks the command before it runs", () => {
@@ -261,6 +213,18 @@ describe("the command rail", () => {
 
   it("lets an ordinary command through", () => {
     expect(hook("pre-tool-use", inThisSession("Bash", { command: "git status" })).code).toBe(0);
+  });
+
+  it("leaves the session marker the commit gate reads, and records the call", () => {
+    // The handshake: the PreToolUse rail writes which session is live, and the gate — spawned by
+    // git, outside any session — reads it back. Both ends are flow's or commits misattribute.
+    const marked = JSON.parse(readFileSync(join(repo, ".flow", ".session-main"), "utf8")) as Record<string, unknown>;
+    expect(marked["session"]).toBe("live-1");
+    // The AGENT too: identity is stored per session x agent, so without this field the gate has no
+    // state file to look up and an actor-scoped commit rule is silenced while reading as armed.
+    expect(marked["agent"]).toBe("main");
+    expect(rows(repo, "live-1").some((row) => row["kind"] === "tool" && row["command"] === "git push --force")).toBe(true);
+    expect(rows(repo, "live-1").some((row) => row["kind"] === "guardrail" && row["out"] === "deny")).toBe(true);
   });
 });
 
@@ -371,45 +335,41 @@ export default defineConfig([pack(notes)]);
     expect(started.hookSpecificOutput.additionalContext).toBe("# breadcrumb: notes.everyone (session)\nFor every agent.");
 
     subagentTranscripts(join(held, ".t"), session, "aheld", { own: [JSON.stringify({ type: "user", message: { content: "Build the task. BUILD-MARKER" } })] });
-    const first = hook("pre-tool-use", { ...pre("Read", { file_path: join(held, "a.ts") }, session), ...who, tool_use_id: "toolu_held1" }, held);
+    // A Read is seen after it ran: flow registers no hook before any tool but Bash.
+    const first = hook("post-tool-use", { ...pre("Read", { file_path: join(held, "a.ts") }, session), ...who }, held);
     expect(first.code, first.stderr).toBe(0);
     const called = JSON.parse(first.stdout) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } };
-    expect(called.hookSpecificOutput.hookEventName).toBe("PreToolUse");
+    expect(called.hookSpecificOutput.hookEventName).toBe("PostToolUse");
     expect(called.hookSpecificOutput.additionalContext).toBe("# breadcrumb: notes.briefedOnly (session)\nFor the briefed agent.");
 
-    const second = hook("pre-tool-use", { ...pre("Read", { file_path: join(held, "a.ts") }, session), ...who, tool_use_id: "toolu_held2" }, held);
+    const second = hook("post-tool-use", { ...pre("Read", { file_path: join(held, "a.ts") }, session), ...who }, held);
     expect(second.stdout, "shown once").not.toContain("notes.briefedOnly");
   });
 });
 
 describe("what a broken or empty call does", () => {
   it("passes an empty payload safely, on every rail", () => {
-    for (const event of ["session-start", "subagent-start", "pre-tool-use", "post-tool-use", "post-tool-use-failure", "stop", "subagent-stop", "notification"]) {
+    for (const event of ["session-start", "subagent-start", "pre-tool-use", "post-tool-use", "stop", "subagent-stop", "notification"]) {
       const answer = run(["hook", event], "");
       expect(answer.code, `${event} on an empty payload`).toBe(0);
       expect(answer.stderr, `${event} said something about nothing`).toBe("");
     }
   });
 
-  it("is loud on every rail that judges a call when it cannot read its payload, and warns on the rest", () => {
+  it("is loud on the one rail that judges a call when it cannot read its payload, and warns on the rest", () => {
     // "I could not SEE what I was guarding" must never be spelled like "I looked and it was fine".
     const guarded = run(["hook", "pre-tool-use"], "not json at all");
     expect(guarded.code).toBe(2);
     expect(guarded.stderr).toContain("could not PARSE its payload");
-    // The after-call rails judge every change the call made, so a payload they cannot read is a call
-    // nobody judged. Exit 2 there blocks nothing — the call has run — and reaches the model.
-    for (const event of ["post-tool-use", "post-tool-use-failure"]) {
-      const judging = run(["hook", event], "not json at all");
-      expect(judging.code, `${event} must not pass an unread call as clean`).toBe(2);
-      expect(judging.stderr).toContain("flow — could not see what this call changed");
-      expect(judging.stderr).toContain(`[flow hook ${event}] could not PARSE its payload (15 bytes on stdin, and not JSON).`);
+    // After a call there is nothing left to refuse, so the fault is said and the call goes on.
+    for (const event of ["post-tool-use", "session-start"]) {
+      const annotating = run(["hook", event], "not json at all");
+      expect(annotating.code, "breaking a session over a breadcrumb is the cure killing the patient").toBe(0);
+      expect(annotating.stderr).toContain(`[flow hook ${event}] could not PARSE its payload (15 bytes on stdin, and not JSON).`);
     }
-    const annotating = run(["hook", "session-start"], "not json at all");
-    expect(annotating.code, "breaking a session over a breadcrumb is the cure killing the patient").toBe(0);
-    expect(annotating.stderr).toContain("could not PARSE its payload");
   });
 
-  it("reports a stdin it cannot read on an after-call rail, naming the error, rather than retrying it", () => {
+  it("reports a stdin it cannot read, naming the error, rather than retrying it", () => {
     // Only EAGAIN means "wait for the next piece"; any other error is a payload nobody will ever
     // see. A stdin opened for writing fails every read with EBADF. A CLOSED stdin cannot show this:
     // node reopens a closed fd 0 on /dev/null before flow's first line runs, so it reads as empty.
@@ -417,8 +377,7 @@ describe("what a broken or empty call does", () => {
     const writeOnly = openSync(join(dir, "stdin"), "w");
     try {
       const answer = runFlow(repo, ["hook", "post-tool-use"], {}, writeOnly);
-      expect(answer.code, "an unread call must not pass as clean").toBe(2);
-      expect(answer.stderr).toContain("flow — could not see what this call changed");
+      expect(answer.code, "a call that has run is not refused").toBe(0);
       expect(answer.stderr).toContain("[flow hook post-tool-use] could not READ its payload from stdin (EBADF).");
     } finally {
       closeSync(writeOnly);
@@ -435,20 +394,14 @@ describe("what a broken or empty call does", () => {
 
 describe("a payload the host writes in pieces (#12)", () => {
   // A Read of an image hands post-tool-use a payload far larger than a pipe's buffer, so the host
-  // writes it in pieces, and the hook can empty the pipe before the next piece lands. The
-  // `tool_use_id` comes after the image, so the after-call rail finds its snapshot only if the
-  // second piece was read too.
-  const image = (): Record<string, unknown> => {
-    const id = `toolu_live_${++calls}`;
-    const before = hook("pre-tool-use", { ...inThisSession("Read", { file_path: "shot.png" }), tool_use_id: id });
-    expect(before.code, before.stderr).toBe(0);
-    return {
-      ...inThisSession("Read", { file_path: "shot.png" }),
-      hook_event_name: "PostToolUse",
-      tool_response: { type: "image", file: { base64: "A".repeat(400_000) } },
-      tool_use_id: id,
-    };
-  };
+  // writes it in pieces, and the hook can empty the pipe before the next piece lands. A payload read
+  // only in part is not JSON, and the hook says so on stderr: so a read that went whole leaves
+  // nothing to say.
+  const image = (): Record<string, unknown> => ({
+    ...inThisSession("Read", { file_path: "shot.png" }),
+    hook_event_name: "PostToolUse",
+    tool_response: { type: "image", file: { base64: "A".repeat(400_000) } },
+  });
 
   // The preload opens `process.stdin` before flow's first line runs, and that stream sets fd 0
   // non-blocking, as a host may leave it. The read then meets EAGAIN between the pieces, and has to
@@ -460,6 +413,7 @@ describe("a payload the host writes in pieces (#12)", () => {
   ])("is read whole when stdin is %s, however long the host pauses between writes", async (_stdin, nodeFlags) => {
     const answer = await hookInPieces(repo, "post-tool-use", image(), nodeFlags);
     expect(answer.code, answer.stderr).toBe(0);
+    expect(answer.stderr, "the whole payload was read").toBe("");
   });
 });
 
@@ -494,7 +448,7 @@ describe("the commit gate", () => {
     expect(answer.stdout + answer.stderr).toBe("");
   });
 
-  describe("over a repo with history, under an append-only rule bound at write, deletion and commit", () => {
+  describe("over a repo with history, under an append-only rule bound at commit", () => {
     // A repo of its own, because these need a real commit for the last commit to hold a migration.
     let other: string;
     const migration = (name: string): string => join(other, "migrations", name);
@@ -508,13 +462,19 @@ describe("the commit gate", () => {
     beforeAll(() => {
       other = newRepo("flow-append-");
       copyGuard(other);
+      writeFileSync(join(other, "header.ts"), HEADER_PACK(PACKAGE));
+      const config = readFileSync(join(other, "flow.config.ts"), "utf8");
+      writeFileSync(
+        join(other, "flow.config.ts"),
+        `import { header } from "./header.ts";\n${config.replace("defineConfig([pack(demo), pack(house)])", "defineConfig([pack(demo), pack(house), pack(header)])")}`,
+      );
       mkdirSync(join(other, "migrations"));
       writeFileSync(migration("001.sql"), "create table a ();\n");
       writeFileSync(migration("002.sql"), "create table b ();\n");
       runGit(other, ["add", "migrations"]);
       const first = gateHere();
       expect(first.code, `before the first commit every file is new: ${first.stderr}`).toBe(0);
-      // Committed past the gate, for --all to find as committed: a file only a plain protectedPath
+      // Committed past the gate, for --all to find as committed: a file only a plain protected-file rule
       // covers, and one holding the marker the content rule noSecrets bans.
       mkdirSync(join(other, "gen"));
       writeFileSync(join(other, "gen", "a.ts"), "export const a = 1;\n");
@@ -534,7 +494,7 @@ describe("the commit gate", () => {
       try {
         const answer = gateHere();
         expect(answer.code).toBe(2);
-        expect(answer.stderr).toContain("✗ demo.appendOnly · migrations/001.sql");
+        expect(answer.stderr).toContain("✗ demo.appendOnly");
         expect(answer.stderr, "003.sql is not in the last commit, so it is new").not.toContain("migrations/003.sql");
       } finally {
         reset();
@@ -546,7 +506,7 @@ describe("the commit gate", () => {
       try {
         const answer = gateHere();
         expect(answer.code).toBe(2);
-        expect(answer.stderr).toContain("✗ demo.appendOnly · migrations/002.sql");
+        expect(answer.stderr).toContain("✗ demo.appendOnly");
         expect(answer.stderr).toContain("is append-only");
       } finally {
         reset();
@@ -558,68 +518,119 @@ describe("the commit gate", () => {
       try {
         const answer = gateHere();
         expect(answer.code).toBe(2);
-        expect(answer.stderr).toContain("✗ demo.appendOnly · migrations/001.sql");
+        expect(answer.stderr).toContain("✗ demo.appendOnly");
         expect(answer.stderr, "the new path is new, and passes").not.toContain("001_renamed.sql");
         const old = gateHere(["commit", "migrations/001_renamed.sql"]);
         expect(old.code, "the old verb an older hook calls asks git too, whatever list it passes").toBe(2);
-        expect(old.stderr).toContain("✗ demo.appendOnly · migrations/001.sql");
+        expect(old.stderr).toContain("✗ demo.appendOnly");
       } finally {
         reset();
       }
     });
 
-    it("passes --all over a tree the last commit already holds, and blocks --all over an edit of one (#142)", () => {
+    it("runs only the rules with .on under --all, once for each file, and none of a commit's own (#142)", () => {
       // This repo's config is untracked and carries the marker noSecrets bans, so --all refuses it
-      // whatever happens here: only the append-only rule's lines are this test's business.
-      const clean = gateHere(["hook", "commit", "--all"]);
-      expect(clean.stderr, "every migration is as committed").not.toContain("demo.appendOnly");
-      expect(clean.stderr, "a plain protectedPath passes a file as committed").not.toContain("demo.keepGenerated");
-      expect(clean.stderr, "a content rule still reads a file as committed").toContain("✗ demo.noSecrets · src/marked.ts");
+      // whatever happens here: only the lines about the rules without `.on` are this test's business.
       writeFileSync(migration("001.sql"), "drop table a;\n");
       writeFileSync(join(other, "gen", "a.ts"), "export const a = 2;\n");
       try {
-        const edited = gateHere(["hook", "commit", "--all"]);
-        expect(edited.code).toBe(2);
-        expect(edited.stderr).toContain("✗ demo.appendOnly · migrations/001.sql");
-        expect(edited.stderr, "002.sql is as committed").not.toContain("migrations/002.sql");
-        expect(edited.stderr).toContain("✗ demo.keepGenerated · gen/a.ts");
+        const all = gateHere(["hook", "commit", "--all"]);
+        expect(all.code).toBe(2);
+        expect(all.stderr, "a content rule reads each file git lists").toContain("✗ demo.noSecrets · src/marked.ts");
+        expect(all.stderr, "an edit of a protected file is a commit's business, and --all has no commit").not.toContain("demo.appendOnly");
+        expect(all.stderr).not.toContain("demo.keepGenerated");
+        expect(all.stderr, "nor is a header, or a rule bound to who").not.toContain("header.header");
+        expect(all.stderr).not.toContain("demo.buildersOnly");
       } finally {
         reset();
       }
     });
 
-    it("refuses a file list, which would be a second source of the staged set", () => {
-      const answer = gateHere(["hook", "commit", "migrations/001.sql"]);
+    it("refuses a list of files, which would be a second source of the staged set", () => {
+      const answer = gateHere(["hook", "commit", "migrations/001.sql", "migrations/002.sql"]);
       expect(answer.code).toBe(2);
-      expect(answer.stderr).toContain("takes no files");
+      expect(answer.stderr).toContain("takes no list of files");
     });
 
-    it("judges the commit git is making through the REAL hook — a delete-only commit, and `git commit -a`", () => {
+    it("judges the commit git is making through the REAL hook — a bad header, a delete-only commit, `git commit -a`, an amend, and passes a merge", () => {
       // `git commit -a` stages into a temporary index that only the hook's own GIT_INDEX_FILE names.
       // A gate that asked git without it would see nothing staged, and pass everything.
       const bin = shimBin();
       try {
         mkdirSync(join(other, ".githooks"), { recursive: true });
-        writeFileSync(join(other, ".githooks", "pre-commit"), PRE_COMMIT, { mode: 0o755 });
+        writeFileSync(join(other, ".githooks", "commit-msg"), COMMIT_MSG, { mode: 0o755 });
         runGit(other, SET_HOOKS_PATH.split(" ").slice(1));
         const viaGit = (args: readonly string[]): Ran => runGit(other, args, { bin });
+        const head = (): string => runGit(other, ["rev-parse", "HEAD"]).stdout.trim();
 
         runGit(other, ["rm", "-q", "migrations/002.sql"]);
-        const deleted = viaGit(["commit", "-m", "drop 002"]);
+        const deleted = viaGit(["commit", "-m", "fix: drop 002"]);
         expect(deleted.code, "git refuses when the gate exits non-zero").not.toBe(0);
-        expect(deleted.stderr).toContain("demo.appendOnly · migrations/002.sql");
+        expect(deleted.stderr).toContain("demo.appendOnly");
         reset();
 
         writeFileSync(migration("001.sql"), "drop table a;\n");
-        const all = viaGit(["commit", "-a", "-m", "edit 001"]);
+        const all = viaGit(["commit", "-a", "-m", "fix: edit 001"]);
         expect(all.code).not.toBe(0);
-        expect(all.stderr).toContain("demo.appendOnly · migrations/001.sql");
+        expect(all.stderr).toContain("demo.appendOnly");
         reset();
 
+        // THE HEADER RULE reads the message as git records it, and judges a clean set all the same.
         writeFileSync(migration("004.sql"), "create table d ();\n");
         runGit(other, ["add", "migrations/004.sql"]);
-        const added = viaGit(["commit", "-m", "add 004"]);
+        const before = head();
+        const wip = viaGit(["commit", "-m", "wip"]);
+        expect(wip.code, "`git commit -m wip` is refused").not.toBe(0);
+        expect(wip.stderr).toContain("header.header");
+        expect(wip.stderr).toContain('header is "wip"');
+        expect(head(), "nothing was committed").toBe(before);
+        // …and the same refusal, exit code 2, when flow is handed a message file as git hands it,
+        // comment lines and all: a comment line is not the header.
+        const messageFile = join(other, "msg.txt");
+        writeFileSync(messageFile, "wip\n# Please enter the commit message\n");
+        expect(gateHere(["hook", "commit", messageFile]).code).toBe(2);
+
+        const added = viaGit(["commit", "-m", "fix: add 004"]);
         expect(added.code, added.stderr).toBe(0);
+
+        // AN AMEND is judged with its message: the commit it replaces is not the one asked about.
+        const amended = viaGit(["commit", "--amend", "-m", "wip"]);
+        expect(amended.code).not.toBe(0);
+        expect(amended.stderr).toContain("header.header");
+        const kept = viaGit(["commit", "--amend", "-m", "fix: add 004, amended"]);
+        expect(kept.code, kept.stderr).toBe(0);
+
+        // A MERGE passes, whatever the branch it brings in broke: its header and its content were
+        // judged, or not, where they were made. With a conflict, the commit that finishes it passes too.
+        const trunk = runGit(other, ["rev-parse", "--abbrev-ref", "HEAD"]).stdout.trim();
+        writeFileSync(join(other, "notes.txt"), "base\n");
+        runGit(other, ["add", "notes.txt"]);
+        expect(viaGit(["commit", "-m", "fix: notes"]).code).toBe(0);
+        runGit(other, ["checkout", "-q", "-b", "topic"]);
+        writeFileSync(join(other, "src", "bad.ts"), "// DO-NOT-COMMIT\n");
+        writeFileSync(join(other, "notes.txt"), "topic\n");
+        runGit(other, ["add", "src/bad.ts", "notes.txt"]);
+        expect(viaGit(["commit", "-m", "wip", "--no-verify"]).code, "the branch broke the header and a content rule").toBe(0);
+        runGit(other, ["checkout", "-q", trunk]);
+        writeFileSync(join(other, "migrations", "005.sql"), "create table e ();\n");
+        runGit(other, ["add", "migrations/005.sql"]);
+        expect(viaGit(["commit", "-m", "fix: add 005"]).code).toBe(0);
+        const clean = viaGit(["merge", "--no-ff", "-m", "Merge topic", "topic"]);
+        expect(clean.code, clean.stderr).toBe(0);
+        expect(runGit(other, ["rev-parse", "HEAD^2"]).code, "a merge commit, with two parents").toBe(0);
+        expect(runGit(other, ["log", "-1", "--format=%s"]).stdout.trim()).toBe("Merge topic");
+
+        runGit(other, ["checkout", "-q", "-b", "clash", "HEAD~1"]);
+        writeFileSync(join(other, "notes.txt"), "clash\n");
+        runGit(other, ["add", "notes.txt"]);
+        expect(viaGit(["commit", "-m", "fix: clash"]).code).toBe(0);
+        const conflicted = viaGit(["merge", "--no-ff", "topic"]);
+        expect(conflicted.code, "the merge stops on a conflict").not.toBe(0);
+        writeFileSync(join(other, "notes.txt"), "resolved\n");
+        runGit(other, ["add", "notes.txt"]);
+        const finished = viaGit(["commit", "--no-edit"]);
+        expect(finished.code, finished.stderr).toBe(0);
+        expect(runGit(other, ["rev-parse", "HEAD^2"]).code).toBe(0);
       } finally {
         rmSync(bin, { recursive: true, force: true });
       }
@@ -675,651 +686,34 @@ describe("the commit gate", () => {
 });
 
 // After the commit gate on purpose: these sessions write the marker the gate reads.
-describe("a shell read, briefed", () => {
-  it("briefs the area a `cat` reads BEFORE it runs, on the PreToolUse answer, and stays quiet on the second", () => {
-    // Under auto mode most contact with an area is a shell read whose payload names no path. The
-    // note rides the same answer the command guardrails use, so it arrives ahead of the output.
-    // The shell stands in src/, so the relative path is resolved from there.
-    const cat = { ...pre("Bash", { command: "cd .. && cat src/a.ts | head -5" }, "live-5"), cwd: join(repo, "src") };
-    const first = hook("pre-tool-use", cat);
-    expect(first.code).toBe(0);
-    expect(first.stderr).toBe("");
-    const decision = JSON.parse(first.stdout) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } };
-    expect(decision.hookSpecificOutput.hookEventName).toBe("PreToolUse");
-    expect(decision.hookSpecificOutput.additionalContext).toBe(
-      "# breadcrumb: demo.area (first-touch)\nsrc/ is the product — its tests sit beside it.",
-    );
-    const again = hook("pre-tool-use", { ...pre("Bash", { command: "cat src/a.ts" }, "live-5"), cwd: repo });
-    expect(again.code).toBe(0);
-    expect(again.stdout, "shown once, until the session drifts past the threshold").toBe("");
-  });
-
-  it("does not spend a note on a refused command — the retry that runs is briefed", () => {
-    const refused = hook("pre-tool-use", { ...pre("Bash", { command: "cat src/a.ts && git push --force" }, "live-6"), cwd: repo });
-    expect(refused.code).toBe(2);
-    expect(refused.stdout).toBe("");
-    const retried = hook("pre-tool-use", { ...pre("Bash", { command: "cat src/a.ts && git push" }, "live-6"), cwd: repo });
-    expect(retried.code).toBe(0);
-    expect(retried.stdout).toContain("# breadcrumb: demo.area (first-touch)");
-  });
-});
-
-// After the commit gate as well, for the same reason: every call here writes the marker.
-describe("the delta rail — every change to the tree, judged the moment it has landed", () => {
-  // THE PROOF OF F4. A shell edit names no file for a PreToolUse rail to judge: the heredoc below is
-  // a command line with no path in it that any rule could see. The change reaches the write rule
-  // only through the diff between the tree before the call and the tree after it.
-  const session = "live-delta";
-  const heredoc = (path: string, line: string): string =>
-    `python3 - <<'EOF'\nfrom pathlib import Path\np = Path(${JSON.stringify(path)})\np.write_text((p.read_text() if p.exists() else "") + ${JSON.stringify(line)} + "\\n")\nEOF`;
-  const bash = (command: string): Record<string, unknown> => ({ ...pre("Bash", { command }, session), cwd: repo });
-
-  it("puts a heredoc's TODO back, byte for byte, and says so under the reverted-write banner", () => {
-    const before = readFileSync(join(repo, "src/a.ts"));
-    let landed = Buffer.alloc(0);
-    const answer = called(bash(heredoc("src/a.ts", "// TODO: later")), () => {
-      expect(shell(heredoc("src/a.ts", "// TODO: later"))).toBe(0);
-      landed = readFileSync(join(repo, "src/a.ts"));
-    });
-    expect(landed.toString(), "the write really landed — nothing stopped it before it ran").toContain("TODO");
-    expect(answer.code, "exit 2 on the after-call rail: the host shows stderr to the model").toBe(2);
-    expect(answer.stdout).toBe("");
-    expect(answer.stderr).toContain("flow — write reverted after it landed:");
-    expect(answer.stderr).toContain("✗ demo.noTodo · src/a.ts");
-    expect(answer.stderr).toContain("No TODOs in src/");
-    expect(answer.stderr).toContain("src/a.ts is back to its previous content.");
-    expect(readFileSync(join(repo, "src/a.ts")), "byte-identical to before the call").toStrictEqual(before);
-    expect(rows(repo, session).some((row) => row["kind"] === "guardrail" && row["out"] === "deny"), "and it is on the record").toBe(true);
-  });
-
-  it("keeps a NEW file a command adds to an append-only folder, and puts back the one it edited", () => {
-    // Judged after the command, the tree holds the new file too — only the snapshot knows it is new.
-    const added = called(bash(heredoc("migrations/002.sql", "create table b ();")), () => {
-      expect(shell(heredoc("migrations/002.sql", "create table b ();"))).toBe(0);
-    });
-    try {
-      expect(added.code, added.stderr).toBe(0);
-      expect(readFileSync(join(repo, "migrations/002.sql"), "utf8")).toBe("create table b ();\n");
-    } finally {
-      rmSync(join(repo, "migrations/002.sql"), { force: true });
-    }
-    const before = readFileSync(join(repo, "migrations/001.sql"));
-    const edited = called(bash(heredoc("migrations/001.sql", "drop table a;")), () => {
-      expect(shell(heredoc("migrations/001.sql", "drop table a;"))).toBe(0);
-    });
-    expect(edited.code).toBe(2);
-    expect(edited.stderr).toContain("✗ demo.appendOnly · migrations/001.sql");
-    expect(readFileSync(join(repo, "migrations/001.sql"))).toStrictEqual(before);
-  });
-
-  it("keeps a compliant heredoc's write, and shows the area's breadcrumb at the change", () => {
-    const answer = called(bash(heredoc("src/fresh.ts", "export const fresh = 1;")), () => {
-      expect(shell(heredoc("src/fresh.ts", "export const fresh = 1;"))).toBe(0);
-    });
-    try {
-      expect(answer.code).toBe(0);
-      expect(answer.stderr).toBe("");
-      expect(readFileSync(join(repo, "src/fresh.ts"), "utf8")).toBe("export const fresh = 1;\n");
-      const decision = JSON.parse(answer.stdout) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } };
-      expect(decision.hookSpecificOutput.hookEventName).toBe("PostToolUse");
-      expect(decision.hookSpecificOutput.additionalContext).toBe(
-        "# breadcrumb: demo.area (first-touch)\nsrc/ is the product — its tests sit beside it.",
-      );
-    } finally {
-      rmSync(join(repo, "src/fresh.ts"), { force: true });
-    }
-  });
-
-  it("records what went round the tool rows: the files a command read and wrote, the mode, and the host's disagreement", () => {
-    const seq = rows(repo, session).length;
-    const command = `cat src/a.ts >/dev/null && ${heredoc("src/shelled.ts", "export const shelled = 1;")}`;
-    // The host's own list names a file flow's diff never saw, and misses the one it did.
-    const payload = { ...bash(command), permission_mode: "auto", tool_response: { stdout: "", bashEditDiff: { changedFiles: [join(repo, "src/other.ts")] } } };
-    try {
-      const answer = called(payload, () => { expect(shell(command)).toBe(0); });
-      expect(answer.code, answer.stderr).toBe(0);
-      const logged = rows(repo, session).slice(seq);
-      expect(logged.find((row) => row["kind"] === "tool")).toMatchObject({ tool: "Bash", mode: "auto" });
-      expect(logged.filter((row) => row["kind"] === "read")).toMatchObject([{ tool: "Bash", path: "src/a.ts" }]);
-      expect(logged.filter((row) => row["kind"] === "write")).toMatchObject([{ tool: "Bash", path: "src/shelled.ts", change: "created" }]);
-      expect(logged.filter((row) => row["kind"] === "mismatch")).toMatchObject([{ hostOnly: ["src/other.ts"], flowOnly: ["src/shelled.ts"] }]);
-    } finally {
-      rmSync(join(repo, "src/shelled.ts"), { force: true });
-    }
-  });
-
-  it("judges a FAILED call's partial write the same way — a command that errors has still written", () => {
-    const before = readFileSync(join(repo, "src/a.ts"));
-    const command = `${heredoc("src/a.ts", "// TODO: half done")}\nexit 1`;
-    const answer = called(bash(command), () => { expect(shell(command)).toBe(1); }, "post-tool-use-failure");
-    expect(answer.code).toBe(2);
-    expect(answer.stderr).toContain("flow — write reverted after it landed:");
-    expect(readFileSync(join(repo, "src/a.ts"))).toStrictEqual(before);
-  });
-
-  it("briefs the area on first touch, and stays quiet on the next one", () => {
-    const first = called({ session_id: "live-4", tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } });
-    expect(first.code).toBe(0);
-    const decision = JSON.parse(first.stdout) as { hookSpecificOutput: { additionalContext: string } };
-    expect(decision.hookSpecificOutput.additionalContext).toBe(
-      "# breadcrumb: demo.area (first-touch)\nsrc/ is the product — its tests sit beside it.",
-    );
-    const again = called({ session_id: "live-4", tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } });
-    expect(again.stdout, "shown once, until the session drifts past the threshold").toBe("");
-    expect(
-      rows(repo, "live-4").filter((row) => row["kind"] === "run").length,
-      "a touch where nothing showed is not a run row — the tool row already said the call happened",
-    ).toBe(1);
-  });
-
-  it("still refuses an Edit before it lands — the pre-emptive rail is unchanged", () => {
-    const answer = hook("pre-tool-use", {
-      ...pre("Edit", { file_path: join(repo, "src/a.ts"), old_string: "1", new_string: "1 // TODO" }, session),
-      tool_use_id: "toolu_live_edit",
-    });
-    expect(answer.code).toBe(2);
-    expect(answer.stderr).toContain("flow — blocked before the write landed");
-    expect(readFileSync(join(repo, "src/a.ts"), "utf8")).toBe("export const a = 1;\n");
-    expect(existsSync(join(repo, ".flow", "snapshots", "toolu_live_edit.json")), "a refused call never runs, so it takes no snapshot").toBe(false);
-  });
-
-  it("reports a call it has no snapshot for, rather than calling it clean", () => {
-    const answer = hook("post-tool-use", { ...bash("touch src/x.ts"), tool_use_id: "toolu_never_seen" });
-    expect(answer.code).toBe(2);
-    expect(answer.stderr).toContain("flow — could not see what this call changed");
-    expect(answer.stderr).toContain("No snapshot was taken before this call");
-  });
-
-  it("leaves no snapshot behind once a call is over", () => {
-    called(bash("true"), () => { expect(shell("true")).toBe(0); });
-    const left = existsSync(join(repo, ".flow", "snapshots"))
-      ? readdirSync(join(repo, ".flow", "snapshots")).filter((name) => name.startsWith("toolu_live_") && !name.startsWith("toolu_live_edit"))
-      : [];
-    expect(left).toStrictEqual([]);
-  });
-});
-
-describe("several agents in one worktree — overlap, background commands, and one writer", () => {
-  // THE PROOF OF F5, in a worktree of its own: a config that sets revert: "all" and binds the work
-  // pack with its writers named, so the three things this phase adds meet in one place — a revert
-  // narrowed by an overlapping call, a background command's later write judged like any other, and
-  // a write by the wrong actor refused whichever tool made it.
-  let tree: string;
-  let ids = 0;
-  const OVERLAP_CONFIG = (packageRoot: string): string => `
-import { defineConfig, definePack, guardrail, pack, write } from ${JSON.stringify(join(packageRoot, "index.ts"))};
-import { work } from ${JSON.stringify(join(packageRoot, "packs", "index.ts"))};
-
-const demo = definePack("demo", {
-  noTodo: guardrail()
-    .at(write)
-    .on("src/**")
-    .check((ctx) => (ctx.file?.content.includes("TODO") ? ctx.fail("line says TODO") : ctx.ok()))
-    .message("No TODOs in src/ — write the code or write the issue.")
-    .test({ pass: [{ path: "src/a.ts", content: "ok" }], block: [{ path: "src/a.ts", content: "TODO" }] }),
-});
-
-export default defineConfig([pack(demo), pack(work, { writers: ["builder", "parent"] })], { revert: "all" });
-`;
-  const sh = (command: string): number => spawnSync("bash", ["-c", command], { cwd: tree }).status ?? -1;
-  const at = (path: string): string | null => (existsSync(join(tree, path)) ? readFileSync(join(tree, path), "utf8") : null);
-  const send = (event: string, payload: unknown): Ran => runFlow(tree, ["hook", event], {}, JSON.stringify(payload));
-
-  /**
-   * A subagent the host spawned as `agentType`, in the message Claude Code really sends for its
-   * calls: its `agent_id` and `agent_type`, and the PARENT's `transcript_path`. Its own transcript
-   * sits under the parent's, at `<parent>/subagents/agent-<id>.jsonl`.
-   */
-  function spawned(agent: string, agentType: string, brief = "work on it"): Record<string, unknown> {
-    const { parent } = subagentTranscripts(join(tree, ".t"), "f5", agent, {
-      parent: [JSON.stringify({ type: "user", message: { content: "run it" } })],
-      own: [JSON.stringify({ type: "user", message: { content: brief } })],
-    });
-    return { session_id: "f5", agent_id: agent, agent_type: agentType, transcript_path: parent };
-  }
-  const PARENT = { session_id: "f5" };
-
-  /** One Bash call's two hook halves, keyed alike — the test decides when each one runs. */
-  function bash(who: Record<string, unknown>, command: string, input: Record<string, unknown> = {}) {
-    const payload = { ...who, tool_name: "Bash", tool_input: { command, ...input }, tool_use_id: `toolu_f5_${++ids}`, cwd: tree };
-    return {
-      key: payload.tool_use_id,
-      before: (): Ran => send("pre-tool-use", payload),
-      after: (): Ran => send("post-tool-use", payload),
-    };
-  }
-
-  beforeAll(() => {
-    tree = newRepo("flow-overlap-");
-    writeFileSync(join(tree, "flow.config.ts"), OVERLAP_CONFIG(PACKAGE));
-    writeFileSync(join(tree, ".gitignore"), ".t/\n");
-    mkdirSync(join(tree, "src"), { recursive: true });
-    writeFileSync(join(tree, "src", "a.ts"), "export const a = 1;\n");
-    writeFileSync(join(tree, "src", "b.ts"), "export const b = 1;\n");
-  });
-  afterAll(() => {
-    rmSync(tree, { recursive: true, force: true });
-  });
-
-  it("puts back every file a refused call changed when the repo sets revert: all", () => {
-    const call = bash(PARENT, "echo '// TODO' >> src/a.ts && echo 'export const d = 1;' > src/d.ts");
-    expect(call.before().code).toBe(0);
-    expect(sh("echo '// TODO' >> src/a.ts && echo 'export const d = 1;' > src/d.ts")).toBe(0);
-    const answer = call.after();
-    expect(answer.code).toBe(2);
-    expect(answer.stderr).toContain("flow — write reverted after it landed:");
-    expect(answer.stderr).toContain('revert: "all" is set, so every file this call changed was put back');
-    expect(at("src/a.ts")).toBe("export const a = 1;\n");
-    expect(at("src/d.ts"), "compliant, and gone again with the rest of the call").toBeNull();
-  });
-
-  it("reverts only its own refused file while another agent's call is in flight — and names that call", () => {
-    const builder = spawned("b1", "builder");
-    const parentCall = bash(PARENT, "python3 fix.py");
-    const builderCall = bash(builder, "python3 build.py");
-    expect(parentCall.before().code).toBe(0);
-    expect(builderCall.before().code).toBe(0);
-    // The two tools run interleaved: the builder writes b.ts, the parent writes a TODO into a.ts and
-    // a compliant e.ts. The parent's diff is taken first, while the builder's call is still open.
-    expect(sh("echo 'export const b = 2;' > src/b.ts")).toBe(0);
-    expect(sh("echo '// TODO' >> src/a.ts && echo 'export const e = 1;' > src/e.ts")).toBe(0);
-
-    const refused = parentCall.after();
-    expect(refused.code).toBe(2);
-    expect(refused.stderr).toContain("✗ demo.noTodo · src/a.ts");
-    expect(refused.stderr).toContain("src/a.ts is back to its previous content.");
-    expect(refused.stderr).toContain(`Other tool calls overlapped this one: Bash ${builderCall.key} (agent b1 of session f5)`);
-    expect(refused.stderr).toContain('revert: "all" is set, and is not applied while calls overlap.');
-    expect(at("src/a.ts"), "the refused file is back").toBe("export const a = 1;\n");
-    expect(at("src/b.ts"), "the other call's file is untouched").toBe("export const b = 2;\n");
-    expect(at("src/e.ts"), "and this call's compliant file stays").toBe("export const e = 1;\n");
-
-    const clean = builderCall.after();
-    expect(clean.code, clean.stderr).toBe(0);
-    expect(at("src/b.ts")).toBe("export const b = 2;\n");
-  });
-
-  it("gives a background command no special treatment: its later write is judged and put back by the call that sees it", () => {
-    const started = bash(PARENT, "sleep 1 && echo '// TODO from the build' >> src/b.ts", { run_in_background: true });
-    expect(started.before().code).toBe(0);
-    expect(existsSync(join(tree, ".flow", "snapshots", `${started.key}.json`)), "snapshotted like any call").toBe(true);
-    expect(started.after().code, "diffed like any call: nothing has changed yet when it returns").toBe(0);
-    // Later, while some other call is in progress, the process writes — and that call's own
-    // compliant write sits in the same diff.
-    const later = bash(spawned("b1", "builder"), "echo 'export const f = 1;' > src/f.ts");
-    expect(later.before().code).toBe(0);
-    expect(sh("echo '// TODO from the build' >> src/b.ts")).toBe(0);
-    expect(sh("echo 'export const f = 1;' > src/f.ts")).toBe(0);
-    const answer = later.after();
-    expect(answer.code).toBe(2);
-    expect(answer.stderr).toContain("flow — write reverted after it landed:");
-    expect(answer.stderr).toContain("✗ demo.noTodo · src/b.ts");
-    expect(answer.stderr).not.toContain("not reverted");
-    expect(at("src/b.ts"), "written back, like any refused write").toBe("export const b = 2;\n");
-    expect(at("src/f.ts"), "revert: all — the rest of the call's diff goes back with it").toBeNull();
-    expect(existsSync(join(tree, ".flow", "background.json")), "no mark is kept for a background command").toBe(false);
-  });
-
-  it("classifies a subagent from the message Claude Code really sends — the parent's transcript_path (#7)", () => {
-    // The triage reproduction. Before the fix, flow looked for the subagent's record beside the
-    // parent's transcript, found none, and refused this write as one by "an actor with no category".
-    const checker = spawned("v7", "verifier", "check it");
-    const call = bash(checker, "echo 'export const fixed = 7;' > src/b.ts");
-    expect(call.before().code).toBe(0);
-    expect(sh("echo 'export const fixed = 7;' > src/b.ts")).toBe(0);
-    const answer = call.after();
-    expect(answer.stderr).toContain("src/b.ts was written by an actor wearing checker");
-    expect(answer.code).toBe(2);
-  });
-
-  it("lets a subagent the host started as builder write, from its hook message", () => {
-    const named = bash(spawned("b7", "builder"), "echo 'export const g = 7;' > src/g.ts");
-    expect(named.before().code).toBe(0);
-    expect(sh("echo 'export const g = 7;' > src/g.ts")).toBe(0);
-    const allowed = named.after();
-    expect(allowed.code, allowed.stderr).toBe(0);
-    expect(at("src/g.ts")).toBe("export const g = 7;\n");
-  });
-
-  it("recognises a generic spawn by the brief in its own transcript, not the parent's", () => {
-    // A `general-purpose` spawn carries no type information: the brief decides, and it is read from
-    // the subagent's transcript, not the parent's ("run it").
-    const generic = bash(spawned("g7", "general-purpose", "Follow `/work build` for F1"), "echo 'export const h = 7;' > src/h.ts");
-    expect(generic.before().code).toBe(0);
-    expect(sh("echo 'export const h = 7;' > src/h.ts")).toBe(0);
-    const recovered = generic.after();
-    expect(recovered.code, recovered.stderr).toBe(0);
-    expect(at("src/h.ts")).toBe("export const h = 7;\n");
-  });
-
-  it("refuses and reverts a write by an actor that is not a writer, naming who wrote it", () => {
-    const checker = spawned("v1", "verifier");
-    const call = bash(checker, "echo 'export const fixed = 1;' > src/b.ts");
-    expect(call.before().code).toBe(0);
-    expect(sh("echo 'export const fixed = 1;' > src/b.ts")).toBe(0);
-    const answer = call.after();
-    expect(answer.code).toBe(2);
-    expect(answer.stderr).toContain("flow — write reverted after it landed:");
-    expect(answer.stderr).toContain("✗ work.builderWrites · src/b.ts");
-    expect(answer.stderr).toContain("Only the builder changes files in this worktree — hand your finding back instead of fixing it.");
-    expect(answer.stderr).toContain("src/b.ts was written by an actor wearing checker — only builder or parent may change files here");
-    expect(at("src/b.ts")).toBe("export const b = 2;\n");
-    // The same actor through the Edit tool is refused before anything lands.
-    const edit = send("pre-tool-use", {
-      ...checker,
-      tool_name: "Write",
-      tool_input: { file_path: join(tree, "src/b.ts"), content: "export const b = 3;\n" },
-      tool_use_id: `toolu_f5_${++ids}`,
-    });
-    expect(edit.code).toBe(2);
-    expect(edit.stderr).toContain("flow — blocked before the write landed");
-    expect(edit.stderr).toContain("work.builderWrites");
-    expect(at("src/b.ts")).toBe("export const b = 2;\n");
-  });
-});
-
-describe("files git puts in place — a checkout is neither judged nor written back", () => {
-  // THE PROOF OF #8, in a repo of its own with history. `old` holds a file committed before the rule
-  // it now breaks, and a migration main has not got yet; main's append-only rule protects that
-  // migration once it exists. A file that matches HEAD after the call is git's, so a switch either
-  // way leaves the tree equal to HEAD — and anything else the same call changed is still judged.
-  let tree: string;
-  let ids = 0;
-  const session = "checkout";
-  const CHECKOUT_CONFIG = (packageRoot: string): string => `
-import { definePack, defineConfig, deletion, guardrail, pack, protectedPath, write } from ${JSON.stringify(join(packageRoot, "index.ts"))};
-
-const demo = definePack("demo", {
-  noTodo: guardrail()
-    .at(write)
-    .on("src/**")
-    .check((ctx) => (ctx.file?.content.includes("TODO") ? ctx.fail("line says TODO") : ctx.ok()))
-    .message("No TODOs in src/.")
-    .test({ pass: [{ path: "src/a.ts", content: "ok" }], block: [{ path: "src/a.ts", content: "TODO" }] }),
-
-  appendOnly: guardrail()
-    .at(write, deletion)
-    .on("migrations/**")
-    .check(protectedPath({ existingOnly: true }))
-    .message("A migration already written is history.")
-    .test({
-      pass: [{ path: "migrations/002.sql", content: "new" }],
-      block: [{ path: "migrations/001.sql", content: "edited", world: { fs: { "migrations/001.sql": "old" } } }, { staged: [], deleted: { "migrations/001.sql": "old" } }],
-    }),
-
-  // The shape of the shipped flow.noDeleteGuardrails, on the one file that runs the commit gate.
-  keepHook: guardrail()
-    .at(deletion)
-    .on(".githooks/pre-commit")
-    .check(protectedPath({}))
-    .message("The commit gate stays.")
-    .test({ block: [{ path: ".githooks/pre-commit", content: "" }] }),
-});
-
-export default defineConfig([pack(demo)]);
-`;
-  /** A commit gate that refuses a staged TODO. It runs only where a test points core.hooksPath at it. */
-  const GATE = "#!/bin/sh\nif git diff --cached -U0 | grep -q '^+.*TODO'; then echo 'gate: a TODO is staged' >&2; exit 1; fi\n";
-  const at = (path: string): string | null => (existsSync(join(tree, path)) ? readFileSync(join(tree, path), "utf8") : null);
-  const inTree = (...args: string[]): string => {
-    const ran = runGit(tree, args);
-    expect(ran.code, `git ${args.join(" ")}: ${ran.stderr}`).toBe(0);
-    return ran.stdout;
-  };
-  /** The tree against HEAD, as a person reads it — empty is "the worktree is HEAD". */
-  const status = (): string => inTree("status", "--porcelain");
-  const backToMain = (): void => {
-    inTree("switch", "-qf", "main");
-    inTree("reset", "-q", "--hard");
-    inTree("clean", "-fdq");
-  };
-
-  /** One Bash call as the host brackets it: PreToolUse, the command itself, then PostToolUse. */
-  function bash(command: string, where = tree, who = session): Ran & { readonly ran: number } {
-    const payload = { ...pre("Bash", { command }, who), cwd: where, tool_use_id: `toolu_checkout_${++ids}` };
-    const before = runFlow(where, ["hook", "pre-tool-use"], {}, JSON.stringify(payload));
-    expect(before.code, `the call was refused before it ran: ${before.stderr}`).toBe(0);
-    const ran = spawnSync("bash", ["-c", command], { cwd: where }).status ?? -1;
-    return { ...runFlow(where, ["hook", "post-tool-use"], {}, JSON.stringify(payload)), ran };
-  }
-
-  beforeAll(() => {
-    tree = newRepo("flow-checkout-");
-    writeFileSync(join(tree, "flow.config.ts"), CHECKOUT_CONFIG(PACKAGE));
-    mkdirSync(join(tree, "src"));
-    mkdirSync(join(tree, "migrations"));
-    mkdirSync(join(tree, ".githooks"));
-    writeFileSync(join(tree, "src", "a.ts"), "export const a = 1;\n");
-    writeFileSync(join(tree, "migrations", "001.sql"), "create table a ();\n");
-    writeFileSync(join(tree, ".githooks", "pre-commit"), GATE, { mode: 0o755 });
-    inTree("add", "-A");
-    inTree("commit", "-qm", "main");
-    inTree("branch", "-M", "main");
-    inTree("switch", "-qc", "old");
-    writeFileSync(join(tree, "src", "legacy.ts"), "// TODO: from before the rule\n");
-    writeFileSync(join(tree, "migrations", "002.sql"), "create table b ();\n");
-    inTree("add", "-A");
-    inTree("commit", "-qm", "old");
-    inTree("switch", "-q", "main");
-  });
-  afterAll(() => {
-    rmSync(tree, { recursive: true, force: true });
-  });
-
-  it("switches TO a branch whose files break a current rule: exit 0, nothing put back, the tree equal to HEAD", () => {
-    const answer = bash("git switch -q old");
-    expect(answer.ran).toBe(0);
-    expect(answer.code, answer.stderr).toBe(0);
-    expect(answer.stderr).toBe("");
-    expect(answer.stdout, "no breadcrumb, no note: nothing reached a rule").toBe("");
-    expect(at("src/legacy.ts"), "old's own file, as old committed it").toBe("// TODO: from before the rule\n");
-    expect(at("migrations/002.sql")).toBe("create table b ();\n");
-    expect(status(), "the worktree is HEAD").toBe("");
-  });
-
-  it("switches BACK to a branch without a file an append-only rule protects: exit 0, the tree equal to HEAD", () => {
-    inTree("switch", "-qf", "old");
-    const answer = bash("git switch -q main");
-    expect(answer.ran).toBe(0);
-    expect(answer.code, answer.stderr).toBe(0);
-    expect(answer.stderr).toBe("");
-    expect(at("migrations/002.sql"), "main has no 002.sql, and it was not put back").toBeNull();
-    expect(at("src/legacy.ts")).toBeNull();
-    expect(status(), "the worktree is HEAD").toBe("");
-  });
-
-  it("records no shell write for a checkout's files, so `flow facts` counts none — and still counts the agent's", () => {
-    const user = mkdtempSync(join(tmpdir(), "flow-user-"));
-    try {
-      backToMain();
-      const id = "checkout-facts";
-      const store = join(user, ".claude", "projects", realpathSync(tree).replace(/[^a-zA-Z0-9]/g, "-"));
-      mkdirSync(store, { recursive: true });
-      writeFileSync(join(store, `${id}.jsonl`), `${JSON.stringify({ type: "user", message: { role: "user", content: "go" } })}\n`);
-      expect(bash("git switch -q old", tree, id).code).toBe(0);
-      expect(bash("git switch -q main", tree, id).code).toBe(0);
-      expect(bash("echo 'export const b = 1;' > src/b.ts", tree, id).code).toBe(0);
-      const read = runFlow(tree, ["facts", "--json", "--session", id], { user, home: join(user, ".claude") });
-      expect(read.code, read.stderr).toBe(0);
-      const facts = JSON.parse(read.stdout) as { narrative: { stats: { shellWrites: number }; shell: { writes: Record<string, number> } } };
-      expect(facts.narrative.stats.shellWrites, "src/b.ts only — not one file of either switch").toBe(1);
-      expect(facts.narrative.shell.writes).toStrictEqual({ "src/b.ts": 1 });
-    } finally {
-      rmSync(user, { recursive: true, force: true });
-    }
-  });
-
-  it("in `git switch old && sed -i …`, refuses and puts back the sed edit, and keeps the switch's own files", () => {
-    backToMain();
-    const seq = rows(tree, session).length;
-    const answer = bash("git switch -q old && sed -i.orig 's|a = 1;|a = 1; // TODO|' src/a.ts && rm src/a.ts.orig");
-    expect(answer.ran).toBe(0);
-    expect(answer.code).toBe(2);
-    expect(answer.stderr).toContain("flow — write reverted after it landed:");
-    expect(answer.stderr).toContain("✗ demo.noTodo · src/a.ts");
-    expect(answer.stderr, "old's committed TODO is git's, not the agent's").not.toContain("legacy.ts");
-    expect(answer.stderr).not.toContain("002.sql");
-    expect(at("src/a.ts"), "the sed edit is gone").toBe("export const a = 1;\n");
-    expect(inTree("rev-parse", "--abbrev-ref", "HEAD").trim(), "the switch itself stands").toBe("old");
-    expect(at("src/legacy.ts")).toBe("// TODO: from before the rule\n");
-    expect(status(), "and so the tree is HEAD").toBe("");
-    expect(
-      rows(tree, session).slice(seq).filter((row) => row["kind"] === "write").map((row) => row["path"]),
-      "the one shell write on the record is the sed's",
-    ).toStrictEqual(["src/a.ts"]);
-  });
-
-  it("refuses and puts back a TODO the same call commits past a real commit gate: with --no-verify, and with the hook removed first", () => {
-    backToMain();
-    const main = inTree("rev-parse", "HEAD").trim();
-    inTree("config", "core.hooksPath", ".githooks");
-    try {
-      // The gate refuses the TODO when nothing skips it.
-      writeFileSync(join(tree, "src", "a.ts"), "export const a = 1; // TODO\n");
-      expect(runGit(tree, ["commit", "-qam", "gated"]).code, "the gate refuses a staged TODO").not.toBe(0);
-      inTree("reset", "-q", "--hard", main);
-
-      const skipped = bash("echo '// TODO' >> src/a.ts && git commit -qam skipped --no-verify");
-      expect(skipped.ran).toBe(0);
-      expect(inTree("rev-parse", "HEAD").trim(), "the commit landed").not.toBe(main);
-      expect(skipped.code).toBe(2);
-      expect(skipped.stderr).toContain("✗ demo.noTodo · src/a.ts");
-      expect(at("src/a.ts"), "written back").toBe("export const a = 1;\n");
-      inTree("reset", "-q", "--hard", main);
-
-      const unhooked = bash("python3 -c \"import os; os.remove('.githooks/pre-commit')\" && echo '// TODO' >> src/a.ts && git commit -qam unhooked");
-      expect(unhooked.ran).toBe(0);
-      expect(inTree("rev-parse", "HEAD").trim(), "the commit landed").not.toBe(main);
-      expect(unhooked.code).toBe(2);
-      expect(unhooked.stderr).toContain("✗ demo.keepHook · .githooks/pre-commit");
-      expect(unhooked.stderr).toContain("✗ demo.noTodo · src/a.ts");
-      expect(at(".githooks/pre-commit"), "written back").toBe(GATE);
-      expect(at("src/a.ts"), "written back").toBe("export const a = 1;\n");
-    } finally {
-      inTree("config", "--unset", "core.hooksPath");
-      inTree("reset", "-q", "--hard", main);
-    }
-  });
-
-  it("judges what a stash pop, a merge stopped on conflicts and a cherry-pick --no-commit write — they match no commit", () => {
-    backToMain();
-    // A stash holding a TODO, from a time before the rule, popped back.
-    writeFileSync(join(tree, "src", "a.ts"), "export const a = 1; // TODO: stashed\n");
-    inTree("stash", "-q");
-    const popped = bash("git stash pop -q");
-    expect(popped.ran).toBe(0);
-    expect(popped.code).toBe(2);
-    expect(popped.stderr).toContain("✗ demo.noTodo · src/a.ts");
-    expect(at("src/a.ts")).toBe("export const a = 1;\n");
-    backToMain();
-
-    // A merge that stops on a conflict leaves the markers, and the other side's TODO, in the file.
-    inTree("switch", "-qc", "clash");
-    writeFileSync(join(tree, "src", "a.ts"), "export const a = 2; // TODO: theirs\n");
-    inTree("commit", "-qam", "clash");
-    inTree("switch", "-q", "main");
-    writeFileSync(join(tree, "src", "a.ts"), "export const a = 3;\n");
-    inTree("commit", "-qam", "ours");
-    const merged = bash("git merge -q clash");
-    expect(merged.ran, "the merge stopped on its conflict").not.toBe(0);
-    expect(merged.code).toBe(2);
-    expect(merged.stderr).toContain("✗ demo.noTodo · src/a.ts");
-    expect(at("src/a.ts")).toBe("export const a = 3;\n");
-    inTree("merge", "--abort");
-    backToMain();
-
-    // A cherry-pick that does not commit lands another branch's change with no commit of its own.
-    inTree("switch", "-qc", "picked");
-    writeFileSync(join(tree, "src", "c.ts"), "// TODO: picked\n");
-    inTree("add", "src/c.ts");
-    inTree("commit", "-qm", "picked");
-    inTree("switch", "-q", "main");
-    const picked = bash("git cherry-pick --no-commit picked");
-    expect(picked.ran).toBe(0);
-    expect(picked.code).toBe(2);
-    expect(picked.stderr).toContain("✗ demo.noTodo · src/c.ts");
-    expect(at("src/c.ts"), "created by the call, so gone again").toBeNull();
-    backToMain();
-  });
-
-  it("still refuses and puts back a shell write in a repo with no commit yet — there is no HEAD to match", () => {
-    const fresh = newRepo("flow-unborn-");
-    try {
-      writeFileSync(join(fresh, "flow.config.ts"), CHECKOUT_CONFIG(PACKAGE));
-      mkdirSync(join(fresh, "src"));
-      writeFileSync(join(fresh, "src", "a.ts"), "export const a = 1;\n");
-      expect(runGit(fresh, ["rev-parse", "--verify", "--quiet", "HEAD"]).code, "no commit yet").not.toBe(0);
-      const answer = bash("echo '// TODO' >> src/a.ts && echo '// TODO' > src/new.ts", fresh);
-      expect(answer.ran).toBe(0);
-      expect(answer.code).toBe(2);
-      expect(answer.stderr).toContain("flow — write reverted after it landed:");
-      expect(answer.stderr).toContain("✗ demo.noTodo · src/a.ts");
-      expect(answer.stderr).toContain("✗ demo.noTodo · src/new.ts");
-      expect(readFileSync(join(fresh, "src", "a.ts"), "utf8")).toBe("export const a = 1;\n");
-      expect(existsSync(join(fresh, "src", "new.ts"))).toBe(false);
-    } finally {
-      rmSync(fresh, { recursive: true, force: true });
-    }
-  });
-});
-
-describe("a call that widens snapshotInclude — a file already on disk enters, never deleted (#146)", () => {
-  // THE HEADLINE BUG, as it happened: the two hooks are two processes, so the after-call rail loads
-  // the config the call just edited. A gitignored .env, guarded, was on disk before the call; the
-  // call adds it to snapshotInclude. Read as content it is a creation, and the refusal deleted it.
-  it("keeps the .env, answers 0, and names it as entered", () => {
-    const where = newRepo("flow-include-");
-    const elsewhere = mkdtempSync(join(tmpdir(), "flow-include-next-"));
-    try {
-      const config = (include: string): string => `
-import { definePack, defineConfig, deletion, guardrail, pack, protectedPath, write } from ${JSON.stringify(join(PACKAGE, "index.ts"))};
-
-const demo = definePack("demo", {
-  keepEnv: guardrail()
-    .at(write, deletion)
-    .on(".env")
-    .check(protectedPath({}))
-    .message("The .env stays.")
-    .test({ pass: [{ path: "a.ts", content: "new" }], block: [{ path: ".env", content: "x" }] }),
-});
-
-export default defineConfig([pack(demo)]${include});
-`;
-      writeFileSync(join(where, "flow.config.ts"), config(""));
-      writeFileSync(join(where, ".gitignore"), ".env\n");
-      writeFileSync(join(where, ".env"), "TOKEN=old\n");
-      expect(runGit(where, ["add", "-A"]).code).toBe(0);
-      expect(runGit(where, ["commit", "-qm", "init"]).code).toBe(0);
-      writeFileSync(join(elsewhere, "flow.config.ts"), config(`, { snapshotInclude: [".env"] }`));
-
-      const command = `cp ${JSON.stringify(join(elsewhere, "flow.config.ts"))} flow.config.ts`;
-      const answer = called({ ...pre("Bash", { command }, "include"), cwd: where }, () => { expect(shell(command, where)).toBe(0); }, "post-tool-use", where);
-
-      expect(answer.code, `nothing judged .env, so nothing refused it; flow said:\n${answer.stderr}`).toBe(0);
-      expect(readFileSync(join(where, ".env"), "utf8"), "the file the call never touched is still there").toBe("TOKEN=old\n");
-      expect(answer.stdout).toContain("flow had no earlier copy of .env: it entered the snapshot during this call");
-    } finally {
-      for (const dir of [where, elsewhere]) rmSync(dir, { recursive: true, force: true });
-    }
-  });
-});
-
 /**
- * A throwaway parent folder holding a guarded repo, `app`, with a config; a linked worktree of it,
- * `app-feature`; and `scratch`, a folder outside the repository. The caller removes `parent`.
+ * A repo of its own for the file-change journey: a session breadcrumb, a note about `src/` and one
+ * about `docs/`, bound at `fileChange`; a repo with a first commit, a linked worktree of it, and a
+ * folder outside it. `src/ignored.log` is ignored by git. The caller removes `parent`.
  */
-function repoWithWorktree(): { parent: string; where: string; worktree: string; outside: string } {
-  const parent = mkdtempSync(join(tmpdir(), "flow-worktree-"));
+function repoForChanges(): { parent: string; where: string; worktree: string; outside: string } {
+  const parent = mkdtempSync(join(tmpdir(), "flow-change-"));
   const where = join(parent, "app");
   const worktree = join(parent, "app-feature");
   const outside = join(parent, "scratch");
-  mkdirSync(where);
+  mkdirSync(join(where, "src"), { recursive: true });
+  mkdirSync(join(where, "docs"));
   mkdirSync(outside);
   expect(runGit(where, ["init", "-q"]).code).toBe(0);
+  writeFileSync(join(where, ".gitignore"), "*.log\n.flow/\n");
+  writeFileSync(join(where, "src", "a.ts"), "export const a = 1;\n");
   writeFileSync(join(where, "flow.config.ts"), `
-import { breadcrumb, defineConfig, definePack, pack, session } from ${JSON.stringify(join(PACKAGE, "index.ts"))};
+import { breadcrumb, defineConfig, definePack, fileChange, pack, session } from ${JSON.stringify(join(PACKAGE, "index.ts"))};
 
-export default defineConfig([pack(definePack("demo", { hello: breadcrumb().at(session).text("Guarded.") }))]);
+export default defineConfig([
+  pack(
+    definePack("demo", {
+      hello: breadcrumb().at(session).text("Guarded."),
+      area: breadcrumb().at(fileChange).on("src/**").text("src/ is the product — its tests sit beside it."),
+      docs: breadcrumb().at(fileChange).on("docs/**").text("docs/ is for people."),
+    }),
+  ),
+]);
 `);
   expect(runGit(where, ["add", "-A"]).code).toBe(0);
   expect(runGit(where, ["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "init"]).code).toBe(0);
@@ -1327,86 +721,108 @@ export default defineConfig([pack(definePack("demo", { hello: breadcrumb().at(se
   return { parent, where, worktree, outside };
 }
 
-/** Did flow's answer tell the agent it does not guard this worktree? */
-const toldAbout = (answer: Ran, folder: string): boolean => answer.stdout.includes(`It does not guard the git worktree ${realpathSync(folder)}`);
+/** What a hook answered to the agent, or nothing. */
+const told = (ran: Ran): string => (ran.stdout === "" ? "" : (JSON.parse(ran.stdout) as { hookSpecificOutput: { additionalContext: string } }).hookSpecificOutput.additionalContext);
 
-describe("a write into another worktree of the repository — told once to stop, never refused (#174)", () => {
-  it("tells the agent once per worktree, a subagent for itself, a worktree nested under .claude/worktrees too, and nothing for a folder outside the repository", () => {
-    const { parent, where, worktree, outside } = repoWithWorktree();
+/** The breadcrumb text, headed as the agent reads it. */
+const AREA = "# breadcrumb: demo.area (file-change)\nsrc/ is the product — its tests sit beside it.";
+const DOCS = "# breadcrumb: demo.docs (file-change)\ndocs/ is for people.";
+
+describe("a file change, briefed", () => {
+  it("shows a breadcrumb after a shell command changes a file under its globs, once; a read shows nothing; after a compaction the next change shows it again", () => {
+    const { parent, where } = repoForChanges();
     try {
-      const write = (path: string, agent?: string): Ran => {
-        const payload = { ...pre("Write", { file_path: path, content: "x\n" }, "worktree"), ...(agent === undefined ? {} : { agent_id: agent, agent_type: "general-purpose" }) };
-        return called(payload, () => { writeFileSync(path, "x\n"); }, "post-tool-use", where);
-      };
+      const shell = (line: string, effect: () => void): Ran => called({ ...pre("Bash", { command: line }, "change-1"), cwd: where }, effect, "post-tool-use", where);
+      const write = (file: string, content: string) => (): void => { writeFileSync(join(where, file), content); };
 
-      const first = write(join(worktree, "a.ts"));
+      const read = shell("cat src/a.ts", () => undefined);
+      expect(read.code, read.stderr).toBe(0);
+      expect(read.stdout, "a read of a file under the globs shows nothing").toBe("");
+
+      const first = shell("echo 'export const a = 2;' > src/a.ts", write("src/a.ts", "export const a = 2;\n"));
       expect(first.code, first.stderr).toBe(0);
-      expect(toldAbout(first, worktree), `the first write into the worktree tells the agent; flow said:\n${first.stdout}`).toBe(true);
-      expect(first.stdout).toContain(`flow guards ${realpathSync(where)}, the folder this session started in.`);
-      expect(readFileSync(join(worktree, "a.ts"), "utf8"), "the call went through and nothing was written back").toBe("x\n");
+      const decision = JSON.parse(first.stdout) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } };
+      expect(decision.hookSpecificOutput.hookEventName).toBe("PostToolUse");
+      expect(decision.hookSpecificOutput.additionalContext, "shown after the call, with its result").toBe(AREA);
 
-      const second = write(join(worktree, "b.ts"));
-      expect(second.code).toBe(0);
-      expect(toldAbout(second, worktree), "a second write into the same worktree is not told again").toBe(false);
+      const second = shell("echo 'export const a = 3;' > src/a.ts", write("src/a.ts", "export const a = 3;\n"));
+      expect(second.stdout, "a second change to the same file shows nothing").toBe("");
+      const ignored = shell("echo x > src/ignored.log", write("src/ignored.log", "x\n"));
+      expect(ignored.stdout, "a file git ignores is not in git's list").toBe("");
+      const compacted = hook("session-start", { ...pre("Bash", {}, "change-1"), hook_event_name: "SessionStart", source: "compact", cwd: where }, where);
+      expect(compacted.stdout, "a compaction shows a session breadcrumb at once").toContain("# breadcrumb: demo.hello (session)\\nGuarded.");
+      expect(compacted.stdout, "and the area breadcrumb only at its own moment").not.toContain("demo.area");
 
-      const subagent = write(join(worktree, "c.ts"), "agent-1");
-      expect(toldAbout(subagent, worktree), "a subagent is told for itself").toBe(true);
+      const again = shell("echo 'export const a = 4;' > src/a.ts", write("src/a.ts", "export const a = 4;\n"));
+      expect(told(again), "the next change after a compaction").toBe(AREA);
 
-      const elsewhere = write(join(outside, "d.ts"));
-      expect(elsewhere.code).toBe(0);
-      expect(elsewhere.stdout, "a folder outside the repository is not a worktree of it").toBe("");
+      // An edit tool has no hook before it: its file is named by the payload. A change AND a commit in
+      // one command: the file leaves git's list by being committed, so only the commit's files say it.
+      const edited = called({ ...pre("Write", { file_path: join(where, "src/a.ts"), content: "export const a = 5;\n" }, "change-1"), cwd: where }, write("src/a.ts", "export const a = 5;\n"), "post-tool-use", where);
+      expect(edited.stdout, "an edit tool's change in an area already shown").toBe("");
+      const line = "echo hi > docs/x.md && git add docs/x.md && git commit -qm 'docs: x'";
+      const committed = called({ ...pre("Bash", { command: line }, "change-1"), cwd: where }, () => {
+        writeFileSync(join(where, "docs", "x.md"), "hi\n");
+        runGit(where, ["add", "docs/x.md"]);
+        runGit(where, ["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "docs: x"]);
+      }, "post-tool-use", where);
+      expect(told(committed), "a file changed and committed in one call leaves git's list: the commit's files say it").toBe(DOCS);
 
-      // A worktree NESTED inside the guarded folder, where Claude Code puts a subagent's own with
-      // `isolation: "worktree"`: its `.git` file is what makes flow ask git.
-      const nested = join(where, ".claude", "worktrees", "agent-2");
-      expect(runGit(where, ["worktree", "add", "-q", "-b", "agent-2", nested]).code).toBe(0);
-      const inNested = write(join(nested, "e.ts"), "agent-2");
-      expect(inNested.code, inNested.stderr).toBe(0);
-      expect(toldAbout(inNested, nested), `a write into the nested worktree tells the subagent; flow said:\n${inNested.stdout}`).toBe(true);
-      expect(readFileSync(join(nested, "e.ts"), "utf8")).toBe("x\n");
-      expect(toldAbout(write(join(nested, "f.ts"), "agent-2"), nested), "and only once").toBe(false);
-      const inRoot = write(join(where, "g.ts"), "agent-2");
-      expect(inRoot.code, inRoot.stderr).toBe(0);
-      expect(inRoot.stdout, "a write in the guarded folder itself is not told").toBe("");
+      const log = rows(where, "change-1");
+      const changes = log.filter((row) => row["kind"] === "change");
+      expect(changes.map((row) => [row["tool"], row["paths"]]), "each call that changed a file is a `change` row, and a read is none").toEqual([
+        ["Bash", ["src/a.ts"]],
+        ["Bash", ["src/a.ts"]],
+        ["Bash", ["src/a.ts"]],
+        ["Write", ["src/a.ts"]],
+        ["Bash", ["docs/x.md"]],
+      ]);
+      const shown = log.filter((row) => row["kind"] === "breadcrumb" && row["id"] === "demo.area");
+      expect(shown.map((row) => [row["moment"], row["cause"], row["subject"]]), "shown twice, each the first time for the agent").toEqual([
+        ["file-change", "first", "src/a.ts"],
+        ["file-change", "first", "src/a.ts"],
+      ]);
     } finally {
       rmSync(parent, { recursive: true, force: true });
     }
   });
-});
 
-describe("a command run in another worktree of the repository — told once to stop, never refused (#174)", () => {
-  it("tells the agent once for a cd into the worktree, once for a session folder there, and nothing for a cd outside the repository or a worktree a write already told", () => {
-    const { parent, where, worktree, outside } = repoWithWorktree();
+  it("reads another worktree of the repo when the call worked in it, by the config of the folder the session started in", () => {
+    const { parent, where, worktree, outside } = repoForChanges();
     try {
-      let ids = 0;
-      const command = (line: string, who: string, cwd = where): Ran =>
-        called({ ...pre("Bash", { command: line }, who), cwd, tool_use_id: `toolu_wt_cmd_${++ids}` }, () => { spawnSync("bash", ["-c", line], { cwd }); }, "post-tool-use", where);
+      // The worktree's own config says something else: it is the session folder's that judges.
+      writeFileSync(join(worktree, "flow.config.ts"), readFileSync(join(where, "flow.config.ts"), "utf8").replace("src/ is the product", "THE WORKTREE'S OWN WORDS"));
+      const write = (path: string, agent?: string): Ran => {
+        const payload = { ...pre("Write", { file_path: path, content: "x\n" }, "worktree"), ...(agent === undefined ? {} : { agent_id: agent, agent_type: "general-purpose" }) };
+        return called(payload, () => { writeFileSync(path, "x\n"); }, "post-tool-use", where);
+      };
+      const shell = (line: string, who: string, cwd = where): Ran =>
+        called({ ...pre("Bash", { command: line }, who), cwd }, () => { spawnSync("bash", ["-c", line], { cwd }); }, "post-tool-use", where);
+      mkdirSync(join(worktree, "docs"));
 
-      const first = command(`cd ${worktree} && touch a.ts`, "worktree-cmd");
-      expect(first.code, first.stderr).toBe(0);
-      expect(toldAbout(first, worktree), `a cd into the worktree tells the agent; flow said:\n${first.stdout}`).toBe(true);
-      expect(first.stdout).toContain(`flow guards ${realpathSync(where)}, the folder this session started in.`);
-      expect(existsSync(join(worktree, "a.ts")), "the call went through").toBe(true);
+      const written = write(join(worktree, "src", "new.ts"));
+      expect(written.code, written.stderr).toBe(0);
+      expect(told(written), "an edit tool's file in another worktree, judged by the session folder's config").toBe(AREA);
+      expect(readFileSync(join(worktree, "src", "new.ts"), "utf8"), "the call went through and nothing was written back").toBe("x\n");
+      expect(written.stdout, "and no message that flow does not guard the worktree").not.toContain("does not guard");
 
-      const second = command(`cd ${worktree} && touch b.ts`, "worktree-cmd");
-      expect(second.code, second.stderr).toBe(0);
-      expect(toldAbout(second, worktree), "a second command in the same worktree is not told again").toBe(false);
+      const viaShell = shell(`cd ${worktree} && echo hi > docs/y.md`, "worktree-shell");
+      expect(told(viaShell), "a command that ran in the worktree: its before and after are the worktree's").toBe(DOCS);
+      const viaSession = shell("echo hi > docs/z.md", "worktree-cwd", worktree);
+      expect(told(viaSession), "a command whose session folder is the worktree").toBe(DOCS);
 
-      const sessionThere = command("touch c.ts", "worktree-cwd", worktree);
-      expect(sessionThere.code, sessionThere.stderr).toBe(0);
-      expect(toldAbout(sessionThere, worktree), `a command whose session folder is in the worktree tells the agent; flow said:\n${sessionThere.stdout}`).toBe(true);
-      expect(toldAbout(command("touch d.ts", "worktree-cwd", worktree), worktree), "and only once").toBe(false);
+      const subagent = write(join(worktree, "src", "agent.ts"), "agent-1");
+      expect(told(subagent), "a subagent is shown it for itself").toBe(AREA);
 
-      const elsewhere = command(`cd ${outside} && touch e.ts`, "worktree-cmd-out");
+      const nested = join(where, ".claude", "worktrees", "agent-2");
+      expect(runGit(where, ["worktree", "add", "-q", "-b", "agent-2", nested]).code).toBe(0);
+      expect(told(write(join(nested, "src", "n.ts"), "agent-2")), "a worktree nested under the session folder").toBe(AREA);
+
+      const elsewhere = shell(`cd ${outside} && echo hi > e.ts`, "worktree-out");
       expect(elsewhere.code, elsewhere.stderr).toBe(0);
-      expect(elsewhere.stdout, "a folder outside the repository is not a worktree of it").toBe("");
-
-      const path = join(worktree, "f.ts");
-      const wrote = called({ ...pre("Write", { file_path: path, content: "x\n" }, "worktree-write") }, () => { writeFileSync(path, "x\n"); }, "post-tool-use", where);
-      expect(toldAbout(wrote, worktree), "the Edit or Write tool tells it first").toBe(true);
-      const after = command(`cd ${worktree} && ls`, "worktree-write");
-      expect(after.code, after.stderr).toBe(0);
-      expect(toldAbout(after, worktree), "a worktree a write already told is not told again by a command").toBe(false);
+      expect(told(elsewhere), "a folder outside the repository is no worktree of it").toBe("");
+      const log = rows(where, "worktree-out").filter((row) => row["kind"] === "change");
+      expect(log, "and a change there is no change of the repo").toEqual([]);
     } finally {
       rmSync(parent, { recursive: true, force: true });
     }
@@ -1414,23 +830,23 @@ describe("a command run in another worktree of the repository — told once to s
 });
 
 describe("work outside the repository — judged only by a rule marked .everywhere()", () => {
-  it("refuses a bad commit header from a linked worktree, passes it in a scratch repo outside, and still refuses a force-push there", () => {
-    const { parent, where, worktree, outside } = repoWithWorktree();
+  it("refuses a hard reset from a linked worktree, passes it in a scratch repo outside, and still refuses a force-push there", () => {
+    const { parent, where, worktree, outside } = repoForChanges();
     try {
+      writeFileSync(join(where, "everywhere.ts"), fixturePack("everywhere-pack", join(PACKAGE, "index.ts")));
       writeFileSync(join(where, "flow.config.ts"), `
 import { defineConfig, pack } from ${JSON.stringify(join(PACKAGE, "index.ts"))};
-import { git } from ${JSON.stringify(join(PACKAGE, "packs", "index.ts"))};
+import { git } from "./everywhere.ts";
 
-export default defineConfig([pack(git, {})]);
+export default defineConfig([pack(git)]);
 `);
-      let ids = 0;
-      const command = (line: string): Ran => hook("pre-tool-use", { ...pre("Bash", { command: line }, "outside"), cwd: where, tool_use_id: `toolu_out_${++ids}` }, where);
+      const command = (line: string): Ran => hook("pre-tool-use", { ...pre("Bash", { command: line }, "outside"), cwd: where }, where);
 
-      const fromWorktree = command(`cd ${worktree} && git commit --allow-empty -m bad`);
+      const fromWorktree = command(`cd ${worktree} && git reset --hard HEAD~1`);
       expect(fromWorktree.code, `a worktree of this repository is inside; flow said:\n${fromWorktree.stderr}`).toBe(2);
-      expect(fromWorktree.stderr).toContain("git.conventionalCommitFormat");
+      expect(fromWorktree.stderr).toContain("git.noHardReset");
 
-      const scratch = command(`cd ${outside} && git init -q && git commit -q --allow-empty -m bad`);
+      const scratch = command(`cd ${outside} && git init -q && git reset --hard HEAD~1`);
       expect(scratch.code, `a scratch repo outside is not this repository's; flow said:\n${scratch.stderr}`).toBe(0);
 
       const forced = command(`cd ${outside} && git push --force origin main`);
@@ -1468,7 +884,12 @@ describe("a subagent's drift and turn, read from its own transcript — never it
     transcript_path: parent,
     ...payload,
   });
-  const read = (): Ran => called(asSubagent({ tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } }));
+  /** The subagent changes a file of its own, new each time: a change in `src/`, which the area note is about. */
+  let changed = 0;
+  const read = (): Ran => {
+    const path = join(repo, "src", `drift-${++changed}.ts`);
+    return called(asSubagent({ tool_name: "Write", tool_input: { file_path: path, content: "x\n" } }), () => { writeFileSync(path, "x\n"); });
+  };
 
   beforeAll(() => {
     ({ parent, own } = subagentTranscripts(join(repo, ".t"), SESSION, AGENT));
@@ -1477,7 +898,7 @@ describe("a subagent's drift and turn, read from its own transcript — never it
   it("measures drift on the subagent's own context, so a note comes back when IT has moved on", () => {
     writeFileSync(parent, lines(prompt("go"), usage(400_000)));
     writeFileSync(own, lines(prompt("look at src"), usage(1_000)));
-    expect(read().stdout, "first touch").toContain("src/ is the product");
+    expect(read().stdout, "the first change").toContain("src/ is the product");
 
     writeFileSync(parent, lines(prompt("go"), usage(900_000)));
     expect(read().stdout, "the parent has drifted, the subagent has not").toBe("");
@@ -1573,7 +994,7 @@ describe("a turn-end note, shown when an agent hands back — at Stop and Subage
   // hand-back above. One note, one turn-end rule, and a drift of 50,000 tokens.
   let notes: string;
   let ids = 0;
-  const NOTE = "# breadcrumb: notes.recap (first-touch)\nWrite the recap before you hand back.";
+  const NOTE = "# breadcrumb: notes.recap (turn-end)\nWrite the recap before you hand back.";
 
   const usage = (tokens: number): string =>
     JSON.stringify({ type: "assistant", message: { usage: { input_tokens: 10, cache_read_input_tokens: tokens } } });
@@ -1645,7 +1066,7 @@ export default defineConfig([pack(notes)], { driftTokens: 50_000 });
     expect(soon.code).toBe(0);
     expect(soon.stdout, "49,999 tokens on: not yet").toBe("");
     expect(context(stop([usage(51_000)], {}, session)), "50,000 tokens on").toStrictEqual(
-      told("Stop", "# breadcrumb: notes.recap (drift)\nWrite the recap before you hand back."),
+      told("Stop", "# breadcrumb: notes.recap (turn-end)\nWrite the recap before you hand back."),
     );
   });
 
@@ -1717,7 +1138,7 @@ describe("the off switch", () => {
   it("silences every rail, and writes no telemetry while it is off", () => {
     writeFileSync(join(repo, ".flow", "off"), "");
     const before = rows(repo, "live-1").length;
-    expect(hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "src/c.ts"), content: "TODO" })).code).toBe(0);
+    expect(hook("pre-tool-use", inThisSession("Bash", { command: "git push --force" })).code).toBe(0);
     expect(gate("src/leak.ts").code).toBe(0);
     expect(rows(repo, "live-1").length, "a half-off guard that still logged would make the A/B dishonest").toBe(before);
     rmSync(join(repo, ".flow", "off"));
@@ -1758,50 +1179,17 @@ describe("a config that will not load", () => {
   // EVERY WAY OF BREAKING IT, not just the one the shell happened to catch as a thrown error. Each
   // call below is one a working rule in this config refuses, so "let through" is the broken state
   // and not a rule that happened to pass.
-  it.each(Object.entries(BREAKS))("lets a write, an edit, a delete and a command through, each with the load error — %s", (_how, breaker) => {
+  it.each(Object.entries(BREAKS))("lets a command through before it runs, and an edit after it ran, each with the load error — %s", (_how, breaker) => {
     withBrokenConfig(breaker, () => {
-      throughAndTold(hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "src/g.ts"), content: "// TODO" })), "a write");
-      throughAndTold(
-        hook("pre-tool-use", inThisSession("Edit", { file_path: join(repo, "src/a.ts"), old_string: "export const a = 1;", new_string: "// TODO" })),
-        "an edit",
-      );
       throughAndTold(hook("pre-tool-use", inThisSession("Bash", { command: "rm migrations/001.sql" })), "a delete");
       throughAndTold(hook("pre-tool-use", inThisSession("Bash", { command: "git push --force" })), "a command");
       throughAndTold(hook("pre-tool-use", inThisSession("Bash", { command: "npm ci" })), "the install that fixes a missing package");
-    });
-  });
-
-  it.each(Object.entries(BREAKS))("puts back nothing a command wrote — %s", (_how, breaker) => {
-    const before = readFileSync(join(repo, "src/a.ts"), "utf8");
-    try {
-      withBrokenConfig(breaker, () => {
-        // A TODO into src/ is what a working config puts back, byte for byte, on the after-call rail.
-        const payload = { ...inThisSession("Bash", { command: "echo '// TODO' >> src/a.ts" }), cwd: repo };
-        const after = called(payload, () => {
-          expect(shell("echo '// TODO' >> src/a.ts")).toBe(0);
-        });
-        expect(after.code, `the after-call rail reports no refusal: ${after.stderr}`).toBe(0);
-        expect(after.stderr).toBe("");
-        expect(readFileSync(join(repo, "src/a.ts"), "utf8"), "what the command wrote stands").toBe(`${before}// TODO\n`);
-        // THE CALL IS OVER, with no diff taken: its snapshot goes, as on a healthy config.
-        const left = existsSync(join(repo, ".flow", "snapshots"))
-          ? readdirSync(join(repo, ".flow", "snapshots")).filter((name) => name.startsWith("toolu_live_") && !name.startsWith("toolu_live_edit"))
-          : [];
-        expect(left, "a broken config still finishes the call's record").toStrictEqual([]);
-      });
-    } finally {
-      writeFileSync(join(repo, "src/a.ts"), before);
-    }
-  });
-
-  // NO DIFF AFTER THE CALL. A healthy config reports a call it has no snapshot for (the write rail's
-  // own case above); a broken one has nothing to judge the diff with, so it takes none, and so it
-  // has no fault to print about one.
-  it.each(Object.entries(BREAKS))("takes no diff after a call, so a call it has no snapshot for is not reported — %s", (_how, breaker) => {
-    withBrokenConfig(breaker, () => {
-      const after = hook("post-tool-use", { ...inThisSession("Bash", { command: "touch src/x.ts" }), tool_use_id: "toolu_broken_never_seen" });
-      expect(after.code, `the after-call rail lets it through: ${after.stderr}`).toBe(0);
-      expect(after.stderr, "no fault about a diff nothing would judge").toBe("");
+      // No hook runs before an Edit or a Write, so the agent is told once the call has run.
+      throughAndTold(
+        hook("post-tool-use", inThisSession("Edit", { file_path: join(repo, "src/a.ts"), old_string: "export const a = 1;", new_string: "// TODO" })),
+        "an edit",
+      );
+      expect(context(hook("post-tool-use", inThisSession("Bash", { command: "npm ci" }))), "a command was told before it ran").toBe("");
     });
   });
 
@@ -1864,10 +1252,10 @@ describe("a config that will not load", () => {
 
   it("changes nothing at all when the config is healthy", () => {
     // Letting everything through is keyed on the BROKEN state and nowhere else: with a working
-    // config, the same write is judged on its rules and refused.
-    const ordinary = hook("pre-tool-use", inThisSession("Write", { file_path: join(repo, "src/g.ts"), content: "// TODO" }));
+    // config, the same command is judged on its rules and refused.
+    const ordinary = hook("pre-tool-use", inThisSession("Bash", { command: "git push --force" }));
     expect(ordinary.code).toBe(2);
-    expect(ordinary.stderr).toContain("No TODOs in src/");
+    expect(ordinary.stderr).toContain("Never force-push");
   });
 });
 
@@ -1941,37 +1329,42 @@ describe("a recorded session, replayed", () => {
     rmSync(join(repo, ".flow", "record"), { force: true });
   });
 
-  it("drives a whole session: greeting, first touch, drift, compaction, two blocks and a commit", () => {
-    // 1 — the greeting. The session breadcrumb shows, and is MARKED there.
+  it("drives a whole session: greeting, first change, drift, compaction, two blocks and a commit", () => {
+    // 1 — the greeting. The session breadcrumb shows, and is MARKED there. Git's list is read here
+    // too, so what was changed before the first call is not that call's.
     const greeting = hook("session-start", inSession({ source: "startup" }));
     expect(greeting.code).toBe(0);
     expect(greeting.stdout).toContain("This repo is guarded by flow.");
 
-    // 2 — first touch of the area. The area note shows.
-    const first = called(inSession({ tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } }));
+    // The files this session changes, each one new, so each is a change git's list shows.
+    const changes = (file: string): Ran => {
+      const path = join(repo, "src", file);
+      return called(inSession({ tool_name: "Write", tool_input: { file_path: path, content: "x\n" } }), () => { writeFileSync(path, "x\n"); });
+    };
+
+    // 2 — the first change in the area. The area note shows.
+    const first = changes("rec-1.ts");
     expect(first.stdout).toContain("src/ is the product");
 
     // 3 — the same area again, with the context barely moved. It stays quiet.
-    const quiet = called(inSession({ tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } }));
+    const quiet = changes("rec-2.ts");
     expect(quiet.stdout).toBe("");
 
     // 4 — the session has drifted past the threshold. The note is earned again.
     drifted(400_000);
-    const again = called(inSession({ tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } }));
+    const again = changes("rec-3.ts");
     expect(again.stdout).toContain("src/ is the product");
 
-    // 5 — a compaction. Every AREA mark is cleared; the SESSION mark is deliberately kept, so the
-    // greeting is not printed a second time in a row — which is why this rail says nothing at all
-    // even though it is the moment that re-arms everything else.
+    // 5 — a compaction. Every mark is cleared, so the SESSION breadcrumb is shown again at once.
     const compacted = hook("session-start", inSession({ source: "compact" }));
-    expect(compacted.stdout, "the session note keeps its mark across a compaction").toBe("");
+    expect(compacted.stdout, "the greeting, again, as the compacted session starts").toContain("This repo is guarded by flow.");
 
-    // 6 — first touch again, because after a compaction it genuinely is one.
-    const relearned = called(inSession({ tool_name: "Read", tool_input: { file_path: join(repo, "src/a.ts") } }));
+    // 6 — the next change in the area, because after a compaction it is one again.
+    const relearned = changes("rec-4.ts");
     expect(relearned.stdout).toContain("src/ is the product");
 
     // 7 and 8 — two rails refuse, which is what the replay has to land again.
-    expect(hook("pre-tool-use", inSession({ tool_name: "Write", tool_input: { file_path: join(repo, "src/z.ts"), content: "// TODO\n" } })).code).toBe(2);
+    expect(hook("pre-tool-use", inSession({ tool_name: "Bash", tool_input: { command: "git push --force origin main" } })).code).toBe(2);
     expect(hook("pre-tool-use", inSession({ tool_name: "Bash", tool_input: { command: "git push --force" } })).code).toBe(2);
     // …and a Bash call that runs, so the recording holds both of its rails.
     expect(hook("pre-tool-use", inSession({ tool_name: "Bash", tool_input: { command: "echo done" } })).code).toBe(0);
@@ -1986,15 +1379,15 @@ describe("a recorded session, replayed", () => {
     expect(records[0]).toEqual({ v: 1, session: SESSION });
     expect(tapeSteps(repo, SESSION)).toEqual([
       "brief session",
-      "brief touch",
-      "brief touch",
-      "brief touch",
+      "brief file-change",
+      "brief file-change",
+      "brief file-change",
       "compaction",
       "brief session",
-      "brief touch",
-      "guard write",
-      // The refused push records its guard and nothing else: a refusal carries no notes, so none
-      // is judged — or marked shown — behind it.
+      "brief file-change",
+      // The refused pushes record their guard and nothing else: a refusal carries no notes, so none
+      // is judged — or marked shown — behind them.
+      "guard command",
       "guard command",
       // A Bash call that runs is two rails, and the recording says so: the command guardrails judge
       // the line and a command NOTE may ride the same answer. Both are canonical events, so a
@@ -2021,11 +1414,10 @@ describe("a recorded session, replayed", () => {
     expect(answer.code).toBe(0);
 
     // …and it really did replay the whole thing rather than agreeing about nothing.
-    expect(answer.stdout).toContain("demo.noTodo");
     expect(answer.stdout).toContain("demo.noForce");
     expect(answer.stdout).toContain("demo.suitePasses");
-    expect(answer.stdout).toContain("demo.area · touch · first-touch");
-    expect(answer.stdout).toContain("demo.area · touch · drift");
+    expect(answer.stdout).toContain("demo.area · file-change · first");
+    expect(answer.stdout).toContain("demo.area · file-change · drift");
     expect(answer.stdout).toContain("demo.orientation · session · session");
   });
 
@@ -2041,7 +1433,7 @@ describe("a recorded session, replayed", () => {
       expect(answer.stderr).toBe("");
       expect(answer.code).toBe(0);
       expect(answer.stdout).toContain("with no repo and no harness");
-      expect(answer.stdout).toContain("demo.noTodo");
+      expect(answer.stdout).toContain("demo.noForce");
       expect(answer.stdout).toContain("demo.suitePasses");
       expect(existsSync(join(elsewhere, ".flow")), "replay writes nothing — it is a reading").toBe(false);
     } finally {
@@ -2112,7 +1504,7 @@ describe("flow facts — the record and the conversations, read back", () => {
     expect(read.health.blocked).toBe(null);
     expect(read.metrics.headline.blocks).toBeGreaterThan(0);
     expect(read.metrics.span.tools).toBeGreaterThan(0);
-    expect(read.metrics.guardrails.find((g) => g.id === "demo.noTodo")?.hits).toBeGreaterThan(0);
+    expect(read.metrics.guardrails.find((g) => g.id === "demo.noForce")?.hits).toBeGreaterThan(0);
     expect(read.moments.totals).toMatchObject({ guardrails: 9, breadcrumbs: 2 });
     expect(read.terrain.some((n) => n.path === "src")).toBe(true);
   });
@@ -2130,27 +1522,32 @@ describe("flow facts — the record and the conversations, read back", () => {
   });
 });
 
-describe("every row names the agent it came from, and a breadcrumb row what was touched (#15)", () => {
+describe("every row names the agent it came from, and a breadcrumb row what showed it (#15)", () => {
   // A worktree of its own, so the marker the commit gate reads is the one these calls leave and
   // nothing the suite above wrote. The config is the least that makes every kind of row: a session
-  // note, an area note, a command note, and one rule at write and at commit.
+  // note, an area note, a command note, and a rule at the command and at the commit.
   let tree: string;
-  let ids = 0;
   const AGENTS_CONFIG = (packageRoot: string): string => `
-import { breadcrumb, command, commit, definePack, defineConfig, guardrail, pack, session, touch, write } from ${JSON.stringify(join(packageRoot, "index.ts"))};
+import { breadcrumb, command, commit, definePack, defineConfig, guardrail, pack, session, fileChange } from ${JSON.stringify(join(packageRoot, "index.ts"))};
+
 
 const demo = definePack("demo", {
   noTodo: guardrail()
-    .at(write, commit)
+    .at(commit)
     .on("src/**")
     .check((ctx) => (ctx.file?.content.includes("TODO") ? ctx.fail("line says TODO") : ctx.ok()))
     .message("No TODOs in src/.")
     .test({
-      pass: [{ path: "src/a.ts", content: "ok" }, { staged: ["src/a.ts"], world: { fs: { "src/a.ts": "ok" } } }],
-      block: [{ path: "src/a.ts", content: "TODO" }, { staged: ["src/a.ts"], world: { fs: { "src/a.ts": "TODO" } } }],
+      pass: [{ path: "src/a.ts", content: "ok" }],
+      block: [{ path: "src/a.ts", content: "TODO" }],
     }),
+  noTodoCommand: guardrail()
+    .at(command)
+    .check((ctx) => ((ctx.command ?? "").includes("TODO") ? ctx.fail("line says TODO") : ctx.ok()))
+    .message("No TODOs in a command.")
+    .test({ pass: ["echo ok"], block: ["echo TODO"] }),
   orientation: breadcrumb().at(session).text("This repo is guarded by flow."),
-  area: breadcrumb().at(touch).on("src/**").text("src/ is the product."),
+  area: breadcrumb().at(fileChange).on("src/**").text("src/ is the product."),
   history: breadcrumb().at(command).on("git log*").text("The journal owns the past."),
 });
 
@@ -2160,8 +1557,11 @@ export default defineConfig([pack(demo)]);
   const sh = (command: string): number => spawnSync("bash", ["-c", command], { cwd: tree }).status ?? -1;
   /** One tool call, both halves, with the tool run between them. */
   function call(who: Record<string, unknown>, tool: string, input: Record<string, unknown>, act = ""): Ran {
-    const payload = { session_id: "agents", ...who, tool_name: tool, tool_input: input, tool_use_id: `toolu_agents_${++ids}`, cwd: tree };
-    expect(send("pre-tool-use", payload).code).toBe(0);
+    const payload = { session_id: "agents", ...who, tool_name: tool, tool_input: input, cwd: tree };
+    if (tool === "Bash") {
+      const before = send("pre-tool-use", payload);
+      if (before.code !== 0) return before;
+    }
     if (act !== "") sh(act);
     return send("post-tool-use", payload);
   }
@@ -2183,16 +1583,17 @@ export default defineConfig([pack(demo)]);
     mkdirSync(join(tree, "src"), { recursive: true });
     writeFileSync(join(tree, "src", "a.ts"), "export const a = 1;\n");
 
-    // The parent: a session start, and a Read of the area.
+    // The parent: a session start, a Read of the area, and a file written in it.
     expect(send("session-start", { session_id: "agents", source: "startup" }).code).toBe(0);
     call({}, "Read", { file_path: join(tree, "src/a.ts") });
+    call({}, "Write", { file_path: join(tree, "src/m.ts"), content: "export const m = 1;\n" }, "echo 'export const m = 1;' > src/m.ts");
     // A subagent whose message carries no type.
     call(UNTYPED, "Read", { file_path: join(tree, "src/a.ts") });
-    // A builder: a command a note matches, then one that reads the area by name and writes a TODO
+    // A builder: a command a note matches, then one that reads the area by name and has a TODO in it
     // the rule refuses.
     call(BUILDER, "Bash", { command: "git log --oneline -1" });
     const refused = call(BUILDER, "Bash", { command: "cat src/a.ts && echo '// TODO' > src/b.ts" }, "cat src/a.ts && echo '// TODO' > src/b.ts");
-    expect(refused.code, "the write is refused, so the builder has a guardrail row").toBe(2);
+    expect(refused.code, "the command is refused, so the builder has a guardrail row").toBe(2);
     // The builder's call was the last one, so the commit is the builder's.
     writeFileSync(join(tree, "src", "c.ts"), "// TODO\n");
     expect(commitGate("src/c.ts").code).toBe(2);
@@ -2214,8 +1615,8 @@ export default defineConfig([pack(demo)]);
     expect(all.length).toBeGreaterThan(0);
     for (const row of all) expect(typeof row["agent"], JSON.stringify(row)).toBe("string");
     expect(new Set(all.map((row) => row["agent"]))).toEqual(new Set(["main", "a77untyped", "a6009b558b4c9155c"]));
-    expect(kinds(from("main"))).toEqual(["breadcrumb", "run", "tool"]);
-    expect(kinds(from("a6009b558b4c9155c"))).toEqual(["breadcrumb", "guardrail", "read", "run", "tool", "write"]);
+    expect(kinds(from("main"))).toEqual(["breadcrumb", "change", "run", "tool"]);
+    expect(kinds(from("a6009b558b4c9155c"))).toEqual(["breadcrumb", "guardrail", "read", "run", "tool"]);
   });
 
   it("puts agentType only on a subagent's rows, and only when its message sent the type", () => {
@@ -2242,23 +1643,34 @@ export default defineConfig([pack(demo)]);
   const crumb = (agent: string, id: string): Record<string, unknown> | undefined =>
     from(agent).find((row) => row["kind"] === "breadcrumb" && row["id"] === id);
 
-  it("names the file whose first touch showed an area note, repo-relative", () => {
-    expect(crumb("main", "demo.area")).toMatchObject({ cause: "first-touch", subject: "src/a.ts" });
+  it("names the file whose first change showed an area note, repo-relative, and the files a call changed on a `change` row", () => {
+    expect(crumb("main", "demo.area")).toMatchObject({ moment: "file-change", cause: "first", subject: "src/m.ts" });
+    expect(from("main").find((row) => row["kind"] === "change")).toMatchObject({ tool: "Write", paths: ["src/m.ts"] });
   });
 
   it("names the command line that showed a command note", () => {
-    expect(crumb("a6009b558b4c9155c", "demo.history")).toMatchObject({ moment: "command", cause: "first-touch", subject: "git log --oneline -1" });
+    expect(crumb("a6009b558b4c9155c", "demo.history")).toMatchObject({ moment: "command", cause: "first", subject: "git log --oneline -1" });
   });
 
-  it("writes no subject on a session note's row, which fired on no touch", () => {
+  it("writes no subject on a session note's row, which fired on no file", () => {
     const greeting = crumb("main", "demo.orientation");
     expect(greeting).toMatchObject({ moment: "session", cause: "session" });
     expect(greeting).not.toHaveProperty("subject");
   });
 
+  it("does not spend a note on a refused command — the retry that runs is briefed", () => {
+    const ask = (command: string): Ran => send("pre-tool-use", { session_id: "refused-note", tool_name: "Bash", tool_input: { command }, cwd: tree });
+    const refused = ask("git log --oneline && echo TODO");
+    expect(refused.code, "the command is refused").toBe(2);
+    expect(refused.stdout).toBe("");
+    const retried = ask("git log --oneline");
+    expect(retried.code).toBe(0);
+    expect(told(retried)).toBe("# breadcrumb: demo.history (command)\nThe journal owns the past.");
+  });
+
   it("leaves the meta row as it was: no agent, no agentType, and v 1", () => {
     const [meta] = rows(tree, "agents");
-    expect(Object.keys(meta ?? {}).sort()).toEqual(["branch", "kind", "session", "started", "v", "worktree"]);
-    expect(meta).toMatchObject({ kind: "meta", v: 1, session: "agents" });
+    expect(Object.keys(meta ?? {}).sort()).toEqual(["branch", "harness", "kind", "session", "started", "v", "worktree"]);
+    expect(meta).toMatchObject({ kind: "meta", v: 2, harness: "claude-code", session: "agents" });
   });
 });

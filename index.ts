@@ -74,11 +74,12 @@ export {
   banCommands,
   canonicalFiles,
   changeTogether,
+  commitMessage,
   commitReason,
   depcruise,
+  docLinks,
   execPasses,
   jsonInvariant,
-  oneWriter,
   protectedPath,
   ranSinceEdit,
   siblingExists,
@@ -93,17 +94,6 @@ export {
   type JsonAssert,
   type RequireEdge,
 } from "./checks/domain.ts";
-
-// The one shared CHECK of a rule's content, and the sentence that goes with it — a backtick the
-// shell would run inside a command that records prose.
-//
-// It is here because TWO PACKS say it: `git` polices `git commit` and the `gh` verbs, `work`
-// polices the lifecycle verbs that write to an append-only journal, and the judgement — a backtick
-// substitution in the command's parse — is identical. Anything two packs share is a core check by
-// the rule F5 settled; the alternative was a shared module beside the packs, which is what this
-// was, and it had grown four unrelated sections around this pair before anyone noticed it had
-// become a bag.
-export { substitutionInProse, SUBSTITUTION_MESSAGE } from "./checks/domain.ts";
 
 // The readings of a command line a bespoke check needs, and the reason they are public: a repo
 // writing its own command rule otherwise writes its own shell tokeniser, and a tokeniser that does
@@ -127,7 +117,7 @@ export { substitutionInProse, SUBSTITUTION_MESSAGE } from "./checks/domain.ts";
 // command a line runs. `programName` is a command's program without its path, the one way flow
 // reads it.
 export { gitCommand, programName, type GitCommand } from "./language/domain.ts";
-export { commitMessage, gitCommands, gitDirPrefix, givesReason, quoteArg, shellCommands } from "./checks/domain.ts";
+export { gitCommands, gitDirPrefix, givesReason, quoteArg, shellCommands } from "./checks/domain.ts";
 
 // The stock way to write a classifier — the engine's, because the ORDER host-written evidence must
 // be read in is engine knowledge (and was measured, not chosen). A bespoke `defineCategory(name,
@@ -135,13 +125,11 @@ export { commitMessage, gitCommands, gitDirPrefix, givesReason, quoteArg, shellC
 export { spawnedAs, type SpawnRecipe } from "./engine/domain.ts";
 
 export {
-  write,
   command,
   commit,
-  deletion,
   turnEnd,
   session,
-  touch,
+  fileChange,
   type Moment,
   type GuardrailMoment,
   type BreadcrumbMoment,

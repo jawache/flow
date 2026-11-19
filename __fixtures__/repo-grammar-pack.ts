@@ -9,7 +9,7 @@
 // The suite repoints it as it writes the file into its temp repo — see `fixturePack` in
 // flow/e2e/harness.ts.
 
-import { astGrep, breadcrumb, command, commit, definePack, guardrail, write } from "../index.ts";
+import { astGrep, breadcrumb, command, commit, definePack, guardrail } from "../index.ts";
 
 export const stranger = definePack("stranger", {
   /**
@@ -34,7 +34,7 @@ export const stranger = definePack("stranger", {
    * astro, vue, svelte — reaches its rules by exactly this route.
    */
   noEvalInScripts: guardrail()
-    .at(write, commit)
+    .at(commit)
     .on("scripts/**/*.py")
     .description("No eval() in a build script — the declared-grammar rule.")
     .check(astGrep({ language: "declared-python", rule: { kind: "call", has: { field: "function", regex: "^eval$" } } }))

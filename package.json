@@ -39,16 +39,13 @@
   "engines": {
     "node": ">=24"
   },
-  "publishConfig": {
-    "access": "public"
-  },
   "scripts": {
-    "//": "Commands live in the justfile — run `just` (build · typecheck · test · test-rules · test-packs · gate · link · release)."
+    "//": "Commands live in the justfile — run `just` (build · typecheck · test · test-rules · test-packs · gate · release)."
   },
   "dependencies": {
     "@ast-grep/napi": "^0.42.3",
     "dependency-cruiser": "^18.1.0",
-    "unbash": "5.1.0"
+    "unbash": "6.0.4"
   },
   "devDependencies": {
     "@ast-grep/lang-python": "^0.0.6",

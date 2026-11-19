@@ -117,7 +117,7 @@ describe("docs/user — every example, against the API it teaches", () => {
   });
 
   it("finds the examples at all, so a fence the reader stopped seeing fails rather than passes empty", () => {
-    expect(examples.flatMap(([, code]) => flowImports(code)).length).toBeGreaterThan(30);
+    expect(examples.flatMap(([, code]) => flowImports(code)).length).toBeGreaterThan(10);
     expect(examples.flatMap(([, code]) => checksCalled(code)).length).toBeGreaterThan(20);
   });
 

@@ -6,7 +6,7 @@ summary: "give every rule its cases, and run them"
 
 This guide shows you how to prove that each rule passes what it should and blocks what it should.
 
-Every guardrail has its own cases, written on the entry with `.test({ pass, block })`. A case is a canned `ctx`: the input a check is called with, supplied as data. `pass` lists the inputs the rule must let through, and `block` lists the inputs it must refuse. A guardrail with no block case does not load.
+Every [guardrail](../reference/glossary.md#guardrail) has its own cases, written on the entry with `.test({ pass, block })`. A case is a canned `ctx`: the input a check is called with, supplied as data. `pass` lists the inputs the rule must let through, and `block` lists the inputs it must refuse. A guardrail with no block case does not load.
 
 ## Write the cases
 
@@ -21,7 +21,7 @@ Every guardrail has its own cases, written on the entry with `.test({ pass, bloc
    })
    ```
 
-4. **If the rule is about a file, a commit or the turn**, write each case as an object. Add a `world` when the check reads more than its input:
+4. **If the rule is about a commit or the turn**, write each case as an object. Add a `world` when the check reads more than its input:
 
    ```
    .test({
@@ -30,11 +30,12 @@ Every guardrail has its own cases, written on the entry with `.test({ pass, bloc
    })
    ```
 
-   Use the shape for the rule's moment:
+   Use the shape for the rule's [moment](../reference/glossary.md#moment):
 
-   - **`path` and `content`** for a write rule.
+   - **`path` and `content`** for a commit rule about one file.
+   - **`staged`** for a commit rule about the whole commit, with `deleted` for the files it deletes.
+   - **`message`** for a commit rule that reads the message.
    - **`command`** for a command rule, when the case also needs a `world` or an `actor`.
-   - **`staged`** for a commit rule.
    - **`actions`** for a turn-end rule.
    - **`world`**, with `fs`, `exec`, `gitDiff` or `staged` answers, for a check that reads further.
 

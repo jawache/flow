@@ -1,0 +1,9 @@
+{"kind":"meta","v":2,"harness":"codex","session":"01a1f2df-666f-7bb0-94fc-0a7b017fe18b","started":"2026-11-19T08:14:51.049Z","branch":"main","worktree":"/work/demo"}
+{"ts":"2026-11-19T08:14:51.050Z","seq":1,"agent":"main","kind":"run","moment":"session","subjects":1,"rules":[]}
+{"ts":"2026-11-19T08:14:51.050Z","seq":2,"agent":"main","kind":"breadcrumb","moment":"session","id":"flow.orientation","cause":"session"}
+{"ts":"2026-11-19T08:14:56.278Z","seq":3,"agent":"main","kind":"tool","tool":"Bash","command":"mkdir -p src && printf '%s\\n' 'export const b = 2;' > src/b.ts","mode":"bypassPermissions"}
+{"ts":"2026-11-19T08:14:56.278Z","seq":4,"agent":"main","kind":"run","moment":"command","subjects":1,"rules":[{"id":"flow.noUninstall","evaluated":1,"hits":0,"silenced":0},{"id":"house.noForcePush","evaluated":1,"hits":0,"silenced":0}]}
+{"ts":"2026-11-19T08:14:56.442Z","seq":5,"agent":"main","kind":"change","tool":"Bash","paths":["out/7b-codex-breadcrumb.txt","src/b.ts"]}
+{"ts":"2026-11-19T08:14:56.443Z","seq":6,"agent":"main","kind":"run","moment":"file-change","subjects":1,"rules":[]}
+{"ts":"2026-11-19T08:14:56.443Z","seq":7,"agent":"main","kind":"breadcrumb","moment":"file-change","id":"house.sourceLayout","cause":"first","subject":"src/b.ts"}
+{"ts":"2026-11-19T08:14:59.303Z","seq":8,"agent":"main","kind":"run","moment":"turn-end","subjects":1,"rules":[]}

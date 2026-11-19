@@ -1,0 +1,70 @@
+{
+  "env": {
+    "CLAUDE_CODE_SUBAGENT_MODEL": "opus"
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$CLAUDE_PROJECT_DIR/node_modules/@jawache/flow/dist/flow.mjs\"; [ -f \"$f\" ] && exec node \"$f\" hook session-start; exec flow hook session-start"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$CLAUDE_PROJECT_DIR/node_modules/@jawache/flow/dist/flow.mjs\"; [ -f \"$f\" ] && exec node \"$f\" hook subagent-start; exec flow hook subagent-start"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$CLAUDE_PROJECT_DIR/node_modules/@jawache/flow/dist/flow.mjs\"; [ -f \"$f\" ] && exec node \"$f\" hook pre-tool-use; exec flow hook pre-tool-use"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$CLAUDE_PROJECT_DIR/node_modules/@jawache/flow/dist/flow.mjs\"; [ -f \"$f\" ] && exec node \"$f\" hook post-tool-use; exec flow hook post-tool-use"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$CLAUDE_PROJECT_DIR/node_modules/@jawache/flow/dist/flow.mjs\"; [ -f \"$f\" ] && exec node \"$f\" hook stop; exec flow hook stop"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$CLAUDE_PROJECT_DIR/node_modules/@jawache/flow/dist/flow.mjs\"; [ -f \"$f\" ] && exec node \"$f\" hook subagent-stop; exec flow hook subagent-stop"
+          }
+        ]
+      }
+    ]
+  }
+}

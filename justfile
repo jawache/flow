@@ -19,12 +19,12 @@ install:
     mkdir -p node_modules/@jawache
     ln -sfn ../.. node_modules/@jawache/flow
 
-[doc("Build the package — the `flow` binary (dist/flow.mjs), the library a flow.config.ts imports (dist/index.mjs), the packs behind their own subpath export (dist/packs.mjs), and the types for all of it (dist/types/). All four are what `exports` and `files` promise; a bundle without the types would ship a config grammar the editor cannot check.")]
+[doc("Build the package — the `flow` binary (dist/flow.mjs), the library a flow.config.ts imports (dist/index.mjs), the one pack behind its own subpath export (dist/packs.mjs), and the types for all of it (dist/types/). All four are what `exports` and `files` promise; a bundle without the types would ship a config grammar the editor cannot check.")]
 build:
     node esbuild.mjs
     just emit-types
 
-[doc("Build as it ships: minified, and with NO sourcemap comment — the map is not in the package's published files list, so a dev build would point at a file that isn't there.")]
+[doc("Build as it ships: minified, and with NO sourcemap comment — the map is not among the files a release tag holds, so a dev build would point at a file that isn't there.")]
 build-release:
     node esbuild.mjs --production
     just emit-types
@@ -34,7 +34,7 @@ emit-types:
     # MEASURED on the eve of 0.1.0, from this very tarball: dist/types/packs/guard.d.ts and
     # dist/types/packs/checks.d.ts — declarations for two packs deleted commits ago — plus
     # dist/types/e2e/harness.d.ts, emitted before tsconfig.build.json excluded that folder. Three
-    # files no clean clone could produce, one `npm publish` away from being part of the package.
+    # files no clean clone could produce, one release away from being part of the package.
     rm -rf dist/types
     npx tsc -p tsconfig.build.json
 
@@ -64,7 +64,7 @@ test-rules:
     just build
     node dist/flow.mjs test
 
-[doc("THE MACHINE TEST — the sibling of test-rules, asked about the PACKS instead of this repo. In a throwaway repo that has never heard of flow: `flow init`, every pack the package ships bound at once with a stranger's parameters, `flow status` green, each pack's own cases run pack by pack, and one live refusal driven at write · delete · command · commit · turn-end. Exit 0 answers 'did anything in the packs break'; a red line names the pack.")]
+[doc("THE MACHINE TEST — the sibling of test-rules, asked about the one pack the package ships, `flow`, instead of this repo. In a throwaway repo that has never heard of flow: `flow init`, the `flow` pack bound bare beside two packs the repo writes, `flow status` green, each pack's own cases run, and a live refusal driven at commit · turn-end. Exit 0 answers 'did the shipped pack break'; a red line names it.")]
 test-packs:
     # No build step: the test builds the bundles itself, because the thing under test is the
     # INSTALLED package — `@jawache/flow` and `@jawache/flow/packs` resolved through the link
@@ -72,16 +72,6 @@ test-packs:
     # FLOW_MACHINE_REPORT is what makes it PRINT its report: the file is in the suite, so
     # `just test` and the commit gate run it too, and they want the exit code rather than the page.
     FLOW_MACHINE_REPORT=1 npx vitest run e2e/machine.test.ts
-
-[doc("Render one page per shipped pack into docs/user/packs/ — the surface a pack is READ on. Each page is the LOADED pack (ids, moments, globs, the message or text verbatim, the check's settings as written, both sides of every case) plus the doc comments the source carries (the pack's lead, its parameters, why each entry exists). Run it after any edit under packs/ and stage what it rewrites.")]
-docs-packs:
-    # No build step and no binary: the generator imports the packs as SOURCE and loads them through
-    # the same `loadConfig` the engine calls, so a page is never one rebuild behind the pack it prints.
-    node tools/pack-pages.ts
-
-[doc("THE DRIFT GATE — regenerate every pack page into memory and compare it with the one on disk. Green when they match; names the stale page and exits non-zero when they do not. This is what the commit gate runs, and it writes no file.")]
-docs-packs-check:
-    node tools/pack-pages.ts --check
 
 [doc("Score a Bash path extractor against the hand-labelled corpus in __fixtures__/bash-corpus/ — recall and precision for reads and writes, per mechanism and per parsing trap. `just score-bash` scores the naive baseline; name another extractor from tools/score-bash.ts to score that one, and add --misses to list every path it missed or invented.")]
 score-bash *args:
@@ -101,7 +91,7 @@ test-commit:
 test-tutorial:
     FLOW_TUTORIAL=1 npx vitest run e2e/product.test.ts -t "the Getting started tutorial's transcripts"
 
-[doc("Run the full commit gate over every file git can see, tracked or not, as if all of it were staged — the same guardrails .githooks/pre-commit runs on the staged changes, plus every file the last commit has that is now gone.")]
+[doc("Run the full commit gate over every file git can see, tracked or not, as if all of it were staged — the same guardrails .githooks/commit-msg runs on the staged changes, plus every file the last commit has that is now gone.")]
 gate: build
     node dist/flow.mjs hook commit --all
 
@@ -109,64 +99,27 @@ gate: build
 guard-status: build
     node dist/flow.mjs status
 
-[doc("Build the binary, then put `flow` on PATH from this checkout (npm link) — the dogfood loop, and how you run flow while you are changing it. A guarded repo installs `@jawache/flow` from npm instead.")]
-link:
-    just build
-    npm link
-    # NO backticks in this message: just hands recipe lines to the shell, which would run them as
-    # command substitution.
-    @echo 'flow now runs from this checkout. Undo with: npm unlink -g @jawache/flow'
-    @echo 'Next, in any repo you want guarded — this one included:  flow init'
-
-[doc("Cut a release, locally: compute the next version from the conventional commits since the last tag, write CHANGELOG.md, stamp package.json and the lockfile, and make ONE `chore(release): x.y.z` commit tagged `vx.y.z`. Refused until docs/user/migrations/<version>.md exists. Nothing is pushed and nothing is published. Preview it with `just release-dry` first.")]
+[doc("Cut a release, locally: compute the next version from the conventional commits since the last tag, write CHANGELOG.md, stamp package.json and the lockfile, and make the `chore(release): x.y.z` commit on this branch. Then build for release and make a second commit above it that holds dist/, and tag THAT one `vx.y.z`. The branch stays at the first commit. Refused until docs/user/migrations/<version>.md exists. Nothing is pushed and nothing is published. Preview it with `just release-dry` first.")]
 release:
-    # The version being cut needs its migration guide — the page a repo that uses flow follows to
+    # The version being cut needs its migration guide, the page a repo that uses flow follows to
     # upgrade. Asked first, for the same no-rollback reason as the gate below.
     node tools/release-guide.ts
     # The gate runs FIRST, before a byte is written. commit-and-tag-version has no rollback: its
-    # own `git commit` fires .githooks/pre-commit, and a gate failure there aborts the release with
-    # the version already stamped and CHANGELOG.md already written, but nothing committed and no
-    # tag — a half-release you then have to unpick by hand. Running the same gate up front turns
-    # that into a clean refusal. The hook still runs on the release commit: this ADDS a check, it
-    # does not replace one, and there is no `--no-verify` anywhere in here.
+    # own `git commit` fires .githooks/commit-msg, and a gate failure there aborts the release with
+    # the version already stamped and CHANGELOG.md already written, but nothing committed. Running
+    # the same gate up front turns that into a clean refusal. There is no `--no-verify` in here.
     just gate
-    # Config in .versionrc.mjs. The version is computed from the commit headers, never chosen —
-    # which is what `git/node/no-hand-edited-version` blocks a hand edit in favour of.
-    npx commit-and-tag-version
-    # LAST, so dist/ holds the release build when `npm publish` follows. The gate the release commit
-    # fires rebuilds dist/ as a DEV build — the e2e suites build the binary they spawn — and
-    # `npm publish` packs dist/ as it stands, with no build of its own (`package.json` has no
-    # scripts, by this repo's own rule). 0.3.2 shipped the dev build, sourcemap comment and all,
-    # because nothing here rebuilt it after the gate.
-    just build-release
-    @echo ''
-    @echo 'Local only — nothing was pushed and nothing was published. dist/ is the release build.'
-    @echo 'To share the release:  git push --follow-tags origin HEAD'
-    @echo 'To publish it:         just build-release && npm publish   (in a terminal; the build again, in case anything rebuilt dist/ since)'
+    # The release commit, the release build, the commit that holds dist/ and the tag on it: all in
+    # tools/release.ts, which pushes nothing.
+    node tools/release.ts cut
 
 [doc("What `just release` WOULD do, and nothing else: the version it computes and the changelog entry it would write, printed. Touches no file, makes no commit, cuts no tag.")]
 release-dry:
     npx commit-and-tag-version --dry-run
 
-[doc("Everything that must be true before publishing: the full gate, a clean build, and the exact tarball npm would upload. Never publishes — `npm publish` stays yours to type.")]
+[doc("Everything that must be true before a release: the full gate, the commit suite, the tutorial against the binary, and then the release itself, made in a throwaway clone: the release commit, the commit that holds dist/ and the tag. The tag is installed into a scratch folder with `npm i -D --ignore-scripts`, and the installed dist/flow.mjs runs. Pushes nothing, and leaves this repo as it was.")]
 release-check:
     just gate
     just test-commit
     just test-tutorial
-    just build-release
-    npm pack --dry-run
-    # READ THE FILE LIST ABOVE before typing the publish line. It is the whole of what strangers
-    # get, `files` is an allowlist, and a package is not unpublishable after 72 hours.
-    #
-    # IN A REAL TERMINAL, and that is not a style note: npm's `otplease` helper rethrows EOTP when
-    # stdin or stdout is not a TTY, so a publish run through anything that captures output — a
-    # subprocess, an agent's shell, CI without a token — fails at the two-factor step instead of
-    # prompting, and can never reach the browser. Learned at 0.1.0.
-    #
-    # AND IT RETURNS BEFORE IT IS VISIBLE. npm answers the publish with 202 Accepted — the upload is
-    # taken, not yet served — so the registry can still say the old version for a minute or two
-    # afterwards. Learned at 0.1.1. `npm view @jawache/flow version` is the honest check, and a
-    # consumer's `npm i -D @jawache/flow@<new>` that 404s a few seconds after a successful publish is
-    # this, not a failed release: wait, then ask again.
-    @echo ''
-    @echo 'To publish, in a terminal:  npm publish'
+    node tools/release.ts check

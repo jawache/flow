@@ -23,6 +23,8 @@ import {
   readFileSync,
   readSync,
   readdirSync,
+  renameSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -33,6 +35,8 @@ import {
   attribution,
   flowDir,
   identify,
+  lockIsStale,
+  lockPath,
   logFile,
   markerPath,
   metaRow,
@@ -103,16 +107,68 @@ export function loadState(root: string, session: string, agent: string): Session
   }
 }
 
-/** Store it. Dropped silently on any error — see the note at the top of this file. */
-export function saveState(root: string, session: string, agent: string, state: SessionState): boolean {
+/** What `updateState` sleeps on between tries: nothing ever wakes it, so each wait runs its full timeout. */
+const NAP = new Int32Array(new SharedArrayBuffer(4));
+
+/** How long one try at the lock waits before the next, and how many tries: about three seconds in all. */
+const LOCK_NAP_MS = 5;
+const LOCK_TRIES = 600;
+
+/**
+ * Take the lock beside a state file, or give up on it. True when it is held.
+ *
+ * A folder is the lock, because `mkdirSync` is atomic and fails when it exists. A lock older than
+ * `LOCK_STALE_MS` is a hook that died holding it, and is taken over. Giving up is not an error: state
+ * is a de-duplication convenience (see the note at the top of this file), so a hook that cannot get
+ * the lock goes on without it, and at worst shows a breadcrumb twice.
+ */
+function takeLock(lock: string): boolean {
+  for (let tries = 0; tries < LOCK_TRIES; tries++) {
+    try {
+      mkdirSync(lock);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") return false;
+    }
+    try {
+      if (lockIsStale(Date.now() - statSync(lock).mtimeMs)) rmSync(lock, { recursive: true, force: true });
+    } catch {
+      /* the holder let go between the two calls, which is what the next try finds out */
+    }
+    Atomics.wait(NAP, 0, 0, LOCK_NAP_MS);
+  }
+  return false;
+}
+
+/**
+ * Change this session × agent's state, so that two hooks running at once cannot drop each other's
+ * change: the lock is taken, the file is read AFTER it, `change` is applied to what is there, and the
+ * result is written whole to a temporary file and renamed over the old one. The caller's function
+ * decides and does no IO, because it runs while others wait. Returns the state written, or what
+ * was read when the write failed. Never throws, as the note at the top of this file says.
+ */
+export function updateState(root: string, session: string, agent: string, change: (state: SessionState) => SessionState): SessionState {
+  const file = statePath(root, session, agent);
+  const lock = lockPath(root, session, agent);
+  ensureFlowDir(root);
   try {
-    const file = statePath(root, session, agent);
-    ensureFlowDir(root);
     mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, JSON.stringify(state));
-    return true;
   } catch {
-    return false;
+    return change(loadState(root, session, agent));
+  }
+  const held = takeLock(lock);
+  try {
+    const next = change(loadState(root, session, agent));
+    const temporary = `${file}.${process.pid}.tmp`;
+    try {
+      writeFileSync(temporary, JSON.stringify(next));
+      renameSync(temporary, file);
+    } catch {
+      /* a dropped write re-shows a breadcrumb, the harmless direction */
+    }
+    return next;
+  } finally {
+    if (held) rmSync(lock, { recursive: true, force: true });
   }
 }
 
@@ -135,12 +191,11 @@ export function stickyIdentity(
   categories: readonly Category[],
   remember = true,
 ): Identity {
-  const stored = loadState(root, session, agent);
-  const seen = identify(stored.categories, facts, categories);
+  const seen = identify(loadState(root, session, agent).categories, facts, categories);
   // A fault means we do not know, so nothing is stored: the next hook tries again rather than
   // inheriting an answer that was never reached.
   if (remember && seen.fresh && seen.faults.length === 0)
-    saveState(root, session, agent, { ...stored, categories: seen.wearing });
+    updateState(root, session, agent, (stored) => ({ ...stored, categories: seen.wearing }));
   return seen;
 }
 
@@ -178,6 +233,8 @@ function tailOf(file: string): string {
 export interface LogContext {
   readonly root: string;
   readonly session: string;
+  /** The harness the session runs under, for the stream's meta row. The shared `commit` stream is no harness's, and names none. */
+  readonly harness?: string;
   /** The branch this worktree has out, for the stream's meta row. The adapter knows it; this does not. */
   readonly branch: string | null;
   /** The agent every row came from, stamped beside the time. */
@@ -197,13 +254,13 @@ export interface LogContext {
 export function appendRows(ctx: LogContext, rows: readonly Row[]): boolean {
   try {
     if (rows.length === 0) return true;
-    const { root, session, branch, who } = ctx;
+    const { root, session, harness, branch, who } = ctx;
     const clock = ctx.now ?? ((): Date => new Date());
     const file = logFile(root, session);
     ensureFlowDir(root);
     mkdirSync(dirname(file), { recursive: true });
     if (!existsSync(file)) {
-      writeFileSync(file, `${JSON.stringify(metaRow(session, branch, root, clock().toISOString()))}\n`);
+      writeFileSync(file, `${JSON.stringify(metaRow(session, branch, root, clock().toISOString(), harness))}\n`);
       seqCache.set(file, 1);
     }
     let seq = seqCache.get(file) ?? nextSeq(tailOf(file));

@@ -1,5 +1,5 @@
 ---
-summary: "reads: file body · fires at: write · commit"
+summary: "reads: file body · fires at: commit"
 ---
 
 # `symbolsInSibling`
@@ -26,13 +26,13 @@ When the sibling test does not exist, the check refuses the file with `sibling t
 
 A refusal names the sibling test once and lists every export it never mentions. The line prints under the entry's `.message(…)`.
 
-The output below is from the [example](#example) entry, bound in a pack named `house`. `src/domain/rooms.ts` exports `ROOM_JOIN_TILES`, `roomJoinSoFar` and `roomName`, and its test names only `roomName`. The commit gate prints:
+The output below is from the [example](#example) entry, bound in a [pack](../reference/glossary.md#pack) named `house`. `src/domain/rooms.ts` exports `ROOM_JOIN_TILES`, `roomJoinSoFar` and `roomName`, and its test names only `roomName`. The commit prints:
 
 ```
 flow — commit blocked:
 
 ✗ house.exportsTested · src/domain/rooms.ts
-  The exports listed below are never named in this file's test. Write a test that uses each one, then write the change again: a reference is enough, as this is a nudge, not coverage.
+  The exports listed below are never named in this file's test. Write a test that uses each one, then commit again: a reference is enough, as this is a nudge, not coverage.
     not referenced in src/domain/rooms.test.ts: ROOM_JOIN_TILES, roomJoinSoFar
 
 Fix the above, then commit again.
@@ -48,11 +48,11 @@ Fix the above, then commit again.
 
 ```
 exportsTested: guardrail()
-  .at(write, commit)
+  .at(commit)
   .on("src/domain/**/*.ts")
   .ignore("**/*.test.ts")
   .check(symbolsInSibling({ sibling: "{dir}/{name}.test.ts" }))
-  .message("The exports listed below are never named in this file's test. Write a test that uses each one, then write the change again: a reference is enough, as this is a nudge, not coverage.")
+  .message("The exports listed below are never named in this file's test. Write a test that uses each one, then commit again: a reference is enough, as this is a nudge, not coverage.")
   .test({
     pass:  [{ path: "src/domain/a.ts", content: "export const x = 1;", world: { fs: { "src/domain/a.test.ts": "expect(x)" } } }],
     block: [{ path: "src/domain/a.ts", content: "export const y = 1;", world: { fs: { "src/domain/a.test.ts": "nothing" } } }],

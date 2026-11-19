@@ -9,7 +9,7 @@
 //
 //   THE LIVE HALF, invoked by something else rather than by a person:
 //     flow hook <event>    what the harness's registrations call, payload on stdin
-//     flow hook commit     what git's pre-commit hook calls; it asks git what the commit changes
+//     flow hook commit     what git's commit-msg hook calls; it asks git what the commit changes
 //
 //   THE ASKING HALF, which a person types:
 //     flow test [config]   every bound entry's cases, driven
@@ -18,7 +18,7 @@
 //     flow facts           what the record and the conversations say about this repo
 //
 //   THE SETUP, typed once:
-//     flow init [--empty]  scaffold a config, arm the gate, register the hooks
+//     flow init [--empty] [--harness <names>]  scaffold a config, arm the gate, register the hooks of each harness
 //     flow uninstall       remove what init wrote, but the config, before the package goes;
 //                          --machine takes the hooks out of the machine-wide settings file too
 //
@@ -28,6 +28,7 @@
 // do is the adapter's, and this file only owns argv, the three IO edges and the exit code.
 
 import { existsSync, readFileSync } from "node:fs";
+import { createInterface } from "node:readline/promises";
 import { registerHooks, stripTypeScriptTypes } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, resolve } from "node:path";
@@ -35,20 +36,27 @@ import { VERSION } from "./version.ts";
 import { entriesOrThrow, FlowConfigError } from "./errors.ts";
 import { loadConfig, type FlowConfig, type LoadedEntry } from "./language/domain.ts";
 import { runCases, type CaseResult } from "./checks/domain.ts";
-import { commitEntry, hookEntry, registerGrammars } from "./adapter/claude.ts";
+import { claudeCode } from "./adapter/claude/claude.ts";
+import { codex } from "./adapter/codex/codex.ts";
+import { commitEntry, registerGrammars } from "./adapter/shell.ts";
 import { facts } from "./adapter/archive.ts";
+import { hookEntry } from "./adapter/hook.ts";
 import {
   CONFIG_FILE,
-  HOOK_EVENTS,
   configLoadFault,
   formatFacts,
   loadsAsStrippedModule,
   snip,
-  type HookResult,
 } from "./adapter/domain.ts";
-import { runInit, runStatus, runUninstall, type VerbResult } from "./adapter/product.ts";
+import type { HookResult } from "./adapter/harness.ts";
+import { runInit, runStatus, runUninstall, type Terminal, type VerbResult } from "./adapter/product.ts";
 import { diffRows, replay, type Row } from "./engine/domain.ts";
 import { loadRecording, readRowsFile } from "./engine/state.ts";
+
+// THE HARNESSES this binary runs for. The one place flow chooses them; everything below takes a
+// `Harness` and names none. The first is the one a hook payload that no harness claims is run as.
+const harnesses = [claudeCode, codex] as const;
+const harness = claudeCode;
 
 const argv = process.argv.slice(2);
 
@@ -265,7 +273,7 @@ async function readFacts(args: readonly string[]): Promise<number> {
   const load = existsSync(join(root, CONFIG_FILE)) ? loadConfig(await loadFile(CONFIG_FILE)) : ({ ok: true, entries: [] } as const);
   const limit = flag(args, "limit");
   const since = flag(args, "since");
-  const read = facts(root, load, {
+  const read = facts(root, load, harnesses, {
     session: flag(args, "session"),
     branch: flag(args, "branch"),
     limit: limit === null || limit === "" ? null : Number(limit),
@@ -282,6 +290,24 @@ async function readFacts(args: readonly string[]): Promise<number> {
   const lines = formatFacts(read);
   process.stdout.write(`${lines.join("\n")}\n`);
   return read.health.blocked === null ? 0 : 1;
+}
+
+/**
+ * The person at the keyboard, when there is one: `flow init` asks questions only when its standard
+ * input and output are both a terminal. An agent or a script runs it with neither, and it prompts for nothing.
+ */
+function terminal(): (Terminal & { readonly close: () => void }) | null {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return null;
+  const lines = createInterface({ input: process.stdin, output: process.stdout });
+  return {
+    ask: (question) => lines.question(question),
+    say: (text) => {
+      process.stdout.write(text);
+    },
+    close: () => {
+      lines.close();
+    },
+  };
 }
 
 const [verb, ...rest] = argv;
@@ -302,7 +328,7 @@ if (argv.includes("--version") || argv.includes("-v")) {
   // Git's hook, not the harness's: it carries no payload on stdin, so it never reaches the reader.
   perform(await commitEntry(rest.slice(1), process.cwd()));
 } else if (verb === "hook") {
-  perform(await hookEntry(rest[0] ?? "", process.cwd()));
+  perform(await hookEntry(harnesses, rest[0] ?? "", process.cwd()));
 } else if (verb === "commit") {
   // The name an older pre-commit hook calls. Kept so those commits still run the gate;
   // `flow status` tells the repo to update the hook, and the file list it passes is ignored.
@@ -311,9 +337,15 @@ if (argv.includes("--version") || argv.includes("-v")) {
   // The product surface. Each answers with the same three edges every other verb does, which is why
   // none of them writes to a stream or picks an exit code of its own.
   let answer: VerbResult;
-  if (verb === "init") answer = runInit(process.cwd(), rest);
-  else if (verb === "uninstall") answer = runUninstall(process.cwd(), rest);
-  else answer = await runStatus(process.cwd(), rest);
+  if (verb === "init") {
+    const person = terminal();
+    try {
+      answer = await runInit(process.cwd(), rest, harnesses, person);
+    } finally {
+      person?.close();
+    }
+  } else if (verb === "uninstall") answer = runUninstall(process.cwd(), rest, harnesses);
+  else answer = await runStatus(process.cwd(), rest, harnesses);
   if (answer.stdout) process.stdout.write(answer.stdout);
   if (answer.stderr) process.stderr.write(answer.stderr);
   process.exitCode = answer.exitCode;
@@ -330,13 +362,13 @@ if (argv.includes("--version") || argv.includes("-v")) {
     [
       `flow ${VERSION}`,
       "",
-      "  flow init [--empty]    scaffold flow.config.ts, arm the git gate, register the hooks",
+      "  flow init [--empty] [--harness <names>]  scaffold flow.config.ts, arm the git gate, register each harness's hooks",
       "  flow uninstall         remove what flow init wrote here, but flow.config.ts — before npm uninstall",
       "                         --machine also removes flow's hooks from the machine-wide settings file",
       "  flow status [--json]   what is bound here, at which moments — and what is not wired yet",
       "  flow test [config]     run every bound entry's cases (default: flow.config.ts)",
-      `  flow hook <event>      a harness hook, payload on stdin — ${HOOK_EVENTS.join(" · ")}`,
-      "  flow hook commit       the git pre-commit gate, over the staged changes — --all for the whole tree",
+      `  flow hook <event>      a harness hook, payload on stdin — ${harness.events.join(" · ")}`,
+      "  flow hook commit [<file>]  git's commit-msg gate, over the staged changes and the message in <file> — --all for the whole tree",
       "  flow replay <file>     a recorded session, back through the engine — --against <log> diffs it",
       "  flow facts             what the record and the conversations say about this repo — --json for all of it",
       "",
