@@ -3219,7 +3219,7 @@ function callEvents(payload: HookPayload, world: EventWorld): AdapterEvent[] {
     //
     // Every guard event comes before every brief event: a refusal carries no notes, and the
     // shell stops judging notes once something has refused, so they are not marked shown.
-    // The line is parsed once here: the command rules read it, and so do the files it reads. The
+    // The line is parsed once here, for the command rules. The
     // host's `cwd` is where the shell stands, which is where each command's folder is followed from.
     const cwd = shellCwd(payload, world.root);
     const steps = parseShellSteps(command, { cwd, home: world.home });
