@@ -58,10 +58,10 @@ lint:
 test *args:
     npx vitest run "$@"
 
-[doc("Run every bound rule's own cases — the .test({pass, block}) block on each entry this repo's flow.config.ts binds, driven through the same ctx the live rails build.")]
+[doc("Run the own cases of the packs this repo writes — the .test({pass, block}) block on each of their entries, driven through the same ctx the live rails build — and count the cases of installed packs it leaves out. `node dist/flow.mjs test --all` runs every bound rule's cases.")]
 test-rules:
     # There is no separate place a rule is proved: the cases travel ON the entry, and a
-    # guardrail carrying none does not load at all. `flow test` walks every one of them.
+    # guardrail carrying none does not load at all. `flow test` walks the repo's own packs' cases.
     just build
     node dist/flow.mjs test
 
@@ -82,7 +82,7 @@ score-bash *args:
 test-coverage:
     npx vitest run --coverage
 
-[doc("Deterministic suite the commit gate runs: every rule's own cases, the whole repo typechecked (the runner strips types, it never checks them), and the whole vitest suite.")]
+[doc("Deterministic suite the commit gate runs: the own packs' cases, the whole repo typechecked (the runner strips types, it never checks them), and the whole vitest suite.")]
 test-commit:
     just test-rules
     just typecheck

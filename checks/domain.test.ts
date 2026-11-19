@@ -66,6 +66,7 @@ import {
   useGrammars,
   runCase,
   runCases,
+  testTail,
   shellCommands,
   siblingExists,
   skipForChanged,
@@ -1916,5 +1917,14 @@ describe("every stock check, bound in a real config", () => {
     expect(loaded.ok ? [] : loaded.refusals.map((r) => [r.code, r.entry])).toEqual([
       ["no-block-cases", "thin.testsPassAtCommit"],
     ]);
+  });
+});
+
+describe("testTail", () => {
+  it("ends with the count of installed packs' cases left out, and nothing when none were", () => {
+    expect(testTail(0, 40)).toBe(" · 40 cases of installed packs, not run");
+    expect(testTail(0, 1)).toBe(" · 1 case of installed packs, not run");
+    expect(testTail(2, 40)).toBe(" · 2 disabled, not run · 40 cases of installed packs, not run");
+    expect(testTail(0, 0)).toBe("");
   });
 });

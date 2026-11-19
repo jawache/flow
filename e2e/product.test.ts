@@ -170,6 +170,10 @@ describe("the scaffolded config", () => {
     const tested = flow(repo, ["test"]);
     expect(tested.code, tested.stdout + tested.stderr).toBe(0);
     expect(tested.stdout).toContain("all green");
+    // `--all` is the same run with the installed packs' cases in it, and it is green too.
+    const everything = flow(repo, ["test", "--all"]);
+    expect(everything.code, everything.stdout + everything.stderr).toBe(0);
+    expect(everything.stdout).toContain("all green");
   });
 
   it("blocks `flow uninstall` from an agent — UAT step 3", () => {

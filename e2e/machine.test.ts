@@ -319,7 +319,8 @@ describe("the machine test", () => {
     // PER PACK, so a deleted case NAMES the pack it was deleted from. One config each, so the
     // number that moves is attributable — the whole-config run below can only say "one fewer".
     const measured = [FLOW, HOUSE, STRANGER].map((entry) => {
-      const said = flow(["test", join("probe", `${entry.pack}.config.ts`)]);
+      // `--all`: the shipped `flow` pack is installed here, and only `--all` runs an installed pack's cases.
+      const said = flow(["test", "--all", join("probe", `${entry.pack}.config.ts`)]);
       const { cases, guardrails, red } = ran(said);
       // Every case of every pack, green under somebody else's parameters. A pack whose own case
       // only passes in the repo that wrote it is a pack that does not travel, and that is exactly
@@ -331,11 +332,17 @@ describe("the machine test", () => {
 
     // …and the same run over the whole config: green, and the cases add up — which is the
     // arithmetic that catches a case moving between packs rather than disappearing.
-    const said = flow(["test"]);
+    const said = flow(["test", "--all"]);
     expect(said.code, said.stdout + said.stderr).toBe(0);
     expect(said.stdout).toContain("all green");
     const total = [FLOW, HOUSE, STRANGER].reduce((sum, entry) => sum + entry.cases, 0);
     expect(ran(said).cases).toBe(total);
+
+    // …and without `--all` the installed `flow` pack's cases are counted and left out.
+    const own = flow(["test"]);
+    expect(own.code, own.stdout + own.stderr).toBe(0);
+    expect(ran(own).cases).toBe(total - FLOW.cases);
+    expect(own.stdout).toContain(`${FLOW.cases} cases of installed packs, not run`);
 
     step("cases", `  cases      ${total} green over ${measured.reduce((sum, m) => sum + m.guardrails, 0)} guardrails, pack by pack`, "  live");
   });
@@ -410,7 +417,7 @@ describe("the machine test", () => {
     // the block changed shape this test would go on proving the old one.
     const probe = join(repo, "probe", "missing-grammar.config.ts");
     writeFileSync(probe, only({ ...STRANGER, cases: 0, guardrails: 0 }, MISSING_LIBRARY));
-    const cases = flow(["test", join("probe", "missing-grammar.config.ts")]);
+    const cases = flow(["test", "--all", join("probe", "missing-grammar.config.ts")]);
     expect(cases.code, "a rule whose grammar is missing must not pass quietly").toBe(1);
     expect(cases.stdout).toContain(MISSING_LIBRARY);
 

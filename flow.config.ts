@@ -4,7 +4,7 @@
 // what you read below is exactly what fires.
 //
 //   flow status   what is bound, at which moments, and what is not wired yet
-//   flow test     every rule's own cases, driven
+//   flow test     the cases of the packs this repo writes, driven (--all: every bound rule's)
 //
 // TWO VERBS AND THE WHOLE FILE IS THEM. `pack(x)` binds a pack and all its entries; `override(x.e)`
 // speaks only what it changes, and everything it does not say comes from the pack. An override

@@ -10,6 +10,8 @@
 
 import { describe, it, expect } from "vitest";
 import {
+  isInstalledPack,
+  originOf,
   breadcrumb,
   BREADCRUMB_KEYS,
   BREADCRUMB_MOMENTS,
@@ -2167,5 +2169,27 @@ describe("REFUSAL_CODES", () => {
       "empty-scope",
       "double-prose",
     ]);
+  });
+});
+
+describe("isInstalledPack", () => {
+  const root = "/repo";
+  it("is the repo's own when the file is under the repo and not under node_modules", () => {
+    expect(isInstalledPack("/repo/flow.config.ts", root)).toBe(false);
+    expect(isInstalledPack("/repo/guards/house.ts", root)).toBe(false);
+    expect(isInstalledPack(undefined, root)).toBe(false);
+  });
+  it("is installed when the file is under node_modules, or outside the repo", () => {
+    expect(isInstalledPack("/repo/node_modules/@x/packs/dist/index.mjs", root)).toBe(true);
+    expect(isInstalledPack("/elsewhere/flow-packs/index.ts", root)).toBe(true);
+    expect(isInstalledPack("/repository/a.ts", root)).toBe(true);
+  });
+});
+
+describe("originOf", () => {
+  it("reads the file URL of the first frame that has one", () => {
+    expect(originOf("    at Object.<anonymous> (file:///repo/a.ts:3:14)\n    at x (file:///b.ts:1:1)")).toBe("file:///repo/a.ts");
+    expect(originOf("    at file:///repo/a.ts:3:14")).toBe("file:///repo/a.ts");
+    expect(originOf("")).toBeUndefined();
   });
 });

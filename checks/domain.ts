@@ -2003,6 +2003,22 @@ export function unansweredText(missing: readonly Unanswered[]): string {
     .join(" · ");
 }
 
+/** How many cases `runCases` would run for one entry. */
+export function casesOf(entry: LoadedEntry): number {
+  const { spec } = entry;
+  if (spec.kind !== "guardrail" || spec.disabled || !spec.check) return 0;
+  return (spec.test?.pass?.length ?? 0) + (spec.test?.block?.length ?? 0);
+}
+
+/** What ends a `flow test` line: the entries it never ran, and the cases of installed packs it left out. */
+export function testTail(disabled: number, leftOut: number): string {
+  const parts = [
+    ...(disabled ? [`${disabled} disabled, not run`] : []),
+    ...(leftOut ? [`${leftOut} case${leftOut === 1 ? "" : "s"} of installed packs, not run`] : []),
+  ];
+  return parts.map((p) => ` · ${p}`).join("");
+}
+
 /**
  * Every bound entry's cases, driven — what `flow test` is.
  *

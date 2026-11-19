@@ -12,7 +12,7 @@
 //     flow hook commit     what git's commit-msg hook calls; it asks git what the commit changes
 //
 //   THE ASKING HALF, which a person types:
-//     flow test [config]   every bound entry's cases, driven
+//     flow test [config] [--all]   the repo's own packs' cases, driven — --all for every bound entry's
 //     flow status          what is bound here, and what is not wired yet
 //     flow replay <file>   a recorded session back through the engine, with no repo and no harness
 //     flow facts           what the record and the conversations say about this repo
@@ -27,15 +27,15 @@
 // The hook and commit verbs are one line each here, and that is the seam working: everything they
 // do is the adapter's, and this file only owns argv, the three IO edges and the exit code.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import { registerHooks, stripTypeScriptTypes } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, resolve } from "node:path";
 import { VERSION } from "./version.ts";
 import { entriesOrThrow, FlowConfigError } from "./errors.ts";
-import { loadConfig, type FlowConfig, type LoadedEntry } from "./language/domain.ts";
-import { runCases, type CaseResult } from "./checks/domain.ts";
+import { isInstalledPack, loadConfig, type FlowConfig, type LoadedEntry } from "./language/domain.ts";
+import { casesOf, runCases, testTail, type CaseResult } from "./checks/domain.ts";
 import { claudeCode } from "./adapter/claude/claude.ts";
 import { codex } from "./adapter/codex/codex.ts";
 import { commitEntry, registerGrammars } from "./adapter/shell.ts";
@@ -139,14 +139,14 @@ async function loadFile(path: string): Promise<FlowConfig> {
 }
 
 /** One line per case, and a hit is quoted with what it should have done instead. */
-function report(entries: readonly LoadedEntry[], results: readonly CaseResult[]): number {
+function report(entries: readonly LoadedEntry[], results: readonly CaseResult[], leftOut = 0): number {
   const failed = results.filter((r) => !r.ok);
   const bound = entries.filter((e) => e.spec.kind === "guardrail" && !e.spec.disabled).length;
   for (const r of failed) {
     process.stdout.write(`  ✗ ${r.entry} · ${r.expect} case ${r.index + 1}\n      ${r.detail}\n`);
   }
   const disabled = entries.filter((e) => e.spec.disabled).length;
-  const tail = disabled ? ` · ${disabled} disabled, not run` : "";
+  const tail = testTail(disabled, leftOut);
   if (failed.length === 0) {
     process.stdout.write(`flow test — ${results.length} cases over ${bound} guardrails, all green${tail}\n`);
     return 0;
@@ -157,12 +157,28 @@ function report(entries: readonly LoadedEntry[], results: readonly CaseResult[])
   return 1;
 }
 
-async function test(path: string): Promise<number> {
+async function test(path: string, all: boolean): Promise<number> {
   const config = await loadFile(path);
   // Every refusal, not the first: a config with three mistakes should report three, and the second
   // one is usually the informative one.
   const entries = entriesOrThrow(loadConfig(config));
-  return report(entries, await runCases(entries));
+  if (all) return report(entries, await runCases(entries));
+  // The repo is the config's own folder. A pack's file is judged with its links followed: the `flow`
+  // pack is reached through a link in `node_modules` that points back into this checkout.
+  const root = realpathSync(dirname(resolve(process.cwd(), path)));
+  const own = entries.filter((e) => !isInstalledPack(realFileOf(e.origin), root));
+  const leftOut = entries.filter((e) => !own.includes(e)).reduce((n, e) => n + casesOf(e), 0);
+  return report(own, await runCases(own), leftOut);
+}
+
+/** A pack's file as the disk has it, links followed; undefined when it cannot be read. */
+function realFileOf(origin: string | undefined): string | undefined {
+  if (origin === undefined) return undefined;
+  try {
+    return realpathSync(fileURLToPath(origin));
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -316,7 +332,8 @@ if (argv.includes("--version") || argv.includes("-v")) {
   process.stdout.write(`${VERSION}\n`);
 } else if (verb === "test") {
   try {
-    process.exitCode = await test(rest[0] ?? "flow.config.ts");
+    const [path = "flow.config.ts"] = rest.filter((a) => a !== "--all");
+    process.exitCode = await test(path, rest.includes("--all"));
   } catch (error) {
     // A config that will not load is a REFUSAL, printed whole. Exit 2 rather than 1, because
     // "your rules are broken" and "your rules caught something" are different answers and a
@@ -366,7 +383,7 @@ if (argv.includes("--version") || argv.includes("-v")) {
       "  flow uninstall         remove what flow init wrote here, but flow.config.ts — before npm uninstall",
       "                         --machine also removes flow's hooks from the machine-wide settings file",
       "  flow status [--json]   what is bound here, at which moments — and what is not wired yet",
-      "  flow test [config]     run every bound entry's cases (default: flow.config.ts)",
+      "  flow test [config] [--all]  run the cases of the repo's own packs — --all runs every bound entry's (default config: flow.config.ts)",
       `  flow hook <event>      a harness hook, payload on stdin — ${harness.events.join(" · ")}`,
       "  flow hook commit [<file>]  git's commit-msg gate, over the staged changes and the message in <file> — --all for the whole tree",
       "  flow replay <file>     a recorded session, back through the engine — --against <log> diffs it",
