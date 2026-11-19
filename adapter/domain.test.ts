@@ -1693,7 +1693,7 @@ describe("the binary fitting — can the hooks and the gate find flow", () => {
     expect(fitting?.detail).toBe(
       "the flow in node_modules/@jawache/flow is not on the PATH, and the gate looks for flow on the PATH alone, so git refuses every commit — " +
         'add `f="$PWD/node_modules/@jawache/flow/dist/flow.mjs"; [ -f "$f" ] && exec node "$f" hook commit "$1"` to .githooks/commit-msg above the line that runs flow; ' +
-        "or install it for this repo with `npm i -D github:jawache/flow#v1.2.3`.",
+        "or install it for this repo with `npm i -D --allow-git=root github:jawache/flow#v1.2.3`.",
     );
     expect(green).toBe(false);
     expect(binary(true, false, { gateText: OLD_GATE }).fitting?.detail, "the old verb's gate too").toContain("the gate looks for flow on the PATH alone");
@@ -1775,7 +1775,7 @@ describe("the binary fitting — can the hooks and the gate find flow", () => {
       detail:
         "this repo's package.json does not list @jawache/flow, so node_modules/@jawache/flow is the link `flow init` made to the flow that ran it, " +
         "and no flow is on the PATH. The hooks and the gate run that link only while it resolves, and once it breaks every hook fails " +
-        "with `flow: not found` and git refuses every commit — install it for this repo with `npm i -D github:jawache/flow#v1.2.3`.",
+        "with `flow: not found` and git refuses every commit — install it for this repo with `npm i -D --allow-git=root github:jawache/flow#v1.2.3`.",
     });
     expect(red.green).toBe(false);
     const listedNotInstalled = status(statusFacts({ binary: { listed: true, copy: false, path: false } })).fittings.find((f) => f.id === "binary");
@@ -1787,7 +1787,7 @@ describe("the binary fitting — can the hooks and the gate find flow", () => {
       const { fitting, green, lines } = binary(false, false, over);
       expect(fitting?.ok).toBe(false);
       expect(fitting?.detail).toContain(`no flow in ${PACKAGE_DIR} or on the PATH`);
-      expect(fitting?.detail).toContain("npm i -D github:jawache/flow#v1.2.3");
+      expect(fitting?.detail).toContain("npm i -D --allow-git=root github:jawache/flow#v1.2.3");
       expect(fitting?.detail).not.toContain("npm i -g");
       expect(green).toBe(false);
       expect(lines.at(-1)).toContain("1 red line");

@@ -4,7 +4,7 @@
 // branch (the version and the changelog, made by commit-and-tag-version with its own tag turned
 // off), and a second commit above it that holds dist/. The tag points at the second, and the branch
 // stays at the first, so the branch never holds built files and the tag always does. A project
-// installs the tag with `npm i -D github:jawache/flow#v<version>`, and npm builds nothing, because
+// installs the tag with `npm i -D --allow-git=root github:jawache/flow#v<version>`, and npm builds nothing, because
 // the tagged package.json has no script it would run (`justfile.node.noPackageScripts` refuses one at the release commit).
 //
 //   node tools/release.ts cut     the release commit, the release build, the commit that holds dist/, the tag

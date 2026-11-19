@@ -1406,7 +1406,7 @@ const paged = (page: string, opening: string): string => fenced(join(PACKAGE, "d
 describe.runIf(process.env["FLOW_TUTORIAL"])("the Getting started tutorial's transcripts", () => {
   it("are what `flow init`, `flow status`, `flow test` and both refusals really print", () => {
     const mine = newRepo();
-    // STEP 1 OF THE PAGE: `npm init -y` and `npm i -D github:jawache/flow#v…`. The repo lists flow
+    // STEP 1 OF THE PAGE: `npm init -y` and `npm i -D --allow-git=root github:jawache/flow#v…`. The repo lists flow
     // as a dev dependency and holds it in node_modules, here the build under test, so `flow init`
     // writes no link and warns of no missing install, as it does on a repo that followed step 1.
     writeFileSync(join(mine, "package.json"), JSON.stringify({ name: "my-repo", devDependencies: { "@jawache/flow": "github:jawache/flow" } }));

@@ -2547,7 +2547,7 @@ function binaryFitting(facts: Pick<StatusFacts, "binary" | "gateText" | "harness
             : `the hooks and the gate run the flow ${byHooks}`
           : `the hooks run the flow ${byHooks}, and the gate the flow ${byGate}`,
     };
-  const install = `install it for this repo with \`npm i -D github:jawache/flow#v${facts.version}\`.`;
+  const install = `install it for this repo with \`npm i -D --allow-git=root github:jawache/flow#v${facts.version}\`.`;
   // LINKED, NOT LISTED, AND NOTHING ON THE PATH: the hooks and the gate run the link while it
   // resolves, so this is red on the safe side, and it says so rather than "no flow".
   if (!modules && copy)
@@ -2583,7 +2583,7 @@ function binaryFitting(facts: Pick<StatusFacts, "binary" | "gateText" | "harness
     ok: false,
     detail:
       `the flow in ${PACKAGE_DIR} is not on the PATH, and ${stranded.map((s) => s.who).join(" and ")} ${looks} for flow on the PATH alone, ` +
-      `so ${stranded.map((s) => s.fails).join(" and ")} — ${stranded.map((s) => s.fix).join("; ")}; or install it for this repo with \`npm i -D github:jawache/flow#v${facts.version}\`.`,
+      `so ${stranded.map((s) => s.fails).join(" and ")} — ${stranded.map((s) => s.fix).join("; ")}; or install it for this repo with \`npm i -D --allow-git=root github:jawache/flow#v${facts.version}\`.`,
   };
 }
 
