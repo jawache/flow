@@ -16,7 +16,7 @@
 // specifiers, resolved through `node_modules/@jawache/flow`, which `flow init` linked back to this
 // very checkout. This repo is therefore a CONSUMER of its own package, on exactly the path a
 // stranger takes: a door that stopped exporting a symbol breaks this file before it breaks anybody
-// else's. Every other pack is this repo's own, in `guards/` and shipped to nobody: nine that
+// else's. Every other pack is this repo's own, in `guards/` and shipped to nobody: eight that
 // started as fleet discipline, `driven`, and `house` — the project map, the internal layout, the
 // one-way import fences, and the ratchet on this binary's verb surface.
 //
@@ -35,7 +35,6 @@ import { node } from "./guards/node.ts";
 import { secrets } from "./guards/secrets.ts";
 import { tdd } from "./guards/tdd.ts";
 import { typescript } from "./guards/typescript.ts";
-import { work } from "./guards/work.ts";
 
 // THIS REPO'S PURE HOME, stated once and used by every fcis rail and by the import fence.
 //
@@ -137,13 +136,6 @@ export default defineConfig([
 
   // ── docs: two audiences, two doors ──
   pack(docs),
-
-  // ── work: the lifecycle's rungs ──
-  //
-  // This repo is built through the same supervised runs as the rest of the fleet, so the pack that
-  // mechanises the ladder is bound whole. It is a plain consumer of the grammar's public door and
-  // imports nothing from the work CLI it is about — which is what lets this package ship it at all.
-  pack(work),
 
   // ── driven by the work daemon ──
   //
