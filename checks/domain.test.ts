@@ -1730,6 +1730,11 @@ describe("runCase", () => {
       expect(result.detail).toBe('this case never reached the rule: src/a.ts is outside .on("app/**")');
     }
     expect((await runCase(scoped, blocks, file("app/a.ts", ""), "block", 0)).ok).toBe(true);
+    const mixed = { staged: ["src/a.ts", "app/a.ts"], world: { fs: { "src/a.ts": "", "app/a.ts": "" } } };
+    expect((await runCase(scoped, blocks, mixed, "block", 0)).ok, "one file inside reaches the rule").toBe(true);
+    const ignoring = entry({ on: ["app/**"], ignore: ["app/skip.ts"] });
+    const skipped = await runCase(ignoring, passes, { staged: ["app/skip.ts"], world: { fs: { "app/skip.ts": "" } } }, "pass", 0);
+    expect(skipped.detail).not.toContain("never reached");
   });
 
   it("a pass case the rule blocks reports the rule's own detail", async () => {

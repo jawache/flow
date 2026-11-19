@@ -1952,7 +1952,7 @@ export async function runCase(
   expect: "pass" | "block",
   index: number,
 ): Promise<CaseResult> {
-  const { dialect } = readCase(c);
+  const { dialect, facts } = readCase(c);
   const at: readonly GuardrailMoment[] = entry.spec.kind === "guardrail" ? (entry.spec.at ?? []) : [];
   const moment = at.find((m) => SPEAKS[dialect].includes(m));
   const head = { entry: entry.id, expect, index };
@@ -1964,7 +1964,7 @@ export async function runCase(
     };
   }
 
-  const outside = outsideOn(entry, moment, c);
+  const outside = outsideOn(entry.spec.on, facts.staged);
   if (outside !== undefined) return { ...head, ok: false, detail: outside };
 
   const unanswered: Unanswered[] = [];
@@ -1974,7 +1974,7 @@ export async function runCase(
     const answers: Verdict[] = [];
     for (const ctx of await caseCtxs(entry, moment, c, unanswered)) answers.push(await check(ctx));
     // Any subject blocking blocks the commit, exactly as the engine's effects do. No subject at all
-    // — a scope nothing staged fell into — is a pass, because there was nothing to refuse.
+    // — nothing staged, or a staged file not on disk — is a pass, because there was nothing to refuse.
     answer = answers.find((v) => !v.ok) ?? { ok: true };
     blocked = !answer.ok;
   } catch (error) {
@@ -1997,14 +1997,12 @@ export async function runCase(
 
 /**
  * The sentence a case earns when it stages files and every one is outside the entry's `.on(…)`, or
- * undefined when the case can reach the rule. `.ignore(…)` is not asked: a file the rule ignores is a case about the ignore list. The rule is never asked, so a pass case would go green
- * and a block case would read as a rule that does not catch what it says: both are the case's fault.
+ * undefined when the case can reach the rule. `.ignore(…)` is not asked: a file the rule ignores is
+ * a case about the ignore list. The rule is never asked, so a pass case would go green and a block
+ * case would read as a rule that does not catch what it says: both are the case's fault.
  */
-function outsideOn(entry: LoadedEntry, moment: Moment, c: Case): string | undefined {
-  const { on } = entry.spec;
-  if (moment !== "commit" || !on?.length) return undefined;
-  const staged = readCase(c).facts.staged ?? [];
-  if (staged.length === 0 || staged.some((path) => inScope({ on }, path))) return undefined;
+function outsideOn(on: readonly string[] | undefined, staged: readonly string[] = []): string | undefined {
+  if (!on?.length || staged.length === 0 || staged.some((path) => inScope({ on }, path))) return undefined;
   return `this case never reached the rule: ${staged.join(", ")} is outside .on(${on.map((g) => `"${g}"`).join(", ")})`;
 }
 
