@@ -41,15 +41,19 @@ Every [guardrail](../reference/glossary.md#guardrail) has its own cases, written
 
    A case whose shape belongs to a moment the rule is not bound at fails in `flow test`.
 
+   A case whose file is outside the rule's `.on(…)` fails too. `flow test` prints that the case never reached the rule, with the path and the globs.
+
 [Cases](../reference/config.md#cases) in the config reference lists every case shape and the keys each one accepts.
 
 ## Run them
 
-1. Run every bound rule's cases:
+1. Run the cases of your own packs:
 
    ```
    flow test
    ```
+
+   The cases of an [installed pack](../reference/glossary.md#installed-pack) run in the repo that writes the pack. `flow test` prints how many it left out, and `flow test --all` runs them too.
 
    Each case runs through the same `ctx` the live rules build, with the world supplied as data. When every case passes, `flow test` prints one line. Each failing case prints its own line, naming the entry and the case, and the command exits 1.
 

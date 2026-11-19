@@ -209,13 +209,13 @@ Code under src/ is pure: no file or network access. Put those in shell/.
 
 Ask the agent what it was just told about `src/`. It repeats the breadcrumb's text. The agent is shown the breadcrumb once: a second change to `src/a.ts` shows nothing.
 
-## 8 · Run every rule's own cases
+## 8 · Run your rules' cases
 
-Every [guardrail](../reference/glossary.md#guardrail) carries the inputs it must let through and the inputs it must refuse. Let's run them all:
+Every [guardrail](../reference/glossary.md#guardrail) carries the inputs it must let through and the inputs it must refuse. Let's run the cases of `house`, the pack we wrote:
 
 ```
 npx flow test
-# flow test — 46 cases over 5 guardrails, all green
+# flow test — 6 cases over 3 guardrails, all green · 40 cases of installed packs, not run
 ```
 
 ## 9 · Commit the guard
@@ -236,7 +236,7 @@ We now have a repo that guards itself:
 - **A commit** is judged on its staged files and its message, and refused when a rule says no.
 - **A named command** is refused before it runs.
 - **A breadcrumb** is shown to an agent when it first changes a file in an area.
-- **Every rule** proves itself with its own cases, through `flow test`.
+- **Every rule we wrote** proves itself with its own cases, through `flow test`.
 
 Anyone who clones the repo and runs `npm install` and `npx flow init` gets the same guard.
 

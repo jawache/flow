@@ -50,6 +50,10 @@ a rule that refuses a commit or a command, or holds a turn open, and says why
 
 the program that runs the agent and calls flow's hooks: Claude Code or Codex
 
+## installed pack
+
+a pack whose file is under `node_modules` or outside the repo. Every other pack is the repo's own
+
 ## moment
 
 when a rule runs: `commit`, `command`, `session`, `file-change` or `turn-end`
