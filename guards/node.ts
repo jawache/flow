@@ -1,12 +1,15 @@
 // guards/node.ts — package.json discipline.
 
-import { breadcrumb, commit, commitReason, defineCheck, definePack, guardrail, fileChange, type Check } from "@jawache/flow";
+import { breadcrumb, commit, commitReason, defineCheck, definePack, guardrail, fileChange, type Check, type Ctx } from "@jawache/flow";
 
 // ── node: the lockfile moves with the dependency, not with the file ──────────
 
-const DEP_BLOCKS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"] as const;
+const DEP_BLOCKS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies", "overrides"] as const;
 /** Every lockfile spelling npm, pnpm, bun and yarn write. The breadcrumb and the gate read one list. */
 const LOCKFILES = ["package-lock.json", "pnpm-lock.yaml", "bun.lock", "bun.lockb", "yarn.lock"];
+
+const ADDS_ZOD = { "git show HEAD:package.json": { stdout: "{}" }, "git show :package.json": { stdout: '{"dependencies":{"zod":"1.0.0"}}' } };
+const STAMPS_VERSION = { "git show HEAD:package.json": { stdout: '{"version":"1.2.2"}' }, "git show :package.json": { stdout: '{"version":"1.2.3"}' } };
 
 /**
  * The dependency names whose entry differs between two package.json texts.
@@ -29,10 +32,29 @@ export function movedDependencies(beforeText: string, afterText: string): string
     const a = (before[block] ?? {}) as Record<string, unknown>;
     const b = (after[block] ?? {}) as Record<string, unknown>;
     for (const name of new Set([...Object.keys(a), ...Object.keys(b)]))
-      if (a[name] !== b[name] && !moved.includes(name)) moved.push(name);
+      if (JSON.stringify(a[name]) !== JSON.stringify(b[name]) && !moved.includes(name)) moved.push(name);
   }
   return moved;
 }
+
+/** The dependencies this commit moves in package.json. `HEAD:` is the last committed version (empty = a brand-new package.json), `:` the staged one. */
+async function movedInCommit(ctx: Ctx): Promise<string[]> {
+  const [head, index] = await Promise.all([ctx.exec("git show HEAD:package.json"), ctx.exec("git show :package.json")]);
+  return movedDependencies(head.code === 0 ? head.stdout : "", index.code === 0 ? index.stdout : "");
+}
+
+/**
+ * A commit that moves a dependency records why. A package.json change that moves none, such as the
+ * version stamp of a release, owes no line.
+ */
+const reasonForMovedDependency = defineCheck(
+  (_opts: Record<string, never>): Check =>
+    async (ctx) => {
+      if (!(ctx.staged ?? []).includes("package.json")) return ctx.ok();
+      if ((await movedInCommit(ctx)).length === 0) return ctx.ok();
+      return commitReason({ whenChanged: ["package.json"], token: "new-dep" })(ctx);
+    },
+);
 
 /**
  * A dependency move and its lockfile land in the same commit.
@@ -47,9 +69,7 @@ const lockfileInStep = defineCheck(
       const staged = ctx.staged ?? [];
       if (!staged.includes("package.json")) return ctx.ok();
       if (staged.some((f) => LOCKFILES.includes(f))) return ctx.ok();
-      // `HEAD:` is the last committed version (empty = a brand-new package.json), `:` the staged one.
-      const [head, index] = await Promise.all([ctx.exec("git show HEAD:package.json"), ctx.exec("git show :package.json")]);
-      const moved = movedDependencies(head.code === 0 ? head.stdout : "", index.code === 0 ? index.stdout : "");
+      const moved = await movedInCommit(ctx);
       if (moved.length === 0) return ctx.ok(); // a metadata edit — nothing for a lockfile to mirror
       return ctx.fail(`this commit moves ${moved.map((d) => `\`${d}\``).join(", ")} in package.json but stages no lockfile`);
     },
@@ -86,26 +106,34 @@ export const node = definePack("node", {
       ].join("\n"),
     ),
 
-  // The condition is the FILE, not the diff. A package.json commit that is only a version bump owes
-  // a line too — a pin change is a supply-chain decision on the same grounds as an addition, and a
-  // mechanism a reader can understand from the entry is worth that.
+  // The condition is the dependency sections, not the file: a pin change is a supply-chain decision
+  // on the same grounds as an addition, and `overrides` is one of the sections. A commit that edits
+  // the rest of package.json, such as a release's version stamp, owes no line.
   /**
    * Without it, a dependency arrives with no record of what else was considered, and the next
    * person to ask "why do we depend on this" has only the package name to go on.
    */
   newDependencyNeedsReason: guardrail()
     .at(commit)
-    .description("A commit that changes package.json must record why, and what else was checked.")
-    .check(commitReason({ whenChanged: ["package.json"], token: "new-dep" }))
+    .description("A commit that moves a dependency in package.json must record why, and what else was checked.")
+    .check(reasonForMovedDependency({}))
     .message(
-      "This commit changes package.json and its message records no reason. If it adds or moves a dependency, put `new-dep: <name> — <why, and what else was checked>` on a line of its own in the message. If the package.json change belongs to another commit, take it out of this one.",
+      "This commit moves a dependency in package.json and its message records no reason. Put `new-dep: <name> — <why, and what else was checked>` on a line of its own in the message. If the package.json change belongs to another commit, take it out of this one.",
     )
     .test({
       pass: [
-        { message: "feat: x\n\nnew-dep: zod — checked ajv", staged: ["package.json"] },
+        { message: "feat: x\n\nnew-dep: zod — checked ajv", staged: ["package.json"], world: { exec: ADDS_ZOD } },
         { message: "feat: x", staged: ["src/a.ts"] },
+        // The release's version stamp: package.json changes, no dependency does.
+        { message: "chore(release): 1.2.3", staged: ["package.json"], world: { exec: STAMPS_VERSION } },
+        // A section the list names is not the only thing a commit may change beside it.
+        { message: "feat: x", staged: ["package.json"], world: { exec: { "git show HEAD:package.json": { stdout: '{"scripts":{"a":"x"}}' }, "git show :package.json": { stdout: '{"scripts":{"a":"y"}}' } } } },
       ],
-      block: [{ message: "feat: x", staged: ["package.json"] }],
+      block: [
+        { message: "feat: x", staged: ["package.json"], world: { exec: ADDS_ZOD } },
+        // An override is a dependency decision too.
+        { message: "feat: x", staged: ["package.json"], world: { exec: { "git show HEAD:package.json": { stdout: '{"overrides":{"a":{"b":"1"}}}' }, "git show :package.json": { stdout: '{"overrides":{"a":{"b":"2"}}}' } } } },
+      ],
     }),
 
   // Keyed on the dependency BLOCKS, not on the file: a repository.url fix moves no lockfile, and
