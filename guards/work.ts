@@ -1,4 +1,8 @@
-// flow/guards/work.ts — what a repo that runs the `work` lifecycle tells its agents about the record.
+// flow/guards/work.ts — NOT BOUND: flow.config.ts does not import this pack. Its one breadcrumb
+// watches `.work/`, which git ignores, so git never reports a change there and it can never fire.
+// The file stays until `house.noDeleteGuards` lets it be deleted.
+//
+// What a repo that runs the `work` lifecycle would tell its agents about the record.
 //
 // ONE BREADCRUMB. The command rules this pack carried (a builder may not run the parent's `work plan`
 // verbs, a parent does not tick a box, nobody files an inbox item) are gone: flow 0.4 judges a
