@@ -1739,7 +1739,7 @@ export const astGrep = defineCheck(
 );
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// CASES — a canned ctx, and the runner that walks every bound entry's
+// CASES — a canned ctx, and the runner that walks the entries it is handed
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 //
 // A case is a canned ctx, and it CAN be, because a check reads the world only through one. That
@@ -2040,7 +2040,7 @@ export function testTail(disabled: number, leftOut: number): string {
 }
 
 /**
- * Every bound entry's cases, driven — what `flow test` is.
+ * The cases of the entries it is handed, driven — what `flow test` is: the repo's own packs' entries, or every bound one with `--all`.
  *
  * Disabled entries are skipped: they are listed with their reason and never run, so asking them to
  * prove anything is how an opt-out becomes cheaper to delete than to explain. Breadcrumbs carry no
