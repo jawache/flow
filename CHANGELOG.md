@@ -2,6 +2,56 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [0.4.0](https://github.com/jawache/flow/compare/v0.3.2...v0.4.0) (2026-11-19)
+
+### ⚠ BREAKING CHANGES
+
+* **status:** 0.4 judges at the commit and at a short list of commands, ships one pack, and installs from GitHub. See docs/user/migrations/0.4.0.md.
+
+### Features
+
+* **adapter:** a breadcrumb is shown after a tool call that changed a file, found from git's list of changed paths in every worktree the call worked in, and a shell change counts in the turn (flow-19/9) ([8bad0b7](https://github.com/jawache/flow/commit/8bad0b7f1010512941af160c9a83ea27aa7254e8))
+* **adapter:** a Codex hook run is proved end to end in a temp repo, and status prints the trust note under its row (flow-19/8) ([9a8c447](https://github.com/jawache/flow/commit/9a8c44736d0d2685c1878ad2906c837aa4f414c2))
+* **adapter:** flow facts reads each session through the harness that wrote it, a subagent's Codex rollout joins its parent, and the harnesses share their hooks-file and store code (flow-19/8) ([d66d9e1](https://github.com/jawache/flow/commit/d66d9e187ed91147ae99b6c8c5494f7de9e0e578))
+* **adapter:** flow runs under Codex: its six hooks, its payloads, its transcript, and the two trust gates named (flow-19/8) ([2e343ff](https://github.com/jawache/flow/commit/2e343ff247cc28c6e0eb97097eddb713ddec3a1b))
+* **checks:** commitMessage and docLinks are stock checks, protectedPath takes paths and judges a commit, oneWriter and substitutionInProse are gone (flow-19/5) ([c22fb7e](https://github.com/jawache/flow/commit/c22fb7e9f175fe2ad903830e269591697fe0413f))
+* **commit:** every commit rule runs once, in git's commit-message hook, with the message, the deleted paths and the added paths (flow-19/3) ([2aa0233](https://github.com/jawache/flow/commit/2aa0233931bc1511d41cb1305ad1951b5cb53083))
+* **engine:** a state file is changed under a lock so two hooks at once cannot drop a mark, a compaction leaves no mark, the log has a change row, and flow facts counts a changed file from change rows (flow-19/9) ([7911053](https://github.com/jawache/flow/commit/7911053d0dd6edd891209ad1ee52e8f962001157))
+* **grammar:** the moment is fileChange in place of touch, a guardrail bound at it does not compile, and the breadcrumbs of this repo's guards are bound at fileChange (flow-19/9) ([4923587](https://github.com/jawache/flow/commit/49235879c6697c742c8c4311002136577cc5b370))
+* **guards:** flow's own product may not import a harness's folder (flow-19/1) ([3e8152f](https://github.com/jawache/flow/commit/3e8152f3aea32f67131f6d4f3a65cdfe39932369))
+* **init:** flow init is interactive, detects the harnesses, and writes every registration inside the repo (flow-19/7) ([ea99fb5](https://github.com/jawache/flow/commit/ea99fb53e0b1e2843c9049947fc25b9afcca08d5))
+* **justfile:** just test takes a file and a name; gate and guard-status build first (flow-9/5) ([b9323c9](https://github.com/jawache/flow/commit/b9323c97f7e89e9a28b65fd1f70d5d66f4945a82))
+* **language:** a command in a for loop is listed once per value, each with its own folder (flow-9/2) ([fdc1c4a](https://github.com/jawache/flow/commit/fdc1c4afd096eb0e959ba325a881f4cf160b305f))
+* **language:** a command's program, arguments and redirects hold the values of the line's own variables (flow-9/1) ([4e5918a](https://github.com/jawache/flow/commit/4e5918a83bb713791e033f0c50bfb0fd24ad342a))
+* **packs:** the flow pack takes no parameter and refuses a commit that deletes the config, the gate or a harness registration; init writes a config that binds it (flow-19/10) ([c82b117](https://github.com/jawache/flow/commit/c82b117bfd33149cabee9e5f44dfaf316365b732))
+* **packs:** the node warning in .work says to call tools by node_modules/.bin, not npx (flow-7/4) ([49a28cd](https://github.com/jawache/flow/commit/49a28cdd8ab7f6ef41c93205df81034727fe2cb4))
+* **packs:** the work pack warns to keep the link's path when running Node in .work (flow-7/1) ([ce60481](https://github.com/jawache/flow/commit/ce60481e5840b8c904e6257d13f099a165eacfb1))
+* **parse:** read unbash 6's tree — elif branches, test operands, glob parts, and a command in square brackets (flow-19/4) ([934a362](https://github.com/jawache/flow/commit/934a36218482b527785860fd080d0841190e053f))
+* **release:** a release is a tag on a second commit that holds dist/, and release-check installs it with scripts off; no recipe links or publishes (flow-19/11) ([f0c665e](https://github.com/jawache/flow/commit/f0c665e096d5d2fb38cbcbf042793bc08f417071))
+* **status:** flow status prints what the tutorial and the CLI page print (flow-19/11) ([304fe6b](https://github.com/jawache/flow/commit/304fe6b94d402e365806f0161b43ed0168909218))
+
+### Bug Fixes
+
+* **adapter:** flow facts leaves a background task's notice out of its prompts (flow-10/1) ([5549888](https://github.com/jawache/flow/commit/55498888e8f5ad6bd76f21013aafd3c232e29967))
+* **adapter:** read detection splits a line's own variable as the shell does (flow-9/1) ([a13f22c](https://github.com/jawache/flow/commit/a13f22c1d72552ba54532934ca1665c8b1ee0f9b))
+* **commit:** diffAdds reads the commit's own index, uninstall and status cover the 0.3 pre-commit gate, comments stay when no editor ran (flow-19/3) ([ffa9c73](https://github.com/jawache/flow/commit/ffa9c739603fb1b6c41f64b5c148c94097ae36a6))
+* **facts:** flow facts leaves out a recorded session no transcript stands behind, and says how many (flow-19/14) ([3253937](https://github.com/jawache/flow/commit/32539372ce372ebfcf1e3321553c0807b8459ff0))
+* **guard:** house.newFlowCommandNeedsCaller knows uninstall already exists (flow-19/14) ([0853970](https://github.com/jawache/flow/commit/0853970b4130abc6798496225e03d22e6366aba5))
+* **guards:** recordShape and logByDaemon judge the record through its real path again (flow-8/4) ([d623008](https://github.com/jawache/flow/commit/d623008a5389b26e2b903ca21364741f32c7e8bb))
+* **guards:** say why recordShape and logByDaemon keep .everywhere() over work's copy (flow-8/4) ([5e8da6d](https://github.com/jawache/flow/commit/5e8da6d1a01b45112c6243e797127582aeb5b544))
+* **guards:** the gate-skip rule keeps the plumbing the review refused (flow-19/10) ([0347782](https://github.com/jawache/flow/commit/03477821dd0eb3f9c2b758c4e2a38250c5d6d095))
+* **guards:** the record rule accepts problem and solution, as work's copy does (flow-9) ([3b47163](https://github.com/jawache/flow/commit/3b471631bbc670a94953e9217210fe86c17b4e9f))
+* **guards:** the record rule accepts problem and solution, as work's copy does (flow-9) ([768914e](https://github.com/jawache/flow/commit/768914ed9635bb18e0bd18b645db224376f3ea4b))
+* **guards:** the shell-parse breadcrumb also fires on the Claude Code adapter's pure home (flow-19/1) ([6bdbbc1](https://github.com/jawache/flow/commit/6bdbbc12ec843c7318dfee987de678298dcd8a82))
+* **guard:** the commit gate refuses a commit that deletes flow.config.ts, and flow.noDeleteGuardrails stops naming the hook it cannot protect (flow-19/14) ([32143d3](https://github.com/jawache/flow/commit/32143d37ecfde85fb5016a785e19d472e23c552c))
+* **guard:** the commit gate runs the worktree's own flow, and the session note names the recipes (flow-9/5) ([dc84eeb](https://github.com/jawache/flow/commit/dc84eebf460ccd147df66597f4b065a288baceab))
+* **guard:** the new-dependency rule asks for a reason only when a dependency section of package.json moves, and the release drops its false new-dep line (flow-19/14) ([866bab6](https://github.com/jawache/flow/commit/866bab6be5f80181437611ce10863c4f55997ca0))
+* **justfile:** just test passes a test name with spaces through intact (flow-9/5) ([f48027e](https://github.com/jawache/flow/commit/f48027e98e97b6f2ce3283fef9ab1c11a1cacfd2))
+* **justfile:** the recipes run this checkout's own flow, not the one on PATH (flow-9/1) ([24c8a6e](https://github.com/jawache/flow/commit/24c8a6e4a9dc2078a4e08783322fbff303bcc88d))
+* **language:** a line's loops are read into at most 1,000 copies of their bodies (flow-9/2) ([1a3285b](https://github.com/jawache/flow/commit/1a3285b7bc87c06b81f537b3da79155c9d3e6c2c))
+* **parse:** a bracket glob keeps its variables and a glob is plain text before a substitution, as on 5.1 (flow-19/4) ([6bb12b4](https://github.com/jawache/flow/commit/6bb12b485ee5d5e2b7ee55a90e6d4398f76fd754))
+* **release:** the release commit answers the commit gate: it names that no dependency moves (flow-19/11) ([4738b26](https://github.com/jawache/flow/commit/4738b268cfbdf2c92149e2027bff5aa26101383d))
+* **tools:** the package test reads npm 12's pack report, an object keyed by package name (flow-19) ([0fae8bd](https://github.com/jawache/flow/commit/0fae8bdc7b7742c4f8b63a691d1e74f49a6177d7))
 ## [0.3.2](https://github.com/jawache/flow/compare/v0.3.1...v0.3.2) (2026-11-06)
 
 ### Features
