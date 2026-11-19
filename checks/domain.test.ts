@@ -1722,6 +1722,16 @@ describe("runCase", () => {
     expect(result.detail).toContain("does not catch what it says it catches");
   });
 
+  it("a case whose file is outside .on(…) never reached the rule, pass or block", async () => {
+    const scoped = entry({ on: ["app/**"] });
+    for (const want of ["pass", "block"] as const) {
+      const result = await runCase(scoped, want === "pass" ? passes : blocks, file("src/a.ts", ""), want, 0);
+      expect(result.ok).toBe(false);
+      expect(result.detail).toBe('this case never reached the rule: src/a.ts is outside .on("app/**")');
+    }
+    expect((await runCase(scoped, blocks, file("app/a.ts", ""), "block", 0)).ok).toBe(true);
+  });
+
   it("a pass case the rule blocks reports the rule's own detail", async () => {
     const result = await runCase(entry({}), blocks, file("a.ts", ""), "pass", 1);
     expect(result.ok).toBe(false);

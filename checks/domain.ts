@@ -1964,6 +1964,9 @@ export async function runCase(
     };
   }
 
+  const outside = outsideOn(entry, moment, c);
+  if (outside !== undefined) return { ...head, ok: false, detail: outside };
+
   const unanswered: Unanswered[] = [];
   let blocked: boolean;
   let answer: Verdict = { ok: true };
@@ -1990,6 +1993,19 @@ export async function runCase(
   }
   const why = answer.ok || answer.detail === undefined ? "" : `: ${answer.detail}`;
   return { ...head, ok: false, detail: `expected a pass and the check blocked it${why}` };
+}
+
+/**
+ * The sentence a case earns when it stages files and every one is outside the entry's `.on(…)`, or
+ * undefined when the case can reach the rule. `.ignore(…)` is not asked: a file the rule ignores is a case about the ignore list. The rule is never asked, so a pass case would go green
+ * and a block case would read as a rule that does not catch what it says: both are the case's fault.
+ */
+function outsideOn(entry: LoadedEntry, moment: Moment, c: Case): string | undefined {
+  const { on } = entry.spec;
+  if (moment !== "commit" || !on?.length) return undefined;
+  const staged = readCase(c).facts.staged ?? [];
+  if (staged.length === 0 || staged.some((path) => inScope({ on }, path))) return undefined;
+  return `this case never reached the rule: ${staged.join(", ")} is outside .on(${on.map((g) => `"${g}"`).join(", ")})`;
 }
 
 /** The sentence an unanswered reach earns — it names what to add to the case. */
