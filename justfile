@@ -88,9 +88,16 @@ test-commit:
     just typecheck
     just test
 
-[doc("Pin the Getting started tutorial to the binary: every transcript on docs/user/tutorials/getting-started.md is what the built flow prints. Outside the commit gate, since the docs land before the code that prints them; the full suite and `just release-check` run it.")]
+[doc("Pin the Getting started tutorial to the binary: every transcript on docs/user/tutorials/getting-started.md is what the built flow prints. Outside the commit gate, since the docs land before the code that prints them; `just full-suite` and `just release-check` run it.")]
 test-tutorial:
     FLOW_TUTORIAL=1 npx vitest run e2e/product.test.ts -t "the Getting started tutorial's transcripts"
+
+[doc("The full suite, the one name a plan's last task runs: the gate, the commit suite, coverage and the tutorial. It stops short of the rehearsal release, which needs the next version's migration guide and runs on release day in `just release-check`.")]
+full-suite:
+    just gate
+    just test-commit
+    just test-coverage
+    just test-tutorial
 
 [doc("Run the full commit gate over every file git can see, tracked or not, as if all of it were staged — the same guardrails .githooks/commit-msg runs on the staged changes, plus every file the last commit has that is now gone.")]
 gate: build
