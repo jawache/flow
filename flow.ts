@@ -27,7 +27,7 @@
 // The hook and commit verbs are one line each here, and that is the seam working: everything they
 // do is the adapter's, and this file only owns argv, the three IO edges and the exit code.
 
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import { registerHooks, stripTypeScriptTypes } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -40,7 +40,7 @@ import { claudeCode } from "./adapter/claude/claude.ts";
 import { codex } from "./adapter/codex/codex.ts";
 import { commitEntry, projectRoot, registerGrammars } from "./adapter/shell.ts";
 import { facts } from "./adapter/archive.ts";
-import { hookEntry } from "./adapter/hook.ts";
+import { hookEntry, realPath } from "./adapter/hook.ts";
 import {
   CONFIG_FILE,
   configLoadFault,
@@ -165,20 +165,10 @@ async function test(path: string, all: boolean): Promise<number> {
   if (all) return report(entries, await runCases(entries));
   // The repo is the git work tree that holds the config, or the config's folder when there is none. A pack's file is judged with its links followed: the `flow`
   // pack is reached through a link in `node_modules` that points back into this checkout.
-  const root = realpathSync(projectRoot(dirname(resolve(process.cwd(), path))));
-  const own = entries.filter((e) => !isInstalledPack(realFileOf(e.origin), root));
+  const root = realPath(projectRoot(dirname(resolve(process.cwd(), path))));
+  const own = entries.filter((e) => !isInstalledPack(e.origin && realPath(fileURLToPath(e.origin)), root));
   const leftOut = entries.filter((e) => !own.includes(e)).reduce((n, e) => n + casesOf(e), 0);
   return report(own, await runCases(own), leftOut, entries);
-}
-
-/** A pack's file as the disk has it, links followed; undefined when it cannot be read. */
-function realFileOf(origin: string | undefined): string | undefined {
-  if (origin === undefined) return undefined;
-  try {
-    return realpathSync(fileURLToPath(origin));
-  } catch {
-    return undefined;
-  }
 }
 
 /**
