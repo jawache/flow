@@ -15,7 +15,7 @@
 // Nothing here pushes, and nothing publishes.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -87,12 +87,14 @@ function check(): void {
     // this repo's do: core.hooksPath is per clone, so it is set here, and the gate resolves flow
     // through the linked node_modules.
     // node_modules is this checkout's, entry by entry, except `@jawache/flow`, which links to the clone as `just install` does.
-    // The rest of `@jawache`, such as `@jawache/flow-packs`, which this repo's config binds, is linked like any other entry.
+    // The rest of `@jawache`, such as `@jawache/flow-packs`, which this repo's config binds, is COPIED, not linked:
+    // a link resolves its own `@jawache/flow` from this checkout, and once the clone's version moves, TypeScript
+    // reads the two copies of flow's types as two packages and refuses every pack the config binds.
     mkdirSync(join(clone, "node_modules", "@jawache"), { recursive: true });
     for (const name of readdirSync(join(PACKAGE, "node_modules")))
       if (name !== "@jawache") symlinkSync(join(PACKAGE, "node_modules", name), join(clone, "node_modules", name));
     for (const name of readdirSync(join(PACKAGE, "node_modules", "@jawache")))
-      if (name !== "flow") symlinkSync(join(PACKAGE, "node_modules", "@jawache", name), join(clone, "node_modules", "@jawache", name));
+      if (name !== "flow") cpSync(join(PACKAGE, "node_modules", "@jawache", name), join(clone, "node_modules", "@jawache", name), { recursive: true });
     symlinkSync(clone, join(clone, "node_modules", "@jawache", "flow"), "dir");
     run("git", ["config", "core.hooksPath", ".githooks"], clone);
     // The gate loads flow.config.ts through that link, so the bundles it imports exist first.
