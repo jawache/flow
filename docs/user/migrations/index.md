@@ -33,7 +33,7 @@ steps that index lists. Stop and report if a Verify step fails.
 
 | Version | Released | Upgrades from | Changes needed |
 | --- | --- | --- | --- |
-| [0.4.0](./0.4.0.md) | not yet released | 0.3.2 | Install from GitHub as a dev dependency. Re-run `flow init`. Replace the nine [packs](../reference/glossary.md#pack) flow no longer ships. Move rules off `write`, `deletion` and `touch`. Move commit-message rules to `commit`. Remove `oneWriter`, `substitutionInProse`, `revert` and `snapshotInclude`. Remove the machine-wide install |
+| [0.4.0](./0.4.0.md) | 2026-11-19 | 0.3.2 | Install from GitHub as a dev dependency. Re-run `flow init`. Replace the nine [packs](../reference/glossary.md#pack) flow no longer ships. Move rules off `write`, `deletion` and `touch`. Move commit-message rules to `commit`. Remove `oneWriter`, `substitutionInProse`, `revert` and `snapshotInclude`. Remove the machine-wide install |
 | [0.3.2](./0.3.2.md) | 2026-11-06 | 0.3.1 | Only for a repo with its own command rule that must judge a command run outside the repository: mark it `.everywhere()` |
 | [0.3.1](./0.3.1.md) | tagged, not published | 0.3.0 | Re-run `flow init` to register `SubagentStart` |
 | [0.3.0](./0.3.0.md) | 2026-10-17 | 0.2.3 | Re-run `flow init`. Add the repo-first line to `.githooks/pre-commit`. Give every [guardrail](../reference/glossary.md#guardrail) a block case. Rewrite each `banCommands` entry, `substitutionInProse` head and `justfile` `recipes` key in words. Replace `tokenizeCommand` and `gitInvocations` |
