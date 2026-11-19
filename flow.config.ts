@@ -17,7 +17,7 @@
 // very checkout. This repo is therefore a CONSUMER of its own package, on exactly the path a
 // stranger takes: a door that stopped exporting a symbol breaks this file before it breaks anybody
 // else's. Eight packs come from `@jawache/flow-packs`, installed from its GitHub tag like any project
-// installs them. Two are this repo's own, in `guards/` and shipped to nobody: `driven`, and `house` —
+// installs them. Two are this repo's own, in `guards/` and shipped to nobody: `work`, and `house` —
 // the project map, the internal layout, the one-way import fences, and the ratchet on this binary's
 // verb surface.
 //
@@ -27,7 +27,7 @@
 import { defineConfig, override, pack } from "@jawache/flow";
 import { flow } from "@jawache/flow/packs";
 import { docs } from "@jawache/flow-packs/docs";
-import { driven } from "./guards/driven.ts";
+import { work } from "./guards/work.ts";
 import { fcis } from "@jawache/flow-packs/fcis";
 import { git } from "@jawache/flow-packs/git";
 import { house } from "./guards/house.ts";
@@ -142,9 +142,9 @@ export default defineConfig([
 
   // ── driven by the work daemon ──
   //
-  // `guards/driven.ts` is the default workflow's pack, copied in by `work init --template` rather
+  // `guards/work.ts` is the default workflow's pack, copied in by `work init --template` rather
   // than written here.
-  pack(driven),
+  pack(work),
 
   // ── this repo's own terrain ──
   pack(house, { pure: PURE }),

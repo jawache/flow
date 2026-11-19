@@ -1,11 +1,11 @@
-// examples/default/guards/driven.ts — the flow pack a repo driven by work binds.
+// examples/default/guards/work.ts — the flow pack a repo driven by work binds.
 //
 // Two entries: a breadcrumb that tells every session how a driven repo works, and the guardrail that
 // refuses the Playwright CLI's `close-all` and `kill-all`, which close every session's browsers. The
 // daemon enforces neither; a driven repo turns them on in its own flow.config.ts:
 //
-//   import { driven } from "./guards/driven.ts";
-//   export default defineConfig([ …, pack(driven) ]);
+//   import { work } from "./guards/work.ts";
+//   export default defineConfig([ …, pack(work) ]);
 //
 // `work init --template` copies this file into the repo's guards/ folder, never links it: the
 // import of @jawache/flow resolves from the repo's own node_modules, which a copy under ~/.work has
@@ -48,7 +48,7 @@ const playwrightAll: Check = (ctx) => {
  *
  * @setup `work` on the PATH (it provides `work log`), and a `work.yml` at the repo root.
  */
-export const driven = definePack("driven", {
+export const work = definePack("work", {
   /**
    * Without it, a session in a driven repo reads `[work]` lines as a stranger's chatter, and
    * answers in the terminal where nobody is reading.
