@@ -4,7 +4,7 @@ summary: "from an unguarded repo to a refused commit, a refused command and a br
 
 # Getting started
 
-In this tutorial, we guard a git repo with flow. We see a commit refused, a command refused before it runs, and a [breadcrumb](../reference/glossary.md#breadcrumb) shown to an agent. Then we run every rule's own test cases. It takes about ten minutes, and every command below is real, so run each one as you read.
+In this tutorial, we guard a git repo with flow. We see a commit refused, a command refused before it runs, and a [breadcrumb](../reference/glossary.md#breadcrumb) shown to an agent. Then we run the test cases of the rules we wrote. It takes about ten minutes, and every command below is real, so run each one as you read.
 
 You need **Node 24 or later**, git, and a git repo to guard. A throwaway repo is fine. For steps 6 and 7 you need Claude Code or Codex.
 

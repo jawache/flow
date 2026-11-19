@@ -52,7 +52,7 @@ the program that runs the agent and calls flow's hooks: Claude Code or Codex
 
 ## installed pack
 
-a pack whose file is under `node_modules` or outside the repo. Every other pack is the repo's own
+a pack whose file, with links followed, is under `node_modules` or outside the repo. Every other pack is the repo's own
 
 ## moment
 

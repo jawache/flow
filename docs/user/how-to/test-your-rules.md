@@ -53,7 +53,7 @@ Every [guardrail](../reference/glossary.md#guardrail) has its own cases, written
    flow test
    ```
 
-   The cases of an [installed pack](../reference/glossary.md#installed-pack) run in the repo that writes the pack. `flow test` prints how many it left out, and `flow test --all` runs them too.
+   `flow test` prints how many cases of [installed packs](../reference/glossary.md#installed-pack) it left out, and `flow test --all` runs them too.
 
    Each case runs through the same `ctx` the live rules build, with the world supplied as data. When every case passes, `flow test` prints one line. Each failing case prints its own line, naming the entry and the case, and the command exits 1.
 
