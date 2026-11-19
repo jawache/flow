@@ -24,7 +24,7 @@ import { basename, dirname, join, posix } from "node:path";
 import { type Category, refusalText, type LoadResult, type Settings, type TurnAction } from "../language/domain.ts";
 import { brief, categoriesIn, DELETED, guard, recorder, runRows, type AgentOf, type Identity, type Marks, type Notice, type Outcome, type RecordedStep, type Row, type SessionState, type Tree } from "../engine/domain.ts";
 import { appendRows, appendSteps, isOff, isRecording, loadState, readRows, stickyIdentity, updateState, writeMarker } from "../engine/state.ts";
-import { agentOf, ALLOW, awaitsBrief, changeEvents, changeRow, commitRange, editedFile, folderChanges, foldersToLook, hermeticEnv, holdsForBrief, isHookEvent, namedChange, nothingBound, noticesThatCouldShow, outsideOf, opensCall, reachesAnotherWorktree, readFault, ridesRefusal, sessionFactsFrom, shellChangesOf, shellReadRows, statusPaths, toEvent, toResult, toolRow, whileBroken, withShellChanges, workedPaths, worktreeFolders, worktreesWorkedIn, type AdapterEvent, type Answer, type BriefAdapterEvent, type EventWorld, type HookEvent, type Refused, type Shown } from "./domain.ts";
+import { agentOf, ALLOW, awaitsBrief, changeEvents, changeRow, commitRange, folderChanges, foldersToLook, hermeticEnv, holdsForBrief, isHookEvent, namedChange, nothingBound, noticesThatCouldShow, outsideOf, opensCall, reachesAnotherWorktree, readFault, ridesRefusal, sessionFactsFrom, shellChangesOf, shellReadRows, statusPaths, toEvent, toResult, toolRow, whileBroken, withShellChanges, workedPaths, worktreeFolders, worktreesWorkedIn, type AdapterEvent, type Answer, type BriefAdapterEvent, type EventWorld, type HookEvent, type Refused, type Shown } from "./domain.ts";
 import type { Harness, HookPayload, HookResult } from "./harness.ts";
 import { currentBranch, loadRegime, readText, realWorld } from "./shell.ts";
 
@@ -264,7 +264,7 @@ function committedBetween(folder: string, before: Tree, after: Tree): string[] {
 function workedFolders(session: Session, payload: HookPayload): string[] {
   const root = realPath(session.root);
   // Each folder once: a command can return to one with `cd -`, and two names can be one folder.
-  const paths = [...new Set([...new Set(workedPaths(payload, session.root, homedir()))].map(realPath))];
+  const paths = [...new Set([...new Set(workedPaths(payload, session.root, homedir(), session.harness.editedFile(payload)))].map(realPath))];
   const others = reachesAnotherWorktree(paths, root, holdsGit) ? worktreesWorkedIn({ paths, root, worktrees: repoWorktrees(session.root) }) : [];
   return [root, ...others];
 }
@@ -364,7 +364,7 @@ export async function runHook(harness: Harness, hook: HookEvent, payload: HookPa
   // and the stream reads in the order things happened. A shell command is recorded before it runs,
   // because one the guard refuses never reaches PostToolUse; every other call is recorded after.
   if (isCall(hook) && !off && opensCall(hook, tool)) {
-    const row = toolRow(payload, root);
+    const row = toolRow(payload, root, harness.editedFile(payload) !== null);
     if (row) rows.push(row);
     if (hook === "pre-tool-use") rows.push(...shellReadRows(payload, root, homedir()));
   }
@@ -457,7 +457,7 @@ async function judge(args: {
   // the same change. The lock is held for a decision and no IO: git, the prose files, the transcript
   // and the real paths are all read BEFORE it, because a hook that waits gives up after seconds.
   const stored = loadState(session.root, session.id, session.who.agent);
-  const written = hook === "post-tool-use" ? editedFile(payload) : null;
+  const written = hook === "post-tool-use" ? session.harness.editedFile(payload) : null;
   const edited = written === null ? null : realPath(posix.resolve(session.root, written));
   const committed = new Map<string, { readonly head: string | null; readonly files: string[] }>();
   if (hook === "post-tool-use")

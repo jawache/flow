@@ -3,7 +3,7 @@
 // The hook payload and the answers are every harness's and are in ../domain.ts.
 
 import { parseShellSteps, type TurnAction } from "../../language/domain.ts";
-import { bashReads, EDIT_TOOLS, hooksFileOf, type HooksFileHook, relativise, repoFirst, text, type HookEvent } from "../domain.ts";
+import { bashReads, hooksFileOf, type HooksFileHook, relativise, repoFirst, text, type HookEvent } from "../domain.ts";
 import type { HookPayload, ToolAction, Spawn, SpawnMeta, Steer, TranscriptEvent, TranscriptHead, TranscriptRef } from "../harness.ts";
 
 
@@ -477,6 +477,20 @@ export function parseEvents(jsonl: string, root = "", home?: string): Transcript
     }
   }
   return out;
+}
+
+/**
+ * The tools that CHANGE a file: which names count as an edit is this harness's knowledge, and this
+ * is the one set. The recorder and the turn-end rule both read it, so a notebook edit is work for both.
+ */
+export const EDIT_TOOLS: ReadonlySet<string> = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
+
+/** The file an edit tool's call (`EDIT_TOOLS`) names, as named; null for any other call, or none named. */
+export function editedFile(payload: HookPayload): string | null {
+  if (!EDIT_TOOLS.has(text(payload.tool_name))) return null;
+  const input = payload.tool_input ?? {};
+  const named = text(input["file_path"] ?? input["notebook_path"]);
+  return named === "" ? null : named;
 }
 
 /** What a tool call did, in flow's words: the product's reading of a transcript never sees a tool name. */

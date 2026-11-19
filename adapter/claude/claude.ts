@@ -11,7 +11,7 @@
 import { join } from "node:path";
 import { DELIVERS, HOOK_EVENTS } from "../domain.ts";
 import type { Harness, HookPayload } from "../harness.ts";
-import { HOST_SURFACE, REPO_SETTINGS, agentSettingOf, briefHead, hooksFile, ownTranscriptPath, parseEvents, spawnMeta, spawnsIn, steerOf, tokensFromTranscript, transcriptHead, turnActions } from "./domain.ts";
+import { HOST_SURFACE, REPO_SETTINGS, agentSettingOf, briefHead, editedFile, hooksFile, ownTranscriptPath, parseEvents, spawnMeta, spawnsIn, steerOf, tokensFromTranscript, transcriptHead, turnActions } from "./domain.ts";
 import { configRoot, readStore, readTranscript } from "./store.ts";
 
 /**
@@ -50,6 +50,7 @@ export const claudeCode: Harness = {
   claims,
   projectRoot,
   machineSettingsPath,
+  editedFile,
   registering: { repoFile: REPO_SETTINGS, hostSurface: HOST_SURFACE, ...hooksFile },
   transcripts: {
     own: ownTranscriptPath,

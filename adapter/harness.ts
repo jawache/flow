@@ -284,6 +284,8 @@ export interface Harness {
   readonly noHookNote: string | null;
   /** The harness's machine-wide settings file, where flow 0.3 wrote. Read for a warning, and cleaned by `flow uninstall --machine`: never written by `flow init`. */
   readonly machineSettingsPath: () => string;
+  /** The file this call changed, as the payload names it, or null: a harness whose agent edits only through the shell names none. */
+  readonly editedFile: (payload: HookPayload) => string | null;
   readonly registering: Registering;
   readonly transcripts: Transcripts;
 }

@@ -3283,24 +3283,6 @@ function within(path: string, dir: string): boolean {
   return path === dir || path.startsWith(dir.endsWith("/") ? dir : `${dir}/`);
 }
 
-/**
- * The tools that CHANGE a file — which names count as an edit is harness knowledge, and this is the
- * one set.
- *
- * There were two in the old engine and they had already drifted: the recorder's knew about
- * `NotebookEdit` and the turn-end rule's did not, so a notebook edit was work for the log and not
- * work for the rule watching for work. A fact about the host's tool names belongs in one place.
- */
-export const EDIT_TOOLS: ReadonlySet<string> = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
-
-/** The file an edit tool's call (`EDIT_TOOLS`) names, as named; null for any other call, or none named. */
-export function editedFile(payload: HookPayload): string | null {
-  if (!EDIT_TOOLS.has(text(payload.tool_name))) return null;
-  const input = payload.tool_input ?? {};
-  const named = text(input["file_path"] ?? input["notebook_path"]);
-  return named === "" ? null : named;
-}
-
 /** Where the shell stood when a call started: the payload's `cwd`, against the guarded folder, which it is when absent. */
 function shellCwd(payload: HookPayload, root: string): string {
   return posix.resolve(root, text(payload["cwd"]));
@@ -3324,11 +3306,10 @@ function knownFolders(commands: readonly ShellCommand[] | null): string[] {
 }
 
 /**
- * Every place a call worked, absolute: the file an edit tool wrote, or the folders a shell command
- * ran in (`commandFolders`). What `worktreesWorkedIn` places in a worktree.
+ * Every place a call worked, absolute: the file an edit tool wrote (`written`, which the harness
+ * names), or the folders a shell command ran in (`commandFolders`). What `worktreesWorkedIn` places in a worktree.
  */
-export function workedPaths(payload: HookPayload, root: string, home: string | undefined): string[] {
-  const written = editedFile(payload);
+export function workedPaths(payload: HookPayload, root: string, home: string | undefined, written: string | null): string[] {
   return written === null ? commandFolders(payload, root, home) : [posix.resolve(root, written)];
 }
 
@@ -3473,7 +3454,7 @@ export function changedBy(before: Tree, after: Tree, committed: readonly string[
 
 /**
  * The file an edit tool's call named, as an absolute path with its links resolved (`absolute`, which
- * the shell makes of `editedFile`), relative to one working folder; null when there is none or it is
+ * the shell makes of the harness's `editedFile`), relative to one working folder; null when there is none or it is
  * outside the folder. It is what a call whose "before" was never taken is left with: a first call,
  * or a call in a worktree this agent has not worked in, has nothing to compare.
  */
@@ -3805,9 +3786,10 @@ const PATH_KEYS = ["file_path", "notebook_path"] as const;
  * EVERY call, including the ones no rule watches and no breadcrumb covers. The subject is whatever
  * the call had — a path (repo-relative, so it matches the globs an entry is written with), a
  * command line, a search pattern and its scope — and a call with no subject is still recorded by
- * name, because "the session ran fifty greps here" is a fact about the area.
+ * name, because "the session ran fifty greps here" is a fact about the area. `edit` is the harness's
+ * answer: whether this call changed the file it names.
  */
-export function toolRow(payload: HookPayload, root = ""): Row | null {
+export function toolRow(payload: HookPayload, root = "", edit = false): Row | null {
   const tool = text(payload.tool_name);
   if (!tool) return null;
   const input = payload.tool_input ?? {};
@@ -3819,7 +3801,7 @@ export function toolRow(payload: HookPayload, root = ""): Row | null {
     // tools change a file is harness knowledge; the engine reads the record back to answer "how
     // much work happened in this area" and may never import this file to ask. So the answer is
     // decided once, at write time, by the only layer entitled to know it.
-    if (input[key]) return { kind: "tool", tool, path: relativise(text(input[key]), root), edit: EDIT_TOOLS.has(tool), ...mode };
+    if (input[key]) return { kind: "tool", tool, path: relativise(text(input[key]), root), edit, ...mode };
   }
   if (tool === "Bash" && input["command"]) return { kind: "tool", tool, command: text(input["command"]), ...mode };
   if (!input["pattern"]) return { kind: "tool", tool, ...mode };

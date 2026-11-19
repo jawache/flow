@@ -6,7 +6,7 @@
 // settings file, its transcripts — is proved in that harness's folder.
 import { describe, it, expect } from "vitest";
 import { DELETED, type Bound, type Row, type Tree } from "../engine/domain.ts";
-import { snipAtWord, changeEvents, noticesThatCouldShow, changeRow, changedBy, commitRange, editedFile, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
+import { snipAtWord, changeEvents, noticesThatCouldShow, changeRow, changedBy, commitRange, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
 import { breadcrumb, defineConfig, definePack, fileChange, loadConfig, pack, session } from "../index.ts";
 import type { Ctx, TurnAction } from "../language/domain.ts";
 import { ranSinceEdit } from "../checks/domain.ts";
@@ -2281,12 +2281,6 @@ describe("a folder's changes when its 'before' was never taken", () => {
     expect(namedChange("/repo.wt/src/a.ts", "/repo"), "a file in another folder").toBeNull();
     expect(namedChange("/repo2/a.ts", "/repo"), "a folder that only shares a name prefix").toBeNull();
     expect(namedChange(null, "/repo")).toBeNull();
-  });
-
-  it("names only the files an edit tool changes: a read, a search and a shell command change none", () => {
-    expect(editedFile({ tool_name: "Write", tool_input: { file_path: "/repo/a.ts" } })).toBe("/repo/a.ts");
-    expect(editedFile({ tool_name: "NotebookEdit", tool_input: { notebook_path: "/repo/n.ipynb" } })).toBe("/repo/n.ipynb");
-    for (const tool of ["Read", "Grep", "Bash"]) expect(editedFile({ tool_name: tool, tool_input: { file_path: "/repo/a.ts", command: "ls" } }), tool).toBeNull();
   });
 
   it("compares with the 'before' when there is one, and falls back to the named file when there is none", () => {

@@ -42,6 +42,8 @@ export const codex: Harness = {
   claims: claimsPayload,
   projectRoot,
   machineSettingsPath,
+  // A Codex agent changes files through the shell: no tool call names one.
+  editedFile: () => null,
   registering: { repoFile: REPO_HOOKS, hostSurface: HOST_SURFACE, ...hooksFile },
   transcripts: {
     own: ownTranscriptPath,

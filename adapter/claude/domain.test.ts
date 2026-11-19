@@ -19,8 +19,8 @@ import { breadcrumb, defineCategory, defineConfig, definePack, guardrail, loadCo
 import { metrics, momentsView, type Block, type Bound, type Row } from "../../engine/domain.ts";
 import { parseCommandLine, parseShellSteps } from "../../language/domain.ts";
 import { claudeCode } from "./claude.ts";
-import { type AdapterEvent, agentOf, ALLOW, awaitsBrief, bashReads, branchFromHead, briefBlock, commandFolders, COMMIT_MSG, CONFIG_FILE, decision, EDIT_TOOLS, type EventWorld, type Facts, FLOW_OFF, foldersBetween, formatFacts, GATE_PATH, guardPaths, holdsForBrief, HOOKS_DIR, type InitFacts, initLines, isGuardPath, isHookEvent, lastMode, LOCAL_BIN, MACHINE_FLAG, mergeNarratives, modesOf, nothingBound, opensCall, outsideOf, PACKAGE_BIN, planInit, planUninstall, reachesAnotherWorktree, readFault, relativise, ridesRefusal, sessionFactsFrom, shellReadRows, type Shown, type SpawnRecord, type Status, status, statusCode, type StatusFacts, statusLines, toEvent, toolRow, toResult, uninstallCode, type UninstallFacts, uninstallLines, weakenedAfterBlock, whileBroken, workedPaths, worktreeFolders, worktreesWorkedIn } from "../domain.ts";
-import { HOST_SURFACE, REPO_SETTINGS, agentSettingOf, bareHook, briefHead, classifyStore, contextTokens, hookCommand, hooksFile, isInjected, ourHookCommand, ownTranscriptPath, parseEvents, projectFolderName, spawnMeta, spawnsIn, steerOf, tokensFromTranscript, transcriptHead, transcriptLines, turnActions } from "./domain.ts";
+import { type AdapterEvent, agentOf, ALLOW, awaitsBrief, bashReads, branchFromHead, briefBlock, commandFolders, COMMIT_MSG, CONFIG_FILE, decision, type EventWorld, type Facts, FLOW_OFF, foldersBetween, formatFacts, GATE_PATH, guardPaths, holdsForBrief, HOOKS_DIR, type InitFacts, initLines, isGuardPath, isHookEvent, lastMode, LOCAL_BIN, MACHINE_FLAG, mergeNarratives, modesOf, nothingBound, opensCall, outsideOf, PACKAGE_BIN, planInit, planUninstall, reachesAnotherWorktree, readFault, relativise, ridesRefusal, sessionFactsFrom, shellReadRows, type Shown, type SpawnRecord, type Status, status, statusCode, type StatusFacts, statusLines, toEvent, toolRow, toResult, uninstallCode, type UninstallFacts, uninstallLines, weakenedAfterBlock, whileBroken, workedPaths, worktreeFolders, worktreesWorkedIn } from "../domain.ts";
+import { EDIT_TOOLS, HOST_SURFACE, REPO_SETTINGS, agentSettingOf, bareHook, briefHead, classifyStore, contextTokens, editedFile, hookCommand, hooksFile, isInjected, ourHookCommand, ownTranscriptPath, parseEvents, projectFolderName, spawnMeta, spawnsIn, steerOf, tokensFromTranscript, transcriptHead, transcriptLines, turnActions } from "./domain.ts";
 
 const { registrations: HOOK_REGISTRATIONS, hooks: HOOK_COSTS, registeredEvents, staleRegistrations, bareRegistrations, withRegistrations, withoutRegistrations } = hooksFile;
 import { type HookPayload, type Steer, type TranscriptEvent } from "../harness.ts";
@@ -584,6 +584,12 @@ describe("the transcript's dialect", () => {
     ]);
   });
 
+  it("names only the files an edit tool changes: a read, a search and a shell command change none", () => {
+    expect(editedFile({ tool_name: "Write", tool_input: { file_path: "/repo/a.ts" } })).toBe("/repo/a.ts");
+    expect(editedFile({ tool_name: "NotebookEdit", tool_input: { notebook_path: "/repo/n.ipynb" } })).toBe("/repo/n.ipynb");
+    for (const tool of ["Read", "Grep", "Bash"]) expect(editedFile({ tool_name: tool, tool_input: { file_path: "/repo/a.ts", command: "ls" } }), tool).toBeNull();
+  });
+
   it("knows which tool names change a file, in one place", () => {
     expect([...EDIT_TOOLS].sort()).toStrictEqual(["Edit", "MultiEdit", "NotebookEdit", "Write"]);
     const jsonl = [human("go"), assistant([use("NotebookEdit", { notebook_path: "n.ipynb" })])].join("\n");
@@ -831,7 +837,7 @@ describe("the flight recorder's row", () => {
     // `edit: true` is stamped here and nowhere else: the engine reads the record back to answer
     // "how much work happened in this area" and may never import this file to ask which of the
     // host's tool names change a file.
-    expect(toolRow(pre("Edit", { file_path: "/repo/src/a.ts" }), ROOT)).toStrictEqual({
+    expect(toolRow(pre("Edit", { file_path: "/repo/src/a.ts" }), ROOT, true)).toStrictEqual({
       kind: "tool",
       tool: "Edit",
       path: "src/a.ts",
@@ -858,7 +864,7 @@ describe("the flight recorder's row", () => {
 
   it("carries the permission mode the host stated for the call, on every shape of row", () => {
     const moded = (tool: string, input: Record<string, unknown>): HookPayload => ({ ...pre(tool, input), permission_mode: "auto" });
-    expect(toolRow(moded("Edit", { file_path: "/repo/a.ts" }), ROOT)).toMatchObject({ mode: "auto" });
+    expect(toolRow(moded("Edit", { file_path: "/repo/a.ts" }), ROOT, true)).toMatchObject({ mode: "auto" });
     expect(toolRow(moded("Bash", { command: "ls" }), ROOT)).toMatchObject({ mode: "auto" });
     expect(toolRow(moded("Grep", { pattern: "x" }), ROOT)).toMatchObject({ mode: "auto" });
     expect(toolRow(moded("Task", {}), ROOT)).toStrictEqual({ kind: "tool", tool: "Task", mode: "auto" });
@@ -2066,7 +2072,7 @@ describe("another worktree of the repository — read when a call works in it", 
   });
 
   it("works where an edit tool writes, absolute, and nowhere for another tool that names a file", () => {
-    const worked = (payload: HookPayload): string[] => workedPaths(payload, root, "/home/me");
+    const worked = (payload: HookPayload): string[] => workedPaths(payload, root, "/home/me", editedFile(payload));
     expect(worked({ tool_name: "Write", tool_input: { file_path: "/code/app.worktrees/feature/a.ts" } })).toEqual(["/code/app.worktrees/feature/a.ts"]);
     expect(worked({ tool_name: "Edit", tool_input: { file_path: "src/a.ts" } })).toEqual(["/code/app/src/a.ts"]);
     expect(worked({ tool_name: "NotebookEdit", tool_input: { notebook_path: "/n.ipynb" } })).toEqual(["/n.ipynb"]);
@@ -2088,7 +2094,7 @@ describe("another worktree of the repository — read when a call works in it", 
   });
 
   it("names the worktree a command ran in, by its cwd or a cd, and nothing for a cd outside the repository", () => {
-    const ran = (command: string, cwd = root): string[] => tell(workedPaths({ tool_name: "Bash", tool_input: { command }, cwd }, root, "/home/me"));
+    const ran = (command: string, cwd = root): string[] => tell(workedPaths({ tool_name: "Bash", tool_input: { command }, cwd }, root, "/home/me", null));
     expect(ran("npm test", "/code/app.worktrees/feature"), "the session's folder is in the worktree").toEqual(["/code/app.worktrees/feature"]);
     expect(ran("cd /code/app.worktrees/fix/src && npm test"), "a cd into it").toEqual(["/code/app.worktrees/fix"]);
     expect(ran("cd /tmp/scratch && ls; cd ../../code/app-other"), "a cd outside the repository, to none of its worktrees").toEqual([]);
