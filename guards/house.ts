@@ -328,7 +328,7 @@ export const house = definePack("house", (repo: Terrain) => ({
           // same rule a guarded repo's own pack obeys from outside and the reason the door can be
           // trusted — a door only one kind of consumer has to use is not a door.
           { from: "packs", to: "language", why: "a pack writes sentences in the grammar; importing the grammar's own file would couple a shipped opinion to a layer path that is free to move" },
-          { from: "packs", to: "checks", why: "the stock checks come through the public door like every other symbol — a pack that reached the layer would be the first consumer allowed to, and the door would stop meaning anything" },
+          { from: "packs", to: "checks", why: "the stock checks come through `index.ts` like every other symbol — a pack that reached the layer would be the first consumer allowed to, and `index.ts` would stop meaning the whole surface" },
           { from: "packs", to: "engine", why: "a pack states rules; matching, scoping and effects are the engine's, and a pack that knew them could no longer be read as a list of claims" },
           { from: "packs", to: "adapter", why: "a pack must not be able to tell which harness is running it — that is what lets the same pack bind in a repo flow has never seen" },
           // And inward: NOTHING imports a pack. The packs are content, and content the machinery
@@ -341,8 +341,8 @@ export const house = definePack("house", (repo: Terrain) => ({
           // THE GUARD, both ways. It consumes the two public doors and nothing else in this tree;
           // and nothing in the package may import it, or one repo's bindings would become part of
           // what everybody installs.
-          { from: "guards", to: "language", why: "this repo's guard is written against the published grammar, through `@jawache/flow` — reaching the layer would prove the door works only for people who do not use it" },
-          { from: "guards", to: "checks", why: "a configured check comes through the public door, the way a stranger's config gets one" },
+          { from: "guards", to: "language", why: "this repo's guard is written against the published grammar, through `@jawache/flow` — reaching the layer would prove `index.ts` works only for people who do not use it" },
+          { from: "guards", to: "checks", why: "a configured check comes through `@jawache/flow`, the way a stranger's config gets one" },
           { from: "guards", to: "engine", why: "a rule states a claim; running it is the engine's job, and a config that imported the runner could not be read as a list of claims" },
           { from: "guards", to: "adapter", why: "a rule must not be able to tell which harness is asking — that is what lets the same rule fire at a keystroke, at a commit and in a replay" },
           { from: "language", to: "guards", why: "the grammar cannot know what one repo bound in it" },
@@ -354,7 +354,7 @@ export const house = definePack("house", (repo: Terrain) => ({
           // behind a recipe reads this package through the doors a stranger reads it through, so what
           // it prints is read off the shipped surface rather than off our layers.
           { from: "tools", to: "language", why: "a tool that reached the grammar's own file would be reading the package from a layer path, and stop seeing what a consumer sees" },
-          { from: "tools", to: "checks", why: "the stock checks come through the public door here too — a second route to them is a second surface to keep working" },
+          { from: "tools", to: "checks", why: "the stock checks come through `index.ts` here too — a second route to them is a second surface to keep working" },
           { from: "tools", to: "engine", why: "a tool asks what a config SAYS; matching, effects and the state home are what happens next, and none of it belongs in a script" },
           { from: "tools", to: "adapter", why: "nothing a recipe prints may depend on which harness is installed — it is the same in every repo that installs this package" },
           { from: "tools", to: "guards", why: "a tool reads what the package SHIPS; this repo's own bindings are not part of that" },
