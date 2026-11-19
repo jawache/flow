@@ -38,7 +38,7 @@ import { isInstalledPack, loadConfig, type FlowConfig, type LoadedEntry } from "
 import { casesOf, runCases, testTail, type CaseResult } from "./checks/domain.ts";
 import { claudeCode } from "./adapter/claude/claude.ts";
 import { codex } from "./adapter/codex/codex.ts";
-import { commitEntry, registerGrammars } from "./adapter/shell.ts";
+import { commitEntry, projectRoot, registerGrammars } from "./adapter/shell.ts";
 import { facts } from "./adapter/archive.ts";
 import { hookEntry } from "./adapter/hook.ts";
 import {
@@ -139,13 +139,13 @@ async function loadFile(path: string): Promise<FlowConfig> {
 }
 
 /** One line per case, and a hit is quoted with what it should have done instead. */
-function report(entries: readonly LoadedEntry[], results: readonly CaseResult[], leftOut = 0): number {
+function report(entries: readonly LoadedEntry[], results: readonly CaseResult[], leftOut = 0, loaded = entries): number {
   const failed = results.filter((r) => !r.ok);
   const bound = entries.filter((e) => e.spec.kind === "guardrail" && !e.spec.disabled).length;
   for (const r of failed) {
     process.stdout.write(`  ✗ ${r.entry} · ${r.expect} case ${r.index + 1}\n      ${r.detail}\n`);
   }
-  const disabled = entries.filter((e) => e.spec.disabled).length;
+  const disabled = loaded.filter((e) => e.spec.disabled).length;
   const tail = testTail(disabled, leftOut);
   if (failed.length === 0) {
     process.stdout.write(`flow test — ${results.length} cases over ${bound} guardrails, all green${tail}\n`);
@@ -163,12 +163,12 @@ async function test(path: string, all: boolean): Promise<number> {
   // one is usually the informative one.
   const entries = entriesOrThrow(loadConfig(config));
   if (all) return report(entries, await runCases(entries));
-  // The repo is the config's own folder. A pack's file is judged with its links followed: the `flow`
+  // The repo is the git work tree that holds the config, or the config's folder when there is none. A pack's file is judged with its links followed: the `flow`
   // pack is reached through a link in `node_modules` that points back into this checkout.
-  const root = realpathSync(dirname(resolve(process.cwd(), path)));
+  const root = realpathSync(projectRoot(dirname(resolve(process.cwd(), path))));
   const own = entries.filter((e) => !isInstalledPack(realFileOf(e.origin), root));
   const leftOut = entries.filter((e) => !own.includes(e)).reduce((n, e) => n + casesOf(e), 0);
-  return report(own, await runCases(own), leftOut);
+  return report(own, await runCases(own), leftOut, entries);
 }
 
 /** A pack's file as the disk has it, links followed; undefined when it cannot be read. */

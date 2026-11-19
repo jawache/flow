@@ -65,6 +65,7 @@ import {
   resolveLang,
   useGrammars,
   runCase,
+  casesOf,
   runCases,
   testTail,
   shellCommands,
@@ -1926,5 +1927,15 @@ describe("testTail", () => {
     expect(testTail(0, 1)).toBe(" · 1 case of installed packs, not run");
     expect(testTail(2, 40)).toBe(" · 2 disabled, not run · 40 cases of installed packs, not run");
     expect(testTail(0, 0)).toBe("");
+  });
+});
+
+describe("casesOf", () => {
+  const entry = (spec: object) => ({ spec }) as unknown as Parameters<typeof casesOf>[0];
+  const check = () => ({ ok: true });
+  it("sums pass and block cases, and is 0 for a disabled entry", () => {
+    const test = { pass: [{}, {}], block: [{}] };
+    expect(casesOf(entry({ kind: "guardrail", check, test }))).toBe(3);
+    expect(casesOf(entry({ kind: "guardrail", check, test, disabled: "off" }))).toBe(0);
   });
 });

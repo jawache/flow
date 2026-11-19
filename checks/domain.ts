@@ -2005,9 +2005,15 @@ export function unansweredText(missing: readonly Unanswered[]): string {
 
 /** How many cases `runCases` would run for one entry. */
 export function casesOf(entry: LoadedEntry): number {
+  const run = runnable(entry);
+  return run ? (run.cases.pass?.length ?? 0) + (run.cases.block?.length ?? 0) : 0;
+}
+
+/** The one skip rule: an entry's check and cases, or undefined for a breadcrumb, a disabled entry or one with no check. */
+function runnable(entry: LoadedEntry) {
   const { spec } = entry;
-  if (spec.kind !== "guardrail" || spec.disabled || !spec.check) return 0;
-  return (spec.test?.pass?.length ?? 0) + (spec.test?.block?.length ?? 0);
+  if (spec.kind !== "guardrail" || spec.disabled || !spec.check) return undefined;
+  return { check: spec.check, cases: spec.test ?? {} };
 }
 
 /** What ends a `flow test` line: the entries it never ran, and the cases of installed packs it left out. */
@@ -2030,10 +2036,9 @@ export function testTail(disabled: number, leftOut: number): string {
 export async function runCases(entries: readonly LoadedEntry[]): Promise<CaseResult[]> {
   const out: CaseResult[] = [];
   for (const entry of entries) {
-    const { spec } = entry;
-    if (spec.kind !== "guardrail" || spec.disabled || !spec.check) continue;
-    const check = spec.check;
-    const cases = spec.test ?? {};
+    const run = runnable(entry);
+    if (!run) continue;
+    const { check, cases } = run;
     for (const [expect, list] of [
       ["pass", cases.pass],
       ["block", cases.block],

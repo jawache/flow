@@ -167,13 +167,10 @@ describe("flow init — a repo that has never heard of flow", () => {
 
 describe("the scaffolded config", () => {
   it("LOADS, and every one of its rules passes its own cases — UAT step 8", () => {
-    const tested = flow(repo, ["test"]);
+    // `--all`: the scaffolded config binds only the installed `flow` pack, so a plain run runs no case.
+    const tested = flow(repo, ["test", "--all"]);
     expect(tested.code, tested.stdout + tested.stderr).toBe(0);
     expect(tested.stdout).toContain("all green");
-    // `--all` is the same run with the installed packs' cases in it, and it is green too.
-    const everything = flow(repo, ["test", "--all"]);
-    expect(everything.code, everything.stdout + everything.stderr).toBe(0);
-    expect(everything.stdout).toContain("all green");
   });
 
   it("blocks `flow uninstall` from an agent — UAT step 3", () => {
@@ -1327,7 +1324,7 @@ describe("the repo's package.json type", () => {
         expect(said.code, "status exit").toBe(0);
 
         // And its rules really run, which is a different fact from the config importing.
-        expect(flow(repo, ["test"]).stdout, "test").toContain("all green");
+        expect(flow(repo, ["test", "--all"]).stdout, "test").toContain("all green");
       } finally {
         rmSync(repo, { recursive: true, force: true });
       }

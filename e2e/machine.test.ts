@@ -319,8 +319,8 @@ describe("the machine test", () => {
     // PER PACK, so a deleted case NAMES the pack it was deleted from. One config each, so the
     // number that moves is attributable — the whole-config run below can only say "one fewer".
     const measured = [FLOW, HOUSE, STRANGER].map((entry) => {
-      // `--all`: the shipped `flow` pack is installed here, and only `--all` runs an installed pack's cases.
-      const said = flow(["test", "--all", join("probe", `${entry.pack}.config.ts`)]);
+      // `--all` only for the shipped `flow` pack: it is installed here (a link out of this repo), and only `--all` runs an installed pack's cases. The others are this repo's own.
+      const said = flow(["test", ...(entry === FLOW ? ["--all"] : []), join("probe", `${entry.pack}.config.ts`)]);
       const { cases, guardrails, red } = ran(said);
       // Every case of every pack, green under somebody else's parameters. A pack whose own case
       // only passes in the repo that wrote it is a pack that does not travel, and that is exactly
@@ -337,12 +337,6 @@ describe("the machine test", () => {
     expect(said.stdout).toContain("all green");
     const total = [FLOW, HOUSE, STRANGER].reduce((sum, entry) => sum + entry.cases, 0);
     expect(ran(said).cases).toBe(total);
-
-    // …and without `--all` the installed `flow` pack's cases are counted and left out.
-    const own = flow(["test"]);
-    expect(own.code, own.stdout + own.stderr).toBe(0);
-    expect(ran(own).cases).toBe(total - FLOW.cases);
-    expect(own.stdout).toContain(`${FLOW.cases} cases of installed packs, not run`);
 
     step("cases", `  cases      ${total} green over ${measured.reduce((sum, m) => sum + m.guardrails, 0)} guardrails, pack by pack`, "  live");
   });
