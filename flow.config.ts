@@ -98,6 +98,7 @@ export default defineConfig([
   // `custody: "file"`, which `just env-encrypt` honours by passing `--no-native`.
   pack(secrets, { dx: "just dx", encrypt: "just env-encrypt", custody: "file" }),
   override(secrets.envEncrypted).disabled("no `.env*` in this repo — nothing to seal"),
+  override(house.noDeleteGuards).disabled("for the one commit that replaces guards/driven.ts with work's guards/work.ts; the next commit turns it back on"),
 
   // ── TypeScript: strict stays on, the checker is never silenced ──
   //
