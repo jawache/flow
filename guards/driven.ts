@@ -1,3 +1,6 @@
+// NOT BOUND: flow.config.ts binds guards/work.ts, the same pack under the name work's template now
+// gives it. This file stays until `house.noDeleteGuards` lets it be deleted.
+//
 // examples/default/guards/driven.ts — the flow pack a repo driven by work binds.
 //
 // Two entries: a breadcrumb that tells every session how a driven repo works, and the guardrail that
