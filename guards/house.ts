@@ -450,7 +450,7 @@ export const house = definePack("house", (repo: Terrain) => ({
           {
             file: "flow.ts",
             patterns: REGISTERS,
-            known: ["test", "hook", "commit", "init", "status", "replay", "facts"],
+            known: ["test", "hook", "commit", "init", "status", "replay", "facts", "uninstall"],
           },
         ],
         token: "caller",
@@ -466,6 +466,7 @@ export const house = definePack("house", (repo: Terrain) => ({
     .test({
       pass: [
         { message: "feat: a thing", staged: ["flow.ts"], world: { exec: { "diff --cached -- 'flow.ts'": { stdout: "" } } } },
+        { message: "fix: the uninstall line", staged: ["flow.ts"], world: { exec: { "diff --cached -- 'flow.ts'": { stdout: '+} else if (verb === "uninstall") {' } } } },
         // Verbs already ON the surface, moved in a refactor: known, so neither is new and neither
         // owes anything. The ratchet is about GROWTH, and a rule that fired on every dispatch tidy
         // would be turned off. Two on one line, because that is how this pair is really written.
