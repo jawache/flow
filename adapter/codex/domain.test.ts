@@ -7,6 +7,8 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { codex } from "./codex.ts";
+import { shellChangesOf, withShellChanges } from "../domain.ts";
+import type { Row } from "../../engine/domain.ts";
 import { HOST_SURFACE, REPO_HOOKS, briefHead, claimsPayload, classifyStore, hookCommand, hooksFile, ownTranscriptPath, parseEvents, spawnMeta, tokensFromTranscript, transcriptHead, turnActions } from "./domain.ts";
 
 const { registrations: HOOK_REGISTRATIONS, hooks: HOOK_COSTS } = hooksFile;
@@ -74,6 +76,19 @@ describe("a Codex rollout", () => {
     expect(briefHead(ROLLOUT)).toBe("Run the shell command: pwd. Then reply with the word done.");
     expect(briefHead(ROLLOUT, 5)).toBe("Run t");
     expect(turnActions("")).toEqual([]);
+  });
+
+  it("names the file a real Codex run's shell command changed as an edit just before the command, matching what the hook recorded", () => {
+    // One recorded run (codex 0.169.0): Codex wrote src/b.ts through the shell. Its rollout names the
+    // command one way and flow's log, written by the hook, names it another; the two must still meet.
+    const read = (name: string) => readFileSync(new URL(`../../__fixtures__/${name}`, import.meta.url), "utf8");
+    const rows = read("codex-turn.flowlog.jsonl").trim().split("\n").map((line) => JSON.parse(line) as Row);
+    const actions = turnActions(read("codex-turn.session.jsonl"));
+    expect(withShellChanges(actions, shellChangesOf(rows, "main")).map((action) => (action.did === "edit" ? `edit ${action.path}` : "run"))).toEqual([
+      "edit out/7b-codex-breadcrumb.txt",
+      "edit src/b.ts",
+      "run",
+    ]);
   });
 
   it("reads the prompt, the command and what it printed, joined by the id the hook payloads carry", () => {
