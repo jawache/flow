@@ -1,4 +1,4 @@
-// flow/packs/tdd.ts — the testing discipline.
+// guards/tdd.ts — the testing discipline.
 // Subtlety: the sibling-test trio lives in `fcis`, not here; `commitRunsTests` takes the suite recipe as a mandatory parameter rather than defaulting to `just test`.
 //
 // The sibling-test machinery (hasTest · exportsTested · coverageGate) is NOT here — `fcis` owns

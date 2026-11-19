@@ -1,4 +1,4 @@
-// flow/packs/justfile.ts — the justfile is the repo's TOOL CATALOGUE.
+// guards/justfile.ts — the justfile is the repo's TOOL CATALOGUE.
 // Subtlety: which recipes are genuinely undocumentable is the one fact this pack cannot know, so `exempt` is a mandatory parameter — this repo binds `{ exempt: [] }` in flow.config.ts, stated rather than defaulted.
 
 import {

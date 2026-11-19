@@ -291,7 +291,7 @@ function deletesConfig(root: string, scope: CommitScope): HookResult {
  * Every `at(commit)` guardrail over the staged set — the half of the promise the PreToolUse rail
  * cannot make.
  *
- * It fires with no agent in the room: a human commit, a merge, CI. That is why it is a verb of the
+ * It fires with no agent in the room: a human commit, CI. That is why it is a verb of the
  * binary rather than a hook, why it is in `DELIVERS` even though the harness supplies nothing here,
  * and why every harness gets the gates for free.
  *

@@ -1,4 +1,4 @@
-// flow/packs/node.ts — package.json discipline.
+// guards/node.ts — package.json discipline.
 
 import { breadcrumb, commit, commitReason, defineCheck, definePack, guardrail, fileChange, type Check } from "@jawache/flow";
 

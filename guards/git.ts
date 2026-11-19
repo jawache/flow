@@ -1,4 +1,4 @@
-// flow/packs/git.ts — the git surface.
+// guards/git.ts — the git surface.
 // Subtlety: the rules on a command read the PARSE of the line, not its text — an agent writes file text through commands (heredocs). The attribution literals are ASSEMBLED from pieces (TRAILER/VENDOR/SITE below) or committing this file would trip its own ban.
 //
 // Subtlety: the release RECIPE is a mandatory parameter, not `just release` written into the pack — which command cuts a release is the repo's fact, and it is named in the sentence a blocked person reads.

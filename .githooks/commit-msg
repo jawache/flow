@@ -3,7 +3,7 @@
 #
 # Every commit guardrail in flow.config.ts runs here, once, over the staged changes and the commit
 # message, and a block exits non-zero, which is how git refuses the commit. This fires with no
-# agent in the room — a human commit, a merge, CI — which is the half of the promise the
+# agent in the room — a human commit, CI — which is the half of the promise the
 # PreToolUse rail cannot make. flow asks git itself what the commit adds, changes and deletes, and
 # git hands this hook the file the message is in as $1.
 #

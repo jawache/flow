@@ -2,9 +2,10 @@
 //
 // The tool is commit-and-tag-version, the local-only successor of standard-version: it reads the
 // conventional commits since the last `v*` tag, computes the next version from what those headers
-// already declare, writes CHANGELOG.md, stamps the version files, and makes ONE
-// `chore(release): x.y.z` commit with a matching `vx.y.z` tag. It never pushes and never
-// publishes — both stay a human's to type.
+// already declare, writes CHANGELOG.md, stamps the version files, and makes a
+// `chore(release): x.y.z` commit. `just release` then adds a second commit above it that holds
+// `dist/`, and tags that one `vx.y.z`. Nothing pushes and nothing publishes — both stay a human's
+// to type.
 //
 // That last sentence is the whole reason it is here and semantic-release is not. semantic-release
 // welds tagging to pushing: its git plugin refuses a no-push option, its auth check is deliberate,

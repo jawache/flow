@@ -1,4 +1,4 @@
-// guards/house.ts — THIS REPO'S TERRAIN, and the only pack it writes itself.
+// guards/house.ts — THIS REPO'S TERRAIN, and the one pack here that is about this repo itself.
 //
 // Everything else this repo's guard binds is the one pack flow ships, `flow`, from
 // `@jawache/flow/packs`, and the packs kept beside this file in `guards/`: fleet discipline any

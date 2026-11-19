@@ -1,10 +1,10 @@
-// flow/packs/secrets.ts — env files committed encrypted, decrypted through one seam.
+// guards/secrets.ts — env files committed encrypted, decrypted through one seam.
 //
 // Subtlety: THIS PACK SHIPS NO FILE. It used to claim a `secrets.just` module that a repo would
 // find copied into its tree; nothing copied it and nothing compared it. What is left is the two
 // command names the sentences below send a stuck reader to — optional, defaulting to dotenvx's
 // own spelling, so a repo that has wrapped them in recipes says so and a repo that has not is
-// still told something it can type. The recipes worth having are on this pack's page, to copy.
+// still told something it can type. The recipes are the repo's own to write.
 
 import { breadcrumb, commit, definePack, guardrail, session, textBan } from "@jawache/flow";
 

@@ -197,8 +197,8 @@ export function frontMatterFields(markdown: string): ReadonlyMap<string, string>
 //
 // `unbalanced`, `unescapedInCode` and `unknownElements` lived here while docs/user/ was HTML. Each
 // asked what a PARSER would do rather than what the text said, and the one that earned them found a
-// live fault: `new-dep: <name> — <why>` sat unescaped inside a code block on the page that is now
-// docs/user/how-to/require-a-reason-in-the-commit-message.md, a parser read the two placeholders as
+// live fault: `new-dep: <name> — <why>` sat unescaped inside a code block on a how-to page about
+// requiring a reason in the commit message, a parser read the two placeholders as
 // unknown ELEMENTS, and every reader was taught `put new-dep:  —  in the message`. Every byte of
 // the file was exactly as its author typed it.
 //

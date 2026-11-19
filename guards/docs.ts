@@ -1,4 +1,4 @@
-// flow/packs/docs.ts — two documentation audiences, one folder, nothing replicated.
+// guards/docs.ts — two documentation audiences, one folder, nothing replicated.
 
 import { breadcrumb, canonicalFiles, commit, definePack, guardrail, fileChange } from "@jawache/flow";
 

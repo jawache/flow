@@ -67,7 +67,8 @@ export default defineConfig([
   //
   // ONE parameter, and `just release` is real here: it runs commit-and-tag-version, computes the
   // version from the conventional commits since the last tag, writes CHANGELOG.md, stamps
-  // package.json and the lockfile, commits and tags. Nothing is pushed and nothing is published.
+  // package.json and the lockfile, and commits; a second commit holds `dist/` and takes the tag.
+  // Nothing is pushed and nothing is published.
   pack(git, { release: "just release" }),
 
   // ── the justfile as tool catalogue ──

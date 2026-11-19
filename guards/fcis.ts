@@ -1,4 +1,4 @@
-// flow/packs/fcis.ts — Functional Core, Imperative Shell.
+// guards/fcis.ts — Functional Core, Imperative Shell.
 //
 // The convention used to be a private default inside each script (`**/pure/**` plus one platform's
 // `src/lib` tier), which meant every repo that did not happen to use that layout bound eight rules

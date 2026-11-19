@@ -1,4 +1,4 @@
-// flow/packs/typescript.ts — TypeScript discipline as shared configuration.
+// guards/typescript.ts — TypeScript discipline as shared configuration.
 //
 // Subtlety: BOTH gate recipes are mandatory parameters, on the `{ run }` shape tdd already uses.
 // `just typecheck` is this fleet's spelling and nothing more — a pack that wrote it in would run
