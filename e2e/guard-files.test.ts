@@ -4,7 +4,7 @@
 // each harness's own constants at once, which no other folder may.
 
 import { describe, it, expect } from "vitest";
-import { CONFIG_FILE, GATE_PATH } from "../adapter/domain.ts";
+import { CONFIG_FILE } from "../adapter/domain.ts";
 import { claudeCode } from "../adapter/claude/claude.ts";
 import { codex } from "../adapter/codex/codex.ts";
 import { defineConfig, loadConfig, pack, type Ctx } from "../index.ts";
@@ -17,7 +17,7 @@ describe("the files flow writes", () => {
     const loaded = loadConfig(defineConfig([pack(flowPack)]));
     const entry = loaded.ok ? loaded.entries.find((e) => e.id === "flow.noDeleteGuardrails") : undefined;
     const check = (entry?.spec as { check: (ctx: Ctx) => Promise<{ ok: boolean }> }).check;
-    const files = [CONFIG_FILE, GATE_PATH, ...[claudeCode, codex].map((harness) => harness.registering.repoFile)];
+    const files = [CONFIG_FILE, ...[claudeCode, codex].map((harness) => harness.registering.repoFile)];
     for (const file of files) {
       const verdict = await check({ staged: [], deleted: [file], ok: () => ({ ok: true }), fail: () => ({ ok: false }) } as unknown as Ctx);
       expect(verdict.ok, `${file} is deleted by a commit`).toBe(false);

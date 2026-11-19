@@ -270,6 +270,24 @@ function readMessage(root: string, file: string | null): { readonly ok: true; re
 }
 
 /**
+ * A repo with no config on disk passes every commit but one: the commit that deletes the config.
+ *
+ * No rule can refuse it, because the rules are in the file being deleted, so the gate refuses it
+ * itself. The commit-msg hook only runs where flow was installed, so a deleted config here is
+ * flow's own guard going, not a repo that never had one.
+ */
+function deletesConfig(root: string, scope: CommitScope): HookResult {
+  if (scope !== "staged") return ALLOW;
+  const changes = readChanges(root, scope);
+  if (!changes.ok || !changes.staged.deleted.includes(CONFIG_FILE)) return ALLOW;
+  return (
+    refused([
+      { moment: "commit", block: fault(`This commit deletes ${CONFIG_FILE}, which is this repo's guard. Turn a rule off in ${CONFIG_FILE} instead.`) },
+    ]) ?? ALLOW
+  );
+}
+
+/**
  * Every `at(commit)` guardrail over the staged set — the half of the promise the PreToolUse rail
  * cannot make.
  *
@@ -285,7 +303,7 @@ function readMessage(root: string, file: string | null): { readonly ok: true; re
  */
 export async function runCommit(root: string, { scope, messageFile }: CommitArgs): Promise<HookResult> {
   const regime = await loadRegime(root);
-  if (regime.kind === "none") return ALLOW;
+  if (regime.kind === "none") return deletesConfig(root, scope);
   if (isOff(root)) return ALLOW;
   // THE GATE USES THE ENGINE'S OWN FAULT, not `whileBroken` next door, and the difference is the
   // point rather than an oversight: `whileBroken` lets every call through, and the commit gate is

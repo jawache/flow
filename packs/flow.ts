@@ -1,4 +1,4 @@
-// flow/packs/flow.ts — flow's own protection, three entries: a note on what steers a session, a refusal of `flow uninstall` by an agent, and a refusal of a commit that deletes flow.config.ts, .githooks/commit-msg, .claude/settings.json or .codex/hooks.json.
+// flow/packs/flow.ts — flow's own protection, three entries: a note on what steers a session, a refusal of `flow uninstall` by an agent, and a refusal of a commit that deletes flow.config.ts, .claude/settings.json or .codex/hooks.json.
 
 import {
   breadcrumb,
@@ -15,8 +15,12 @@ import {
   type ShellCommand,
 } from "../index.ts";
 
-/** The files that are the guard: the config, the gate git runs, and each harness's registration of flow's hooks. */
-const GUARD_FILES = ["flow.config.ts", ".githooks/commit-msg", ".claude/settings.json", ".codex/hooks.json"];
+/**
+ * The files that are the guard: the config, and each harness's registration of flow's hooks.
+ * The gate git runs, `.githooks/commit-msg`, is not here: git runs no hook that is not there, so
+ * its deletion cannot refuse its own commit. `flow status` names it red.
+ */
+const GUARD_FILES = ["flow.config.ts", ".claude/settings.json", ".codex/hooks.json"];
 
 /** The programs that start flow without being flow: the package runners, and node on the bundle or the bin link. */
 const RUNNERS = new Set(["npx", "pnpx", "bunx", "yarn", "pnpm", "bun", "npm", "node"]);
@@ -103,7 +107,7 @@ export const flow = definePack("flow", {
 
   noDeleteGuardrails: guardrail()
     .at(commit)
-    .description("Refuses a commit that deletes flow.config.ts, the commit gate or a harness's hook registrations. No bypass — disable entries in the file instead.")
+    .description("Refuses a commit that deletes flow.config.ts or a harness's hook registrations. No bypass — disable entries in the file instead.")
     // A deletion is read from the commit's own list, so the staged paths are left out of the
     // call: changing flow.config.ts or a pack is what a repo does all day, and deleting one is
     // the attack.
@@ -112,10 +116,9 @@ export const flow = definePack("flow", {
       "This commit deletes part of this repo's guard. Turn a rule off in flow.config.ts instead.",
     )
     .test({
-      pass: [{ staged: ["flow.config.ts"] }, { staged: [".claude/settings.json"] }, { staged: [], deleted: ["src/a.ts"] }, { staged: [], deleted: ["guards/git.ts"] }],
+      pass: [{ staged: ["flow.config.ts"] }, { staged: [".claude/settings.json"] }, { staged: [], deleted: ["src/a.ts"] }, { staged: [], deleted: ["guards/git.ts"] }, { staged: [], deleted: [".githooks/commit-msg"] }],
       block: [
         { staged: [], deleted: ["flow.config.ts"] },
-        { staged: ["src/a.ts"], deleted: [".githooks/commit-msg"] },
         { staged: [], deleted: [".claude/settings.json"] },
         { staged: [], deleted: [".codex/hooks.json"] },
       ],

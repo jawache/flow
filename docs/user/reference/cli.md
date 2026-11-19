@@ -94,7 +94,7 @@ flow ships one pack, behind `@jawache/flow/packs`. It has three entries:
 | --- | --- | --- | --- |
 | `flow.orientation` | [breadcrumb](./glossary.md#breadcrumb) | `session` | Tells the agent the repo is guarded, and that turning a [guardrail](./glossary.md#guardrail) off is a change to `flow.config.ts` |
 | `flow.noUninstall` | guardrail | `command` | Refuses `flow uninstall`, in any folder |
-| `flow.noDeleteGuardrails` | guardrail | `commit` | Refuses a commit that deletes `flow.config.ts`, `.githooks/commit-msg`, `.claude/settings.json` or `.codex/hooks.json` |
+| `flow.noDeleteGuardrails` | guardrail | `commit` | Refuses a commit that deletes `flow.config.ts`, `.claude/settings.json` or `.codex/hooks.json`. A deleted `.githooks/commit-msg` cannot refuse its own commit: `flow status` names it red |
 
 To protect your own pack files too, add a rule of your own with [`protectedPath`](../checks/protected-path.md).
 

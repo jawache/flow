@@ -22,7 +22,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { currentBranch, loadRegime, readText, realWorld, runCommand } from "./shell.ts";
+import { commitEntry, currentBranch, loadRegime, readText, realWorld, runCommand } from "./shell.ts";
 
 let repo: string;
 
@@ -172,5 +172,29 @@ describe("what a repo's config amounts to", () => {
     const regime = await loadRegime(repo);
     expect(regime.kind).toBe("loaded");
     if (regime.kind === "loaded") expect(regime.load.ok).toBe(true);
+  });
+});
+
+describe("the commit gate, in a repo whose config the commit deletes", () => {
+  const commitWith = (message: string) => {
+    const file = join(repo, ".git", "COMMIT_EDITMSG");
+    writeFileSync(file, message);
+    return commitEntry([file], repo);
+  };
+
+  it("refuses the commit that deletes flow.config.ts, and passes one that leaves it gone", async () => {
+    writeFileSync(join(repo, "flow.config.ts"), "export default {};\n");
+    git("add", "flow.config.ts");
+    git("commit", "-qm", "chore: config");
+    git("rm", "-q", "flow.config.ts");
+    const refused = await commitWith("chore: drop it");
+    expect(refused.exitCode).toBe(2);
+    expect(refused.stderr).toContain("deletes flow.config.ts");
+
+    // A repo with no config that deletes something else was never guarded: it passes.
+    git("commit", "-qm", "chore: dropped");
+    writeFileSync(join(repo, "a.txt"), "a");
+    git("add", "a.txt");
+    expect((await commitWith("chore: a")).exitCode).toBe(0);
   });
 });
