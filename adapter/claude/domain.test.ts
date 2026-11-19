@@ -1079,6 +1079,7 @@ describe("formatFacts — the whole of what a person sees", () => {
     store: { dir: "/home/.claude/projects/-repo", exists: true, ignored: [] },
     selection: { analyse: [], excluded: [], counts: { backlog: 0, analysed: 0, excluded: 0 } },
     coverage: { analysed: 0, withRecord: 0, narrativeOnly: 0 },
+    withoutTranscript: [],
     health: { blocked: null, warn: [] },
     metrics: metrics({ sessions: [], entries: [], nowMs: 0 }),
     moments: momentsView([], null),
@@ -1090,6 +1091,11 @@ describe("formatFacts — the whole of what a person sees", () => {
     modes: modesOf([]),
     marked: null,
     ...over,
+  });
+
+  it("says how many recorded sessions it left out for want of a transcript", () => {
+    expect(formatFacts(empty({ withoutTranscript: ["a", "b"] }))).toContain("  excluded  2 recorded sessions with no transcript behind them");
+    expect(formatFacts(empty()).join("\n")).not.toContain("excluded");
   });
 
   it("leads with the fail-loud header — an unarmed record is never presented as a calm week", () => {

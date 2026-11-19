@@ -30,6 +30,7 @@ import { alreadyRead, markRead, readHistory } from "../engine/state.ts";
 import { readText, runCommand } from "./shell.ts";
 import type { Harness, Steer, StoredTranscript } from "./harness.ts";
 import {
+  backedByTranscript,
   belongsToRepo,
   CONFIG_FILE,
   health,
@@ -135,7 +136,11 @@ export function facts(root: string, load: LoadResult, harnesses: readonly Harnes
       }
     : selectSessions(scoped, alreadyRead(root), opts);
 
-  const history = readHistory(root);
+  // A log with no transcript behind it is no session someone had. With no transcript of this repo to compare with, every log stays.
+  const { kept: history, excluded: withoutTranscript } = backedByTranscript(
+    readHistory(root),
+    candidates.length > 0 ? new Set(candidates.map((c) => c.id)) : null,
+  );
   const bySession = new Map(history.map((s) => [s.session, s.rows]));
   const bound: Bound[] = load.ok ? universe(load.entries) : [];
   const tools = recipeTools(readText(root, "justfile") ?? "");
@@ -187,6 +192,7 @@ export function facts(root: string, load: LoadResult, harnesses: readonly Harnes
       withRecord,
       narrativeOnly: selection.analyse.length - withRecord,
     },
+    withoutTranscript,
     health: health({
       armed: history.length > 0,
       rows: history.reduce((n, s) => n + s.rows.length, 0),

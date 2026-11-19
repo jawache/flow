@@ -999,6 +999,24 @@ export function modesOf(each: readonly { readonly rows: readonly Row[]; readonly
   return { calls, auto, steered, variants };
 }
 
+/**
+ * The recorded sessions that a transcript stands behind, and the ids of those left out.
+ *
+ * A log with no conversation behind it is not a session someone had: a replay script writes one for
+ * every command it feeds the hook. `transcribed` is every conversation of this repo a store holds, or null
+ * when there is none to compare with, which keeps every log rather than dropping the lot.
+ */
+export function backedByTranscript<T extends { readonly session: string }>(
+  history: readonly T[],
+  transcribed: ReadonlySet<string> | null,
+): { readonly kept: readonly T[]; readonly excluded: readonly string[] } {
+  if (transcribed === null) return { kept: history, excluded: [] };
+  return {
+    kept: history.filter((one) => transcribed.has(one.session)),
+    excluded: history.filter((one) => !transcribed.has(one.session)).map((one) => one.session),
+  };
+}
+
 export interface Facts {
   /** What the harness is called in a sentence. */
   readonly host: string;
@@ -1007,6 +1025,8 @@ export interface Facts {
   /** Which conversations this run covers, and which it deliberately deferred. */
   readonly selection: Selection;
   readonly coverage: { readonly analysed: number; readonly withRecord: number; readonly narrativeOnly: number };
+  /** The ids of recorded sessions left out of every number below because no transcript stands behind them. */
+  readonly withoutTranscript: readonly string[];
   /** The fail-loud header. Read it before believing anything else here. */
   readonly health: Health;
   /**
@@ -1069,6 +1089,8 @@ export function formatFacts(facts: Facts): string[] {
 
   for (const gap of headline.gaps.slice(0, HEADLINE))
     lines.push(`  gap       ${gap.area} — ${gap.edits} edit${gap.edits === 1 ? "" : "s"}, nothing watches it`);
+  if (facts.withoutTranscript.length > 0)
+    lines.push(`  excluded  ${facts.withoutTranscript.length} recorded session${facts.withoutTranscript.length === 1 ? "" : "s"} with no transcript behind ${facts.withoutTranscript.length === 1 ? "it" : "them"}`);
   if (headline.dead.length > 0) lines.push(`  dead      ${headline.dead.join(" · ")}`);
   if (headline.retire.length > 0) lines.push(`  retire    ${headline.retire.join(" · ")} — bound, never once reached`);
   if (headline.quiet.length > 0)

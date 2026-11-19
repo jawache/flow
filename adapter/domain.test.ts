@@ -6,7 +6,7 @@
 // settings file, its transcripts — is proved in that harness's folder.
 import { describe, it, expect } from "vitest";
 import { DELETED, type Bound, type Row, type Tree } from "../engine/domain.ts";
-import { snipAtWord, changeEvents, noticesThatCouldShow, changeRow, changedBy, commitRange, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
+import { backedByTranscript, snipAtWord, changeEvents, noticesThatCouldShow, changeRow, changedBy, commitRange, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
 import { breadcrumb, defineConfig, definePack, fileChange, loadConfig, pack, session } from "../index.ts";
 import type { Ctx, TurnAction } from "../language/domain.ts";
 import { ranSinceEdit } from "../checks/domain.ts";
@@ -2420,5 +2420,17 @@ describe("snipAtWord — a rule's text on the status page, cut at a whole word",
     expect(snipAtWord("abcd efgh ijkl", 10)).toBe("abcd efgh…");
     expect(snipAtWord("abcd efgh ijkl", 9)).toBe("abcd…");
     expect(snipAtWord("abcdefghijklmnop", 5)).toBe("…");
+  });
+});
+
+describe("backedByTranscript", () => {
+  const logs = [{ session: "real" }, { session: "replayed-1" }, { session: "replayed-2" }];
+
+  it("keeps the sessions a transcript stands behind, and names the ones it leaves out", () => {
+    expect(backedByTranscript(logs, new Set(["real", "older"]))).toEqual({ kept: [{ session: "real" }], excluded: ["replayed-1", "replayed-2"] });
+  });
+
+  it("keeps every log when there is no store to compare with", () => {
+    expect(backedByTranscript(logs, null)).toEqual({ kept: logs, excluded: [] });
   });
 });
