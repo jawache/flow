@@ -215,7 +215,7 @@ export const house = definePack("house", (repo: Terrain) => ({
     .description("Every reading of a shell command goes through the one parse — never a regex or a splitter over the raw line.")
     .text(
       [
-        "EVERY READING OF A SHELL COMMAND GOES THROUGH THE ONE PARSE. `parseCommandLine` in `language/domain.ts` parses the line as bash with `unbash`, once; checks read it as `ctx.commands`, and the adapter's delete, read and recipe detection read the same walk as `parseShellSteps`.",
+        "EVERY READING OF A SHELL COMMAND GOES THROUGH THE ONE PARSE. `parseCommandLine` in `language/domain.ts` parses the line as bash with `unbash`, once; checks read it as `ctx.commands`, and the adapter's read and recipe detection read the same walk as `parseShellSteps`.",
         "· A check, a pack or a guard reads `ctx.commands`, or `shellCommands(ctx)` and `gitCommands(ctx)` where an older engine may hand no parse. Which command runs is a program and its arguments, not text: compare `programName(c.program)` and `c.args`, or name the command in words with `banCommands`, never a regex against a command's `text` or against `ctx.command`. A regex is for text, such as a commit message, a file or a heredoc's body.",
         "· Never write a second reader: no splitting the line on `;`, `&&`, `|` or a newline, no scanning for where a quote, a `$(` or a heredoc closes, no regex over the raw line to find a program, an argument, a heredoc, a substitution or a redirect.",
         "· The parse lacks a fact the rule needs? Add it to the parse in `language/domain.ts`, and its row to `docs/user/reference/ctx.md`, so every reader gets it.",

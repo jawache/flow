@@ -527,10 +527,9 @@ function checkOne(obj: unknown, a: JsonAssert): string[] {
 /**
  * Every assertion that fails over one JSON document.
  *
- * Text that will not parse yields NO violations, and that is deliberate rather than lax: this runs
- * on a would-be file at write time, which is frequently mid-keystroke, and a rule that shouted
- * "invalid JSON" at every second character would be turned off within a day. A file that really is
- * broken JSON is a problem the tool that reads it will name, loudly, on its own.
+ * Text that will not parse yields NO violations, and that is deliberate rather than lax: a rule
+ * about a JSON file's contents has nothing to say about a file that is not JSON yet. A file that
+ * really is broken JSON is a problem the tool that reads it will name, loudly, on its own.
  */
 export function jsonViolations(jsonText: string, assert: readonly JsonAssert[]): string[] {
   let obj: unknown;

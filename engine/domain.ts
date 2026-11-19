@@ -1703,10 +1703,10 @@ function treeOrder(a: TerrainNode, b: TerrainNode): number {
 // The question this arrangement answers is the agent's own — "what will happen to me at moment
 // X?" — so entries are grouped by MOMENT rather than by pack. An entry appears in every moment it
 // fires at; that is not duplication, it is the answer: standing at the commit, a rule that also
-// fires at write is still about to run.
+// fires at a command is still about to run.
 //
 // There is no vocabulary translation here and there must never be one. The old engine kept a table
-// mapping its internal phase names to human words, because `edit` and `write` were two spellings
+// mapping its internal phase names to human words, because two of its phase words were two spellings
 // of one moment and no reader could be expected to know which. flow's moments are the words the
 // config is written in, so the word on the page IS the word in the sentence.
 
