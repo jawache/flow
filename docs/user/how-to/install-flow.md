@@ -52,7 +52,7 @@ Add `node_modules/` to `.gitignore`.
 
    ```
    npx flow status      # is the guard working here? what is bound, and what is not wired yet
-   npx flow test        # do the rules do what they claim? every rule's own cases, run
+   npx flow test        # do your rules do what they claim? the cases of your own packs, run
    ```
 
    A red line in `flow status` names its own fix. The command then exits non-zero, so a setup script can read the exit code.

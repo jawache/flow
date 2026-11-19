@@ -28,7 +28,7 @@ This guide shows you how to move one project from the flow it pins to a newer re
 
    ```
    npx flow status            # every fitting green
-   npx flow test              # every rule's cases pass
+   npx flow test              # the cases of your own packs pass
    npx flow hook commit --all # every rule with .on(…) passes over the whole repo
    ```
 

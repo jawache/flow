@@ -58,10 +58,10 @@ lint:
 test *args:
     npx vitest run "$@"
 
-[doc("Run every bound rule's own cases — the .test({pass, block}) block on each entry this repo's flow.config.ts binds, driven through the same ctx the live rails build.")]
+[doc("Run the own cases of the packs this repo writes — the .test({pass, block}) block on each of their entries, driven through the same ctx the live rails build — and count the cases of installed packs it leaves out. `node dist/flow.mjs test --all` runs every bound rule's cases.")]
 test-rules:
     # There is no separate place a rule is proved: the cases travel ON the entry, and a
-    # guardrail carrying none does not load at all. `flow test` walks every one of them.
+    # guardrail carrying none does not load at all. `flow test` walks the repo's own packs' cases.
     just build
     node dist/flow.mjs test
 
@@ -82,15 +82,22 @@ score-bash *args:
 test-coverage:
     npx vitest run --coverage
 
-[doc("Deterministic suite the commit gate runs: every rule's own cases, the whole repo typechecked (the runner strips types, it never checks them), and the whole vitest suite.")]
+[doc("Deterministic suite the commit gate runs: the own packs' cases, the whole repo typechecked (the runner strips types, it never checks them), and the whole vitest suite.")]
 test-commit:
     just test-rules
     just typecheck
     just test
 
-[doc("Pin the Getting started tutorial to the binary: every transcript on docs/user/tutorials/getting-started.md is what the built flow prints. Outside the commit gate, since the docs land before the code that prints them; the full suite and `just release-check` run it.")]
+[doc("Pin the Getting started tutorial to the binary: every transcript on docs/user/tutorials/getting-started.md is what the built flow prints. Outside the commit gate, since the docs land before the code that prints them; `just full-suite` and `just release-check` run it.")]
 test-tutorial:
     FLOW_TUTORIAL=1 npx vitest run e2e/product.test.ts -t "the Getting started tutorial's transcripts"
+
+[doc("The full suite, the one name a plan's last task runs: the gate, the commit suite, coverage and the tutorial. It stops short of the rehearsal release, which needs the next version's migration guide and runs on release day in `just release-check`.")]
+full-suite:
+    just gate
+    just test-commit
+    just test-coverage
+    just test-tutorial
 
 [doc("Run the full commit gate over every file git can see, tracked or not, as if all of it were staged — the same guardrails .githooks/commit-msg runs on the staged changes, plus every file the last commit has that is now gone.")]
 gate: build

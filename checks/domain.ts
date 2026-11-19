@@ -1739,7 +1739,7 @@ export const astGrep = defineCheck(
 );
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
-// CASES — a canned ctx, and the runner that walks every bound entry's
+// CASES — a canned ctx, and the runner that walks the entries it is handed
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 //
 // A case is a canned ctx, and it CAN be, because a check reads the world only through one. That
@@ -1952,7 +1952,7 @@ export async function runCase(
   expect: "pass" | "block",
   index: number,
 ): Promise<CaseResult> {
-  const { dialect } = readCase(c);
+  const { dialect, facts } = readCase(c);
   const at: readonly GuardrailMoment[] = entry.spec.kind === "guardrail" ? (entry.spec.at ?? []) : [];
   const moment = at.find((m) => SPEAKS[dialect].includes(m));
   const head = { entry: entry.id, expect, index };
@@ -1964,6 +1964,9 @@ export async function runCase(
     };
   }
 
+  const outside = outsideOn(entry.spec.on, facts.staged);
+  if (outside !== undefined) return { ...head, ok: false, detail: outside };
+
   const unanswered: Unanswered[] = [];
   let blocked: boolean;
   let answer: Verdict = { ok: true };
@@ -1971,7 +1974,7 @@ export async function runCase(
     const answers: Verdict[] = [];
     for (const ctx of await caseCtxs(entry, moment, c, unanswered)) answers.push(await check(ctx));
     // Any subject blocking blocks the commit, exactly as the engine's effects do. No subject at all
-    // — a scope nothing staged fell into — is a pass, because there was nothing to refuse.
+    // — nothing staged, or a staged file not on disk — is a pass, because there was nothing to refuse.
     answer = answers.find((v) => !v.ok) ?? { ok: true };
     blocked = !answer.ok;
   } catch (error) {
@@ -1992,6 +1995,17 @@ export async function runCase(
   return { ...head, ok: false, detail: `expected a pass and the check blocked it${why}` };
 }
 
+/**
+ * The sentence a case earns when it stages files and every one is outside the entry's `.on(…)`, or
+ * undefined when the case can reach the rule. `.ignore(…)` is not asked: a file the rule ignores is
+ * a case about the ignore list. The rule is never asked, so a pass case would go green and a block
+ * case would read as a rule that does not catch what it says: both are the case's fault.
+ */
+function outsideOn(on: readonly string[] | undefined, staged: readonly string[] = []): string | undefined {
+  if (!on?.length || staged.length === 0 || staged.some((path) => inScope({ on }, path))) return undefined;
+  return `this case never reached the rule: ${staged.join(", ")} is outside .on(${on.map((g) => `"${g}"`).join(", ")})`;
+}
+
 /** The sentence an unanswered reach earns — it names what to add to the case. */
 export function unansweredText(missing: readonly Unanswered[]): string {
   return missing
@@ -2003,8 +2017,30 @@ export function unansweredText(missing: readonly Unanswered[]): string {
     .join(" · ");
 }
 
+/** How many cases `runCases` would run for one entry. */
+export function casesOf(entry: LoadedEntry): number {
+  const run = runnable(entry);
+  return run ? (run.cases.pass?.length ?? 0) + (run.cases.block?.length ?? 0) : 0;
+}
+
+/** The one skip rule: an entry's check and cases, or undefined for a breadcrumb, a disabled entry or one with no check. */
+function runnable(entry: LoadedEntry) {
+  const { spec } = entry;
+  if (spec.kind !== "guardrail" || spec.disabled || !spec.check) return undefined;
+  return { check: spec.check, cases: spec.test ?? {} };
+}
+
+/** What ends a `flow test` line: the entries it never ran, and the cases of installed packs it left out. */
+export function testTail(disabled: number, leftOut: number): string {
+  const parts = [
+    ...(disabled ? [`${disabled} disabled, not run`] : []),
+    ...(leftOut ? [`${leftOut} case${leftOut === 1 ? "" : "s"} of installed packs, not run`] : []),
+  ];
+  return parts.map((p) => ` · ${p}`).join("");
+}
+
 /**
- * Every bound entry's cases, driven — what `flow test` is.
+ * The cases of the entries it is handed, driven — what `flow test` is: the repo's own packs' entries, or every bound one with `--all`.
  *
  * Disabled entries are skipped: they are listed with their reason and never run, so asking them to
  * prove anything is how an opt-out becomes cheaper to delete than to explain. Breadcrumbs carry no
@@ -2014,10 +2050,9 @@ export function unansweredText(missing: readonly Unanswered[]): string {
 export async function runCases(entries: readonly LoadedEntry[]): Promise<CaseResult[]> {
   const out: CaseResult[] = [];
   for (const entry of entries) {
-    const { spec } = entry;
-    if (spec.kind !== "guardrail" || spec.disabled || !spec.check) continue;
-    const check = spec.check;
-    const cases = spec.test ?? {};
+    const run = runnable(entry);
+    if (!run) continue;
+    const { check, cases } = run;
     for (const [expect, list] of [
       ["pass", cases.pass],
       ["block", cases.block],

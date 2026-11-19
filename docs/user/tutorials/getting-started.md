@@ -4,7 +4,7 @@ summary: "from an unguarded repo to a refused commit, a refused command and a br
 
 # Getting started
 
-In this tutorial, we guard a git repo with flow. We see a commit refused, a command refused before it runs, and a [breadcrumb](../reference/glossary.md#breadcrumb) shown to an agent. Then we run every rule's own test cases. It takes about ten minutes, and every command below is real, so run each one as you read.
+In this tutorial, we guard a git repo with flow. We see a commit refused, a command refused before it runs, and a [breadcrumb](../reference/glossary.md#breadcrumb) shown to an agent. Then we run the test cases of the rules we wrote. It takes about ten minutes, and every command below is real, so run each one as you read.
 
 You need **Node 24 or later**, git, and a git repo to guard. A throwaway repo is fine. For steps 6 and 7 you need Claude Code or Codex.
 
@@ -209,13 +209,13 @@ Code under src/ is pure: no file or network access. Put those in shell/.
 
 Ask the agent what it was just told about `src/`. It repeats the breadcrumb's text. The agent is shown the breadcrumb once: a second change to `src/a.ts` shows nothing.
 
-## 8 · Run every rule's own cases
+## 8 · Run your rules' cases
 
-Every [guardrail](../reference/glossary.md#guardrail) carries the inputs it must let through and the inputs it must refuse. Let's run them all:
+Every [guardrail](../reference/glossary.md#guardrail) carries the inputs it must let through and the inputs it must refuse. Let's run the cases of `house`, the pack we wrote:
 
 ```
 npx flow test
-# flow test — 46 cases over 5 guardrails, all green
+# flow test — 6 cases over 3 guardrails, all green · 40 cases of installed packs, not run
 ```
 
 ## 9 · Commit the guard
@@ -236,7 +236,7 @@ We now have a repo that guards itself:
 - **A commit** is judged on its staged files and its message, and refused when a rule says no.
 - **A named command** is refused before it runs.
 - **A breadcrumb** is shown to an agent when it first changes a file in an area.
-- **Every rule** proves itself with its own cases, through `flow test`.
+- **Every rule we wrote** proves itself with its own cases, through `flow test`.
 
 Anyone who clones the repo and runs `npm install` and `npx flow init` gets the same guard.
 

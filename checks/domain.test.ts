@@ -65,7 +65,9 @@ import {
   resolveLang,
   useGrammars,
   runCase,
+  casesOf,
   runCases,
+  testTail,
   shellCommands,
   siblingExists,
   skipForChanged,
@@ -1720,6 +1722,21 @@ describe("runCase", () => {
     expect(result.detail).toContain("does not catch what it says it catches");
   });
 
+  it("a case whose file is outside .on(…) never reached the rule, pass or block", async () => {
+    const scoped = entry({ on: ["app/**"] });
+    for (const want of ["pass", "block"] as const) {
+      const result = await runCase(scoped, want === "pass" ? passes : blocks, file("src/a.ts", ""), want, 0);
+      expect(result.ok).toBe(false);
+      expect(result.detail).toBe('this case never reached the rule: src/a.ts is outside .on("app/**")');
+    }
+    expect((await runCase(scoped, blocks, file("app/a.ts", ""), "block", 0)).ok).toBe(true);
+    const mixed = { staged: ["src/a.ts", "app/a.ts"], world: { fs: { "src/a.ts": "", "app/a.ts": "" } } };
+    expect((await runCase(scoped, blocks, mixed, "block", 0)).ok, "one file inside reaches the rule").toBe(true);
+    const ignoring = entry({ on: ["app/**"], ignore: ["app/skip.ts"] });
+    const skipped = await runCase(ignoring, passes, { staged: ["app/skip.ts"], world: { fs: { "app/skip.ts": "" } } }, "pass", 0);
+    expect(skipped.detail).not.toContain("never reached");
+  });
+
   it("a pass case the rule blocks reports the rule's own detail", async () => {
     const result = await runCase(entry({}), blocks, file("a.ts", ""), "pass", 1);
     expect(result.ok).toBe(false);
@@ -1916,5 +1933,24 @@ describe("every stock check, bound in a real config", () => {
     expect(loaded.ok ? [] : loaded.refusals.map((r) => [r.code, r.entry])).toEqual([
       ["no-block-cases", "thin.testsPassAtCommit"],
     ]);
+  });
+});
+
+describe("testTail", () => {
+  it("ends with the count of installed packs' cases left out, and nothing when none were", () => {
+    expect(testTail(0, 40)).toBe(" · 40 cases of installed packs, not run");
+    expect(testTail(0, 1)).toBe(" · 1 case of installed packs, not run");
+    expect(testTail(2, 40)).toBe(" · 2 disabled, not run · 40 cases of installed packs, not run");
+    expect(testTail(0, 0)).toBe("");
+  });
+});
+
+describe("casesOf", () => {
+  const entry = (spec: object) => ({ spec }) as unknown as Parameters<typeof casesOf>[0];
+  const check = () => ({ ok: true });
+  it("sums pass and block cases, and is 0 for a disabled entry", () => {
+    const test = { pass: [{}, {}], block: [{}] };
+    expect(casesOf(entry({ kind: "guardrail", check, test }))).toBe(3);
+    expect(casesOf(entry({ kind: "guardrail", check, test, disabled: "off" }))).toBe(0);
   });
 });

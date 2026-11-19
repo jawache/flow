@@ -139,7 +139,7 @@ Any case may include a `world`, for a rule that reaches past its facts. A reach 
 })
 ```
 
-`flow test` runs every case. See [how to test your rules](../how-to/test-your-rules.md).
+`flow test` runs the cases of the repo's own packs, and `flow test --all` runs every case. See [how to test your rules](../how-to/test-your-rules.md).
 
 ## Categories
 

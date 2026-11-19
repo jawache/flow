@@ -7,23 +7,12 @@
 // It is the one file that hands the rest of flow a `Harness` (../harness.ts), as `codex`: flow.ts chooses
 // it, and nothing else outside this folder imports it.
 
-import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { DELIVERS, hermeticEnv } from "../domain.ts";
+import { DELIVERS } from "../domain.ts";
+import { projectRoot } from "../shell.ts";
 import type { Harness } from "../harness.ts";
 import { HOOK_WORDS, HOST_SURFACE, REPO_HOOKS, briefHead, claimsPayload, hooksFile, ownTranscriptPath, parseEvents, spawnMeta, tokensFromTranscript, transcriptHead, turnActions } from "./domain.ts";
 import { codexHome, readStore, readTranscript } from "./store.ts";
-
-/**
- * The repo a hook stands in: git's top folder for the folder Codex ran the hook in, which may be inside the
- * repo. The folder itself when git cannot say, which keeps a hook run outside any repository answering from
- * where it stands.
- */
-export function projectRoot(cwd: string): string {
-  const asked = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd, env: hermeticEnv(process.env), encoding: "utf8" });
-  const top = asked.status === 0 ? asked.stdout.trim() : "";
-  return top === "" ? cwd : top;
-}
 
 /** The machine-wide hooks file. flow 0.3 wrote nothing for Codex there, so a run of `flow uninstall --machine` finds nothing of flow's in it. */
 function machineSettingsPath(): string {

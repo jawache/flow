@@ -172,16 +172,16 @@ export default [
     },
   },
 
-  // ── override 7 · guards/driven.ts is work's copy, not this repo's code ──────────
+  // ── override 7 · guards/work.ts is work's copy, not this repo's code ──────────
   //
-  // The file is work's `examples/default/guards/driven.ts`, copied in byte for byte so a later copy
+  // The file is work's `examples/default/guards/work.ts`, copied in byte for byte so a later copy
   // replaces it whole. Two of its lines fail the fleet base: a `?? 0` on a regex match's index,
   // which is never undefined (no-unnecessary-condition), and `String(front.type)` on a value of
   // unknown type (no-base-to-string). Editing them here would fork the copy, so the fix is work's,
   // filed as work-127. Once a fixed copy lands, this override goes. Scoped to the one file and the
   // two rules, so every other rule still reads it.
   {
-    files: ["guards/driven.ts"],
+    files: ["guards/work.ts"],
     rules: {
       "@typescript-eslint/no-unnecessary-condition": "off",
       "@typescript-eslint/no-base-to-string": "off",

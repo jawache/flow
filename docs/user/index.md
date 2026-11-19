@@ -12,7 +12,7 @@ Each page is one of four kinds: a lesson, a guide to one task, a description to 
 
 For you if you are new to flow: one lesson, from an unguarded repo to a refused commit.
 
-- [Getting started](./tutorials/getting-started.md): guard a repo, watch a commit and a command refused and a [breadcrumb](./reference/glossary.md#breadcrumb) shown, and run every rule's own cases, in about ten minutes.
+- [Getting started](./tutorials/getting-started.md): guard a repo, watch a commit and a command refused and a [breadcrumb](./reference/glossary.md#breadcrumb) shown, and run your rules' own cases, in about ten minutes.
 
 ## Get something done
 

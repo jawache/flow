@@ -32,6 +32,17 @@ import type { HookResult, StoredTranscript, TranscriptRef } from "./harness.ts";
 // THE WORLD — what a check reaches through, and the only place flow runs anything
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
+/**
+ * The repo a hook stands in: git's top folder for the folder Codex ran the hook in, or `flow test` the config in, which may be inside
+ * the repo. The folder itself when git cannot say, which keeps a hook run outside any repository answering from
+ * where it stands.
+ */
+export function projectRoot(cwd: string): string {
+  const asked = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd, env: hermeticEnv(process.env), encoding: "utf8" });
+  const top = asked.status === 0 ? asked.stdout.trim() : "";
+  return top === "" ? cwd : top;
+}
+
 /** How much of a tool's output a check may be handed. Generous — a failing suite is verbose. */
 const MAX_OUTPUT = 16 * 1024 * 1024;
 

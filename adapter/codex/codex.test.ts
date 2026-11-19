@@ -8,7 +8,8 @@ import { tmpdir } from "node:os";
 import { readRows } from "../../engine/state.ts";
 import { facts } from "../archive.ts";
 import { runHook } from "../hook.ts";
-import { codex, projectRoot } from "./codex.ts";
+import { projectRoot } from "../shell.ts";
+import { codex } from "./codex.ts";
 
 describe("a hook run for the harness that sent the payload", () => {
   const config = `import { breadcrumb, command, defineConfig, definePack, guardrail, pack, session } from ${JSON.stringify(new URL("../../index.ts", import.meta.url).pathname)};

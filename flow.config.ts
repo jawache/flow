@@ -4,7 +4,7 @@
 // what you read below is exactly what fires.
 //
 //   flow status   what is bound, at which moments, and what is not wired yet
-//   flow test     every rule's own cases, driven
+//   flow test     the cases of the packs this repo writes, driven (--all: every bound rule's)
 //
 // TWO VERBS AND THE WHOLE FILE IS THEM. `pack(x)` binds a pack and all its entries; `override(x.e)`
 // speaks only what it changes, and everything it does not say comes from the pack. An override
@@ -142,8 +142,7 @@ export default defineConfig([
   // ── driven by the work daemon ──
   //
   // `guards/work.ts` is the default workflow's pack, copied in by `work init --template` rather
-  // than written here. `guards/driven.ts` is its old name, the same two entries, and is not bound:
-  // the file stays until `house.noDeleteGuards` lets it be deleted.
+  // than written here.
   pack(work),
 
   // ── this repo's own terrain ──

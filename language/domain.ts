@@ -2201,6 +2201,11 @@ export interface PackDefinition {
    * `pack(docs)` may bind, exactly as the compiler already allows.
    */
   readonly takesParams: boolean;
+  /**
+   * The file URL of the module that called `definePack`, read from the stack at the call. Absent
+   * when the stack names no file. `flow test` reads it to tell an installed pack from the repo's own.
+   */
+  readonly origin?: string | undefined;
 }
 
 /** Where a reference points. Flat: the pack's name, and the entry's dotted path within it. */
@@ -2345,7 +2350,25 @@ export function definePack(
   const takesParams = typeof entries === "function" && entries.length > 0;
   const build = (params: unknown): EntryGroup =>
     typeof entries === "function" ? entries(params as never) : entries;
-  return refProxy(name, [], { name, build, takesParams }) as Pack<EntryGroup, never>;
+  const holder: { stack?: string } = {};
+  Error.captureStackTrace(holder, definePack);
+  const origin = originOf(holder.stack ?? "");
+  return refProxy(name, [], { name, build, takesParams, origin }) as Pack<EntryGroup, never>;
+}
+
+/** The file URL of the first frame of a stack that names one, or undefined. */
+export function originOf(stack: string): string | undefined {
+  return /\((file:\/\/[^)]*?):\d+:\d+\)|at (file:\/\/\S*?):\d+:\d+/.exec(stack)?.slice(1).find(Boolean);
+}
+
+/**
+ * Is a pack installed: its file, with links already followed, is under `node_modules` or outside
+ * the repo? A pack whose file is unknown is the repo's own, so its cases run.
+ */
+export function isInstalledPack(file: string | undefined, repoRoot: string): boolean {
+  if (file === undefined) return false;
+  const rel = posix.relative(repoRoot.replaceAll("\\", "/"), file.replaceAll("\\", "/"));
+  return rel.startsWith("..") || posix.isAbsolute(rel) || rel.split("/").includes("node_modules");
 }
 
 // One proxy serves both jobs a pack value has: it IS the reference tree, and it CARRIES the
@@ -2598,6 +2621,8 @@ export interface LoadedEntry {
   readonly pack: string;
   /** The entry's dotted path within its pack. */
   readonly key: string;
+  /** The file URL of the pack's `definePack` call, when known (`PackDefinition.origin`). */
+  readonly origin?: string | undefined;
   readonly spec: EntrySpec;
   /** Where each key came from — what `flow status` prints when it explains an entry. */
   readonly source: Readonly<Record<string, "pack" | "override">>;
@@ -2635,6 +2660,7 @@ export function refusalText(refusals: readonly Refusal[]): string {
 interface Draft {
   id: string;
   pack: string;
+  origin?: string | undefined;
   key: string;
   spec: EntrySpec;
   source: Readonly<Record<string, "pack" | "override">>;
@@ -2675,7 +2701,7 @@ export function loadConfig(config: FlowConfig): LoadResult {
       continue;
     }
 
-    const { name, build, takesParams } = binding.pack;
+    const { name, build, takesParams, origin } = binding.pack;
     if (takesParams && !binding.hasParams) {
       refusals.push({
         code: "missing-parameter",
@@ -2689,7 +2715,7 @@ export function loadConfig(config: FlowConfig): LoadResult {
       // `overlay(spec, {})` rather than a source loop of its own: an entry with no override is
       // the same operation with nothing laid over it, and overlay is the one place a source map
       // is built.
-      const draft: Draft = { id: `${name}.${key}`, pack: name, key, ...overlay(spec, {}) };
+      const draft: Draft = { id: `${name}.${key}`, pack: name, origin, key, ...overlay(spec, {}) };
       const clash = seen.get(draft.id);
       if (clash) {
         refusals.push({
@@ -2734,6 +2760,7 @@ export function loadConfig(config: FlowConfig): LoadResult {
     entries: drafts.map((d) => ({
       id: d.id,
       pack: d.pack,
+      origin: d.origin,
       key: d.key,
       spec: d.spec,
       source: d.source,
