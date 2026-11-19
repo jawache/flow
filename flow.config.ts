@@ -16,25 +16,26 @@
 // specifiers, resolved through `node_modules/@jawache/flow`, which `flow init` linked back to this
 // very checkout. This repo is therefore a CONSUMER of its own package, on exactly the path a
 // stranger takes: a door that stopped exporting a symbol breaks this file before it breaks anybody
-// else's. Every other pack is this repo's own, in `guards/` and shipped to nobody: eight that
-// started as fleet discipline, `driven`, and `house` — the project map, the internal layout, the
-// one-way import fences, and the ratchet on this binary's verb surface.
+// else's. Eight packs come from `@jawache/flow-packs`, installed from its GitHub tag like any project
+// installs them. Two are this repo's own, in `guards/` and shipped to nobody: `driven`, and `house` —
+// the project map, the internal layout, the one-way import fences, and the ratchet on this binary's
+// verb surface.
 //
 // An unbound pack costs nothing, so binding is opt-in per pack and every one is named below on
 // purpose.
 
 import { defineConfig, override, pack } from "@jawache/flow";
 import { flow } from "@jawache/flow/packs";
-import { docs } from "./guards/docs.ts";
+import { docs } from "@jawache/flow-packs/docs";
 import { driven } from "./guards/driven.ts";
-import { fcis } from "./guards/fcis.ts";
-import { git } from "./guards/git.ts";
+import { fcis } from "@jawache/flow-packs/fcis";
+import { git } from "@jawache/flow-packs/git";
 import { house } from "./guards/house.ts";
-import { justfile } from "./guards/justfile.ts";
-import { node } from "./guards/node.ts";
-import { secrets } from "./guards/secrets.ts";
-import { tdd } from "./guards/tdd.ts";
-import { typescript } from "./guards/typescript.ts";
+import { justfile } from "@jawache/flow-packs/justfile";
+import { node } from "@jawache/flow-packs/node";
+import { secrets } from "@jawache/flow-packs/secrets";
+import { tdd } from "@jawache/flow-packs/tdd";
+import { typescript } from "@jawache/flow-packs/typescript";
 
 // THIS REPO'S PURE HOME, stated once and used by every fcis rail and by the import fence.
 //
@@ -146,6 +147,7 @@ export default defineConfig([
 
   // ── this repo's own terrain ──
   pack(house, { pure: PURE }),
+  override(house.noDeleteGuards).disabled("for the one commit that deletes the eight packs now in @jawache/flow-packs; the next commit turns it back on"),
 ], {
   driftTokens: 400_000,
 });

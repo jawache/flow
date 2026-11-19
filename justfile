@@ -12,7 +12,8 @@ default:
 
 [doc("Install dependencies from the lockfile, and link `@jawache/flow` back to this checkout — run this first in a fresh clone or worktree.")]
 install:
-    npm ci
+    # --allow-git=root: npm 12 fetches a git dependency only when told to, and @jawache/flow-packs is one.
+    npm ci --allow-git=root
     # AFTER `npm ci`, which wipes node_modules. The hooks run node_modules/@jawache/flow/dist/flow.mjs
     # when it exists and fall back to the `flow` on PATH, so without this link a checkout's hooks run
     # whatever older flow is installed, and the config this checkout's packs write may not load there.

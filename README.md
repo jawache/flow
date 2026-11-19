@@ -83,7 +83,7 @@ just test-commit             # what the commit runs: the rule cases, the typeche
 just test-tutorial           # the Getting started tutorial against the built binary
 ```
 
-flow guards its own repo, from its own checkout. `flow.config.ts` binds the `flow` pack and this repo's own packs in `guards/`, and its hooks are in its own `.claude/settings.json` and `.codex/hooks.json`. A change that breaks a rule, an export or the build is refused at this repo's own next commit.
+flow guards its own repo, from its own checkout. `flow.config.ts` binds the `flow` pack, eight packs from [flow-packs](https://github.com/jawache/flow-packs), and this repo's own packs in `guards/`, and its hooks are in its own `.claude/settings.json` and `.codex/hooks.json`. A change that breaks a rule, an export or the build is refused at this repo's own next commit.
 
 ## Licence
 
