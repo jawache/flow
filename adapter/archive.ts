@@ -141,8 +141,9 @@ export function facts(root: string, load: LoadResult, harnesses: readonly Harnes
     : selectSessions(scoped, alreadyRead(root), opts);
 
   // A log with no transcript behind it is no session someone had. With no transcript of this repo to compare with, every log stays.
+  // Transcripts copied from elsewhere come from another worktree, so this one's `.flow/log/` is not theirs: with no `log` named, none is read.
   const { kept: history, excluded: withoutTranscript } = backedByTranscript(
-    readHistory(root, opts.log ?? undefined),
+    opts.transcripts != null && opts.log == null ? [] : readHistory(root, opts.log ?? undefined),
     candidates.length > 0 ? new Set(candidates.map((c) => c.id)) : null,
   );
   const bySession = new Map(history.map((s) => [s.session, s.rows]));
@@ -197,7 +198,7 @@ export function facts(root: string, load: LoadResult, harnesses: readonly Harnes
     },
     withoutTranscript,
     health: health({
-      armed: history.length > 0,
+      armed: history.length + withoutTranscript.length > 0,
       transcripts: candidates.length,
       rows: history.reduce((n, s) => n + s.rows.length, 0),
       withRecord,

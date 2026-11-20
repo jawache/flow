@@ -320,11 +320,8 @@ export function sessionIds(root: string, dir?: string): string[] {
 }
 
 /** The whole recorded history of a repo — every stream, read. A `dir` is a copy of `.flow/log/` kept elsewhere, read in its place. */
-export function readHistory(root: string, dir?: string): SessionRows[] {
-  return sessionIds(root, dir).map((session) => ({
-    session,
-    rows: dir === undefined ? readRows(root, session) : readRowsFile(join(dir, `${session}.jsonl`)),
-  }));
+export function readHistory(root: string, dir: string = join(flowDir(root), "log")): SessionRows[] {
+  return sessionIds(root, dir).map((session) => ({ session, rows: readRowsFile(join(dir, `${session}.jsonl`)) }));
 }
 
 // ── what the archival side has already read ──────────────────────────────────

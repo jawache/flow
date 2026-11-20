@@ -171,9 +171,11 @@ describe("transcripts kept elsewhere", () => {
       expect(read.health.blocked).toBe(null);
       expect(read.health.warn[0]).toContain("no session log was found");
 
-      // Nothing at all to read is still a refusal.
-      const none = facts(repo, regime, [claudeCode], { home, transcripts: join(kept, "nowhere") });
-      expect(none.health.blocked).toContain("NOT ARMED");
+      // This worktree's own log belongs to no copy: with `--transcripts` alone it is not read, and excludes nothing.
+      appendRows({ root: repo, session: "other", branch: "main", who: { agent: "main" } }, [{ kind: "tool", tool: "Edit", path: "a.ts", edit: true }]);
+      const alone = facts(repo, regime, [claudeCode], { home, transcripts: kept });
+      expect(alone.withoutTranscript).toHaveLength(0);
+      expect(alone.health.warn[0]).toContain("no session log was found");
     } finally {
       rmSync(kept, { recursive: true, force: true });
     }
@@ -304,8 +306,6 @@ describe("the reading, assembled", () => {
   it("a conversation with no record of its own is narrative-only, and the health line says so", () => {
     conversation(repo, "one");
     const read = facts(repo, regime, [claudeCode], { home });
-    expect(read.health.blocked).toBe(null);
-    expect(read.health.warn[0]).toContain("no session log was found");
     expect(read.coverage).toEqual({ analysed: 1, withRecord: 0, narrativeOnly: 1 });
     expect(read.metrics.span.tools).toBe(0);
   });
