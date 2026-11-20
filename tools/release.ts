@@ -146,7 +146,7 @@ const verb = process.argv[2];
 try {
   if (verb === "cut") {
     const version = cut(PACKAGE);
-    process.stdout.write(`\nLocal only: nothing was pushed and nothing was published.\nv${version} holds dist/; the branch is joined to it and holds none at the release commit.\nTo share it:  git push origin HEAD && git push origin v${version}\n`);
+    process.stdout.write(`\nLocal only: nothing was pushed and nothing was published.\nv${version} holds dist/; the branch is joined to it and holds no dist/.\nTo share it:  git push origin HEAD && git push origin v${version}\n`);
   } else if (verb === "check") {
     check();
   } else {
