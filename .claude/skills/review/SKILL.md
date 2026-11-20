@@ -88,7 +88,7 @@ The numbers come from `flow facts` (this repo's `docs/user/reference/facts.md`) 
 ### P-FACTS
 
 1. work keeps a finished issue's transcripts in its record, under `transcripts/`, and its flow logs under `flow-log/`.
-2. In the project's checkout, with this repo's own flow: `flow facts --transcripts <record>/transcripts --log <record>/flow-log --all --json`. It needs `TYPESAFE_API_KEY` in this session's environment.
+2. In the project's checkout, with this repo's own flow: `flow facts --transcripts <record>/transcripts --log <record>/flow-log --all --json`. It reads `TYPESAFE_API_KEY` from this repo's `.env` file, which git ignores.
 
 ### P-RECORD
 
