@@ -61,7 +61,7 @@ flow reads the transcript named in the payload, and for a subagent the subagent'
 
 - **The context size,** from the last message's input and cache tokens, for `driftTokens`.
 - **A generic subagent's brief,** for a category.
-- **Prompts and tool calls,** for `flow facts`.
+- **Prompts, tool calls and their results, model requests, context sizes and models,** for `flow facts`.
 
 flow writes nothing to a transcript.
 

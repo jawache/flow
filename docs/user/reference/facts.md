@@ -4,22 +4,18 @@ summary: "every part of the report flow facts prints, where each number is read 
 
 # The facts report
 
-`flow facts` prints what happened in a repo's conversations with a [harness](./glossary.md#harness): what ran, what failed, what flow refused, and what the person typed. Every number is a count, read by code. One part is sorted by a model: the prompts, which go to Jev.
-
-[`flow facts`](./cli.md#flow-facts) lists the command's options.
+`flow facts` prints what happened in a repo's conversations with a [harness](./glossary.md#harness): what ran, what failed, what flow refused, and what the person typed. Code reads every count. One part is sorted by a model: the prompts, which go to Jev.
 
 ## What it reads
 
 | Source | Where | Holds |
 | --- | --- | --- |
-| The transcripts | the harness's folder for this repo, one file per conversation and one per [subagent](./glossary.md#actor) it started | every prompt, every model request, every tool call and its result |
+| The transcripts | where the harness keeps them ([Claude Code](./claude-code.md), [Codex](./codex.md)), one file per conversation and one per subagent it started | every prompt, every model request, every tool call and its result |
 | [The session log](./log.md) | `.flow/log/` in this worktree | every rule that ran, every refusal and every [breadcrumb](./glossary.md#breadcrumb) shown |
 
-`flow facts` reads every conversation that started in this worktree and is not marked read. `--branch`, `--session`, `--since` and `--limit` narrow that. `--worktree <path>` reads another worktree's conversations.
+`flow facts` reads every conversation that started in this worktree and is not marked read.
 
-The harness keeps a worktree's transcripts after the worktree is removed. The session log is removed with it. For a removed worktree, the report has every part read from the transcripts, and `health` says the log is missing.
-
-A count from the transcripts includes each subagent's transcript.
+`--transcripts <dir>` and `--log <dir>` read copies kept elsewhere, such as the ones a tool saved before it removed the worktree. With transcripts and no log, the report has every part read from the transcripts, and `health` says the log is missing.
 
 ## The parts of the report
 
@@ -27,19 +23,23 @@ A count from the transcripts includes each subagent's transcript.
 | --- | --- | --- |
 | Conversations | How many conversations were read, of how many unread, and how many have a session log | both |
 | Recorded | Tool calls, conversations and days in the log. Under 15 conversations and under 30 days, the log is too thin to call a rule dead | log |
+| Blocks | How many times a guardrail refused a commit or a command | log |
+| Excluded | Sessions in the log with no transcript behind them, which no count includes | both |
 | Requests | Model requests, and the largest context in tokens, for the conversation and for each subagent | transcripts |
 | Models | The model each subagent ran on | transcripts |
-| Test runs | How many [test runs](#test-runs) there were, how many failed, and how many model requests fell between a failed run and the next one that passed | transcripts |
-| Refusals | For each [guardrail](./glossary.md#guardrail): how often it refused, and how often the next command differed from the refused one | transcripts |
+| Test runs | For the conversation and for each subagent: how many [test runs](#test-runs) there were, how many failed, and how many model requests fell between a failed run and the next one that passed | transcripts |
+| Refusals | For each [guardrail](./glossary.md#guardrail), in the conversation and its subagents: how often it refused, and how often the next command differed from the refused one | transcripts |
 | Lead | For each breadcrumb shown: how many tool calls passed before a file it is about changed | log |
 | Gap | A folder where files changed and no rule's globs reach. Up to 5 | log |
 | Dead, retire, quiet | Rules whose globs never matched, rules that never ran, and rules that last refused over 30 days ago. Printed when the log is not too thin | log |
 | Session | Edit calls, Write calls, files a shell command read by name, and commits | transcripts |
+| Shell | The files those shell commands read, most read first | transcripts |
 | Mode | Tool calls for each permission mode | both |
 | Unwatched | A file the conversation read or changed that no rule's globs reach. Up to 5 | transcripts |
 | Actors | Each subagent: its type and its description. Up to 5 | transcripts |
 | Guard edited | A warning when a guardrail refused and the conversation later changed `flow.config.ts`, a pack file it imports, or the hooks file | both |
 | Prompts | Each prompt a person typed, with [its kind and a frustration score](#prompts) | transcripts, Jev |
+| Marked | With `--mark`, how many conversations were marked read | transcripts |
 
 A file counts as changed from the log's [`change` rows](./log.md#change), whichever tool changed it.
 
@@ -48,13 +48,13 @@ A file counts as changed from the log's [`change` rows](./log.md#change), whiche
 A test run is one shell command that runs a test, a build or a gate. A command is a test run when it runs either of these:
 
 - a recipe of the repo's justfile whose name starts with `test`, `check`, `gate`, `e2e`, `lint`, `typecheck` or `build`;
-- a program that one of those recipes runs, such as `vitest`.
+- a program that one of those recipes runs, such as `vitest`. A shell utility, such as `grep`, `mkdir` or `rm`, never counts.
 
-[`testRuns`](./config.md#settings) in `flow.config.ts` adds recipe names.
+[`testRuns`](./config.md#settings) in `flow.config.ts` adds recipe names, each matched whole.
 
 A test run failed when the harness marked its result as an error.
 
-The requests between a failed run and the next passing one are the cost of getting back to green. The count starts at the first failed run and stops at the next run that passes.
+The count of requests between starts at the first failed run and stops at the next run that passes.
 
 ## Prompts
 
@@ -65,7 +65,7 @@ A prompt is text a person typed or sent to the conversation. A notice the harnes
 | Field | What it is |
 | --- | --- |
 | kind | one of `correction`, `confusion`, `new_direction`, `answer`, `go_ahead`, `question` or `other` |
-| confidence | 0 to 1, how sure Jev is of the kind. Under 0.6, the report counts the prompt as `unsure` |
+| confidence | 0 to 1, how sure Jev is of the kind |
 | frustrated | 0 to 1, how likely the person is annoyed with the agent |
 
 | Kind | The prompt |
@@ -85,10 +85,12 @@ The key is read from `TYPESAFE_API_KEY`. `--no-prompts` leaves this part out, se
 
 | Key | What it holds |
 | --- | --- |
+| `host`, `root` | The harness's name and the repo's folder |
 | `selection`, `coverage`, `store` | Which conversations were read, which were left, and where the transcripts are |
+| `withoutTranscript` | The Excluded sessions |
 | `health` | A warning when there is no log |
 | `requests` | For the conversation and each subagent: model requests, largest context and model |
-| `testRuns` | Each test run: its command, the transcript line, and whether it failed. Then the totals |
+| `testRuns` | Each test run: its command, the transcript line, and whether it failed. Then the totals, for the conversation and each subagent |
 | `refusals` | For each guardrail: each refusal's transcript line, and whether the next command differed |
 | `prompts` | Each prompt, shortened, with its kind, confidence and frustration score |
 | `metrics` | For each guardrail and breadcrumb: its counts from the log. Then the numbers behind Recorded, Lead, Gap, Dead, retire, quiet |
@@ -97,12 +99,13 @@ The key is read from `TYPESAFE_API_KEY`. `--no-prompts` leaves this part out, se
 | `actors` | Every subagent: its type, description and the transcript line that started it |
 | `weakened` | The Guard edited warnings |
 | `modes` | Calls for each permission mode |
+| `marked` | How many conversations were marked read, or `null` without `--mark` |
 | `terrain` | Every folder and file of the repo, with how often it was read, how often changed, and which rules reach it |
 | `moments` | Every bound rule grouped by the [moment](./glossary.md#moment) it runs at, with its counts |
 
 ## The report as a page
 
-`--report <file>` writes the same parts as one HTML page: a line per conversation, the test runs that failed, the refusals per guardrail, and the prompts by kind.
+`--report <file>` writes one HTML page in the work + flow colours and type. It has the totals, one row per conversation with its requests, failed test runs and largest context, the refusals per guardrail, and the prompts by kind.
 
 ---
 

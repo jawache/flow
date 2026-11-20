@@ -2,7 +2,7 @@
 name: review
 description: Use when the work daemon types `[work] /review <issue>` into a daily review issue in this repo, or when the human asks for "the daily review" or "review yesterday's issues". Reads every project's issues that finished the day before, and posts one report of the few things that cost a lot.
 file: SKILL
-when: the line `[work] /review <issue>`, typed each weekday morning into a new issue
+when: the line `[work] /review <issue>`, typed at 07:00 each weekday, Europe/London, into a new issue of type `review`, whose statuses are Review and Done
 brief: the review's own issue
 writes: the report page in the issue's record · one question card · an issue in a project's Backlog, on the human's "file"
 guards: none
@@ -56,6 +56,7 @@ The numbers come from `flow facts` (this repo's `docs/user/reference/facts.md`) 
 - `DRV-R12` If the human's frustration has the same cause on several days, raise it as a finding.
 - `DRV-R13` Say how sure you are of each finding: what is counted, and what is your reading.
 - `DRV-R14` Never file an issue until the human replies "file" with the finding's number.
+- `DRV-R15` Count a prompt's kind only when its confidence is 0.6 or more.
 
 ## Steps
 
@@ -69,7 +70,9 @@ The numbers come from `flow facts` (this repo's `docs/user/reference/facts.md`) 
 - `DRV-S8` Read the last five reviews' records for a cause of frustration that repeats. (R11, R12)
 - `DRV-S9` Before you believe a candidate, open the transcript lines `flow facts` cites for it.
 - `DRV-S10` Put each candidate through the two tests. (R2–R8)
+- `DRV-S16` Work out what each finding could have saved, as an upper limit. → P-SAVED
 - `DRV-S11` Write the report to `<record>artifacts/report.html`. Read `templates/report.html`, then write the page in its shape. (R1, R13)
+- `DRV-S17` On a day with no finding, leave out the Findings section, and write the header as "I read <m> issues that cost $<x>, and found nothing worth your time".
 - `DRV-S12` Post one question card. Read `templates/card.md`, then write it in its shape.
 - `DRV-S13` On "file <n>", file that finding's issue in its project's Backlog. → P-FILE (R14)
 - `DRV-S14` On "discuss <n>", talk it through in this session. On "skip <n>", do nothing.
@@ -84,13 +87,19 @@ The numbers come from `flow facts` (this repo's `docs/user/reference/facts.md`) 
 
 ### P-FACTS
 
-1. An issue's worktree is `<project path>.worktrees/<its branch>`. It may have been removed.
-2. In the project's checkout: `flow facts --worktree <that path> --all --json`.
+1. work keeps a finished issue's transcripts in its record, under `transcripts/`, and its flow logs under `flow-log/`.
+2. In the project's checkout: `flow facts --transcripts <record>/transcripts --log <record>/flow-log --all --json`. It needs `TYPESAFE_API_KEY` in this session's environment.
 
 ### P-RECORD
 
 1. Cost per stage is the first line under `## Cost` in the issue's `issue.md`.
 2. A card is a `question` line of `log.jsonl`. Its wait is the time to the `answer` line whose `of` is the card's `at`.
+
+### P-SAVED
+
+1. Take the builders' requests between a failed test run and the next passing one, and the builders' requests, from `flow facts`.
+2. The share is the first over the second. The report's "spent fixing a failed test run" is this share over all the day's builders.
+3. A finding's upper limit is that issue's share times its Build cost. Write it as "up to $<x>".
 
 ### P-FILE
 

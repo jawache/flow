@@ -34,7 +34,8 @@ summary: "every `flow` command, what `flow init` writes and `flow uninstall` rem
 | `--largest` | Orders the conversations by size, largest first |
 | `--since <date>` | Reads only conversations from this date on |
 | `--mark` | Marks what was read, so the next run starts after it |
-| `--worktree <path>` | Reads the conversations that started in the worktree at `<path>`, in place of the current folder. The worktree may have been removed |
+| `--transcripts <dir>` | Reads the transcripts in `<dir>`, in place of the harness's folder for this worktree |
+| `--log <dir>` | Reads the session logs in `<dir>`, in place of `.flow/log/` |
 | `--report <file>` | Writes the report as one HTML page at `<file>` |
 | `--no-prompts` | Leaves the prompts out, so nothing is sent to Jev and no key is needed |
 
@@ -184,7 +185,7 @@ These commands exit 1:
 
 - **`flow status`**, when a fitting is missing.
 - **`flow test`**, when a case fails.
-- **`flow facts`**, when the record cannot be read at all, such as a repo where no session has ever been recorded.
+- **`flow facts`**, when there is no transcript and no log to read, such as a repo where no session has ever been recorded, or when `TYPESAFE_API_KEY` is not set and `--no-prompts` is not given.
 - **`flow replay`**, when the recording did not capture something a check reached for, or when `--against` finds a difference.
 - **`flow init`**, when one of its steps fails.
 - **`flow init`**, when git already runs other hooks and the `commit-msg` hook git runs does not call flow, or is not executable, as described under [when git already runs other hooks](#when-git-already-runs-other-hooks).

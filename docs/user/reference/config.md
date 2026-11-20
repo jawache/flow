@@ -41,7 +41,7 @@ The settings apply to the whole run rather than to one entry, so they are `defin
 | Key | Type | Meaning |
 | --- | --- | --- |
 | `driftTokens` | number | How far the agent's context size must grow, in tokens, before a [breadcrumb](./glossary.md#breadcrumb) that has already been shown is shown again. It applies to every breadcrumb except a `session` one. See [when a breadcrumb is shown again](./moments.md#when-a-breadcrumb-is-shown-again). The context size is read from the last message's input and cache tokens. The default is 200,000. It is one value for the whole repo, which is why it is not set on entries |
-| `testRuns` | array | Recipe names that count as a [test run](./glossary.md#test-run) in [the facts report](./facts.md#test-runs), added to the names flow already counts. Each is a recipe of the repo's justfile, such as `"verify"` |
+| `testRuns` | array | Recipe names that count as a [test run](./glossary.md#test-run) in [the facts report](./facts.md#test-runs), added to the names flow already counts. Each is the whole name of a recipe of the repo's justfile, such as `"verify"` |
 | `grammars` | array | Grammars this repo built itself, for `astGrep` rules whose language nobody publishes. Each is `{ name, libraryPath, extensions, languageSymbol? }`. The path is relative to the repo root or absolute, and it is a build artefact. Until the file is built, `flow status` shows a red line naming it, and the rules on that language refuse rather than pass |
 
 ```

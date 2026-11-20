@@ -94,7 +94,7 @@ a:focus-visible,code:focus-visible{outline:2px solid var(--flow);outline-offset:
   <div class="tile"><b>4</b><span>issues finished</span></div>
   <div class="tile"><b>$257.59</b><span>spent on them</span></div>
   <div class="tile"><b>up to $12</b><span>could have been saved</span></div>
-  <div class="tile"><b>18%</b><span>of builders' requests spent fixing a red check</span></div>
+  <div class="tile"><b>18%</b><span>of builders' requests spent fixing a failed test run</span></div>
 </div>
 
 <h2>Findings</h2>
@@ -107,7 +107,7 @@ a:focus-visible,code:focus-visible{outline:2px solid var(--flow);outline-offset:
   </div>
   <dl class="rows">
     <dt>What happened</dt><dd>The issue restyled the web pages. The tests for those pages compare the page's HTML, style names included. Each restyle turned them red, and the builders edited the expected HTML by hand until they passed.</dd>
-    <dt>Shown by</dt><dd>423 checks, 130 of them red. 205 of the builders' 1,099 requests fell between a red check and the next green one.</dd>
+    <dt>Shown by</dt><dd>423 test runs, 130 of them failed. 205 of the builders' 1,099 requests fell between a failed run and the next passing one.</dd>
     <dt>Root cause</dt><dd>A test that holds the page's markup fails when the look changes, not when the behaviour breaks.</dd>
     <dt>Intent</dt><dd>Not met. The tests are there to catch broken behaviour.</dd>
     <dt>Fix</dt><dd><b>Rung 3, a guardrail:</b> refuse a web test that matches on a style name. The tests that do so today change first.</dd>
@@ -134,7 +134,7 @@ a:focus-visible,code:focus-visible{outline:2px solid var(--flow);outline-offset:
 
 <h2>The day's work</h2>
 <div class="wrap"><table>
-<tr><th>Issue</th><th class="n">Cost</th><th>Share of the day</th><th class="n">Agents</th><th class="n">Requests</th><th>Builders' checks that were red</th><th class="n">Largest context</th></tr>
+<tr><th>Issue</th><th class="n">Cost</th><th>Share of the day</th><th class="n">Agents</th><th class="n">Requests</th><th>Builders' test runs that failed</th><th class="n">Largest context</th></tr>
 <tr><td><span class="id">work-125</span><span class="sub">The feed is a card per question</span></td><td class="n">$106.65</td><td><div class="bar"><i style="width:41%"></i></div></td><td class="n">31</td><td class="n">2,018</td><td><div class="bar"><i class="r" style="width:31%"></i></div><span class="sub">130 of 423</span></td><td class="n">537k</td></tr>
 <tr><td><span class="id">zk-18</span><span class="sub">The end-to-end suite is a few journeys</span></td><td class="n">$95.56</td><td><div class="bar"><i style="width:37%"></i></div></td><td class="n">33</td><td class="n">1,711</td><td><div class="bar"><i class="r" style="width:27%"></i></div><span class="sub">58 of 213</span></td><td class="n">367k</td></tr>
 <tr><td><span class="id">flow-9</span><span class="sub">Rules read a shell line's own variables</span></td><td class="n">$38.31</td><td><div class="bar"><i style="width:15%"></i></div></td><td class="n">13</td><td class="n">584</td><td><div class="bar"><i class="r" style="width:24%"></i></div><span class="sub">13 of 54</span></td><td class="n">222k</td></tr>
