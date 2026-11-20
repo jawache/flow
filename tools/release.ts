@@ -50,13 +50,13 @@ function cut(repo: string): string {
   run("just", ["build-release"], repo);
 
   // The second commit is an ordinary `git commit` on a detached HEAD, so the commit gate judges it
-  // like every other commit, and the branch is never moved: switching back leaves it at the release commit.
+  // like every other commit, and the branch is not moved while it is made: switching back leaves it at the release commit, and only the join below moves it.
   const branch = spawnSync("git", ["symbolic-ref", "--short", "-q", "HEAD"], { cwd: repo, encoding: "utf8" }).stdout.trim();
   const release = out("git", ["rev-parse", "HEAD"], repo);
   run("git", ["switch", "--detach", "-q"], repo);
   try {
     run("git", ["add", "-f", "--", ...BUILT], repo);
-    run("git", ["commit", "-q", "-m", `chore(release): v${version} holds the built files`], repo);
+    run("git", ["commit", "-q", "-m", `chore(release): ${tag} holds the built files`], repo);
     run("git", ["tag", "-a", tag, "-m", tag], repo);
   } catch (error) {
     // The branch is put back whatever refused, so the caller sees the refusal and a repo as it was.
@@ -74,7 +74,16 @@ function cut(repo: string): string {
   // The tag's commit is joined into the branch with `-s ours`: the branch's files stay exactly as the
   // release commit left them, so it still holds no dist/, and the tag becomes reachable from it. Without
   // the join the next release counts from the tag before this one, and its changelog repeats this one.
-  run("git", ["merge", "-q", "-s", "ours", "--no-ff", "-m", `chore(release): join v${version} into the branch, taking none of its files`, tag], repo);
+  const merge = ["merge", "-q", "-s", "ours", "--no-ff", "-m", `chore(release): join ${tag} into the branch, taking none of its files`, tag];
+  try {
+    run("git", merge, repo);
+  } catch (error) {
+    // A refused join leaves a half-made merge. It is dropped, the release build is put back, and the tag stays.
+    spawnSync("git", ["merge", "--abort"], { cwd: repo });
+    run("git", ["restore", "--source", tag, "--worktree", "--", ...BUILT], repo);
+    throw new Error(`${(error as Error).message}\n${tag} exists, and the join was not made: redo it with \`git ${merge.map((a) => (a.includes(" ") ? JSON.stringify(a) : a)).join(" ")}\``);
+  }
+  // The gate rebuilt dist/ as a dev build while it judged the join, so the release build is put back.
   run("git", ["restore", "--source", tag, "--worktree", "--", ...BUILT], repo);
   return version;
 }
