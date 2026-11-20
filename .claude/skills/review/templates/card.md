@@ -9,6 +9,7 @@
 - **What happened:** <one or two sentences>
 - **Shown by:** <the counts>
 - **Root cause:** <the cause, or "not confirmed">
+- **Intent:** <met or not met, when a guardrail, a breadcrumb or a test is the subject>
 - **Fix:** <the rung and the fix>
 - **How sure:** <what is counted, what is a reading>
 - **The issue it would become:** "<title>", in <project>. Or: no issue offered yet, and why.

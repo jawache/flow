@@ -4,7 +4,7 @@ summary: "every part of the report flow facts prints, where each number is read 
 
 # The facts report
 
-`flow facts` prints what happened in a repo's conversations with a [harness](./glossary.md#harness): what ran, what failed, what flow refused, and what the person typed. Code reads every count. One part is sorted by a model: the prompts, which go to Jev.
+`flow facts` prints what happened in a repo's conversations with a [harness](./glossary.md#harness): what ran, what failed, what flow refused, and what the person typed.
 
 ## What it reads
 
@@ -26,7 +26,7 @@ summary: "every part of the report flow facts prints, where each number is read 
 | Blocks | How many times a guardrail refused a commit or a command | log |
 | Excluded | Sessions in the log with no transcript behind them, which no count includes | both |
 | Requests | Model requests, and the largest context in tokens, for the conversation and for each subagent | transcripts |
-| Models | The model each subagent ran on | transcripts |
+| Models | The model the conversation and each subagent ran on | transcripts |
 | Test runs | For the conversation and for each subagent: how many [test runs](#test-runs) there were, how many failed, and how many model requests fell between a failed run and the next one that passed | transcripts |
 | Refusals | For each [guardrail](./glossary.md#guardrail), in the conversation and its subagents: how often it refused, and how often the next command differed from the refused one | transcripts |
 | Lead | For each breadcrumb shown: how many tool calls passed before a file it is about changed | log |
@@ -43,12 +43,22 @@ summary: "every part of the report flow facts prints, where each number is read 
 
 A file counts as changed from the log's [`change` rows](./log.md#change), whichever tool changed it.
 
+The printed report has one line for each part. An example of five of them:
+
+```
+  requests  286 · largest context 214k
+  models    builder opus-5-5 ×2 · coach opus-5-5
+  tests     26 runs · 2 failed · 3 requests between a failed run and the next pass
+  refused   git.conventionalCommitFormat 2× · the next command differed 2×
+  prompts   13 · 1 correction · 1 confusion · 2 frustrated
+```
+
 ## Test runs
 
 A test run is one shell command that runs a test, a build or a gate. A command is a test run when it runs either of these:
 
 - a recipe of the repo's justfile whose name starts with `test`, `check`, `gate`, `e2e`, `lint`, `typecheck` or `build`;
-- a program that one of those recipes runs, such as `vitest`. A shell utility, such as `grep`, `mkdir` or `rm`, never counts.
+- a program that one of those recipes runs, such as `vitest`. A shell utility never counts: `cat`, `cd`, `cp`, `echo`, `find`, `grep`, `head`, `ls`, `mkdir`, `mv`, `rm`, `sed`, `sort`, `tail`, `test`, `touch`, `true` or `wc`.
 
 [`testRuns`](./config.md#settings) in `flow.config.ts` adds recipe names, each matched whole.
 
@@ -76,8 +86,7 @@ A prompt is text a person typed or sent to the conversation. A notice the harnes
 | `answer` | answers the agent's question |
 | `go_ahead` | approves, such as "go" |
 | `question` | requests an explanation |
-
-The key is read from `TYPESAFE_API_KEY`. `--no-prompts` leaves this part out, sends nothing and needs no key.
+| `other` | is none of these |
 
 ## The report as JSON
 
@@ -105,7 +114,7 @@ The key is read from `TYPESAFE_API_KEY`. `--no-prompts` leaves this part out, se
 
 ## The report as a page
 
-`--report <file>` writes one HTML page in the work + flow colours and type. It has the totals, one row per conversation with its requests, failed test runs and largest context, the refusals per guardrail, and the prompts by kind.
+`--report <file>` writes one HTML page in the work + flow colours and type. It has the totals of requests, failed test runs, refusals and prompts, one row per conversation with its requests, failed test runs and largest context, the refusals per guardrail, and the prompts by kind.
 
 ---
 

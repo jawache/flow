@@ -32,7 +32,7 @@ A finding passes two tests before it is shown.
 | 4 | Breadcrumb or skill text | a clause in a skill file |
 | 5 | A change to the process | a new status or stop |
 
-A lower rung does the same thing on every run. Text an agent reads may not, and each addition is read by every later session. A trial of a text change costs $20 to $40.
+A lower rung does the same thing on every run. Text an agent reads may not, and each addition is read by every later session.
 
 Most days have little to say. A report with no finding is a valid result.
 
@@ -88,7 +88,7 @@ The numbers come from `flow facts` (this repo's `docs/user/reference/facts.md`) 
 ### P-FACTS
 
 1. work keeps a finished issue's transcripts in its record, under `transcripts/`, and its flow logs under `flow-log/`.
-2. In the project's checkout: `flow facts --transcripts <record>/transcripts --log <record>/flow-log --all --json`. It needs `TYPESAFE_API_KEY` in this session's environment.
+2. In the project's checkout, with this repo's own flow: `flow facts --transcripts <record>/transcripts --log <record>/flow-log --all --json`. It needs `TYPESAFE_API_KEY` in this session's environment.
 
 ### P-RECORD
 
