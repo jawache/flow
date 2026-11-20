@@ -107,7 +107,7 @@ gate: build
 guard-status: build
     node dist/flow.mjs status
 
-[doc("Cut a release, locally: compute the next version from the conventional commits since the last tag, write CHANGELOG.md, stamp package.json and the lockfile, and make the `chore(release): x.y.z` commit on this branch. Then build for release and make a second commit above it that holds dist/, and tag THAT one `vx.y.z`. The branch stays at the first commit. Refused until docs/user/migrations/<version>.md exists. Nothing is pushed and nothing is published. Preview it with `just release-dry` first.")]
+[doc("Cut a release, locally: compute the next version from the conventional commits since the last tag, write CHANGELOG.md, stamp package.json and the lockfile, and make the `chore(release): x.y.z` commit on this branch. Then build for release and make a second commit above it that holds dist/, and tag THAT one `vx.y.z`. Then join the tag back into the branch with a merge that takes none of its files, so the branch holds no built files and the next release counts from this tag. Refused until docs/user/migrations/<version>.md exists. Nothing is pushed and nothing is published. Preview it with `just release-dry` first.")]
 release:
     # The version being cut needs its migration guide, the page a repo that uses flow follows to
     # upgrade. Asked first, for the same no-rollback reason as the gate below.
@@ -117,7 +117,7 @@ release:
     # the version already stamped and CHANGELOG.md already written, but nothing committed. Running
     # the same gate up front turns that into a clean refusal. There is no `--no-verify` in here.
     just gate
-    # The release commit, the release build, the commit that holds dist/ and the tag on it: all in
+    # The release commit, the release build, the commit that holds dist/, the tag on it and its join into the branch: all in
     # tools/release.ts, which pushes nothing.
     node tools/release.ts cut
 
@@ -125,9 +125,13 @@ release:
 release-dry:
     npx commit-and-tag-version --dry-run
 
-[doc("Everything that must be true before a release: the full gate, the commit suite, the tutorial against the binary, and then the release itself, made in a throwaway clone: the release commit, the commit that holds dist/ and the tag. The tag is installed into a scratch folder with `npm i -D --ignore-scripts`, and the installed dist/flow.mjs runs. Pushes nothing, and leaves this repo as it was.")]
+[doc("Everything that must be true before a release: the full gate, the commit suite, the tutorial against the binary, and then the release itself, made in a throwaway clone: the release commit, the commit that holds dist/, the tag and the join of the tag back into the branch, which must leave the tag an ancestor and the branch without dist/. The tag is installed into a scratch folder with `npm i -D --ignore-scripts`, and the installed dist/flow.mjs runs. Pushes nothing, and leaves this repo as it was.")]
 release-check:
     just gate
     just test-commit
     just test-tutorial
     node tools/release.ts check
+
+[doc("Rehearse a release on this branch, whatever it holds: the release, its tag, its join into the branch and the tag installed and run, all in a throwaway clone with a stand-in migration guide written there. Runs only the rehearsal, none of `just release-check`'s gates, so it answers whether the release tool works, not whether a release is ready. Leaves this repo as it was.")]
+release-rehearse:
+    node tools/release.ts check --stub-guide

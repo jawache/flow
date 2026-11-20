@@ -7,22 +7,20 @@
 // refusal naming the file to write. The house pack's `releaseHasMigrationGuide` asks again at the
 // commit, so a release cut any other way is refused too.
 
-import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { migrationGuide, nextVersion } from "./domain.ts";
+import { nextGuide } from "./next-guide.ts";
 
-const dry = spawnSync("npx", ["commit-and-tag-version", "--dry-run"], { encoding: "utf8" });
-const version = nextVersion(`${dry.stdout}${dry.stderr}`);
-const guide = version === null ? null : migrationGuide(version);
-
-if (dry.status !== 0 || version === null || guide === null) {
-  process.stderr.write(`release-guide: could not read the next version from a dry run (exit ${String(dry.status)}).\n${dry.stderr}`);
+try {
+  const { version, guide } = nextGuide(process.cwd());
+  if (!existsSync(guide)) {
+    process.stderr.write(
+      `release-guide: ${version} has no migration guide. Write ${guide} before releasing — what a repo that uses flow must change to upgrade to ${version}, in the format .claude/skills/release/migration-guide.md gives — linked from docs/user/migrations/index.md.\n`,
+    );
+    process.exitCode = 1;
+  } else {
+    process.stdout.write(`release-guide: ${guide} is here.\n`);
+  }
+} catch (error) {
+  process.stderr.write(`release-guide: ${(error as Error).message}\n`);
   process.exitCode = 1;
-} else if (!existsSync(guide)) {
-  process.stderr.write(
-    `release-guide: ${version} has no migration guide. Write ${guide} before releasing — what a repo that uses flow must change to upgrade to ${version}, in the format .claude/skills/release/migration-guide.md gives, linked from docs/user/migrations/index.md.\n`,
-  );
-  process.exitCode = 1;
-} else {
-  process.stdout.write(`release-guide: ${guide} is here.\n`);
 }

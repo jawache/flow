@@ -4,7 +4,8 @@
 // conventional commits since the last `v*` tag, computes the next version from what those headers
 // already declare, writes CHANGELOG.md, stamps the version files, and makes a
 // `chore(release): x.y.z` commit. `just release` then adds a second commit above it that holds
-// `dist/`, and tags that one `vx.y.z`. Nothing pushes and nothing publishes — both stay a human's
+// `dist/`, and tags that one `vx.y.z`, then joins the tag back into the branch with `-s ours`, so the
+// next release counts from it. Nothing pushes and nothing publishes — both stay a human's
 // to type.
 //
 // That last sentence is the whole reason it is here and semantic-release is not. semantic-release
