@@ -74,6 +74,10 @@ the list of commands flow reads from a shell line, each a program and its argume
 
 a command guardrail whose message names the command to run instead
 
+## test run
+
+one shell command that runs a test, a build or a gate, which [the facts report](./facts.md#test-runs) counts as passed or failed
+
 ## trust gate
 
 one of the two conditions Codex sets before it runs a project's hooks: the folder is trusted, and each hook is approved

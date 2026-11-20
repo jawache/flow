@@ -34,10 +34,13 @@ summary: "every `flow` command, what `flow init` writes and `flow uninstall` rem
 | `--largest` | Orders the conversations by size, largest first |
 | `--since <date>` | Reads only conversations from this date on |
 | `--mark` | Marks what was read, so the next run starts after it |
+| `--worktree <path>` | Reads the conversations that started in the worktree at `<path>`, in place of the current folder. The worktree may have been removed |
+| `--report <file>` | Writes the report as one HTML page at `<file>` |
+| `--no-prompts` | Leaves the prompts out, so nothing is sent to Jev and no key is needed |
 
-The report's corrections are prompts a person typed that read as pushback, such as "no, revert that". A notice that the harness writes when a background task finishes is not a prompt.
+[The facts report](./facts.md) describes every part of the report and how each number is found.
 
-The report counts a file as changed from the log's [`change` rows](./log.md#change), whichever tool changed it.
+`flow facts` sends each prompt a person typed to Jev, so it needs `TYPESAFE_API_KEY` in the environment. Without the key and without `--no-prompts`, it prints the variable's name and exits non-zero.
 
 ## What `flow init` prompts for
 
