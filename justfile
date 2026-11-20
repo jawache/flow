@@ -117,7 +117,7 @@ release:
     # the version already stamped and CHANGELOG.md already written, but nothing committed. Running
     # the same gate up front turns that into a clean refusal. There is no `--no-verify` in here.
     just gate
-    # The release commit, the release build, the commit that holds dist/ and the tag on it: all in
+    # The release commit, the release build, the commit that holds dist/, the tag on it and its join into the branch: all in
     # tools/release.ts, which pushes nothing.
     node tools/release.ts cut
 
@@ -131,3 +131,7 @@ release-check:
     just test-commit
     just test-tutorial
     node tools/release.ts check
+
+[doc("Rehearse a release on this branch, whatever it holds: the release, its tag, its join into the branch and the tag installed and run, all in a throwaway clone with a stand-in migration guide written there. Runs only the rehearsal, none of `just release-check`'s gates, so it answers whether the release tool works, not whether a release is ready. Leaves this repo as it was.")]
+release-rehearse:
+    node tools/release.ts check --stub-guide
