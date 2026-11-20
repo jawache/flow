@@ -22,7 +22,7 @@ import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { migrationGuide, nextVersion } from "./domain.ts";
+import { nextGuide } from "./next-guide.ts";
 
 const PACKAGE = resolve(import.meta.dirname, "..");
 
@@ -99,10 +99,7 @@ function files(dir: string): string[] {
 
 /** In the clone, write and commit a stand-in for the next version's migration guide, which is written on release day, so a rehearsal on any branch passes the guard's guide rule. The clone is thrown away; this repo never sees it. */
 function stubGuide(clone: string): void {
-  const dry = spawnSync("npx", ["commit-and-tag-version", "--dry-run"], { cwd: clone, encoding: "utf8" });
-  const version = nextVersion(`${dry.stdout}${dry.stderr}`);
-  const guide = version === null ? null : migrationGuide(version);
-  if (version === null || guide === null) throw new Error(`could not read the next version from a dry run in ${clone}`);
+  const { version, guide } = nextGuide(clone);
   writeFileSync(join(clone, guide), `---\nsummary: "a stand-in for ${version}"\n---\n\n# Upgrade to ${version}\n\n[All guides](./index.md)\n\nA stand-in written by \`just release-rehearse\`, in a throwaway clone.\n`);
   run("git", ["add", "--", guide], clone);
   run("git", ["commit", "-q", "-m", `docs(migrations): a stand-in guide for ${version}, in the rehearsal's clone`], clone);
@@ -171,7 +168,11 @@ try {
     const version = cut(PACKAGE);
     process.stdout.write(`\nLocal only: nothing was pushed and nothing was published.\nv${version} holds dist/; the branch is joined to it and holds no dist/.\nTo share it:  git push origin HEAD && git push origin v${version}\n`);
   } else if (verb === "check") {
-    check(process.argv[3] === "--stub-guide");
+    const option = process.argv[3];
+    if (option !== undefined && option !== "--stub-guide") {
+      process.stderr.write("usage: node tools/release.ts cut | check [--stub-guide]\n");
+      process.exitCode = 2;
+    } else check(option === "--stub-guide");
   } else {
     process.stderr.write("usage: node tools/release.ts cut | check [--stub-guide]\n");
     process.exitCode = 2;
