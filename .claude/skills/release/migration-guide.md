@@ -43,7 +43,7 @@ summary: "upgrade to <version> from <previous>"
 change. "No changes needed" is a valid answer, and is stated here.>
 
 ## 1 · Install <version>
-<The install command: `npm i -D github:jawache/flow#v<version>`.>
+<The install command: `npm i -D --allow-git=root github:jawache/flow#v<version>`.>
 
 ## 2 · Required changes
 ### 2.1 · <What to change, imperative>
