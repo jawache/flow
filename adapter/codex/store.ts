@@ -49,8 +49,8 @@ function firstRecord(file: string): string {
 }
 
 /** What Codex has recorded on this machine. The folder is shared by every project, so the caller keeps the rollouts whose own `cwd` is its repo. */
-export function readStore(_cwd: string, home?: string): Store {
-  const dir = join(codexHome(home), "sessions");
+export function readStore(_cwd: string, home?: string, copy?: string): Store {
+  const dir = copy ?? join(codexHome(home), "sessions");
   if (!existsSync(dir)) return { dir, exists: false, transcripts: [], ignored: [] };
   const { transcripts, ignored } = classifyStore(listing(dir).map((path) => ({ path, first: path.endsWith(".jsonl") ? firstRecord(join(dir, path)) : "" })));
   return { dir, exists: true, transcripts: storedTranscripts(dir, transcripts), ignored };

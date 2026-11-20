@@ -61,6 +61,10 @@ export interface FactsOpts extends SelectOpts {
   readonly branch?: string | null | undefined;
   /** Mark what was read, so the backlog starts after it next time. */
   readonly mark?: boolean | undefined;
+  /** Read the transcripts kept in this folder, in place of the harness's folder for this worktree. */
+  readonly transcripts?: string | null | undefined;
+  /** Read the session logs kept in this folder, in place of `.flow/log/`. */
+  readonly log?: string | null | undefined;
   readonly home?: string | undefined;
   readonly nowMs?: number | undefined;
 }
@@ -88,7 +92,7 @@ function nestedWorktrees(root: string): string[] {
 export function facts(root: string, load: LoadResult, harnesses: readonly Harness[], opts: FactsOpts = {}): Facts {
   const home = opts.home ?? homedir();
   const nowMs = opts.nowMs ?? Date.now();
-  const stores = harnesses.map((harness) => ({ harness, store: harness.transcripts.readStore(root, opts.home) }));
+  const stores = harnesses.map((harness) => ({ harness, store: harness.transcripts.readStore(root, opts.home, opts.transcripts ?? undefined) }));
   // The report names the first store that exists, or the first harness's when none does.
   const store = (stores.find((one) => one.store.exists) ?? stores[0])?.store ?? { dir: "", exists: false, transcripts: [], ignored: [] };
   const nested = nestedWorktrees(root);
@@ -114,7 +118,8 @@ export function facts(root: string, load: LoadResult, harnesses: readonly Harnes
     // WHICH WORKTREE, answered from inside the records. The store folder's name collapses dots and
     // slashes to dashes, so two checkouts of one repo can share it, and Codex keeps every project in
     // one folder; a conversation recorded in somebody else's checkout is somebody else's.
-    if (!belongsToRepo(head.cwd, root, nested)) continue;
+    // A folder the caller named holds copies, kept elsewhere, of conversations this repo had: all of them are read.
+    if (opts.transcripts == null && !belongsToRepo(head.cwd, root, nested)) continue;
     held.set(stored.ref.session, jsonl);
     via.set(stored.ref.session, harness);
     candidates.push({
@@ -137,7 +142,7 @@ export function facts(root: string, load: LoadResult, harnesses: readonly Harnes
 
   // A log with no transcript behind it is no session someone had. With no transcript of this repo to compare with, every log stays.
   const { kept: history, excluded: withoutTranscript } = backedByTranscript(
-    readHistory(root),
+    readHistory(root, opts.log ?? undefined),
     candidates.length > 0 ? new Set(candidates.map((c) => c.id)) : null,
   );
   const bySession = new Map(history.map((s) => [s.session, s.rows]));
@@ -193,6 +198,7 @@ export function facts(root: string, load: LoadResult, harnesses: readonly Harnes
     withoutTranscript,
     health: health({
       armed: history.length > 0,
+      transcripts: candidates.length,
       rows: history.reduce((n, s) => n + s.rows.length, 0),
       withRecord,
       analysed: selection.analyse.length,

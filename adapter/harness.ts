@@ -238,8 +238,11 @@ export interface Transcripts {
   readonly brief: (jsonl: string) => string;
   /** The agent the session itself runs as (`--agent`, or its setting), read from the parent's transcript; null when it runs as none. */
   readonly sessionAgent: (jsonl: string) => string | null;
-  /** The store as it stands for a working directory. A missing folder is a fact, not an error. */
-  readonly readStore: (cwd: string, home?: string) => Store;
+  /**
+   * The store as it stands for a working directory. A missing folder is a fact, not an error. A `dir` names
+   * a copy kept elsewhere, laid out as the harness lays out its own, and is read in place of the harness's folder.
+   */
+  readonly readStore: (cwd: string, home?: string, dir?: string) => Store;
   /** One transcript's bytes, and the sidecar beside it if there is one. */
   readonly readTranscript: (dir: string, held: StoredTranscript) => { jsonl: string; meta: SpawnMeta | null };
   /** What the conversation did, in order. */

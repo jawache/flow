@@ -274,6 +274,12 @@ async function replayFile(args: readonly string[]): Promise<number> {
  * not this file's — a report is a pile of branches about what a reader most needs to know, and the
  * branch that matters most is the one that fires least.
  */
+/** A folder an option names, from where the command was run. Null when the option is not given. */
+function pathFlag(args: readonly string[], name: string): string | null {
+  const value = flag(args, name);
+  return value === null || value === "" ? null : resolve(process.cwd(), value);
+}
+
 async function readFacts(args: readonly string[]): Promise<number> {
   const root = process.cwd();
   const load = existsSync(join(root, CONFIG_FILE)) ? loadConfig(await loadFile(CONFIG_FILE)) : ({ ok: true, entries: [] } as const);
@@ -287,6 +293,8 @@ async function readFacts(args: readonly string[]): Promise<number> {
     largest: flag(args, "largest") !== null,
     since: since === null || since === "" ? null : Date.parse(since),
     mark: flag(args, "mark") !== null,
+    transcripts: pathFlag(args, "transcripts"),
+    log: pathFlag(args, "log"),
   });
 
   if (flag(args, "json") !== null) {

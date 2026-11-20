@@ -677,10 +677,20 @@ export interface HealthArgs {
   /** How many of the conversations being read had a stream of their own. */
   readonly withRecord: number;
   readonly analysed: number;
+  /** How many conversations were found to read, read or not. */
+  readonly transcripts: number;
 }
 
 /** What a reader must know before believing anything under it. */
-export function health({ armed, rows, withRecord, analysed }: HealthArgs): Health {
+export function health({ armed, rows, withRecord, analysed, transcripts }: HealthArgs): Health {
+  if (!armed && transcripts > 0)
+    return {
+      blocked: null,
+      warn: [
+        "no session log was found, so everything read from the log is missing — the recorded counts, blocks, leads and dead rules. " +
+          "Everything read from the transcripts is here.",
+      ],
+    };
   if (!armed)
     return {
       blocked:

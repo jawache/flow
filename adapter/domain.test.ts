@@ -160,16 +160,23 @@ describe("selecting which conversations a run covers", () => {
 });
 
 describe("the health line above every number", () => {
-  it("an unarmed record BLOCKS the reading rather than reporting zeroes", () => {
-    const said = health({ armed: false, rows: 0, withRecord: 0, analysed: 3 });
+  it("no log and no transcript BLOCKS the reading rather than reporting zeroes", () => {
+    const said = health({ armed: false, rows: 0, withRecord: 0, analysed: 0, transcripts: 0 });
     expect(said.blocked).toContain("NOT ARMED");
     expect(said.warn).toEqual([]);
   });
 
+  it("transcripts and no log WARN that the log is missing, and block nothing", () => {
+    const said = health({ armed: false, rows: 0, withRecord: 0, analysed: 3, transcripts: 3 });
+    expect(said.blocked).toBe(null);
+    expect(said.warn).toHaveLength(1);
+    expect(said.warn[0]).toContain("no session log was found");
+  });
+
   it("armed but silent for what was read is a warning, not a verdict", () => {
-    expect(health({ armed: true, rows: 0, withRecord: 1, analysed: 1 }).warn[0]).toContain("holds no events");
-    expect(health({ armed: true, rows: 0, withRecord: 0, analysed: 2 }).warn[0]).toContain("narrative only");
-    expect(health({ armed: true, rows: 12, withRecord: 1, analysed: 1 })).toEqual({ blocked: null, warn: [] });
+    expect(health({ armed: true, rows: 0, withRecord: 1, analysed: 1, transcripts: 1 }).warn[0]).toContain("holds no events");
+    expect(health({ armed: true, rows: 0, withRecord: 0, analysed: 2, transcripts: 2 }).warn[0]).toContain("narrative only");
+    expect(health({ armed: true, rows: 12, withRecord: 1, analysed: 1, transcripts: 1 })).toEqual({ blocked: null, warn: [] });
   });
 });
 
