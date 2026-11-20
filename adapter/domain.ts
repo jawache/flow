@@ -381,7 +381,7 @@ export function classifyBash(command: unknown): BashClass {
 
 // ── the reading ────────────────────────────────────────────────────────────
 
-/** A pointer into a transcript — the shape every heuristic finding takes. */
+/** A pointer into a transcript: the line something came from, and its text. */
 export interface Pointer {
   readonly line: number;
   readonly text: string;
@@ -474,13 +474,9 @@ export function narrative(events: readonly TranscriptEvent[]): Narrative {
  * stop being chapters and become one list somebody can work down.
  */
 export function mergeNarratives(each: readonly { session: string; read: Narrative }[]): Narrative {
-  const tag = <T extends object>(rows: readonly T[], session: string): (T & { session: string })[] =>
-    rows.map((row) => ({ ...row, session }));
   const recipes: Record<string, number> = {};
   const touched: Record<string, number> = {};
-  const out = {
-    prompts: [] as Pointer[],
-  };
+  const prompts: Pointer[] = [];
   let edits = 0;
   let writes = 0;
   let shellReads = 0;
@@ -491,7 +487,7 @@ export function mergeNarratives(each: readonly { session: string; read: Narrativ
   };
 
   for (const { session, read } of each) {
-    out.prompts.push(...tag(read.prompts, session));
+    prompts.push(...read.prompts.map((prompt) => ({ ...prompt, session })));
     edits += read.stats.edits;
     writes += read.stats.writes;
     shellReads += read.stats.shellReads;
@@ -500,7 +496,7 @@ export function mergeNarratives(each: readonly { session: string; read: Narrativ
     add(touched, read.touched);
     add(shell.reads, read.shell.reads);
   }
-  return { stats: { edits, writes, shellReads, commits, recipes }, ...out, shell, touched };
+  return { stats: { edits, writes, shellReads, commits, recipes }, prompts, shell, touched };
 }
 
 /**

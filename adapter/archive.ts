@@ -11,8 +11,8 @@
 //
 //   THE ROWS        flow's own event log. Deterministic ground truth — what fired, what refused,
 //                   what was shown and when. Numbers come from here and from nowhere else.
-//   THE TRANSCRIPT  the conversation. HEURISTIC — and every
-//                   finding carries the line it came from so a reader judges the spot, not the label.
+//   THE TRANSCRIPT  the conversation. Counts of what was called, and the line each came from, so a
+//                   reader judges the spot, not the label.
 //
 // SCOPE COMES FROM THE STORE, never from the log. History from before flow was installed is
 // precisely what a first reading most wants to see, and a backlog taken from the log could only

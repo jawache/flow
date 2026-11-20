@@ -191,7 +191,7 @@ describe("the reading, assembled", () => {
     // NUMBERS — from the rows, and from nowhere else.
     expect(read.metrics.headline.blocks).toBe(1);
     expect(read.metrics.guardrails.find((g) => g.id === "rails.everyone")?.hits).toBe(1);
-    // NARRATIVE — from the conversation, heuristic, and every finding citing its line.
+    // NARRATIVE — from the conversation: counts of what was called, and the line each came from.
     expect(read.narrative.stats.edits).toBe(1);
     expect(read.narrative.prompts).toContainEqual({ line: 4, text: "no, revert that", session: "one" });
     // The universe is the CONFIG's answer, handed in — this file never loads one.
