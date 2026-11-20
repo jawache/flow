@@ -11,7 +11,7 @@
 //
 //   THE ROWS        flow's own event log. Deterministic ground truth — what fired, what refused,
 //                   what was shown and when. Numbers come from here and from nowhere else.
-//   THE TRANSCRIPT  the conversation. HEURISTIC — a correction, an edit loop, a bypass — and every
+//   THE TRANSCRIPT  the conversation. HEURISTIC — and every
 //                   finding carries the line it came from so a reader judges the spot, not the label.
 //
 // SCOPE COMES FROM THE STORE, never from the log. History from before flow was installed is
@@ -38,7 +38,6 @@ import {
   mergeNarratives,
   modesOf,
   narrative,
-  recipeTools,
   selectSessions,
   uncoveredAreas,
   guardPaths,
@@ -143,7 +142,6 @@ export function facts(root: string, load: LoadResult, harnesses: readonly Harnes
   );
   const bySession = new Map(history.map((s) => [s.session, s.rows]));
   const bound: Bound[] = load.ok ? universe(load.entries) : [];
-  const tools = recipeTools(readText(root, "justfile") ?? "");
   // What counts as "somebody edited the guard" here: the config, the packs it imports, and the
   // host's registration files. Read from the config's text once, not per session.
   const guarded = guardPaths(readText(root, CONFIG_FILE), harnesses.flatMap((harness) => harness.registering.hostSurface));
@@ -162,7 +160,7 @@ export function facts(root: string, load: LoadResult, harnesses: readonly Harnes
     const { transcripts } = harness;
     const dir = stores.find((one) => one.harness === harness)?.store.dir ?? store.dir;
     const events = transcripts.events(jsonl, root, home);
-    readings.push({ session: candidate.id, read: narrative(events, tools) });
+    readings.push({ session: candidate.id, read: narrative(events) });
     ran.push({ rows, steer: transcripts.steer(jsonl) });
     weakened.push(...weakenedAfterBlock(rows, events, guarded));
 

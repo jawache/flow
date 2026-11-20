@@ -355,120 +355,26 @@ export function snipAtWord(value: unknown, n: number): string {
   return `${whole.trimEnd()}…`;
 }
 
-/**
- * High-signal pushback — where the human corrected the agent. A HEURISTIC, and the report says so.
- *
- * It is deliberately generous: the cost of a false positive is a coach reading one line that turns
- * out to be fine, and the cost of a false negative is the session's most informative moment going
- * unnoticed.
- */
-// THE ANCHORING IS OUTSIDE THE CLASSES, and that is a fix rather than a transcription. The ported
-// regex wrapped every alternative in one `\b(…)\b`, so the two that end in punctuation — `wait[, ]`
-// and `no[, ]` — were then asked for a word boundary immediately after a comma or a space, which
-// neither can ever be followed by. `no, that's wrong` and `wait, stop` are the two commonest
-// spellings of pushback there are, and both alternatives were dead: a detector that reads as armed
-// and matches nothing is the spec's own P2 shape, inside the code meant to find it.
-const CORRECTION = new RegExp(
-  [
-    String.raw`\b(actually|hold on|nope|revert|undo|instead|hmm)\b`,
-    String.raw`\b(wait|no)[,!.](\s|$)`,
-    String.raw`\b(stop|don'?t|do not)\s`,
-    String.raw`\bthat'?s (wrong|not right|not what|not)\b`,
-    String.raw`\byou (broke|shouldn'?t|missed|forgot|didn'?t)\b`,
-    String.raw`\bwhy (did|are) you\b`,
-    String.raw`\b(rather than|let'?s not)\b`,
-  ].join("|"),
-  "i",
-);
-
-/** Does this prompt read as the human pushing back? */
-export function isCorrection(prose: string): boolean {
-  return CORRECTION.test(prose);
-}
-
-// ── the justfile's own tools, so a bypass is derived rather than guessed ──
-//
-// Each recipe's body is parsed, and each command's program, or the tool `npx` runs, is a tool that
-// "should go through just". Shell noise is dropped; with no justfile, bypass detection is switched
-// off entirely rather than falling back to a hardcoded list that would be wrong for every other repo.
-
-const NOISE = new Set([
-  "set", "node", "npx", "just", "cd", "export", "echo", "then", "fi", "do", "done", "if", "for", "while", "source",
-]);
-
-/** Is this top-level line a recipe header — `name:`, `name arg:`, `[attr]` and all? */
-function isRecipeHeader(line: string): boolean {
-  if (line.startsWith("[")) return false;
-  const colon = line.indexOf(":");
-  if (colon < 0) return false;
-  const head = line.slice(0, colon).trim();
-  return head !== "" && /^[@A-Za-z_][\w-]*(\s|$)/.test(head) && !head.includes("=");
-}
-
-/**
- * The tools a repo's justfile actually drives — what a direct invocation would be bypassing.
- *
- * Each recipe's body is read through the parse as one script, so a loop or an `if` that spans its
- * lines is read whole; a body that does not parse whole is read line by line, and a line that does
- * not parse names nothing. Just's own `@` and `-` line prefixes are dropped first.
- */
-export function recipeTools(justfile: string): string[] {
-  const bodies: string[][] = [];
-  let body: string[] | null = null;
-  for (const raw of justfile.split("\n")) {
-    const line = raw.trim();
-    if (line === "") continue;
-    if (!/^\s/.test(raw)) {
-      // A top-level line opens a recipe, or ends one; the header itself is not a command.
-      body = isRecipeHeader(line) ? [] : null;
-      if (body !== null) bodies.push(body);
-    } else if (body !== null && !line.startsWith("#")) body.push(line.replace(/^[@-]+/, ""));
-  }
-  const tools = new Set<string>();
-  for (const lines of bodies) {
-    const commands = parseCommandLine(lines.join("\n")) ?? lines.flatMap((line) => parseCommandLine(line) ?? []);
-    for (const command of commands) {
-      // A LAUNCHER names the tool in its next word, and dropping the line at the launcher is how
-      // the ported reader came back empty on this very repo: every recipe here is `npx tsc`,
-      // `npx vitest`, `npx eslint`, so `npx` matched the noise list and no tool was ever
-      // collected — leaving the bypass section switched off and looking like a clean record.
-      const tool = toolOf(command);
-      if (command.nested || command.program.includes("/") || !/^[A-Za-z]/.test(tool) || NOISE.has(tool)) continue;
-      tools.add(tool);
-    }
-  }
-  return [...tools];
-}
-
-/** What one Bash line was: the recipes it drove, the tools it went round, and whether it committed. */
+/** What one Bash line was: the recipes it drove, and whether it committed. */
 export interface BashClass {
   readonly recipes: readonly string[];
-  readonly bypasses: readonly string[];
   readonly commits: boolean;
 }
 
-/** The tool a command runs: its program, or the tool `npx` is asked to run. */
-function toolOf(command: ShellCommand): string {
-  const program = programName(command.program);
-  return program === "npx" ? programName(command.args.find((arg) => !arg.startsWith("-")) ?? "") : program;
-}
-
 /**
- * Read one command line against the repo's own recipe tools, from its parse. A heredoc's body is
- * text the command is fed, so a file being written that names a tool is not a run of it — while
- * the line around the heredoc is judged like any other, and so is a body a shell runs. A line that
- * does not parse is nothing: no recipe, no bypass, no commit.
+ * Read one command line, from its parse. A heredoc's body is text the command is fed, so a file
+ * being written that names a recipe is not a run of it — while the line around the heredoc is
+ * judged like any other, and so is a body a shell runs. A line that does not parse is nothing: no
+ * recipe, no commit.
  */
-export function classifyBash(command: unknown, tools: readonly string[]): BashClass {
+export function classifyBash(command: unknown): BashClass {
   const commands = parseCommandLine(strip(command)) ?? [];
   const recipes = commands.flatMap((c) => {
     const recipe = programName(c.program) === "just" ? c.args[0] : undefined;
     return recipe !== undefined && /^[a-z][\w-]*$/.test(recipe) ? [recipe] : [];
   });
-  const ran = new Set(commands.map(toolOf));
   return {
     recipes,
-    bypasses: tools.filter((tool) => ran.has(tool)),
     commits: gitCommands({ commands }).some((git) => git.subcommand === "commit"),
   };
 }
@@ -483,27 +389,6 @@ export interface Pointer {
   readonly session?: string;
 }
 
-export interface Bypass extends Pointer {
-  readonly tool: string;
-}
-
-/** The same file edited over and over — a loop somebody was stuck in. */
-export interface EditLoop {
-  readonly path: string;
-  readonly count: number;
-  readonly from: number;
-  readonly to: number;
-  readonly session?: string;
-}
-
-/** The same command run again and again — something that would not come right. */
-export interface Retry {
-  readonly command: string;
-  readonly count: number;
-  readonly lines: readonly number[];
-  readonly session?: string;
-}
-
 export interface Narrative {
   readonly stats: {
     readonly edits: number;
@@ -512,67 +397,38 @@ export interface Narrative {
     readonly shellReads: number;
     readonly commits: number;
     readonly recipes: Readonly<Record<string, number>>;
-    readonly bypasses: Readonly<Record<string, number>>;
   };
   readonly prompts: readonly Pointer[];
-  readonly corrections: readonly Pointer[];
-  readonly bypassSites: readonly Bypass[];
-  readonly loops: readonly EditLoop[];
-  readonly retries: readonly Retry[];
   /** The files a shell command read by name, with how often each. */
   readonly shell: { readonly reads: Readonly<Record<string, number>> };
   /** Every in-repo file the session touched, with how often. The facts layer scores coverage. */
   readonly touched: Readonly<Record<string, number>>;
 }
 
-/** How many times one file is edited in a row before it reads as a loop. */
-const LOOP = 5;
-
-/** How many times one command line is repeated before it reads as a retry. */
-const RETRY = 3;
-
 // `insideRepo` is the engine's, imported rather than re-spelled: whether a path is a file of this
 // repo decides what the narrative counts as touched AND what the record counts as an uncovered
 // edit, and those two must never be able to disagree.
 
 /**
- * The narrative reading of one conversation. Everything here is a guess with a citation.
- *
- * `tools` is INJECTED — the shell reads the justfile — so the same call is reproducible from a
- * fixture, which is the same discipline the guard itself is built on.
+ * The narrative reading of one conversation: what it edited, wrote, read and ran.
  *
  * Shell READS come from the transcript, like every Read does, so they are counted in every
  * conversation. A transcript says what command ran, never what it changed, so a shell write is not
  * counted.
  */
-export function narrative(events: readonly TranscriptEvent[], tools: readonly string[] = []): Narrative {
+export function narrative(events: readonly TranscriptEvent[]): Narrative {
   let edits = 0;
   let writes = 0;
   let shellReads = 0;
   const shell = { reads: {} as Record<string, number> };
   let commits = 0;
   const recipes: Record<string, number> = {};
-  const bypasses: Record<string, number> = {};
   const touched: Record<string, number> = {};
   const prompts: Pointer[] = [];
-  const corrections: Pointer[] = [];
-  const bypassSites: Bypass[] = [];
-  const loops: EditLoop[] = [];
-  const retries: Retry[] = [];
-  const byCommand: Record<string, number[]> = {};
-
-  let loopPath: string | null = null;
-  let loopFrom = 0;
-  let loopTo = 0;
-  let loopCount = 0;
-  const closeLoop = (): void => {
-    if (loopCount >= LOOP && loopPath !== null) loops.push({ path: loopPath, count: loopCount, from: loopFrom, to: loopTo });
-  };
 
   for (const event of events) {
     if (event.kind === "prompt") {
       prompts.push({ line: event.line, text: snip(event.text, 120) });
-      if (isCorrection(event.text)) corrections.push({ line: event.line, text: snip(event.text, 140) });
       continue;
     }
     if (event.kind !== "use") continue;
@@ -583,18 +439,7 @@ export function narrative(events: readonly TranscriptEvent[], tools: readonly st
     if (event.action === "edit" || event.action === "write") {
       if (event.action === "write") writes += 1;
       else edits += 1;
-      const here = insideRepo(event.path);
-      if (here && event.path === loopPath) {
-        loopCount += 1;
-        loopTo = event.line;
-      } else {
-        closeLoop();
-        loopPath = here ? event.path : null;
-        loopFrom = event.line;
-        loopTo = event.line;
-        loopCount = here ? 1 : 0;
-      }
-      if (here) touched[event.path] = (touched[event.path] ?? 0) + 1;
+      if (insideRepo(event.path)) touched[event.path] = (touched[event.path] ?? 0) + 1;
       continue;
     }
     if (event.action === "read") {
@@ -608,28 +453,14 @@ export function narrative(events: readonly TranscriptEvent[], tools: readonly st
       shell.reads[path] = (shell.reads[path] ?? 0) + 1;
       shellReads += 1;
     }
-    const command = text(event.input["command"]);
-    const read = classifyBash(command, tools);
+    const read = classifyBash(text(event.input["command"]));
     for (const recipe of read.recipes) recipes[recipe] = (recipes[recipe] ?? 0) + 1;
-    for (const tool of read.bypasses) {
-      bypasses[tool] = (bypasses[tool] ?? 0) + 1;
-      bypassSites.push({ line: event.line, tool, text: snip(command, 120) });
-    }
     if (read.commits) commits += 1;
-    const normalised = snip(command, 400);
-    (byCommand[normalised] ??= []).push(event.line);
   }
-  closeLoop();
-  for (const [command, lines] of Object.entries(byCommand))
-    if (lines.length >= RETRY) retries.push({ command, count: lines.length, lines });
 
   return {
-    stats: { edits, writes, shellReads, commits, recipes, bypasses },
+    stats: { edits, writes, shellReads, commits, recipes },
     prompts,
-    corrections,
-    bypassSites,
-    loops,
-    retries,
     shell,
     touched,
   };
@@ -646,14 +477,9 @@ export function mergeNarratives(each: readonly { session: string; read: Narrativ
   const tag = <T extends object>(rows: readonly T[], session: string): (T & { session: string })[] =>
     rows.map((row) => ({ ...row, session }));
   const recipes: Record<string, number> = {};
-  const bypasses: Record<string, number> = {};
   const touched: Record<string, number> = {};
   const out = {
     prompts: [] as Pointer[],
-    corrections: [] as Pointer[],
-    bypassSites: [] as Bypass[],
-    loops: [] as EditLoop[],
-    retries: [] as Retry[],
   };
   let edits = 0;
   let writes = 0;
@@ -666,20 +492,15 @@ export function mergeNarratives(each: readonly { session: string; read: Narrativ
 
   for (const { session, read } of each) {
     out.prompts.push(...tag(read.prompts, session));
-    out.corrections.push(...tag(read.corrections, session));
-    out.bypassSites.push(...tag(read.bypassSites, session));
-    out.loops.push(...tag(read.loops, session));
-    out.retries.push(...tag(read.retries, session));
     edits += read.stats.edits;
     writes += read.stats.writes;
     shellReads += read.stats.shellReads;
     commits += read.stats.commits;
     add(recipes, read.stats.recipes);
-    add(bypasses, read.stats.bypasses);
     add(touched, read.touched);
     add(shell.reads, read.shell.reads);
   }
-  return { stats: { edits, writes, shellReads, commits, recipes, bypasses }, ...out, shell, touched };
+  return { stats: { edits, writes, shellReads, commits, recipes }, ...out, shell, touched };
 }
 
 /**
@@ -1096,12 +917,10 @@ export function formatFacts(facts: Facts): string[] {
   if (headline.quiet.length > 0)
     lines.push(`  quiet     ${headline.quiet.map((q) => `${q.id} (${q.daysSince}d)`).join(" · ")}`);
 
-  const { stats, corrections, loops, retries, bypassSites, shell } = facts.narrative;
+  const { stats, shell } = facts.narrative;
   lines.push(
     `  session   ${stats.edits} edits · ${stats.writes} writes · ` +
-      `${stats.shellReads} shell reads · ${stats.commits} commits · ` +
-      `${corrections.length} corrections · ${loops.length} edit loops · ${retries.length} retries · ` +
-      `${bypassSites.length} bypasses`,
+      `${stats.shellReads} shell reads · ${stats.commits} commits`,
   );
   // THE PATHS BEHIND THE SHELL COUNT, so a number that went round the read tools can be followed.
   if (stats.shellReads > 0) lines.push(`  shell     read ${pathList(shell.reads)}`);

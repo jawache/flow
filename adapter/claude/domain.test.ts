@@ -19,7 +19,7 @@ import { breadcrumb, defineCategory, defineConfig, definePack, guardrail, loadCo
 import { metrics, momentsView, type Block, type Bound, type Row } from "../../engine/domain.ts";
 import { parseCommandLine, parseShellSteps } from "../../language/domain.ts";
 import { claudeCode } from "./claude.ts";
-import { type AdapterEvent, agentOf, ALLOW, awaitsBrief, bashReads, branchFromHead, briefBlock, commandFolders, COMMIT_MSG, CONFIG_FILE, decision, type EventWorld, type Facts, FLOW_OFF, foldersBetween, formatFacts, GATE_PATH, guardPaths, holdsForBrief, HOOKS_DIR, type InitFacts, initLines, isGuardPath, isHookEvent, lastMode, LOCAL_BIN, MACHINE_FLAG, mergeNarratives, modesOf, nothingBound, opensCall, outsideOf, PACKAGE_BIN, planInit, planUninstall, reachesAnotherWorktree, readFault, relativise, ridesRefusal, sessionFactsFrom, shellReadRows, type Shown, type SpawnRecord, type Status, status, statusCode, type StatusFacts, statusLines, toEvent, toolRow, toResult, uninstallCode, type UninstallFacts, uninstallLines, weakenedAfterBlock, whileBroken, workedPaths, worktreeFolders, worktreesWorkedIn } from "../domain.ts";
+import { type AdapterEvent, agentOf, ALLOW, awaitsBrief, bashReads, branchFromHead, briefBlock, commandFolders, COMMIT_MSG, CONFIG_FILE, decision, type EventWorld, type Facts, FLOW_OFF, foldersBetween, formatFacts, GATE_PATH, guardPaths, holdsForBrief, HOOKS_DIR, type InitFacts, initLines, isGuardPath, isHookEvent, lastMode, LOCAL_BIN, MACHINE_FLAG, mergeNarratives, modesOf, narrative, nothingBound, opensCall, outsideOf, PACKAGE_BIN, planInit, planUninstall, reachesAnotherWorktree, readFault, relativise, ridesRefusal, sessionFactsFrom, shellReadRows, type Shown, type SpawnRecord, type Status, status, statusCode, type StatusFacts, statusLines, toEvent, toolRow, toResult, uninstallCode, type UninstallFacts, uninstallLines, weakenedAfterBlock, whileBroken, workedPaths, worktreeFolders, worktreesWorkedIn } from "../domain.ts";
 import { EDIT_TOOLS, HOST_SURFACE, REPO_SETTINGS, agentSettingOf, bareHook, briefHead, classifyStore, contextTokens, editedFile, hookCommand, hooksFile, isInjected, ourHookCommand, ownTranscriptPath, parseEvents, projectFolderName, spawnMeta, spawnsIn, steerOf, tokensFromTranscript, transcriptHead, transcriptLines, turnActions } from "./domain.ts";
 
 const { registrations: HOOK_REGISTRATIONS, hooks: HOOK_COSTS, registeredEvents, staleRegistrations, bareRegistrations, withRegistrations, withoutRegistrations } = hooksFile;
@@ -1124,6 +1124,20 @@ describe("formatFacts — the whole of what a person sees", () => {
     expect(text).toContain("gap       docs — 1 edit, nothing watches it");
     expect(text).toContain("dead      core.fiction");
     expect(text).toContain("retire    core.fiction — bound, never once reached");
+  });
+
+  it("prints a session line of edits, writes, shell reads and commits, and no other count", () => {
+    const events: TranscriptEvent[] = [
+      { line: 1, kind: "prompt", text: "no, revert that" },
+      { line: 2, kind: "use", ts: null, id: "a", name: "Edit", action: "edit", input: {}, path: "src/a.ts" },
+      { line: 3, kind: "use", ts: null, id: "b", name: "Write", action: "write", input: {}, path: "src/b.ts" },
+      { line: 4, kind: "use", ts: null, id: "c", name: "Bash", action: "shell", input: { command: "cat src/a.ts" }, path: "", reads: ["src/a.ts"] },
+      { line: 5, kind: "use", ts: null, id: "d", name: "Bash", action: "shell", input: { command: "git commit -m x" }, path: "" },
+    ];
+    const narrativeFacts = empty({ narrative: mergeNarratives([{ session: "s", read: narrative(events) }]) });
+    const line = formatFacts(narrativeFacts).find((one) => one.startsWith("  session"));
+    expect(line).toBe("  session   1 edits · 1 writes · 1 shell reads · 1 commits");
+    expect(Object.keys(narrativeFacts.narrative).sort()).toEqual(["prompts", "shell", "stats", "touched"]);
   });
 
   it("counts the shell's reads beside the edits, lists their paths, and counts no shell write", () => {
