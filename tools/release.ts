@@ -3,21 +3,26 @@
 // A release is a tag that holds flow's built files. Two commits make it: the release commit on the
 // branch (the version and the changelog, made by commit-and-tag-version with its own tag turned
 // off), and a second commit above it that holds dist/. The tag points at the second, and the branch
-// stays at the first, so the branch never holds built files and the tag always does. A project
+// never takes its files, so the branch never holds built files and the tag always does. A merge with
+// `-s ours` then joins the tag into the branch without its files, so the tag is reachable from the
+// branch, which is where commit-and-tag-version looks for the last release. A project
 // installs the tag with `npm i -D --allow-git=root github:jawache/flow#v<version>`, and npm builds nothing, because
 // the tagged package.json has no script it would run (`justfile.node.noPackageScripts` refuses one at the release commit).
 //
-//   node tools/release.ts cut     the release commit, the release build, the commit that holds dist/, the tag
-//   node tools/release.ts check   the same, in a throwaway clone, then the tag installed with scripts off and run
+//   node tools/release.ts cut     the release commit, the release build, the commit that holds dist/, the tag, the join
+//   node tools/release.ts check   the same, in a throwaway clone, then the tag installed with scripts off and run;
+//                                  --stub-guide first commits a stand-in migration guide in the clone, to rehearse on any branch
 //
 // The second commit is a plain `git commit` on a detached HEAD, so the commit gate judges it as it
-// judges every commit; the branch is switched back to the release commit afterwards.
+// judges every commit; the branch is switched back to the release commit afterwards, and the tag is
+// joined into it by a merge commit that the gate judges too.
 // Nothing here pushes, and nothing publishes.
 
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { nextGuide } from "./next-guide.ts";
 
 const PACKAGE = resolve(import.meta.dirname, "..");
 
@@ -37,23 +42,24 @@ function out(program: string, args: readonly string[], cwd: string): string {
   return ran.stdout.trim();
 }
 
-/** The release in `repo`: the release commit, the release build, then the commit that holds dist/ and the tag on it. Returns the version. */
+/** The release in `repo`: the release commit, the release build, then the commit that holds dist/ and the tag on it, joined back into the branch. Returns the version. */
 function cut(repo: string): string {
   // The tag is made below, on the second commit, so the tool's own is skipped.
   run("npx", ["commit-and-tag-version", "--skip.tag"], repo);
   const version = (JSON.parse(readFileSync(join(repo, "package.json"), "utf8")) as { version: string }).version;
+  const tag = `v${version}`;
   // LAST of the builds: the commit the tool just made fired the gate, which rebuilds dist/ as a dev build.
   run("just", ["build-release"], repo);
 
   // The second commit is an ordinary `git commit` on a detached HEAD, so the commit gate judges it
-  // like every other commit, and the branch is never moved: switching back leaves it at the release commit.
+  // like every other commit, and the branch is not moved while it is made: switching back leaves it at the release commit, and only the join below moves it.
   const branch = spawnSync("git", ["symbolic-ref", "--short", "-q", "HEAD"], { cwd: repo, encoding: "utf8" }).stdout.trim();
   const release = out("git", ["rev-parse", "HEAD"], repo);
   run("git", ["switch", "--detach", "-q"], repo);
   try {
     run("git", ["add", "-f", "--", ...BUILT], repo);
-    run("git", ["commit", "-q", "-m", `chore(release): v${version} holds the built files`], repo);
-    run("git", ["tag", "-a", `v${version}`, "-m", `v${version}`], repo);
+    run("git", ["commit", "-q", "-m", `chore(release): ${tag} holds the built files`], repo);
+    run("git", ["tag", "-a", tag, "-m", tag], repo);
   } catch (error) {
     // The branch is put back whatever refused, so the caller sees the refusal and a repo as it was.
     spawnSync("git", ["reset", "-q"], { cwd: repo });
@@ -65,7 +71,22 @@ function cut(repo: string): string {
   // the working tree alone, from the tag: the release build, which this repo's guard loads, and nothing staged.
   run("git", ["restore", "--", "dist"], repo);
   run("git", ["switch", "-q", branch === "" ? release : branch], repo);
-  run("git", ["restore", "--source", `v${version}`, "--worktree", "--", ...BUILT], repo);
+  // The gate loads flow.config.ts from dist/, which the switch just removed, so the build is put back first.
+  run("git", ["restore", "--source", tag, "--worktree", "--", ...BUILT], repo);
+  // The tag's commit is joined into the branch with `-s ours`: the branch's files stay exactly as the
+  // release commit left them, so it still holds no dist/, and the tag becomes reachable from it. Without
+  // the join the next release counts from the tag before this one, and its changelog repeats this one.
+  const merge = ["merge", "-q", "-s", "ours", "--no-ff", "-m", `chore(release): join ${tag} into the branch, taking none of its files`, tag];
+  try {
+    run("git", merge, repo);
+  } catch (error) {
+    // A refused join leaves a half-made merge. It is dropped, and the tag stays.
+    spawnSync("git", ["merge", "--abort"], { cwd: repo });
+    throw new Error(`${(error as Error).message}\n${tag} exists, and the join was not made: redo it with \`git ${merge.map((a) => (a.includes(" ") ? JSON.stringify(a) : a)).join(" ")}\``);
+  } finally {
+    // The gate rebuilt dist/ as a dev build while it judged the join, so the release build is put back, joined or not.
+    run("git", ["restore", "--source", tag, "--worktree", "--", ...BUILT], repo);
+  }
   return version;
 }
 
@@ -76,8 +97,16 @@ function files(dir: string): string[] {
     .map((entry) => join(entry.parentPath, entry.name).slice(dir.length + 1));
 }
 
-/** The release, made in a throwaway clone and installed from its tag as a project would. */
-function check(): void {
+/** In the clone, write and commit a stand-in for the next version's migration guide, which is written on release day, so a rehearsal on any branch passes the guard's guide rule. The clone is thrown away; this repo never sees it. */
+function stubGuide(clone: string): void {
+  const { version, guide } = nextGuide(clone);
+  writeFileSync(join(clone, guide), `---\nsummary: "a stand-in for ${version}"\n---\n\n# Upgrade to ${version}\n\n[All guides](./index.md)\n\nA stand-in written by \`just release-rehearse\`, in a throwaway clone.\n`);
+  run("git", ["add", "--", guide], clone);
+  run("git", ["commit", "-q", "-m", `docs(migrations): a stand-in guide for ${version}, in the rehearsal's clone`], clone);
+}
+
+/** The release, made in a throwaway clone and installed from its tag as a project would. With `stub`, the next version's migration guide is a stand-in written in the clone. */
+function check(stub: boolean): void {
   const root = mkdtempSync(join(tmpdir(), "flow-release-check-"));
   try {
     const clone = join(root, "flow");
@@ -100,6 +129,7 @@ function check(): void {
     // The gate loads flow.config.ts through that link, so the bundles it imports exist first.
     run("just", ["build"], clone);
 
+    if (stub) stubGuide(clone);
     const version = cut(clone);
     const tag = `v${version}`;
     process.stdout.write(`\nrelease-check: ${tag} cut in ${clone}\n`);
@@ -109,6 +139,11 @@ function check(): void {
     if (!existsSync(join(clone, "dist", "flow.mjs"))) throw new Error("dist/flow.mjs is missing from the clone after the release: this repo's guard cannot load without it");
     if (out("git", ["ls-tree", "-r", "--name-only", `${tag}^`, "dist"], clone) !== "")
       throw new Error("the release commit holds dist/: only the tag's commit may");
+    // The join: the next release counts from the newest tag reachable from the branch.
+    if (spawnSync("git", ["merge-base", "--is-ancestor", tag, "HEAD"], { cwd: clone }).status !== 0)
+      throw new Error(`${tag} is not an ancestor of the branch: the next release would count from the tag before it`);
+    if (out("git", ["ls-tree", "-r", "--name-only", "HEAD", "dist"], clone) !== "")
+      throw new Error("the branch holds dist/ after the release: only the tag's commit may");
 
     const project = join(root, "project");
     mkdirSync(project);
@@ -131,11 +166,15 @@ const verb = process.argv[2];
 try {
   if (verb === "cut") {
     const version = cut(PACKAGE);
-    process.stdout.write(`\nLocal only: nothing was pushed and nothing was published.\nv${version} holds dist/; the branch stays at the release commit.\nTo share it:  git push origin HEAD && git push origin v${version}\n`);
+    process.stdout.write(`\nLocal only: nothing was pushed and nothing was published.\nv${version} holds dist/; the branch is joined to it and holds no dist/.\nTo share it:  git push origin HEAD && git push origin v${version}\n`);
   } else if (verb === "check") {
-    check();
+    const option = process.argv[3];
+    if (option !== undefined && option !== "--stub-guide") {
+      process.stderr.write("usage: node tools/release.ts cut | check [--stub-guide]\n");
+      process.exitCode = 2;
+    } else check(option === "--stub-guide");
   } else {
-    process.stderr.write("usage: node tools/release.ts cut | check\n");
+    process.stderr.write("usage: node tools/release.ts cut | check [--stub-guide]\n");
     process.exitCode = 2;
   }
 } catch (error) {
