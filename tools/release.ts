@@ -69,6 +69,8 @@ function cut(repo: string): string {
   // the working tree alone, from the tag: the release build, which this repo's guard loads, and nothing staged.
   run("git", ["restore", "--", "dist"], repo);
   run("git", ["switch", "-q", branch === "" ? release : branch], repo);
+  // The gate loads flow.config.ts from dist/, which the switch just removed, so the build is put back first.
+  run("git", ["restore", "--source", tag, "--worktree", "--", ...BUILT], repo);
   // The tag's commit is joined into the branch with `-s ours`: the branch's files stay exactly as the
   // release commit left them, so it still holds no dist/, and the tag becomes reachable from it. Without
   // the join the next release counts from the tag before this one, and its changelog repeats this one.
