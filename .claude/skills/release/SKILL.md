@@ -106,7 +106,7 @@ git ls-remote --tags origin v<version>       # one line
 Then install the tag as a project does, in a scratch folder, with scripts off:
 
 ```sh
-npm init -y && npm i -D --ignore-scripts github:jawache/flow#v<version>
+npm init -y && npm i -D --ignore-scripts --allow-git=root github:jawache/flow#v<version>
 node node_modules/@jawache/flow/dist/flow.mjs --version      # <version>
 ```
 
