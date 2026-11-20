@@ -20,7 +20,7 @@ import type { HookPayload, ToolAction, Spawn, SpawnMeta, Steer, TranscriptEvent,
 //
 // ONE READER here, and three consumers on top of it: how far the session has drifted, what the
 // actor did this turn, and the brief it was started with. F5's archival side extends the same
-// reader for the narrative half (prompts, tool results, corrections); none of that shape is decided
+// reader for the narrative half (prompts, tool results); none of that shape is decided
 // here.
 
 /** One line of a transcript, parsed. `record` is the raw object — this file reads it, nobody else. */
@@ -173,8 +173,8 @@ function turnStart(line: TranscriptLine): string | null {
  * It is NOT in `INJECTED`, on purpose. A notice wakes the agent, so it starts a turn, and a turn
  * woken by one holds only what the agent did after it; read as an injection, that turn would reach
  * back to the human's last message, and a turn-end rule would be handed an edit from a turn
- * earlier. It is not the human talking either, so the report's prompts, and the corrections read
- * from them, leave it out. Either mark is enough: the text's opening tag, and the record's own
+ * earlier. It is not the human talking either, so the report's prompts leave it out.
+ * Either mark is enough: the text's opening tag, and the record's own
  * `origin.kind`, which every notice measured on Claude Code 2.1.322 to 2.1.325 carried.
  */
 function isTaskNotice(line: TranscriptLine, prose: string): boolean {
