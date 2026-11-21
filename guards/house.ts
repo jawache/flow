@@ -167,7 +167,6 @@ export const house = definePack("house", (repo: Terrain) => ({
       [
         "Purpose. You are in `flow`: guardrails and breadcrumbs as code for coding agents. It is one package, `@jawache/flow`: the engine, the `flow` binary and the one pack it ships, `flow`. A guarded repo's whole guard is one TypeScript file that imports from here. Code outside the package imports two files: `index.ts` is the grammar (`@jawache/flow`), and `packs/index.ts` is the shipped pack (`@jawache/flow/packs`). The layout is by pipeline stage, `language → checks → engine → adapter`, with one `domain.ts` for each layer. This repo's guard is flow itself. `flow.config.ts` binds `flow` through `node_modules/@jawache/flow`, a link back to this checkout, so a missing export or a broken bundle refuses this repo's next commit first. It also binds eight packs from `@jawache/flow-packs`, installed from its GitHub tag, and `work` and `house`, written in `guards/` and shipped to nobody. A guarded repo installs flow from a GitHub tag that holds the built files, never from npm. flow's state is `.flow/`, which git ignores. Tests are vitest. People read `docs/user/`, and `docs/agent/` is archival context.",
         "## Rules",
-        "- `HSE-R1` Run `just` to list the commands.",
         "- `HSE-R2` In a new clone or worktree, run `just install` first.",
         "  why: It links `node_modules/@jawache/flow` back to this checkout.",
         "- `HSE-R3` To run one test, pass `just test` a test file and a name.",
