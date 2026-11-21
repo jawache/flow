@@ -2138,16 +2138,16 @@ describe("the settings are a closed set", () => {
     }
   });
 
-  it("refuses any other key as well, and lists the two it has", () => {
+  it("refuses any other key as well, and lists the three it has", () => {
     const result = loadConfig({ bindings: [], settings: { driftTokens: 1, drift: 2 } as never });
     const refusals = result.ok ? [] : result.refusals;
     expect(shape(refusals)).toEqual([["unknown-setting", ""]]);
     expect(refusals[0]?.detail).toContain("`drift`");
-    expect(refusals[0]?.detail).toContain("`driftTokens` and `grammars`");
+    expect(refusals[0]?.detail).toContain("`driftTokens`, `grammars` and `testRuns`");
   });
 
-  it("accepts driftTokens and grammars", () => {
-    expect(loadConfig({ bindings: [], settings: { driftTokens: 1, grammars: [] } }).ok).toBe(true);
+  it("accepts driftTokens, grammars and testRuns", () => {
+    expect(loadConfig({ bindings: [], settings: { driftTokens: 1, grammars: [], testRuns: ["verify"] } }).ok).toBe(true);
   });
 });
 

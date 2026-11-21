@@ -2280,6 +2280,11 @@ export interface Settings {
   /** Context tokens between re-showings of a breadcrumb. Absent = the engine's own default. */
   readonly driftTokens?: number;
   /**
+   * Recipe names that count as a test run in `flow facts`, added to the names it already counts.
+   * Each is the whole name of a recipe of the repo's justfile, such as `"verify"`.
+   */
+  readonly testRuns?: readonly string[];
+  /**
    * Grammars this repo built itself, for `astGrep` rules whose language has no published package.
    *
    * ast-grep parses five languages out of the box and resolves anything else as an
@@ -2293,7 +2298,7 @@ export interface Settings {
 }
 
 /** The keys `Settings` has: what the load accepts in the second argument of `defineConfig`. */
-const SETTING_KEYS = ["driftTokens", "grammars"] as const satisfies readonly (keyof Settings)[];
+const SETTING_KEYS = ["driftTokens", "grammars", "testRuns"] as const satisfies readonly (keyof Settings)[];
 
 /**
  * The settings 0.3 had and 0.4 refuses by name: both configured the snapshot, which is removed, so
@@ -2683,7 +2688,7 @@ export function loadConfig(config: FlowConfig): LoadResult {
       entry: "",
       detail: REMOVED_SETTINGS.has(key)
         ? `The settings in the second argument of \`defineConfig\` have \`${key}\`, which flow 0.4 does not have: it configured the snapshot, and flow keeps none. Delete the key. docs/user/migrations/0.4.0.md, section 2.10, says why.`
-        : `The settings in the second argument of \`defineConfig\` have \`${key}\`, which is not a setting. The settings are ${SETTING_KEYS.map((k) => `\`${k}\``).join(" and ")}.`,
+        : `The settings in the second argument of \`defineConfig\` have \`${key}\`, which is not a setting. The settings are ${SETTING_KEYS.map((k) => `\`${k}\``).slice(0, -1).join(", ")} and \`${SETTING_KEYS[SETTING_KEYS.length - 1]}\`.`,
     });
   }
 
