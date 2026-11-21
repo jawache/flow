@@ -98,10 +98,13 @@ export const flow = definePack("flow", {
     .description("What the guard layer is and how it steers — shown at the start of every session.")
     .text(
       [
-        "This repo is guarded by flow. A guardrail refuses a commit or a command, and a breadcrumb is text shown to you at a moment, such as the area you changed. Nothing stops you writing or deleting a file in the working tree, so a file is judged when it is staged: the commit is refused, with the guardrail's message, until it passes. A command is judged before it runs, by its words. A breadcrumb is shown at the start of a session, before a command, when you hand back, and after a tool call that changed a file it is about.",
-        "The whole guard is `flow.config.ts` — every rule that fires is reachable from that one file, whether it comes from a pack the config imports or from a pack this repo writes itself. Nothing resolves at run time and nothing defaults: what you read there is what fires. Authoring a new entry is always welcome; never loosen a guardrail to get an edit through — that is the user's call.",
-        "There is no bypass token anywhere in this system. A guardrail is on or off, and turning one off is `override(pack.entry).disabled(\"why\")` in flow.config.ts — a committed change, visible in review.",
-        "If the config will not load, flow is off: no guardrail and no breadcrumb fires, and the load error comes with every call instead — at session start, before each command, after each other tool call and at turn-end — so the guard is never off without you reading that it is. Edits and commands go through, so you fix the config the way you do any other work, `npm ci` for a missing package included. The commit gate refuses every commit until the config loads again, so nothing written while flow was off reaches a commit before every guardrail has checked it.",
+        "Purpose. This repo is guarded by flow. A guardrail refuses a commit or a command, and a breadcrumb is text shown to you at a moment, such as the area you changed. A file is judged when it is staged: the commit is refused, with the guardrail's message, until the file passes. A command is judged before it runs, by its words. Every rule that fires is reachable from `flow.config.ts`, and what you read there is what fires. A guardrail is on or off, and there is no bypass token. If the config does not load, flow is off: the load error comes with every call, edits and commands go through, and every commit is refused until the config loads.",
+        "## Rules",
+        "- `FLW-R1` You may write a new guardrail or breadcrumb.",
+        "- `FLW-R2` Do not loosen a guardrail to get an edit through. Leave that to the user.",
+        "  why: Turning a guardrail off is `override(pack.entry).disabled(\"why\")` in `flow.config.ts`, a committed change that review reads.",
+        "- `FLW-R3` If a load error comes with a call, fix the config as you do any other work.",
+        "- `FLW-R4` If the load error names a missing package, run `npm ci`.",
       ].join("\n"),
     ),
 
