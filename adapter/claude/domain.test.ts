@@ -584,6 +584,12 @@ describe("the transcript's dialect", () => {
     ]);
   });
 
+  it("reads no prompt from a command run with `!`, nor from what it printed", () => {
+    const jsonl = [human("do the thing"), human("<bash-input>env</bash-input>"), human("<bash-stdout>SECRET=1</bash-stdout><bash-stderr></bash-stderr>")].join("\n");
+    const prompts = parseEvents(jsonl).flatMap((event) => (event.kind === "prompt" ? [event.text] : []));
+    expect(prompts).toStrictEqual(["do the thing"]);
+  });
+
   it("names only the files an edit tool changes: a read, a search and a shell command change none", () => {
     expect(editedFile({ tool_name: "Write", tool_input: { file_path: "/repo/a.ts" } })).toBe("/repo/a.ts");
     expect(editedFile({ tool_name: "NotebookEdit", tool_input: { notebook_path: "/repo/n.ipynb" } })).toBe("/repo/n.ipynb");

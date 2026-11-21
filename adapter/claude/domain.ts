@@ -201,6 +201,11 @@ function isTaskNotice(line: TranscriptLine, prose: string): boolean {
   return origin?.kind === "task-notification" || prose.trimStart().startsWith("<task-notification>");
 }
 
+/** Is this user text a command run with `!` in Claude Code, or what it printed? Those are not a prompt, and are never sent out. */
+function isShellEcho(prose: string): boolean {
+  return /^<bash-(input|stdout|stderr)>/.test(prose.trimStart());
+}
+
 /**
  * What the actor did THIS TURN, in order — the fact a turn-end check is handed.
  *
@@ -454,7 +459,8 @@ export function parseEvents(jsonl: string, root = "", home?: string): Transcript
       const start = turnStart(line);
       if (start !== null) {
         // A background task's notice starts a turn, but nobody typed it.
-        if (!isTaskNotice(line, start)) out.push({ line: line.line, kind: "prompt", text: start, ...(said === "" ? {} : { before: said }) });
+        // Nor is a command the person ran with `!`, or what it printed: it is theirs, and may hold a secret.
+        if (!isTaskNotice(line, start) && !isShellEcho(start)) out.push({ line: line.line, kind: "prompt", text: start, ...(said === "" ? {} : { before: said }) });
         continue;
       }
       if (!Array.isArray(content)) continue;
