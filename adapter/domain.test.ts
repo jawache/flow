@@ -7,7 +7,7 @@
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import { DELETED, type Bound, type Row, type Tree } from "../engine/domain.ts";
-import { JEV_KEY, backedByTranscript, jevRequest, readJevReply, keyInDotenv, promptsLine, withPrompts, reportPage, type Facts, type Prompt, type PromptKind, isTestRun, testRunRules, testRunsIn, endsWithRunnerFailure, refusalsIn, refused, requestsEntry, snipAtWord, changeEvents, noticesThatCouldShow, changeRow, changedBy, commitRange, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
+import { JEV_KEY, backedByTranscript, jevRequest, readJevReply, keyInDotenv, promptsLine, withPrompts, withoutCodeBlocks, reportPage, type Facts, type Prompt, type PromptKind, isTestRun, testRunRules, testRunsIn, endsWithRunnerFailure, refusalsIn, refused, requestsEntry, snipAtWord, changeEvents, noticesThatCouldShow, changeRow, changedBy, commitRange, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
 import { breadcrumb, defineConfig, definePack, fileChange, loadConfig, pack, session } from "../index.ts";
 import type { Ctx, TurnAction } from "../language/domain.ts";
 import { ranSinceEdit } from "../checks/domain.ts";
@@ -2557,16 +2557,23 @@ describe("the prompts, sorted by Jev", () => {
     expect(promptsLine(undefined)).toBeNull();
   });
 
+  it("cuts code blocks from the agent's message before it is sent beside a prompt", () => {
+    const said = "Here is the file:\n```ts\nconst key = 1;\n```\nShall I merge?\n```\nnever closed";
+    const read = narrative([{ line: 1, kind: "prompt", text: "go", before: said }]);
+    expect(read.prompts[0]?.before).toBe("Here is the file:\n\nShall I merge?");
+    expect(withoutCodeBlocks("no code")).toBe("no code");
+  });
+
   it("puts Jev's answers on the prompts and keeps the long text out of the report", () => {
     const one = narrative([{ line: 1, kind: "prompt", text: "go", before: "Shall I merge?" }]);
     const read = { narrative: mergeNarratives([{ session: "s1", read: one }]) } as Facts;
     expect(read.narrative.prompts[0]).toMatchObject({ asked: "go", before: "Shall I merge?" });
     const out = withPrompts(read, [{ kind: "go_ahead", confidence: 0.95, frustrated: 0 }]);
     expect(out.prompts).toEqual([{ line: 1, text: "go", session: "s1", sorted: { kind: "go_ahead", confidence: 0.95, frustrated: 0 } }]);
-    expect(out.narrative.prompts).toEqual([{ line: 1, text: "go", session: "s1" }]);
+    expect(out.narrative.prompts, "each prompt is listed once").toEqual([]);
     const unsorted = withPrompts(read, null);
     expect(unsorted).not.toHaveProperty("prompts");
-    expect(unsorted.narrative.prompts).toEqual([{ line: 1, text: "go", session: "s1" }]);
+    expect(unsorted.narrative.prompts, "--no-prompts leaves every prompt's text out").toEqual([]);
     expect(JEV_KEY).toBe("TYPESAFE_API_KEY");
   });
 });

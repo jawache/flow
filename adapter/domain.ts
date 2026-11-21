@@ -575,7 +575,7 @@ export function narrative(events: readonly TranscriptEvent[]): Narrative {
 
   for (const event of events) {
     if (event.kind === "prompt") {
-      prompts.push({ line: event.line, text: snip(event.text, 120), asked: event.text.trim().slice(0, JEV_ASKED), before: (event.before ?? "").slice(-JEV_BEFORE) });
+      prompts.push({ line: event.line, text: snip(event.text, 120), asked: event.text.trim().slice(0, JEV_ASKED), before: withoutCodeBlocks(event.before ?? "").slice(-JEV_BEFORE) });
       continue;
     }
     if (event.kind !== "use") continue;
@@ -620,6 +620,11 @@ export const JEV_KEY = "TYPESAFE_API_KEY";
 /** How much of a prompt, and of the agent's message before it, Jev is sent. */
 const JEV_ASKED = 2500;
 const JEV_BEFORE = 700;
+
+/** The agent's message with every fenced code block cut out, an unclosed one to the end: the page promises no code is sent. */
+export function withoutCodeBlocks(message: string): string {
+  return message.replace(/^[ \t]*(```|~~~)[\s\S]*?(?:^[ \t]*\1[^\n]*$|(?![\s\S]))/gm, "").trim();
+}
 
 /** The seven kinds a prompt is sorted into, and what each one is, as Jev is told. */
 const KIND_CRITERIA = {
@@ -682,12 +687,13 @@ export function keyInDotenv(dotenv: string): string | null {
   return null;
 }
 
-/** The facts with each prompt's answer from Jev in place (none when Jev was not asked), and the long text each was sent as left out of the narrative. */
+/** The facts with each prompt's answer from Jev in place (none when Jev was not asked). The narrative holds no prompt after it: each is listed once, in `prompts`, and none when Jev was not asked. */
 export function withPrompts(facts: Facts, sorted: readonly (Sorted | null)[] | null): Facts {
   const turns = facts.narrative.prompts;
   const prompts = turns.map((turn, at): Prompt => ({ line: turn.line, text: turn.text, session: turn.session ?? "", sorted: sorted?.[at] ?? null }));
   const kept = sorted === null ? {} : { prompts };
-  return { ...facts, ...kept, narrative: { ...facts.narrative, prompts: turns.map(({ line, text, session }) => ({ line, text, ...(session === undefined ? {} : { session }) })) } };
+  // Each prompt is listed once, in `prompts`, and with no key there is no list: its text is nowhere else.
+  return { ...facts, ...kept, narrative: { ...facts.narrative, prompts: [] } };
 }
 
 /** The `prompts` line: how many, how many of the two kinds that cost the person something, and how many were frustrated. Null with no prompts. */
