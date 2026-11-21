@@ -57,10 +57,10 @@ describe("the key", () => {
     try {
       spawnSync("git", ["init", "-q"], { cwd: dir });
       writeFileSync(join(dir, ".env"), "TYPESAFE_API_KEY=from-file\n");
-      expect(readKey(dir, {}, dir)).toBeNull();
+      expect(readKey(dir, {}, null)).toBeNull();
       writeFileSync(join(dir, ".gitignore"), ".env\n");
-      expect(readKey(dir, {}, dir)).toBe("from-file");
-      expect(readKey(dir, { TYPESAFE_API_KEY: "from-env" }, dir)).toBe("from-env");
+      expect(readKey(dir, {}, null)).toBe("from-file");
+      expect(readKey(dir, { TYPESAFE_API_KEY: "from-env" }, null)).toBe("from-env");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -80,12 +80,21 @@ describe("the key", () => {
       spawnSync("git", ["worktree", "add", "-q", worktree], { cwd: main });
       writeFileSync(join(main, ".gitignore"), ".env\n");
       writeFileSync(join(main, ".env"), "TYPESAFE_API_KEY=from-main\n");
-      const flowDir = join(worktree, "adapter");
-      mkdirSync(flowDir);
-      expect(readKey(other, {}, flowDir)).toBe("from-main");
+      expect(readKey(other, {}, worktree)).toBe("from-main");
       writeFileSync(join(other, ".gitignore"), ".env\n");
       writeFileSync(join(other, ".env"), "TYPESAFE_API_KEY=from-other\n");
-      expect(readKey(other, {}, flowDir), "the repo's own file comes first").toBe("from-other");
+      expect(readKey(other, {}, worktree), "the repo's own file comes first").toBe("from-other");
+      // An installed flow is a folder inside a project's repo, and that repo's checkout is not flow's.
+      const project = join(base, "project");
+      const installed = join(project, "node_modules", "flow");
+      mkdirSync(installed, { recursive: true });
+      spawnSync("git", ["init", "-q"], { cwd: project });
+      writeFileSync(join(project, ".gitignore"), ".env\nnode_modules\n");
+      writeFileSync(join(project, ".env"), "TYPESAFE_API_KEY=from-project\n");
+      const bare = join(base, "bare");
+      mkdirSync(bare);
+      spawnSync("git", ["init", "-q"], { cwd: bare });
+      expect(readKey(bare, {}, installed)).toBeNull();
     } finally {
       rmSync(base, { recursive: true, force: true });
     }

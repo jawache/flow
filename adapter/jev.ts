@@ -4,10 +4,11 @@
 // this file holds the key's places and the request itself. Nothing but a prompt and the end of the
 // agent's message before it, less its code blocks, is sent.
 
+import { realpathSync } from "node:fs";
 import { dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { JEV_KEY, jevRequest, keyInDotenv, readJevReply, type PromptTurn, type Sorted } from "./domain.ts";
+import { packageRoot } from "./product.ts";
 import { readText, runCommand } from "./shell.ts";
 
 /** Jev's address. */
@@ -23,21 +24,27 @@ function keyIn(dir: string): string | null {
   return ignored ? keyInDotenv(readText(dir, ".env") ?? "") : null;
 }
 
-/** The main checkout of the flow that is running: the folder git's common directory, found from where `flow.mjs` is, belongs to. Null when that is not a git checkout. */
-function mainCheckoutOfFlow(flowDir: string): string | null {
-  const found = runCommand("git rev-parse --path-format=absolute --git-common-dir", flowDir);
-  return found.code === 0 && found.stdout.trim() !== "" ? dirname(found.stdout.trim()) : null;
+/**
+ * The main checkout of the flow that runs, only when flow's own package root is the top of a git
+ * checkout. An installed flow sits inside a project's repo, and that project's checkout is not named.
+ */
+function fromFlowCheckout(flowRoot: string | null): string | null {
+  if (flowRoot === null) return null;
+  const top = runCommand("git rev-parse --show-toplevel", flowRoot);
+  if (top.code !== 0 || realpathSync(top.stdout.trim()) !== realpathSync(flowRoot)) return null;
+  const common = runCommand("git rev-parse --path-format=absolute --git-common-dir", flowRoot);
+  const main = common.code === 0 && common.stdout.trim() !== "" ? dirname(common.stdout.trim()) : null;
+  return main === null ? null : keyIn(main);
 }
 
 /**
  * The key, from the environment, then from the `.env` file in the repo's root, then from the `.env`
  * in the main checkout of the flow that runs. Each file is read only when git ignores it.
  */
-export function readKey(root: string, env: NodeJS.ProcessEnv = process.env, flowDir: string = dirname(fileURLToPath(import.meta.url))): string | null {
+export function readKey(root: string, env: NodeJS.ProcessEnv = process.env, flowRoot: string | null = packageRoot()): string | null {
   const fromEnv = env[JEV_KEY];
   if (fromEnv !== undefined && fromEnv.trim() !== "") return fromEnv.trim();
-  const main = mainCheckoutOfFlow(flowDir);
-  return keyIn(root) ?? (main === null ? null : keyIn(main));
+  return keyIn(root) ?? fromFlowCheckout(flowRoot);
 }
 
 /** One prompt, sorted: null when Jev could not be reached or its reply was not what was asked for. */
