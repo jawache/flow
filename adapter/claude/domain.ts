@@ -156,6 +156,10 @@ const INJECTED = [
   "<command-name>",
   "<command-message>",
   "<local-command",
+  // A command the person ran with `!`, and what it printed: not said to the agent, and it may hold a secret.
+  "<bash-input>",
+  "<bash-stdout>",
+  "<bash-stderr>",
   "<user-prompt-submit-hook",
   "Caveat:",
   "Result of calling",
@@ -199,11 +203,6 @@ function turnStart(line: TranscriptLine): string | null {
 function isTaskNotice(line: TranscriptLine, prose: string): boolean {
   const origin = line.record["origin"] as { kind?: unknown } | undefined;
   return origin?.kind === "task-notification" || prose.trimStart().startsWith("<task-notification>");
-}
-
-/** Is this user text a command run with `!` in Claude Code, or what it printed? Those are not a prompt, and are never sent out. */
-function isShellEcho(prose: string): boolean {
-  return /^<bash-(input|stdout|stderr)>/.test(prose.trimStart());
 }
 
 /**
@@ -459,8 +458,7 @@ export function parseEvents(jsonl: string, root = "", home?: string): Transcript
       const start = turnStart(line);
       if (start !== null) {
         // A background task's notice starts a turn, but nobody typed it.
-        // Nor is a command the person ran with `!`, or what it printed: it is theirs, and may hold a secret.
-        if (!isTaskNotice(line, start) && !isShellEcho(start)) out.push({ line: line.line, kind: "prompt", text: start, ...(said === "" ? {} : { before: said }) });
+        if (!isTaskNotice(line, start)) out.push({ line: line.line, kind: "prompt", text: start, ...(said === "" ? {} : { before: said }) });
         continue;
       }
       if (!Array.isArray(content)) continue;

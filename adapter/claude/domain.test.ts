@@ -565,6 +565,14 @@ describe("the transcript's dialect", () => {
     expect(isInjected("write the code")).toBe(false);
   });
 
+  it("reads no prompt from a command run with `!`, nor from what it printed", () => {
+    const jsonl = [human("do the thing"), human("<bash-input>env</bash-input>"), human("<bash-stdout>SECRET=1</bash-stdout><bash-stderr></bash-stderr>")].join("\n");
+    const prompts = parseEvents(jsonl).flatMap((event) => (event.kind === "prompt" ? [event.text] : []));
+    expect(prompts).toStrictEqual(["do the thing"]);
+    expect(isInjected("<bash-input>env</bash-input>")).toBe(true);
+    expect(turnActions([human("go"), assistant([use("Edit", { file_path: "a.ts" })]), human("<bash-input>ls</bash-input>"), assistant([use("Bash", { command: "ls" })])].join("\n"))).toStrictEqual([{ did: "edit", path: "a.ts" }, { did: "run", command: "ls" }]);
+  });
+
   it("starts a turn at a background task's notice, though nobody typed it", () => {
     // The notice wakes the agent. Read as an injection, the turn would reach back to the human's
     // last message, and a turn-end rule would be handed the edit from the turn before.
@@ -582,12 +590,6 @@ describe("the transcript's dialect", () => {
       { did: "run", command: "ls" },
       { did: "edit", path: "b.ts" },
     ]);
-  });
-
-  it("reads no prompt from a command run with `!`, nor from what it printed", () => {
-    const jsonl = [human("do the thing"), human("<bash-input>env</bash-input>"), human("<bash-stdout>SECRET=1</bash-stdout><bash-stderr></bash-stderr>")].join("\n");
-    const prompts = parseEvents(jsonl).flatMap((event) => (event.kind === "prompt" ? [event.text] : []));
-    expect(prompts).toStrictEqual(["do the thing"]);
   });
 
   it("names only the files an edit tool changes: a read, a search and a shell command change none", () => {
