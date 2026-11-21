@@ -124,7 +124,7 @@ flow is ON — 5 guardrails · 2 breadcrumbs, every one resolved and able to fir
         Force-pushing rewrites history everyone else has. Push a correcting commit, or ask first.
   session
     🍞 flow.orientation
-        This repo is guarded by flow. A guardrail refuses a commit or a command, and a breadcrumb is text…
+        Purpose. This repo is guarded by flow. A guardrail refuses a commit or a command, and a breadcrumb…
   file-change
     🍞 house.sourceLayout  —  on src/**
         Code under src/ is pure: no file or network access. Put those in shell/.
