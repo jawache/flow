@@ -2436,6 +2436,8 @@ describe("test runs, decided from the justfile", () => {
     "    mkdir -p dist",
     "    grep -r x src",
     "    tsc -p .",
+    "    go build -ldflags \"$(git describe)\"",
+    "    node scripts/x.mjs",
     "",
     "fmt:",
     "    prettier --write .",
@@ -2451,12 +2453,14 @@ describe("test runs, decided from the justfile", () => {
     expect(isTestRun("vitest run", rules)).toBe(true);
     expect(isTestRun("npx vitest run adapter", rules)).toBe(true);
     expect(isTestRun("just fmt", rules)).toBe(false);
+    expect(isTestRun("git status", rules), "git only runs inside a substitution").toBe(false);
     expect(isTestRun("prettier --write .", rules), "fmt is no counted recipe").toBe(false);
   });
 
   it("never counts a shell utility, though a build recipe runs it", () => {
     expect(isTestRun("mkdir -p out", rules)).toBe(false);
     expect(isTestRun("grep -r x src", rules)).toBe(false);
+    expect(isTestRun("node scripts/x.mjs", rules), "node never counts").toBe(false);
     expect(isTestRun("tsc -p .", rules)).toBe(true);
   });
 
@@ -2494,7 +2498,7 @@ describe("test runs, decided from the justfile", () => {
   });
 
   it("fails a run whose output ends with a runner's failure line though the harness marked no error, and not one that says 0 failed", () => {
-    const lines = ["Tests  2 failed | 5 passed (7)", " Test Files  1 failed (1)", "--- FAIL: TestX (0.00s)", "FAIL\tpkg\t0.1s", "FAIL src/a.test.ts", "adapter/x.ts(3,4): error TS2304: Cannot find name", "error: Recipe `test` failed on line 4 with exit code 1", "✖ 3 problems (3 errors)"];
+    const lines = ["Tests:       1 failed, 5 passed, 6 total", "Tests  2 failed | 5 passed (7)", " Test Files  1 failed (1)", "--- FAIL: TestX (0.00s)", "FAIL\tpkg\t0.1s", "FAIL src/a.test.ts", "adapter/x.ts(3,4): error TS2304: Cannot find name", "error: Recipe `test` failed on line 4 with exit code 1", "✖ 3 problems (3 errors)"];
     for (const line of lines) {
       const events: TranscriptEvent[] = [use(2, "t1", "just test | tail -5"), { line: 3, kind: "result", id: "t1", content: `ok\n${line}\n`, failed: false }];
       expect(testRunsIn(who, events, [], testRunRules(justfile)).runs[0]?.failed, line).toBe(true);

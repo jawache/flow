@@ -391,7 +391,7 @@ const SHELL_UTILITIES: ReadonlySet<string> = new Set([
 ]);
 
 /** Words a recipe body starts a command with that name no program: a shell keyword, or a launcher whose next word is the program. */
-const NOT_PROGRAMS: ReadonlySet<string> = new Set(["set", "node", "npx", "just", "export", "then", "fi", "do", "done", "if", "for", "while", "source"]);
+const NOT_PROGRAMS: ReadonlySet<string> = new Set(["set", "exit", "node", "npx", "just", "export", "then", "fi", "do", "done", "if", "for", "while", "source"]);
 
 /** The recipe names that count, and the programs those recipes run: what makes a command a test run. */
 export interface TestRunRules {
@@ -439,7 +439,7 @@ export function testRunRules(justfile: string | null, added: readonly string[] =
     const commands = parseCommandLine(lines.join("\n")) ?? lines.flatMap((line) => parseCommandLine(line) ?? []);
     for (const command of commands) {
       const tool = toolOf(command);
-      if (command.program.includes("/") || !/^[A-Za-z]/.test(tool) || NOT_PROGRAMS.has(tool) || SHELL_UTILITIES.has(tool)) continue;
+      if (command.nested || command.program.includes("/") || !/^[A-Za-z]/.test(tool) || NOT_PROGRAMS.has(tool) || SHELL_UTILITIES.has(tool)) continue;
       programs.add(tool);
     }
   }
@@ -450,7 +450,6 @@ export function testRunRules(justfile: string | null, added: readonly string[] =
 export function isTestRun(command: unknown, rules: TestRunRules): boolean {
   return (parseCommandLine(strip(command)) ?? []).some((one) => {
     const tool = toolOf(one);
-    if (SHELL_UTILITIES.has(tool)) return false;
     return programName(one.program) === "just" ? rules.recipes.has(one.args[0] ?? "") : rules.programs.has(tool);
   });
 }
@@ -460,7 +459,7 @@ export function isTestRun(command: unknown, rules: TestRunRules): boolean {
  * `--- FAIL` and `FAIL`, a TypeScript error, just's failed recipe, an eslint summary, a failed command, make's
  * error. A count of zero failed is no failure, so each count starts at one.
  */
-const RUNNER_FAILURE = /(?:Tests?|Test Files)\s+[1-9]\d* failed|^--- FAIL|^FAIL(?:\b|\t)|error: Recipe `[^`]+` failed|\berror TS\d+|✖ [1-9]\d* problems?|Command failed with exit code|^make: \*\*\*/m;
+const RUNNER_FAILURE = /(?:Tests?|Test Files):?\s+[1-9]\d* failed|^--- FAIL|^FAIL(?:\b|\t)|error: Recipe `[^`]+` failed|\berror TS\d+|✖ [1-9]\d* problems?|Command failed with exit code|^make: \*\*\*/m;
 
 /** How much of the end of a result is read for a runner's failure line. */
 const RESULT_TAIL = 3000;
@@ -470,7 +469,7 @@ export function endsWithRunnerFailure(output: string): boolean {
   return RUNNER_FAILURE.test(output.slice(-RESULT_TAIL));
 }
 
-/** One test run: the command, the transcript line it was called on, and whether the harness marked its result an error. */
+/** One test run: the command, the transcript line it was called on, and whether it failed: the harness marked its result an error, or its output ends with a runner's failure line. */
 export interface TestRun {
   readonly session: string;
   readonly agent: string | null;
