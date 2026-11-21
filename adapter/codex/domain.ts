@@ -126,6 +126,12 @@ function promptOf(item: Record<string, unknown>): string {
   return parts.map((part) => (part.type === "text" ? text(part.text) : "")).join("\n").trim();
 }
 
+/** What the agent said, from an `AgentMessage` item: its text parts, joined. */
+function saidOf(item: Record<string, unknown>): string {
+  const parts = Array.isArray(item["content"]) ? (item["content"] as { type?: unknown; text?: unknown }[]) : [];
+  return parts.map((part) => (/^text$/i.test(text(part.type)) ? text(part.text) : "")).join("\n").trim();
+}
+
 /** The shell line a `CommandExecution` item ran: what Codex parsed out of it, else the last word of the shell's own argv. */
 function commandOf(item: Record<string, unknown>): string {
   const parsed = Array.isArray(item["parsed_cmd"]) ? (item["parsed_cmd"] as { cmd?: unknown }[]) : [];
@@ -208,11 +214,15 @@ export function briefHead(jsonl: string, cap = 8000): string {
 export function parseEvents(jsonl: string, root = "", home?: string): TranscriptEvent[] {
   const out: TranscriptEvent[] = [];
   let cwd = root;
+  // What the agent last said in words, which a prompt answers.
+  let said = "";
   for (const record of rollout(jsonl)) {
     if (record.type === "session_meta") cwd = text(record.payload["cwd"]) || root;
+    const message = completed(record, "AgentMessage");
+    if (message !== null && saidOf(message) !== "") said = saidOf(message);
     const prompt = completed(record, "UserMessage");
     if (prompt !== null) {
-      out.push({ line: record.line, kind: "prompt", text: promptOf(prompt) });
+      out.push({ line: record.line, kind: "prompt", text: promptOf(prompt), ...(said === "" ? {} : { before: said }) });
       continue;
     }
     const item = completed(record, "CommandExecution");

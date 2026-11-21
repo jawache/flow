@@ -308,7 +308,7 @@ async function readFacts(args: readonly string[]): Promise<number> {
     log: pathFlag(args, "log"),
     testRuns: config?.settings.testRuns,
   });
-  const read = key === null ? counted : withPrompts(counted, await sortPrompts(counted.narrative.prompts, key));
+  const read = withPrompts(counted, key === null ? null : await sortPrompts(counted.narrative.prompts, key));
 
   if (flag(args, "json") !== null) {
     process.stdout.write(`${JSON.stringify(read, null, 2)}\n`);

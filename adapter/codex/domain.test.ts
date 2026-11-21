@@ -99,6 +99,19 @@ describe("a Codex rollout", () => {
     expect(events[2]).toMatchObject({ kind: "result", id: "exec-69835531-9a4a-4b72-a8c8-4fbd98d5c358", content: "/repo/src/deep\n", failed: false });
   });
 
+  it("gives a prompt the agent's last message before it", () => {
+    const item = (type: string, content: unknown): string =>
+      JSON.stringify({ type: "event_msg", payload: { type: "item_completed", item: { type, content } } });
+    const events = parseEvents(
+      [item("UserMessage", [{ type: "text", text: "first" }]), item("AgentMessage", [{ type: "Text", text: "Shall I merge?" }]), item("UserMessage", [{ type: "text", text: "go" }])].join("\n"),
+      "/repo",
+    );
+    expect(events).toEqual([
+      { line: 1, kind: "prompt", text: "first" },
+      { line: 3, kind: "prompt", text: "go", before: "Shall I merge?" },
+    ]);
+  });
+
   it("names where it started, when, and on which branch", () => {
     expect(transcriptHead(ROLLOUT)).toEqual({ cwd: "/repo/src/deep", branch: null, started: "2026-11-18T15:21:44.452Z" });
     const withGit = JSON.stringify({ type: "session_meta", payload: { cwd: "/repo", timestamp: "t", git: { commit_hash: "abc", branch: "main" } } });

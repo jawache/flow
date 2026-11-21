@@ -4,7 +4,9 @@
 // file holds the key's two places and the request itself. Nothing but a prompt and the end of the
 // agent's message before it is sent: no code and no command.
 
-import { JEV_KEY, jevRequest, keyFrom, readJevReply, type PromptTurn, type Sorted } from "./domain.ts";
+// eslint-disable-next-line n/no-unsupported-features/node-builtins -- parseEnv needs Node 24.10; the package says >=24
+import { parseEnv } from "node:util";
+import { JEV_KEY, jevRequest, readJevReply, type PromptTurn, type Sorted } from "./domain.ts";
 import { readText, runCommand } from "./shell.ts";
 
 /** Jev's address. */
@@ -22,7 +24,7 @@ export function readKey(root: string, env: NodeJS.ProcessEnv = process.env): str
   const fromEnv = env[JEV_KEY];
   if (fromEnv !== undefined && fromEnv.trim() !== "") return fromEnv.trim();
   const ignored = runCommand("git check-ignore -q .env", root).code === 0;
-  return keyFrom(undefined, ignored ? readText(root, ".env") : null);
+  return ignored ? (parseEnv(readText(root, ".env") ?? "")[JEV_KEY]?.trim() || null) : null;
 }
 
 /** One prompt, sorted: null when Jev could not be reached or its reply was not what was asked for. */
@@ -32,10 +34,10 @@ async function sortOne(turn: PromptTurn, key: string, url: string): Promise<Sort
       const reply = await fetch(url, {
         method: "POST",
         headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-        body: JSON.stringify(jevRequest(turn.asked, turn.before)),
+        body: JSON.stringify(jevRequest(turn.asked ?? "", turn.before ?? "")),
       });
       if (reply.status === 429 || reply.status >= 500) {
-        await new Promise((done) => setTimeout(done, 1500 * attempt));
+        if (attempt < TRIES) await new Promise((done) => setTimeout(done, 1500 * attempt));
         continue;
       }
       return reply.ok ? readJevReply(await reply.json()) : null;

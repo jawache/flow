@@ -531,8 +531,9 @@ export interface Pointer {
 
 /** A prompt a person typed, and what Jev is sent about it: the prompt, and the end of the agent's message before it. */
 export interface PromptTurn extends Pointer {
-  readonly asked: string;
-  readonly before: string;
+  /** What Jev is sent. Left out of a report. */
+  readonly asked?: string;
+  readonly before?: string;
 }
 
 export interface Narrative {
@@ -670,23 +671,12 @@ export function readJevReply(body: unknown): Sorted | null {
   return { kind: kind as PromptKind, confidence, frustrated };
 }
 
-/** The key: the environment's, or else the one `.env` holds. Null when neither has it. */
-export function keyFrom(fromEnv: string | undefined, dotenv: string | null): string | null {
-  if (fromEnv !== undefined && fromEnv.trim() !== "") return fromEnv.trim();
-  for (const line of (dotenv ?? "").split("\n")) {
-    const found = /^\s*(?:export\s+)?([A-Za-z_]\w*)\s*=\s*(.*?)\s*$/.exec(line);
-    if (found?.[1] !== JEV_KEY) continue;
-    const value = (found[2] ?? "").replace(/^(["'])(.*)\1$/, "$2").trim();
-    if (value !== "") return value;
-  }
-  return null;
-}
-
-/** The facts with each prompt's answer from Jev in place, and the long text each was sent as left out of the narrative. */
-export function withPrompts(facts: Facts, sorted: readonly (Sorted | null)[]): Facts {
+/** The facts with each prompt's answer from Jev in place (none when Jev was not asked), and the long text each was sent as left out of the narrative. */
+export function withPrompts(facts: Facts, sorted: readonly (Sorted | null)[] | null): Facts {
   const turns = facts.narrative.prompts;
-  const prompts = turns.map((turn, at): Prompt => ({ line: turn.line, text: turn.text, session: turn.session ?? "", sorted: sorted[at] ?? null }));
-  return { ...facts, prompts, narrative: { ...facts.narrative, prompts: turns.map(({ line, text, session }) => ({ line, text, ...(session === undefined ? {} : { session }), asked: "", before: "" })) } };
+  const prompts = turns.map((turn, at): Prompt => ({ line: turn.line, text: turn.text, session: turn.session ?? "", sorted: sorted?.[at] ?? null }));
+  const kept = sorted === null ? {} : { prompts };
+  return { ...facts, ...kept, narrative: { ...facts.narrative, prompts: turns.map(({ line, text, session }) => ({ line, text, ...(session === undefined ? {} : { session }) })) } };
 }
 
 /** The `prompts` line: how many, how many of the two kinds that cost the person something, and how many were frustrated. Null with no prompts. */

@@ -6,7 +6,7 @@
 // settings file, its transcripts — is proved in that harness's folder.
 import { describe, it, expect } from "vitest";
 import { DELETED, type Bound, type Row, type Tree } from "../engine/domain.ts";
-import { JEV_KEY, backedByTranscript, jevRequest, readJevReply, keyFrom, promptsLine, withPrompts, type Facts, type Prompt, type PromptKind, isTestRun, testRunRules, testRunsIn, endsWithRunnerFailure, refusalsIn, refused, requestsEntry, snipAtWord, changeEvents, noticesThatCouldShow, changeRow, changedBy, commitRange, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
+import { JEV_KEY, backedByTranscript, jevRequest, readJevReply, promptsLine, withPrompts, type Facts, type Prompt, type PromptKind, isTestRun, testRunRules, testRunsIn, endsWithRunnerFailure, refusalsIn, refused, requestsEntry, snipAtWord, changeEvents, noticesThatCouldShow, changeRow, changedBy, commitRange, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
 import { breadcrumb, defineConfig, definePack, fileChange, loadConfig, pack, session } from "../index.ts";
 import type { Ctx, TurnAction } from "../language/domain.ts";
 import { ranSinceEdit } from "../checks/domain.ts";
@@ -2542,15 +2542,6 @@ describe("the prompts, sorted by Jev", () => {
     expect(readJevReply(null)).toBeNull();
   });
 
-  it("takes the key from the environment before .env, and reads .env's lines as a shell would", () => {
-    expect(JEV_KEY).toBe("TYPESAFE_API_KEY");
-    expect(keyFrom("from-env", "TYPESAFE_API_KEY=from-file")).toBe("from-env");
-    expect(keyFrom(undefined, "# a\nOTHER=x\nexport TYPESAFE_API_KEY='quoted'\n")).toBe("quoted");
-    expect(keyFrom("  ", "TYPESAFE_API_KEY=file")).toBe("file");
-    expect(keyFrom(undefined, "TYPESAFE_API_KEY=")).toBeNull();
-    expect(keyFrom(undefined, null)).toBeNull();
-  });
-
   it("prints the prompts line, and none without prompts", () => {
     const sorted = (kind: PromptKind, frustrated: number): Prompt => ({ line: 1, text: "x", session: "s", sorted: { kind, confidence: 0.9, frustrated } });
     expect(promptsLine([sorted("correction", 0.8), sorted("confusion", 0.6), sorted("answer", 0.1), { line: 2, text: "y", session: "s", sorted: null }])).toBe("prompts   4 · 1 correction · 1 confusion · 2 frustrated · 1 not sorted");
@@ -2564,6 +2555,10 @@ describe("the prompts, sorted by Jev", () => {
     expect(read.narrative.prompts[0]).toMatchObject({ asked: "go", before: "Shall I merge?" });
     const out = withPrompts(read, [{ kind: "go_ahead", confidence: 0.95, frustrated: 0 }]);
     expect(out.prompts).toEqual([{ line: 1, text: "go", session: "s1", sorted: { kind: "go_ahead", confidence: 0.95, frustrated: 0 } }]);
-    expect(out.narrative.prompts).toEqual([{ line: 1, text: "go", session: "s1", asked: "", before: "" }]);
+    expect(out.narrative.prompts).toEqual([{ line: 1, text: "go", session: "s1" }]);
+    const unsorted = withPrompts(read, null);
+    expect(unsorted).not.toHaveProperty("prompts");
+    expect(unsorted.narrative.prompts).toEqual([{ line: 1, text: "go", session: "s1" }]);
+    expect(JEV_KEY).toBe("TYPESAFE_API_KEY");
   });
 });
