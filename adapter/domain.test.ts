@@ -6,7 +6,7 @@
 // settings file, its transcripts — is proved in that harness's folder.
 import { describe, it, expect } from "vitest";
 import { DELETED, type Bound, type Row, type Tree } from "../engine/domain.ts";
-import { backedByTranscript, isTestRun, testRunRules, testRunsIn, refusalsIn, refused, requestsEntry, snipAtWord, changeEvents, noticesThatCouldShow, changeRow, changedBy, commitRange, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
+import { backedByTranscript, isTestRun, testRunRules, testRunsIn, endsWithRunnerFailure, refusalsIn, refused, requestsEntry, snipAtWord, changeEvents, noticesThatCouldShow, changeRow, changedBy, commitRange, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
 import { breadcrumb, defineConfig, definePack, fileChange, loadConfig, pack, session } from "../index.ts";
 import type { Ctx, TurnAction } from "../language/domain.ts";
 import { ranSinceEdit } from "../checks/domain.ts";
@@ -2491,5 +2491,15 @@ describe("test runs, decided from the justfile", () => {
   it("counts no requests for a failed run no pass follows, or a run that passes first", () => {
     const events = [use(2, "t1", "just test"), result(3, "t1", false), use(6, "t2", "just test"), result(7, "t2", true)];
     expect(testRunsIn(who, events, asked(1, 4, 5, 8), testRunRules(justfile)).totals).toMatchObject({ runs: 2, failed: 1, requestsBetween: 0 });
+  });
+
+  it("fails a run whose output ends with a runner's failure line though the harness marked no error, and not one that says 0 failed", () => {
+    const lines = ["Tests  2 failed | 5 passed (7)", " Test Files  1 failed (1)", "--- FAIL: TestX (0.00s)", "FAIL\tpkg\t0.1s", "FAIL src/a.test.ts", "adapter/x.ts(3,4): error TS2304: Cannot find name", "error: Recipe `test` failed on line 4 with exit code 1", "✖ 3 problems (3 errors)"];
+    for (const line of lines) {
+      const events: TranscriptEvent[] = [use(2, "t1", "just test | tail -5"), { line: 3, kind: "result", id: "t1", content: `ok\n${line}\n`, failed: false }];
+      expect(testRunsIn(who, events, [], testRunRules(justfile)).runs[0]?.failed, line).toBe(true);
+    }
+    expect(endsWithRunnerFailure("Tests  0 failed | 7 passed (7)\nTest Files  0 failed")).toBe(false);
+    expect(endsWithRunnerFailure(`FAIL\n${"x".repeat(3000)}`), "only the end is read").toBe(false);
   });
 });

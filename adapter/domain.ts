@@ -455,6 +455,21 @@ export function isTestRun(command: unknown, rules: TestRunRules): boolean {
   });
 }
 
+/**
+ * The lines a test runner or a build ends its output with when it failed: vitest's and jest's counts, Go's
+ * `--- FAIL` and `FAIL`, a TypeScript error, just's failed recipe, an eslint summary, a failed command, make's
+ * error. A count of zero failed is no failure, so each count starts at one.
+ */
+const RUNNER_FAILURE = /(?:Tests?|Test Files)\s+[1-9]\d* failed|^--- FAIL|^FAIL(?:\b|\t)|error: Recipe `[^`]+` failed|\berror TS\d+|✖ [1-9]\d* problems?|Command failed with exit code|^make: \*\*\*/m;
+
+/** How much of the end of a result is read for a runner's failure line. */
+const RESULT_TAIL = 3000;
+
+/** Does a result's output end with a runner's failure line? */
+export function endsWithRunnerFailure(output: string): boolean {
+  return RUNNER_FAILURE.test(output.slice(-RESULT_TAIL));
+}
+
 /** One test run: the command, the transcript line it was called on, and whether the harness marked its result an error. */
 export interface TestRun {
   readonly session: string;
@@ -478,7 +493,7 @@ export interface TestRunTotals {
 /**
  * The test runs in one transcript, and their totals. A stretch starts at the first failed run and
  * stops at the next run that passes: the requests made after the failed run's call, up to and
- * including the one that called the pass. A run that fails again inside a stretch adds nothing,
+ * including the one that called the pass. A run failed when the harness marked its result an error or its output ends with a runner's failure line. A run that fails again inside a stretch adds nothing,
  * and a stretch no run passes after is not counted.
  */
 export function testRunsIn(
@@ -487,7 +502,7 @@ export function testRunsIn(
   requests: readonly ModelRequest[],
   rules: TestRunRules,
 ): { readonly runs: readonly TestRun[]; readonly totals: TestRunTotals } {
-  const failedIds = new Set(events.flatMap((event) => (event.kind === "result" && event.failed ? [event.id] : [])));
+  const failedIds = new Set(events.flatMap((event) => (event.kind === "result" && (event.failed || endsWithRunnerFailure(event.content)) ? [event.id] : [])));
   const runs: TestRun[] = [];
   let between = 0;
   let since: number | null = null;
