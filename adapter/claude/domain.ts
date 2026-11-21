@@ -4,7 +4,7 @@
 
 import { parseShellSteps, type TurnAction } from "../../language/domain.ts";
 import { bashReads, hooksFileOf, type HooksFileHook, relativise, repoFirst, text, type HookEvent } from "../domain.ts";
-import type { HookPayload, ToolAction, Spawn, SpawnMeta, Steer, TranscriptEvent, TranscriptHead, TranscriptRef } from "../harness.ts";
+import type { HookPayload, ModelRequest, ToolAction, Spawn, SpawnMeta, Steer, TranscriptEvent, TranscriptHead, TranscriptRef } from "../harness.ts";
 
 
 
@@ -123,6 +123,25 @@ export function tokensFromTranscript(jsonl: string): number {
     if (message?.usage) return contextTokens(message.usage);
   }
   return 0;
+}
+
+/**
+ * The model requests a transcript holds: one for each message id, because the host writes one line for each content
+ * block of a reply and every one of them carries the reply's id, model and usage. The last line of an id has the
+ * final usage. A reply with no usage, such as the host's own `<synthetic>` notice, is no request.
+ */
+export function requestsOf(jsonl: string): ModelRequest[] {
+  const byId = new Map<string, ModelRequest>();
+  for (const line of transcriptLines(jsonl)) {
+    if (line.kind !== "assistant") continue;
+    const message = line.record["message"] as { id?: unknown; model?: unknown; usage?: Usage } | undefined;
+    if (message?.usage === undefined) continue;
+    const model = text(message.model);
+    const id = text(message.id) || `line-${line.line}`;
+    const first = byId.get(id);
+    byId.set(id, { line: first?.line ?? line.line, model: model === "" || model === "<synthetic>" ? null : model, context: contextTokens(message.usage) });
+  }
+  return [...byId.values()];
 }
 
 /**

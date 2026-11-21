@@ -10,7 +10,7 @@
 
 import { parseShellSteps, type TurnAction } from "../../language/domain.ts";
 import { bashReads, hooksFileOf, repoFirst, text, type HooksFileHook, type HookEvent } from "../domain.ts";
-import type { HookPayload, SpawnMeta, TranscriptEvent, TranscriptHead, TranscriptRef } from "../harness.ts";
+import type { HookPayload, ModelRequest, SpawnMeta, TranscriptEvent, TranscriptHead, TranscriptRef } from "../harness.ts";
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // WHICH PAYLOADS ARE CODEX'S
@@ -151,6 +151,31 @@ export function tokensFromTranscript(jsonl: string): number {
     if (typeof used === "number" && Number.isFinite(used)) return used;
   }
   return 0;
+}
+
+/**
+ * The model requests a rollout holds: one for each `token_count` row that has usage and whose running total moved
+ * since the row before, because Codex writes the same row again when nothing was sent. A request's context is its
+ * `input_tokens`, which counts the cached ones, and its model is the one the latest `turn_context` record named.
+ */
+export function requestsOf(jsonl: string): ModelRequest[] {
+  const out: ModelRequest[] = [];
+  let model: string | null = null;
+  let seen = -1;
+  for (const record of rollout(jsonl)) {
+    if (record.type === "turn_context") model = text(record.payload["model"]) || model;
+    if (record.type !== "event_msg" || record.payload["type"] !== "token_count") continue;
+    const info = record.payload["info"] as { total_token_usage?: { total_tokens?: unknown }; last_token_usage?: { input_tokens?: unknown } } | null | undefined;
+    const used = info?.last_token_usage?.input_tokens;
+    if (typeof used !== "number" || !Number.isFinite(used)) continue;
+    const total = info?.total_token_usage?.total_tokens;
+    if (typeof total === "number") {
+      if (total === seen) continue;
+      seen = total;
+    }
+    out.push({ line: record.line, model, context: used });
+  }
+  return out;
 }
 
 /**

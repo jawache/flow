@@ -6,7 +6,7 @@
 // settings file, its transcripts — is proved in that harness's folder.
 import { describe, it, expect } from "vitest";
 import { DELETED, type Bound, type Row, type Tree } from "../engine/domain.ts";
-import { backedByTranscript, snipAtWord, changeEvents, noticesThatCouldShow, changeRow, changedBy, commitRange, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
+import { backedByTranscript, refusalsIn, requestsEntry, snipAtWord, changeEvents, noticesThatCouldShow, changeRow, changedBy, commitRange, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
 import { breadcrumb, defineConfig, definePack, fileChange, loadConfig, pack, session } from "../index.ts";
 import type { Ctx, TurnAction } from "../language/domain.ts";
 import { ranSinceEdit } from "../checks/domain.ts";
@@ -2370,5 +2370,51 @@ describe("backedByTranscript", () => {
 
   it("keeps every log when there is no store to compare with", () => {
     expect(backedByTranscript(logs, null)).toEqual({ kept: logs, excluded: [] });
+  });
+});
+
+describe("requests, models and refusals of a conversation with one subagent", () => {
+  const conversation = requestsEntry({ session: "s1", agent: null, agentType: null }, [
+    { line: 2, model: "claude-opus-5-5", context: 30_000 },
+    { line: 5, model: "claude-opus-5-5", context: 214_000 },
+    { line: 9, model: "claude-sonnet-5-5", context: 90_000 },
+  ]);
+  const builder = requestsEntry({ session: "s1", agent: "a1", agentType: "builder" }, [{ line: 2, model: "claude-sonnet-5-5", context: 50_000 }]);
+
+  it("counts the requests and the largest context, for the conversation and for the subagent", () => {
+    expect(conversation).toMatchObject({ requests: 3, largestContext: 214_000 });
+    expect(builder).toMatchObject({ requests: 1, largestContext: 50_000 });
+  });
+
+  it("names the model most requests ran on, and none when no request named one", () => {
+    expect(conversation.model).toBe("claude-opus-5-5");
+    expect(builder.model).toBe("claude-sonnet-5-5");
+    expect(requestsEntry({ session: "s", agent: null, agentType: null }, [{ line: 1, model: null, context: 5 }]).model).toBeNull();
+  });
+
+  const use = (line: number, id: string, command: string): TranscriptEvent => ({ line, kind: "use", ts: null, id, name: "Bash", action: "shell", input: { command }, path: "" });
+  const result = (line: number, id: string, content: string, failed = true): TranscriptEvent => ({ line, kind: "result", id, content, failed });
+  const refusal = "flow — commit blocked:\n\n✗ git.conventionalCommitFormat\n  Use a type.";
+
+  it("finds a refusal by its guardrail's name, and tells a next command that differs from a repeat", () => {
+    const events = [
+      use(2, "t1", "git commit -m wip"),
+      result(3, "t1", refusal),
+      use(4, "t2", "git commit -m 'fix: x'"),
+      result(5, "t2", "ok", false),
+      use(6, "t3", "git commit -m wip"),
+      result(7, "t3", refusal),
+      use(8, "t4", "git commit -m wip"),
+      result(9, "t4", refusal),
+    ];
+    expect(refusalsIn(events)).toEqual([
+      { entry: "git.conventionalCommitFormat", line: 3, differed: true },
+      { entry: "git.conventionalCommitFormat", line: 7, differed: false },
+      { entry: "git.conventionalCommitFormat", line: 9, differed: false },
+    ]);
+  });
+
+  it("ignores a result that only shows the text, because it did not fail", () => {
+    expect(refusalsIn([use(2, "t1", "cat notes"), result(3, "t1", refusal, false)])).toEqual([]);
   });
 });

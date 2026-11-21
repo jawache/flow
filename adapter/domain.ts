@@ -25,6 +25,7 @@ import type {
   HookPayload,
   Registration,
   HookResult,
+  ModelRequest,
   Registering,
   Spawn,
   SpawnMeta,
@@ -766,6 +767,86 @@ export function joinSpawn(args: {
   };
 }
 
+// ── model requests, and the guardrails that refused ──
+
+/** What one conversation, or one of its subagents, asked of a model: how often, how large, and which. */
+export interface RequestsEntry {
+  readonly session: string;
+  /** The harness's id for the subagent; null for the conversation itself. */
+  readonly agent: string | null;
+  readonly agentType: string | null;
+  readonly requests: number;
+  /** The most tokens any one request's context held. */
+  readonly largestContext: number;
+  /** The model that served most of the requests; the first of them on a tie. Null when none was named. */
+  readonly model: string | null;
+}
+
+/** Requests, largest context and model of one transcript's model requests. */
+export function requestsEntry(who: Pick<RequestsEntry, "session" | "agent" | "agentType">, list: readonly ModelRequest[]): RequestsEntry {
+  const served = new Map<string, number>();
+  let largestContext = 0;
+  for (const request of list) {
+    largestContext = Math.max(largestContext, request.context);
+    if (request.model !== null) served.set(request.model, (served.get(request.model) ?? 0) + 1);
+  }
+  let model: string | null = null;
+  let most = 0;
+  for (const [name, n] of served)
+    if (n > most) {
+      model = name;
+      most = n;
+    }
+  return { ...who, requests: list.length, largestContext, model };
+}
+
+/** One refusal found in a transcript: where, and whether the command that came next was another one. */
+export interface GuardRefusal {
+  readonly session: string;
+  readonly agent: string | null;
+  readonly line: number;
+  readonly differed: boolean;
+}
+
+/** Every refusal of one guardrail. */
+export interface GuardrailRefusals {
+  readonly entry: string;
+  readonly refusals: readonly GuardRefusal[];
+}
+
+/** A guardrail's refusal as it reaches the agent: `✗ <pack>.<entry>` at the start of a line of a failed call's result. */
+const REFUSAL_HEAD = /^✗ ([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+)/gm;
+
+/**
+ * The refusals in one conversation's events, each with the guardrail that refused it and whether the next
+ * call differed. A refusal is a failed result that holds `✗ <entry>` at a line start. The next call is the
+ * first call after the result; it differed when its tool or its input is not the refused call's, and it did
+ * not when it repeated the call or when no call came after.
+ */
+export function refusalsIn(events: readonly TranscriptEvent[]): { readonly entry: string; readonly line: number; readonly differed: boolean }[] {
+  const out: { entry: string; line: number; differed: boolean }[] = [];
+  const same = (a: TranscriptEvent, b: TranscriptEvent): boolean => a.kind === "use" && b.kind === "use" && a.name === b.name && JSON.stringify(a.input) === JSON.stringify(b.input);
+  events.forEach((event, at) => {
+    if (event.kind !== "result" || !event.failed) return;
+    const entries = new Set([...event.content.matchAll(REFUSAL_HEAD)].map((match) => match[1] as string));
+    if (entries.size === 0) return;
+    const refusedCall = events.find((other) => other.kind === "use" && other.id === event.id);
+    const next = events.slice(at + 1).find((other) => other.kind === "use");
+    const differed = refusedCall !== undefined && next !== undefined && !same(refusedCall, next);
+    for (const entry of entries) out.push({ entry, line: event.line, differed });
+  });
+  return out;
+}
+
+/** Each guardrail's refusals across conversations, the most refused first. */
+export function groupRefusals(found: readonly { readonly entry: string; readonly refusal: GuardRefusal }[]): GuardrailRefusals[] {
+  const by = new Map<string, GuardRefusal[]>();
+  for (const { entry, refusal } of found) by.set(entry, [...(by.get(entry) ?? []), refusal]);
+  return [...by]
+    .map(([entry, refusals]) => ({ entry, refusals }))
+    .sort((a, b) => b.refusals.length - a.refusals.length || a.entry.localeCompare(b.entry));
+}
+
 /** An area the conversations worked in that no entry's globs reach. */
 export interface Uncovered {
   readonly path: string;
@@ -870,12 +951,52 @@ export interface Facts {
   readonly uncovered: readonly Uncovered[];
   /** Every actor the read conversations spawned, both host-written records joined. */
   readonly actors: readonly SpawnRecord[];
+  /** Model requests, largest context and model, for each conversation read and each of its subagents. */
+  readonly requests: readonly RequestsEntry[];
+  /** For each guardrail that refused in a transcript: every refusal, and whether the next command differed. */
+  readonly refusals: readonly GuardrailRefusals[];
   /** A rail refused, and then somebody edited the guard. A pointer, never an accusation. */
   readonly weakened: readonly Weakening[];
   /** The permission modes the read conversations ran under, and the auto-mode steer. */
   readonly modes: Modes;
   /** How many conversations were marked read, when asked for. Null when not asked. */
   readonly marked: number | null;
+}
+
+/** A token count as a person reads it: `214k` from a thousand up. */
+function tokensShort(n: number): string {
+  return n < 1000 ? String(n) : `${Math.round(n / 1000)}k`;
+}
+
+/** A model's name without its vendor: `claude-opus-5-5` is `opus-5-5`. */
+function modelShort(model: string): string {
+  return model.replace(/^claude-/, "");
+}
+
+/** The `requests` line: every request, and the largest context any one held. Null when nothing was read. */
+function requestsLine(entries: readonly RequestsEntry[]): string | null {
+  if (entries.length === 0) return null;
+  const total = entries.reduce((n, entry) => n + entry.requests, 0);
+  return `requests  ${total} · largest context ${tokensShort(Math.max(...entries.map((entry) => entry.largestContext)))}`;
+}
+
+/** The `models` line: the conversation, then each kind of subagent with its model, counted when more than one. */
+function modelsLine(entries: readonly RequestsEntry[]): string | null {
+  const kinds = new Map<string, number>();
+  for (const entry of entries) {
+    if (entry.model === null) continue;
+    const key = `${entry.agent === null ? "conversation" : (entry.agentType ?? "agent")} ${modelShort(entry.model)}`;
+    kinds.set(key, (kinds.get(key) ?? 0) + 1);
+  }
+  if (kinds.size === 0) return null;
+  return `models    ${[...kinds].map(([key, n]) => (n === 1 ? key : `${key} ×${n}`)).join(" · ")}`;
+}
+
+/** The `refused` line: each guardrail with how often it refused, then how often the next command differed. Null when none refused. */
+function refusedLine(refusals: readonly GuardrailRefusals[]): string | null {
+  if (refusals.length === 0) return null;
+  const differed = refusals.reduce((n, one) => n + one.refusals.filter((refusal) => refusal.differed).length, 0);
+  return `refused   ${[...refusals.slice(0, HEADLINE).map((one) => `${one.entry} ${one.refusals.length}×`), ...(refusals.length > HEADLINE ? [`…and ${refusals.length - HEADLINE} more`] : []), `the next command differed ${differed}×`].join(" · ")}`;
 }
 
 /** How many gaps and how many actors a headline lists before it stops being a headline. */
@@ -922,6 +1043,8 @@ export function formatFacts(facts: Facts): string[] {
   if (headline.retire.length > 0) lines.push(`  retire    ${headline.retire.join(" · ")} — bound, never once reached`);
   if (headline.quiet.length > 0)
     lines.push(`  quiet     ${headline.quiet.map((q) => `${q.id} (${q.daysSince}d)`).join(" · ")}`);
+
+  for (const line of [requestsLine(facts.requests), modelsLine(facts.requests), refusedLine(facts.refusals)]) if (line !== null) lines.push(`  ${line}`);
 
   const { stats, shell } = facts.narrative;
   lines.push(

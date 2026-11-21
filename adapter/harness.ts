@@ -126,6 +126,13 @@ export interface Spawn {
   readonly line: number;
 }
 
+/** One model request a conversation made: the line it was recorded on, the model that served it and the tokens its context held. */
+export interface ModelRequest {
+  readonly line: number;
+  readonly model: string | null;
+  readonly context: number;
+}
+
 /** What a tool call did, whichever harness's tool it was: `write` makes a whole file, `edit` changes part of one. */
 export type ToolAction = "edit" | "write" | "read" | "shell" | "other";
 
@@ -247,6 +254,8 @@ export interface Transcripts {
   readonly readTranscript: (dir: string, held: StoredTranscript) => { jsonl: string; meta: SpawnMeta | null };
   /** What the conversation did, in order. */
   readonly events: (jsonl: string, root?: string, home?: string) => TranscriptEvent[];
+  /** The model requests the conversation made, in order, each counted once however many lines the host wrote for it. */
+  readonly requests: (jsonl: string) => ModelRequest[];
   /** The conversation's first facts: when it started, on which branch, in which folder. */
   readonly head: (jsonl: string) => TranscriptHead;
   /** The subagents the conversation started, by the host's id for each. */

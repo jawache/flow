@@ -38,14 +38,19 @@ import {
   mergeNarratives,
   modesOf,
   narrative,
+  refusalsIn,
+  requestsEntry,
   selectSessions,
   uncoveredAreas,
+  groupRefusals,
   guardPaths,
   weakenedAfterBlock,
   worktreeFolders,
   type Candidate,
   type Facts,
+  type GuardRefusal,
   type Narrative,
+  type RequestsEntry,
   type SelectOpts,
   type Selection,
   type SpawnRecord,
@@ -155,6 +160,8 @@ export function facts(root: string, load: LoadResult, harnesses: readonly Harnes
   const readings: { session: string; read: Narrative }[] = [];
   const weakened: Weakening[] = [];
   const actors: SpawnRecord[] = [];
+  const requests: RequestsEntry[] = [];
+  const refused: { entry: string; refusal: GuardRefusal }[] = [];
   const ran: { rows: readonly Row[]; steer: Steer | null }[] = [];
   let withRecord = 0;
   for (const candidate of selection.analyse) {
@@ -170,18 +177,28 @@ export function facts(root: string, load: LoadResult, harnesses: readonly Harnes
     ran.push({ rows, steer: transcripts.steer(jsonl) });
     weakened.push(...weakenedAfterBlock(rows, events, guarded));
 
+    const refusalsOf = (session: string, agent: string | null, found: ReturnType<typeof refusalsIn>): void => {
+      for (const { entry, line, differed } of found) refused.push({ entry, refusal: { session, agent, line, differed } });
+    };
+    requests.push(requestsEntry({ session: candidate.id, agent: null, agentType: null }, transcripts.requests(jsonl)));
+    refusalsOf(candidate.id, null, refusalsIn(events));
+
     // THE JOIN, at the one place that has both halves: the parent's own spawn blocks, and the
     // sidecar the host wrote beside each child's transcript.
     const spawns = transcripts.spawns(jsonl);
-    for (const child of children.get(candidate.id) ?? [])
-      actors.push({
-        ...joinSpawn({
-          session: candidate.id,
-          agent: child.ref.agent ?? "",
-          meta: child.ref.meta === null ? null : transcripts.spawnMeta(readText(root, join(dir, child.ref.meta))),
-          spawns,
-        }),
+    for (const child of children.get(candidate.id) ?? []) {
+      const spawned = joinSpawn({
+        session: candidate.id,
+        agent: child.ref.agent ?? "",
+        meta: child.ref.meta === null ? null : transcripts.spawnMeta(readText(root, join(dir, child.ref.meta))),
+        spawns,
       });
+      actors.push(spawned);
+      // A subagent's own transcript is read for the same parts as the conversation's.
+      const childJsonl = readText(root, child.file) ?? "";
+      requests.push(requestsEntry({ session: candidate.id, agent: spawned.agent, agentType: spawned.agentType }, transcripts.requests(childJsonl)));
+      refusalsOf(candidate.id, spawned.agent, refusalsIn(transcripts.events(childJsonl, root, home)));
+    }
   }
 
   const recorded = metrics({ sessions: history, entries: bound, nowMs });
@@ -210,6 +227,8 @@ export function facts(root: string, load: LoadResult, harnesses: readonly Harnes
     narrative: read,
     uncovered: uncoveredAreas(read.touched, bound),
     actors,
+    requests,
+    refusals: groupRefusals(refused),
     weakened,
     modes: modesOf(ran),
     marked: opts.mark === true ? markRead(root, selection.analyse.map((c) => c.id)) : null,

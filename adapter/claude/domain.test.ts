@@ -19,8 +19,8 @@ import { breadcrumb, defineCategory, defineConfig, definePack, guardrail, loadCo
 import { metrics, momentsView, type Block, type Bound, type Row } from "../../engine/domain.ts";
 import { parseCommandLine, parseShellSteps } from "../../language/domain.ts";
 import { claudeCode } from "./claude.ts";
-import { type AdapterEvent, agentOf, ALLOW, awaitsBrief, bashReads, branchFromHead, briefBlock, commandFolders, COMMIT_MSG, CONFIG_FILE, decision, type EventWorld, type Facts, FLOW_OFF, foldersBetween, formatFacts, GATE_PATH, guardPaths, holdsForBrief, HOOKS_DIR, type InitFacts, initLines, isGuardPath, isHookEvent, lastMode, LOCAL_BIN, MACHINE_FLAG, mergeNarratives, modesOf, nothingBound, opensCall, outsideOf, PACKAGE_BIN, planInit, planUninstall, reachesAnotherWorktree, readFault, relativise, ridesRefusal, sessionFactsFrom, shellReadRows, type Shown, type SpawnRecord, type Status, status, statusCode, type StatusFacts, statusLines, toEvent, toolRow, toResult, uninstallCode, type UninstallFacts, uninstallLines, weakenedAfterBlock, whileBroken, workedPaths, worktreeFolders, worktreesWorkedIn } from "../domain.ts";
-import { EDIT_TOOLS, HOST_SURFACE, REPO_SETTINGS, agentSettingOf, bareHook, briefHead, classifyStore, contextTokens, editedFile, hookCommand, hooksFile, isInjected, ourHookCommand, ownTranscriptPath, parseEvents, projectFolderName, spawnMeta, spawnsIn, steerOf, tokensFromTranscript, transcriptHead, transcriptLines, turnActions } from "./domain.ts";
+import { type AdapterEvent, agentOf, ALLOW, awaitsBrief, bashReads, branchFromHead, briefBlock, commandFolders, COMMIT_MSG, CONFIG_FILE, decision, type EventWorld, type Facts, FLOW_OFF, foldersBetween, formatFacts, GATE_PATH, groupRefusals, guardPaths, holdsForBrief, HOOKS_DIR, type InitFacts, initLines, isGuardPath, isHookEvent, lastMode, LOCAL_BIN, MACHINE_FLAG, mergeNarratives, modesOf, nothingBound, opensCall, outsideOf, PACKAGE_BIN, planInit, planUninstall, reachesAnotherWorktree, readFault, relativise, ridesRefusal, sessionFactsFrom, shellReadRows, type Shown, type SpawnRecord, type Status, status, statusCode, type StatusFacts, statusLines, toEvent, toolRow, toResult, uninstallCode, type UninstallFacts, uninstallLines, weakenedAfterBlock, whileBroken, workedPaths, worktreeFolders, worktreesWorkedIn } from "../domain.ts";
+import { EDIT_TOOLS, HOST_SURFACE, REPO_SETTINGS, agentSettingOf, bareHook, briefHead, classifyStore, contextTokens, editedFile, hookCommand, hooksFile, isInjected, ourHookCommand, ownTranscriptPath, parseEvents, projectFolderName, requestsOf, spawnMeta, spawnsIn, steerOf, tokensFromTranscript, transcriptHead, transcriptLines, turnActions } from "./domain.ts";
 
 const { registrations: HOOK_REGISTRATIONS, hooks: HOOK_COSTS, registeredEvents, staleRegistrations, bareRegistrations, withRegistrations, withoutRegistrations } = hooksFile;
 import { type HookPayload, type Steer, type TranscriptEvent } from "../harness.ts";
@@ -1087,10 +1087,26 @@ describe("formatFacts — the whole of what a person sees", () => {
     narrative: mergeNarratives([]),
     uncovered: [],
     actors: [],
+    requests: [],
+    refusals: [],
     weakened: [],
     modes: modesOf([]),
     marked: null,
     ...over,
+  });
+
+  it("prints the requests, models and refused lines, the guardrails most refused first", () => {
+    const entry = (agent: string | null, agentType: string | null, requests: number, largestContext: number, model: string): Facts["requests"][number] => ({ session: "s1", agent, agentType, requests, largestContext, model });
+    const refusals = groupRefusals([
+      { entry: "a.one", refusal: { session: "s1", agent: null, line: 3, differed: true } },
+      { entry: "b.two", refusal: { session: "s1", agent: "a1", line: 4, differed: false } },
+      { entry: "b.two", refusal: { session: "s1", agent: "a1", line: 8, differed: true } },
+    ]);
+    const lines = formatFacts(empty({ requests: [entry(null, null, 3, 214_000, "claude-opus-5-5"), entry("a1", "builder", 1, 50_000, "claude-sonnet-5-5")], refusals }));
+    expect(lines).toContain("  requests  4 · largest context 214k");
+    expect(lines).toContain("  models    conversation opus-5-5 · builder sonnet-5-5");
+    expect(lines).toContain("  refused   b.two 2× · a.one 1× · the next command differed 2×");
+    expect(formatFacts(empty()).join("\n")).not.toMatch(/requests|models|refused/);
   });
 
   it("says how many recorded sessions it left out for want of a transcript", () => {
@@ -2203,5 +2219,22 @@ describe("what a tool call did, in flow's own words", () => {
     expect(actionOfTool("Read")).toBe("read");
     expect(actionOfTool("Bash")).toBe("shell");
     expect(actionOfTool("Grep")).toBe("other");
+  });
+});
+
+describe("requestsOf — a Claude Code transcript's model requests", () => {
+  const reply = (id: string, model: string, input: number, cache: number): string =>
+    JSON.stringify({ type: "assistant", message: { id, model, content: [], usage: { input_tokens: input, cache_read_input_tokens: cache } } });
+
+  it("counts a reply once however many lines it was written on, with its context and model", () => {
+    const jsonl = [reply("m1", "claude-opus-5-5", 2, 1000), reply("m1", "claude-opus-5-5", 2, 1000), reply("m2", "claude-opus-5-5", 3, 5000), "not json"].join("\n");
+    expect(requestsOf(jsonl)).toEqual([
+      { line: 1, model: "claude-opus-5-5", context: 1002 },
+      { line: 3, model: "claude-opus-5-5", context: 5003 },
+    ]);
+  });
+
+  it("counts a reply with no usage as no request", () => {
+    expect(requestsOf(JSON.stringify({ type: "assistant", message: { id: "m", model: "<synthetic>", content: [] } }))).toEqual([]);
   });
 });

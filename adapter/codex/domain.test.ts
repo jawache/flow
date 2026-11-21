@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { codex } from "./codex.ts";
 import { shellChangesOf, withShellChanges } from "../domain.ts";
 import type { Row } from "../../engine/domain.ts";
-import { HOST_SURFACE, REPO_HOOKS, briefHead, claimsPayload, classifyStore, hookCommand, hooksFile, ownTranscriptPath, parseEvents, spawnMeta, tokensFromTranscript, transcriptHead, turnActions } from "./domain.ts";
+import { HOST_SURFACE, REPO_HOOKS, briefHead, claimsPayload, classifyStore, hookCommand, hooksFile, ownTranscriptPath, parseEvents, requestsOf, spawnMeta, tokensFromTranscript, transcriptHead, turnActions } from "./domain.ts";
 
 const { registrations: HOOK_REGISTRATIONS, hooks: HOOK_COSTS } = hooksFile;
 
@@ -140,5 +140,22 @@ describe("codex — the harness flow is handed", () => {
     expect(codex.delivers.brief).toContain("session");
     expect(codex.trustNote).toContain("/hooks");
     expect(codex.noHookNote).toBe("Codex runs a project's hooks only in a trusted folder, and each hook only once approved in /hooks");
+  });
+});
+
+describe("requestsOf — a rollout's model requests", () => {
+  const row = (type: string, payload: Record<string, unknown>): string => JSON.stringify({ timestamp: "2026-11-18T10:00:00.000Z", type, payload });
+  const count = (input: number, total: number): string => row("event_msg", { type: "token_count", info: { total_token_usage: { total_tokens: total }, last_token_usage: { input_tokens: input } } });
+
+  it("gives a request, its context and its model for each token count that moved, and skips a repeated one", () => {
+    const jsonl = [row("turn_context", { model: "gpt-5" }), count(100, 120), count(100, 120), count(450, 700)].join("\n");
+    expect(requestsOf(jsonl)).toEqual([
+      { line: 2, model: "gpt-5", context: 100 },
+      { line: 4, model: "gpt-5", context: 450 },
+    ]);
+  });
+
+  it("skips a token count with no usage", () => {
+    expect(requestsOf(row("event_msg", { type: "token_count", info: null }))).toEqual([]);
   });
 });
