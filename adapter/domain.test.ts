@@ -2578,14 +2578,20 @@ describe("reportPage", () => {
       { session: "s1", agent: "a", agentType: "builder", requests: 5, largestContext: 90000, model: null },
     ],
     testRuns: { runs: [], totals: [{ session: "s1", agent: null, agentType: null, runs: 4, failed: 3, requestsBetween: 0 }] },
-    refusals: [{ entry: "pack.entry-one", refusals: [{ session: "s1", agent: null, line: 3, differed: true }, { session: "s1", agent: null, line: 9, differed: false }] }],
-    prompts: [{ line: 1, text: "<go>", session: "s1", sorted: { kind: "go_ahead", confidence: 0.9, frustrated: 0 } }],
+    refusals: [{ entry: "pack.<entry>", refusals: [{ session: "s1", agent: null, line: 3, differed: true }, { session: "s1", agent: null, line: 9, differed: false }] }],
+    prompts: [
+      { line: 1, text: "go", session: "s1", sorted: { kind: "go_ahead", confidence: 0.9, frustrated: 0 } },
+      { line: 2, text: "go", session: "s1", sorted: null },
+    ],
   } as unknown as Facts);
 
   it("holds each conversation's requests, failed test runs and largest context, and each guardrail's refusals", () => {
-    expect(page).toContain("<td>s1</td><td class=\"n\">15</td><td class=\"n\">3</td><td class=\"n\">214k</td>");
-    expect(page).toContain("<td>pack.entry-one</td><td class=\"n\">2</td><td class=\"n\">1</td>");
+    expect(page).toContain("<td>s1</td><td class=\"n\">10</td><td class=\"n\">3</td><td class=\"n\">214k</td>");
+    expect(page).toContain("<td>pack.&lt;entry&gt;</td><td class=\"n\">2</td><td class=\"n\">1</td>");
+    expect(page).toContain("<td>\u2514 builder</td><td class=\"n\">5</td><td class=\"n\">0</td><td class=\"n\">90k</td>");
+    expect(page).toContain("&lt;entry&gt;");
     expect(page).toContain("go_ahead");
+    expect(page).toContain("<td>not sorted</td><td class=\"n\">1</td>");
   });
 
   it("has no prompts when the facts hold none", () => {

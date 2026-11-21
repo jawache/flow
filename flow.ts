@@ -283,6 +283,8 @@ async function replayFile(args: readonly string[]): Promise<number> {
  * thinking, and `formatFacts` is the headline for one that does not. The prose is a pure home's,
  * not this file's — a report is a pile of branches about what a reader most needs to know, and the
  * branch that matters most is the one that fires least.
+ *
+ * `--report <file>` writes the page `reportPage` builds, beside either output.
  */
 async function readFacts(args: readonly string[]): Promise<number> {
   const root = process.cwd();

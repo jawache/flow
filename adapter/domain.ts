@@ -1242,26 +1242,25 @@ function reportTable(head: readonly string[], rows: readonly (readonly (string |
 
 /**
  * The reading as one HTML page in the work + flow colours and type: the totals of requests, failed
- * test runs, refusals and prompts, a row per conversation, the refusals per guardrail, and the
- * prompts by kind. A conversation's row adds its subagents to it. With no prompts in the facts,
+ * test runs, refusals and prompts, a row per conversation with a row under it for each subagent, the refusals per guardrail, and the
+ * prompts by kind. With no prompts in the facts,
  * the page has no prompts.
  */
 export function reportPage(facts: Facts): string {
-  const sessions = [...new Set([...facts.requests.map((one) => one.session), ...facts.testRuns.totals.map((one) => one.session)])];
-  const conversations = sessions.map((session) => {
-    const mine = facts.requests.filter((one) => one.session === session);
-    return [session, mine.reduce((n, one) => n + one.requests, 0), facts.testRuns.totals.filter((one) => one.session === session).reduce((n, one) => n + one.failed, 0), tokensShort(Math.max(0, ...mine.map((one) => one.largestContext)))];
-  });
+  const failedOf = (one: RequestsEntry): number => facts.testRuns.totals.filter((t) => t.session === one.session && t.agent === one.agent).reduce((n, t) => n + t.failed, 0);
+  const rowOf = (one: RequestsEntry): (string | number)[] => [one.agent === null ? one.session : `\u2514 ${one.agentType ?? "agent"}`, one.requests, failedOf(one), tokensShort(one.largestContext)];
+  const conversations = facts.requests.filter((one) => one.agent === null).flatMap((one) => [rowOf(one), ...facts.requests.filter((sub) => sub.session === one.session && sub.agent !== null).map(rowOf)]);
   const requests = facts.requests.reduce((n, one) => n + one.requests, 0);
   const failed = facts.testRuns.totals.reduce((n, one) => n + one.failed, 0);
   const refusals = facts.refusals.reduce((n, one) => n + one.refusals.length, 0);
   const tile = (value: number, label: string, bad = false): string => `<div class="tile${bad ? " bad" : ""}"><b>${value}</b><span>${label}</span></div>`;
   const tiles = [tile(requests, "model requests"), tile(failed, "failed test runs", failed > 0), tile(refusals, "refusals", refusals > 0), ...(facts.prompts === undefined ? [] : [tile(facts.prompts.length, "prompts")])];
-  const kinds = facts.prompts === undefined ? [] : KINDS.map((kind) => [kind, facts.prompts?.filter((one) => one.sorted?.kind === kind).length ?? 0] as const).filter(([, n]) => n > 0);
+  const unsorted = facts.prompts?.filter((one) => one.sorted === null).length ?? 0;
+  const kinds = facts.prompts === undefined ? [] : [...KINDS.map((kind) => [kind, facts.prompts?.filter((one) => one.sorted?.kind === kind).length ?? 0] as const), ["not sorted", unsorted] as const].filter(([, n]) => n > 0);
   const sections = [
     `<h2>Conversations</h2>${conversations.length === 0 ? "<p>No conversation was read.</p>" : reportTable(["Conversation", "Requests", "Failed test runs", "Largest context"], conversations)}`,
     `<h2>Refusals per guardrail</h2>${refusals === 0 ? "<p>No guardrail refused.</p>" : reportTable(["Guardrail", "Refusals", "Next command differed"], facts.refusals.map((one) => [one.entry, one.refusals.length, one.refusals.filter((r) => r.differed).length]))}`,
-    ...(facts.prompts === undefined ? [] : [`<h2>Prompts by kind</h2>${kinds.length === 0 ? "<p>No prompt was sorted.</p>" : reportTable(["Kind", "Prompts"], kinds)}`]),
+    ...(facts.prompts === undefined ? [] : [`<h2>Prompts by kind</h2>${reportTable(["Kind", "Prompts"], kinds)}`]),
   ];
   return `<!doctype html>
 <html lang="en">
