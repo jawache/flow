@@ -4,9 +4,10 @@
 // reading of a conversation once it is events. The harness a verb is handed comes from
 // `__fixtures__/host.ts`, so this file names none; what is one harness's own — its payloads, its
 // settings file, its transcripts — is proved in that harness's folder.
+import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import { DELETED, type Bound, type Row, type Tree } from "../engine/domain.ts";
-import { JEV_KEY, backedByTranscript, jevRequest, readJevReply, keyInDotenv, promptsLine, withPrompts, type Facts, type Prompt, type PromptKind, isTestRun, testRunRules, testRunsIn, endsWithRunnerFailure, refusalsIn, refused, requestsEntry, snipAtWord, changeEvents, noticesThatCouldShow, changeRow, changedBy, commitRange, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
+import { JEV_KEY, backedByTranscript, jevRequest, readJevReply, keyInDotenv, promptsLine, withPrompts, reportPage, type Facts, type Prompt, type PromptKind, isTestRun, testRunRules, testRunsIn, endsWithRunnerFailure, refusalsIn, refused, requestsEntry, snipAtWord, changeEvents, noticesThatCouldShow, changeRow, changedBy, commitRange, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
 import { breadcrumb, defineConfig, definePack, fileChange, loadConfig, pack, session } from "../index.ts";
 import type { Ctx, TurnAction } from "../language/domain.ts";
 import { ranSinceEdit } from "../checks/domain.ts";
@@ -2567,5 +2568,34 @@ describe("the prompts, sorted by Jev", () => {
     expect(unsorted).not.toHaveProperty("prompts");
     expect(unsorted.narrative.prompts).toEqual([{ line: 1, text: "go", session: "s1" }]);
     expect(JEV_KEY).toBe("TYPESAFE_API_KEY");
+  });
+});
+
+describe("reportPage", () => {
+  const page = reportPage({
+    requests: [
+      { session: "s1", agent: null, agentType: null, requests: 10, largestContext: 214000, model: null },
+      { session: "s1", agent: "a", agentType: "builder", requests: 5, largestContext: 90000, model: null },
+    ],
+    testRuns: { runs: [], totals: [{ session: "s1", agent: null, agentType: null, runs: 4, failed: 3, requestsBetween: 0 }] },
+    refusals: [{ entry: "pack.entry-one", refusals: [{ session: "s1", agent: null, line: 3, differed: true }, { session: "s1", agent: null, line: 9, differed: false }] }],
+    prompts: [{ line: 1, text: "<go>", session: "s1", sorted: { kind: "go_ahead", confidence: 0.9, frustrated: 0 } }],
+  } as unknown as Facts);
+
+  it("holds each conversation's requests, failed test runs and largest context, and each guardrail's refusals", () => {
+    expect(page).toContain("<td>s1</td><td class=\"n\">15</td><td class=\"n\">3</td><td class=\"n\">214k</td>");
+    expect(page).toContain("<td>pack.entry-one</td><td class=\"n\">2</td><td class=\"n\">1</td>");
+    expect(page).toContain("go_ahead");
+  });
+
+  it("has no prompts when the facts hold none", () => {
+    expect(reportPage({ requests: [], testRuns: { runs: [], totals: [] }, refusals: [] } as unknown as Facts)).not.toContain("Prompts");
+  });
+
+  it("uses only colours that are values in the brand tokens", () => {
+    const tokens = readFileSync(new URL("../docs/agent/brand/tokens.json", import.meta.url), "utf8").toLowerCase();
+    const colours = page.toLowerCase().match(/#[0-9a-f]{6,8}\b/g) ?? [];
+    expect(colours.length).toBeGreaterThan(0);
+    for (const colour of colours) expect(tokens, colour).toContain(`"${colour}"`);
   });
 });

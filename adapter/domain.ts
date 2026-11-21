@@ -1203,6 +1203,86 @@ export interface Facts {
   readonly prompts?: readonly Prompt[];
 }
 
+/** Text safe inside HTML. */
+function escaped(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/** The report's colours: the work + flow tokens, ink first and paper under a light preference. The values are `docs/agent/brand/tokens.json`'s. */
+const REPORT_STYLE = `
+:root{--bg:#0d0e11;--bg-panel:#15161b;--bg-rule:#2a2c33;--fg:#f3f0e9;--fg-muted:#8b8d98;--flow:#22dfa8;--work:#ff6a3d;--danger:#ff5c5c;
+--sans:"Geist",system-ui,-apple-system,"Segoe UI",sans-serif;--mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+@media (prefers-color-scheme:light){:root{--bg:#f3f0e9;--bg-panel:#faf8f3;--bg-rule:#dcd8cf;--fg:#0d0e11;--fg-muted:#5f6170;--flow:#0b7557;--work:#c2491f;--danger:#b3261e}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:400 17px/1.6 var(--sans)}
+.in{max-width:900px;margin:0 auto;padding:48px 16px 96px}
+.wm{font:700 44px/1 var(--sans);letter-spacing:-0.04em;color:var(--flow)}
+.wm i{font-style:normal;color:var(--work)}
+.kind,h2,th{font:500 12px/1.4 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--fg-muted)}
+h1{margin:8px 0 0;font:700 32px/1.2 var(--sans);letter-spacing:-0.02em}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:1px;border:1px solid var(--bg-rule);border-radius:14px;background:var(--bg-rule);margin:32px 0 0;overflow:hidden}
+.tile{padding:16px 24px;background:var(--bg-panel)}
+.tile b{display:block;font:700 26px/1.2 var(--mono);font-variant-numeric:tabular-nums}
+.tile span{font-size:15px;color:var(--fg-muted)}
+.bad b{color:var(--danger)}
+h2{margin:48px 0 12px}
+table{width:100%;border-collapse:collapse;background:var(--bg-panel);border:1px solid var(--bg-rule);border-radius:14px;font-size:15px}
+th,td{padding:12px 16px;text-align:left;border-bottom:1px solid var(--bg-rule)}
+td.n,th.n{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+tr:last-child td{border-bottom:0}
+code{font:400 .92em var(--mono)}
+p{color:var(--fg-muted);font-size:15px}
+`;
+
+/** A table of rows, each a list of cells, with the columns after the first set as numbers. */
+function reportTable(head: readonly string[], rows: readonly (readonly (string | number)[])[]): string {
+  const cell = (tag: string, value: string | number, at: number): string => `<${tag}${at === 0 ? "" : ' class="n"'}>${escaped(String(value))}</${tag}>`;
+  return `<table><thead><tr>${head.map((one, at) => cell("th", one, at)).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${row.map((one, at) => cell("td", one, at)).join("")}</tr>`).join("")}</tbody></table>`;
+}
+
+/**
+ * The reading as one HTML page in the work + flow colours and type: the totals of requests, failed
+ * test runs, refusals and prompts, a row per conversation, the refusals per guardrail, and the
+ * prompts by kind. A conversation's row adds its subagents to it. With no prompts in the facts,
+ * the page has no prompts.
+ */
+export function reportPage(facts: Facts): string {
+  const sessions = [...new Set([...facts.requests.map((one) => one.session), ...facts.testRuns.totals.map((one) => one.session)])];
+  const conversations = sessions.map((session) => {
+    const mine = facts.requests.filter((one) => one.session === session);
+    return [session, mine.reduce((n, one) => n + one.requests, 0), facts.testRuns.totals.filter((one) => one.session === session).reduce((n, one) => n + one.failed, 0), tokensShort(Math.max(0, ...mine.map((one) => one.largestContext)))];
+  });
+  const requests = facts.requests.reduce((n, one) => n + one.requests, 0);
+  const failed = facts.testRuns.totals.reduce((n, one) => n + one.failed, 0);
+  const refusals = facts.refusals.reduce((n, one) => n + one.refusals.length, 0);
+  const tile = (value: number, label: string, bad = false): string => `<div class="tile${bad ? " bad" : ""}"><b>${value}</b><span>${label}</span></div>`;
+  const tiles = [tile(requests, "model requests"), tile(failed, "failed test runs", failed > 0), tile(refusals, "refusals", refusals > 0), ...(facts.prompts === undefined ? [] : [tile(facts.prompts.length, "prompts")])];
+  const kinds = facts.prompts === undefined ? [] : KINDS.map((kind) => [kind, facts.prompts?.filter((one) => one.sorted?.kind === kind).length ?? 0] as const).filter(([, n]) => n > 0);
+  const sections = [
+    `<h2>Conversations</h2>${conversations.length === 0 ? "<p>No conversation was read.</p>" : reportTable(["Conversation", "Requests", "Failed test runs", "Largest context"], conversations)}`,
+    `<h2>Refusals per guardrail</h2>${refusals === 0 ? "<p>No guardrail refused.</p>" : reportTable(["Guardrail", "Refusals", "Next command differed"], facts.refusals.map((one) => [one.entry, one.refusals.length, one.refusals.filter((r) => r.differed).length]))}`,
+    ...(facts.prompts === undefined ? [] : [`<h2>Prompts by kind</h2>${kinds.length === 0 ? "<p>No prompt was sorted.</p>" : reportTable(["Kind", "Prompts"], kinds)}`]),
+  ];
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>flow facts</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;700&display=swap">
+<style>${REPORT_STYLE}</style>
+</head>
+<body><div class="in">
+<div class="wm">flow<i>.</i></div>
+<div class="kind">facts</div>
+<h1>What the conversations say about this repo</h1>
+<div class="tiles">${tiles.join("")}</div>
+${sections.join("\n")}
+</div></body>
+</html>
+`;
+}
+
 /** A token count as a person reads it: `214k` from a thousand up. */
 function tokensShort(n: number): string {
   return n < 1000 ? String(n) : `${Math.round(n / 1000)}k`;

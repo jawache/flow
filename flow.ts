@@ -27,7 +27,7 @@
 // The hook and commit verbs are one line each here, and that is the seam working: everything they
 // do is the adapter's, and this file only owns argv, the three IO edges and the exit code.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import { registerHooks, stripTypeScriptTypes } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -46,6 +46,7 @@ import {
   CONFIG_FILE,
   configLoadFault,
   formatFacts,
+  reportPage,
   JEV_KEY,
   loadsAsStrippedModule,
   snip,
@@ -310,6 +311,8 @@ async function readFacts(args: readonly string[]): Promise<number> {
   });
   const read = withPrompts(counted, key === null ? null : await sortPrompts(counted.narrative.prompts, key));
 
+  const report = pathFlag(args, "report");
+  if (report !== null) writeFileSync(report, reportPage(read));
   if (flag(args, "json") !== null) {
     process.stdout.write(`${JSON.stringify(read, null, 2)}\n`);
     return read.health.blocked === null ? 0 : 1;
