@@ -98,7 +98,7 @@ export const flow = definePack("flow", {
     .description("What the guard layer is and how it steers — shown at the start of every session.")
     .text(
       [
-        "Purpose. This repo is guarded by flow. A guardrail refuses a commit or a command, and a breadcrumb is text shown to you at a moment, such as the area you changed. A file is judged when it is staged: the commit is refused, with the guardrail's message, until the file passes. A command is judged before it runs, by its words. Every rule that fires is reachable from `flow.config.ts`, and what you read there is what fires. A guardrail is on or off, and there is no bypass token. If the config does not load, flow is off: the load error comes with every call, edits and commands go through, and every commit is refused until the config loads.",
+        "Purpose. This repo is guarded by flow. A guardrail refuses a commit or a command, and a breadcrumb is text shown to you at a moment, such as the area you changed. A file is judged when it is staged: the commit is refused, with the guardrail's message, until the file passes. A command is judged before it runs, by its words. Every guardrail and breadcrumb that fires is reachable from `flow.config.ts`, and what you read there is what fires. A guardrail is on or off, and there is no bypass token. If the config does not load, flow is off: the load error comes with every call, edits and commands go through, and every commit is refused until the config loads.",
         "## Rules",
         "- `FLW-R1` You may write a new guardrail or breadcrumb.",
         "- `FLW-R2` Do not loosen a guardrail to get an edit through. Leave that to the user.",
