@@ -78,6 +78,9 @@ types:                                               # each type of issue, and t
     - feature.Trial
     - feature.Merge
     - feature.Done
+  review:                                            # the daily review's issue, made by the weekday-7 rule; the rule types its line, so no status has an action
+    - { name: Review, icon: "👀", default: true }
+    - { name: Done,   icon: "✅", done: true }
 
 fields:                                              # every other key in each issue's front matter
   story: { type: text, card: true }                  # a word on an issue, to group it with others; card shows it on the board
@@ -90,6 +93,9 @@ fields:                                              # every other key in each i
       - { name: high,   icon: "🔴" }
   risk: [low, medium, high]                          # the change's blast radius: its code, files and complexity
 
+clock:                                               # entries that come due on a schedule and fire the rules on `clock.<name>`
+  weekday-7: { cron: "0 7 * * 1-5", tz: Europe/London }
+
 on:                                                  # the rules: what else is typed into a session when an event happens (docs/user/reference/events.md)
   merged:
     event: issue.merged
@@ -101,3 +107,7 @@ on:                                                  # the rules: what else is t
   unhandled:
     event: question.reopened
     action: "[work] Open again, not handled: {ask}"
+  daily-review:
+    event: clock.weekday-7
+    create: { title: "Review · {weekday} {date}", status: Review, fields: { type: review } }
+    action: "[work] /review {issue}"
