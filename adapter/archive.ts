@@ -48,7 +48,6 @@ import {
   worktreeFolders,
   type Candidate,
   type Facts,
-  type GuardRefusal,
   type Narrative,
   type RequestsEntry,
   type SelectOpts,
@@ -161,7 +160,7 @@ export function facts(root: string, load: LoadResult, harnesses: readonly Harnes
   const weakened: Weakening[] = [];
   const actors: SpawnRecord[] = [];
   const requests: RequestsEntry[] = [];
-  const refused: { entry: string; refusal: GuardRefusal }[] = [];
+  const refused: ReturnType<typeof refusalsIn> = [];
   const ran: { rows: readonly Row[]; steer: Steer | null }[] = [];
   let withRecord = 0;
   for (const candidate of selection.analyse) {
@@ -177,11 +176,8 @@ export function facts(root: string, load: LoadResult, harnesses: readonly Harnes
     ran.push({ rows, steer: transcripts.steer(jsonl) });
     weakened.push(...weakenedAfterBlock(rows, events, guarded));
 
-    const refusalsOf = (session: string, agent: string | null, found: ReturnType<typeof refusalsIn>): void => {
-      for (const { entry, line, differed } of found) refused.push({ entry, refusal: { session, agent, line, differed } });
-    };
     requests.push(requestsEntry({ session: candidate.id, agent: null, agentType: null }, transcripts.requests(jsonl)));
-    refusalsOf(candidate.id, null, refusalsIn(events));
+    refused.push(...refusalsIn({ session: candidate.id, agent: null }, events));
 
     // THE JOIN, at the one place that has both halves: the parent's own spawn blocks, and the
     // sidecar the host wrote beside each child's transcript.
@@ -197,7 +193,7 @@ export function facts(root: string, load: LoadResult, harnesses: readonly Harnes
       // A subagent's own transcript is read for the same parts as the conversation's.
       const childJsonl = readText(root, child.file) ?? "";
       requests.push(requestsEntry({ session: candidate.id, agent: spawned.agent, agentType: spawned.agentType }, transcripts.requests(childJsonl)));
-      refusalsOf(candidate.id, spawned.agent, refusalsIn(transcripts.events(childJsonl, root, home)));
+      refused.push(...refusalsIn({ session: candidate.id, agent: spawned.agent }, transcripts.events(childJsonl, root, home)));
     }
   }
 

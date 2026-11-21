@@ -6,7 +6,7 @@
 // settings file, its transcripts — is proved in that harness's folder.
 import { describe, it, expect } from "vitest";
 import { DELETED, type Bound, type Row, type Tree } from "../engine/domain.ts";
-import { backedByTranscript, refusalsIn, requestsEntry, snipAtWord, changeEvents, noticesThatCouldShow, changeRow, changedBy, commitRange, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
+import { backedByTranscript, refusalsIn, refused, requestsEntry, snipAtWord, changeEvents, noticesThatCouldShow, changeRow, changedBy, commitRange, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
 import { breadcrumb, defineConfig, definePack, fileChange, loadConfig, pack, session } from "../index.ts";
 import type { Ctx, TurnAction } from "../language/domain.ts";
 import { ranSinceEdit } from "../checks/domain.ts";
@@ -2394,7 +2394,7 @@ describe("requests, models and refusals of a conversation with one subagent", ()
 
   const use = (line: number, id: string, command: string): TranscriptEvent => ({ line, kind: "use", ts: null, id, name: "Bash", action: "shell", input: { command }, path: "" });
   const result = (line: number, id: string, content: string, failed = true): TranscriptEvent => ({ line, kind: "result", id, content, failed });
-  const refusal = "flow — commit blocked:\n\n✗ git.conventionalCommitFormat\n  Use a type.";
+  const refusal = refused([{ moment: "commit", block: { do: "block", entry: "git.conventionalCommitFormat", message: "Use a type.", subject: null, detail: "" } }])?.stderr ?? "";
 
   it("finds a refusal by its guardrail's name, and tells a next command that differs from a repeat", () => {
     const events = [
@@ -2407,14 +2407,16 @@ describe("requests, models and refusals of a conversation with one subagent", ()
       use(8, "t4", "git commit -m wip"),
       result(9, "t4", refusal),
     ];
-    expect(refusalsIn(events)).toEqual([
-      { entry: "git.conventionalCommitFormat", line: 3, differed: true },
-      { entry: "git.conventionalCommitFormat", line: 7, differed: false },
-      { entry: "git.conventionalCommitFormat", line: 9, differed: false },
+    const entry = "git.conventionalCommitFormat";
+    const who = { session: "s1", agent: null };
+    expect(refusalsIn(who, events)).toEqual([
+      { entry, refusal: { ...who, line: 3, differed: true } },
+      { entry, refusal: { ...who, line: 7, differed: false } },
+      { entry, refusal: { ...who, line: 9, differed: false } },
     ]);
   });
 
   it("ignores a result that only shows the text, because it did not fail", () => {
-    expect(refusalsIn([use(2, "t1", "cat notes"), result(3, "t1", refusal, false)])).toEqual([]);
+    expect(refusalsIn({ session: "s1", agent: null }, [use(2, "t1", "cat notes"), result(3, "t1", refusal, false)])).toEqual([]);
   });
 });

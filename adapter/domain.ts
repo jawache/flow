@@ -823,8 +823,8 @@ const REFUSAL_HEAD = /^✗ ([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+)/gm;
  * first call after the result; it differed when its tool or its input is not the refused call's, and it did
  * not when it repeated the call or when no call came after.
  */
-export function refusalsIn(events: readonly TranscriptEvent[]): { readonly entry: string; readonly line: number; readonly differed: boolean }[] {
-  const out: { entry: string; line: number; differed: boolean }[] = [];
+export function refusalsIn(who: Pick<GuardRefusal, "session" | "agent">, events: readonly TranscriptEvent[]): { readonly entry: string; readonly refusal: GuardRefusal }[] {
+  const out: { entry: string; refusal: GuardRefusal }[] = [];
   const same = (a: TranscriptEvent, b: TranscriptEvent): boolean => a.kind === "use" && b.kind === "use" && a.name === b.name && JSON.stringify(a.input) === JSON.stringify(b.input);
   events.forEach((event, at) => {
     if (event.kind !== "result" || !event.failed) return;
@@ -833,7 +833,7 @@ export function refusalsIn(events: readonly TranscriptEvent[]): { readonly entry
     const refusedCall = events.find((other) => other.kind === "use" && other.id === event.id);
     const next = events.slice(at + 1).find((other) => other.kind === "use");
     const differed = refusedCall !== undefined && next !== undefined && !same(refusedCall, next);
-    for (const entry of entries) out.push({ entry, line: event.line, differed });
+    for (const entry of entries) out.push({ entry, refusal: { ...who, line: event.line, differed } });
   });
   return out;
 }

@@ -142,15 +142,7 @@ function commandOf(item: Record<string, unknown>): string {
  * breadcrumb is then not shown again as the context grows.
  */
 export function tokensFromTranscript(jsonl: string): number {
-  const records = rollout(jsonl);
-  for (let i = records.length - 1; i >= 0; i--) {
-    const record = records[i] as Rollout;
-    if (record.type !== "event_msg" || record.payload["type"] !== "token_count") continue;
-    const info = record.payload["info"] as { last_token_usage?: { input_tokens?: unknown } } | null | undefined;
-    const used = info?.last_token_usage?.input_tokens;
-    if (typeof used === "number" && Number.isFinite(used)) return used;
-  }
-  return 0;
+  return requestsOf(jsonl).at(-1)?.context ?? 0;
 }
 
 /**
