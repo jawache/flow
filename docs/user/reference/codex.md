@@ -65,7 +65,7 @@ Codex runs a project's hooks only when both of these are true. When either is no
 Codex names the session's transcript in each payload: `~/.codex/sessions/<year>/<month>/<day>/rollout-<start time>-<id>.jsonl`.
 
 - **The context size** is read from its `token_count` rows, for `driftTokens`. With no transcript, a breadcrumb is not shown again as the context grows.
-- **Prompts, tool calls and their results, model requests, context sizes and models** are read for `flow facts`.
+- **Prompts and the end of the agent's message before each, tool calls and their results, model requests, context sizes and models** are read for `flow facts`.
 
 flow writes nothing to a transcript.
 

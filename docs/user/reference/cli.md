@@ -41,7 +41,7 @@ summary: "every `flow` command, what `flow init` writes and `flow uninstall` rem
 
 [The facts report](./facts.md) describes every part of the report and how each number is found.
 
-`flow facts` sends each prompt a person typed to Jev, so it needs `TYPESAFE_API_KEY`. It reads the key from the environment, then from a `.env` file in the repo's root, which git must ignore. Without the key and without `--no-prompts`, it prints the variable's name and exits non-zero.
+`flow facts` sends each prompt a person typed to Jev, so it needs `TYPESAFE_API_KEY`. It reads the key from the environment, then from a `.env` file in the repo's root, then from the `.env` in the main checkout of the flow it runs. Git must ignore each file. Without the key and without `--no-prompts`, it prints the variable's name and exits non-zero.
 
 ## What `flow init` prompts for
 

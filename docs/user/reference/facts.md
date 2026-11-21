@@ -15,7 +15,7 @@ summary: "every part of the report flow facts prints, where each number is read 
 
 `flow facts` reads every conversation that started in this worktree and is not marked read.
 
-`--transcripts <dir>` and `--log <dir>` read copies kept elsewhere, such as the ones a tool saved before it removed the worktree. With transcripts and no log, the report has every part read from the transcripts, and `health` says the log is missing.
+`--transcripts <dir>` and `--log <dir>` read copies kept elsewhere, such as the ones a tool saved before it removed the worktree. `--transcripts` reads every conversation in the folder, not only this worktree's. With transcripts and no log, the report has every part read from the transcripts, and `health` says the log is missing.
 
 ## The parts of the report
 
@@ -47,7 +47,7 @@ The printed report has one line for each part. An example of five of them:
 
 ```
   requests  286 · largest context 214k
-  models    builder opus-5-5 ×2 · coach opus-5-5
+  models    conversation opus-5-5 · builder opus-5-5 ×2 · coach opus-5-5
   tests     26 runs · 2 failed · 3 requests between a failed run and the next pass
   refused   git.conventionalCommitFormat 2× · the next command differed 2×
   prompts   13 · 1 correction · 1 confusion · 2 frustrated
@@ -68,9 +68,11 @@ The count of requests between starts at the first failed run and stops at the ne
 
 ## Prompts
 
-A prompt is text a person typed or sent to the conversation. A notice the harness writes, such as a finished background task, is not a prompt.
+A prompt is text a person typed or sent to the conversation. A notice the harness writes, such as a finished background task, is not a prompt. A command you run with `!` in Claude Code, and what it prints, is not a prompt either.
 
-`flow facts` sends each prompt to Jev, TypeSafe's decision model, with the end of the agent's message before it. No code and no command is sent. Jev returns:
+The `prompts` line counts a prompt as frustrated when Jev's `frustrated` is 0.5 or more. `not sorted` counts the prompts Jev could not be reached for, or whose reply was not what was asked for.
+
+`flow facts` sends each prompt to Jev, TypeSafe's decision model, with the end of the agent's message before it, less its code blocks. No code and no command is sent. Jev returns:
 
 | Field | What it is |
 | --- | --- |
@@ -114,7 +116,7 @@ A prompt is text a person typed or sent to the conversation. A notice the harnes
 
 ## The report as a page
 
-`--report <file>` writes one HTML page in the work + flow colours and type. It has the totals of requests, failed test runs, refusals and prompts, one row per conversation with its requests, failed test runs and largest context, the refusals per guardrail, and the prompts by kind.
+`--report <file>` writes one HTML page in the work + flow colours and type. It has the totals of requests, failed test runs, refusals and prompts, one row per conversation, and under it one row per subagent, each with its requests, failed test runs and largest context, the refusals per guardrail, and the prompts by kind.
 
 ---
 
