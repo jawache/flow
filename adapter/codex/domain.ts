@@ -10,7 +10,7 @@
 
 import { parseShellSteps, type TurnAction } from "../../language/domain.ts";
 import { bashReads, hooksFileOf, repoFirst, text, type HooksFileHook, type HookEvent } from "../domain.ts";
-import type { HookPayload, SpawnMeta, TranscriptEvent, TranscriptHead, TranscriptRef } from "../harness.ts";
+import type { HookPayload, ModelRequest, SpawnMeta, TranscriptEvent, TranscriptHead, TranscriptRef } from "../harness.ts";
 
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 // WHICH PAYLOADS ARE CODEX'S
@@ -120,10 +120,10 @@ function completed(record: Rollout, kind: string): Record<string, unknown> | nul
   return item?.["type"] === kind ? item : null;
 }
 
-/** What the human typed, from a `UserMessage` item: its text parts, joined. */
-function promptOf(item: Record<string, unknown>): string {
+/** What a message said, from a `UserMessage` or `AgentMessage` item: its text parts, joined. */
+function textOf(item: Record<string, unknown>): string {
   const parts = Array.isArray(item["content"]) ? (item["content"] as { type?: unknown; text?: unknown }[]) : [];
-  return parts.map((part) => (part.type === "text" ? text(part.text) : "")).join("\n").trim();
+  return parts.map((part) => (/^text$/i.test(text(part.type)) ? text(part.text) : "")).join("\n").trim();
 }
 
 /** The shell line a `CommandExecution` item ran: what Codex parsed out of it, else the last word of the shell's own argv. */
@@ -142,15 +142,32 @@ function commandOf(item: Record<string, unknown>): string {
  * breadcrumb is then not shown again as the context grows.
  */
 export function tokensFromTranscript(jsonl: string): number {
-  const records = rollout(jsonl);
-  for (let i = records.length - 1; i >= 0; i--) {
-    const record = records[i] as Rollout;
+  return requestsOf(jsonl).at(-1)?.context ?? 0;
+}
+
+/**
+ * The model requests a rollout holds: one for each `token_count` row that has usage and whose running total moved
+ * since the row before, because Codex writes the same row again when nothing was sent. A request's context is its
+ * `input_tokens`, which counts the cached ones, and its model is the one the latest `turn_context` record named.
+ */
+export function requestsOf(jsonl: string): ModelRequest[] {
+  const out: ModelRequest[] = [];
+  let model: string | null = null;
+  let seen = -1;
+  for (const record of rollout(jsonl)) {
+    if (record.type === "turn_context") model = text(record.payload["model"]) || model;
     if (record.type !== "event_msg" || record.payload["type"] !== "token_count") continue;
-    const info = record.payload["info"] as { last_token_usage?: { input_tokens?: unknown } } | null | undefined;
+    const info = record.payload["info"] as { total_token_usage?: { total_tokens?: unknown }; last_token_usage?: { input_tokens?: unknown } } | null | undefined;
     const used = info?.last_token_usage?.input_tokens;
-    if (typeof used === "number" && Number.isFinite(used)) return used;
+    if (typeof used !== "number" || !Number.isFinite(used)) continue;
+    const total = info?.total_token_usage?.total_tokens;
+    if (typeof total === "number") {
+      if (total === seen) continue;
+      seen = total;
+    }
+    out.push({ line: record.line, model, context: used });
   }
-  return 0;
+  return out;
 }
 
 /**
@@ -178,7 +195,7 @@ export function turnActions(jsonl: string): TurnAction[] {
 export function briefHead(jsonl: string, cap = 8000): string {
   for (const record of rollout(jsonl)) {
     const item = completed(record, "UserMessage");
-    if (item !== null) return promptOf(item).slice(0, cap);
+    if (item !== null) return textOf(item).slice(0, cap);
   }
   return "";
 }
@@ -191,11 +208,15 @@ export function briefHead(jsonl: string, cap = 8000): string {
 export function parseEvents(jsonl: string, root = "", home?: string): TranscriptEvent[] {
   const out: TranscriptEvent[] = [];
   let cwd = root;
+  // What the agent last said in words, which a prompt answers.
+  let said = "";
   for (const record of rollout(jsonl)) {
     if (record.type === "session_meta") cwd = text(record.payload["cwd"]) || root;
+    const message = completed(record, "AgentMessage");
+    if (message !== null && textOf(message) !== "") said = textOf(message);
     const prompt = completed(record, "UserMessage");
     if (prompt !== null) {
-      out.push({ line: record.line, kind: "prompt", text: promptOf(prompt) });
+      out.push({ line: record.line, kind: "prompt", text: textOf(prompt), ...(said === "" ? {} : { before: said }) });
       continue;
     }
     const item = completed(record, "CommandExecution");

@@ -108,7 +108,7 @@ function readMachineFile(root: string, harness: Harness): { path: string; settin
  * literal `new URL("../../")` would therefore be right in the suite and wrong in the shipped binary
  * — silently, because it would still name a real directory.
  */
-function packageRoot(): string | null {
+export function packageRoot(): string | null {
   let at = dirname(fileURLToPath(import.meta.url));
   for (let up = 0; up < 6; up++) {
     const manifest = readText(at, "package.json");

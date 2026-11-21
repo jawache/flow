@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>flow daily review · 16 November</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;700&display=swap">
+<style>
+/* work + flow design system, tokens.json. Ink is the default theme, paper the light one. */
+:root{
+  --bg:#0d0e11;--bg-panel:#15161b;--bg-rule:#2a2c33;--bg-faint:#3a3c45;
+  --fg:#f3f0e9;--fg-muted:#8b8d98;--flow:#22dfa8;--flow-tint:#22dfa81f;--danger:#ff5c5c;
+  --sans:"Geist",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:light){:root{
+  --bg:#f3f0e9;--bg-panel:#faf8f3;--bg-rule:#dcd8cf;--bg-faint:#c9c5bb;
+  --fg:#0d0e11;--fg-muted:#5f6170;--flow:#0b7557;--flow-tint:#0b755714;--danger:#b3261e;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:400 17px/1.6 var(--sans)}
+.in{max-width:900px;margin:0 auto}
+header{padding:48px 16px 32px;border-bottom:1px solid var(--bg-rule)}
+.brand{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+.wm{display:inline-flex;align-items:baseline;font:700 44px/1 var(--sans);letter-spacing:-0.04em;color:var(--flow)}
+.wm svg{width:.62em;height:.53em;margin-right:.1em;overflow:visible}
+.kind{font:500 12px/1.4 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--fg-muted)}
+.date{margin:32px 0 8px;font:500 12px/1.4 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--fg-muted)}
+h1{margin:0;font:700 32px/1.2 var(--sans);letter-spacing:-0.02em;max-width:26ch}
+main{padding:0 16px 96px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));border:1px solid var(--bg-rule);border-radius:14px;background:var(--bg-panel);margin:32px 0 0;overflow:hidden}
+.tile{padding:16px 24px;border-right:1px solid var(--bg-rule);margin-right:-1px;border-bottom:1px solid var(--bg-rule);margin-bottom:-1px}
+.tile b{display:block;font:700 26px/1.2 var(--mono);font-variant-numeric:tabular-nums}
+.tile span{font-size:15px;color:var(--fg-muted)}
+h2{font:500 12px/1.4 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--fg-muted);margin:48px 0 12px}
+.f{background:var(--bg-panel);border:1px solid var(--bg-rule);border-radius:14px;margin:12px 0;overflow:hidden}
+.f .top{padding:24px 24px 16px;display:grid;grid-template-columns:auto 1fr;gap:8px 16px;align-items:start}
+.num{font:700 15px var(--mono);border:1px solid var(--bg-rule);border-radius:4px;width:30px;height:30px;display:grid;place-items:center;color:var(--fg)}
+.f h3{margin:0;font:600 24px/1.3 var(--sans);letter-spacing:-0.01em}
+.chips{grid-column:2;display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+.chip{font:500 12px/1.4 var(--mono);letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--bg-rule);border-radius:4px;padding:2px 8px;color:var(--fg-muted)}
+.chip.w{color:var(--fg)}
+.rows{border-top:1px solid var(--bg-rule);display:grid;grid-template-columns:140px 1fr;font-size:15px;line-height:1.5;margin:0}
+.rows dt,.rows dd{margin:0;padding:12px 24px;border-bottom:1px solid var(--bg-rule)}
+.rows dt{color:var(--fg-muted);font:500 12px/1.9 var(--mono);letter-spacing:.08em;text-transform:uppercase}
+.rows dt:last-of-type,.rows dd:last-of-type{border-bottom:0}
+.act{background:var(--flow-tint);border-top:1px solid var(--bg-rule);padding:12px 24px;font-size:15px;display:flex;flex-wrap:wrap;gap:8px 24px;align-items:center}
+code{font:400 .92em/1 var(--mono);background:var(--bg-panel);border-radius:4px;padding:1px 4px}
+.f code,.box code,.act code{background:var(--bg);border:1px solid var(--bg-rule)}
+.wrap{overflow-x:auto;background:var(--bg-panel);border:1px solid var(--bg-rule);border-radius:14px}
+table{border-collapse:collapse;width:100%;font-size:15px;min-width:680px}
+th,td{text-align:left;padding:12px 16px;border-bottom:1px solid var(--bg-rule);vertical-align:middle}
+tr:last-child td{border-bottom:0}
+th{font:500 12px/1.4 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--fg-muted)}
+td.n,th.n{text-align:right;white-space:nowrap}
+td.n{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.id{font:500 15px var(--mono)}
+.sub{color:var(--fg-muted);font-size:13px;line-height:1.45;display:block}
+.bar{height:6px;border-radius:999px;background:var(--bg-rule);min-width:90px;position:relative;overflow:hidden}
+.bar i{position:absolute;inset:0 auto 0 0;background:var(--fg-muted);border-radius:999px}
+.bar i.r{background:var(--danger)}
+.stage{display:grid;grid-template-columns:80px 1fr 80px;gap:8px 16px;align-items:center;font-size:15px;background:var(--bg-panel);border:1px solid var(--bg-rule);border-radius:14px;padding:24px}
+.stage span:nth-child(3n){text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
+.box{background:var(--bg-panel);border:1px solid var(--bg-rule);border-radius:14px;padding:24px}
+.box h4{margin:0 0 8px;font:600 18px/1.4 var(--sans)}
+.box p{margin:8px 0;font-size:15px;line-height:1.5}
+.box .big{font:700 26px/1.2 var(--mono);font-variant-numeric:tabular-nums}
+ul{padding-left:20px;margin:0}
+li{margin:8px 0;font-size:15px;line-height:1.5}
+.quiet{border:1px solid var(--bg-rule);border-radius:14px;padding:24px;color:var(--fg-muted);font-size:15px}
+.quiet p{margin:0 0 8px}
+.quiet b{color:var(--fg);font-weight:600}
+footer{color:var(--fg-muted);font-size:13px;line-height:1.45;margin-top:48px;padding-top:24px;border-top:1px solid var(--bg-rule)}
+footer .pair{font-family:var(--mono);color:var(--fg)}
+a:focus-visible,code:focus-visible{outline:2px solid var(--flow);outline-offset:2px}
+@media (max-width:560px){.rows{grid-template-columns:1fr}.rows dt{border-bottom:0;padding-bottom:0}h1{font-size:26px}.wm{font-size:36px}.f h3{font-size:20px}}
+</style>
+</head>
+<body>
+<header><div class="in">
+  <div class="brand">
+    <span class="wm"><svg viewBox="14 14 36 36" preserveAspectRatio="none" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" role="img" aria-label="flow"><path d="M14 32 C 20.8 12, 26.4 12, 32 32 S 43.2 52, 50 32"/></svg>flow</span>
+    <span class="kind">daily review</span>
+  </div>
+  <p class="date">Monday 16 November 2026 · flow, work, zk</p>
+  <h1>One thing cost real money, one setting did not take effect, and two issues ran clean</h1>
+</div></header>
+
+<main><div class="in">
+
+<div class="tiles">
+  <div class="tile"><b>4</b><span>issues finished</span></div>
+  <div class="tile"><b>$257.59</b><span>spent on them</span></div>
+  <div class="tile"><b>up to $12</b><span>could have been saved</span></div>
+  <div class="tile"><b>18%</b><span>of builders' requests spent fixing a failed test run</span></div>
+</div>
+
+<h2>Findings</h2>
+
+<section class="f">
+  <div class="top">
+    <div class="num">1</div>
+    <h3>work-125 spent a fifth of its build fixing tests that a restyle should not have broken</h3>
+    <div class="chips"><span class="chip">could have cost less</span><span class="chip w">up to $12 of $106.65</span><span class="chip">work</span></div>
+  </div>
+  <dl class="rows">
+    <dt>What happened</dt><dd>The issue restyled the web pages. The tests for those pages compare the page's HTML, style names included. Each restyle turned them red, and the builders edited the expected HTML by hand until they passed.</dd>
+    <dt>Shown by</dt><dd>423 test runs, 130 of them failed. 205 of the builders' 1,099 requests fell between a failed run and the next passing one.</dd>
+    <dt>Root cause</dt><dd>A test that holds the page's markup fails when the look changes, not when the behaviour breaks.</dd>
+    <dt>Intent</dt><dd>Not met. The tests are there to catch broken behaviour.</dd>
+    <dt>Fix</dt><dd><b>Rung 3, a guardrail:</b> refuse a web test that matches on a style name. The tests that do so today change first.</dd>
+    <dt>How sure</dt><dd>The rounds are counted. $12 is the most it could be. The guardrail stops style-name matches for certain, and does not stop a test that compares a whole page.</dd>
+  </dl>
+  <div class="act"><span><b>The issue it would become:</b> "No web test matches on a style name", in work.</span><span>Reply <code>file 1</code> · <code>discuss 1</code> · <code>skip 1</code></span></div>
+</section>
+
+<section class="f">
+  <div class="top">
+    <div class="num">2</div>
+    <h3>flow-9 built two tasks on Opus, nine hours after flow's builder was set to Sonnet</h3>
+    <div class="chips"><span class="chip">a setting that did not take effect</span><span class="chip w">small</span><span class="chip">flow, work</span></div>
+  </div>
+  <dl class="rows">
+    <dt>What happened</dt><dd><code>work.yml</code> changed on main at 23:59 on 15 November. Tasks 2 and 3 were built at 09:28 and 09:58 the next morning, on Opus. The review fixes at 18:55 ran on Sonnet.</dd>
+    <dt>Shown by</dt><dd>The model named in each builder's transcript: 71 requests on Opus after the change.</dd>
+    <dt>Root cause</dt><dd>Not confirmed. A running issue seems to read the <code>work.yml</code> in its own worktree.</dd>
+    <dt>Fix</dt><dd><b>Rung 1, remove the cause,</b> once it is confirmed.</dd>
+    <dt>How sure</dt><dd>What happened is certain. The cause is a reading.</dd>
+  </dl>
+  <div class="act"><span><b>No issue offered yet.</b> The cause needs confirming in work's code.</span><span>Reply <code>discuss 2</code> · <code>skip 2</code></span></div>
+</section>
+
+<h2>The day's work</h2>
+<div class="wrap"><table>
+<tr><th>Issue</th><th class="n">Cost</th><th>Share of the day</th><th class="n">Agents</th><th class="n">Requests</th><th>Builders' test runs that failed</th><th class="n">Largest context</th></tr>
+<tr><td><span class="id">work-125</span><span class="sub">The feed is a card per question</span></td><td class="n">$106.65</td><td><div class="bar"><i style="width:41%"></i></div></td><td class="n">31</td><td class="n">2,018</td><td><div class="bar"><i class="r" style="width:31%"></i></div><span class="sub">130 of 423</span></td><td class="n">537k</td></tr>
+<tr><td><span class="id">zk-18</span><span class="sub">The end-to-end suite is a few journeys</span></td><td class="n">$95.56</td><td><div class="bar"><i style="width:37%"></i></div></td><td class="n">33</td><td class="n">1,711</td><td><div class="bar"><i class="r" style="width:27%"></i></div><span class="sub">58 of 213</span></td><td class="n">367k</td></tr>
+<tr><td><span class="id">flow-9</span><span class="sub">Rules read a shell line's own variables</span></td><td class="n">$38.31</td><td><div class="bar"><i style="width:15%"></i></div></td><td class="n">13</td><td class="n">584</td><td><div class="bar"><i class="r" style="width:24%"></i></div><span class="sub">13 of 54</span></td><td class="n">222k</td></tr>
+<tr><td><span class="id">flow-10</span><span class="sub">flow facts leaves out background notices</span></td><td class="n">$17.07</td><td><div class="bar"><i style="width:7%"></i></div></td><td class="n">10</td><td class="n">286</td><td><div class="bar"><i class="r" style="width:17%"></i></div><span class="sub">2 of 12</span></td><td class="n">214k</td></tr>
+</table></div>
+
+<h2>Where the money went, by stage</h2>
+<div class="stage">
+  <span>Build</span><div class="bar"><i style="width:100%"></i></div><span>$123.50</span>
+  <span>Review</span><div class="bar"><i style="width:39%"></i></div><span>$47.99</span>
+  <span>Refine</span><div class="bar"><i style="width:22%"></i></div><span>$26.78</span>
+  <span>Plan</span><div class="bar"><i style="width:17%"></i></div><span>$20.63</span>
+  <span>Demo</span><div class="bar"><i style="width:12%"></i></div><span>$14.57</span>
+  <span>Docs</span><div class="bar"><i style="width:11%"></i></div><span>$14.09</span>
+  <span>Merge</span><div class="bar"><i style="width:7%"></i></div><span>$8.35</span>
+  <span>Trial</span><div class="bar"><i style="width:1%"></i></div><span>$1.39</span>
+</div>
+
+<h2>The guard, and you</h2>
+<div class="two">
+  <div class="box">
+    <h4>Guardrails</h4>
+    <p><span class="big">21 of 22</span></p>
+    <p>refusals were followed by a change of course. Each rule did what it is for.</p>
+    <p>Nine were <code>justfile.useTheRecipe</code> in zk-18, where the builder was changing that rule and trying it.</p>
+  </div>
+  <div class="box">
+    <h4>You</h4>
+    <p><span class="big">6</span></p>
+    <p>times you corrected an agent or could not follow it, all in zk-18.</p>
+    <p>One issue is not a pattern, so nothing is raised. The count carries over to tomorrow.</p>
+  </div>
+</div>
+
+<h2>Looked at, and not raised</h2>
+<div class="box">
+<ul>
+<li><b>flow-10</b> ran clean.</li>
+<li><b>zk-18's review fixes took 3 hours.</b> About 30 minutes went on one test, run in 13 commands while the dev database did not answer. The cause was outside the repo.</li>
+<li><b>zk-18's Plan cost $14.63,</b> against a usual $0.94. Seven agents read every end-to-end test to sort them, which is what the issue asked for.</li>
+<li><b>Contradicting instructions:</b> none found.</li>
+</ul>
+</div>
+
+<footer>
+<p class="pair">part of ●work ~flow, tools for a team of one, by @jawache</p>
+<p>Read: 4 issues' records, 87 transcripts, 4,599 model requests. Dollars are each issue's own Cost section. A failed test run is a test, a build or a gate that reported failure.</p>
+</footer>
+
+</div></main>
+</body>
+</html>

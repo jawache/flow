@@ -120,4 +120,4 @@ It has no fields beyond the ones on every row. After it, each `session` breadcru
 
 ---
 
-[Index](../index.md) · the report built from the log: [`flow facts`](./cli.md#flow-facts) · when each moment runs: [moments](./moments.md)
+[Index](../index.md) · the report built from the log: [the facts report](./facts.md) · when each moment runs: [moments](./moments.md)

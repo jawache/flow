@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { DELIVERS } from "../domain.ts";
 import { projectRoot } from "../shell.ts";
 import type { Harness } from "../harness.ts";
-import { HOOK_WORDS, HOST_SURFACE, REPO_HOOKS, briefHead, claimsPayload, hooksFile, ownTranscriptPath, parseEvents, spawnMeta, tokensFromTranscript, transcriptHead, turnActions } from "./domain.ts";
+import { HOOK_WORDS, HOST_SURFACE, REPO_HOOKS, briefHead, claimsPayload, hooksFile, ownTranscriptPath, parseEvents, requestsOf, spawnMeta, tokensFromTranscript, transcriptHead, turnActions } from "./domain.ts";
 import { codexHome, readStore, readTranscript } from "./store.ts";
 
 /** The machine-wide hooks file. flow 0.3 wrote nothing for Codex there, so a run of `flow uninstall --machine` finds nothing of flow's in it. */
@@ -44,6 +44,7 @@ export const codex: Harness = {
     readStore,
     readTranscript,
     events: parseEvents,
+    requests: requestsOf,
     head: transcriptHead,
     spawns: () => new Map(),
     spawnMeta,

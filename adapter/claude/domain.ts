@@ -4,7 +4,7 @@
 
 import { parseShellSteps, type TurnAction } from "../../language/domain.ts";
 import { bashReads, hooksFileOf, type HooksFileHook, relativise, repoFirst, text, type HookEvent } from "../domain.ts";
-import type { HookPayload, ToolAction, Spawn, SpawnMeta, Steer, TranscriptEvent, TranscriptHead, TranscriptRef } from "../harness.ts";
+import type { HookPayload, ModelRequest, ToolAction, Spawn, SpawnMeta, Steer, TranscriptEvent, TranscriptHead, TranscriptRef } from "../harness.ts";
 
 
 
@@ -20,7 +20,7 @@ import type { HookPayload, ToolAction, Spawn, SpawnMeta, Steer, TranscriptEvent,
 //
 // ONE READER here, and three consumers on top of it: how far the session has drifted, what the
 // actor did this turn, and the brief it was started with. F5's archival side extends the same
-// reader for the narrative half (prompts, tool results, corrections); none of that shape is decided
+// reader for the narrative half (prompts, tool results); none of that shape is decided
 // here.
 
 /** One line of a transcript, parsed. `record` is the raw object — this file reads it, nobody else. */
@@ -126,6 +126,25 @@ export function tokensFromTranscript(jsonl: string): number {
 }
 
 /**
+ * The model requests a transcript holds: one for each message id, because the host writes one line for each content
+ * block of a reply and every one of them carries the reply's id, model and usage. The last line of an id has the
+ * final usage. A reply with no usage, such as the host's own `<synthetic>` notice, is no request.
+ */
+export function requestsOf(jsonl: string): ModelRequest[] {
+  const byId = new Map<string, ModelRequest>();
+  for (const line of transcriptLines(jsonl)) {
+    if (line.kind !== "assistant") continue;
+    const message = line.record["message"] as { id?: unknown; model?: unknown; usage?: Usage } | undefined;
+    if (message?.usage === undefined) continue;
+    const model = text(message.model);
+    const id = text(message.id) || `line-${line.line}`;
+    const first = byId.get(id);
+    byId.set(id, { line: first?.line ?? line.line, model: model === "" || model === "<synthetic>" ? null : model, context: contextTokens(message.usage) });
+  }
+  return [...byId.values()];
+}
+
+/**
  * Text on a `user` line that the HUMAN did not type — the harness talking to itself.
  *
  * It matters because the turn boundary is "the last thing the human said", and a hook's own
@@ -137,6 +156,10 @@ const INJECTED = [
   "<command-name>",
   "<command-message>",
   "<local-command",
+  // A command the person ran with `!`, and what it printed: not said to the agent, and it may hold a secret.
+  "<bash-input>",
+  "<bash-stdout>",
+  "<bash-stderr>",
   "<user-prompt-submit-hook",
   "Caveat:",
   "Result of calling",
@@ -173,8 +196,8 @@ function turnStart(line: TranscriptLine): string | null {
  * It is NOT in `INJECTED`, on purpose. A notice wakes the agent, so it starts a turn, and a turn
  * woken by one holds only what the agent did after it; read as an injection, that turn would reach
  * back to the human's last message, and a turn-end rule would be handed an edit from a turn
- * earlier. It is not the human talking either, so the report's prompts, and the corrections read
- * from them, leave it out. Either mark is enough: the text's opening tag, and the record's own
+ * earlier. It is not the human talking either, so the report's prompts leave it out.
+ * Either mark is enough: the text's opening tag, and the record's own
  * `origin.kind`, which every notice measured on Claude Code 2.1.322 to 2.1.325 carried.
  */
 function isTaskNotice(line: TranscriptLine, prose: string): boolean {
@@ -426,6 +449,8 @@ export function spawnsIn(jsonl: string): Map<string, Spawn> {
  */
 export function parseEvents(jsonl: string, root = "", home?: string): TranscriptEvent[] {
   const out: TranscriptEvent[] = [];
+  // What the agent last said in words, which a prompt answers.
+  let said = "";
   for (const line of transcriptLines(jsonl)) {
     const content = (line.record["message"] as { content?: unknown } | undefined)?.content;
 
@@ -433,7 +458,7 @@ export function parseEvents(jsonl: string, root = "", home?: string): Transcript
       const start = turnStart(line);
       if (start !== null) {
         // A background task's notice starts a turn, but nobody typed it.
-        if (!isTaskNotice(line, start)) out.push({ line: line.line, kind: "prompt", text: start });
+        if (!isTaskNotice(line, start)) out.push({ line: line.line, kind: "prompt", text: start, ...(said === "" ? {} : { before: said }) });
         continue;
       }
       if (!Array.isArray(content)) continue;
@@ -452,6 +477,13 @@ export function parseEvents(jsonl: string, root = "", home?: string): Transcript
     }
 
     if (line.kind !== "assistant" || !Array.isArray(content)) continue;
+    const spoken = content
+      .map((raw) => (raw as { type?: string; text?: unknown } | null))
+      .filter((block) => block?.type === "text")
+      .map((block) => text(block?.text))
+      .join("\n")
+      .trim();
+    if (spoken !== "") said = spoken;
     for (const raw of content) {
       const block = raw as { type?: string; id?: string; name?: string; input?: Record<string, unknown> } | null;
       if (!block || block.type !== "tool_use") continue;

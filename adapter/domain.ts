@@ -25,6 +25,7 @@ import type {
   HookPayload,
   Registration,
   HookResult,
+  ModelRequest,
   Registering,
   Spawn,
   SpawnMeta,
@@ -355,96 +356,54 @@ export function snipAtWord(value: unknown, n: number): string {
   return `${whole.trimEnd()}…`;
 }
 
-/**
- * High-signal pushback — where the human corrected the agent. A HEURISTIC, and the report says so.
- *
- * It is deliberately generous: the cost of a false positive is a coach reading one line that turns
- * out to be fine, and the cost of a false negative is the session's most informative moment going
- * unnoticed.
- */
-// THE ANCHORING IS OUTSIDE THE CLASSES, and that is a fix rather than a transcription. The ported
-// regex wrapped every alternative in one `\b(…)\b`, so the two that end in punctuation — `wait[, ]`
-// and `no[, ]` — were then asked for a word boundary immediately after a comma or a space, which
-// neither can ever be followed by. `no, that's wrong` and `wait, stop` are the two commonest
-// spellings of pushback there are, and both alternatives were dead: a detector that reads as armed
-// and matches nothing is the spec's own P2 shape, inside the code meant to find it.
-const CORRECTION = new RegExp(
-  [
-    String.raw`\b(actually|hold on|nope|revert|undo|instead|hmm)\b`,
-    String.raw`\b(wait|no)[,!.](\s|$)`,
-    String.raw`\b(stop|don'?t|do not)\s`,
-    String.raw`\bthat'?s (wrong|not right|not what|not)\b`,
-    String.raw`\byou (broke|shouldn'?t|missed|forgot|didn'?t)\b`,
-    String.raw`\bwhy (did|are) you\b`,
-    String.raw`\b(rather than|let'?s not)\b`,
-  ].join("|"),
-  "i",
-);
-
-/** Does this prompt read as the human pushing back? */
-export function isCorrection(prose: string): boolean {
-  return CORRECTION.test(prose);
-}
-
-// ── the justfile's own tools, so a bypass is derived rather than guessed ──
-//
-// Each recipe's body is parsed, and each command's program, or the tool `npx` runs, is a tool that
-// "should go through just". Shell noise is dropped; with no justfile, bypass detection is switched
-// off entirely rather than falling back to a hardcoded list that would be wrong for every other repo.
-
-const NOISE = new Set([
-  "set", "node", "npx", "just", "cd", "export", "echo", "then", "fi", "do", "done", "if", "for", "while", "source",
-]);
-
-/** Is this top-level line a recipe header — `name:`, `name arg:`, `[attr]` and all? */
-function isRecipeHeader(line: string): boolean {
-  if (line.startsWith("[")) return false;
-  const colon = line.indexOf(":");
-  if (colon < 0) return false;
-  const head = line.slice(0, colon).trim();
-  return head !== "" && /^[@A-Za-z_][\w-]*(\s|$)/.test(head) && !head.includes("=");
-}
-
-/**
- * The tools a repo's justfile actually drives — what a direct invocation would be bypassing.
- *
- * Each recipe's body is read through the parse as one script, so a loop or an `if` that spans its
- * lines is read whole; a body that does not parse whole is read line by line, and a line that does
- * not parse names nothing. Just's own `@` and `-` line prefixes are dropped first.
- */
-export function recipeTools(justfile: string): string[] {
-  const bodies: string[][] = [];
-  let body: string[] | null = null;
-  for (const raw of justfile.split("\n")) {
-    const line = raw.trim();
-    if (line === "") continue;
-    if (!/^\s/.test(raw)) {
-      // A top-level line opens a recipe, or ends one; the header itself is not a command.
-      body = isRecipeHeader(line) ? [] : null;
-      if (body !== null) bodies.push(body);
-    } else if (body !== null && !line.startsWith("#")) body.push(line.replace(/^[@-]+/, ""));
-  }
-  const tools = new Set<string>();
-  for (const lines of bodies) {
-    const commands = parseCommandLine(lines.join("\n")) ?? lines.flatMap((line) => parseCommandLine(line) ?? []);
-    for (const command of commands) {
-      // A LAUNCHER names the tool in its next word, and dropping the line at the launcher is how
-      // the ported reader came back empty on this very repo: every recipe here is `npx tsc`,
-      // `npx vitest`, `npx eslint`, so `npx` matched the noise list and no tool was ever
-      // collected — leaving the bypass section switched off and looking like a clean record.
-      const tool = toolOf(command);
-      if (command.nested || command.program.includes("/") || !/^[A-Za-z]/.test(tool) || NOISE.has(tool)) continue;
-      tools.add(tool);
-    }
-  }
-  return [...tools];
-}
-
-/** What one Bash line was: the recipes it drove, the tools it went round, and whether it committed. */
+/** What one Bash line was: the recipes it drove, and whether it committed. */
 export interface BashClass {
   readonly recipes: readonly string[];
-  readonly bypasses: readonly string[];
   readonly commits: boolean;
+}
+
+/**
+ * Read one command line, from its parse. A heredoc's body is text the command is fed, so a file
+ * being written that names a recipe is not a run of it — while the line around the heredoc is
+ * judged like any other, and so is a body a shell runs. A line that does not parse is nothing: no
+ * recipe, no commit.
+ */
+export function classifyBash(command: unknown): BashClass {
+  const commands = parseCommandLine(strip(command)) ?? [];
+  const recipes = commands.flatMap((c) => {
+    const recipe = programName(c.program) === "just" ? c.args[0] : undefined;
+    return recipe !== undefined && /^[a-z][\w-]*$/.test(recipe) ? [recipe] : [];
+  });
+  return {
+    recipes,
+    commits: gitCommands({ commands }).some((git) => git.subcommand === "commit"),
+  };
+}
+
+// ── test runs, decided from the repo's justfile ──
+
+/** A recipe name that starts with one of these runs a test, a build or a gate. */
+const TEST_RECIPE_PREFIXES = ["test", "check", "gate", "e2e", "lint", "typecheck", "build"] as const;
+
+/** The shell utilities, which are never a test run even when a counted recipe runs them. */
+const SHELL_UTILITIES: ReadonlySet<string> = new Set([
+  "cat", "cd", "cp", "echo", "find", "grep", "head", "ls", "mkdir", "mv", "rm", "sed", "sort", "tail", "test", "touch", "true", "wc",
+]);
+
+/** Words a recipe body starts a command with that name no program: a shell keyword, or a launcher whose next word is the program. */
+const NOT_PROGRAMS: ReadonlySet<string> = new Set(["set", "exit", "node", "npx", "just", "export", "then", "fi", "do", "done", "if", "for", "while", "source"]);
+
+/** The recipe names that count, and the programs those recipes run: what makes a command a test run. */
+export interface TestRunRules {
+  readonly recipes: ReadonlySet<string>;
+  readonly programs: ReadonlySet<string>;
+}
+
+/** The recipe a top-level justfile line opens: its name. A setting, an assignment and an attribute line open none. */
+function recipeHeaderName(line: string): string | null {
+  if (line.startsWith("[") || /^[A-Za-z_][\w-]*\s*:?=/.test(line) || !line.includes(":")) return null;
+  const name = /^@?([A-Za-z_][\w-]*)(?:\s|:)/.exec(line)?.[1];
+  return name === undefined || name === "set" ? null : name;
 }
 
 /** The tool a command runs: its program, or the tool `npx` is asked to run. */
@@ -454,28 +413,115 @@ function toolOf(command: ShellCommand): string {
 }
 
 /**
- * Read one command line against the repo's own recipe tools, from its parse. A heredoc's body is
- * text the command is fed, so a file being written that names a tool is not a run of it — while
- * the line around the heredoc is judged like any other, and so is a body a shell runs. A line that
- * does not parse is nothing: no recipe, no bypass, no commit.
+ * What counts as a test run in a repo: the recipes of its justfile whose name starts with `test`,
+ * `check`, `gate`, `e2e`, `lint`, `typecheck` or `build`, those `testRuns` names whole, and the programs
+ * those recipes run. Each recipe's body is read through the one parse, as a script, or line by line
+ * when it does not parse whole; just's `@` and `-` line prefixes are dropped first. With no justfile
+ * only the `testRuns` names count.
  */
-export function classifyBash(command: unknown, tools: readonly string[]): BashClass {
-  const commands = parseCommandLine(strip(command)) ?? [];
-  const recipes = commands.flatMap((c) => {
-    const recipe = programName(c.program) === "just" ? c.args[0] : undefined;
-    return recipe !== undefined && /^[a-z][\w-]*$/.test(recipe) ? [recipe] : [];
+export function testRunRules(justfile: string | null, added: readonly string[] = []): TestRunRules {
+  const bodies = new Map<string, string[]>();
+  let body: string[] | null = null;
+  for (const raw of (justfile ?? "").split("\n")) {
+    const line = raw.trim();
+    if (line === "") continue;
+    if (!/^\s/.test(raw)) {
+      const name = recipeHeaderName(line);
+      body = name === null ? null : (bodies.get(name) ?? []);
+      if (name !== null) bodies.set(name, body as string[]);
+    } else if (body !== null && !line.startsWith("#")) body.push(line.replace(/^[@-]+/, ""));
+  }
+  const recipes = new Set([...bodies.keys()].filter((name) => TEST_RECIPE_PREFIXES.some((prefix) => name.startsWith(prefix))));
+  for (const name of added) recipes.add(name);
+  const programs = new Set<string>();
+  for (const name of recipes) {
+    const lines = bodies.get(name) ?? [];
+    const commands = parseCommandLine(lines.join("\n")) ?? lines.flatMap((line) => parseCommandLine(line) ?? []);
+    for (const command of commands) {
+      const tool = toolOf(command);
+      if (command.nested || command.program.includes("/") || !/^[A-Za-z]/.test(tool) || NOT_PROGRAMS.has(tool) || SHELL_UTILITIES.has(tool)) continue;
+      programs.add(tool);
+    }
+  }
+  return { recipes, programs };
+}
+
+/** Does this shell command line run a test: a counted recipe through `just`, or a program a counted recipe runs? */
+export function isTestRun(command: unknown, rules: TestRunRules): boolean {
+  return (parseCommandLine(strip(command)) ?? []).some((one) => {
+    const tool = toolOf(one);
+    return programName(one.program) === "just" ? rules.recipes.has(one.args[0] ?? "") : rules.programs.has(tool);
   });
-  const ran = new Set(commands.map(toolOf));
-  return {
-    recipes,
-    bypasses: tools.filter((tool) => ran.has(tool)),
-    commits: gitCommands({ commands }).some((git) => git.subcommand === "commit"),
-  };
+}
+
+/**
+ * The lines a test runner or a build ends its output with when it failed: vitest's and jest's counts, Go's
+ * `--- FAIL` and `FAIL`, a TypeScript error, just's failed recipe, an eslint summary, a failed command, make's
+ * error. A count of zero failed is no failure, so each count starts at one.
+ */
+const RUNNER_FAILURE = /(?:Tests?|Test Files):?\s+[1-9]\d* failed|^--- FAIL|^FAIL(?:\b|\t)|error: Recipe `[^`]+` failed|\berror TS\d+|✖ [1-9]\d* problems?|Command failed with exit code|^make: \*\*\*/m;
+
+/** How much of the end of a result is read for a runner's failure line. */
+const RESULT_TAIL = 3000;
+
+/** Does a result's output end with a runner's failure line? */
+export function endsWithRunnerFailure(output: string): boolean {
+  return RUNNER_FAILURE.test(output.slice(-RESULT_TAIL));
+}
+
+/** One test run: the command, the transcript line it was called on, and whether it failed: the harness marked its result an error, or its output ends with a runner's failure line. */
+export interface TestRun {
+  readonly session: string;
+  readonly agent: string | null;
+  readonly line: number;
+  readonly command: string;
+  readonly failed: boolean;
+}
+
+/** The test runs of the conversation or of one subagent, counted. */
+export interface TestRunTotals {
+  readonly session: string;
+  readonly agent: string | null;
+  readonly agentType: string | null;
+  readonly runs: number;
+  readonly failed: number;
+  /** The model requests from each first failed run to the next run that passed, added up. */
+  readonly requestsBetween: number;
+}
+
+/**
+ * The test runs in one transcript, and their totals. A stretch starts at the first failed run and
+ * stops at the next run that passes: the requests made after the failed run's call, up to and
+ * including the one that called the pass. A run failed when the harness marked its result an error or its output ends with a runner's failure line. A run that fails again inside a stretch adds nothing,
+ * and a stretch no run passes after is not counted.
+ */
+export function testRunsIn(
+  who: Pick<TestRunTotals, "session" | "agent" | "agentType">,
+  events: readonly TranscriptEvent[],
+  requests: readonly ModelRequest[],
+  rules: TestRunRules,
+): { readonly runs: readonly TestRun[]; readonly totals: TestRunTotals } {
+  const failedIds = new Set(events.flatMap((event) => (event.kind === "result" && (event.failed || endsWithRunnerFailure(event.content)) ? [event.id] : [])));
+  const runs: TestRun[] = [];
+  let between = 0;
+  let since: number | null = null;
+  for (const event of events) {
+    if (event.kind !== "use" || event.action !== "shell" || !isTestRun(event.input["command"], rules)) continue;
+    const failed = failedIds.has(event.id);
+    runs.push({ session: who.session, agent: who.agent, line: event.line, command: strip(event.input["command"]), failed });
+    if (failed) since ??= event.line;
+    else if (since !== null) {
+      const from = since;
+      between += requests.filter((request) => request.line > from && request.line <= event.line).length;
+      since = null;
+    }
+  }
+  return { runs, totals: { ...who, runs: runs.length, failed: runs.filter((run) => run.failed).length, requestsBetween: between } };
 }
 
 // ── the reading ────────────────────────────────────────────────────────────
 
-/** A pointer into a transcript — the shape every heuristic finding takes. */
+/** A pointer into a transcript: the line something came from, and its text. */
 export interface Pointer {
   readonly line: number;
   readonly text: string;
@@ -483,25 +529,11 @@ export interface Pointer {
   readonly session?: string;
 }
 
-export interface Bypass extends Pointer {
-  readonly tool: string;
-}
-
-/** The same file edited over and over — a loop somebody was stuck in. */
-export interface EditLoop {
-  readonly path: string;
-  readonly count: number;
-  readonly from: number;
-  readonly to: number;
-  readonly session?: string;
-}
-
-/** The same command run again and again — something that would not come right. */
-export interface Retry {
-  readonly command: string;
-  readonly count: number;
-  readonly lines: readonly number[];
-  readonly session?: string;
+/** A prompt a person typed, and what Jev is sent about it: the prompt, and the end of the agent's message before it. */
+export interface PromptTurn extends Pointer {
+  /** What Jev is sent. Left out of a report. */
+  readonly asked?: string;
+  readonly before?: string;
 }
 
 export interface Narrative {
@@ -512,67 +544,38 @@ export interface Narrative {
     readonly shellReads: number;
     readonly commits: number;
     readonly recipes: Readonly<Record<string, number>>;
-    readonly bypasses: Readonly<Record<string, number>>;
   };
-  readonly prompts: readonly Pointer[];
-  readonly corrections: readonly Pointer[];
-  readonly bypassSites: readonly Bypass[];
-  readonly loops: readonly EditLoop[];
-  readonly retries: readonly Retry[];
+  readonly prompts: readonly PromptTurn[];
   /** The files a shell command read by name, with how often each. */
   readonly shell: { readonly reads: Readonly<Record<string, number>> };
   /** Every in-repo file the session touched, with how often. The facts layer scores coverage. */
   readonly touched: Readonly<Record<string, number>>;
 }
 
-/** How many times one file is edited in a row before it reads as a loop. */
-const LOOP = 5;
-
-/** How many times one command line is repeated before it reads as a retry. */
-const RETRY = 3;
-
 // `insideRepo` is the engine's, imported rather than re-spelled: whether a path is a file of this
 // repo decides what the narrative counts as touched AND what the record counts as an uncovered
 // edit, and those two must never be able to disagree.
 
 /**
- * The narrative reading of one conversation. Everything here is a guess with a citation.
- *
- * `tools` is INJECTED — the shell reads the justfile — so the same call is reproducible from a
- * fixture, which is the same discipline the guard itself is built on.
+ * The narrative reading of one conversation: what it edited, wrote, read and ran.
  *
  * Shell READS come from the transcript, like every Read does, so they are counted in every
  * conversation. A transcript says what command ran, never what it changed, so a shell write is not
  * counted.
  */
-export function narrative(events: readonly TranscriptEvent[], tools: readonly string[] = []): Narrative {
+export function narrative(events: readonly TranscriptEvent[]): Narrative {
   let edits = 0;
   let writes = 0;
   let shellReads = 0;
   const shell = { reads: {} as Record<string, number> };
   let commits = 0;
   const recipes: Record<string, number> = {};
-  const bypasses: Record<string, number> = {};
   const touched: Record<string, number> = {};
-  const prompts: Pointer[] = [];
-  const corrections: Pointer[] = [];
-  const bypassSites: Bypass[] = [];
-  const loops: EditLoop[] = [];
-  const retries: Retry[] = [];
-  const byCommand: Record<string, number[]> = {};
-
-  let loopPath: string | null = null;
-  let loopFrom = 0;
-  let loopTo = 0;
-  let loopCount = 0;
-  const closeLoop = (): void => {
-    if (loopCount >= LOOP && loopPath !== null) loops.push({ path: loopPath, count: loopCount, from: loopFrom, to: loopTo });
-  };
+  const prompts: PromptTurn[] = [];
 
   for (const event of events) {
     if (event.kind === "prompt") {
-      prompts.push({ line: event.line, text: snip(event.text, 120) });
-      if (isCorrection(event.text)) corrections.push({ line: event.line, text: snip(event.text, 140) });
+      prompts.push({ line: event.line, text: snip(event.text, 120), asked: event.text.trim().slice(0, JEV_ASKED), before: withoutCodeBlocks(event.before ?? "").slice(-JEV_BEFORE) });
       continue;
     }
     if (event.kind !== "use") continue;
@@ -583,18 +586,7 @@ export function narrative(events: readonly TranscriptEvent[], tools: readonly st
     if (event.action === "edit" || event.action === "write") {
       if (event.action === "write") writes += 1;
       else edits += 1;
-      const here = insideRepo(event.path);
-      if (here && event.path === loopPath) {
-        loopCount += 1;
-        loopTo = event.line;
-      } else {
-        closeLoop();
-        loopPath = here ? event.path : null;
-        loopFrom = event.line;
-        loopTo = event.line;
-        loopCount = here ? 1 : 0;
-      }
-      if (here) touched[event.path] = (touched[event.path] ?? 0) + 1;
+      if (insideRepo(event.path)) touched[event.path] = (touched[event.path] ?? 0) + 1;
       continue;
     }
     if (event.action === "read") {
@@ -608,31 +600,113 @@ export function narrative(events: readonly TranscriptEvent[], tools: readonly st
       shell.reads[path] = (shell.reads[path] ?? 0) + 1;
       shellReads += 1;
     }
-    const command = text(event.input["command"]);
-    const read = classifyBash(command, tools);
+    const read = classifyBash(text(event.input["command"]));
     for (const recipe of read.recipes) recipes[recipe] = (recipes[recipe] ?? 0) + 1;
-    for (const tool of read.bypasses) {
-      bypasses[tool] = (bypasses[tool] ?? 0) + 1;
-      bypassSites.push({ line: event.line, tool, text: snip(command, 120) });
-    }
     if (read.commits) commits += 1;
-    const normalised = snip(command, 400);
-    (byCommand[normalised] ??= []).push(event.line);
   }
-  closeLoop();
-  for (const [command, lines] of Object.entries(byCommand))
-    if (lines.length >= RETRY) retries.push({ command, count: lines.length, lines });
 
   return {
-    stats: { edits, writes, shellReads, commits, recipes, bypasses },
+    stats: { edits, writes, shellReads, commits, recipes },
     prompts,
-    corrections,
-    bypassSites,
-    loops,
-    retries,
     shell,
     touched,
   };
+}
+
+// ── the prompts, sorted by Jev ──────────────────────────────────────────────
+
+/** The variable that holds the key Jev needs. */
+export const JEV_KEY = "TYPESAFE_API_KEY";
+/** How much of a prompt, and of the agent's message before it, Jev is sent. */
+const JEV_ASKED = 2500;
+const JEV_BEFORE = 700;
+
+/** The agent's message with every fenced code block cut out, an unclosed one to the end: the page promises no code is sent. */
+function withoutCodeBlocks(message: string): string {
+  return message.replace(/^[ \t]*(```|~~~)[\s\S]*?(?:^[ \t]*\1[^\n]*$|(?![\s\S]))/gm, "").trim();
+}
+
+/** The seven kinds a prompt is sorted into, and what each one is, as Jev is told. */
+const KIND_CRITERIA = {
+  correction: "Tells the agent it did something wrong, misunderstood, ignored an instruction, or should not have asked. Includes having to repeat an instruction.",
+  confusion: "Says they do not understand what the agent wrote or asked.",
+  new_direction: "Changes or widens what is wanted, or adds a requirement the agent could not have known.",
+  answer: "Answers the agent's question or chooses between its options, without complaint.",
+  go_ahead: "Simply approves: go, yes, continue, merge.",
+  question: "Asks the agent for information or an explanation.",
+  other: "None of these.",
+} as const;
+
+export type PromptKind = keyof typeof KIND_CRITERIA;
+const KINDS = Object.keys(KIND_CRITERIA) as PromptKind[];
+
+/** What Jev says of one prompt. */
+export interface Sorted {
+  readonly kind: PromptKind;
+  readonly confidence: number;
+  readonly frustrated: number;
+}
+
+/** A prompt as `flow facts` reports it: shortened, with what Jev said, or nothing when Jev could not be reached. */
+export interface Prompt extends Pointer {
+  readonly session: string;
+  readonly sorted: Sorted | null;
+}
+
+/** The body of the one request Jev gets for a prompt: the words, and what the agent said before them. No code and no command. */
+export function jevRequest(asked: string, before: string): Record<string, unknown> {
+  return {
+    model: "jev-latest",
+    state: { the_agent_said_before: before, the_person_then_wrote: asked },
+    questions: {
+      kind: { type: "choice", instructions: "A person directs an AI coding agent. Classify what the person's message mainly is.", criteria: KIND_CRITERIA },
+      frustrated: { type: "noul", instructions: "Is the person annoyed or frustrated with the agent in this message?" },
+    },
+  };
+}
+
+/** Jev's reply as a kind, a confidence and a frustration score, or null when it is not shaped like one. */
+export function readJevReply(body: unknown): Sorted | null {
+  const answers = (body as { answers?: { kind?: { choice?: unknown; confidence?: unknown }; frustrated?: { noul?: unknown } } } | null)?.answers;
+  const kind = answers?.kind?.choice;
+  const confidence = answers?.kind?.confidence;
+  const frustrated = answers?.frustrated?.noul;
+  if (typeof kind !== "string" || !(KINDS as string[]).includes(kind)) return null;
+  if (typeof confidence !== "number" || typeof frustrated !== "number") return null;
+  return { kind: kind as PromptKind, confidence, frustrated };
+}
+
+/** The key a `.env` file's text holds, or null. A line is `NAME=value`, with an optional `export` and quotes around the value. */
+export function keyInDotenv(dotenv: string): string | null {
+  for (const line of dotenv.split("\n")) {
+    const found = /^\s*(?:export\s+)?([A-Za-z_]\w*)\s*=\s*(.*?)\s*$/.exec(line);
+    if (found?.[1] !== JEV_KEY) continue;
+    const value = (found[2] ?? "").replace(/^(["'])(.*)\1$/, "$2").trim();
+    if (value !== "") return value;
+  }
+  return null;
+}
+
+/** The facts with each prompt's answer from Jev in place (none when Jev was not asked). The narrative holds no prompt after it: each is listed once, in `prompts`, and none when Jev was not asked. */
+export function withPrompts(facts: Facts, sorted: readonly (Sorted | null)[] | null): Facts {
+  const turns = facts.narrative.prompts;
+  const prompts = turns.map((turn, at): Prompt => ({ line: turn.line, text: turn.text, session: turn.session ?? "", sorted: sorted?.[at] ?? null }));
+  const kept = sorted === null ? {} : { prompts };
+  // Each prompt is listed once, in `prompts`, and with no key there is no list: its text is nowhere else.
+  return { ...facts, ...kept, narrative: { ...facts.narrative, prompts: [] } };
+}
+
+/** The `prompts` line: how many, how many of the two kinds that cost the person something, and how many were frustrated. Null with no prompts. */
+export function promptsLine(prompts: readonly Prompt[] | undefined): string | null {
+  if (prompts === undefined || prompts.length === 0) return null;
+  const count = (kind: PromptKind): number => prompts.filter((one) => one.sorted?.kind === kind).length;
+  const parts = [String(prompts.length)];
+  for (const kind of ["correction", "confusion"] as const) if (count(kind) > 0) parts.push(`${count(kind)} ${kind}`);
+  const frustrated = prompts.filter((one) => (one.sorted?.frustrated ?? 0) >= 0.5).length;
+  if (frustrated > 0) parts.push(`${frustrated} frustrated`);
+  const unsorted = prompts.filter((one) => one.sorted === null).length;
+  if (unsorted > 0) parts.push(`${unsorted} not sorted`);
+  return `prompts   ${parts.join(" · ")}`;
 }
 
 /**
@@ -643,18 +717,9 @@ export function narrative(events: readonly TranscriptEvent[], tools: readonly st
  * stop being chapters and become one list somebody can work down.
  */
 export function mergeNarratives(each: readonly { session: string; read: Narrative }[]): Narrative {
-  const tag = <T extends object>(rows: readonly T[], session: string): (T & { session: string })[] =>
-    rows.map((row) => ({ ...row, session }));
   const recipes: Record<string, number> = {};
-  const bypasses: Record<string, number> = {};
   const touched: Record<string, number> = {};
-  const out = {
-    prompts: [] as Pointer[],
-    corrections: [] as Pointer[],
-    bypassSites: [] as Bypass[],
-    loops: [] as EditLoop[],
-    retries: [] as Retry[],
-  };
+  const prompts: PromptTurn[] = [];
   let edits = 0;
   let writes = 0;
   let shellReads = 0;
@@ -665,21 +730,16 @@ export function mergeNarratives(each: readonly { session: string; read: Narrativ
   };
 
   for (const { session, read } of each) {
-    out.prompts.push(...tag(read.prompts, session));
-    out.corrections.push(...tag(read.corrections, session));
-    out.bypassSites.push(...tag(read.bypassSites, session));
-    out.loops.push(...tag(read.loops, session));
-    out.retries.push(...tag(read.retries, session));
+    prompts.push(...read.prompts.map((prompt) => ({ ...prompt, session })));
     edits += read.stats.edits;
     writes += read.stats.writes;
     shellReads += read.stats.shellReads;
     commits += read.stats.commits;
     add(recipes, read.stats.recipes);
-    add(bypasses, read.stats.bypasses);
     add(touched, read.touched);
     add(shell.reads, read.shell.reads);
   }
-  return { stats: { edits, writes, shellReads, commits, recipes, bypasses }, ...out, shell, touched };
+  return { stats: { edits, writes, shellReads, commits, recipes }, prompts, shell, touched };
 }
 
 /**
@@ -860,10 +920,20 @@ export interface HealthArgs {
   /** How many of the conversations being read had a stream of their own. */
   readonly withRecord: number;
   readonly analysed: number;
+  /** How many conversations were found to read, read or not. */
+  readonly transcripts: number;
 }
 
 /** What a reader must know before believing anything under it. */
-export function health({ armed, rows, withRecord, analysed }: HealthArgs): Health {
+export function health({ armed, rows, withRecord, analysed, transcripts }: HealthArgs): Health {
+  if (!armed && transcripts > 0)
+    return {
+      blocked: null,
+      warn: [
+        "no session log was found, so everything read from the log is missing — the recorded counts, blocks, leads and dead rules. " +
+          "Everything read from the transcripts is here.",
+      ],
+    };
   if (!armed)
     return {
       blocked:
@@ -937,6 +1007,86 @@ export function joinSpawn(args: {
     at: from?.ts ?? null,
     line: from?.line ?? null,
   };
+}
+
+// ── model requests, and the guardrails that refused ──
+
+/** What one conversation, or one of its subagents, asked of a model: how often, how large, and which. */
+export interface RequestsEntry {
+  readonly session: string;
+  /** The harness's id for the subagent; null for the conversation itself. */
+  readonly agent: string | null;
+  readonly agentType: string | null;
+  readonly requests: number;
+  /** The most tokens any one request's context held. */
+  readonly largestContext: number;
+  /** The model that served most of the requests; the first of them on a tie. Null when none was named. */
+  readonly model: string | null;
+}
+
+/** Requests, largest context and model of one transcript's model requests. */
+export function requestsEntry(who: Pick<RequestsEntry, "session" | "agent" | "agentType">, list: readonly ModelRequest[]): RequestsEntry {
+  const served = new Map<string, number>();
+  let largestContext = 0;
+  for (const request of list) {
+    largestContext = Math.max(largestContext, request.context);
+    if (request.model !== null) served.set(request.model, (served.get(request.model) ?? 0) + 1);
+  }
+  let model: string | null = null;
+  let most = 0;
+  for (const [name, n] of served)
+    if (n > most) {
+      model = name;
+      most = n;
+    }
+  return { ...who, requests: list.length, largestContext, model };
+}
+
+/** One refusal found in a transcript: where, and whether the command that came next was another one. */
+export interface GuardRefusal {
+  readonly session: string;
+  readonly agent: string | null;
+  readonly line: number;
+  readonly differed: boolean;
+}
+
+/** Every refusal of one guardrail. */
+export interface GuardrailRefusals {
+  readonly entry: string;
+  readonly refusals: readonly GuardRefusal[];
+}
+
+/** A guardrail's refusal as it reaches the agent: `✗ <pack>.<entry>` at the start of a line of a failed call's result. */
+const REFUSAL_HEAD = /^✗ ([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+)/gm;
+
+/**
+ * The refusals in one conversation's events, each with the guardrail that refused it and whether the next
+ * call differed. A refusal is a failed result that holds `✗ <entry>` at a line start. The next call is the
+ * first call after the result; it differed when its tool or its input is not the refused call's, and it did
+ * not when it repeated the call or when no call came after.
+ */
+export function refusalsIn(who: Pick<GuardRefusal, "session" | "agent">, events: readonly TranscriptEvent[]): { readonly entry: string; readonly refusal: GuardRefusal }[] {
+  const out: { entry: string; refusal: GuardRefusal }[] = [];
+  const same = (a: TranscriptEvent, b: TranscriptEvent): boolean => a.kind === "use" && b.kind === "use" && a.name === b.name && JSON.stringify(a.input) === JSON.stringify(b.input);
+  events.forEach((event, at) => {
+    if (event.kind !== "result" || !event.failed) return;
+    const entries = new Set([...event.content.matchAll(REFUSAL_HEAD)].map((match) => match[1] as string));
+    if (entries.size === 0) return;
+    const refusedCall = events.find((other) => other.kind === "use" && other.id === event.id);
+    const next = events.slice(at + 1).find((other) => other.kind === "use");
+    const differed = refusedCall !== undefined && next !== undefined && !same(refusedCall, next);
+    for (const entry of entries) out.push({ entry, refusal: { ...who, line: event.line, differed } });
+  });
+  return out;
+}
+
+/** Each guardrail's refusals across conversations, the most refused first. */
+export function groupRefusals(found: readonly { readonly entry: string; readonly refusal: GuardRefusal }[]): GuardrailRefusals[] {
+  const by = new Map<string, GuardRefusal[]>();
+  for (const { entry, refusal } of found) by.set(entry, [...(by.get(entry) ?? []), refusal]);
+  return [...by]
+    .map(([entry, refusals]) => ({ entry, refusals }))
+    .sort((a, b) => b.refusals.length - a.refusals.length || a.entry.localeCompare(b.entry));
 }
 
 /** An area the conversations worked in that no entry's globs reach. */
@@ -1037,18 +1187,149 @@ export interface Facts {
   readonly metrics: Metrics;
   readonly moments: MomentsView;
   readonly terrain: readonly TerrainNode[];
-  /** The heuristic pointers, one list, each row tagged with the conversation it came from. */
+  /** What the conversations edited, wrote, read, ran and typed, each row tagged with the conversation it came from. */
   readonly narrative: Narrative;
   /** Where the conversations worked that nothing watches — the transcript's own coverage answer. */
   readonly uncovered: readonly Uncovered[];
   /** Every actor the read conversations spawned, both host-written records joined. */
   readonly actors: readonly SpawnRecord[];
+  /** Model requests, largest context and model, for each conversation read and each of its subagents. */
+  readonly requests: readonly RequestsEntry[];
+  /** Each test run, and the totals for each conversation and each of its subagents. */
+  readonly testRuns: { readonly runs: readonly TestRun[]; readonly totals: readonly TestRunTotals[] };
+  /** For each guardrail that refused in a transcript: every refusal, and whether the next command differed. */
+  readonly refusals: readonly GuardrailRefusals[];
   /** A rail refused, and then somebody edited the guard. A pointer, never an accusation. */
   readonly weakened: readonly Weakening[];
   /** The permission modes the read conversations ran under, and the auto-mode steer. */
   readonly modes: Modes;
   /** How many conversations were marked read, when asked for. Null when not asked. */
   readonly marked: number | null;
+  /** Each prompt with its kind, confidence and frustration score from Jev. Absent without Jev. */
+  readonly prompts?: readonly Prompt[];
+}
+
+/** Text safe inside HTML. */
+function escaped(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/** The report's colours: the work + flow tokens, ink first and paper under a light preference. The values are `docs/agent/brand/tokens.json`'s. */
+const REPORT_STYLE = `
+:root{--bg:#0d0e11;--bg-panel:#15161b;--bg-rule:#2a2c33;--fg:#f3f0e9;--fg-muted:#8b8d98;--flow:#22dfa8;--work:#ff6a3d;--danger:#ff5c5c;
+--sans:"Geist",system-ui,-apple-system,"Segoe UI",sans-serif;--mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+@media (prefers-color-scheme:light){:root{--bg:#f3f0e9;--bg-panel:#faf8f3;--bg-rule:#dcd8cf;--fg:#0d0e11;--fg-muted:#5f6170;--flow:#0b7557;--work:#c2491f;--danger:#b3261e}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:400 17px/1.6 var(--sans)}
+.in{max-width:900px;margin:0 auto;padding:48px 16px 96px}
+.wm{font:700 44px/1 var(--sans);letter-spacing:-0.04em;color:var(--flow)}
+.wm i{font-style:normal;color:var(--work)}
+.kind,h2,th{font:500 12px/1.4 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--fg-muted)}
+h1{margin:8px 0 0;font:700 32px/1.2 var(--sans);letter-spacing:-0.02em}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:1px;border:1px solid var(--bg-rule);border-radius:14px;background:var(--bg-rule);margin:32px 0 0;overflow:hidden}
+.tile{padding:16px 24px;background:var(--bg-panel)}
+.tile b{display:block;font:700 26px/1.2 var(--mono);font-variant-numeric:tabular-nums}
+.tile span{font-size:15px;color:var(--fg-muted)}
+.bad b{color:var(--danger)}
+h2{margin:48px 0 12px}
+table{width:100%;border-collapse:collapse;background:var(--bg-panel);border:1px solid var(--bg-rule);border-radius:14px;font-size:15px}
+th,td{padding:12px 16px;text-align:left;border-bottom:1px solid var(--bg-rule)}
+td.n,th.n{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+tr:last-child td{border-bottom:0}
+code{font:400 .92em var(--mono)}
+p{color:var(--fg-muted);font-size:15px}
+`;
+
+/** A table of rows, each a list of cells, with the columns after the first set as numbers. */
+function reportTable(head: readonly string[], rows: readonly (readonly (string | number)[])[]): string {
+  const cell = (tag: string, value: string | number, at: number): string => `<${tag}${at === 0 ? "" : ' class="n"'}>${escaped(String(value))}</${tag}>`;
+  return `<table><thead><tr>${head.map((one, at) => cell("th", one, at)).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${row.map((one, at) => cell("td", one, at)).join("")}</tr>`).join("")}</tbody></table>`;
+}
+
+/**
+ * The reading as one HTML page in the work + flow colours and type: the totals of requests, failed
+ * test runs, refusals and prompts, a row per conversation with a row under it for each subagent, the refusals per guardrail, and the
+ * prompts by kind. With no prompts in the facts,
+ * the page has no prompts.
+ */
+export function reportPage(facts: Facts): string {
+  const failedOf = (one: RequestsEntry): number => facts.testRuns.totals.filter((t) => t.session === one.session && t.agent === one.agent).reduce((n, t) => n + t.failed, 0);
+  const rowOf = (one: RequestsEntry): (string | number)[] => [one.agent === null ? one.session : `\u2514 ${one.agentType ?? "agent"}`, one.requests, failedOf(one), tokensShort(one.largestContext)];
+  const conversations = facts.requests.filter((one) => one.agent === null).flatMap((one) => [rowOf(one), ...facts.requests.filter((sub) => sub.session === one.session && sub.agent !== null).map(rowOf)]);
+  const requests = facts.requests.reduce((n, one) => n + one.requests, 0);
+  const failed = facts.testRuns.totals.reduce((n, one) => n + one.failed, 0);
+  const refusals = facts.refusals.reduce((n, one) => n + one.refusals.length, 0);
+  const tile = (value: number, label: string, bad = false): string => `<div class="tile${bad ? " bad" : ""}"><b>${value}</b><span>${label}</span></div>`;
+  const tiles = [tile(requests, "model requests"), tile(failed, "failed test runs", failed > 0), tile(refusals, "refusals", refusals > 0), ...(facts.prompts === undefined ? [] : [tile(facts.prompts.length, "prompts")])];
+  const unsorted = facts.prompts?.filter((one) => one.sorted === null).length ?? 0;
+  const kinds = facts.prompts === undefined ? [] : [...KINDS.map((kind) => [kind, facts.prompts?.filter((one) => one.sorted?.kind === kind).length ?? 0] as const), ["not sorted", unsorted] as const].filter(([, n]) => n > 0);
+  const sections = [
+    `<h2>Conversations</h2>${conversations.length === 0 ? "<p>No conversation was read.</p>" : reportTable(["Conversation", "Requests", "Failed test runs", "Largest context"], conversations)}`,
+    `<h2>Refusals per guardrail</h2>${refusals === 0 ? "<p>No guardrail refused.</p>" : reportTable(["Guardrail", "Refusals", "Next command differed"], facts.refusals.map((one) => [one.entry, one.refusals.length, one.refusals.filter((r) => r.differed).length]))}`,
+    ...(facts.prompts === undefined ? [] : [`<h2>Prompts by kind</h2>${reportTable(["Kind", "Prompts"], kinds)}`]),
+  ];
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>flow facts</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;700&display=swap">
+<style>${REPORT_STYLE}</style>
+</head>
+<body><div class="in">
+<div class="wm">flow<i>.</i></div>
+<div class="kind">facts</div>
+<h1>What the conversations say about this repo</h1>
+<div class="tiles">${tiles.join("")}</div>
+${sections.join("\n")}
+</div></body>
+</html>
+`;
+}
+
+/** A token count as a person reads it: `214k` from a thousand up. */
+function tokensShort(n: number): string {
+  return n < 1000 ? String(n) : `${Math.round(n / 1000)}k`;
+}
+
+/** A model's name without its vendor: `claude-opus-5-5` is `opus-5-5`. */
+function modelShort(model: string): string {
+  return model.replace(/^claude-/, "");
+}
+
+/** The `requests` line: every request, and the largest context any one held. Null when nothing was read. */
+function requestsLine(entries: readonly RequestsEntry[]): string | null {
+  if (entries.length === 0) return null;
+  const total = entries.reduce((n, entry) => n + entry.requests, 0);
+  return `requests  ${total} · largest context ${tokensShort(Math.max(...entries.map((entry) => entry.largestContext)))}`;
+}
+
+/** The `models` line: the conversation, then each kind of subagent with its model, counted when more than one. */
+function modelsLine(entries: readonly RequestsEntry[]): string | null {
+  const kinds = new Map<string, number>();
+  for (const entry of entries) {
+    if (entry.model === null) continue;
+    const key = `${entry.agent === null ? "conversation" : (entry.agentType ?? "agent")} ${modelShort(entry.model)}`;
+    kinds.set(key, (kinds.get(key) ?? 0) + 1);
+  }
+  if (kinds.size === 0) return null;
+  return `models    ${[...kinds].map(([key, n]) => (n === 1 ? key : `${key} ×${n}`)).join(" · ")}`;
+}
+
+/** The `tests` line: every run, how many failed, and the requests between a failed run and the next pass. Null when nothing ran. */
+function testsLine(totals: readonly TestRunTotals[]): string | null {
+  const runs = totals.reduce((n, one) => n + one.runs, 0);
+  if (runs === 0) return null;
+  const sum = (pick: (one: TestRunTotals) => number): number => totals.reduce((n, one) => n + pick(one), 0);
+  return `tests     ${runs} runs · ${sum((one) => one.failed)} failed · ${sum((one) => one.requestsBetween)} requests between a failed run and the next pass`;
+}
+
+/** The `refused` line: each guardrail with how often it refused, then how often the next command differed. Null when none refused. */
+function refusedLine(refusals: readonly GuardrailRefusals[]): string | null {
+  if (refusals.length === 0) return null;
+  const differed = refusals.reduce((n, one) => n + one.refusals.filter((refusal) => refusal.differed).length, 0);
+  return `refused   ${[...refusals.slice(0, HEADLINE).map((one) => `${one.entry} ${one.refusals.length}×`), ...(refusals.length > HEADLINE ? [`…and ${refusals.length - HEADLINE} more`] : []), `the next command differed ${differed}×`].join(" · ")}`;
 }
 
 /** How many gaps and how many actors a headline lists before it stops being a headline. */
@@ -1096,12 +1377,12 @@ export function formatFacts(facts: Facts): string[] {
   if (headline.quiet.length > 0)
     lines.push(`  quiet     ${headline.quiet.map((q) => `${q.id} (${q.daysSince}d)`).join(" · ")}`);
 
-  const { stats, corrections, loops, retries, bypassSites, shell } = facts.narrative;
+  for (const line of [requestsLine(facts.requests), modelsLine(facts.requests), testsLine(facts.testRuns.totals), refusedLine(facts.refusals), promptsLine(facts.prompts)]) if (line !== null) lines.push(`  ${line}`);
+
+  const { stats, shell } = facts.narrative;
   lines.push(
     `  session   ${stats.edits} edits · ${stats.writes} writes · ` +
-      `${stats.shellReads} shell reads · ${stats.commits} commits · ` +
-      `${corrections.length} corrections · ${loops.length} edit loops · ${retries.length} retries · ` +
-      `${bypassSites.length} bypasses`,
+      `${stats.shellReads} shell reads · ${stats.commits} commits`,
   );
   // THE PATHS BEHIND THE SHELL COUNT, so a number that went round the read tools can be followed.
   if (stats.shellReads > 0) lines.push(`  shell     read ${pathList(shell.reads)}`);

@@ -35,3 +35,6 @@ dist/
 
 # This worktree's dev port, written fresh by the worktrunk pre-start hook.
 .wt-port
+
+# The key `flow facts` sends prompts to Jev with, read from a .env file in the repo root. Never committed.
+.env

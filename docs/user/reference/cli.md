@@ -34,10 +34,14 @@ summary: "every `flow` command, what `flow init` writes and `flow uninstall` rem
 | `--largest` | Orders the conversations by size, largest first |
 | `--since <date>` | Reads only conversations from this date on |
 | `--mark` | Marks what was read, so the next run starts after it |
+| `--transcripts <dir>` | Reads the transcripts in `<dir>`, in place of the harness's folder for this worktree |
+| `--log <dir>` | Reads the session logs in `<dir>`, in place of `.flow/log/` |
+| `--report <file>` | Writes the report as one HTML page at `<file>` |
+| `--no-prompts` | Leaves the prompts out, so nothing is sent to Jev and no key is needed |
 
-The report's corrections are prompts a person typed that read as pushback, such as "no, revert that". A notice that the harness writes when a background task finishes is not a prompt.
+[The facts report](./facts.md) describes every part of the report and how each number is found.
 
-The report counts a file as changed from the log's [`change` rows](./log.md#change), whichever tool changed it.
+`flow facts` sends each prompt a person typed to Jev, so it needs `TYPESAFE_API_KEY`. It reads the key from the environment, then from a `.env` file in the repo's root, then from the `.env` in the main checkout of the flow it runs. Git must ignore each file. Without the key and without `--no-prompts`, it prints the variable's name and exits non-zero.
 
 ## What `flow init` prompts for
 
@@ -181,7 +185,7 @@ These commands exit 1:
 
 - **`flow status`**, when a fitting is missing.
 - **`flow test`**, when a case fails.
-- **`flow facts`**, when the record cannot be read at all, such as a repo where no session has ever been recorded.
+- **`flow facts`**, when there is no transcript and no log to read, such as a repo where no session has ever been recorded, or when `TYPESAFE_API_KEY` is not set and `--no-prompts` is not given.
 - **`flow replay`**, when the recording did not capture something a check reached for, or when `--against` finds a difference.
 - **`flow init`**, when one of its steps fails.
 - **`flow init`**, when git already runs other hooks and the `commit-msg` hook git runs does not call flow, or is not executable, as described under [when git already runs other hooks](#when-git-already-runs-other-hooks).

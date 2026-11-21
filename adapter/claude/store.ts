@@ -61,8 +61,8 @@ function listing(dir: string): string[] {
 
 
 /** What the harness has recorded for this working directory. A missing folder is a fact, not an error. */
-export function readStore(cwd: string, home?: string): Store {
-  const dir = projectDir(cwd, home);
+export function readStore(cwd: string, home?: string, copy?: string): Store {
+  const dir = copy ?? projectDir(cwd, home);
   if (!existsSync(dir)) return { dir, exists: false, transcripts: [], ignored: [] };
   const { transcripts, ignored } = classifyStore(listing(dir));
   return {

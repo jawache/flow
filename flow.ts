@@ -27,7 +27,7 @@
 // The hook and commit verbs are one line each here, and that is the seam working: everything they
 // do is the adapter's, and this file only owns argv, the three IO edges and the exit code.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import { registerHooks, stripTypeScriptTypes } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -40,13 +40,17 @@ import { claudeCode } from "./adapter/claude/claude.ts";
 import { codex } from "./adapter/codex/codex.ts";
 import { commitEntry, projectRoot, registerGrammars } from "./adapter/shell.ts";
 import { facts } from "./adapter/archive.ts";
+import { readKey, sortPrompts } from "./adapter/jev.ts";
 import { hookEntry, realPath } from "./adapter/hook.ts";
 import {
   CONFIG_FILE,
   configLoadFault,
   formatFacts,
+  reportPage,
+  JEV_KEY,
   loadsAsStrippedModule,
   snip,
+  withPrompts,
 } from "./adapter/domain.ts";
 import type { HookResult } from "./adapter/harness.ts";
 import { runInit, runStatus, runUninstall, type Terminal, type VerbResult } from "./adapter/product.ts";
@@ -192,6 +196,12 @@ function flag(args: readonly string[], name: string): string | null {
   return next === undefined || next.startsWith("--") ? "" : next;
 }
 
+/** A folder an option names, from where the command was run. Null when the option is not given. */
+function pathFlag(args: readonly string[], name: string): string | null {
+  const value = flag(args, name);
+  return value === null || value === "" ? null : resolve(process.cwd(), value);
+}
+
 const positional = (args: readonly string[]): string[] => {
   const out: string[] = [];
   for (let i = 0; i < args.length; i++) {
@@ -273,13 +283,23 @@ async function replayFile(args: readonly string[]): Promise<number> {
  * thinking, and `formatFacts` is the headline for one that does not. The prose is a pure home's,
  * not this file's — a report is a pile of branches about what a reader most needs to know, and the
  * branch that matters most is the one that fires least.
+ *
+ * `--report <file>` writes the page `reportPage` builds, beside either output.
  */
 async function readFacts(args: readonly string[]): Promise<number> {
   const root = process.cwd();
-  const load = existsSync(join(root, CONFIG_FILE)) ? loadConfig(await loadFile(CONFIG_FILE)) : ({ ok: true, entries: [] } as const);
+  const config = existsSync(join(root, CONFIG_FILE)) ? await loadFile(CONFIG_FILE) : null;
+  const load = config === null ? ({ ok: true, entries: [] } as const) : loadConfig(config);
   const limit = flag(args, "limit");
   const since = flag(args, "since");
-  const read = facts(root, load, harnesses, {
+  // Jev sorts the prompts, so it needs its key: without it, and without `--no-prompts`, nothing is read.
+  const sorting = flag(args, "no-prompts") === null;
+  const key = sorting ? readKey(root) : null;
+  if (sorting && key === null) {
+    process.stdout.write(`flow facts sends each prompt to Jev and needs ${JEV_KEY}: set it in the environment, in a .env file in the repo's root that git ignores, or in the .env of flow's main checkout, or pass --no-prompts\n`);
+    return 1;
+  }
+  const counted = facts(root, load, harnesses, {
     session: flag(args, "session"),
     branch: flag(args, "branch"),
     limit: limit === null || limit === "" ? null : Number(limit),
@@ -287,8 +307,14 @@ async function readFacts(args: readonly string[]): Promise<number> {
     largest: flag(args, "largest") !== null,
     since: since === null || since === "" ? null : Date.parse(since),
     mark: flag(args, "mark") !== null,
+    transcripts: pathFlag(args, "transcripts"),
+    log: pathFlag(args, "log"),
+    testRuns: config?.settings.testRuns,
   });
+  const read = withPrompts(counted, key === null ? null : await sortPrompts(counted.narrative.prompts, key));
 
+  const report = pathFlag(args, "report");
+  if (report !== null) writeFileSync(report, reportPage(read));
   if (flag(args, "json") !== null) {
     process.stdout.write(`${JSON.stringify(read, null, 2)}\n`);
     return read.health.blocked === null ? 0 : 1;
@@ -377,7 +403,7 @@ if (argv.includes("--version") || argv.includes("-v")) {
       `  flow hook <event>      a harness hook, payload on stdin — ${harness.events.join(" · ")}`,
       "  flow hook commit [<file>]  git's commit-msg gate, over the staged changes and the message in <file> — --all for the whole tree",
       "  flow replay <file>     a recorded session, back through the engine — --against <log> diffs it",
-      "  flow facts             what the record and the conversations say about this repo — --json for all of it",
+      "  flow facts             what the record and the conversations say about this repo — --json for all of it, --no-prompts to skip Jev",
       "",
     ].join("\n"),
   );

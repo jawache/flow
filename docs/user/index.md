@@ -47,6 +47,7 @@ For you when you need an exact command, verb, [moment](./reference/glossary.md#m
 - [flow under Claude Code](./reference/claude-code.md): the hooks, the payload fields, how an agent's type is learned, and the transcript.
 - [flow under Codex](./reference/codex.md): the same for Codex, with its two [trust gates](./reference/glossary.md#trust-gate).
 - [The session log](./reference/log.md): the log flow writes for each session, and every field of each kind of row.
+- [The facts report](./reference/facts.md): every part of what `flow facts` prints, where each number is read from, and what is sent to Jev.
 - [Glossary](./reference/glossary.md): every term these pages use.
 
 ### The stock checks — one page each

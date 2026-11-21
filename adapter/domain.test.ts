@@ -4,16 +4,17 @@
 // reading of a conversation once it is events. The harness a verb is handed comes from
 // `__fixtures__/host.ts`, so this file names none; what is one harness's own — its payloads, its
 // settings file, its transcripts — is proved in that harness's folder.
+import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import { DELETED, type Bound, type Row, type Tree } from "../engine/domain.ts";
-import { backedByTranscript, snipAtWord, changeEvents, noticesThatCouldShow, changeRow, changedBy, commitRange, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
+import { JEV_KEY, backedByTranscript, jevRequest, readJevReply, keyInDotenv, promptsLine, withPrompts, reportPage, type Facts, type Prompt, type PromptKind, isTestRun, testRunRules, testRunsIn, endsWithRunnerFailure, refusalsIn, refused, requestsEntry, snipAtWord, changeEvents, noticesThatCouldShow, changeRow, changedBy, commitRange, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
 import { breadcrumb, defineConfig, definePack, fileChange, loadConfig, pack, session } from "../index.ts";
 import type { Ctx, TurnAction } from "../language/domain.ts";
 import { ranSinceEdit } from "../checks/domain.ts";
 import { missingGrammarText } from "../checks/domain.ts";
 import { matchAny } from "../glob.ts";
 import { host } from "../__fixtures__/host.ts";
-import { belongsToRepo, aboutToWrite, ADD_THE_GATE_LINE, ago, armsFlow, armsOldFlow, type Candidate, chooseHarnesses, classifyBash, cleanMessage, commentLeader, COMMIT_MSG, commitArgs, commitMsgOf, CONFIG_FILE, configImports, configLoadFault, defaultHarnesses, DELIVERS, delivers, detection, FLOW_OFF, flowLinesOf, type Found, GATE_LOCAL_LINE, GATE_PATH, GATE_RUN_LINE, gateWithoutFlow, GIT_HOOK_ENV, guardPaths, harnessArg, harnessPrompt, harnessQuestion, health, hermeticEnv, HOOK_EVENTS, HOOKS_DIR, HOOKS_UNKNOWN, hooksDirOf, type HooksFolder, hostPath, initCode, type InitFacts, initLines, isCorrection, isHookEvent, isYes, joinSpawn, lastHookRan, listed, listsFlow, loadsAsStrippedModule, LOCAL_BIN, MACHINE_FLAG, mergeNarratives, narrative, NODE_FLOOR, NOT_INSTALLED, notInstalledLines, OLD_GATE_PATH, type OtherHooks, otherHooks, PACKAGE_BIN, PACKAGE_DIR, pathLines, planInit, planUninstall, readsCommitIndex, recipeTools, repoFirst, scaffold, selectSessions, SET_HOOKS_PATH, snip, stagedChanges, status, statusCode, type StatusFacts, statusLines, strip, text, treeChanges, uncoveredAreas, uninstallCode, type UninstallFacts, uninstallLines, uninstallRefusal, UPDATE_THE_GATE_LINE, wantsColour, warningLines, weakenedAfterBlock, whileBroken, writtenLines } from "./domain.ts";
+import { belongsToRepo, aboutToWrite, ADD_THE_GATE_LINE, ago, armsFlow, armsOldFlow, type Candidate, chooseHarnesses, classifyBash, cleanMessage, commentLeader, COMMIT_MSG, commitArgs, commitMsgOf, CONFIG_FILE, configImports, configLoadFault, defaultHarnesses, DELIVERS, delivers, detection, FLOW_OFF, flowLinesOf, type Found, GATE_LOCAL_LINE, GATE_PATH, GATE_RUN_LINE, gateWithoutFlow, GIT_HOOK_ENV, guardPaths, harnessArg, harnessPrompt, harnessQuestion, health, hermeticEnv, HOOK_EVENTS, HOOKS_DIR, HOOKS_UNKNOWN, hooksDirOf, type HooksFolder, hostPath, initCode, type InitFacts, initLines, isHookEvent, isYes, joinSpawn, lastHookRan, listed, listsFlow, loadsAsStrippedModule, LOCAL_BIN, MACHINE_FLAG, mergeNarratives, narrative, NODE_FLOOR, NOT_INSTALLED, notInstalledLines, OLD_GATE_PATH, type OtherHooks, otherHooks, PACKAGE_BIN, PACKAGE_DIR, pathLines, planInit, planUninstall, readsCommitIndex, repoFirst, scaffold, selectSessions, SET_HOOKS_PATH, snip, stagedChanges, status, statusCode, type StatusFacts, statusLines, strip, text, treeChanges, uncoveredAreas, uninstallCode, type UninstallFacts, uninstallLines, uninstallRefusal, UPDATE_THE_GATE_LINE, wantsColour, warningLines, weakenedAfterBlock, whileBroken, writtenLines } from "./domain.ts";
 import { type ToolAction, type TranscriptEvent } from "./harness.ts";
 
 describe("the environment a check's command sees", () => {
@@ -27,56 +28,24 @@ describe("the environment a check's command sees", () => {
   });
 });
 
-describe("the justfile — a bypass is DERIVED from the repo's own recipes", () => {
-  const justfile = ["# a comment", "test:", "    npx vitest run", "    @just lint", "lint:", "    eslint .", "[private]"].join("\n");
-
-
-  it("reads each recipe body's command words, minus the shell noise", () => {
-    // `npx vitest run` names `vitest`, not `npx`. The ported reader took the first word, found a
-    // launcher in its own noise list, and dropped the line — so in a repo that drives everything
-    // through npx (this one) the tool set came back empty and the bypass section was silently off.
-    expect(recipeTools(justfile).sort()).toEqual(["eslint", "vitest"]);
-    // With no justfile there is nothing to bypass, so the detection switches itself off rather
-    // than falling back to a hardcoded list that would be wrong in every other repo.
-    expect(recipeTools("")).toEqual([]);
-  });
-
-  it("reads a recipe body whole, so a loop over several lines is commands, and an assignment is no tool", () => {
-    const looped = ["check:", "    for f in a b; do \\", "      npx tsc -p $f; \\", "    done", "    FLOW_MACHINE_REPORT=1 npx vitest run", "    @-rm -rf dist"].join("\n");
-    expect(recipeTools(looped).sort()).toEqual(["rm", "tsc", "vitest"]);
-    // A body that does not parse whole is read line by line, and a line that does not parse names nothing.
-    expect(recipeTools(["a:", '    printf "unclosed', "    eslint ."].join("\n"))).toEqual(["eslint"]);
-  });
-
+describe("a Bash line, read from its parse", () => {
   it("judges a line that holds a heredoc: the commands around it count, the body it is fed does not", () => {
-    const tools = ["vitest", "eslint"];
-    expect(classifyBash("cat > notes.md <<'EOF'\nnpx vitest run\nEOF\nnpx vitest run", tools)).toEqual({ recipes: [], bypasses: ["vitest"], commits: false });
-    expect(classifyBash("git commit -F - <<'EOF'\nfix: run eslint\nEOF", tools)).toEqual({ recipes: [], bypasses: [], commits: true });
-    expect(classifyBash("python3 - <<'PY'\nimport os\nPY\njust test", tools)).toEqual({ recipes: ["test"], bypasses: [], commits: false });
-    // A body a shell reads is commands, and runs.
-    expect(classifyBash("bash <<'EOF'\neslint .\nEOF", tools).bypasses).toEqual(["eslint"]);
-    // A tool named inside another command's quoted argument is not run.
-    expect(classifyBash('gh issue create --body "ran npx vitest run"', tools).bypasses).toEqual([]);
-    expect(classifyBash('echo "x', tools), "a line that does not parse").toEqual({ recipes: [], bypasses: [], commits: false });
+    expect(classifyBash("git commit -F - <<'EOF'\nfix: run eslint\nEOF")).toEqual({ recipes: [], commits: true });
+    expect(classifyBash("python3 - <<'PY'\nimport os\nPY\njust test")).toEqual({ recipes: ["test"], commits: false });
+    expect(classifyBash("cat > notes.md <<'EOF'\njust test\nEOF")).toEqual({ recipes: [], commits: false });
+    expect(classifyBash('echo "x'), "a line that does not parse").toEqual({ recipes: [], commits: false });
   });
 
-  it("tells a recipe call from going round it, and leaves a heredoc alone", () => {
-    const tools = ["vitest", "eslint"];
-    expect(classifyBash("just test && just lint", tools)).toEqual({ recipes: ["test", "lint"], bypasses: [], commits: false });
-    expect(classifyBash("npx vitest run", tools)).toEqual({ recipes: [], bypasses: ["vitest"], commits: false });
-    // A tool run by its path is the tool.
-    expect(classifyBash("node_modules/.bin/vitest run", tools)).toEqual({ recipes: [], bypasses: ["vitest"], commits: false });
-    expect(classifyBash("./node_modules/.bin/eslint .", tools)).toEqual({ recipes: [], bypasses: ["eslint"], commits: false });
-    expect(classifyBash("just test-vitest", tools)).toEqual({ recipes: ["test-vitest"], bypasses: [], commits: false });
-    expect(classifyBash("git commit -m x", tools).commits).toBe(true);
-    // Authoring a file whose body mentions a tool is not running that tool.
-    expect(classifyBash("cat <<'EOF' > x\neslint .\nEOF", tools)).toEqual({ recipes: [], bypasses: [], commits: false });
-    // A here-string is not a heredoc: the line is still read.
-    expect(classifyBash("grep -c x <<< foo && npx vitest run", tools).bypasses).toEqual(["vitest"]);
+  it("names the recipes a line drives, and a shell line that runs git commit is a commit", () => {
+    expect(classifyBash("just test && just lint")).toEqual({ recipes: ["test", "lint"], commits: false });
+    expect(classifyBash("just test-vitest")).toEqual({ recipes: ["test-vitest"], commits: false });
+    expect(classifyBash("git commit -m x").commits).toBe(true);
+    expect(classifyBash("cd sub && git commit -m x").commits).toBe(true);
+    expect(classifyBash("git status").commits).toBe(false);
   });
 });
 
-describe("the narrative reading — stats, loops, retries, and what was touched", () => {
+describe("the narrative reading — stats and what was touched", () => {
   const call = (name: string, input: Record<string, unknown>, line: number): TranscriptEvent => ({
     line,
     kind: "use",
@@ -88,7 +57,7 @@ describe("the narrative reading — stats, loops, retries, and what was touched"
     path: typeof input["file_path"] === "string" ? input["file_path"] : "",
   });
 
-  it("counts the work, and cites where the human pushed back", () => {
+  it("counts the work, and lists the prompts", () => {
     const read = narrative(
       [
         { line: 1, kind: "prompt", text: "add the parser" },
@@ -98,39 +67,16 @@ describe("the narrative reading — stats, loops, retries, and what was touched"
         call("Read", { file_path: "src/b.ts" }, 5),
         call("Bash", { command: "git commit -m x" }, 6),
       ],
-      [],
     );
     expect(read.stats).toMatchObject({ edits: 1, writes: 1, commits: 1 });
     expect(read.prompts.map((p) => p.line)).toEqual([1, 2]);
-    expect(read.corrections.map((p) => p.text)).toEqual(["no, revert that"]);
     expect(read.touched).toEqual({ "src/a.ts": 2, "src/b.ts": 1 });
   });
 
   it("counts a file read through the shell as touched, like a Read", () => {
     const cat: TranscriptEvent = { line: 1, kind: "use", ts: null, id: "t1", name: "Bash", action: "shell", input: { command: "cat src/a.ts src/c.ts" }, path: "", reads: ["src/a.ts", "src/c.ts"] };
-    const read = narrative([cat, call("Read", { file_path: "src/a.ts" }, 2)], []);
+    const read = narrative([cat, call("Read", { file_path: "src/a.ts" }, 2)]);
     expect(read.touched).toEqual({ "src/a.ts": 2, "src/c.ts": 1 });
-  });
-
-  it("a file edited five times in a row is a LOOP; four is just work", () => {
-    const edits = (n: number): TranscriptEvent[] =>
-      Array.from({ length: n }, (_, i) => call("Edit", { file_path: "src/a.ts" }, i + 1));
-    expect(narrative(edits(4)).loops).toEqual([]);
-    expect(narrative(edits(5)).loops).toEqual([{ path: "src/a.ts", count: 5, from: 1, to: 5 }]);
-    // A path outside the repo breaks the run rather than extending it — it is not this tree's file.
-    expect(narrative([...edits(3), call("Edit", { file_path: "/tmp/x" }, 9), ...edits(3)]).loops).toEqual([]);
-  });
-
-  it("the same command three times is a RETRY, with every line it happened on", () => {
-    const runs = Array.from({ length: 3 }, (_, i) => call("Bash", { command: "just test" }, i + 1));
-    expect(narrative(runs).retries).toEqual([{ command: "just test", count: 3, lines: [1, 2, 3] }]);
-    expect(narrative(runs.slice(0, 2)).retries).toEqual([]);
-  });
-
-  it("records a bypass at the site it happened, so the coach reads the line", () => {
-    const read = narrative([call("Bash", { command: "npx vitest run" }, 7)], ["vitest"]);
-    expect(read.stats.bypasses).toEqual({ vitest: 1 });
-    expect(read.bypassSites).toEqual([{ line: 7, tool: "vitest", text: "npx vitest run" }]);
   });
 
   it("merges several readings into ONE list, each pointer tagged with its own transcript", () => {
@@ -142,8 +88,8 @@ describe("the narrative reading — stats, loops, retries, and what was touched"
     ]);
     expect(merged.stats.edits).toBe(2);
     expect(merged.touched).toEqual({ "a.ts": 2 });
-    expect(merged.corrections).toEqual([{ line: 1, text: "no, undo it", session: "s1" }]);
-    expect(mergeNarratives([]).stats).toEqual({ edits: 0, writes: 0, shellReads: 0, commits: 0, recipes: {}, bypasses: {} });
+    expect(merged.prompts).toMatchObject([{ line: 1, text: "no, undo it", session: "s1" }]);
+    expect(mergeNarratives([]).stats).toEqual({ edits: 0, writes: 0, shellReads: 0, commits: 0, recipes: {} });
   });
 
   it("counts shell reads from the transcript, and no shell write — a transcript says what ran, never what it changed", () => {
@@ -215,16 +161,23 @@ describe("selecting which conversations a run covers", () => {
 });
 
 describe("the health line above every number", () => {
-  it("an unarmed record BLOCKS the reading rather than reporting zeroes", () => {
-    const said = health({ armed: false, rows: 0, withRecord: 0, analysed: 3 });
+  it("no log and no transcript BLOCKS the reading rather than reporting zeroes", () => {
+    const said = health({ armed: false, rows: 0, withRecord: 0, analysed: 0, transcripts: 0 });
     expect(said.blocked).toContain("NOT ARMED");
     expect(said.warn).toEqual([]);
   });
 
+  it("transcripts and no log WARN that the log is missing, and block nothing", () => {
+    const said = health({ armed: false, rows: 0, withRecord: 0, analysed: 3, transcripts: 3 });
+    expect(said.blocked).toBe(null);
+    expect(said.warn).toHaveLength(1);
+    expect(said.warn[0]).toContain("no session log was found");
+  });
+
   it("armed but silent for what was read is a warning, not a verdict", () => {
-    expect(health({ armed: true, rows: 0, withRecord: 1, analysed: 1 }).warn[0]).toContain("holds no events");
-    expect(health({ armed: true, rows: 0, withRecord: 0, analysed: 2 }).warn[0]).toContain("narrative only");
-    expect(health({ armed: true, rows: 12, withRecord: 1, analysed: 1 })).toEqual({ blocked: null, warn: [] });
+    expect(health({ armed: true, rows: 0, withRecord: 1, analysed: 1, transcripts: 1 }).warn[0]).toContain("holds no events");
+    expect(health({ armed: true, rows: 0, withRecord: 0, analysed: 2, transcripts: 2 }).warn[0]).toContain("narrative only");
+    expect(health({ armed: true, rows: 12, withRecord: 1, analysed: 1, transcripts: 1 })).toEqual({ blocked: null, warn: [] });
   });
 });
 
@@ -1252,12 +1205,25 @@ describe("the narrative — the pairing, and the pointers it produces", () => {
     expect(host.transcripts.events(file)[0]).not.toHaveProperty("reads");
   });
 
+  it("gives a prompt the agent's last message in words before it, and none when it had said nothing", () => {
+    const file = store(
+      spoke("first"),
+      spokeBack([{ type: "text", text: "I changed the parser." }, used("Bash", { command: "just test" }, "t1")]),
+      spoke("no, revert that"),
+    );
+    const prompts = host.transcripts.events(file, "/repo").filter((event) => event.kind === "prompt");
+    expect(prompts).toEqual([
+      { line: 1, kind: "prompt", text: "first" },
+      { line: 3, kind: "prompt", text: "no, revert that", before: "I changed the parser." },
+    ]);
+  });
+
   it("a result carrying an object rather than text is still readable", () => {
     const file = store({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t", content: { n: 1 } }] } });
     expect(host.transcripts.events(file)[0]).toMatchObject({ kind: "result", content: '{"n":1}', failed: false });
   });
 
-  it("leaves a background task's notice out of the prompts, so its result is never read as the human's correction", () => {
+  it("leaves a background task's notice out of the prompts, so its result is never read as the human's prompt", () => {
     // The host writes the notice as a user line. The agent's own result is inside it, and reads as
     // pushback as often as not: "instead", "rather than", "undo". Either mark is a notice.
     const file = store(
@@ -1266,21 +1232,7 @@ describe("the narrative — the pairing, and the pointers it produces", () => {
       { ...spoke("Agent finished: it chose a set instead."), origin: { kind: "task-notification" } },
     );
     const read = narrative(host.transcripts.events(file));
-    expect(read.prompts).toEqual([{ line: 1, text: "no, revert that" }]);
-    expect(read.corrections).toEqual([{ line: 1, text: "no, revert that" }]);
-  });
-
-  it("spots the human pushing back — a heuristic, which is why every finding cites its line", () => {
-    expect(isCorrection("actually, revert that")).toBe(true);
-    expect(isCorrection("you forgot the test")).toBe(true);
-    // `no,` — the commonest spelling of pushback there is, and the one the ported regex could
-    // never match: its alternative ended in a punctuation class and was then asked for a word
-    // boundary, which a comma followed by a space can never be. A dead alternative in a detector
-    // is the spec's own P2 shape, so the anchoring moved outside the class.
-    expect(isCorrection("no, the other one")).toBe(true);
-    expect(isCorrection("wait, that is not it")).toBe(true);
-    expect(isCorrection("please add a test for the parser")).toBe(false);
-    expect(isCorrection("the manifest has no, or few, entries")).toBe(true);
+    expect(read.prompts).toMatchObject([{ line: 1, text: "no, revert that" }]);
   });
 
   it("shortens for printing, and MARKS the cut so a truncated line never reads as a whole one", () => {
@@ -2432,5 +2384,230 @@ describe("backedByTranscript", () => {
 
   it("keeps every log when there is no store to compare with", () => {
     expect(backedByTranscript(logs, null)).toEqual({ kept: logs, excluded: [] });
+  });
+});
+
+describe("requests, models and refusals of a conversation with one subagent", () => {
+  const conversation = requestsEntry({ session: "s1", agent: null, agentType: null }, [
+    { line: 2, model: "claude-opus-5-5", context: 30_000 },
+    { line: 5, model: "claude-opus-5-5", context: 214_000 },
+    { line: 9, model: "claude-sonnet-5-5", context: 90_000 },
+  ]);
+  const builder = requestsEntry({ session: "s1", agent: "a1", agentType: "builder" }, [{ line: 2, model: "claude-sonnet-5-5", context: 50_000 }]);
+
+  it("counts the requests and the largest context, for the conversation and for the subagent", () => {
+    expect(conversation).toMatchObject({ requests: 3, largestContext: 214_000 });
+    expect(builder).toMatchObject({ requests: 1, largestContext: 50_000 });
+  });
+
+  it("names the model most requests ran on, and none when no request named one", () => {
+    expect(conversation.model).toBe("claude-opus-5-5");
+    expect(builder.model).toBe("claude-sonnet-5-5");
+    expect(requestsEntry({ session: "s", agent: null, agentType: null }, [{ line: 1, model: null, context: 5 }]).model).toBeNull();
+  });
+
+  const use = (line: number, id: string, command: string): TranscriptEvent => ({ line, kind: "use", ts: null, id, name: "Bash", action: "shell", input: { command }, path: "" });
+  const result = (line: number, id: string, content: string, failed = true): TranscriptEvent => ({ line, kind: "result", id, content, failed });
+  const refusal = refused([{ moment: "commit", block: { do: "block", entry: "git.conventionalCommitFormat", message: "Use a type.", subject: null, detail: "" } }])?.stderr ?? "";
+
+  it("finds a refusal by its guardrail's name, and tells a next command that differs from a repeat", () => {
+    const events = [
+      use(2, "t1", "git commit -m wip"),
+      result(3, "t1", refusal),
+      use(4, "t2", "git commit -m 'fix: x'"),
+      result(5, "t2", "ok", false),
+      use(6, "t3", "git commit -m wip"),
+      result(7, "t3", refusal),
+      use(8, "t4", "git commit -m wip"),
+      result(9, "t4", refusal),
+    ];
+    const entry = "git.conventionalCommitFormat";
+    const who = { session: "s1", agent: null };
+    expect(refusalsIn(who, events)).toEqual([
+      { entry, refusal: { ...who, line: 3, differed: true } },
+      { entry, refusal: { ...who, line: 7, differed: false } },
+      { entry, refusal: { ...who, line: 9, differed: false } },
+    ]);
+  });
+
+  it("ignores a result that only shows the text, because it did not fail", () => {
+    expect(refusalsIn({ session: "s1", agent: null }, [use(2, "t1", "cat notes"), result(3, "t1", refusal, false)])).toEqual([]);
+  });
+});
+
+describe("test runs, decided from the justfile", () => {
+  const justfile = [
+    "set shell := [\"bash\", \"-c\"]",
+    "",
+    "# the fast tests",
+    "test file='':",
+    "    npx vitest run {{file}}",
+    "",
+    "e2e spec:",
+    "    @npx playwright test {{spec}}",
+    "",
+    "build:",
+    "    mkdir -p dist",
+    "    grep -r x src",
+    "    tsc -p .",
+    "    go build -ldflags \"$(git describe)\"",
+    "    node scripts/x.mjs",
+    "",
+    "fmt:",
+    "    prettier --write .",
+    "",
+    "verify:",
+    "    cargo nextest run",
+  ].join("\n");
+  const rules = testRunRules(justfile);
+
+  it("counts a recipe by its prefix, and the programs a counted recipe runs", () => {
+    expect(isTestRun("just test", rules)).toBe(true);
+    expect(isTestRun("just e2e x", rules)).toBe(true);
+    expect(isTestRun("vitest run", rules)).toBe(true);
+    expect(isTestRun("npx vitest run adapter", rules)).toBe(true);
+    expect(isTestRun("just fmt", rules)).toBe(false);
+    expect(isTestRun("git status", rules), "git only runs inside a substitution").toBe(false);
+    expect(isTestRun("prettier --write .", rules), "fmt is no counted recipe").toBe(false);
+  });
+
+  it("never counts a shell utility, though a build recipe runs it", () => {
+    expect(isTestRun("mkdir -p out", rules)).toBe(false);
+    expect(isTestRun("grep -r x src", rules)).toBe(false);
+    expect(isTestRun("node scripts/x.mjs", rules), "node never counts").toBe(false);
+    expect(isTestRun("tsc -p .", rules)).toBe(true);
+  });
+
+  it("counts a recipe testRuns names, matched whole", () => {
+    expect(isTestRun("just verify", rules)).toBe(false);
+    const added = testRunRules(justfile, ["verify"]);
+    expect(isTestRun("just verify", added)).toBe(true);
+    expect(isTestRun("cargo nextest run", added)).toBe(true);
+    expect(isTestRun("just verify-all", added)).toBe(false);
+  });
+
+  const use = (line: number, id: string, command: string): TranscriptEvent => ({ line, kind: "use", ts: null, id, name: "Bash", action: "shell", input: { command }, path: "" });
+  const result = (line: number, id: string, failed: boolean): TranscriptEvent => ({ line, kind: "result", id, content: "", failed });
+  const asked = (...lines: number[]) => lines.map((line) => ({ line, model: null, context: 0 }));
+  const who = { session: "s1", agent: "a1", agentType: "builder" };
+
+  it("counts the requests from the first failed run to the next pass, a run that fails twice once", () => {
+    const events = [
+      use(2, "t1", "just test"),
+      result(3, "t1", true),
+      use(6, "t2", "just test"),
+      result(7, "t2", true),
+      use(10, "t3", "just test"),
+      result(11, "t3", false),
+      use(14, "t4", "ls"),
+    ];
+    const { runs, totals } = testRunsIn(who, events, asked(1, 4, 5, 8, 9, 12), testRunRules(justfile));
+    expect(runs.map((run) => [run.line, run.failed])).toEqual([[2, true], [6, true], [10, false]]);
+    expect(totals).toEqual({ ...who, runs: 3, failed: 2, requestsBetween: 4 });
+  });
+
+  it("counts no requests for a failed run no pass follows, or a run that passes first", () => {
+    const events = [use(2, "t1", "just test"), result(3, "t1", false), use(6, "t2", "just test"), result(7, "t2", true)];
+    expect(testRunsIn(who, events, asked(1, 4, 5, 8), testRunRules(justfile)).totals).toMatchObject({ runs: 2, failed: 1, requestsBetween: 0 });
+  });
+
+  it("fails a run whose output ends with a runner's failure line though the harness marked no error, and not one that says 0 failed", () => {
+    const lines = ["Tests:       1 failed, 5 passed, 6 total", "Tests  2 failed | 5 passed (7)", " Test Files  1 failed (1)", "--- FAIL: TestX (0.00s)", "FAIL\tpkg\t0.1s", "FAIL src/a.test.ts", "adapter/x.ts(3,4): error TS2304: Cannot find name", "error: Recipe `test` failed on line 4 with exit code 1", "✖ 3 problems (3 errors)"];
+    for (const line of lines) {
+      const events: TranscriptEvent[] = [use(2, "t1", "just test | tail -5"), { line: 3, kind: "result", id: "t1", content: `ok\n${line}\n`, failed: false }];
+      expect(testRunsIn(who, events, [], testRunRules(justfile)).runs[0]?.failed, line).toBe(true);
+    }
+    expect(endsWithRunnerFailure("Tests  0 failed | 7 passed (7)\nTest Files  0 failed")).toBe(false);
+    expect(endsWithRunnerFailure(`FAIL\n${"x".repeat(3000)}`), "only the end is read").toBe(false);
+  });
+});
+
+describe("the prompts, sorted by Jev", () => {
+  it("asks Jev about one prompt with the prompt, the end of the agent's message and the seven kinds, and no tool call", () => {
+    const body = jevRequest("no, revert that", "I changed the parser") as {
+      model: string;
+      state: Record<string, string>;
+      questions: { kind: { criteria: Record<string, string> }; frustrated: { type: string } };
+    };
+    expect(body.state).toEqual({ the_agent_said_before: "I changed the parser", the_person_then_wrote: "no, revert that" });
+    expect(Object.keys(body.questions.kind.criteria)).toEqual(["correction", "confusion", "new_direction", "answer", "go_ahead", "question", "other"]);
+    expect(body.questions.frustrated.type).toBe("noul");
+    expect(JSON.stringify(body)).not.toMatch(/tool_use|"command"/);
+  });
+
+  it("reads a reply into kind, confidence and frustration score, and nothing else", () => {
+    const reply = { answers: { kind: { choice: "correction", confidence: 0.9 }, frustrated: { noul: 0.7 } } };
+    expect(readJevReply(reply)).toEqual({ kind: "correction", confidence: 0.9, frustrated: 0.7 });
+    expect(readJevReply({ answers: { kind: { choice: "rant", confidence: 0.9 }, frustrated: { noul: 0.7 } } })).toBeNull();
+    expect(readJevReply({ answers: { kind: { choice: "answer" } } })).toBeNull();
+    expect(readJevReply(null)).toBeNull();
+  });
+
+  it("reads the key from a .env file's lines as a shell would", () => {
+    expect(keyInDotenv("# a\nOTHER=x\nexport TYPESAFE_API_KEY='quoted'\n")).toBe("quoted");
+    expect(keyInDotenv("TYPESAFE_API_KEY=plain")).toBe("plain");
+    expect(keyInDotenv("TYPESAFE_API_KEY=\nOTHER=x")).toBeNull();
+    expect(keyInDotenv("")).toBeNull();
+  });
+
+  it("prints the prompts line, and none without prompts", () => {
+    const sorted = (kind: PromptKind, frustrated: number): Prompt => ({ line: 1, text: "x", session: "s", sorted: { kind, confidence: 0.9, frustrated } });
+    expect(promptsLine([sorted("correction", 0.8), sorted("confusion", 0.6), sorted("answer", 0.1), { line: 2, text: "y", session: "s", sorted: null }])).toBe("prompts   4 · 1 correction · 1 confusion · 2 frustrated · 1 not sorted");
+    expect(promptsLine([])).toBeNull();
+    expect(promptsLine(undefined)).toBeNull();
+  });
+
+  it("cuts code blocks from the agent's message before it is sent beside a prompt", () => {
+    const said = "Here is the file:\n```ts\nconst key = 1;\n```\nShall I merge?\n```\nnever closed";
+    const read = narrative([{ line: 1, kind: "prompt", text: "go", before: said }]);
+    expect(read.prompts[0]?.before).toBe("Here is the file:\n\nShall I merge?");
+  });
+
+  it("puts Jev's answers on the prompts and keeps the long text out of the report", () => {
+    const one = narrative([{ line: 1, kind: "prompt", text: "go", before: "Shall I merge?" }]);
+    const read = { narrative: mergeNarratives([{ session: "s1", read: one }]) } as Facts;
+    expect(read.narrative.prompts[0]).toMatchObject({ asked: "go", before: "Shall I merge?" });
+    const out = withPrompts(read, [{ kind: "go_ahead", confidence: 0.95, frustrated: 0 }]);
+    expect(out.prompts).toEqual([{ line: 1, text: "go", session: "s1", sorted: { kind: "go_ahead", confidence: 0.95, frustrated: 0 } }]);
+    expect(out.narrative.prompts, "each prompt is listed once").toEqual([]);
+    const unsorted = withPrompts(read, null);
+    expect(unsorted).not.toHaveProperty("prompts");
+    expect(unsorted.narrative.prompts, "--no-prompts leaves every prompt's text out").toEqual([]);
+    expect(JEV_KEY).toBe("TYPESAFE_API_KEY");
+  });
+});
+
+describe("reportPage", () => {
+  const page = reportPage({
+    requests: [
+      { session: "s1", agent: null, agentType: null, requests: 10, largestContext: 214000, model: null },
+      { session: "s1", agent: "a", agentType: "builder", requests: 5, largestContext: 90000, model: null },
+    ],
+    testRuns: { runs: [], totals: [{ session: "s1", agent: null, agentType: null, runs: 4, failed: 3, requestsBetween: 0 }] },
+    refusals: [{ entry: "pack.<entry>", refusals: [{ session: "s1", agent: null, line: 3, differed: true }, { session: "s1", agent: null, line: 9, differed: false }] }],
+    prompts: [
+      { line: 1, text: "go", session: "s1", sorted: { kind: "go_ahead", confidence: 0.9, frustrated: 0 } },
+      { line: 2, text: "go", session: "s1", sorted: null },
+    ],
+  } as unknown as Facts);
+
+  it("holds each conversation's requests, failed test runs and largest context, and each guardrail's refusals", () => {
+    expect(page).toContain("<td>s1</td><td class=\"n\">10</td><td class=\"n\">3</td><td class=\"n\">214k</td>");
+    expect(page).toContain("<td>pack.&lt;entry&gt;</td><td class=\"n\">2</td><td class=\"n\">1</td>");
+    expect(page).toContain("<td>\u2514 builder</td><td class=\"n\">5</td><td class=\"n\">0</td><td class=\"n\">90k</td>");
+    expect(page).toContain("&lt;entry&gt;");
+    expect(page).toContain("go_ahead");
+    expect(page).toContain("<td>not sorted</td><td class=\"n\">1</td>");
+  });
+
+  it("has no prompts when the facts hold none", () => {
+    expect(reportPage({ requests: [], testRuns: { runs: [], totals: [] }, refusals: [] } as unknown as Facts)).not.toContain("Prompts");
+  });
+
+  it("uses only colours that are values in the brand tokens", () => {
+    const tokens = readFileSync(new URL("../docs/agent/brand/tokens.json", import.meta.url), "utf8").toLowerCase();
+    const colours = page.toLowerCase().match(/#[0-9a-f]{6,8}\b/g) ?? [];
+    expect(colours.length).toBeGreaterThan(0);
+    for (const colour of colours) expect(tokens, colour).toContain(`"${colour}"`);
   });
 });

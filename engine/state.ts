@@ -303,14 +303,14 @@ export function readRows(root: string, session: string): Row[] {
 }
 
 /**
- * Every session that has a stream here, oldest file first.
+ * Every session that has a stream here, oldest file first. A `dir` is read in place of `.flow/log/`.
  *
  * `commit` is included: its rows still count toward what an entry has done, and only the SESSION
  * count excludes it — a shared file is not a chat, and the metrics say so where it matters.
  */
-export function sessionIds(root: string): string[] {
+export function sessionIds(root: string, dir?: string): string[] {
   try {
-    return readdirSync(join(flowDir(root), "log"))
+    return readdirSync(dir ?? join(flowDir(root), "log"))
       .filter((name) => name.endsWith(".jsonl"))
       .map((name) => name.slice(0, -".jsonl".length))
       .sort();
@@ -319,9 +319,9 @@ export function sessionIds(root: string): string[] {
   }
 }
 
-/** The whole recorded history of a repo — every stream, read. */
-export function readHistory(root: string): SessionRows[] {
-  return sessionIds(root).map((session) => ({ session, rows: readRows(root, session) }));
+/** The whole recorded history of a repo — every stream, read. A `dir` is a copy of `.flow/log/` kept elsewhere, read in its place. */
+export function readHistory(root: string, dir: string = join(flowDir(root), "log")): SessionRows[] {
+  return sessionIds(root, dir).map((session) => ({ session, rows: readRowsFile(join(dir, `${session}.jsonl`)) }));
 }
 
 // ── what the archival side has already read ──────────────────────────────────

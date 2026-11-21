@@ -139,6 +139,62 @@ describe("which checkout a conversation belongs to", () => {
 
 // The marker store itself lives in the engine's state home with every other `.flow/` path — the
 // adapter only asks. What is proved here is the BACKLOG behaviour it buys.
+describe("transcripts kept elsewhere", () => {
+  it("reads one conversation and its subagent from a folder laid out as work's record keeps them, with no log, and warns", () => {
+    // A copy of another worktree's store: the conversation was recorded in a checkout that is gone.
+    const kept = mkdtempSync(join(tmpdir(), "flow-kept-"));
+    try {
+      const gone = join(tmpdir(), "flow-gone-worktree");
+      writeFileSync(
+        join(kept, "sess-a.jsonl"),
+        [
+          line({ type: "user", timestamp: "2026-09-04T10:00:00.000Z", cwd: gone, gitBranch: "main", message: { content: "go" } }),
+          line({
+            type: "assistant",
+            timestamp: "2026-09-04T10:01:00.000Z",
+            message: { content: [{ type: "tool_use", id: "t1", name: "Edit", input: { file_path: join(gone, "a.ts") } }] },
+          }),
+          "",
+        ].join("\n"),
+      );
+      mkdirSync(join(kept, "sess-a", "subagents"), { recursive: true });
+      writeFileSync(
+        join(kept, "sess-a", "subagents", "agent-1.jsonl"),
+        line({ type: "user", timestamp: "2026-09-04T10:00:30.000Z", cwd: gone, message: { content: "sub" } }) + "\n",
+      );
+      writeFileSync(join(kept, "sess-a", "subagents", "agent-1.meta.json"), JSON.stringify({ agentType: "builder", toolUseId: "toolu_9" }));
+
+      const read = facts(repo, regime, [claudeCode], { home, transcripts: kept });
+      expect(read.selection.analyse.map((c) => c.id)).toEqual(["sess-a"]);
+      expect(read.narrative.stats.edits).toBe(1);
+      expect(read.actors.map((a) => [a.agent, a.agentType])).toEqual([["1", "builder"]]);
+      expect(read.health.blocked).toBe(null);
+      expect(read.health.warn[0]).toContain("no session log was found");
+
+      // This worktree's own log belongs to no copy: with `--transcripts` alone it is not read, and excludes nothing.
+      appendRows({ root: repo, session: "other", branch: "main", who: { agent: "main" } }, [{ kind: "tool", tool: "Edit", path: "a.ts", edit: true }]);
+      const alone = facts(repo, regime, [claudeCode], { home, transcripts: kept });
+      expect(alone.withoutTranscript).toHaveLength(0);
+      expect(alone.health.warn[0]).toContain("no session log was found");
+    } finally {
+      rmSync(kept, { recursive: true, force: true });
+    }
+  });
+
+  it("reads the session logs in a given folder in place of .flow/log/", () => {
+    conversation(repo, "one");
+    const logs = mkdtempSync(join(tmpdir(), "flow-logs-"));
+    try {
+      writeFileSync(join(logs, "one.jsonl"), line({ kind: "guardrail", moment: "write", id: "rails.everyone", subject: "a.ts", out: "deny" }) + "\n");
+      const read = facts(repo, regime, [claudeCode], { home, log: logs });
+      expect(read.metrics.headline.blocks).toBe(1);
+      expect(read.health.blocked).toBe(null);
+    } finally {
+      rmSync(logs, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("the backlog's memory", () => {
   it("a marked conversation leaves the backlog, and only ANALYSED ones are ever marked", () => {
     conversation(repo, "one");
@@ -188,12 +244,12 @@ describe("the reading, assembled", () => {
     const read = facts(repo, regime, [claudeCode], { home });
     expect(read.health.blocked).toBe(null);
     expect(read.coverage).toEqual({ analysed: 1, withRecord: 1, narrativeOnly: 0 });
-    // NUMBERS — from the rows, and from nowhere else.
+    // NUMBERS FROM THE ROWS — what the guard did.
     expect(read.metrics.headline.blocks).toBe(1);
     expect(read.metrics.guardrails.find((g) => g.id === "rails.everyone")?.hits).toBe(1);
-    // NARRATIVE — from the conversation, heuristic, and every finding citing its line.
+    // NARRATIVE — from the conversation: counts of what was called, and the line each came from.
     expect(read.narrative.stats.edits).toBe(1);
-    expect(read.narrative.corrections).toEqual([{ line: 4, text: "no, revert that", session: "one" }]);
+    expect(read.narrative.prompts).toContainEqual(expect.objectContaining({ line: 4, text: "no, revert that", session: "one" }));
     // The universe is the CONFIG's answer, handed in — this file never loads one.
     expect(read.moments.totals.guardrails).toBe(10);
     expect(read.terrain.some((node) => node.path === "src/a.ts")).toBe(true);
@@ -250,7 +306,6 @@ describe("the reading, assembled", () => {
   it("a conversation with no record of its own is narrative-only, and the health line says so", () => {
     conversation(repo, "one");
     const read = facts(repo, regime, [claudeCode], { home });
-    expect(read.health.blocked).toContain("NOT ARMED");
     expect(read.coverage).toEqual({ analysed: 1, withRecord: 0, narrativeOnly: 1 });
     expect(read.metrics.span.tools).toBe(0);
   });

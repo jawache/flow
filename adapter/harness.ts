@@ -126,12 +126,25 @@ export interface Spawn {
   readonly line: number;
 }
 
+/** One model request a conversation made: the line it was recorded on, the model that served it and the tokens its context held. */
+export interface ModelRequest {
+  readonly line: number;
+  readonly model: string | null;
+  readonly context: number;
+}
+
 /** What a tool call did, whichever harness's tool it was: `write` makes a whole file, `edit` changes part of one. */
 export type ToolAction = "edit" | "write" | "read" | "shell" | "other";
 
 /** One thing that happened in a conversation, with the line it happened on. */
 export type TranscriptEvent =
-  | { readonly line: number; readonly kind: "prompt"; readonly text: string }
+  | {
+      readonly line: number;
+      readonly kind: "prompt";
+      readonly text: string;
+      /** The agent's last message before it, when the harness's record has one. */
+      readonly before?: string;
+    }
   | { readonly line: number; readonly kind: "result"; readonly id: string; readonly content: string; readonly failed: boolean }
   | {
       readonly line: number;
@@ -238,12 +251,17 @@ export interface Transcripts {
   readonly brief: (jsonl: string) => string;
   /** The agent the session itself runs as (`--agent`, or its setting), read from the parent's transcript; null when it runs as none. */
   readonly sessionAgent: (jsonl: string) => string | null;
-  /** The store as it stands for a working directory. A missing folder is a fact, not an error. */
-  readonly readStore: (cwd: string, home?: string) => Store;
+  /**
+   * The store as it stands for a working directory. A missing folder is a fact, not an error. A `dir` names
+   * a copy kept elsewhere, laid out as the harness lays out its own, and is read in place of the harness's folder.
+   */
+  readonly readStore: (cwd: string, home?: string, dir?: string) => Store;
   /** One transcript's bytes, and the sidecar beside it if there is one. */
   readonly readTranscript: (dir: string, held: StoredTranscript) => { jsonl: string; meta: SpawnMeta | null };
   /** What the conversation did, in order. */
   readonly events: (jsonl: string, root?: string, home?: string) => TranscriptEvent[];
+  /** The model requests the conversation made, in order, each counted once however many lines the host wrote for it. */
+  readonly requests: (jsonl: string) => ModelRequest[];
   /** The conversation's first facts: when it started, on which branch, in which folder. */
   readonly head: (jsonl: string) => TranscriptHead;
   /** The subagents the conversation started, by the host's id for each. */

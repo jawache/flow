@@ -10,9 +10,9 @@
 // TWO SOURCES, KEPT STRICTLY APART, because that separation IS the report:
 //
 //   THE ROWS        flow's own event log. Deterministic ground truth — what fired, what refused,
-//                   what was shown and when. Numbers come from here and from nowhere else.
-//   THE TRANSCRIPT  the conversation. HEURISTIC — a correction, an edit loop, a bypass — and every
-//                   finding carries the line it came from so a reader judges the spot, not the label.
+//                   what was shown and when. Every count of what a rule did comes from here.
+//   THE TRANSCRIPT  the conversation. Counts of what was called, and the line each came from, so a
+//                   reader judges the spot, not the label.
 //
 // SCOPE COMES FROM THE STORE, never from the log. History from before flow was installed is
 // precisely what a first reading most wants to see, and a backlog taken from the log could only
@@ -38,15 +38,20 @@ import {
   mergeNarratives,
   modesOf,
   narrative,
-  recipeTools,
+  refusalsIn,
+  requestsEntry,
+  testRunRules,
+  testRunsIn,
   selectSessions,
   uncoveredAreas,
+  groupRefusals,
   guardPaths,
   weakenedAfterBlock,
   worktreeFolders,
   type Candidate,
   type Facts,
   type Narrative,
+  type RequestsEntry,
   type SelectOpts,
   type Selection,
   type SpawnRecord,
@@ -62,6 +67,12 @@ export interface FactsOpts extends SelectOpts {
   readonly branch?: string | null | undefined;
   /** Mark what was read, so the backlog starts after it next time. */
   readonly mark?: boolean | undefined;
+  /** Read the transcripts kept in this folder, in place of the harness's folder for this worktree. */
+  readonly transcripts?: string | null | undefined;
+  /** Read the session logs kept in this folder, in place of `.flow/log/`. */
+  readonly log?: string | null | undefined;
+  /** The `testRuns` setting: recipe names that count as a test run, added to the ones flow counts. */
+  readonly testRuns?: readonly string[] | undefined;
   readonly home?: string | undefined;
   readonly nowMs?: number | undefined;
 }
@@ -89,7 +100,7 @@ function nestedWorktrees(root: string): string[] {
 export function facts(root: string, load: LoadResult, harnesses: readonly Harness[], opts: FactsOpts = {}): Facts {
   const home = opts.home ?? homedir();
   const nowMs = opts.nowMs ?? Date.now();
-  const stores = harnesses.map((harness) => ({ harness, store: harness.transcripts.readStore(root, opts.home) }));
+  const stores = harnesses.map((harness) => ({ harness, store: harness.transcripts.readStore(root, opts.home, opts.transcripts ?? undefined) }));
   // The report names the first store that exists, or the first harness's when none does.
   const store = (stores.find((one) => one.store.exists) ?? stores[0])?.store ?? { dir: "", exists: false, transcripts: [], ignored: [] };
   const nested = nestedWorktrees(root);
@@ -115,7 +126,8 @@ export function facts(root: string, load: LoadResult, harnesses: readonly Harnes
     // WHICH WORKTREE, answered from inside the records. The store folder's name collapses dots and
     // slashes to dashes, so two checkouts of one repo can share it, and Codex keeps every project in
     // one folder; a conversation recorded in somebody else's checkout is somebody else's.
-    if (!belongsToRepo(head.cwd, root, nested)) continue;
+    // A folder the caller named holds copies, kept elsewhere, of conversations this repo had: all of them are read.
+    if (opts.transcripts == null && !belongsToRepo(head.cwd, root, nested)) continue;
     held.set(stored.ref.session, jsonl);
     via.set(stored.ref.session, harness);
     candidates.push({
@@ -137,13 +149,13 @@ export function facts(root: string, load: LoadResult, harnesses: readonly Harnes
     : selectSessions(scoped, alreadyRead(root), opts);
 
   // A log with no transcript behind it is no session someone had. With no transcript of this repo to compare with, every log stays.
+  // Transcripts copied from elsewhere come from another worktree, so this one's `.flow/log/` is not theirs: with no `log` named, none is read.
   const { kept: history, excluded: withoutTranscript } = backedByTranscript(
-    readHistory(root),
+    opts.transcripts != null && opts.log == null ? [] : readHistory(root, opts.log ?? undefined),
     candidates.length > 0 ? new Set(candidates.map((c) => c.id)) : null,
   );
   const bySession = new Map(history.map((s) => [s.session, s.rows]));
   const bound: Bound[] = load.ok ? universe(load.entries) : [];
-  const tools = recipeTools(readText(root, "justfile") ?? "");
   // What counts as "somebody edited the guard" here: the config, the packs it imports, and the
   // host's registration files. Read from the config's text once, not per session.
   const guarded = guardPaths(readText(root, CONFIG_FILE), harnesses.flatMap((harness) => harness.registering.hostSurface));
@@ -151,6 +163,10 @@ export function facts(root: string, load: LoadResult, harnesses: readonly Harnes
   const readings: { session: string; read: Narrative }[] = [];
   const weakened: Weakening[] = [];
   const actors: SpawnRecord[] = [];
+  const requests: RequestsEntry[] = [];
+  const refused: ReturnType<typeof refusalsIn> = [];
+  const testRuns: ReturnType<typeof testRunsIn>[] = [];
+  const rules = testRunRules(readText(root, "justfile"), opts.testRuns ?? []);
   const ran: { rows: readonly Row[]; steer: Steer | null }[] = [];
   let withRecord = 0;
   for (const candidate of selection.analyse) {
@@ -162,22 +178,34 @@ export function facts(root: string, load: LoadResult, harnesses: readonly Harnes
     const { transcripts } = harness;
     const dir = stores.find((one) => one.harness === harness)?.store.dir ?? store.dir;
     const events = transcripts.events(jsonl, root, home);
-    readings.push({ session: candidate.id, read: narrative(events, tools) });
+    readings.push({ session: candidate.id, read: narrative(events) });
     ran.push({ rows, steer: transcripts.steer(jsonl) });
     weakened.push(...weakenedAfterBlock(rows, events, guarded));
+
+    const asked = transcripts.requests(jsonl);
+    requests.push(requestsEntry({ session: candidate.id, agent: null, agentType: null }, asked));
+    testRuns.push(testRunsIn({ session: candidate.id, agent: null, agentType: null }, events, asked, rules));
+    refused.push(...refusalsIn({ session: candidate.id, agent: null }, events));
 
     // THE JOIN, at the one place that has both halves: the parent's own spawn blocks, and the
     // sidecar the host wrote beside each child's transcript.
     const spawns = transcripts.spawns(jsonl);
-    for (const child of children.get(candidate.id) ?? [])
-      actors.push({
-        ...joinSpawn({
-          session: candidate.id,
-          agent: child.ref.agent ?? "",
-          meta: child.ref.meta === null ? null : transcripts.spawnMeta(readText(root, join(dir, child.ref.meta))),
-          spawns,
-        }),
+    for (const child of children.get(candidate.id) ?? []) {
+      const spawned = joinSpawn({
+        session: candidate.id,
+        agent: child.ref.agent ?? "",
+        meta: child.ref.meta === null ? null : transcripts.spawnMeta(readText(root, join(dir, child.ref.meta))),
+        spawns,
       });
+      actors.push(spawned);
+      // A subagent's own transcript is read for the same parts as the conversation's.
+      const childJsonl = readText(root, child.file) ?? "";
+      const childAsked = transcripts.requests(childJsonl);
+      const childEvents = transcripts.events(childJsonl, root, home);
+      requests.push(requestsEntry({ session: candidate.id, agent: spawned.agent, agentType: spawned.agentType }, childAsked));
+      testRuns.push(testRunsIn({ session: candidate.id, agent: spawned.agent, agentType: spawned.agentType }, childEvents, childAsked, rules));
+      refused.push(...refusalsIn({ session: candidate.id, agent: spawned.agent }, childEvents));
+    }
   }
 
   const recorded = metrics({ sessions: history, entries: bound, nowMs });
@@ -194,7 +222,8 @@ export function facts(root: string, load: LoadResult, harnesses: readonly Harnes
     },
     withoutTranscript,
     health: health({
-      armed: history.length > 0,
+      armed: history.length + withoutTranscript.length > 0,
+      transcripts: candidates.length,
       rows: history.reduce((n, s) => n + s.rows.length, 0),
       withRecord,
       analysed: selection.analyse.length,
@@ -205,6 +234,9 @@ export function facts(root: string, load: LoadResult, harnesses: readonly Harnes
     narrative: read,
     uncovered: uncoveredAreas(read.touched, bound),
     actors,
+    requests,
+    testRuns: { runs: testRuns.flatMap((one) => one.runs), totals: testRuns.map((one) => one.totals) },
+    refusals: groupRefusals(refused),
     weakened,
     modes: modesOf(ran),
     marked: opts.mark === true ? markRead(root, selection.analyse.map((c) => c.id)) : null,
