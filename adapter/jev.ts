@@ -4,9 +4,7 @@
 // file holds the key's two places and the request itself. Nothing but a prompt and the end of the
 // agent's message before it is sent: no code and no command.
 
-// eslint-disable-next-line n/no-unsupported-features/node-builtins -- parseEnv needs Node 24.10; the package says >=24
-import { parseEnv } from "node:util";
-import { JEV_KEY, jevRequest, readJevReply, type PromptTurn, type Sorted } from "./domain.ts";
+import { JEV_KEY, jevRequest, keyInDotenv, readJevReply, type PromptTurn, type Sorted } from "./domain.ts";
 import { readText, runCommand } from "./shell.ts";
 
 /** Jev's address. */
@@ -24,7 +22,7 @@ export function readKey(root: string, env: NodeJS.ProcessEnv = process.env): str
   const fromEnv = env[JEV_KEY];
   if (fromEnv !== undefined && fromEnv.trim() !== "") return fromEnv.trim();
   const ignored = runCommand("git check-ignore -q .env", root).code === 0;
-  return ignored ? (parseEnv(readText(root, ".env") ?? "")[JEV_KEY]?.trim() || null) : null;
+  return ignored ? keyInDotenv(readText(root, ".env") ?? "") : null;
 }
 
 /** One prompt, sorted: null when Jev could not be reached or its reply was not what was asked for. */

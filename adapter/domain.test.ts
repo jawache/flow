@@ -6,7 +6,7 @@
 // settings file, its transcripts — is proved in that harness's folder.
 import { describe, it, expect } from "vitest";
 import { DELETED, type Bound, type Row, type Tree } from "../engine/domain.ts";
-import { JEV_KEY, backedByTranscript, jevRequest, readJevReply, promptsLine, withPrompts, type Facts, type Prompt, type PromptKind, isTestRun, testRunRules, testRunsIn, endsWithRunnerFailure, refusalsIn, refused, requestsEntry, snipAtWord, changeEvents, noticesThatCouldShow, changeRow, changedBy, commitRange, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
+import { JEV_KEY, backedByTranscript, jevRequest, readJevReply, keyInDotenv, promptsLine, withPrompts, type Facts, type Prompt, type PromptKind, isTestRun, testRunRules, testRunsIn, endsWithRunnerFailure, refusalsIn, refused, requestsEntry, snipAtWord, changeEvents, noticesThatCouldShow, changeRow, changedBy, commitRange, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
 import { breadcrumb, defineConfig, definePack, fileChange, loadConfig, pack, session } from "../index.ts";
 import type { Ctx, TurnAction } from "../language/domain.ts";
 import { ranSinceEdit } from "../checks/domain.ts";
@@ -2540,6 +2540,13 @@ describe("the prompts, sorted by Jev", () => {
     expect(readJevReply({ answers: { kind: { choice: "rant", confidence: 0.9 }, frustrated: { noul: 0.7 } } })).toBeNull();
     expect(readJevReply({ answers: { kind: { choice: "answer" } } })).toBeNull();
     expect(readJevReply(null)).toBeNull();
+  });
+
+  it("reads the key from a .env file's lines as a shell would", () => {
+    expect(keyInDotenv("# a\nOTHER=x\nexport TYPESAFE_API_KEY='quoted'\n")).toBe("quoted");
+    expect(keyInDotenv("TYPESAFE_API_KEY=plain")).toBe("plain");
+    expect(keyInDotenv("TYPESAFE_API_KEY=\nOTHER=x")).toBeNull();
+    expect(keyInDotenv("")).toBeNull();
   });
 
   it("prints the prompts line, and none without prompts", () => {

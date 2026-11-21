@@ -671,6 +671,17 @@ export function readJevReply(body: unknown): Sorted | null {
   return { kind: kind as PromptKind, confidence, frustrated };
 }
 
+/** The key a `.env` file's text holds, or null. A line is `NAME=value`, with an optional `export` and quotes around the value. */
+export function keyInDotenv(dotenv: string): string | null {
+  for (const line of dotenv.split("\n")) {
+    const found = /^\s*(?:export\s+)?([A-Za-z_]\w*)\s*=\s*(.*?)\s*$/.exec(line);
+    if (found?.[1] !== JEV_KEY) continue;
+    const value = (found[2] ?? "").replace(/^(["'])(.*)\1$/, "$2").trim();
+    if (value !== "") return value;
+  }
+  return null;
+}
+
 /** The facts with each prompt's answer from Jev in place (none when Jev was not asked), and the long text each was sent as left out of the narrative. */
 export function withPrompts(facts: Facts, sorted: readonly (Sorted | null)[] | null): Facts {
   const turns = facts.narrative.prompts;
