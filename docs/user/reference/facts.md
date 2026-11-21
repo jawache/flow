@@ -58,11 +58,11 @@ The printed report has one line for each part. An example of five of them:
 A test run is one shell command that runs a test, a build or a gate. A command is a test run when it runs either of these:
 
 - a recipe of the repo's justfile whose name starts with `test`, `check`, `gate`, `e2e`, `lint`, `typecheck` or `build`;
-- a program that one of those recipes runs, such as `vitest`. A shell utility never counts: `cat`, `cd`, `cp`, `echo`, `find`, `grep`, `head`, `ls`, `mkdir`, `mv`, `rm`, `sed`, `sort`, `tail`, `test`, `touch`, `true` or `wc`.
+- a program that one of those recipes runs, such as `vitest`. A shell utility never counts: `cat`, `cd`, `cp`, `echo`, `find`, `grep`, `head`, `ls`, `mkdir`, `mv`, `rm`, `sed`, `sort`, `tail`, `test`, `touch`, `true` or `wc`, nor does `node`.
 
 [`testRuns`](./config.md#settings) in `flow.config.ts` adds recipe names, each matched whole.
 
-A test run failed when the harness marked its result as an error.
+A test run failed when the harness marked its result as an error, or when its output ends with a test runner's failure line, such as `Tests  2 failed`, `--- FAIL`, `error TS2304` or ``error: Recipe `test` failed``.
 
 The count of requests between starts at the first failed run and stops at the next run that passes.
 
