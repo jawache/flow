@@ -10,7 +10,7 @@
 // TWO SOURCES, KEPT STRICTLY APART, because that separation IS the report:
 //
 //   THE ROWS        flow's own event log. Deterministic ground truth — what fired, what refused,
-//                   what was shown and when. Numbers come from here and from nowhere else.
+//                   what was shown and when. Every count of what a rule did comes from here.
 //   THE TRANSCRIPT  the conversation. Counts of what was called, and the line each came from, so a
 //                   reader judges the spot, not the label.
 //

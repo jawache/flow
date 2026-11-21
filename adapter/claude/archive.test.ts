@@ -244,7 +244,7 @@ describe("the reading, assembled", () => {
     const read = facts(repo, regime, [claudeCode], { home });
     expect(read.health.blocked).toBe(null);
     expect(read.coverage).toEqual({ analysed: 1, withRecord: 1, narrativeOnly: 0 });
-    // NUMBERS — from the rows, and from nowhere else.
+    // NUMBERS FROM THE ROWS — what the guard did.
     expect(read.metrics.headline.blocks).toBe(1);
     expect(read.metrics.guardrails.find((g) => g.id === "rails.everyone")?.hits).toBe(1);
     // NARRATIVE — from the conversation: counts of what was called, and the line each came from.

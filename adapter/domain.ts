@@ -1187,7 +1187,7 @@ export interface Facts {
   readonly metrics: Metrics;
   readonly moments: MomentsView;
   readonly terrain: readonly TerrainNode[];
-  /** The heuristic pointers, one list, each row tagged with the conversation it came from. */
+  /** What the conversations edited, wrote, read, ran and typed, each row tagged with the conversation it came from. */
   readonly narrative: Narrative;
   /** Where the conversations worked that nothing watches — the transcript's own coverage answer. */
   readonly uncovered: readonly Uncovered[];

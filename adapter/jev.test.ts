@@ -2,7 +2,7 @@
 // prompt, and what it reports back from the reply.
 
 import { createServer, type Server } from "node:http";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -57,12 +57,37 @@ describe("the key", () => {
     try {
       spawnSync("git", ["init", "-q"], { cwd: dir });
       writeFileSync(join(dir, ".env"), "TYPESAFE_API_KEY=from-file\n");
-      expect(readKey(dir, {})).toBeNull();
+      expect(readKey(dir, {}, dir)).toBeNull();
       writeFileSync(join(dir, ".gitignore"), ".env\n");
-      expect(readKey(dir, {})).toBe("from-file");
-      expect(readKey(dir, { TYPESAFE_API_KEY: "from-env" })).toBe("from-env");
+      expect(readKey(dir, {}, dir)).toBe("from-file");
+      expect(readKey(dir, { TYPESAFE_API_KEY: "from-env" }, dir)).toBe("from-env");
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("is read from the main checkout of the flow that runs, when the repo it runs in has none", () => {
+    const base = mkdtempSync(join(tmpdir(), "flow-jev-"));
+    try {
+      const main = join(base, "main");
+      const worktree = join(base, "worktree");
+      const other = join(base, "other");
+      for (const dir of [main, other]) {
+        mkdirSync(dir);
+        spawnSync("git", ["init", "-q"], { cwd: dir });
+      }
+      spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"], { cwd: main });
+      spawnSync("git", ["worktree", "add", "-q", worktree], { cwd: main });
+      writeFileSync(join(main, ".gitignore"), ".env\n");
+      writeFileSync(join(main, ".env"), "TYPESAFE_API_KEY=from-main\n");
+      const flowDir = join(worktree, "adapter");
+      mkdirSync(flowDir);
+      expect(readKey(other, {}, flowDir)).toBe("from-main");
+      writeFileSync(join(other, ".gitignore"), ".env\n");
+      writeFileSync(join(other, ".env"), "TYPESAFE_API_KEY=from-other\n");
+      expect(readKey(other, {}, flowDir), "the repo's own file comes first").toBe("from-other");
+    } finally {
+      rmSync(base, { recursive: true, force: true });
     }
   });
 });

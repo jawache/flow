@@ -296,7 +296,7 @@ async function readFacts(args: readonly string[]): Promise<number> {
   const sorting = flag(args, "no-prompts") === null;
   const key = sorting ? readKey(root) : null;
   if (sorting && key === null) {
-    process.stdout.write(`flow facts sends each prompt to Jev and needs ${JEV_KEY}: set it in the environment or in a .env file in the repo's root that git ignores, or pass --no-prompts\n`);
+    process.stdout.write(`flow facts sends each prompt to Jev and needs ${JEV_KEY}: set it in the environment, in a .env file in the repo's root that git ignores, or in the .env of flow's main checkout, or pass --no-prompts\n`);
     return 1;
   }
   const counted = facts(root, load, harnesses, {

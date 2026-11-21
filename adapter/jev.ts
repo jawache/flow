@@ -1,8 +1,11 @@
 // flow/adapter/jev.ts — the one call out of `flow facts`: each prompt goes to Jev, TypeSafe's decision model.
 //
-// What is asked and how a reply is read are domain.ts's (`jevRequest`, `readJevReply`, `keyFrom`); this
-// file holds the key's two places and the request itself. Nothing but a prompt and the end of the
-// agent's message before it is sent: no code and no command.
+// What is asked and how a reply is read are domain.ts's (`jevRequest`, `readJevReply`, `keyInDotenv`);
+// this file holds the key's places and the request itself. Nothing but a prompt and the end of the
+// agent's message before it, less its code blocks, is sent.
+
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { JEV_KEY, jevRequest, keyInDotenv, readJevReply, type PromptTurn, type Sorted } from "./domain.ts";
 import { readText, runCommand } from "./shell.ts";
@@ -14,15 +17,27 @@ export const JEV_URL = "https://api.typesafe.ai/v1/systemone";
 const IN_FLIGHT = 8;
 const TRIES = 4;
 
+/** The key in `dir`'s `.env`, read only when git ignores that file, so a key can never be the one a commit would carry. */
+function keyIn(dir: string): string | null {
+  const ignored = runCommand("git check-ignore -q .env", dir).code === 0;
+  return ignored ? keyInDotenv(readText(dir, ".env") ?? "") : null;
+}
+
+/** The main checkout of the flow that is running: the folder git's common directory, found from where `flow.mjs` is, belongs to. Null when that is not a git checkout. */
+function mainCheckoutOfFlow(flowDir: string): string | null {
+  const found = runCommand("git rev-parse --path-format=absolute --git-common-dir", flowDir);
+  return found.code === 0 && found.stdout.trim() !== "" ? dirname(found.stdout.trim()) : null;
+}
+
 /**
- * The key, from the environment and then from the `.env` file in the repo's root. That file is read
- * only when git ignores it, so a key can never be the one a commit would carry.
+ * The key, from the environment, then from the `.env` file in the repo's root, then from the `.env`
+ * in the main checkout of the flow that runs. Each file is read only when git ignores it.
  */
-export function readKey(root: string, env: NodeJS.ProcessEnv = process.env): string | null {
+export function readKey(root: string, env: NodeJS.ProcessEnv = process.env, flowDir: string = dirname(fileURLToPath(import.meta.url))): string | null {
   const fromEnv = env[JEV_KEY];
   if (fromEnv !== undefined && fromEnv.trim() !== "") return fromEnv.trim();
-  const ignored = runCommand("git check-ignore -q .env", root).code === 0;
-  return ignored ? keyInDotenv(readText(root, ".env") ?? "") : null;
+  const main = mainCheckoutOfFlow(flowDir);
+  return keyIn(root) ?? (main === null ? null : keyIn(main));
 }
 
 /** One prompt, sorted: null when Jev could not be reached or its reply was not what was asked for. */

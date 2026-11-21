@@ -120,14 +120,8 @@ function completed(record: Rollout, kind: string): Record<string, unknown> | nul
   return item?.["type"] === kind ? item : null;
 }
 
-/** What the human typed, from a `UserMessage` item: its text parts, joined. */
-function promptOf(item: Record<string, unknown>): string {
-  const parts = Array.isArray(item["content"]) ? (item["content"] as { type?: unknown; text?: unknown }[]) : [];
-  return parts.map((part) => (part.type === "text" ? text(part.text) : "")).join("\n").trim();
-}
-
-/** What the agent said, from an `AgentMessage` item: its text parts, joined. */
-function saidOf(item: Record<string, unknown>): string {
+/** What a message said, from a `UserMessage` or `AgentMessage` item: its text parts, joined. */
+function textOf(item: Record<string, unknown>): string {
   const parts = Array.isArray(item["content"]) ? (item["content"] as { type?: unknown; text?: unknown }[]) : [];
   return parts.map((part) => (/^text$/i.test(text(part.type)) ? text(part.text) : "")).join("\n").trim();
 }
@@ -201,7 +195,7 @@ export function turnActions(jsonl: string): TurnAction[] {
 export function briefHead(jsonl: string, cap = 8000): string {
   for (const record of rollout(jsonl)) {
     const item = completed(record, "UserMessage");
-    if (item !== null) return promptOf(item).slice(0, cap);
+    if (item !== null) return textOf(item).slice(0, cap);
   }
   return "";
 }
@@ -219,10 +213,10 @@ export function parseEvents(jsonl: string, root = "", home?: string): Transcript
   for (const record of rollout(jsonl)) {
     if (record.type === "session_meta") cwd = text(record.payload["cwd"]) || root;
     const message = completed(record, "AgentMessage");
-    if (message !== null && saidOf(message) !== "") said = saidOf(message);
+    if (message !== null && textOf(message) !== "") said = textOf(message);
     const prompt = completed(record, "UserMessage");
     if (prompt !== null) {
-      out.push({ line: record.line, kind: "prompt", text: promptOf(prompt), ...(said === "" ? {} : { before: said }) });
+      out.push({ line: record.line, kind: "prompt", text: textOf(prompt), ...(said === "" ? {} : { before: said }) });
       continue;
     }
     const item = completed(record, "CommandExecution");
