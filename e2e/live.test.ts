@@ -1493,7 +1493,7 @@ describe("flow status — the live session's permission mode, and auto mode's st
 
 describe("flow facts — the record and the conversations, read back", () => {
   it("reads its own rows, names the areas nothing watches, and says when it is not armed", () => {
-    const answer = run(["facts", "--json"], "");
+    const answer = run(["facts", "--json", "--no-prompts"], "");
     expect(answer.code).toBe(0);
     const read = JSON.parse(answer.stdout) as {
       health: { blocked: string | null };
@@ -1513,7 +1513,7 @@ describe("flow facts — the record and the conversations, read back", () => {
     const bare = mkdtempSync(join(tmpdir(), "flow-facts-"));
     try {
       copyGuard(bare);
-      const answer = runFlow(bare, ["facts"]);
+      const answer = runFlow(bare, ["facts", "--no-prompts"]);
       expect(answer.code).toBe(1);
       expect(answer.stdout).toContain("NOT ARMED");
     } finally {
