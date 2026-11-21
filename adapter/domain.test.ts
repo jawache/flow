@@ -7,7 +7,7 @@
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import { DELETED, type Bound, type Row, type Tree } from "../engine/domain.ts";
-import { JEV_KEY, backedByTranscript, jevRequest, readJevReply, keyInDotenv, promptsLine, withPrompts, withoutCodeBlocks, reportPage, type Facts, type Prompt, type PromptKind, isTestRun, testRunRules, testRunsIn, endsWithRunnerFailure, refusalsIn, refused, requestsEntry, snipAtWord, changeEvents, noticesThatCouldShow, changeRow, changedBy, commitRange, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
+import { JEV_KEY, backedByTranscript, jevRequest, readJevReply, keyInDotenv, promptsLine, withPrompts, reportPage, type Facts, type Prompt, type PromptKind, isTestRun, testRunRules, testRunsIn, endsWithRunnerFailure, refusalsIn, refused, requestsEntry, snipAtWord, changeEvents, noticesThatCouldShow, changeRow, changedBy, commitRange, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
 import { breadcrumb, defineConfig, definePack, fileChange, loadConfig, pack, session } from "../index.ts";
 import type { Ctx, TurnAction } from "../language/domain.ts";
 import { ranSinceEdit } from "../checks/domain.ts";
@@ -2561,7 +2561,6 @@ describe("the prompts, sorted by Jev", () => {
     const said = "Here is the file:\n```ts\nconst key = 1;\n```\nShall I merge?\n```\nnever closed";
     const read = narrative([{ line: 1, kind: "prompt", text: "go", before: said }]);
     expect(read.prompts[0]?.before).toBe("Here is the file:\n\nShall I merge?");
-    expect(withoutCodeBlocks("no code")).toBe("no code");
   });
 
   it("puts Jev's answers on the prompts and keeps the long text out of the report", () => {

@@ -622,7 +622,7 @@ const JEV_ASKED = 2500;
 const JEV_BEFORE = 700;
 
 /** The agent's message with every fenced code block cut out, an unclosed one to the end: the page promises no code is sent. */
-export function withoutCodeBlocks(message: string): string {
+function withoutCodeBlocks(message: string): string {
   return message.replace(/^[ \t]*(```|~~~)[\s\S]*?(?:^[ \t]*\1[^\n]*$|(?![\s\S]))/gm, "").trim();
 }
 
