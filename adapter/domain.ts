@@ -529,6 +529,12 @@ export interface Pointer {
   readonly session?: string;
 }
 
+/** A prompt a person typed, and what Jev is sent about it: the prompt, and the end of the agent's message before it. */
+export interface PromptTurn extends Pointer {
+  readonly asked: string;
+  readonly before: string;
+}
+
 export interface Narrative {
   readonly stats: {
     readonly edits: number;
@@ -538,7 +544,7 @@ export interface Narrative {
     readonly commits: number;
     readonly recipes: Readonly<Record<string, number>>;
   };
-  readonly prompts: readonly Pointer[];
+  readonly prompts: readonly PromptTurn[];
   /** The files a shell command read by name, with how often each. */
   readonly shell: { readonly reads: Readonly<Record<string, number>> };
   /** Every in-repo file the session touched, with how often. The facts layer scores coverage. */
@@ -564,11 +570,11 @@ export function narrative(events: readonly TranscriptEvent[]): Narrative {
   let commits = 0;
   const recipes: Record<string, number> = {};
   const touched: Record<string, number> = {};
-  const prompts: Pointer[] = [];
+  const prompts: PromptTurn[] = [];
 
   for (const event of events) {
     if (event.kind === "prompt") {
-      prompts.push({ line: event.line, text: snip(event.text, 120) });
+      prompts.push({ line: event.line, text: snip(event.text, 120), asked: event.text.trim().slice(0, JEV_ASKED), before: (event.before ?? "").slice(-JEV_BEFORE) });
       continue;
     }
     if (event.kind !== "use") continue;
@@ -606,6 +612,96 @@ export function narrative(events: readonly TranscriptEvent[]): Narrative {
   };
 }
 
+// ── the prompts, sorted by Jev ──────────────────────────────────────────────
+
+/** The variable that holds the key Jev needs. */
+export const JEV_KEY = "TYPESAFE_API_KEY";
+/** How much of a prompt, and of the agent's message before it, Jev is sent. */
+const JEV_ASKED = 2500;
+const JEV_BEFORE = 700;
+
+/** The seven kinds a prompt is sorted into, and what each one is, as Jev is told. */
+const KIND_CRITERIA = {
+  correction: "Tells the agent it did something wrong, misunderstood, ignored an instruction, or should not have asked. Includes having to repeat an instruction.",
+  confusion: "Says they do not understand what the agent wrote or asked.",
+  new_direction: "Changes or widens what is wanted, or adds a requirement the agent could not have known.",
+  answer: "Answers the agent's question or chooses between its options, without complaint.",
+  go_ahead: "Simply approves: go, yes, continue, merge.",
+  question: "Asks the agent for information or an explanation.",
+  other: "None of these.",
+} as const;
+
+export type PromptKind = keyof typeof KIND_CRITERIA;
+const KINDS = Object.keys(KIND_CRITERIA) as PromptKind[];
+
+/** What Jev says of one prompt. */
+export interface Sorted {
+  readonly kind: PromptKind;
+  readonly confidence: number;
+  readonly frustrated: number;
+}
+
+/** A prompt as `flow facts` reports it: shortened, with what Jev said, or nothing when Jev could not be reached. */
+export interface Prompt extends Pointer {
+  readonly session: string;
+  readonly sorted: Sorted | null;
+}
+
+/** The body of the one request Jev gets for a prompt: the words, and what the agent said before them. No code and no command. */
+export function jevRequest(asked: string, before: string): Record<string, unknown> {
+  return {
+    model: "jev-latest",
+    state: { the_agent_said_before: before, the_person_then_wrote: asked },
+    questions: {
+      kind: { type: "choice", instructions: "A person directs an AI coding agent. Classify what the person's message mainly is.", criteria: KIND_CRITERIA },
+      frustrated: { type: "noul", instructions: "Is the person annoyed or frustrated with the agent in this message?" },
+    },
+  };
+}
+
+/** Jev's reply as a kind, a confidence and a frustration score, or null when it is not shaped like one. */
+export function readJevReply(body: unknown): Sorted | null {
+  const answers = (body as { answers?: { kind?: { choice?: unknown; confidence?: unknown }; frustrated?: { noul?: unknown } } } | null)?.answers;
+  const kind = answers?.kind?.choice;
+  const confidence = answers?.kind?.confidence;
+  const frustrated = answers?.frustrated?.noul;
+  if (typeof kind !== "string" || !(KINDS as string[]).includes(kind)) return null;
+  if (typeof confidence !== "number" || typeof frustrated !== "number") return null;
+  return { kind: kind as PromptKind, confidence, frustrated };
+}
+
+/** The key: the environment's, or else the one `.env` holds. Null when neither has it. */
+export function keyFrom(fromEnv: string | undefined, dotenv: string | null): string | null {
+  if (fromEnv !== undefined && fromEnv.trim() !== "") return fromEnv.trim();
+  for (const line of (dotenv ?? "").split("\n")) {
+    const found = /^\s*(?:export\s+)?([A-Za-z_]\w*)\s*=\s*(.*?)\s*$/.exec(line);
+    if (found?.[1] !== JEV_KEY) continue;
+    const value = (found[2] ?? "").replace(/^(["'])(.*)\1$/, "$2").trim();
+    if (value !== "") return value;
+  }
+  return null;
+}
+
+/** The facts with each prompt's answer from Jev in place, and the long text each was sent as left out of the narrative. */
+export function withPrompts(facts: Facts, sorted: readonly (Sorted | null)[]): Facts {
+  const turns = facts.narrative.prompts;
+  const prompts = turns.map((turn, at): Prompt => ({ line: turn.line, text: turn.text, session: turn.session ?? "", sorted: sorted[at] ?? null }));
+  return { ...facts, prompts, narrative: { ...facts.narrative, prompts: turns.map(({ line, text, session }) => ({ line, text, ...(session === undefined ? {} : { session }), asked: "", before: "" })) } };
+}
+
+/** The `prompts` line: how many, how many of the two kinds that cost the person something, and how many were frustrated. Null with no prompts. */
+export function promptsLine(prompts: readonly Prompt[] | undefined): string | null {
+  if (prompts === undefined || prompts.length === 0) return null;
+  const count = (kind: PromptKind): number => prompts.filter((one) => one.sorted?.kind === kind).length;
+  const parts = [String(prompts.length)];
+  for (const kind of ["correction", "confusion"] as const) if (count(kind) > 0) parts.push(`${count(kind)} ${kind}`);
+  const frustrated = prompts.filter((one) => (one.sorted?.frustrated ?? 0) >= 0.5).length;
+  if (frustrated > 0) parts.push(`${frustrated} frustrated`);
+  const unsorted = prompts.filter((one) => one.sorted === null).length;
+  if (unsorted > 0) parts.push(`${unsorted} not sorted`);
+  return `prompts   ${parts.join(" · ")}`;
+}
+
 /**
  * Every narrative reading merged into one, each pointer tagged with the transcript it came from.
  *
@@ -616,7 +712,7 @@ export function narrative(events: readonly TranscriptEvent[]): Narrative {
 export function mergeNarratives(each: readonly { session: string; read: Narrative }[]): Narrative {
   const recipes: Record<string, number> = {};
   const touched: Record<string, number> = {};
-  const prompts: Pointer[] = [];
+  const prompts: PromptTurn[] = [];
   let edits = 0;
   let writes = 0;
   let shellReads = 0;
@@ -1102,6 +1198,8 @@ export interface Facts {
   readonly modes: Modes;
   /** How many conversations were marked read, when asked for. Null when not asked. */
   readonly marked: number | null;
+  /** Each prompt with its kind, confidence and frustration score from Jev. Absent without Jev. */
+  readonly prompts?: readonly Prompt[];
 }
 
 /** A token count as a person reads it: `214k` from a thousand up. */
@@ -1193,7 +1291,7 @@ export function formatFacts(facts: Facts): string[] {
   if (headline.quiet.length > 0)
     lines.push(`  quiet     ${headline.quiet.map((q) => `${q.id} (${q.daysSince}d)`).join(" · ")}`);
 
-  for (const line of [requestsLine(facts.requests), modelsLine(facts.requests), testsLine(facts.testRuns.totals), refusedLine(facts.refusals)]) if (line !== null) lines.push(`  ${line}`);
+  for (const line of [requestsLine(facts.requests), modelsLine(facts.requests), testsLine(facts.testRuns.totals), refusedLine(facts.refusals), promptsLine(facts.prompts)]) if (line !== null) lines.push(`  ${line}`);
 
   const { stats, shell } = facts.narrative;
   lines.push(

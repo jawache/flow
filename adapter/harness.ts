@@ -138,7 +138,13 @@ export type ToolAction = "edit" | "write" | "read" | "shell" | "other";
 
 /** One thing that happened in a conversation, with the line it happened on. */
 export type TranscriptEvent =
-  | { readonly line: number; readonly kind: "prompt"; readonly text: string }
+  | {
+      readonly line: number;
+      readonly kind: "prompt";
+      readonly text: string;
+      /** The agent's last message before it, when the harness's record has one. */
+      readonly before?: string;
+    }
   | { readonly line: number; readonly kind: "result"; readonly id: string; readonly content: string; readonly failed: boolean }
   | {
       readonly line: number;

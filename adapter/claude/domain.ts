@@ -445,6 +445,8 @@ export function spawnsIn(jsonl: string): Map<string, Spawn> {
  */
 export function parseEvents(jsonl: string, root = "", home?: string): TranscriptEvent[] {
   const out: TranscriptEvent[] = [];
+  // What the agent last said in words, which a prompt answers.
+  let said = "";
   for (const line of transcriptLines(jsonl)) {
     const content = (line.record["message"] as { content?: unknown } | undefined)?.content;
 
@@ -452,7 +454,7 @@ export function parseEvents(jsonl: string, root = "", home?: string): Transcript
       const start = turnStart(line);
       if (start !== null) {
         // A background task's notice starts a turn, but nobody typed it.
-        if (!isTaskNotice(line, start)) out.push({ line: line.line, kind: "prompt", text: start });
+        if (!isTaskNotice(line, start)) out.push({ line: line.line, kind: "prompt", text: start, ...(said === "" ? {} : { before: said }) });
         continue;
       }
       if (!Array.isArray(content)) continue;
@@ -471,6 +473,13 @@ export function parseEvents(jsonl: string, root = "", home?: string): Transcript
     }
 
     if (line.kind !== "assistant" || !Array.isArray(content)) continue;
+    const spoken = content
+      .map((raw) => (raw as { type?: string; text?: unknown } | null))
+      .filter((block) => block?.type === "text")
+      .map((block) => text(block?.text))
+      .join("\n")
+      .trim();
+    if (spoken !== "") said = spoken;
     for (const raw of content) {
       const block = raw as { type?: string; id?: string; name?: string; input?: Record<string, unknown> } | null;
       if (!block || block.type !== "tool_use") continue;

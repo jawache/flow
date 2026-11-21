@@ -6,7 +6,7 @@
 // settings file, its transcripts — is proved in that harness's folder.
 import { describe, it, expect } from "vitest";
 import { DELETED, type Bound, type Row, type Tree } from "../engine/domain.ts";
-import { backedByTranscript, isTestRun, testRunRules, testRunsIn, endsWithRunnerFailure, refusalsIn, refused, requestsEntry, snipAtWord, changeEvents, noticesThatCouldShow, changeRow, changedBy, commitRange, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
+import { JEV_KEY, backedByTranscript, jevRequest, readJevReply, keyFrom, promptsLine, withPrompts, type Facts, type Prompt, type PromptKind, isTestRun, testRunRules, testRunsIn, endsWithRunnerFailure, refusalsIn, refused, requestsEntry, snipAtWord, changeEvents, noticesThatCouldShow, changeRow, changedBy, commitRange, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
 import { breadcrumb, defineConfig, definePack, fileChange, loadConfig, pack, session } from "../index.ts";
 import type { Ctx, TurnAction } from "../language/domain.ts";
 import { ranSinceEdit } from "../checks/domain.ts";
@@ -87,7 +87,7 @@ describe("the narrative reading — stats and what was touched", () => {
     ]);
     expect(merged.stats.edits).toBe(2);
     expect(merged.touched).toEqual({ "a.ts": 2 });
-    expect(merged.prompts).toEqual([{ line: 1, text: "no, undo it", session: "s1" }]);
+    expect(merged.prompts).toMatchObject([{ line: 1, text: "no, undo it", session: "s1" }]);
     expect(mergeNarratives([]).stats).toEqual({ edits: 0, writes: 0, shellReads: 0, commits: 0, recipes: {} });
   });
 
@@ -1204,6 +1204,19 @@ describe("the narrative — the pairing, and the pointers it produces", () => {
     expect(host.transcripts.events(file)[0]).not.toHaveProperty("reads");
   });
 
+  it("gives a prompt the agent's last message in words before it, and none when it had said nothing", () => {
+    const file = store(
+      spoke("first"),
+      spokeBack([{ type: "text", text: "I changed the parser." }, used("Bash", { command: "just test" }, "t1")]),
+      spoke("no, revert that"),
+    );
+    const prompts = host.transcripts.events(file, "/repo").filter((event) => event.kind === "prompt");
+    expect(prompts).toEqual([
+      { line: 1, kind: "prompt", text: "first" },
+      { line: 3, kind: "prompt", text: "no, revert that", before: "I changed the parser." },
+    ]);
+  });
+
   it("a result carrying an object rather than text is still readable", () => {
     const file = store({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t", content: { n: 1 } }] } });
     expect(host.transcripts.events(file)[0]).toMatchObject({ kind: "result", content: '{"n":1}', failed: false });
@@ -1218,7 +1231,7 @@ describe("the narrative — the pairing, and the pointers it produces", () => {
       { ...spoke("Agent finished: it chose a set instead."), origin: { kind: "task-notification" } },
     );
     const read = narrative(host.transcripts.events(file));
-    expect(read.prompts).toEqual([{ line: 1, text: "no, revert that" }]);
+    expect(read.prompts).toMatchObject([{ line: 1, text: "no, revert that" }]);
   });
 
   it("shortens for printing, and MARKS the cut so a truncated line never reads as a whole one", () => {
@@ -2505,5 +2518,52 @@ describe("test runs, decided from the justfile", () => {
     }
     expect(endsWithRunnerFailure("Tests  0 failed | 7 passed (7)\nTest Files  0 failed")).toBe(false);
     expect(endsWithRunnerFailure(`FAIL\n${"x".repeat(3000)}`), "only the end is read").toBe(false);
+  });
+});
+
+describe("the prompts, sorted by Jev", () => {
+  it("asks Jev about one prompt with the prompt, the end of the agent's message and the seven kinds, and no tool call", () => {
+    const body = jevRequest("no, revert that", "I changed the parser") as {
+      model: string;
+      state: Record<string, string>;
+      questions: { kind: { criteria: Record<string, string> }; frustrated: { type: string } };
+    };
+    expect(body.state).toEqual({ the_agent_said_before: "I changed the parser", the_person_then_wrote: "no, revert that" });
+    expect(Object.keys(body.questions.kind.criteria)).toEqual(["correction", "confusion", "new_direction", "answer", "go_ahead", "question", "other"]);
+    expect(body.questions.frustrated.type).toBe("noul");
+    expect(JSON.stringify(body)).not.toMatch(/tool_use|"command"/);
+  });
+
+  it("reads a reply into kind, confidence and frustration score, and nothing else", () => {
+    const reply = { answers: { kind: { choice: "correction", confidence: 0.9 }, frustrated: { noul: 0.7 } } };
+    expect(readJevReply(reply)).toEqual({ kind: "correction", confidence: 0.9, frustrated: 0.7 });
+    expect(readJevReply({ answers: { kind: { choice: "rant", confidence: 0.9 }, frustrated: { noul: 0.7 } } })).toBeNull();
+    expect(readJevReply({ answers: { kind: { choice: "answer" } } })).toBeNull();
+    expect(readJevReply(null)).toBeNull();
+  });
+
+  it("takes the key from the environment before .env, and reads .env's lines as a shell would", () => {
+    expect(JEV_KEY).toBe("TYPESAFE_API_KEY");
+    expect(keyFrom("from-env", "TYPESAFE_API_KEY=from-file")).toBe("from-env");
+    expect(keyFrom(undefined, "# a\nOTHER=x\nexport TYPESAFE_API_KEY='quoted'\n")).toBe("quoted");
+    expect(keyFrom("  ", "TYPESAFE_API_KEY=file")).toBe("file");
+    expect(keyFrom(undefined, "TYPESAFE_API_KEY=")).toBeNull();
+    expect(keyFrom(undefined, null)).toBeNull();
+  });
+
+  it("prints the prompts line, and none without prompts", () => {
+    const sorted = (kind: PromptKind, frustrated: number): Prompt => ({ line: 1, text: "x", session: "s", sorted: { kind, confidence: 0.9, frustrated } });
+    expect(promptsLine([sorted("correction", 0.8), sorted("confusion", 0.6), sorted("answer", 0.1), { line: 2, text: "y", session: "s", sorted: null }])).toBe("prompts   4 · 1 correction · 1 confusion · 2 frustrated · 1 not sorted");
+    expect(promptsLine([])).toBeNull();
+    expect(promptsLine(undefined)).toBeNull();
+  });
+
+  it("puts Jev's answers on the prompts and keeps the long text out of the report", () => {
+    const one = narrative([{ line: 1, kind: "prompt", text: "go", before: "Shall I merge?" }]);
+    const read = { narrative: mergeNarratives([{ session: "s1", read: one }]) } as Facts;
+    expect(read.narrative.prompts[0]).toMatchObject({ asked: "go", before: "Shall I merge?" });
+    const out = withPrompts(read, [{ kind: "go_ahead", confidence: 0.95, frustrated: 0 }]);
+    expect(out.prompts).toEqual([{ line: 1, text: "go", session: "s1", sorted: { kind: "go_ahead", confidence: 0.95, frustrated: 0 } }]);
+    expect(out.narrative.prompts).toEqual([{ line: 1, text: "go", session: "s1", asked: "", before: "" }]);
   });
 });

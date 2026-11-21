@@ -249,7 +249,7 @@ describe("the reading, assembled", () => {
     expect(read.metrics.guardrails.find((g) => g.id === "rails.everyone")?.hits).toBe(1);
     // NARRATIVE — from the conversation: counts of what was called, and the line each came from.
     expect(read.narrative.stats.edits).toBe(1);
-    expect(read.narrative.prompts).toContainEqual({ line: 4, text: "no, revert that", session: "one" });
+    expect(read.narrative.prompts).toContainEqual(expect.objectContaining({ line: 4, text: "no, revert that", session: "one" }));
     // The universe is the CONFIG's answer, handed in — this file never loads one.
     expect(read.moments.totals.guardrails).toBe(10);
     expect(read.terrain.some((node) => node.path === "src/a.ts")).toBe(true);
