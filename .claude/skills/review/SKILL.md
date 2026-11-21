@@ -57,6 +57,7 @@ The numbers come from `flow facts` (this repo's `docs/user/reference/facts.md`) 
 - `DRV-R13` Say how sure you are of each finding: what is counted, and what is your reading.
 - `DRV-R14` Never file an issue until the human replies "file" with the finding's number.
 - `DRV-R15` Count a prompt's kind only when its confidence is 0.6 or more.
+- `DRV-R16` If the issue itself already removed the cause, do not raise it. List it under "Looked at, and not raised", with what removed it.
 
 ## Steps
 
