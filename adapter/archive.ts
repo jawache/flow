@@ -40,6 +40,8 @@ import {
   narrative,
   refusalsIn,
   requestsEntry,
+  testRunRules,
+  testRunsIn,
   selectSessions,
   uncoveredAreas,
   groupRefusals,
@@ -69,6 +71,8 @@ export interface FactsOpts extends SelectOpts {
   readonly transcripts?: string | null | undefined;
   /** Read the session logs kept in this folder, in place of `.flow/log/`. */
   readonly log?: string | null | undefined;
+  /** The `testRuns` setting: recipe names that count as a test run, added to the ones flow counts. */
+  readonly testRuns?: readonly string[] | undefined;
   readonly home?: string | undefined;
   readonly nowMs?: number | undefined;
 }
@@ -161,6 +165,8 @@ export function facts(root: string, load: LoadResult, harnesses: readonly Harnes
   const actors: SpawnRecord[] = [];
   const requests: RequestsEntry[] = [];
   const refused: ReturnType<typeof refusalsIn> = [];
+  const testRuns: ReturnType<typeof testRunsIn>[] = [];
+  const rules = testRunRules(readText(root, "justfile"), opts.testRuns ?? []);
   const ran: { rows: readonly Row[]; steer: Steer | null }[] = [];
   let withRecord = 0;
   for (const candidate of selection.analyse) {
@@ -176,7 +182,9 @@ export function facts(root: string, load: LoadResult, harnesses: readonly Harnes
     ran.push({ rows, steer: transcripts.steer(jsonl) });
     weakened.push(...weakenedAfterBlock(rows, events, guarded));
 
-    requests.push(requestsEntry({ session: candidate.id, agent: null, agentType: null }, transcripts.requests(jsonl)));
+    const asked = transcripts.requests(jsonl);
+    requests.push(requestsEntry({ session: candidate.id, agent: null, agentType: null }, asked));
+    testRuns.push(testRunsIn({ session: candidate.id, agent: null, agentType: null }, events, asked, rules));
     refused.push(...refusalsIn({ session: candidate.id, agent: null }, events));
 
     // THE JOIN, at the one place that has both halves: the parent's own spawn blocks, and the
@@ -192,8 +200,11 @@ export function facts(root: string, load: LoadResult, harnesses: readonly Harnes
       actors.push(spawned);
       // A subagent's own transcript is read for the same parts as the conversation's.
       const childJsonl = readText(root, child.file) ?? "";
-      requests.push(requestsEntry({ session: candidate.id, agent: spawned.agent, agentType: spawned.agentType }, transcripts.requests(childJsonl)));
-      refused.push(...refusalsIn({ session: candidate.id, agent: spawned.agent }, transcripts.events(childJsonl, root, home)));
+      const childAsked = transcripts.requests(childJsonl);
+      const childEvents = transcripts.events(childJsonl, root, home);
+      requests.push(requestsEntry({ session: candidate.id, agent: spawned.agent, agentType: spawned.agentType }, childAsked));
+      testRuns.push(testRunsIn({ session: candidate.id, agent: spawned.agent, agentType: spawned.agentType }, childEvents, childAsked, rules));
+      refused.push(...refusalsIn({ session: candidate.id, agent: spawned.agent }, childEvents));
     }
   }
 
@@ -224,6 +235,7 @@ export function facts(root: string, load: LoadResult, harnesses: readonly Harnes
     uncovered: uncoveredAreas(read.touched, bound),
     actors,
     requests,
+    testRuns: { runs: testRuns.flatMap((one) => one.runs), totals: testRuns.map((one) => one.totals) },
     refusals: groupRefusals(refused),
     weakened,
     modes: modesOf(ran),

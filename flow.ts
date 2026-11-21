@@ -282,7 +282,8 @@ async function replayFile(args: readonly string[]): Promise<number> {
  */
 async function readFacts(args: readonly string[]): Promise<number> {
   const root = process.cwd();
-  const load = existsSync(join(root, CONFIG_FILE)) ? loadConfig(await loadFile(CONFIG_FILE)) : ({ ok: true, entries: [] } as const);
+  const config = existsSync(join(root, CONFIG_FILE)) ? await loadFile(CONFIG_FILE) : null;
+  const load = config === null ? ({ ok: true, entries: [] } as const) : loadConfig(config);
   const limit = flag(args, "limit");
   const since = flag(args, "since");
   const read = facts(root, load, harnesses, {
@@ -295,6 +296,7 @@ async function readFacts(args: readonly string[]): Promise<number> {
     mark: flag(args, "mark") !== null,
     transcripts: pathFlag(args, "transcripts"),
     log: pathFlag(args, "log"),
+    testRuns: config?.settings.testRuns,
   });
 
   if (flag(args, "json") !== null) {

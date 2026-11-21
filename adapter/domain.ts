@@ -380,6 +380,131 @@ export function classifyBash(command: unknown): BashClass {
   };
 }
 
+// ── test runs, decided from the repo's justfile ──
+
+/** A recipe name that starts with one of these runs a test, a build or a gate. */
+const TEST_RECIPE_PREFIXES = ["test", "check", "gate", "e2e", "lint", "typecheck", "build"] as const;
+
+/** The shell utilities, which are never a test run even when a counted recipe runs them. */
+const SHELL_UTILITIES: ReadonlySet<string> = new Set([
+  "cat", "cd", "cp", "echo", "find", "grep", "head", "ls", "mkdir", "mv", "rm", "sed", "sort", "tail", "test", "touch", "true", "wc",
+]);
+
+/** Words a recipe body starts a command with that name no program: a shell keyword, or a launcher whose next word is the program. */
+const NOT_PROGRAMS: ReadonlySet<string> = new Set(["set", "node", "npx", "just", "export", "then", "fi", "do", "done", "if", "for", "while", "source"]);
+
+/** The recipe names that count, and the programs those recipes run: what makes a command a test run. */
+export interface TestRunRules {
+  readonly recipes: ReadonlySet<string>;
+  readonly programs: ReadonlySet<string>;
+}
+
+/** The recipe a top-level justfile line opens: its name. A setting, an assignment and an attribute line open none. */
+function recipeHeaderName(line: string): string | null {
+  if (line.startsWith("[") || /^[A-Za-z_][\w-]*\s*:?=/.test(line) || !line.includes(":")) return null;
+  const name = /^@?([A-Za-z_][\w-]*)(?:\s|:)/.exec(line)?.[1];
+  return name === undefined || name === "set" ? null : name;
+}
+
+/** The tool a command runs: its program, or the tool `npx` is asked to run. */
+function toolOf(command: ShellCommand): string {
+  const program = programName(command.program);
+  return program === "npx" ? programName(command.args.find((arg) => !arg.startsWith("-")) ?? "") : program;
+}
+
+/**
+ * What counts as a test run in a repo: the recipes of its justfile whose name starts with `test`,
+ * `check`, `gate`, `e2e`, `lint`, `typecheck` or `build`, those `testRuns` names whole, and the programs
+ * those recipes run. Each recipe's body is read through the one parse, as a script, or line by line
+ * when it does not parse whole; just's `@` and `-` line prefixes are dropped first. With no justfile
+ * only the `testRuns` names count.
+ */
+export function testRunRules(justfile: string | null, added: readonly string[] = []): TestRunRules {
+  const bodies = new Map<string, string[]>();
+  let body: string[] | null = null;
+  for (const raw of (justfile ?? "").split("\n")) {
+    const line = raw.trim();
+    if (line === "") continue;
+    if (!/^\s/.test(raw)) {
+      const name = recipeHeaderName(line);
+      body = name === null ? null : (bodies.get(name) ?? []);
+      if (name !== null) bodies.set(name, body as string[]);
+    } else if (body !== null && !line.startsWith("#")) body.push(line.replace(/^[@-]+/, ""));
+  }
+  const recipes = new Set([...bodies.keys()].filter((name) => TEST_RECIPE_PREFIXES.some((prefix) => name.startsWith(prefix))));
+  for (const name of added) recipes.add(name);
+  const programs = new Set<string>();
+  for (const name of recipes) {
+    const lines = bodies.get(name) ?? [];
+    const commands = parseCommandLine(lines.join("\n")) ?? lines.flatMap((line) => parseCommandLine(line) ?? []);
+    for (const command of commands) {
+      const tool = toolOf(command);
+      if (command.program.includes("/") || !/^[A-Za-z]/.test(tool) || NOT_PROGRAMS.has(tool) || SHELL_UTILITIES.has(tool)) continue;
+      programs.add(tool);
+    }
+  }
+  return { recipes, programs };
+}
+
+/** Does this shell command line run a test: a counted recipe through `just`, or a program a counted recipe runs? */
+export function isTestRun(command: unknown, rules: TestRunRules): boolean {
+  return (parseCommandLine(strip(command)) ?? []).some((one) => {
+    const tool = toolOf(one);
+    if (SHELL_UTILITIES.has(tool)) return false;
+    return programName(one.program) === "just" ? rules.recipes.has(one.args[0] ?? "") : rules.programs.has(tool);
+  });
+}
+
+/** One test run: the command, the transcript line it was called on, and whether the harness marked its result an error. */
+export interface TestRun {
+  readonly session: string;
+  readonly agent: string | null;
+  readonly line: number;
+  readonly command: string;
+  readonly failed: boolean;
+}
+
+/** The test runs of the conversation or of one subagent, counted. */
+export interface TestRunTotals {
+  readonly session: string;
+  readonly agent: string | null;
+  readonly agentType: string | null;
+  readonly runs: number;
+  readonly failed: number;
+  /** The model requests from each first failed run to the next run that passed, added up. */
+  readonly requestsBetween: number;
+}
+
+/**
+ * The test runs in one transcript, and their totals. A stretch starts at the first failed run and
+ * stops at the next run that passes: the requests made after the failed run's call, up to and
+ * including the one that called the pass. A run that fails again inside a stretch adds nothing,
+ * and a stretch no run passes after is not counted.
+ */
+export function testRunsIn(
+  who: Pick<TestRunTotals, "session" | "agent" | "agentType">,
+  events: readonly TranscriptEvent[],
+  requests: readonly ModelRequest[],
+  rules: TestRunRules,
+): { readonly runs: readonly TestRun[]; readonly totals: TestRunTotals } {
+  const failedIds = new Set(events.flatMap((event) => (event.kind === "result" && event.failed ? [event.id] : [])));
+  const runs: TestRun[] = [];
+  let between = 0;
+  let since: number | null = null;
+  for (const event of events) {
+    if (event.kind !== "use" || event.action !== "shell" || !isTestRun(event.input["command"], rules)) continue;
+    const failed = failedIds.has(event.id);
+    runs.push({ session: who.session, agent: who.agent, line: event.line, command: strip(event.input["command"]), failed });
+    if (failed) since ??= event.line;
+    else if (since !== null) {
+      const from = since;
+      between += requests.filter((request) => request.line > from && request.line <= event.line).length;
+      since = null;
+    }
+  }
+  return { runs, totals: { ...who, runs: runs.length, failed: runs.filter((run) => run.failed).length, requestsBetween: between } };
+}
+
 // ── the reading ────────────────────────────────────────────────────────────
 
 /** A pointer into a transcript: the line something came from, and its text. */
@@ -953,6 +1078,8 @@ export interface Facts {
   readonly actors: readonly SpawnRecord[];
   /** Model requests, largest context and model, for each conversation read and each of its subagents. */
   readonly requests: readonly RequestsEntry[];
+  /** Each test run, and the totals for each conversation and each of its subagents. */
+  readonly testRuns: { readonly runs: readonly TestRun[]; readonly totals: readonly TestRunTotals[] };
   /** For each guardrail that refused in a transcript: every refusal, and whether the next command differed. */
   readonly refusals: readonly GuardrailRefusals[];
   /** A rail refused, and then somebody edited the guard. A pointer, never an accusation. */
@@ -990,6 +1117,14 @@ function modelsLine(entries: readonly RequestsEntry[]): string | null {
   }
   if (kinds.size === 0) return null;
   return `models    ${[...kinds].map(([key, n]) => (n === 1 ? key : `${key} ×${n}`)).join(" · ")}`;
+}
+
+/** The `tests` line: every run, how many failed, and the requests between a failed run and the next pass. Null when nothing ran. */
+function testsLine(totals: readonly TestRunTotals[]): string | null {
+  const runs = totals.reduce((n, one) => n + one.runs, 0);
+  if (runs === 0) return null;
+  const sum = (pick: (one: TestRunTotals) => number): number => totals.reduce((n, one) => n + pick(one), 0);
+  return `tests     ${runs} runs · ${sum((one) => one.failed)} failed · ${sum((one) => one.requestsBetween)} requests between a failed run and the next pass`;
 }
 
 /** The `refused` line: each guardrail with how often it refused, then how often the next command differed. Null when none refused. */
@@ -1044,7 +1179,7 @@ export function formatFacts(facts: Facts): string[] {
   if (headline.quiet.length > 0)
     lines.push(`  quiet     ${headline.quiet.map((q) => `${q.id} (${q.daysSince}d)`).join(" · ")}`);
 
-  for (const line of [requestsLine(facts.requests), modelsLine(facts.requests), refusedLine(facts.refusals)]) if (line !== null) lines.push(`  ${line}`);
+  for (const line of [requestsLine(facts.requests), modelsLine(facts.requests), testsLine(facts.testRuns.totals), refusedLine(facts.refusals)]) if (line !== null) lines.push(`  ${line}`);
 
   const { stats, shell } = facts.narrative;
   lines.push(

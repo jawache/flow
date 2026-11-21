@@ -6,7 +6,7 @@
 // settings file, its transcripts — is proved in that harness's folder.
 import { describe, it, expect } from "vitest";
 import { DELETED, type Bound, type Row, type Tree } from "../engine/domain.ts";
-import { backedByTranscript, refusalsIn, refused, requestsEntry, snipAtWord, changeEvents, noticesThatCouldShow, changeRow, changedBy, commitRange, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
+import { backedByTranscript, isTestRun, testRunRules, testRunsIn, refusalsIn, refused, requestsEntry, snipAtWord, changeEvents, noticesThatCouldShow, changeRow, changedBy, commitRange, folderChanges, foldersToLook, namedChange, shellChangesOf, statusPaths, withShellChanges } from "./domain.ts";
 import { breadcrumb, defineConfig, definePack, fileChange, loadConfig, pack, session } from "../index.ts";
 import type { Ctx, TurnAction } from "../language/domain.ts";
 import { ranSinceEdit } from "../checks/domain.ts";
@@ -2418,5 +2418,78 @@ describe("requests, models and refusals of a conversation with one subagent", ()
 
   it("ignores a result that only shows the text, because it did not fail", () => {
     expect(refusalsIn({ session: "s1", agent: null }, [use(2, "t1", "cat notes"), result(3, "t1", refusal, false)])).toEqual([]);
+  });
+});
+
+describe("test runs, decided from the justfile", () => {
+  const justfile = [
+    "set shell := [\"bash\", \"-c\"]",
+    "",
+    "# the fast tests",
+    "test file='':",
+    "    npx vitest run {{file}}",
+    "",
+    "e2e spec:",
+    "    @npx playwright test {{spec}}",
+    "",
+    "build:",
+    "    mkdir -p dist",
+    "    grep -r x src",
+    "    tsc -p .",
+    "",
+    "fmt:",
+    "    prettier --write .",
+    "",
+    "verify:",
+    "    cargo nextest run",
+  ].join("\n");
+  const rules = testRunRules(justfile);
+
+  it("counts a recipe by its prefix, and the programs a counted recipe runs", () => {
+    expect(isTestRun("just test", rules)).toBe(true);
+    expect(isTestRun("just e2e x", rules)).toBe(true);
+    expect(isTestRun("vitest run", rules)).toBe(true);
+    expect(isTestRun("npx vitest run adapter", rules)).toBe(true);
+    expect(isTestRun("just fmt", rules)).toBe(false);
+    expect(isTestRun("prettier --write .", rules), "fmt is no counted recipe").toBe(false);
+  });
+
+  it("never counts a shell utility, though a build recipe runs it", () => {
+    expect(isTestRun("mkdir -p out", rules)).toBe(false);
+    expect(isTestRun("grep -r x src", rules)).toBe(false);
+    expect(isTestRun("tsc -p .", rules)).toBe(true);
+  });
+
+  it("counts a recipe testRuns names, matched whole", () => {
+    expect(isTestRun("just verify", rules)).toBe(false);
+    const added = testRunRules(justfile, ["verify"]);
+    expect(isTestRun("just verify", added)).toBe(true);
+    expect(isTestRun("cargo nextest run", added)).toBe(true);
+    expect(isTestRun("just verify-all", added)).toBe(false);
+  });
+
+  const use = (line: number, id: string, command: string): TranscriptEvent => ({ line, kind: "use", ts: null, id, name: "Bash", action: "shell", input: { command }, path: "" });
+  const result = (line: number, id: string, failed: boolean): TranscriptEvent => ({ line, kind: "result", id, content: "", failed });
+  const asked = (...lines: number[]) => lines.map((line) => ({ line, model: null, context: 0 }));
+  const who = { session: "s1", agent: "a1", agentType: "builder" };
+
+  it("counts the requests from the first failed run to the next pass, a run that fails twice once", () => {
+    const events = [
+      use(2, "t1", "just test"),
+      result(3, "t1", true),
+      use(6, "t2", "just test"),
+      result(7, "t2", true),
+      use(10, "t3", "just test"),
+      result(11, "t3", false),
+      use(14, "t4", "ls"),
+    ];
+    const { runs, totals } = testRunsIn(who, events, asked(1, 4, 5, 8, 9, 12), testRunRules(justfile));
+    expect(runs.map((run) => [run.line, run.failed])).toEqual([[2, true], [6, true], [10, false]]);
+    expect(totals).toEqual({ ...who, runs: 3, failed: 2, requestsBetween: 4 });
+  });
+
+  it("counts no requests for a failed run no pass follows, or a run that passes first", () => {
+    const events = [use(2, "t1", "just test"), result(3, "t1", false), use(6, "t2", "just test"), result(7, "t2", true)];
+    expect(testRunsIn(who, events, asked(1, 4, 5, 8), testRunRules(justfile)).totals).toMatchObject({ runs: 2, failed: 1, requestsBetween: 0 });
   });
 });

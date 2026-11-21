@@ -1088,6 +1088,7 @@ describe("formatFacts — the whole of what a person sees", () => {
     uncovered: [],
     actors: [],
     requests: [],
+    testRuns: { runs: [], totals: [] },
     refusals: [],
     weakened: [],
     modes: modesOf([]),
