@@ -48,6 +48,12 @@ describe("ctx.exec, live", () => {
     expect(runCommand("exit 3", repo).code).toBe(3);
   });
 
+  it("keeps the order of both streams on one pipe, and the streams apart otherwise", () => {
+    const command = "echo a; echo b >&2; echo c";
+    expect(runCommand(command, repo, undefined, true)).toStrictEqual({ stdout: "", stderr: "", output: "a\nb\nc\n", code: 0 });
+    expect(runCommand(command, repo)).toStrictEqual({ stdout: "a\nc\n", stderr: "b\n", code: 0 });
+  });
+
   it("answers a MISSING BINARY with 127 rather than throwing — the fail-loud proof stands on it", () => {
     // A bound command that does not exist must refuse the rail, not sail through it. The engine
     // turns a non-zero exit into a block naming the entry and the command; a throw here would be

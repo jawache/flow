@@ -89,6 +89,8 @@ import {
   fires,
   flowDir,
   formatBlock,
+  keptOutputFile,
+  outputFile,
   formatBlocks,
   guard,
   identify,
@@ -1088,6 +1090,33 @@ describe("formatting a refusal", () => {
     expect(formatBlock(block)).toBe("✗ x.y\n  m\n    one\n    two");
   });
 
+  it("shows a tool's output of 40 lines whole, with no line about a file", () => {
+    const output = Array.from({ length: 40 }, (_, i) => `line ${i + 1}`).join("\n") + "\n";
+    const text = formatBlock({ do: "block", entry: "x.y", message: "m", subject: null, detail: "d", output });
+    expect(text.split("\n")).toEqual(["✗ x.y", "  m", "    d", ...Array.from({ length: 40 }, (_, i) => `    line ${i + 1}`)]);
+  });
+
+  it("cuts a tool's output of 252 lines to its last 40, and names the file with all of it", () => {
+    const output = Array.from({ length: 252 }, (_, i) => `line ${i + 1}`).join("\n");
+    const lines = formatBlock({ do: "block", entry: "python.commitRunsLint", message: "m", subject: null, detail: "d", output }).split("\n");
+    expect(lines.slice(3, 43)).toEqual(Array.from({ length: 40 }, (_, i) => `    line ${i + 213}`));
+    expect(lines.at(-1)).toBe("    … 212 lines cut. All of it: .flow/output/python.commitRunsLint.log");
+    expect(lines).toHaveLength(44);
+    expect(outputFile("python.commitRunsLint")).toBe(".flow/output/python.commitRunsLint.log");
+  });
+
+  it("a block's output is kept only when lines were cut and an entry can name the file", () => {
+    const block = (entry: string | null, n: number): Parameters<typeof keptOutputFile>[0] => ({
+      do: "block", entry, message: "m", subject: null, detail: "d",
+      output: Array.from({ length: n }, (_, i) => `l${i}`).join("\n"),
+    });
+    expect(keptOutputFile(block("a.b", 41))).toBe(".flow/output/a.b.log");
+    expect(keptOutputFile(block("a.b", 40))).toBeNull();
+    expect(keptOutputFile(block(null, 41))).toBeNull();
+    const { output: _output, ...bare } = block("a.b", 41);
+    expect(keptOutputFile(bare)).toBeNull();
+  });
+
   it("prints the guard's own fault as itself, with no rule to attribute it to", () => {
     expect(formatBlock({ do: "block", entry: null, message: "flow: broken", subject: null, detail: "" })).toBe(
       "flow: broken",
@@ -1275,6 +1304,20 @@ describe("the log's layout", () => {
       },
       { kind: "breadcrumb", moment: "commit", id: "a.note", cause: "drift", subject: "x.ts" },
     ]);
+  });
+
+  it("holds all 252 lines a refused tool printed in the guardrail row's output, and no output on a block of any other check", () => {
+    const output = Array.from({ length: 252 }, (_, i) => `line ${i + 1}`).join("\n");
+    const outcome: Outcome = {
+      effects: [
+        { do: "block", entry: "a.tool", message: "m", subject: null, detail: "d", output },
+        { do: "block", entry: "a.other", message: "n", subject: "x.ts", detail: "" },
+      ],
+      tallies: [],
+    };
+    const [, tool, other] = runRows("commit", outcome, 1);
+    expect(tool?.["output"]).toBe(output);
+    expect(other).not.toHaveProperty("output");
   });
 
   it("writes no subject on a breadcrumb row whose note fired on no touch", () => {
@@ -1930,6 +1973,17 @@ describe("the recording seam — the live world's answers, written down", () => 
       gitDiff: "@@ -1",
       staged: ["a.ts"],
     });
+  });
+
+  it("replays a one-pipe call as it was answered", async () => {
+    const live: World = {
+      exec: () => Promise.resolve({ stdout: "", stderr: "", output: "a\nb\nc\n", code: 1 }),
+      fs: { read: () => Promise.resolve(""), exists: () => Promise.resolve(false) },
+      git: { diff: () => Promise.resolve(""), stagedFiles: () => Promise.resolve([]) },
+    };
+    const one = recorder(live);
+    await one.world.exec("lint", { onePipe: true });
+    expect(await cannedWorld(one.taken(), undefined, []).exec("lint", { onePipe: true })).toEqual({ stdout: "", stderr: "", output: "a\nb\nc\n", code: 1 });
   });
 
   it("a world nothing reached for records nothing — an empty answer set, not an empty world", () => {

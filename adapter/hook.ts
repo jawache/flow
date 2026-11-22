@@ -23,7 +23,7 @@ import { isatty } from "node:tty";
 import { basename, dirname, join, posix } from "node:path";
 import { type Category, refusalText, type LoadResult, type Settings, type TurnAction } from "../language/domain.ts";
 import { brief, categoriesIn, DELETED, guard, recorder, runRows, type AgentOf, type Identity, type Marks, type Notice, type Outcome, type RecordedStep, type Row, type SessionState, type Tree } from "../engine/domain.ts";
-import { appendRows, appendSteps, isOff, isRecording, loadState, readRows, stickyIdentity, updateState, writeMarker } from "../engine/state.ts";
+import { appendRows, appendSteps, keepOutputs, isOff, isRecording, loadState, readRows, stickyIdentity, updateState, writeMarker } from "../engine/state.ts";
 import { agentOf, ALLOW, awaitsBrief, changeEvents, changeRow, commitRange, folderChanges, foldersToLook, hermeticEnv, holdsForBrief, isHookEvent, namedChange, nothingBound, noticesThatCouldShow, outsideOf, opensCall, reachesAnotherWorktree, readFault, ridesRefusal, sessionFactsFrom, shellChangesOf, shellReadRows, statusPaths, toEvent, toResult, toolRow, whileBroken, withShellChanges, workedPaths, worktreeFolders, worktreesWorkedIn, type AdapterEvent, type Answer, type BriefAdapterEvent, type EventWorld, type HookEvent, type Refused, type Shown } from "./domain.ts";
 import type { Harness, HookPayload, HookResult } from "./harness.ts";
 import { currentBranch, loadRegime, readText, realWorld } from "./shell.ts";
@@ -441,9 +441,9 @@ async function judge(args: {
       wearing: identity.wearing,
       world: tape?.taken() ?? {},
     });
-    for (const effect of outcome.effects)
-      if (effect.do === "block")
-        blocked.push({ moment: event.moment, block: effect });
+    const blocks = outcome.effects.flatMap((effect) => (effect.do === "block" ? [effect] : []));
+    for (const block of blocks) blocked.push({ moment: event.moment, block });
+    keepOutputs(session.root, blocks);
     if (!off) rows.push(...runRows(event.moment, outcome, 1));
   }
 

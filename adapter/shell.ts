@@ -20,10 +20,10 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { loadConfig, type ExecResult, type FlowConfig, type LoadResult, type Grammar, type Settings, type World } from "../language/domain.ts";
+import { loadConfig, type ExecOptions, type ExecResult, type FlowConfig, type LoadResult, type Grammar, type Settings, type World } from "../language/domain.ts";
 import { fault, guard, recorder, runRows, UNNAMED_COMMIT, type AgentOf, type Block } from "../engine/domain.ts";
 import { quoteArg, useGrammars } from "../checks/domain.ts";
-import { appendRows, appendSteps, commitAttribution, isOff, isRecording, loadState } from "../engine/state.ts";
+import { appendRows, appendSteps, keepOutputs, commitAttribution, isOff, isRecording, loadState } from "../engine/state.ts";
 import { ALLOW, CONFIG_FILE, branchFromHead, cleanMessage, commentLeader, commitArgs, configLoadFault, hermeticEnv, pathLines, readsCommitIndex, refused, stagedChanges, treeChanges, type CommitArgs, type CommitScope, type Refused, type StagedChanges } from "./domain.ts";
 import type { HookResult, StoredTranscript, TranscriptRef } from "./harness.ts";
 
@@ -59,18 +59,25 @@ const MAX_OUTPUT = 16 * 1024 * 1024;
  * installed refuses the commit instead of passing it. bash answers 127 itself; the only case left
  * is bash being unspawnable, which is the same fact one level up and is answered the same way.
  */
-export function runCommand(command: string, root: string, env = hermeticEnv(process.env)): ExecResult {
-  const result = spawnSync("bash", ["-lc", command], {
+export function runCommand(command: string, root: string, env = hermeticEnv(process.env), onePipe = false): ExecResult {
+  // One pipe is set up where bash starts: `exec 2>&1` joins stderr to stdout before the command runs,
+  // so the kernel orders the writes. The command string `ctx.exec` was given is never touched.
+  const result = spawnSync("bash", ["-lc", onePipe ? `exec 2>&1\n${command}` : command], {
     cwd: root,
     encoding: "utf8",
     maxBuffer: MAX_OUTPUT,
     // Git's hook variables would aim any nested `git` at the in-progress commit. See GIT_HOOK_ENV.
     env,
   });
-  if (result.error) return { stdout: "", stderr: `flow could not run a command: ${result.error.message}`, code: 127 };
+  if (result.error) {
+    const said = `flow could not run a command: ${result.error.message}`;
+    return onePipe ? { stdout: "", stderr: "", output: said, code: 127 } : { stdout: "", stderr: said, code: 127 };
+  }
   // `status` is null when a signal killed the process. That is a failure, and 1 says so — the one
   // code that must never be invented is 0.
-  return { stdout: result.stdout, stderr: result.stderr, code: result.status ?? 1 };
+  const code = result.status ?? 1;
+  // One pipe has no split to give: everything printed is `output`.
+  return onePipe ? { stdout: "", stderr: "", output: result.stdout, code } : { stdout: result.stdout, stderr: result.stderr, code };
 }
 
 /** A repo-relative path, made absolute. Every path a check sees is relative; disk is not. */
@@ -102,10 +109,10 @@ export function readText(root: string, path: string): string | null {
 export function realWorld(root: string, commitIndex?: string): World {
   return {
     // Hermetic, but for a read of what the commit holds, which is given the commit's own index.
-    exec: (command: string): Promise<ExecResult> => {
+    exec: (command: string, options?: ExecOptions): Promise<ExecResult> => {
       const hermetic = hermeticEnv(process.env);
       return Promise.resolve(
-        runCommand(command, root, commitIndex !== undefined && readsCommitIndex(command) ? { ...hermetic, GIT_INDEX_FILE: commitIndex } : hermetic),
+        runCommand(command, root, commitIndex !== undefined && readsCommitIndex(command) ? { ...hermetic, GIT_INDEX_FILE: commitIndex } : hermetic, options?.onePipe === true),
       );
     },
     fs: {
@@ -367,6 +374,7 @@ export async function runCommit(root: string, { scope, messageFile }: CommitArgs
   const blocks: Refused[] = outcome.effects
     .filter((effect): effect is Block => effect.do === "block")
     .map((block) => ({ moment: "commit", block }));
+  keepOutputs(root, blocks.map((b) => b.block));
   return refused(blocks) ?? ALLOW;
 }
 

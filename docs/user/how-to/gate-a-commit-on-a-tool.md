@@ -34,7 +34,7 @@ This guide shows you how to run a tool at each commit, and refuse the commit whe
 
 3. Run `flow test`.
 
-An exit code of 0 passes. Any other exit code refuses the commit, and the refusal shows the tool's failing lines.
+An exit code of 0 passes. Any other exit code refuses the commit, and the refusal shows [what the tool printed](../checks/exec-passes.md#what-the-refusal-shows).
 
 ## Variants
 

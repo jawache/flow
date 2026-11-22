@@ -18,6 +18,7 @@ import {
   appendFileSync,
   closeSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -41,6 +42,7 @@ import {
   markerPath,
   metaRow,
   nextSeq,
+  keptOutputFile,
   offPath,
   readDir,
   readMarkPath,
@@ -52,6 +54,7 @@ import {
   statePath,
   type AgentOf,
   type Attribution,
+  type Block,
   type Identity,
   type RecordedStep,
   type Recording,
@@ -159,10 +162,8 @@ export function updateState(root: string, session: string, agent: string, change
   const held = takeLock(lock);
   try {
     const next = change(loadState(root, session, agent));
-    const temporary = `${file}.${process.pid}.tmp`;
     try {
-      writeFileSync(temporary, JSON.stringify(next));
-      renameSync(temporary, file);
+      replaceFile(file, JSON.stringify(next));
     } catch {
       /* a dropped write re-shows a breadcrumb, the harmless direction */
     }
@@ -241,6 +242,41 @@ export interface LogContext {
   readonly who: AgentOf;
   /** Injected, because a clock inside a decision is a decision nobody can test. */
   readonly now?: () => Date;
+}
+
+/**
+ * Write a file by replacing it: the body goes to a fresh temporary name, which is renamed into
+ * place. A link planted at the file's name or at the temporary one is replaced or refused, never
+ * written through.
+ */
+function replaceFile(file: string, body: string): void {
+  const temporary = `${file}.${process.pid}.tmp`;
+  rmSync(temporary, { force: true });
+  writeFileSync(temporary, body, { flag: "wx" });
+  renameSync(temporary, file);
+}
+
+/**
+ * Keep all of a refused tool's output in `.flow/output/<entry id>.log`, for each block whose
+ * refusal cut lines. A refusal that showed it whole writes nothing. A write that fails is lost
+ * quietly: the refusal is the answer, and the file is only the rest of it.
+ */
+export function keepOutputs(root: string, blocks: readonly Block[]): void {
+  for (const block of blocks) {
+    const kept = keptOutputFile(block);
+    if (kept === null || block.output === undefined) continue;
+    try {
+      const file = join(root, kept);
+      ensureFlowDir(root);
+      mkdirSync(dirname(file), { recursive: true });
+      // A folder that is a link, or not a folder, is not written into.
+      const folder = lstatSync(dirname(file));
+      if (folder.isSymbolicLink() || !folder.isDirectory()) continue;
+      replaceFile(file, block.output);
+    } catch {
+      // see above
+    }
+  }
 }
 
 /**

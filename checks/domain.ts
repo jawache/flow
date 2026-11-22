@@ -1127,20 +1127,6 @@ export function skipForChanged(files: readonly string[], changed: readonly strin
 }
 
 /**
- * The lines worth showing FIRST when a tool fails — the errors, not the success chatter.
- *
- * Prefer lines that look like a failure; fall back to the tail. Capped, so a blocked commit stays
- * terse: quiet on pass, and on failure the error is up top rather than buried under a progress log.
- */
-export function failureExcerpt(output: string, cap = 8): string {
-  const lines = output.trim().split("\n").filter(Boolean);
-  const hot = lines.filter(
-    (l) => /\b(fail|failed|error|not ok|assert|expected|cannot|undefined)\b/i.test(l) || /[✖✗✘]/.test(l),
-  );
-  return (hot.length ? hot : lines.slice(-6)).slice(0, cap).join("\n");
-}
-
-/**
  * Run a whole-project tool and block on its failure — the one tool-delegated check.
  *
  * Some checks need the whole tree in a consistent state (a transitive import boundary, coverage,
@@ -1161,9 +1147,10 @@ export const execPasses = defineCheck(
       const wantsFiles = opts.run.includes("{files}");
       if (wantsFiles && files.length === 0) return ctx.ok();
       const run = wantsFiles ? opts.run.replace("{files}", files.map(quoteArg).join(" ")) : opts.run;
-      const result = await ctx.exec(run);
+      // One pipe: the refusal shows what the tool printed in the order it printed it.
+      const result = await ctx.exec(run, { onePipe: true });
       if (result.code === 0) return ctx.ok();
-      return ctx.fail(`\`${run}\` failed (exit ${result.code}):\n${failureExcerpt(result.stderr || result.stdout)}`);
+      return ctx.fail(`\`${run}\` failed (exit ${result.code}):`, result.output ?? "");
     },
 );
 
@@ -1341,7 +1328,7 @@ export function compileDialect(rule: Dialect): NativeConfig {
   }
 
   // ── forbid: edges between layers, plain circular, orphans, cyclesBetween. Every one of them
-  //    refuses the commit: depcruiseHits reads no severity, so `warn` here is only dependency-cruiser's
+  //    refuses the commit: depcruiseReport reads no severity, so `warn` here is only dependency-cruiser's
   //    label for the rule, never a softer outcome.
   for (const f of rule.forbid ?? []) {
     if (f === "circular") {
@@ -1456,22 +1443,24 @@ interface DepcruiseViolation {
   to?: string;
 }
 
-/** The tool's JSON report → one hit per violation, each naming the fence and its `why`. */
-export function depcruiseHits(result: ExecResult): string[] {
+/**
+ * Read the tool's answer once: its JSON report becomes one hit per violation, each naming the fence
+ * and its `why`. With no report to read, the run either passed (nothing to say) or failed, and then
+ * `failure` is what it printed, stdout then stderr, whole.
+ */
+export function depcruiseReport(result: ExecResult): { readonly hits: string[]; readonly failure: string | null } {
   let json: { summary?: { violations?: DepcruiseViolation[] } };
   try {
     json = JSON.parse(result.stdout || "") as { summary?: { violations?: DepcruiseViolation[] } };
   } catch {
-    // No parseable JSON. Exit 0 with no report is an empty cruise; anything else is a real failure
-    // — a bad config, a missing tool — and saying so beats reporting a clean graph.
-    if (result.code === 0) return [];
-    return [`depcruise failed (exit ${result.code}): ${failureExcerpt(result.stderr || result.stdout, 3)}`];
+    return { hits: [], failure: result.code === 0 ? null : `${result.stdout}${result.stderr}` };
   }
-  return (json.summary?.violations ?? []).map((v) => {
+  const hits = (json.summary?.violations ?? []).map((v) => {
     const name = v.rule?.name ?? "fence";
     const why = v.comment ?? v.rule?.comment ?? ""; // the fence's own reason, when depcruise echoes it
     return `${name}: ${v.from} → ${v.to}${why ? ` — ${why}` : ""}`;
   });
+  return { hits, failure: null };
 }
 
 /**
@@ -1556,7 +1545,11 @@ export function removedWarnOption(opts: Dialect): string[] {
  * only so the fences are readable by the person who has to change them.
  */
 export const depcruise = defineCheck((opts: Dialect): Check => {
-  const run: Check = async (ctx) => answer(ctx, depcruiseHits(await ctx.exec(depcruiseCommand(opts))), "\n");
+  const run: Check = async (ctx) => {
+    const result = await ctx.exec(depcruiseCommand(opts));
+    const { hits, failure } = depcruiseReport(result);
+    return failure !== null ? ctx.fail(`depcruise failed (exit ${result.code}):`, failure) : answer(ctx, hits, "\n");
+  };
   // The options are judged when the check is BUILT, and a fault refuses the load rather than
   // waiting for a commit: a fence that cannot match is worse than no fence, because it reports.
   return withFaults(run, [...nonGlobLayers(opts.layers), ...holesInAnOnlyList(opts), ...removedWarnOption(opts)]);

@@ -7,17 +7,18 @@
 // answers instead of throwing when the disk says no.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, utimesSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, utimesSync, symlinkSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { defineCategory, type SessionFacts } from "../index.ts";
 import { builder, parent } from "../__fixtures__/engine-pack.ts";
-import { FLOW_DIR, LOCK_STALE_MS, lockPath, logFile, offPath, recordPath, recordingFile, statePath, type RecordedStep, type Row, type SessionState } from "./domain.ts";
+import { FLOW_DIR, LOCK_STALE_MS, lockPath, logFile, offPath, recordPath, recordingFile, statePath, type Block, type RecordedStep, type Row, type SessionState } from "./domain.ts";
 import {
   alreadyRead,
   appendRows,
+  keepOutputs,
   appendSteps,
   commitAttribution,
   ensureFlowDir,
@@ -384,5 +385,40 @@ describe("the recording seam", () => {
 
   it("a recording that is not there is an empty one, keyed by the name it was asked for", () => {
     expect(loadRecording(join(root, "nope.jsonl"))).toEqual({ v: 1, session: "nope", steps: [] });
+  });
+});
+
+describe("keepOutputs", () => {
+  const block = (lines: number): Block => ({
+    do: "block",
+    entry: "py.lint",
+    message: "m",
+    subject: null,
+    detail: "d",
+    output: Array.from({ length: lines }, (_, i) => `line ${i + 1}`).join("\n") + "\n",
+  });
+
+  it("keeps a file only when lines were cut, and never writes through a link", () => {
+    const file = join(root, ".flow", "output", "py.lint.log");
+    keepOutputs(root, [block(40)]);
+    expect(existsSync(file)).toBe(false);
+
+    const outside = join(root, "outside.txt");
+    writeFileSync(outside, "mine");
+    mkdirSync(join(root, ".flow", "output"), { recursive: true });
+    symlinkSync(outside, file);
+    symlinkSync(outside, `${file}.${process.pid}.tmp`);
+    keepOutputs(root, [block(41)]);
+    expect(readFileSync(outside, "utf8")).toBe("mine");
+    expect(readFileSync(file, "utf8").trimEnd().split("\n")).toHaveLength(41);
+  });
+
+  it("writes nothing into an output folder that is a link", () => {
+    const elsewhere = join(root, "elsewhere");
+    mkdirSync(elsewhere);
+    mkdirSync(join(root, ".flow"), { recursive: true });
+    symlinkSync(elsewhere, join(root, ".flow", "output"));
+    keepOutputs(root, [block(41)]);
+    expect(readdirSync(elsewhere)).toEqual([]);
   });
 });

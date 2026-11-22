@@ -41,11 +41,10 @@ import {
   layerGlobs,
   depcruise,
   depcruiseCommand,
-  depcruiseHits,
+  depcruiseReport,
   entryToMatcher,
   execPasses,
   exportedNames,
-  failureExcerpt,
   gitCommands,
   gitDirPrefix,
   givesReason,
@@ -114,6 +113,12 @@ const runWithReaches = async (
   const missing: Unanswered[] = [];
   const v = await check(await ctxOf(moment, c, missing));
   return { detail: v.ok ? null : (v.detail ?? ""), missing };
+};
+
+/** …and the output a refusal carries: what a failed tool printed, whole. */
+const outputOf = async (check: Check, moment: Parameters<typeof caseCtxs>[1], c: Case): Promise<string | null> => {
+  const v = await check(await ctxOf(moment, c, []));
+  return v.ok ? null : (v.output ?? "");
 };
 
 const file = (path: string, content: string): Case => ({ path, content });
@@ -1144,30 +1149,8 @@ describe("skipForChanged", () => {
   });
 });
 
-describe("failureExcerpt", () => {
-  it("surfaces the error lines and drops the success chatter", () => {
-    const out = [
-      "Running tests",
-      "ok 1",
-      "✖ the widget renders",
-      "AssertionError: expected 1 to equal 2",
-      "ℹ pass 2",
-    ].join("\n");
-    const excerpt = failureExcerpt(out);
-    expect(excerpt).toContain("AssertionError");
-    expect(excerpt).toContain("widget renders");
-    expect(excerpt).not.toContain("Running tests");
-  });
-
-  it("falls back to the tail when nothing looks like an error, and stays capped", () => {
-    const excerpt = failureExcerpt(Array.from({ length: 40 }, (_, i) => `line ${i}`).join("\n"));
-    expect(excerpt.split("\n").length).toBeLessThanOrEqual(8);
-    expect(excerpt).toContain("line 39");
-  });
-});
-
 describe("execPasses", () => {
-  it("passes on exit 0 and blocks with an excerpt otherwise", async () => {
+  it("passes on exit 0 and blocks naming the exit code otherwise", async () => {
     const ok = await run(execPasses({ run: "just test" }), "commit", {
       staged: ["a.ts"],
       world: { exec: { "just test": { code: 0 } } },
@@ -1178,7 +1161,18 @@ describe("execPasses", () => {
       world: { exec: { "just test": { code: 3, stdout: "AssertionError: nope" } } },
     });
     expect(bad).toContain("exit 3");
-    expect(bad).toContain("AssertionError");
+  });
+
+  it("a refusal holds stdout then stderr whole, from any command: ruff's finding and just's error", async () => {
+    const stdout = "src/joby/oops.py:1:8: F401 [*] `os` imported but unused\nFound 1 error.\n";
+    const stderr = "error: recipe `lint` failed on line 18 with exit code 1\n";
+    for (const command of ["just lint", "ruff check ."]) {
+      const output = await outputOf(execPasses({ run: command }), "commit", {
+        staged: ["src/joby/oops.py"],
+        world: { exec: { [command]: { code: 1, stdout, stderr } } },
+      });
+      expect(output).toBe(`${stdout}${stderr}`);
+    }
   });
 
   it("a scoped gate stays quiet when its area is untouched, and never runs the tool", async () => {
@@ -1435,32 +1429,45 @@ describe("depcruiseCommand", () => {
   });
 });
 
-describe("depcruiseHits", () => {
+describe("depcruiseReport", () => {
   it("names the fence, the edge and the why", () => {
     const stdout = JSON.stringify({
       summary: { violations: [{ rule: { name: "pure-only", comment: "pure imports only pure" }, from: "a.ts", to: "b.ts" }] },
     });
-    expect(depcruiseHits({ stdout, stderr: "", code: 1 })).toEqual([
+    expect(depcruiseReport({ stdout, stderr: "", code: 1 }).hits).toEqual([
       "pure-only: a.ts → b.ts — pure imports only pure",
     ]);
   });
 
   it("an unnamed violation still reads, and a clean cruise says nothing", () => {
     const stdout = JSON.stringify({ summary: { violations: [{ from: "a.ts", to: "b.ts" }] } });
-    expect(depcruiseHits({ stdout, stderr: "", code: 1 })).toEqual(["fence: a.ts → b.ts"]);
-    expect(depcruiseHits({ stdout: JSON.stringify({ summary: {} }), stderr: "", code: 0 })).toEqual([]);
+    expect(depcruiseReport({ stdout, stderr: "", code: 1 }).hits).toEqual(["fence: a.ts → b.ts"]);
+    expect(depcruiseReport({ stdout: JSON.stringify({ summary: {} }), stderr: "", code: 0 }).hits).toEqual([]);
   });
 
   it("a violation at severity warn is a hit like any other, though the tool exits 0 for it", () => {
     const stdout = JSON.stringify({
       summary: { violations: [{ rule: { name: "no-orphans", severity: "warn" }, from: "src/core.ts", to: "src/app.ts" }] },
     });
-    expect(depcruiseHits({ stdout, stderr: "", code: 0 })).toEqual(["no-orphans: src/core.ts → src/app.ts"]);
+    expect(depcruiseReport({ stdout, stderr: "", code: 0 }).hits).toEqual(["no-orphans: src/core.ts → src/app.ts"]);
   });
 
   it("unparseable output is a REAL failure when the tool failed, and silence when it did not", () => {
-    expect(depcruiseHits({ stdout: "", stderr: "boom", code: 2 })[0]).toContain("depcruise failed (exit 2)");
-    expect(depcruiseHits({ stdout: "not json", stderr: "", code: 0 })).toEqual([]);
+    expect(depcruiseReport({ stdout: "", stderr: "boom", code: 2 })).toEqual({ hits: [], failure: "boom" });
+    expect(depcruiseReport({ stdout: "not json", stderr: "", code: 0 })).toEqual({ hits: [], failure: null });
+    expect(depcruiseReport({ stdout: JSON.stringify({ summary: {} }), stderr: "x", code: 2 }).failure).toBeNull();
+  });
+
+  it("a tool that fails with no report refuses with its stdout then its stderr, whole", async () => {
+    const world: CaseWorld = { exec: { depcruise: { stdout: "Error: cannot read config\nat line 2\n", stderr: "npm ERR! boom\n", code: 2 } } };
+    const check = depcruise({ scan: "s", layers: {} });
+    expect(await run(check, "commit", { staged: ["a.ts"], world })).toBe("depcruise failed (exit 2):");
+    expect(await outputOf(check, "commit", { staged: ["a.ts"], world })).toBe("Error: cannot read config\nat line 2\nnpm ERR! boom\n");
+  });
+
+  it("a violation report carries no tool output", async () => {
+    const stdout = JSON.stringify({ summary: { violations: [{ rule: { name: "pure-only" }, from: "a", to: "b" }] } });
+    expect(await outputOf(depcruise({ scan: "s", layers: {} }), "commit", { staged: ["a.ts"], world: { exec: { depcruise: { stdout, code: 1 } } } })).toBe("");
   });
 
   it("blocks through the check", async () => {

@@ -42,6 +42,7 @@ import {
   type Check,
   type Ctx,
   type EntrySpec,
+  type ExecOptions,
   type ExecResult,
   type GuardrailMoment,
   type LoadResult,
@@ -387,6 +388,8 @@ export interface Block {
   readonly subject: string | null;
   /** What the check said was wrong. Empty when it gave no detail. */
   readonly detail: string;
+  /** What a failed tool printed, whole. Absent when the check ran no tool or the tool printed nothing. */
+  readonly output?: string;
 }
 
 /**
@@ -521,6 +524,7 @@ export async function guard({ load, event, world, faults = [], off = false }: Gu
         message: entry.spec.message ?? "",
         subject: subject.name,
         detail: answer.detail ?? "",
+        ...(answer.output === undefined ? {} : { output: answer.output }),
       });
     }
     tallies.push({ id: entry.id, evaluated, hits, silenced: 0 });
@@ -653,7 +657,43 @@ export function formatBlock(block: Block): string {
   const lines = [head];
   if (block.entry !== null && block.message) lines.push(`  ${block.message}`);
   if (block.detail) lines.push(...block.detail.split("\n").map((line) => `    ${line}`));
+  if (block.output !== undefined) {
+    const { shown, cut } = cutOutput(block.output);
+    lines.push(...shown.map((line) => `    ${line}`));
+    const kept = keptOutputFile(block);
+    if (kept !== null) lines.push(`    … ${cut} lines cut. All of it: ${kept}`);
+  }
   return lines.join("\n");
+}
+
+/** The most lines of a failed tool's output a refusal shows. */
+const OUTPUT_LINES = 40;
+
+/** A tool's output as lines, its closing newline not counted. */
+function linesOf(output: string): string[] {
+  return output === "" ? [] : output.replace(/\n$/, "").split("\n");
+}
+
+/** The last `OUTPUT_LINES` lines of a tool's output, and how many lines came before them. */
+export function cutOutput(output: string): { readonly shown: string[]; readonly cut: number } {
+  const lines = linesOf(output);
+  const cut = Math.max(0, lines.length - OUTPUT_LINES);
+  return { shown: lines.slice(cut), cut };
+}
+
+/** Where all of an entry's refused tool's output is kept, relative to the repo root. */
+export function outputFile(entry: string): string {
+  // An entry id is `pack.name`: the dot stays, so the file is named as the docs say.
+  return `${FLOW_DIR}/output/${entry.replace(/[^A-Za-z0-9_.-]/g, "-")}.log`;
+}
+
+/**
+ * Where a block's output is kept, or null when it is not: the refusal cut lines, and an entry
+ * can name the file. The refusal's line and the file's write both ask this, so they cannot differ.
+ */
+export function keptOutputFile(block: Block): string | null {
+  if (block.entry === null || block.output === undefined || cutOutput(block.output).cut === 0) return null;
+  return outputFile(block.entry);
 }
 
 /** Every block in one outcome, as one message. Empty when nothing refused. */
@@ -1020,6 +1060,7 @@ export function runRows(moment: Moment, outcome: Outcome, subjects: number): Row
         out: "deny",
         message: effect.message,
         detail: effect.detail,
+        ...(effect.output === undefined ? {} : { output: effect.output }),
       });
     else
       rows.push({
@@ -2012,9 +2053,10 @@ export function recorder(world: World): { readonly world: World; readonly taken:
   let staged: string[] | undefined;
   return {
     world: {
-      exec: async (command: string): Promise<ExecResult> => {
-        const answer = await world.exec(command);
-        exec[command] = { stdout: answer.stdout, stderr: answer.stderr, code: answer.code };
+      exec: async (command: string, options?: ExecOptions): Promise<ExecResult> => {
+        const answer = await world.exec(command, options);
+        // A one-pipe answer is kept as the case's stdout alone, which replays as the same output.
+        exec[command] = { stdout: answer.output ?? answer.stdout, stderr: answer.stderr, code: answer.code };
         return answer;
       },
       fs: {

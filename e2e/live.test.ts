@@ -39,7 +39,7 @@ const HOUSE = (packageRoot: string): string => fixturePack("repo-pack", join(pac
 
 /** What the temp repo's own guard says. A few entries, at least one per rail this suite drives. */
 const CONFIG = (packageRoot: string): string => `
-import { breadcrumb, command, commit, definePack, defineConfig, guardrail, pack, protectedPath, session, fileChange, turnEnd } from ${JSON.stringify(
+import { breadcrumb, command, commit, definePack, defineConfig, execPasses, guardrail, pack, protectedPath, session, fileChange, turnEnd } from ${JSON.stringify(
   join(packageRoot, "index.ts"),
 )};
 import { builder, house } from "./guards/house.ts";
@@ -94,6 +94,15 @@ const demo = definePack("demo", {
     .test({
       pass: [{ staged: ["tool/x.ts"], world: { fs: { "tool/x.ts": "" }, exec: { "definitely-not-a-real-binary-xyz": { code: 0 } } } }],
       block: [{ staged: ["tool/x.ts"], world: { fs: { "tool/x.ts": "" }, exec: { "definitely-not-a-real-binary-xyz": { code: 127, stderr: "command not found" } } } }],
+    }),
+
+  bulkOutput: guardrail()
+    .at(commit)
+    .check(execPasses({ run: "if [ -f bulk/x.ts ]; then seq 1 252; exit 1; fi" }))
+    .message("The bulk tool failed.")
+    .test({
+      pass: [{ staged: ["src/a.ts"] }],
+      block: [{ staged: ["bulk/x.ts"], world: { exec: { "if [ -f bulk/x.ts ]; then seq 1 252; exit 1; fi": { code: 1, stdout: "1\\n" } } } }],
     }),
 
   buildersOnly: guardrail()
@@ -648,6 +657,22 @@ describe("the commit gate", () => {
     expect(answer.stderr).toContain("demo.suitePasses");
     expect(answer.stderr).toContain("definitely-not-a-real-binary-xyz");
     expect(answer.stderr.toLowerCase()).toContain("command not found");
+  });
+
+  it("shows the last 40 lines of a tool's output, and keeps all 252 in a file", () => {
+    // The marker names the session the gate's rows land in, so this step makes it live itself.
+    expect(hook("pre-tool-use", inThisSession("Bash", { command: "git status" })).code).toBe(0);
+    mkdirSync(join(repo, "bulk"), { recursive: true });
+    writeFileSync(join(repo, "bulk", "x.ts"), "export const x = 1;\n");
+    const answer = gate("bulk/x.ts");
+    // The rule runs while the file is there, so it goes before anything else judges a commit.
+    rmSync(join(repo, "bulk"), { recursive: true });
+    expect(answer.code).toBe(2);
+    expect(answer.stderr).toContain("    252\n    … 212 lines cut. All of it: .flow/output/demo.bulkOutput.log");
+    const kept = readFileSync(join(repo, ".flow", "output", "demo.bulkOutput.log"), "utf8");
+    expect(kept.trimEnd().split("\n")).toHaveLength(252);
+    const row = rows(repo, "live-1").find((r) => r["kind"] === "guardrail" && r["id"] === "demo.bulkOutput");
+    expect((row?.["output"] as string).trimEnd().split("\n")).toHaveLength(252);
   });
 
   it("wears the categories of the session x agent the marker names, so .for(…) fires at commit too", () => {
@@ -1505,7 +1530,7 @@ describe("flow facts — the record and the conversations, read back", () => {
     expect(read.metrics.headline.blocks).toBeGreaterThan(0);
     expect(read.metrics.span.tools).toBeGreaterThan(0);
     expect(read.metrics.guardrails.find((g) => g.id === "demo.noForce")?.hits).toBeGreaterThan(0);
-    expect(read.moments.totals).toMatchObject({ guardrails: 9, breadcrumbs: 2 });
+    expect(read.moments.totals).toMatchObject({ guardrails: 10, breadcrumbs: 2 });
     expect(read.terrain.some((n) => n.path === "src")).toBe(true);
   });
 

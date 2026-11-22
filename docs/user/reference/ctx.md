@@ -14,6 +14,8 @@ A check is `(ctx) => ctx.ok() | ctx.fail(detail)`.
 - **A check may be async.**
 - **A check reaches the world only through `ctx`.** It never uses `node:fs`, `child_process` or `process.env`. That is what lets the same check run live, run in a case, and replay from a recording with no repo.
 - **`ctx.fail(detail)`** takes a sentence naming what was seen and what to do.
+- **`ctx.fail(detail, output)`** also takes `output`, what a failed tool printed. The refusal shows its last 40 lines, and flow keeps all of it, as on `execPasses`.
+- **`ctx.exec(cmd, { onePipe: true })`** returns `output`, the command's stdout and stderr together in the order printed. `stdout` and `stderr` are then empty.
 - **A check that throws while it runs** blocks, with the detail `the check threw: <message>`, and the refusal names the entry. In `flow test`, the case fails. A throw while `flow.config.ts` is being imported is a load fault that names `flow.config.ts`.
 
 ```
@@ -40,7 +42,7 @@ A check declares no moments, no schema and no `kind`. The entry's `.at(…)` set
 | `ctx.actor` | The [category](./glossary.md#category) names that match the agent making this change. Each name comes from evidence the [harness](./glossary.md#harness) wrote about that agent, never from a claim the agent made about itself |
 | `ctx.moment` | Which moment this is, to branch on |
 | `ctx.fs` · `ctx.exec` · `ctx.git` | The effects: read a file, run a command, query git. They are the only way a check reaches beyond its facts |
-| `ctx.ok()` · `ctx.fail(detail)` | The verdict: a pass, or a block that includes the detail line |
+| `ctx.ok()` · `ctx.fail(detail, output)` | The verdict: a pass, or a block that includes the detail line and the tail of `output` |
 
 ### ctx.file
 
