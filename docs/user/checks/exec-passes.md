@@ -4,7 +4,11 @@ summary: "reads: runs a tool · fires at: commit"
 
 # `execPasses`
 
-Runs a whole-project tool and blocks on a non-zero exit, showing its failing lines. flow decides WHEN it runs; the tool owns its own job and config. If `run` contains `{files}`, flow substitutes the changed set.
+Runs a whole-project tool and blocks on a non-zero exit, showing what the tool printed. flow decides WHEN it runs; the tool owns its own job and config. If `run` contains `{files}`, flow substitutes the changed set.
+
+## What the refusal shows
+
+The refusal shows the tool's stdout and stderr together, in the order the tool printed them. Output of up to 40 lines is shown whole. Longer output is cut to its last 40 lines, followed by a line with the number of lines cut and the path of a file that holds all of it, `.flow/output/<entry id>.log`. Each refusal replaces the file. The whole output is also in the refusal's row of [the session log](../reference/log.md#guardrail).
 
 ## Options
 
