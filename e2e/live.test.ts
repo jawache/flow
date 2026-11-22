@@ -669,6 +669,11 @@ describe("the commit gate", () => {
     expect(answer.stderr).toContain("    252\n    … 212 lines cut. All of it: .flow/output/demo.bulkOutput.log");
     const kept = readFileSync(join(repo, ".flow", "output", "demo.bulkOutput.log"), "utf8");
     expect(kept.trimEnd().split("\n")).toHaveLength(252);
+    // The gate names the session the marker names, or its own when none is live: read every log.
+    const row = readdirSync(join(repo, ".flow", "log"))
+      .flatMap((name) => rows(repo, name.replace(/\.jsonl$/, "")))
+      .find((r) => r["kind"] === "guardrail" && r["id"] === "demo.bulkOutput");
+    expect((row?.["output"] as string).trimEnd().split("\n")).toHaveLength(252);
   });
 
   it("wears the categories of the session x agent the marker names, so .for(…) fires at commit too", () => {

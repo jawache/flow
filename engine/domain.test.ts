@@ -1293,6 +1293,21 @@ describe("the log's layout", () => {
     ]);
   });
 
+  it("holds all 252 lines a refused tool printed in the guardrail row's output, and no output on a block of any other check", () => {
+    const output = Array.from({ length: 252 }, (_, i) => `line ${i + 1}`).join("\n");
+    const outcome: Outcome = {
+      effects: [
+        { do: "block", entry: "a.tool", message: "m", subject: null, detail: "d", output },
+        { do: "block", entry: "a.other", message: "n", subject: "x.ts", detail: "" },
+      ],
+      tallies: [],
+    };
+    const [, tool, other] = runRows("commit", outcome, 1);
+    expect((tool?.["output"] as string).split("\n")).toHaveLength(252);
+    expect(tool?.["output"]).toBe(output);
+    expect(other).not.toHaveProperty("output");
+  });
+
   it("writes no subject on a breadcrumb row whose note fired on no touch", () => {
     const greeting: Outcome = {
       effects: [{ do: "notice", entry: "a.hello", text: "hi", file: undefined, cause: "session", subject: undefined }],
@@ -1503,6 +1518,14 @@ describe("the record — blocks, lead, gaps", () => {
       nowMs,
     });
     expect(across.guardrails.find((g) => g.id === "rails.everyone")?.repeats).toBe(0);
+  });
+
+  it("reads a guardrail row that holds the refused tool's output as the block it is", () => {
+    const output = Array.from({ length: 252 }, (_, i) => `line ${i + 1}`).join("\n");
+    const deny = row("guardrail", { moment: "commit", id: "rails.everyone", out: "deny", subject: "a.ts", detail: "d", output });
+    const read = metrics({ sessions: [{ session: "s1", rows: [deny, deny] }], entries: bound, nowMs });
+    const rail = read.guardrails.find((g) => g.id === "rails.everyone");
+    expect([rail?.hits, rail?.repeats, read.headline.blocks]).toEqual([2, 1, 2]);
   });
 
   it("a run tally becomes the rail's runs · evaluated · silenced", () => {

@@ -1050,6 +1050,7 @@ export function runRows(moment: Moment, outcome: Outcome, subjects: number): Row
         out: "deny",
         message: effect.message,
         detail: effect.detail,
+        ...(effect.output === undefined ? {} : { output: effect.output }),
       });
     else
       rows.push({
