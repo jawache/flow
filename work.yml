@@ -19,6 +19,7 @@ agents:                                              # what claude is started as
   tech-editor: { model: opus }
   tech-writer: { model: opus }
   devops:   { model: opus }
+  manager:  { model: opus, autocompact: 200000, permissions: bypassPermissions }   # the manager's session: passed to claude as --model, --autocompact and --permission-mode
 chats:                                               # summary runs when a chat's first turn ends: the conversation on stdin, the title and two summary lines on stdout
   summary: 'claude -p --model haiku --tools "" --no-session-persistence --system-prompt "You title and summarise conversations, and never reply to them. Print three lines and nothing else. Line 1 is a title, at most eight words. Line 2 is one sentence, at most 25 words, on what the conversation was about. Line 3 is one sentence, at most 25 words, on what was decided or done. Start each line with its content, never a label. No Markdown. No blank lines." "Title and summarise the conversation above."'
 
@@ -39,6 +40,15 @@ sessions:                                            # default is every numbered
       Lines starting with [work] relay the daemon: a move, and a merge of this issue's branch.
     resumed: |
       [work] This session was resumed. Re-read .work/{issue}/, its issue.md, its tasks and its log, and continue from where it stands.
+
+  manager:                                           # the manager, flow-session-manager, in the main checkout: woken by the rules under `on`, never on a timer
+    icon: "🧭"
+    agent: manager
+    started: |
+      [work] You are the manager, {issue}. Your record is .work/{issue}/: its log is your memory across compactions.
+      You decide what starts. Read `/work manage` before your first wake.
+    resumed: |
+      [work] Resumed. Re-read .work/{issue}/log.jsonl before acting on what you are typed next.
 
 types:                                               # each type of issue, and the stages of the line it skips; the first type is the default
   feature: {}
@@ -96,3 +106,45 @@ on:                                                  # the rules: what else is t
     event: clock.weekday-7
     create: { title: "Review · {weekday} {date}", status: Review, fields: { type: review } }
     action: "[work] /review {issue}"
+  # The manager keeps two issues between Refine and Plan (docs/user/explanation/default-workflow.md § A manager).
+  # It starts nothing while Build to Merge hold four or more. The daemon counts nothing: --slots,
+  # --statuses, --hold and --held are the skill's to read.
+  manage-new:
+    event: issue.created
+    where: { status: Backlog }
+    to: manager
+    action: "[work] /work manage new {issue} --slots 2 --statuses Refine,Docs,Plan --hold 4 --held Build,Test,Demo,Review,Merge"
+  manage-next:
+    event: issue.moved
+    where: { status: Up next }
+    to: manager
+    action: "[work] /work manage slot {issue} --slots 2 --statuses Refine,Docs,Plan --hold 4 --held Build,Test,Demo,Review,Merge"
+  manage-slot:
+    event: issue.moved
+    where: { previous: [Refine, Docs, Plan] }
+    to: manager
+    action: "[work] /work manage slot {issue} --slots 2 --statuses Refine,Docs,Plan --hold 4 --held Build,Test,Demo,Review,Merge"
+  manage-done:
+    event: issue.moved
+    where: { done: true }
+    to: manager
+    action: "[work] /work manage slot {issue} --slots 2 --statuses Refine,Docs,Plan --hold 4 --held Build,Test,Demo,Review,Merge"
+  manage-archived:
+    event: issue.archived
+    where: { status: [Refine, Docs, Plan] }
+    to: manager
+    action: "[work] /work manage slot {issue} --slots 2 --statuses Refine,Docs,Plan --hold 4 --held Build,Test,Demo,Review,Merge"
+  manage-stuck:
+    event: session.stuck
+    to: manager
+    action: "[work] /work manage stuck {issue}"
+  manage-invalid:
+    event: issue.invalid
+    where: { live: false }
+    to: manager
+    action: "[work] /work manage invalid {issue}: {why}"
+  manage-unpaused:
+    event: issue.unpaused
+    where: { session: manager }
+    to: manager
+    action: "[work] /work manage unpaused {issue} --slots 2 --statuses Refine,Docs,Plan --hold 4 --held Build,Test,Demo,Review,Merge --skipped {skipped}"
