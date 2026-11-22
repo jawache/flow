@@ -20,7 +20,7 @@ A release is six steps, in order. You do the first four in this session. The hum
 
 - **The version is computed, never chosen.** commit-and-tag-version reads the Conventional Commit headers since the last `v*` tag. Config is in `.versionrc.mjs`. Below 1.0.0 every bump is demoted one level: a `BREAKING CHANGE` is a minor, a `feat` is a patch, a `fix` is a patch.
 - **You must not hand-edit** the `version` field in `package.json` or `package-lock.json`, or `CHANGELOG.md`. This repo's rules refuse the commit.
-- **`just release` is local, and makes two commits.** The first is `chore(release): x.y.z` on the branch: the version and the changelog. The second holds the built files, `dist/`, with the first as its parent. The tag `vx.y.z` points at the second, and the branch stays at the first. So `main` never holds built files, and the tag always does. It pushes nothing.
+- **`just release` is local, and makes three commits.** The first is `chore(release): x.y.z` on the branch: the version and the changelog. The second holds the built files, `dist/`, with the first as its parent. The tag `vx.y.z` points at the second. The third is a merge on the branch that joins the tag and takes none of its files. So `main` never holds built files, the tag always does, and the next release counts from this tag. It pushes nothing.
 - **The tagged `package.json` has no build script:** no `prepare`, `prepack`, `build`, `install` or `postinstall`. npm builds a git dependency that has one, and installs an empty package when scripts are off.
 - **Two gates ask for the migration guide.** `just release` refuses to start without `docs/user/migrations/<version>.md`. The house pack refuses any commit whose `package.json` version has no guide.
 
@@ -56,7 +56,7 @@ The guide is `docs/user/migrations/<version>.md`. Its fixed shape, and where to 
 just release-check
 ```
 
-This runs the full gate, the commit suite and a minified production build. Then it makes the release's two commits and its tag in a throwaway clone. It installs flow from that tag into a scratch folder with `npm i -D --ignore-scripts`, and runs the installed `dist/flow.mjs --version`. It pushes nothing, and leaves this repo as it was.
+This runs the full gate, the commit suite, the tutorial's test and a minified production build. Then it makes the release's two commits, its tag and the join in a throwaway clone. It installs flow from that tag into a scratch folder with `npm i -D --ignore-scripts`, and runs the installed `dist/flow.mjs --version`. It pushes nothing, and leaves this repo as it was.
 
 - **Read the file list** at the end. It is exactly what a project gets in `node_modules/@jawache/flow`. `files` in `package.json` is the allowlist. A file missing from the list, or one that must not ship, is a fix to `files` before the release.
 - **A red line** is fixed on the branch, committed, and the check run again.
@@ -75,12 +75,12 @@ Then cut it:
 just release
 ```
 
-The recipe checks the guide exists, runs the gate, runs commit-and-tag-version, then builds for release and makes the commit that holds `dist/`. Confirm what it made:
+The recipe checks the guide exists, runs the gate, runs commit-and-tag-version, then builds for release, makes the commit that holds `dist/`, tags it, and joins the tag into the branch. Confirm what it made:
 
 ```sh
-git log -1 --format='%h %s'                  # chore(release): <version>
+git log -1 --format='%h %s'                  # chore(release): join v<version> into the branch, taking none of its files
 git log -1 --format='%h %s' v<version>       # the commit that holds dist/
-git rev-parse v<version>^                    # the release commit above
+git rev-parse v<version>^                    # the chore(release): <version> commit
 git ls-tree -r --name-only v<version> dist | head -3
 git status                                   # clean
 ```
@@ -94,7 +94,7 @@ git push origin HEAD
 git push origin v<version>
 ```
 
-- **The tag is pushed by name.** It points at a commit the branch does not have, so `--follow-tags` does not send it.
+- **The tag is pushed by name.**
 - **The push is the human's unless they say otherwise.** A pushed tag is what every project pins. A tag that projects have installed is never moved: a mistake is fixed by the next version.
 
 ## 6 · Verify
