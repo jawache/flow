@@ -104,7 +104,7 @@ The first line of the file. It has no `ts`, `seq`, `agent` or `agentType`.
 | `out` | `deny` |
 | `message` | The guardrail's message |
 | `detail` | What the check found, when it returned more than its message |
-| `output` | Everything the tool printed, stdout and stderr together, when the check ran a tool that failed, such as [`execPasses`](../checks/exec-passes.md) |
+| `output` | Everything the tool printed, stdout and stderr together, when the check is [`execPasses`](../checks/exec-passes.md) or [`depcruise`](../checks/depcruise.md) and its tool failed |
 
 ### `breadcrumb`
 
