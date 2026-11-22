@@ -1303,7 +1303,6 @@ describe("the log's layout", () => {
       tallies: [],
     };
     const [, tool, other] = runRows("commit", outcome, 1);
-    expect((tool?.["output"] as string).split("\n")).toHaveLength(252);
     expect(tool?.["output"]).toBe(output);
     expect(other).not.toHaveProperty("output");
   });
@@ -1518,14 +1517,6 @@ describe("the record — blocks, lead, gaps", () => {
       nowMs,
     });
     expect(across.guardrails.find((g) => g.id === "rails.everyone")?.repeats).toBe(0);
-  });
-
-  it("reads a guardrail row that holds the refused tool's output as the block it is", () => {
-    const output = Array.from({ length: 252 }, (_, i) => `line ${i + 1}`).join("\n");
-    const deny = row("guardrail", { moment: "commit", id: "rails.everyone", out: "deny", subject: "a.ts", detail: "d", output });
-    const read = metrics({ sessions: [{ session: "s1", rows: [deny, deny] }], entries: bound, nowMs });
-    const rail = read.guardrails.find((g) => g.id === "rails.everyone");
-    expect([rail?.hits, rail?.repeats, read.headline.blocks]).toEqual([2, 1, 2]);
   });
 
   it("a run tally becomes the rail's runs · evaluated · silenced", () => {

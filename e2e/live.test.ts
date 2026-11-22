@@ -660,6 +660,8 @@ describe("the commit gate", () => {
   });
 
   it("shows the last 40 lines of a tool's output, and keeps all 252 in a file", () => {
+    // The marker names the session the gate's rows land in, so this step makes it live itself.
+    expect(hook("pre-tool-use", inThisSession("Bash", { command: "git status" })).code).toBe(0);
     mkdirSync(join(repo, "bulk"), { recursive: true });
     writeFileSync(join(repo, "bulk", "x.ts"), "export const x = 1;\n");
     const answer = gate("bulk/x.ts");
@@ -669,10 +671,7 @@ describe("the commit gate", () => {
     expect(answer.stderr).toContain("    252\n    … 212 lines cut. All of it: .flow/output/demo.bulkOutput.log");
     const kept = readFileSync(join(repo, ".flow", "output", "demo.bulkOutput.log"), "utf8");
     expect(kept.trimEnd().split("\n")).toHaveLength(252);
-    // The gate names the session the marker names, or its own when none is live: read every log.
-    const row = readdirSync(join(repo, ".flow", "log"))
-      .flatMap((name) => rows(repo, name.replace(/\.jsonl$/, "")))
-      .find((r) => r["kind"] === "guardrail" && r["id"] === "demo.bulkOutput");
+    const row = rows(repo, "live-1").find((r) => r["kind"] === "guardrail" && r["id"] === "demo.bulkOutput");
     expect((row?.["output"] as string).trimEnd().split("\n")).toHaveLength(252);
   });
 
