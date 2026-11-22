@@ -277,10 +277,14 @@ export function isCategory(value: unknown): value is Category {
 //   custody from judgement to action stays one-directional.
 
 
-/** What `ctx.exec` answers. A diagnostic command's whole result, as data. */
+/**
+ * What `ctx.exec` answers. A diagnostic command's whole result, as data. `output` is stdout and
+ * stderr together, in the order the command printed them.
+ */
 export interface ExecResult {
   stdout: string;
   stderr: string;
+  output: string;
   code: number;
 }
 
@@ -1678,7 +1682,7 @@ export interface CaseWorld {
    * of `"depcruise"` answers the multi-line invocation the depcruise check builds, which is not a
    * string anybody would want to retype into a case.
    */
-  readonly exec?: Readonly<Record<string, { stdout?: string; stderr?: string; code?: number }>>;
+  readonly exec?: Readonly<Record<string, { stdout?: string; stderr?: string; output?: string; code?: number }>>;
   /** Files `ctx.fs` can see, by path. A path not here does not exist. */
   readonly fs?: Readonly<Record<string, string>>;
   /** What `ctx.git.diff()` answers. */
@@ -1761,9 +1765,11 @@ export function cannedWorld(
       const answer = key === undefined ? undefined : execAnswers[key];
       if (answer === undefined) {
         unanswered.push({ kind: "exec", asked: cmd });
-        return Promise.resolve({ stdout: "", stderr: "", code: 0 });
+        return Promise.resolve({ stdout: "", stderr: "", output: "", code: 0 });
       }
-      return Promise.resolve({ stdout: answer.stdout ?? "", stderr: answer.stderr ?? "", code: answer.code ?? 0 });
+      const stdout = answer.stdout ?? "";
+      const stderr = answer.stderr ?? "";
+      return Promise.resolve({ stdout, stderr, output: answer.output ?? `${stdout}${stderr}`, code: answer.code ?? 0 });
     },
     fs: {
       // `exists` is answered by the map alone and is never unanswered: a path the recording did not

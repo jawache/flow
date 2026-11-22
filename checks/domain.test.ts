@@ -1440,27 +1440,27 @@ describe("depcruiseHits", () => {
     const stdout = JSON.stringify({
       summary: { violations: [{ rule: { name: "pure-only", comment: "pure imports only pure" }, from: "a.ts", to: "b.ts" }] },
     });
-    expect(depcruiseHits({ stdout, stderr: "", code: 1 })).toEqual([
+    expect(depcruiseHits({ stdout, stderr: "", output: "", code: 1 })).toEqual([
       "pure-only: a.ts → b.ts — pure imports only pure",
     ]);
   });
 
   it("an unnamed violation still reads, and a clean cruise says nothing", () => {
     const stdout = JSON.stringify({ summary: { violations: [{ from: "a.ts", to: "b.ts" }] } });
-    expect(depcruiseHits({ stdout, stderr: "", code: 1 })).toEqual(["fence: a.ts → b.ts"]);
-    expect(depcruiseHits({ stdout: JSON.stringify({ summary: {} }), stderr: "", code: 0 })).toEqual([]);
+    expect(depcruiseHits({ stdout, stderr: "", output: "", code: 1 })).toEqual(["fence: a.ts → b.ts"]);
+    expect(depcruiseHits({ stdout: JSON.stringify({ summary: {} }), stderr: "", output: "", code: 0 })).toEqual([]);
   });
 
   it("a violation at severity warn is a hit like any other, though the tool exits 0 for it", () => {
     const stdout = JSON.stringify({
       summary: { violations: [{ rule: { name: "no-orphans", severity: "warn" }, from: "src/core.ts", to: "src/app.ts" }] },
     });
-    expect(depcruiseHits({ stdout, stderr: "", code: 0 })).toEqual(["no-orphans: src/core.ts → src/app.ts"]);
+    expect(depcruiseHits({ stdout, stderr: "", output: "", code: 0 })).toEqual(["no-orphans: src/core.ts → src/app.ts"]);
   });
 
   it("unparseable output is a REAL failure when the tool failed, and silence when it did not", () => {
-    expect(depcruiseHits({ stdout: "", stderr: "boom", code: 2 })[0]).toContain("depcruise failed (exit 2)");
-    expect(depcruiseHits({ stdout: "not json", stderr: "", code: 0 })).toEqual([]);
+    expect(depcruiseHits({ stdout: "", stderr: "boom", output: "boom", code: 2 })[0]).toContain("depcruise failed (exit 2)");
+    expect(depcruiseHits({ stdout: "not json", stderr: "", output: "", code: 0 })).toEqual([]);
   });
 
   it("blocks through the check", async () => {

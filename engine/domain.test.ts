@@ -1910,12 +1910,12 @@ describe("diffRows — the proof is an EMPTY diff", () => {
 describe("the recording seam — the live world's answers, written down", () => {
   it("keeps every answer the checks reached for, in the shape a case is written in", async () => {
     const live: World = {
-      exec: (cmd) => Promise.resolve({ stdout: `ran ${cmd}`, stderr: "", code: 0 }),
+      exec: (cmd) => Promise.resolve({ stdout: `ran ${cmd}`, stderr: "", output: `ran ${cmd}`, code: 0 }),
       fs: { read: (path) => Promise.resolve(`body of ${path}`), exists: (path) => Promise.resolve(path !== "gone.ts") },
       git: { diff: () => Promise.resolve("@@ -1"), stagedFiles: () => Promise.resolve(["a.ts"]) },
     };
     const taping = recorder(live);
-    expect(await taping.world.exec("just test")).toEqual({ stdout: "ran just test", stderr: "", code: 0 });
+    expect(await taping.world.exec("just test")).toEqual({ stdout: "ran just test", stderr: "", output: "ran just test", code: 0 });
     expect(await taping.world.fs.read("a.ts")).toBe("body of a.ts");
     expect(await taping.world.fs.exists("b.ts")).toBe(true);
     expect(await taping.world.fs.exists("gone.ts")).toBe(false);
@@ -1923,13 +1923,25 @@ describe("the recording seam — the live world's answers, written down", () => 
     expect(await taping.world.git.stagedFiles()).toEqual(["a.ts"]);
 
     expect(taping.taken()).toEqual({
-      exec: { "just test": { stdout: "ran just test", stderr: "", code: 0 } },
+      exec: { "just test": { stdout: "ran just test", stderr: "", output: "ran just test", code: 0 } },
       // `b.ts` exists and nothing read it, so it is present with no content; `gone.ts` is absent,
       // which is what a canned world reads as "not there".
       fs: { "a.ts": "body of a.ts", "b.ts": "" },
       gitDiff: "@@ -1",
       staged: ["a.ts"],
     });
+  });
+
+  it("keeps the order the command printed in, and replays it", async () => {
+    const live: World = {
+      exec: () => Promise.resolve({ stdout: "a\nc\n", stderr: "b\n", output: "a\nb\nc\n", code: 1 }),
+      fs: { read: () => Promise.resolve(""), exists: () => Promise.resolve(false) },
+      git: { diff: () => Promise.resolve(""), stagedFiles: () => Promise.resolve([]) },
+    };
+    const taping = recorder(live);
+    await taping.world.exec("lint");
+    const replayed = cannedWorld(taping.taken(), undefined, []);
+    expect(await replayed.exec("lint")).toEqual({ stdout: "a\nc\n", stderr: "b\n", output: "a\nb\nc\n", code: 1 });
   });
 
   it("a world nothing reached for records nothing — an empty answer set, not an empty world", () => {
@@ -1939,7 +1951,7 @@ describe("the recording seam — the live world's answers, written down", () => 
 
   it("what it records replays: the same check, the same verdict, no repo", async () => {
     const live: World = {
-      exec: () => Promise.resolve({ stdout: "", stderr: "red", code: 1 }),
+      exec: () => Promise.resolve({ stdout: "", stderr: "red", output: "red", code: 1 }),
       fs: { read: () => Promise.resolve("ok"), exists: () => Promise.resolve(true) },
       git: { diff: () => Promise.resolve(""), stagedFiles: () => Promise.resolve([]) },
     };

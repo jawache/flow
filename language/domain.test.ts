@@ -218,7 +218,7 @@ const ok = { ok: true } as const;
 const ctx = (over: Partial<Ctx> = {}): Ctx => ({
     moment: "commit",
     actor: [],
-    exec: () => Promise.resolve({ stdout: "", stderr: "", code: 0 }),
+    exec: () => Promise.resolve({ stdout: "", stderr: "", output: "", code: 0 }),
     fs: { read: () => Promise.resolve(""), exists: () => Promise.resolve(false) },
     git: { diff: () => Promise.resolve(""), stagedFiles: () => Promise.resolve([]) },
     ok: verdict.ok,
@@ -250,7 +250,7 @@ describe("makeCtx — the ONE assembler", () => {
     const world: World = {
       exec(cmd: string) {
         asked.push(`exec:${cmd}`);
-        return Promise.resolve({ stdout: "out", stderr: "", code: 0 });
+        return Promise.resolve({ stdout: "out", stderr: "", output: "", code: 0 });
       },
       fs: {
         read(path: string) {
@@ -288,7 +288,7 @@ describe("makeCtx — the ONE assembler", () => {
     class Adapter {
       readonly label = "live";
       exec(cmd: string): Promise<ExecResult> {
-        return Promise.resolve({ stdout: `${this.label}:${cmd}`, stderr: "", code: 0 });
+        return Promise.resolve({ stdout: `${this.label}:${cmd}`, stderr: "", output: `${this.label}:${cmd}`, code: 0 });
       }
       readonly fs = { read: () => Promise.resolve(""), exists: () => Promise.resolve(false) };
       readonly git = { diff: () => Promise.resolve(""), stagedFiles: () => Promise.resolve([]) };
@@ -1155,12 +1155,18 @@ describe("cannedWorld — the ONE recorded world", () => {
     expect(missed).toEqual([]);
   });
 
+  it("answers `output` as stdout then stderr, or as recorded when the case says", async () => {
+    const w = cannedWorld({ exec: { plain: { stdout: "o", stderr: "e" }, ordered: { stdout: "a", stderr: "b", output: "ba" } } }, undefined, []);
+    expect((await w.exec("plain")).output).toBe("oe");
+    expect((await w.exec("ordered")).output).toBe("ba");
+  });
+
   it("RECORDS a reach it cannot answer instead of guessing — a fiction is how a case passes wrongly", async () => {
     const missed = reaches();
     const w = cannedWorld({ fs: { "a.ts": "body" } }, undefined, missed);
     expect(await w.fs.read("a.ts")).toBe("body");
     expect(await w.fs.read("b.ts")).toBe("");
-    expect(await w.exec("just test")).toEqual({ stdout: "", stderr: "", code: 0 });
+    expect(await w.exec("just test")).toEqual({ stdout: "", stderr: "", output: "", code: 0 });
     expect(missed).toEqual([
       { kind: "read", asked: "b.ts" },
       { kind: "exec", asked: "just test" },
@@ -1189,7 +1195,7 @@ describe("cannedWorld — the ONE recorded world", () => {
 
   it("fills the exec answer's absent fields, so a case may record only the part it cares about", async () => {
     const w = cannedWorld({ exec: { "just test": { code: 1 } } }, undefined, reaches());
-    expect(await w.exec("just test")).toEqual({ stdout: "", stderr: "", code: 1 });
+    expect(await w.exec("just test")).toEqual({ stdout: "", stderr: "", output: "", code: 1 });
   });
 });
 
@@ -1212,7 +1218,7 @@ describe("defineCheck", () => {
       return async (c) => ((await c.exec(opts.run)).code === 0 ? c.ok() : c.fail(`${opts.run} failed`));
     });
 
-    const red = ctx({ exec: () => Promise.resolve({ stdout: "", stderr: "boom", code: 1 }) });
+    const red = ctx({ exec: () => Promise.resolve({ stdout: "", stderr: "boom", output: "boom", code: 1 }) });
     expect(await suitePasses({ run: "just test" })(red)).toEqual({ ok: false, detail: "just test failed" });
     expect(await suitePasses({ run: "just test" })(ctx())).toEqual(ok);
   });
