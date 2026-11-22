@@ -89,6 +89,7 @@ import {
   fires,
   flowDir,
   formatBlock,
+  outputFile,
   formatBlocks,
   guard,
   identify,
@@ -1086,6 +1087,21 @@ describe("formatting a refusal", () => {
   it("indents every line of a multi-line detail, so a tool's output stays under its entry", () => {
     const block: Block = { do: "block", entry: "x.y", message: "m", subject: null, detail: "one\ntwo" };
     expect(formatBlock(block)).toBe("✗ x.y\n  m\n    one\n    two");
+  });
+
+  it("shows a tool's output of 40 lines whole, with no line about a file", () => {
+    const output = Array.from({ length: 40 }, (_, i) => `line ${i + 1}`).join("\n") + "\n";
+    const text = formatBlock({ do: "block", entry: "x.y", message: "m", subject: null, detail: "d", output });
+    expect(text.split("\n")).toEqual(["✗ x.y", "  m", "    d", ...Array.from({ length: 40 }, (_, i) => `    line ${i + 1}`)]);
+  });
+
+  it("cuts a tool's output of 252 lines to its last 40, and names the file with all of it", () => {
+    const output = Array.from({ length: 252 }, (_, i) => `line ${i + 1}`).join("\n");
+    const lines = formatBlock({ do: "block", entry: "python.commitRunsLint", message: "m", subject: null, detail: "d", output }).split("\n");
+    expect(lines.slice(3, 43)).toEqual(Array.from({ length: 40 }, (_, i) => `    line ${i + 213}`));
+    expect(lines.at(-1)).toBe("    … 212 lines cut. All of it: .flow/output/python.commitRunsLint.log");
+    expect(lines).toHaveLength(44);
+    expect(outputFile("python.commitRunsLint")).toBe(".flow/output/python.commitRunsLint.log");
   });
 
   it("prints the guard's own fault as itself, with no rule to attribute it to", () => {

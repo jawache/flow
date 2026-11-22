@@ -33,6 +33,7 @@ import type { Category, SessionFacts } from "../language/domain.ts";
 import {
   FLOW_GITIGNORE,
   attribution,
+  cutOutput,
   flowDir,
   identify,
   lockIsStale,
@@ -41,6 +42,7 @@ import {
   markerPath,
   metaRow,
   nextSeq,
+  outputFile,
   offPath,
   readDir,
   readMarkPath,
@@ -52,6 +54,7 @@ import {
   statePath,
   type AgentOf,
   type Attribution,
+  type Block,
   type Identity,
   type RecordedStep,
   type Recording,
@@ -241,6 +244,25 @@ export interface LogContext {
   readonly who: AgentOf;
   /** Injected, because a clock inside a decision is a decision nobody can test. */
   readonly now?: () => Date;
+}
+
+/**
+ * Keep all of a refused tool's output in `.flow/output/<entry id>.log`, for each block whose
+ * refusal cut lines. A refusal that showed it whole writes nothing. A write that fails is lost
+ * quietly: the refusal is the answer, and the file is only the rest of it.
+ */
+export function keepOutputs(root: string, blocks: readonly Block[]): void {
+  for (const block of blocks) {
+    if (block.entry === null || block.output === undefined || cutOutput(block.output).cut === 0) continue;
+    try {
+      const file = join(root, outputFile(block.entry));
+      ensureFlowDir(root);
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, block.output);
+    } catch {
+      // see above
+    }
+  }
 }
 
 /**

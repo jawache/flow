@@ -297,7 +297,14 @@ export interface ExecResult {
 }
 
 /** A check's answer. Never an action — the engine turns a fail into an effect. */
-export type Verdict = { readonly ok: true } | { readonly ok: false; readonly detail?: string };
+export type Verdict =
+  | { readonly ok: true }
+  | {
+      readonly ok: false;
+      readonly detail?: string;
+      /** What a failed tool printed, whole. The engine shows its tail and the adapter keeps all of it. */
+      readonly output?: string;
+    };
 
 /**
  * One thing the actor did during a turn: it changed a file, or it ran a command.
@@ -382,8 +389,11 @@ export interface Ctx {
 
   // ── THE ANSWER — a verdict, never an action. ──
   ok(): Verdict;
-  /** `detail` rides under the sentence's message, saying which thing broke. */
-  fail(detail?: string): Verdict;
+  /**
+   * `detail` rides under the sentence's message, saying which thing broke. `output` is what a failed
+   * tool printed: flow shows its last 40 lines and keeps all of it, so a check never picks lines.
+   */
+  fail(detail?: string, output?: string): Verdict;
 }
 
 /** A check: ctx in, a verdict out. Sync or async — the engine awaits either. */
@@ -401,7 +411,11 @@ export type Check = (ctx: Ctx) => Verdict | Promise<Verdict>;
  */
 export const verdict = {
   ok: (): Verdict => ({ ok: true }),
-  fail: (detail?: string): Verdict => (detail === undefined ? { ok: false } : { ok: false, detail }),
+  fail: (detail?: string, output?: string): Verdict => ({
+    ok: false,
+    ...(detail === undefined ? {} : { detail }),
+    ...(output === undefined || output === "" ? {} : { output }),
+  }),
 };
 
 /**

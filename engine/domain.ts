@@ -388,6 +388,8 @@ export interface Block {
   readonly subject: string | null;
   /** What the check said was wrong. Empty when it gave no detail. */
   readonly detail: string;
+  /** What a failed tool printed, whole. Absent when the check ran no tool or the tool printed nothing. */
+  readonly output?: string;
 }
 
 /**
@@ -522,6 +524,7 @@ export async function guard({ load, event, world, faults = [], off = false }: Gu
         message: entry.spec.message ?? "",
         subject: subject.name,
         detail: answer.detail ?? "",
+        ...(answer.output === undefined ? {} : { output: answer.output }),
       });
     }
     tallies.push({ id: entry.id, evaluated, hits, silenced: 0 });
@@ -654,7 +657,33 @@ export function formatBlock(block: Block): string {
   const lines = [head];
   if (block.entry !== null && block.message) lines.push(`  ${block.message}`);
   if (block.detail) lines.push(...block.detail.split("\n").map((line) => `    ${line}`));
+  if (block.output !== undefined) {
+    const { shown, cut } = cutOutput(block.output);
+    lines.push(...shown.map((line) => `    ${line}`));
+    if (cut > 0 && block.entry !== null) lines.push(`    … ${cut} lines cut. All of it: ${outputFile(block.entry)}`);
+  }
   return lines.join("\n");
+}
+
+/** The most lines of a failed tool's output a refusal shows. */
+const OUTPUT_LINES = 40;
+
+/** A tool's output as lines, its closing newline not counted. */
+function linesOf(output: string): string[] {
+  return output === "" ? [] : output.replace(/\n$/, "").split("\n");
+}
+
+/** The last `OUTPUT_LINES` lines of a tool's output, and how many lines came before them. */
+export function cutOutput(output: string): { readonly shown: string[]; readonly cut: number } {
+  const lines = linesOf(output);
+  const cut = Math.max(0, lines.length - OUTPUT_LINES);
+  return { shown: lines.slice(cut), cut };
+}
+
+/** Where all of an entry's refused tool's output is kept, relative to the repo root. */
+export function outputFile(entry: string): string {
+  // An entry id is `pack.name`: the dot stays, so the file is named as the docs say.
+  return `${FLOW_DIR}/output/${entry.replace(/[^A-Za-z0-9_.-]/g, "-")}.log`;
 }
 
 /** Every block in one outcome, as one message. Empty when nothing refused. */

@@ -23,7 +23,7 @@ import { pathToFileURL } from "node:url";
 import { loadConfig, type ExecOptions, type ExecResult, type FlowConfig, type LoadResult, type Grammar, type Settings, type World } from "../language/domain.ts";
 import { fault, guard, recorder, runRows, UNNAMED_COMMIT, type AgentOf, type Block } from "../engine/domain.ts";
 import { quoteArg, useGrammars } from "../checks/domain.ts";
-import { appendRows, appendSteps, commitAttribution, isOff, isRecording, loadState } from "../engine/state.ts";
+import { appendRows, appendSteps, keepOutputs, commitAttribution, isOff, isRecording, loadState } from "../engine/state.ts";
 import { ALLOW, CONFIG_FILE, branchFromHead, cleanMessage, commentLeader, commitArgs, configLoadFault, hermeticEnv, pathLines, readsCommitIndex, refused, stagedChanges, treeChanges, type CommitArgs, type CommitScope, type Refused, type StagedChanges } from "./domain.ts";
 import type { HookResult, StoredTranscript, TranscriptRef } from "./harness.ts";
 
@@ -374,6 +374,7 @@ export async function runCommit(root: string, { scope, messageFile }: CommitArgs
   const blocks: Refused[] = outcome.effects
     .filter((effect): effect is Block => effect.do === "block")
     .map((block) => ({ moment: "commit", block }));
+  keepOutputs(root, blocks.map((b) => b.block));
   return refused(blocks) ?? ALLOW;
 }
 
