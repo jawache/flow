@@ -42,6 +42,7 @@ import {
   type Check,
   type Ctx,
   type EntrySpec,
+  type ExecOptions,
   type ExecResult,
   type GuardrailMoment,
   type LoadResult,
@@ -2006,15 +2007,16 @@ export function diffRows(replayed: readonly Row[], live: readonly Row[]): RowDif
  * matches by containment: a recording is machine-written and has no reason to be approximate.
  */
 export function recorder(world: World): { readonly world: World; readonly taken: () => CaseWorld } {
-  const exec: Record<string, { stdout: string; stderr: string; output: string; code: number }> = {};
+  const exec: Record<string, { stdout: string; stderr: string; code: number }> = {};
   const files: Record<string, string> = {};
   let gitDiff: string | undefined;
   let staged: string[] | undefined;
   return {
     world: {
-      exec: async (command: string): Promise<ExecResult> => {
-        const answer = await world.exec(command);
-        exec[command] = { stdout: answer.stdout, stderr: answer.stderr, output: answer.output, code: answer.code };
+      exec: async (command: string, options?: ExecOptions): Promise<ExecResult> => {
+        const answer = await world.exec(command, options);
+        // A one-pipe answer is kept as the case's stdout alone, which replays as the same output.
+        exec[command] = { stdout: answer.output ?? answer.stdout, stderr: answer.stderr, code: answer.code };
         return answer;
       },
       fs: {

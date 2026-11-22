@@ -44,15 +44,14 @@ afterEach(() => {
 describe("ctx.exec, live", () => {
   it("runs in the repo and answers with stdout, stderr and the exit code", () => {
     writeFileSync(join(repo, "here.txt"), "yes");
-    expect(runCommand("cat here.txt", repo)).toStrictEqual({ stdout: "yes", stderr: "", output: "yes", code: 0 });
+    expect(runCommand("cat here.txt", repo)).toStrictEqual({ stdout: "yes", stderr: "", code: 0 });
     expect(runCommand("exit 3", repo).code).toBe(3);
   });
 
-  it("answers `output` with both streams in the order the command printed them, stdout and stderr unchanged", () => {
-    const ran = runCommand("echo a; sleep 0.1; echo b >&2; sleep 0.1; echo c", repo);
-    expect(ran.output).toBe("a\nb\nc\n");
-    expect(ran.stdout).toBe("a\nc\n");
-    expect(ran.stderr).toBe("b\n");
+  it("keeps the order of both streams on one pipe, and the streams apart otherwise", () => {
+    const command = "echo a; echo b >&2; echo c";
+    expect(runCommand(command, repo, undefined, true)).toStrictEqual({ stdout: "", stderr: "", output: "a\nb\nc\n", code: 0 });
+    expect(runCommand(command, repo)).toStrictEqual({ stdout: "a\nc\n", stderr: "b\n", code: 0 });
   });
 
   it("answers a MISSING BINARY with 127 rather than throwing — the fail-loud proof stands on it", () => {

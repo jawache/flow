@@ -1103,7 +1103,7 @@ describe("stagedChanges — one question to git, and every staged change comes b
 });
 
 describe("treeChanges — the whole tree as one commit, against the last commit's own list", () => {
-  const ran = (stdout: string, code = 0) => ({ stdout, stderr: "", output: stdout, code });
+  const ran = (stdout: string, code = 0) => ({ stdout, stderr: "", code });
   const unasked = (): boolean => {
     throw new Error("HEAD was asked about although the tree answered");
   };

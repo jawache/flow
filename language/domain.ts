@@ -277,14 +277,22 @@ export function isCategory(value: unknown): value is Category {
 //   custody from judgement to action stays one-directional.
 
 
-/**
- * What `ctx.exec` answers. A diagnostic command's whole result, as data. `output` is stdout and
- * stderr together, in the order the command printed them.
- */
+/** How a `ctx.exec` call is run. Absent, the streams come apart, as always. */
+export interface ExecOptions {
+  /** Start the command with stdout and stderr on one pipe, so the answer's `output` keeps their order. */
+  readonly onePipe?: boolean;
+}
+
+/** What `ctx.exec` answers. A diagnostic command's whole result, as data. */
 export interface ExecResult {
   stdout: string;
   stderr: string;
-  output: string;
+  /**
+   * What the command printed, stdout and stderr together in the order printed. Set only by a call
+   * that asked for one pipe (`ExecOptions.onePipe`), and then `stdout` and `stderr` are empty: one
+   * pipe cannot say which stream a line came from.
+   */
+  output?: string;
   code: number;
 }
 
@@ -362,7 +370,7 @@ export interface Ctx {
   readonly actor: readonly string[];
 
   // ── THE DOOR TO THE WORLD — capabilities, injected. The only way out. ──
-  exec(cmd: string): Promise<ExecResult>;
+  exec(cmd: string, options?: ExecOptions): Promise<ExecResult>;
   readonly fs: {
     read(path: string): Promise<string>;
     exists(path: string): Promise<boolean>;
@@ -1581,7 +1589,7 @@ export function makeCtx(moment: Moment, facts: Partial<Ctx>, world: World): Ctx 
     ...facts,
     ...parsed,
     actor: facts.actor ?? [],
-    exec: (cmd: string) => world.exec(cmd),
+    exec: (cmd: string, options?: ExecOptions) => world.exec(cmd, options),
     fs: world.fs,
     git: world.git,
     ok: verdict.ok,
@@ -1682,7 +1690,7 @@ export interface CaseWorld {
    * of `"depcruise"` answers the multi-line invocation the depcruise check builds, which is not a
    * string anybody would want to retype into a case.
    */
-  readonly exec?: Readonly<Record<string, { stdout?: string; stderr?: string; output?: string; code?: number }>>;
+  readonly exec?: Readonly<Record<string, { stdout?: string; stderr?: string; code?: number }>>;
   /** Files `ctx.fs` can see, by path. A path not here does not exist. */
   readonly fs?: Readonly<Record<string, string>>;
   /** What `ctx.git.diff()` answers. */
@@ -1760,16 +1768,18 @@ export function cannedWorld(
   const execAnswers = recorded.exec ?? {};
   const files = recorded.fs ?? {};
   return {
-    exec: (cmd: string): Promise<ExecResult> => {
+    exec: (cmd: string, options?: ExecOptions): Promise<ExecResult> => {
       const key = Object.hasOwn(execAnswers, cmd) ? cmd : Object.keys(execAnswers).find((k) => cmd.includes(k));
       const answer = key === undefined ? undefined : execAnswers[key];
       if (answer === undefined) {
         unanswered.push({ kind: "exec", asked: cmd });
-        return Promise.resolve({ stdout: "", stderr: "", output: "", code: 0 });
+        return Promise.resolve({ stdout: "", stderr: "", code: 0 });
       }
       const stdout = answer.stdout ?? "";
       const stderr = answer.stderr ?? "";
-      return Promise.resolve({ stdout, stderr, output: answer.output ?? `${stdout}${stderr}`, code: answer.code ?? 0 });
+      // One pipe has no split to give: the case's stdout then its stderr is the nearest a case can say.
+      if (options?.onePipe) return Promise.resolve({ stdout: "", stderr: "", output: `${stdout}${stderr}`, code: answer.code ?? 0 });
+      return Promise.resolve({ stdout, stderr, code: answer.code ?? 0 });
     },
     fs: {
       // `exists` is answered by the map alone and is never unanswered: a path the recording did not

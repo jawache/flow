@@ -17,10 +17,11 @@
 // TELEMETRY fails SAFE and silent: a log that cannot be written is never the reason a commit is
 // refused.
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { loadConfig, type ExecResult, type FlowConfig, type LoadResult, type Grammar, type Settings, type World } from "../language/domain.ts";
+import { loadConfig, type ExecOptions, type ExecResult, type FlowConfig, type LoadResult, type Grammar, type Settings, type World } from "../language/domain.ts";
 import { fault, guard, recorder, runRows, UNNAMED_COMMIT, type AgentOf, type Block } from "../engine/domain.ts";
 import { quoteArg, useGrammars } from "../checks/domain.ts";
 import { appendRows, appendSteps, commitAttribution, isOff, isRecording, loadState } from "../engine/state.ts";
@@ -59,47 +60,39 @@ const MAX_OUTPUT = 16 * 1024 * 1024;
  * installed refuses the commit instead of passing it. bash answers 127 itself; the only case left
  * is bash being unspawnable, which is the same fact one level up and is answered the same way.
  */
-export function runCommand(command: string, root: string, env = hermeticEnv(process.env)): ExecResult {
-  // `spawnSync` hands back two buffers and no order between them. The relay is a child node that
-  // starts the shell and notes each chunk as it arrives from either stream; `output` is that order.
-  const result = spawnSync(process.execPath, ["-e", RELAY, command], {
+export function runCommand(command: string, root: string, env = hermeticEnv(process.env), onePipe = false): ExecResult {
+  if (onePipe) return runOnOnePipe(command, root, env);
+  const result = spawnSync("bash", ["-lc", command], {
     cwd: root,
     encoding: "utf8",
     maxBuffer: MAX_OUTPUT,
     // Git's hook variables would aim any nested `git` at the in-progress commit. See GIT_HOOK_ENV.
     env,
   });
-  if (result.error) return { stdout: "", stderr: `flow could not run a command: ${result.error.message}`, output: `flow could not run a command: ${result.error.message}`, code: 127 };
-  try {
-    const relayed = JSON.parse(result.stdout) as { stdout: string; stderr: string; output: string; code: number | null; error?: string };
-    if (relayed.error !== undefined) {
-      const said = `flow could not run a command: ${relayed.error}`;
-      return { stdout: "", stderr: said, output: said, code: 127 };
-    }
-    // `code` is null when a signal killed the process. That is a failure, and 1 says so — the one
-    // code that must never be invented is 0.
-    return { stdout: relayed.stdout, stderr: relayed.stderr, output: relayed.output, code: relayed.code ?? 1 };
-  } catch {
-    const said = `flow could not run a command: its relay answered ${result.stderr.trim() || "nothing readable"}`;
-    return { stdout: "", stderr: said, output: said, code: 127 };
-  }
+  if (result.error) return { stdout: "", stderr: `flow could not run a command: ${result.error.message}`, code: 127 };
+  // `status` is null when a signal killed the process. That is a failure, and 1 says so — the one
+  // code that must never be invented is 0.
+  return { stdout: result.stdout, stderr: result.stderr, code: result.status ?? 1 };
 }
 
 /**
- * The relay `runCommand` starts: runs the command under bash, collects each stream and the two
- * together in the order the chunks arrived, and prints one JSON line. A stream read is the only way
- * to learn the order, and the order is as fine as the pipes keep it: two writes in the same
- * instant may arrive as one chunk.
+ * The command with stdout and stderr on ONE file, set up at spawn: both descriptors are the same
+ * open file, so the kernel orders the writes and nothing is guessed afterwards. The answer carries
+ * `output` alone, because one file cannot say which stream a line came from.
  */
-const RELAY = `
-const { spawn } = require("node:child_process");
-let stdout = "", stderr = "", output = "";
-const child = spawn("bash", ["-lc", process.argv[1]], { stdio: ["ignore", "pipe", "pipe"] });
-child.stdout.setEncoding("utf8").on("data", (c) => { stdout += c; output += c; });
-child.stderr.setEncoding("utf8").on("data", (c) => { stderr += c; output += c; });
-child.on("error", (e) => { process.stdout.write(JSON.stringify({ error: e.message })); });
-child.on("close", (code) => { process.stdout.write(JSON.stringify({ stdout, stderr, output, code })); });
-`;
+function runOnOnePipe(command: string, root: string, env: NodeJS.ProcessEnv): ExecResult {
+  const dir = mkdtempSync(join(tmpdir(), "flow-exec-"));
+  const file = join(dir, "output");
+  const fd = openSync(file, "a");
+  try {
+    const result = spawnSync("bash", ["-lc", command], { cwd: root, stdio: ["ignore", fd, fd], env });
+    if (result.error) return { stdout: "", stderr: `flow could not run a command: ${result.error.message}`, code: 127 };
+    return { stdout: "", stderr: "", output: readFileSync(file, "utf8"), code: result.status ?? 1 };
+  } finally {
+    closeSync(fd);
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 /** A repo-relative path, made absolute. Every path a check sees is relative; disk is not. */
 function inRepo(root: string, path: string): string {
@@ -130,10 +123,10 @@ export function readText(root: string, path: string): string | null {
 export function realWorld(root: string, commitIndex?: string): World {
   return {
     // Hermetic, but for a read of what the commit holds, which is given the commit's own index.
-    exec: (command: string): Promise<ExecResult> => {
+    exec: (command: string, options?: ExecOptions): Promise<ExecResult> => {
       const hermetic = hermeticEnv(process.env);
       return Promise.resolve(
-        runCommand(command, root, commitIndex !== undefined && readsCommitIndex(command) ? { ...hermetic, GIT_INDEX_FILE: commitIndex } : hermetic),
+        runCommand(command, root, commitIndex !== undefined && readsCommitIndex(command) ? { ...hermetic, GIT_INDEX_FILE: commitIndex } : hermetic, options?.onePipe === true),
       );
     },
     fs: {
