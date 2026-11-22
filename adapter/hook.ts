@@ -441,10 +441,9 @@ async function judge(args: {
       wearing: identity.wearing,
       world: tape?.taken() ?? {},
     });
-    for (const effect of outcome.effects)
-      if (effect.do === "block")
-        blocked.push({ moment: event.moment, block: effect });
-    keepOutputs(session.root, outcome.effects.flatMap((effect) => (effect.do === "block" ? [effect] : [])));
+    const blocks = outcome.effects.flatMap((effect) => (effect.do === "block" ? [effect] : []));
+    for (const block of blocks) blocked.push({ moment: event.moment, block });
+    keepOutputs(session.root, blocks);
     if (!off) rows.push(...runRows(event.moment, outcome, 1));
   }
 

@@ -14,10 +14,11 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { defineCategory, type SessionFacts } from "../index.ts";
 import { builder, parent } from "../__fixtures__/engine-pack.ts";
-import { FLOW_DIR, LOCK_STALE_MS, lockPath, logFile, offPath, recordPath, recordingFile, statePath, type RecordedStep, type Row, type SessionState } from "./domain.ts";
+import { FLOW_DIR, LOCK_STALE_MS, lockPath, logFile, offPath, recordPath, recordingFile, statePath, type Block, type RecordedStep, type Row, type SessionState } from "./domain.ts";
 import {
   alreadyRead,
   appendRows,
+  keepOutputs,
   appendSteps,
   commitAttribution,
   ensureFlowDir,
@@ -384,5 +385,24 @@ describe("the recording seam", () => {
 
   it("a recording that is not there is an empty one, keyed by the name it was asked for", () => {
     expect(loadRecording(join(root, "nope.jsonl"))).toEqual({ v: 1, session: "nope", steps: [] });
+  });
+});
+
+describe("keepOutputs", () => {
+  const block = (lines: number): Block => ({
+    do: "block",
+    entry: "py.lint",
+    message: "m",
+    subject: null,
+    detail: "d",
+    output: Array.from({ length: lines }, (_, i) => `line ${i + 1}`).join("\n") + "\n",
+  });
+
+  it("keeps a file only when the refusal cut lines, and the file holds all of the output", () => {
+    const file = join(root, ".flow", "output", "py.lint.log");
+    keepOutputs(root, [block(40)]);
+    expect(existsSync(file)).toBe(false);
+    keepOutputs(root, [block(41)]);
+    expect(readFileSync(file, "utf8").trimEnd().split("\n")).toHaveLength(41);
   });
 });

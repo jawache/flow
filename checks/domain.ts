@@ -1150,7 +1150,7 @@ export const execPasses = defineCheck(
       // One pipe: the refusal shows what the tool printed in the order it printed it.
       const result = await ctx.exec(run, { onePipe: true });
       if (result.code === 0) return ctx.ok();
-      return ctx.fail(`\`${run}\` failed (exit ${result.code}):`, result.output ?? `${result.stdout}${result.stderr}`);
+      return ctx.fail(`\`${run}\` failed (exit ${result.code}):`, result.output ?? "");
     },
 );
 
@@ -1462,10 +1462,8 @@ export function depcruiseHits(result: ExecResult): string[] {
   try {
     json = JSON.parse(result.stdout || "") as { summary?: { violations?: DepcruiseViolation[] } };
   } catch {
-    // No parseable JSON. Exit 0 with no report is an empty cruise; anything else is a real failure
-    // — a bad config, a missing tool — and saying so beats reporting a clean graph.
-    if (result.code === 0) return [];
-    return [`depcruise failed (exit ${result.code}):`];
+    // No parseable JSON: no violations to name. A failed run is `depcruiseFailure`'s to say.
+    return [];
   }
   return (json.summary?.violations ?? []).map((v) => {
     const name = v.rule?.name ?? "fence";
@@ -1558,8 +1556,8 @@ export function removedWarnOption(opts: Dialect): string[] {
 export const depcruise = defineCheck((opts: Dialect): Check => {
   const run: Check = async (ctx) => {
     const result = await ctx.exec(depcruiseCommand(opts));
-    const hits = depcruiseHits(result);
-    return hits.length === 0 ? ctx.ok() : ctx.fail(hits.join("\n"), depcruiseFailure(result) ?? undefined);
+    const failed = depcruiseFailure(result);
+    return failed !== null ? ctx.fail(`depcruise failed (exit ${result.code}):`, failed) : answer(ctx, depcruiseHits(result), "\n");
   };
   // The options are judged when the check is BUILT, and a fault refuses the load rather than
   // waiting for a commit: a fence that cannot match is worse than no fence, because it reports.
