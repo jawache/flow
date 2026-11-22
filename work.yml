@@ -55,7 +55,7 @@ types:                                               # each type of issue, and t
   bug:   { skip: [Docs, Trial] }
   docs:  { skip: [Plan, Build, Test, Trial, Demo, Review] }
   skill: { skip: [Plan, Build, Test, Demo, Review] }
-  review:                                            # the daily review's issue, made by the weekday-7 rule; the rule types its line, so Review has no action
+  review:                                            # the daily review's issue, made by the daily-review rule; the rule types its line, so Review has no action
     - { name: Review, icon: "👀", default: true }
     - { name: Done,   icon: "✅", done: true }
 
@@ -86,7 +86,7 @@ fields:                                              # every other key in each i
   risk: [low, medium, high]                          # the change's blast radius: its code, files and complexity
 
 clock:                                               # entries that come due on a schedule and fire the rules on `clock.<name>`
-  weekday-7: { cron: "0 7 * * 1-5", tz: Europe/London }
+  daily-7: { cron: "0 7 * * *", tz: Europe/London }
 
 on:                                                  # the rules: what else is typed into a session when an event happens (docs/user/reference/events.md)
   merged:
@@ -103,7 +103,7 @@ on:                                                  # the rules: what else is t
     event: question.reopened
     action: "[work] Open again, not handled: {ask}"
   daily-review:
-    event: clock.weekday-7
+    event: clock.daily-7
     create: { title: "Review · {weekday} {date}", status: Review, fields: { type: review } }
     action: "[work] /review {issue}"
   # The manager keeps two issues between Refine and Plan (docs/user/explanation/default-workflow.md § A manager).

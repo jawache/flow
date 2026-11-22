@@ -2,7 +2,7 @@
 name: review
 description: Use when the work daemon types `[work] /review <issue>` into a daily review issue in this repo, or when the human asks for "the daily review" or "review yesterday's issues". Reads every project's issues that finished the day before, and posts one report of the few things that cost a lot.
 file: SKILL
-when: the line `[work] /review <issue>`, typed at 07:00 each weekday, Europe/London, into a new issue of type `review`, whose statuses are Review and Done
+when: the line `[work] /review <issue>`, typed at 07:00 each day, Europe/London, into a new issue of type `review`, whose statuses are Review and Done
 brief: the review's own issue
 writes: the report page in the issue's record · one question card · an issue in a project's Backlog, on the human's "file"
 guards: none
