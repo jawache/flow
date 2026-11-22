@@ -1328,7 +1328,7 @@ export function compileDialect(rule: Dialect): NativeConfig {
   }
 
   // ── forbid: edges between layers, plain circular, orphans, cyclesBetween. Every one of them
-  //    refuses the commit: depcruiseHits reads no severity, so `warn` here is only dependency-cruiser's
+  //    refuses the commit: depcruiseReport reads no severity, so `warn` here is only dependency-cruiser's
   //    label for the rule, never a softer outcome.
   for (const f of rule.forbid ?? []) {
     if (f === "circular") {
@@ -1444,32 +1444,23 @@ interface DepcruiseViolation {
 }
 
 /**
- * What the tool printed when it failed with no report to read, stdout then stderr, whole. Null when
- * there is a report, or the cruise was clean.
+ * Read the tool's answer once: its JSON report becomes one hit per violation, each naming the fence
+ * and its `why`. With no report to read, the run either passed (nothing to say) or failed, and then
+ * `failure` is what it printed, stdout then stderr, whole.
  */
-export function depcruiseFailure(result: ExecResult): string | null {
-  try {
-    JSON.parse(result.stdout || "");
-    return null;
-  } catch {
-    return result.code === 0 ? null : `${result.stdout}${result.stderr}`;
-  }
-}
-
-/** The tool's JSON report → one hit per violation, each naming the fence and its `why`. */
-export function depcruiseHits(result: ExecResult): string[] {
+export function depcruiseReport(result: ExecResult): { readonly hits: string[]; readonly failure: string | null } {
   let json: { summary?: { violations?: DepcruiseViolation[] } };
   try {
     json = JSON.parse(result.stdout || "") as { summary?: { violations?: DepcruiseViolation[] } };
   } catch {
-    // No parseable JSON: no violations to name. A failed run is `depcruiseFailure`'s to say.
-    return [];
+    return { hits: [], failure: result.code === 0 ? null : `${result.stdout}${result.stderr}` };
   }
-  return (json.summary?.violations ?? []).map((v) => {
+  const hits = (json.summary?.violations ?? []).map((v) => {
     const name = v.rule?.name ?? "fence";
     const why = v.comment ?? v.rule?.comment ?? ""; // the fence's own reason, when depcruise echoes it
     return `${name}: ${v.from} → ${v.to}${why ? ` — ${why}` : ""}`;
   });
+  return { hits, failure: null };
 }
 
 /**
@@ -1556,8 +1547,8 @@ export function removedWarnOption(opts: Dialect): string[] {
 export const depcruise = defineCheck((opts: Dialect): Check => {
   const run: Check = async (ctx) => {
     const result = await ctx.exec(depcruiseCommand(opts));
-    const failed = depcruiseFailure(result);
-    return failed !== null ? ctx.fail(`depcruise failed (exit ${result.code}):`, failed) : answer(ctx, depcruiseHits(result), "\n");
+    const { hits, failure } = depcruiseReport(result);
+    return failure !== null ? ctx.fail(`depcruise failed (exit ${result.code}):`, failure) : answer(ctx, hits, "\n");
   };
   // The options are judged when the check is BUILT, and a fault refuses the load rather than
   // waiting for a commit: a fence that cannot match is worse than no fence, because it reports.
