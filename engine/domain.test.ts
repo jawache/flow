@@ -89,6 +89,7 @@ import {
   fires,
   flowDir,
   formatBlock,
+  keptOutputFile,
   outputFile,
   formatBlocks,
   guard,
@@ -1102,6 +1103,18 @@ describe("formatting a refusal", () => {
     expect(lines.at(-1)).toBe("    … 212 lines cut. All of it: .flow/output/python.commitRunsLint.log");
     expect(lines).toHaveLength(44);
     expect(outputFile("python.commitRunsLint")).toBe(".flow/output/python.commitRunsLint.log");
+  });
+
+  it("a block's output is kept only when lines were cut and an entry can name the file", () => {
+    const block = (entry: string | null, n: number): Parameters<typeof keptOutputFile>[0] => ({
+      do: "block", entry, message: "m", subject: null, detail: "d",
+      output: Array.from({ length: n }, (_, i) => `l${i}`).join("\n"),
+    });
+    expect(keptOutputFile(block("a.b", 41))).toBe(".flow/output/a.b.log");
+    expect(keptOutputFile(block("a.b", 40))).toBeNull();
+    expect(keptOutputFile(block(null, 41))).toBeNull();
+    const { output: _output, ...bare } = block("a.b", 41);
+    expect(keptOutputFile(bare)).toBeNull();
   });
 
   it("prints the guard's own fault as itself, with no rule to attribute it to", () => {

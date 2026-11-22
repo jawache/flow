@@ -7,7 +7,7 @@
 // answers instead of throwing when the disk says no.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, utimesSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, utimesSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
@@ -403,6 +403,17 @@ describe("keepOutputs", () => {
     keepOutputs(root, [block(40)]);
     expect(existsSync(file)).toBe(false);
     keepOutputs(root, [block(41)]);
+    expect(readFileSync(file, "utf8").trimEnd().split("\n")).toHaveLength(41);
+  });
+
+  it("replaces a link planted at the file's name, and never writes through it", () => {
+    const outside = join(root, "outside.txt");
+    writeFileSync(outside, "mine");
+    mkdirSync(join(root, ".flow", "output"), { recursive: true });
+    const file = join(root, ".flow", "output", "py.lint.log");
+    symlinkSync(outside, file);
+    keepOutputs(root, [block(41)]);
+    expect(readFileSync(outside, "utf8")).toBe("mine");
     expect(readFileSync(file, "utf8").trimEnd().split("\n")).toHaveLength(41);
   });
 });

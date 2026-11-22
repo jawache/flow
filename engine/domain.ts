@@ -660,7 +660,8 @@ export function formatBlock(block: Block): string {
   if (block.output !== undefined) {
     const { shown, cut } = cutOutput(block.output);
     lines.push(...shown.map((line) => `    ${line}`));
-    if (cut > 0 && block.entry !== null) lines.push(`    … ${cut} lines cut. All of it: ${outputFile(block.entry)}`);
+    const kept = keptOutputFile(block);
+    if (kept !== null) lines.push(`    … ${cut} lines cut. All of it: ${kept}`);
   }
   return lines.join("\n");
 }
@@ -684,6 +685,15 @@ export function cutOutput(output: string): { readonly shown: string[]; readonly 
 export function outputFile(entry: string): string {
   // An entry id is `pack.name`: the dot stays, so the file is named as the docs say.
   return `${FLOW_DIR}/output/${entry.replace(/[^A-Za-z0-9_.-]/g, "-")}.log`;
+}
+
+/**
+ * Where a block's output is kept, or null when it is not: the refusal cut lines, and an entry
+ * can name the file. The refusal's line and the file's write both ask this, so they cannot differ.
+ */
+export function keptOutputFile(block: Block): string | null {
+  if (block.entry === null || block.output === undefined || cutOutput(block.output).cut === 0) return null;
+  return outputFile(block.entry);
 }
 
 /** Every block in one outcome, as one message. Empty when nothing refused. */

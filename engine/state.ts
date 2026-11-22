@@ -33,7 +33,6 @@ import type { Category, SessionFacts } from "../language/domain.ts";
 import {
   FLOW_GITIGNORE,
   attribution,
-  cutOutput,
   flowDir,
   identify,
   lockIsStale,
@@ -42,7 +41,7 @@ import {
   markerPath,
   metaRow,
   nextSeq,
-  outputFile,
+  keptOutputFile,
   offPath,
   readDir,
   readMarkPath,
@@ -253,12 +252,16 @@ export interface LogContext {
  */
 export function keepOutputs(root: string, blocks: readonly Block[]): void {
   for (const block of blocks) {
-    if (block.entry === null || block.output === undefined || cutOutput(block.output).cut === 0) continue;
+    const kept = keptOutputFile(block);
+    if (kept === null || block.output === undefined) continue;
     try {
-      const file = join(root, outputFile(block.entry));
+      const file = join(root, kept);
       ensureFlowDir(root);
       mkdirSync(dirname(file), { recursive: true });
-      writeFileSync(file, block.output);
+      // Written beside it and renamed into place: a link planted at the name is replaced, never written through.
+      const tmp = `${file}.${process.pid}.tmp`;
+      writeFileSync(tmp, block.output);
+      renameSync(tmp, file);
     } catch {
       // see above
     }
