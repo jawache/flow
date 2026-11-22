@@ -46,7 +46,6 @@ export {
   type Ctx,
   type World,
   type Verdict,
-  type ExecOptions,
   type ExecResult,
   type TurnAction,
   type ShellCommand,

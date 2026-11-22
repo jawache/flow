@@ -1158,7 +1158,10 @@ describe("cannedWorld — the ONE recorded world", () => {
   it("answers a one-pipe call with the case's stdout then its stderr, and no split", async () => {
     const w = cannedWorld({ exec: { lint: { stdout: "o", stderr: "e", code: 1 } } }, undefined, []);
     expect(await w.exec("lint", { onePipe: true })).toEqual({ stdout: "", stderr: "", output: "oe", code: 1 });
-    expect(await w.exec("lint")).toEqual({ stdout: "o", stderr: "e", code: 1 });
+    const missed = reaches();
+    const none = cannedWorld({}, undefined, missed);
+    expect(await none.exec("nothing", { onePipe: true })).toEqual({ stdout: "", stderr: "", output: "", code: 0 });
+    expect(missed).toEqual([{ kind: "exec", asked: "nothing" }]);
   });
 
   it("RECORDS a reach it cannot answer instead of guessing — a fiction is how a case passes wrongly", async () => {

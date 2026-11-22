@@ -17,8 +17,7 @@
 // TELEMETRY fails SAFE and silent: a log that cannot be written is never the reason a commit is
 // refused.
 import { spawnSync } from "node:child_process";
-import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { loadConfig, type ExecOptions, type ExecResult, type FlowConfig, type LoadResult, type Grammar, type Settings, type World } from "../language/domain.ts";
@@ -61,37 +60,24 @@ const MAX_OUTPUT = 16 * 1024 * 1024;
  * is bash being unspawnable, which is the same fact one level up and is answered the same way.
  */
 export function runCommand(command: string, root: string, env = hermeticEnv(process.env), onePipe = false): ExecResult {
-  if (onePipe) return runOnOnePipe(command, root, env);
-  const result = spawnSync("bash", ["-lc", command], {
+  // One pipe is set up where bash starts: `exec 2>&1` joins stderr to stdout before the command runs,
+  // so the kernel orders the writes. The command string `ctx.exec` was given is never touched.
+  const result = spawnSync("bash", ["-lc", onePipe ? `exec 2>&1\n${command}` : command], {
     cwd: root,
     encoding: "utf8",
     maxBuffer: MAX_OUTPUT,
     // Git's hook variables would aim any nested `git` at the in-progress commit. See GIT_HOOK_ENV.
     env,
   });
-  if (result.error) return { stdout: "", stderr: `flow could not run a command: ${result.error.message}`, code: 127 };
+  if (result.error) {
+    const said = `flow could not run a command: ${result.error.message}`;
+    return onePipe ? { stdout: "", stderr: "", output: said, code: 127 } : { stdout: "", stderr: said, code: 127 };
+  }
   // `status` is null when a signal killed the process. That is a failure, and 1 says so — the one
   // code that must never be invented is 0.
-  return { stdout: result.stdout, stderr: result.stderr, code: result.status ?? 1 };
-}
-
-/**
- * The command with stdout and stderr on ONE file, set up at spawn: both descriptors are the same
- * open file, so the kernel orders the writes and nothing is guessed afterwards. The answer carries
- * `output` alone, because one file cannot say which stream a line came from.
- */
-function runOnOnePipe(command: string, root: string, env: NodeJS.ProcessEnv): ExecResult {
-  const dir = mkdtempSync(join(tmpdir(), "flow-exec-"));
-  const file = join(dir, "output");
-  const fd = openSync(file, "a");
-  try {
-    const result = spawnSync("bash", ["-lc", command], { cwd: root, stdio: ["ignore", fd, fd], env });
-    if (result.error) return { stdout: "", stderr: `flow could not run a command: ${result.error.message}`, code: 127 };
-    return { stdout: "", stderr: "", output: readFileSync(file, "utf8"), code: result.status ?? 1 };
-  } finally {
-    closeSync(fd);
-    rmSync(dir, { recursive: true, force: true });
-  }
+  const code = result.status ?? 1;
+  // One pipe has no split to give: everything printed is `output`.
+  return onePipe ? { stdout: "", stderr: "", output: result.stdout, code } : { stdout: result.stdout, stderr: result.stderr, code };
 }
 
 /** A repo-relative path, made absolute. Every path a check sees is relative; disk is not. */

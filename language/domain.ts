@@ -1773,7 +1773,7 @@ export function cannedWorld(
       const answer = key === undefined ? undefined : execAnswers[key];
       if (answer === undefined) {
         unanswered.push({ kind: "exec", asked: cmd });
-        return Promise.resolve({ stdout: "", stderr: "", code: 0 });
+        return Promise.resolve(options?.onePipe ? { stdout: "", stderr: "", output: "", code: 0 } : { stdout: "", stderr: "", code: 0 });
       }
       const stdout = answer.stdout ?? "";
       const stderr = answer.stderr ?? "";

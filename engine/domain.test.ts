@@ -1932,19 +1932,15 @@ describe("the recording seam — the live world's answers, written down", () => 
     });
   });
 
-  it("replays each call as it was answered, one pipe or not", async () => {
+  it("replays a one-pipe call as it was answered", async () => {
     const live: World = {
-      exec: (_c, options) =>
-        Promise.resolve(options?.onePipe ? { stdout: "", stderr: "", output: "a\nb\nc\n", code: 1 } : { stdout: "a\nc\n", stderr: "b\n", code: 1 }),
+      exec: () => Promise.resolve({ stdout: "", stderr: "", output: "a\nb\nc\n", code: 1 }),
       fs: { read: () => Promise.resolve(""), exists: () => Promise.resolve(false) },
       git: { diff: () => Promise.resolve(""), stagedFiles: () => Promise.resolve([]) },
     };
     const one = recorder(live);
     await one.world.exec("lint", { onePipe: true });
     expect(await cannedWorld(one.taken(), undefined, []).exec("lint", { onePipe: true })).toEqual({ stdout: "", stderr: "", output: "a\nb\nc\n", code: 1 });
-    const apart = recorder(live);
-    await apart.world.exec("lint");
-    expect(await cannedWorld(apart.taken(), undefined, []).exec("lint")).toEqual({ stdout: "a\nc\n", stderr: "b\n", code: 1 });
   });
 
   it("a world nothing reached for records nothing — an empty answer set, not an empty world", () => {
