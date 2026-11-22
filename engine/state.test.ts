@@ -7,7 +7,7 @@
 // answers instead of throwing when the disk says no.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, utimesSync, symlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, utimesSync, symlinkSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
@@ -398,22 +398,27 @@ describe("keepOutputs", () => {
     output: Array.from({ length: lines }, (_, i) => `line ${i + 1}`).join("\n") + "\n",
   });
 
-  it("keeps a file only when the refusal cut lines, and the file holds all of the output", () => {
+  it("keeps a file only when lines were cut, and never writes through a link", () => {
     const file = join(root, ".flow", "output", "py.lint.log");
     keepOutputs(root, [block(40)]);
     expect(existsSync(file)).toBe(false);
-    keepOutputs(root, [block(41)]);
-    expect(readFileSync(file, "utf8").trimEnd().split("\n")).toHaveLength(41);
-  });
 
-  it("replaces a link planted at the file's name, and never writes through it", () => {
     const outside = join(root, "outside.txt");
     writeFileSync(outside, "mine");
     mkdirSync(join(root, ".flow", "output"), { recursive: true });
-    const file = join(root, ".flow", "output", "py.lint.log");
     symlinkSync(outside, file);
+    symlinkSync(outside, `${file}.${process.pid}.tmp`);
     keepOutputs(root, [block(41)]);
     expect(readFileSync(outside, "utf8")).toBe("mine");
     expect(readFileSync(file, "utf8").trimEnd().split("\n")).toHaveLength(41);
+  });
+
+  it("writes nothing into an output folder that is a link", () => {
+    const elsewhere = join(root, "elsewhere");
+    mkdirSync(elsewhere);
+    mkdirSync(join(root, ".flow"), { recursive: true });
+    symlinkSync(elsewhere, join(root, ".flow", "output"));
+    keepOutputs(root, [block(41)]);
+    expect(readdirSync(elsewhere)).toEqual([]);
   });
 });
