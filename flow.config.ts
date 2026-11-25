@@ -27,7 +27,7 @@
 import { defineConfig, override, pack } from "@jawache/flow";
 import { flow } from "@jawache/flow/packs";
 import { docs } from "@jawache/flow-packs/docs";
-import { work } from "./guards/work.ts";
+import { work } from "@jawache/flow-packs/work";
 import { fcis } from "@jawache/flow-packs/fcis";
 import { git } from "@jawache/flow-packs/git";
 import { house } from "./guards/house.ts";
@@ -141,8 +141,8 @@ export default defineConfig([
 
   // ── driven by the work daemon ──
   //
-  // `guards/work.ts` is the default workflow's pack, copied in by `work init --template` rather
-  // than written here.
+  // flow-packs' work pack, which each release of flow-packs updates here, rather than written
+  // here.
   pack(work),
 
   // ── this repo's own terrain ──
