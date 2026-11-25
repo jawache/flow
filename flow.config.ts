@@ -147,6 +147,7 @@ export default defineConfig([
 
   // ── this repo's own terrain ──
   pack(house, { pure: PURE }),
+  override(house.noDeleteGuards).disabled("for one commit: deleting guards/work.ts, the copy work init made, which flow-packs' work pack replaces"),
 ], {
   driftTokens: 400_000,
 });
