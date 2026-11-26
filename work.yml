@@ -13,6 +13,7 @@ agents:                                              # what claude is started as
   leader:   { model: fable, effort: medium, mcp: off, permissions: bypassPermissions }   # every issue's session until Build: passed to claude as --model, --effort and --permission-mode
                                                      # add mcp: <file> for only that MCP config's servers, or mcp: off for none; left out, every server Claude Code is configured with
   leader-build: { model: opus, effort: high, mcp: off, permissions: bypassPermissions }   # the session from Build on: Build's action switches to it
+  reviewer: { model: opus, effort: medium, mcp: off, permissions: bypassPermissions }   # the daily review's session: the rule daily-review starts its issue as it
   builder:  { model: sonnet }            # the others are read by the repo's skill, which passes both when it spawns that agent
   secops:   { model: opus }
   tech-lead: { model: opus }
@@ -106,7 +107,7 @@ on:                                                  # the rules: what else is t
     action: "[work] Open again, not handled: {ask}"
   daily-review:
     event: clock.daily-7
-    create: { title: "Review · {weekday} {date}", status: Review, fields: { type: review } }
+    create: { title: "Review · {weekday} {date}", status: Review, fields: { type: review }, agent: reviewer }
     action: "[work] /review {issue}"
   # The updater takes a release of what this repo pins, flow-packs (docs/user/explanation/default-workflow.md § An updater).
   update:
